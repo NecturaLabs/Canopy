@@ -255,32 +255,34 @@ pub(crate) fn hunk_patch(diff: &Diff<'_>, index: usize) -> Result<Option<(Vec<u8
         if index >= patch.num_hunks() {
             return Ok(None);
         }
-        let old = path_of(delta.old_file()).unwrap_or_default();
-        let new = path_of(delta.new_file()).unwrap_or_default();
+        // Raw bytes, quoted as git quotes them, so names with spaces, tabs, quotes, backslashes
+        // or non-ASCII (even non-UTF-8) bytes round-trip through `git apply`.
+        let old = delta.old_file().path_bytes().unwrap_or_default();
+        let new = delta.new_file().path_bytes().unwrap_or_default();
         let mut out = Vec::new();
-        out.extend_from_slice(format!("diff --git a/{old} b/{new}\n").as_bytes());
+        out.extend_from_slice(b"diff --git ");
+        out.extend(quoted(b"a/", old));
+        out.push(b' ');
+        out.extend(quoted(b"b/", new));
+        out.push(b'\n');
         let mode = |m: git2::FileMode| i32::from(m);
-        match delta.status() {
+        let (old_absent, new_absent) = match delta.status() {
             git2::Delta::Added | git2::Delta::Untracked => {
                 out.extend_from_slice(
-                    format!(
-                        "new file mode {:o}\n--- /dev/null\n+++ b/{new}\n",
-                        mode(delta.new_file().mode())
-                    )
-                    .as_bytes(),
+                    format!("new file mode {:o}\n", mode(delta.new_file().mode())).as_bytes(),
                 );
+                (true, false)
             }
             git2::Delta::Deleted => {
                 out.extend_from_slice(
-                    format!(
-                        "deleted file mode {:o}\n--- a/{old}\n+++ /dev/null\n",
-                        mode(delta.old_file().mode())
-                    )
-                    .as_bytes(),
+                    format!("deleted file mode {:o}\n", mode(delta.old_file().mode())).as_bytes(),
                 );
+                (false, true)
             }
-            _ => out.extend_from_slice(format!("--- a/{old}\n+++ b/{new}\n").as_bytes()),
-        }
+            _ => (false, false),
+        };
+        file_line(&mut out, b"--- ", b"a/", old, old_absent);
+        file_line(&mut out, b"+++ ", b"b/", new, new_absent);
         let (hunk, n) = patch.hunk(index)?;
         out.extend_from_slice(hunk.header());
         if !hunk.header().ends_with(b"\n") {
@@ -307,4 +309,72 @@ pub(crate) fn hunk_patch(diff: &Diff<'_>, index: usize) -> Result<Option<(Vec<u8
         return Ok(Some((out, key)));
     }
     Ok(None)
+}
+
+/// A `---` or `+++` line. Like `git diff`, a name containing a space is followed by a tab so
+/// `git apply` knows where it ends.
+pub(crate) fn file_line(out: &mut Vec<u8>, lead: &[u8], prefix: &[u8], path: &[u8], absent: bool) {
+    out.extend_from_slice(lead);
+    if absent {
+        out.extend_from_slice(b"/dev/null");
+    } else {
+        out.extend(quoted(prefix, path));
+        if path.contains(&b' ') {
+            out.push(b'\t');
+        }
+    }
+    out.push(b'\n');
+}
+
+/// `prefix` + `path`, C-quoted the way git quotes paths when it contains a control character,
+/// a quote, a backslash or a non-ASCII byte (which also covers non-UTF-8 names).
+pub(crate) fn quoted(prefix: &[u8], path: &[u8]) -> Vec<u8> {
+    let special = |b: u8| !(0x20..0x7f).contains(&b) || b == b'"' || b == b'\\';
+    if !path.iter().copied().any(special) {
+        return [prefix, path].concat();
+    }
+    let mut out = vec![b'"'];
+    out.extend_from_slice(prefix);
+    for &b in path {
+        match b {
+            b'"' => out.extend_from_slice(b"\\\""),
+            b'\\' => out.extend_from_slice(b"\\\\"),
+            b'\t' => out.extend_from_slice(b"\\t"),
+            b'\n' => out.extend_from_slice(b"\\n"),
+            b'\r' => out.extend_from_slice(b"\\r"),
+            0x07 => out.extend_from_slice(b"\\a"),
+            0x08 => out.extend_from_slice(b"\\b"),
+            0x0b => out.extend_from_slice(b"\\v"),
+            0x0c => out.extend_from_slice(b"\\f"),
+            b if special(b) => out.extend_from_slice(format!("\\{b:03o}").as_bytes()),
+            b => out.push(b),
+        }
+    }
+    out.push(b'"');
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quotes_paths_like_git() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"plain.txt", b"a/plain.txt"),
+            (b"with space.txt", b"a/with space.txt"),
+            (b"tab\there", b"\"a/tab\\there\""),
+            (b"q\"b\\", b"\"a/q\\\"b\\\\\""),
+            ("caf\u{e9}".as_bytes(), b"\"a/caf\\303\\251\""),
+            (b"raw\xff", b"\"a/raw\\377\""),
+        ];
+        for (path, want) in cases {
+            assert_eq!(
+                quoted(b"a/", path),
+                *want,
+                "{}",
+                String::from_utf8_lossy(path)
+            );
+        }
+    }
 }

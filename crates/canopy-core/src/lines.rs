@@ -15,7 +15,7 @@
 use git2::{Diff, Patch};
 
 use crate::cli;
-use crate::diff::{DiffSource, HunkKey};
+use crate::diff::{DiffSource, HunkKey, file_line, quoted};
 use crate::ops::HunkAction;
 use crate::{Error, Repo, Result};
 
@@ -352,49 +352,6 @@ fn render(file: &FileHeader, section: &[u8], e: &Edited) -> Vec<u8> {
     out
 }
 
-/// A `---` or `+++` line. Like `git diff`, a name containing a space is followed by a tab so
-/// `git apply` knows where it ends.
-fn file_line(out: &mut Vec<u8>, lead: &[u8], prefix: &[u8], path: &[u8], absent: bool) {
-    out.extend_from_slice(lead);
-    if absent {
-        out.extend_from_slice(b"/dev/null");
-    } else {
-        out.extend(quoted(prefix, path));
-        if path.contains(&b' ') {
-            out.push(b'\t');
-        }
-    }
-    out.push(b'\n');
-}
-
-/// `prefix` + `path`, C-quoted the way git quotes paths when it contains a control character,
-/// a quote, a backslash or a non-ASCII byte (which also covers non-UTF-8 names).
-fn quoted(prefix: &[u8], path: &[u8]) -> Vec<u8> {
-    let special = |b: u8| !(0x20..0x7f).contains(&b) || b == b'"' || b == b'\\';
-    if !path.iter().copied().any(special) {
-        return [prefix, path].concat();
-    }
-    let mut out = vec![b'"'];
-    out.extend_from_slice(prefix);
-    for &b in path {
-        match b {
-            b'"' => out.extend_from_slice(b"\\\""),
-            b'\\' => out.extend_from_slice(b"\\\\"),
-            b'\t' => out.extend_from_slice(b"\\t"),
-            b'\n' => out.extend_from_slice(b"\\n"),
-            b'\r' => out.extend_from_slice(b"\\r"),
-            0x07 => out.extend_from_slice(b"\\a"),
-            0x08 => out.extend_from_slice(b"\\b"),
-            0x0b => out.extend_from_slice(b"\\v"),
-            0x0c => out.extend_from_slice(b"\\f"),
-            b if special(b) => out.extend_from_slice(format!("\\{b:03o}").as_bytes()),
-            b => out.push(b),
-        }
-    }
-    out.push(b'"');
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,26 +553,6 @@ mod tests {
         assert_eq!(body(&e), [" a", " b", "+c"]);
         // Selecting both versions of the last line is fine.
         assert!(edit(&h, &[1, 2, 3], false).is_ok());
-    }
-
-    #[test]
-    fn quotes_paths_like_git() {
-        let cases: &[(&[u8], &[u8])] = &[
-            (b"plain.txt", b"a/plain.txt"),
-            (b"with space.txt", b"a/with space.txt"),
-            (b"tab\there", b"\"a/tab\\there\""),
-            (b"q\"b\\", b"\"a/q\\\"b\\\\\""),
-            ("caf\u{e9}".as_bytes(), b"\"a/caf\\303\\251\""),
-            (b"raw\xff", b"\"a/raw\\377\""),
-        ];
-        for (path, want) in cases {
-            assert_eq!(
-                quoted(b"a/", path),
-                *want,
-                "{}",
-                String::from_utf8_lossy(path)
-            );
-        }
     }
 
     #[test]

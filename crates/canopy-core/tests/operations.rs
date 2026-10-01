@@ -275,6 +275,64 @@ fn hunk_staging_works_without_context_lines() {
 }
 
 #[test]
+fn hunk_staging_handles_unusual_paths() {
+    // `git diff` C-quotes names with quotes, control characters or non-ASCII bytes and ends a
+    // name containing a space with a tab on the ---/+++ lines; the hunk patch must do the same.
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    let mut names = vec!["my notes.txt", "caf\u{e9} \"q\".txt", "back\\slash.txt"];
+    if cfg!(unix) {
+        // Windows forbids tabs and backslashes in file names.
+        names.push("tab\there.txt");
+    } else {
+        names.retain(|n| !n.contains('\\'));
+    }
+    for name in names {
+        fs::write(p.join(name), "1\n2\n3\n4\n5\n6\n7\n8\n9\n").expect("write");
+        git(p, &["add", "--", name]);
+        git(p, &["commit", "-q", "-m", "test: add file"]);
+        fs::write(p.join(name), "1\n2\nTHREE\n4\n5\n6\n7\nEIGHT\n9\n").expect("write");
+        let d = repo
+            .file_diff(&DiffSource::Unstaged, name, None, 1, Whitespace::Show)
+            .expect("diff");
+        assert_eq!(d.hunks.len(), 2, "{name}: {d:#?}");
+        repo.apply_hunk(HunkAction::Stage, name, 1, d.hunks[1].key(), 1)
+            .unwrap_or_else(|e| panic!("stage {name:?}: {e}"));
+        assert_eq!(
+            index_blob(p, name),
+            "1\n2\n3\n4\n5\n6\n7\nEIGHT\n9\n",
+            "{name}"
+        );
+        let staged = repo
+            .file_diff(&DiffSource::Staged, name, None, 1, Whitespace::Show)
+            .expect("staged");
+        repo.apply_hunk(HunkAction::Unstage, name, 0, staged.hunks[0].key(), 1)
+            .unwrap_or_else(|e| panic!("unstage {name:?}: {e}"));
+        assert_eq!(index_blob(p, name), "1\n2\n3\n4\n5\n6\n7\n8\n9\n", "{name}");
+        let d = repo
+            .file_diff(&DiffSource::Unstaged, name, None, 1, Whitespace::Show)
+            .expect("diff");
+        repo.apply_hunk(HunkAction::Discard, name, 0, d.hunks[0].key(), 1)
+            .unwrap_or_else(|e| panic!("discard {name:?}: {e}"));
+        assert_eq!(
+            fs::read_to_string(p.join(name)).expect("read"),
+            "1\n2\n3\n4\n5\n6\n7\nEIGHT\n9\n",
+            "{name}"
+        );
+    }
+
+    // A new (untracked) file with an unusual name: its single hunk stages as a new file.
+    let name = "new caf\u{e9}.txt";
+    fs::write(p.join(name), "x\n").expect("write");
+    let d = repo
+        .file_diff(&DiffSource::Unstaged, name, None, 3, Whitespace::Show)
+        .expect("diff");
+    repo.apply_hunk(HunkAction::Stage, name, 0, d.hunks[0].key(), 3)
+        .expect("stage new file");
+    assert_eq!(index_blob(p, name), "x\n");
+}
+
+#[test]
 fn branches_tags_stash_reset() {
     let (dir, repo) = fixture();
     let p = dir.path();
