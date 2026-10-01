@@ -5,6 +5,12 @@ verified in the running app.
 
 ## Now
 
+- [ ] Build-number versions instead of semver: build N = `git rev-list --count` on main plus the
+      short SHA ("build 412 (a1b2c3d)"), embedded at compile time; tags `build-N`, no version-bump
+      commit; feed carries the integer build; updater and installers compare integers and treat
+      an old semver as older. Releases stay manual (`workflow_dispatch` only). A partial attempt
+      (installers, `build.rs`, test fixtures; not finished) is saved outside the repository at
+      `/run/media/nectura/Programming SSD/tmp/canopy-build-versions-partial.patch`.
 - [ ] Partial clones: trusted locations. Downloads (which run the repository's own git config)
       only for repositories under folders trusted in Settings; compare canonicalized paths in the
       worker; a "Trust…" button offering the repository's folder or its parent; privacy text.
