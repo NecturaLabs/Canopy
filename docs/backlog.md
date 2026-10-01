@@ -18,7 +18,7 @@ Who works on what, on which branch. Remove a row when its branch is merged.
 | --- | --- | --- | --- |
 | Installer security-review fixes (1 blocking, 9 should-fix, nits) | `fix/installer-review` | canopy-1 agent | In progress |
 | Performance: shared snapshots and diffs, diff layout cache, virtualised diff and resolver rows, highlighting thread, palette cache | `perf/views` | canopy-1 | Done (2cc3cad: 119–209 ms → 0.3–0.9 ms per frame on huge data); in review, then merge |
-| Partial clones in core (missing objects fetched through git) | `feat/partial-clones` | canopy-1 | Core done (85bf861, 15 new tests); in review, then merge |
+| Partial clones in core (missing objects fetched through git) | `feat/partial-clones` | canopy-1 | Core and worker done, review findings fixed; in re-review, then merge |
 | Core safety: `branch -d` by default, publish any branch, mode and type changes, collapsed untracked folders, nested repositories in Stage all, safe paths, ignore rules | `canopy-2/core-safety` | canopy-2 | In progress (core only; canopy-1 wires the UI) |
 | Core workflows: git-flow, merged detection, LFS status, submodules | `canopy-3/core-workflows` | canopy-3 | In progress (core only; canopy-1 wires the UI) |
 
@@ -41,7 +41,13 @@ In order. The UI entries come before accessibility, and accessibility before the
   keychain; the old folder migrates once.
 - [ ] **Partial clones in the views**: a "not downloaded yet" state for blobs missing from a
   partial clone, fetched on demand off the UI thread. Accept: a `--filter=blob:none` clone browses
-  history without blocking and shows file contents after fetching.
+  history without blocking and shows file contents after fetching. The core reads are done
+  (`feat/partial-clones`: `MissingObjects`, `partial.rs`, offline file lists, `status_unavailable`),
+  and so are the worker (offline first, download with a progress line, superseded reads dropped)
+  and the details pane's error with Retry. Left: verify against a real `--filter=blob:none` and
+  `--filter=tree:0` clone in the running app, screenshots of the error pane and the "Changes not
+  available" state, a Retry for a failed diff (only commit details have one), and a per-file
+  "not downloaded" marker before the diff is opened.
 - [ ] **Git LFS**: correct status for LFS files, an LFS indicator and pointer-only state, LFS
   diffs, `git lfs pull`/fetch, track and untrack, locks, and a prompt when `git-lfs` is missing.
   Accept: an LFS fixture shows no phantom changes, marks pointer-only files and pulls them.
