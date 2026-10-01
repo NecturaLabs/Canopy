@@ -11,6 +11,15 @@ verified in the running app.
       an old semver as older. Releases stay manual (`workflow_dispatch` only). A partial attempt
       (installers, `build.rs`, test fixtures; not finished) is saved outside the repository at
       `/run/media/nectura/Programming SSD/tmp/canopy-build-versions-partial.patch`.
+- [ ] Git identity in Settings: show the effective `user.name` / `user.email` and where each comes
+      from (local, global, env); edit them for this repository or globally through `git config`
+      via `canopy_core::cli` on a worker `Op`; core tests against temporary repositories.
+- [ ] Identity warning: a banner and a hint on the commit button when the identity is missing or
+      looks like a placeholder (for example `t` / `t@t`, an email whose domain has no dot);
+      git's own "who you are" error stays the toast when none is set.
+- [ ] First-launch identity step: after the consent screen, a one-time prompt pre-filled from the
+      current git config; skipped when a sensible identity is already configured. Canopy never
+      writes `user.*` without the user confirming it.
 - [ ] Partial clones: trusted locations. Downloads (which run the repository's own git config)
       only for repositories under folders trusted in Settings; compare canonicalized paths in the
       worker; a "Trust…" button offering the repository's folder or its parent; privacy text.
@@ -42,8 +51,8 @@ verified in the running app.
 - [ ] Missing tools: detect git, git-lfs, ssh and signing tools; show install steps per OS.
 - [ ] Architecture: shared widgets, tab-state and palette tests,
       a lint against colours outside `theme.rs`, the merge dialog's per-frame branch list.
-- [ ] Settings: every preference in the UI, consent review, search/reset/import/export, Git
-      identity, remappable keybindings.
+- [ ] Settings: every preference in the UI, consent review, search/reset/import/export,
+      remappable keybindings (Git identity has its own entries above).
 - [ ] Design: colour tokens everywhere, typography tokens, controls, motion (reduce-motion
       setting), responsive 960×600 to 4K, polish and a design review.
 - [ ] Stress readiness: lazy background tabs, bounded threads, staggered auto-fetch, one shared
