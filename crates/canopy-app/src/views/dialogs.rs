@@ -281,6 +281,25 @@ fn pick_folder(start: &str) -> Option<String> {
         .map(|p| p.display().to_string())
 }
 
+/// An icon and a line of text that wraps within the dialog, aligned under itself.
+fn bullet(ui: &mut Ui, glyph: &str, color: egui::Color32, text: &str) {
+    let p = palette(ui.ctx());
+    ui.horizontal_top(|ui| {
+        ui.label(RichText::new(glyph).color(color));
+        ui.add(egui::Label::new(RichText::new(text).size(12.5).color(p.text)).wrap());
+    });
+    ui.add_space(2.0);
+}
+
+fn multiline_key() -> Id {
+    Id::new("dialog-multiline")
+}
+
+/// Records the dialog's multi-line field so Enter there inserts a newline instead of submitting.
+fn remember_multiline(ui: &Ui, id: Id) {
+    ui.ctx().data_mut(|d| d.insert_temp(multiline_key(), id));
+}
+
 fn field(ui: &mut Ui, label: &str, value: &mut String, hint: &str, focus: bool) -> egui::Response {
     let p = palette(ui.ctx());
     ui.label(RichText::new(label).size(12.0).color(p.text_dim));
@@ -303,10 +322,13 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
     let mut outcome = Outcome::Keep;
     let modal = egui::Modal::new(Id::new("dialog"))
         .frame(egui::Frame::new().fill(p.elevated).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS_LG)).shadow(ctx.global_style().visuals.window_shadow).inner_margin(egui::Margin::same(22)))
-        .backdrop_color(egui::Color32::from_black_alpha(if p.dark { 150 } else { 70 }))
+        .backdrop_color(p.backdrop())
         .show(ctx, |ui| {
             ui.set_width(460.0);
-            let enter = ui.input(|i| i.key_pressed(Key::Enter) && !i.modifiers.shift);
+            // Enter submits, except in a multi-line field, where it starts a new line and
+            // Ctrl+Enter submits instead.
+            let in_multiline = ctx.data(|d| d.get_temp::<Id>(multiline_key())).is_some_and(|id| ctx.memory(|m| m.has_focus(id)));
+            let enter = ui.input(|i| i.key_pressed(Key::Enter) && !i.modifiers.shift && (!in_multiline || i.modifiers.command));
             let mut primary = |ui: &mut Ui, label: &str, enabled: bool| -> bool {
                 ui.add_space(6.0);
                 let mut go = false;
@@ -426,7 +448,8 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     title(ui, icon::TAG, &format!("Tag {}", short_id(*target)));
                     field(ui, "Name", name, "v1.2.0", true);
                     ui.label(RichText::new("Message (makes an annotated tag)").size(12.0).color(p.text_dim));
-                    ui.add(egui::TextEdit::multiline(message).desired_rows(3).desired_width(f32::INFINITY).margin(egui::Margin::symmetric(8, 6)));
+                    let r = ui.add(egui::TextEdit::multiline(message).desired_rows(3).desired_width(f32::INFINITY).margin(egui::Margin::symmetric(8, 6)));
+                    remember_multiline(ui, r.id);
                     ui.add_space(8.0);
                     let ok = valid_ref_name(name.trim());
                     if primary(ui, "Create tag", ok) {
@@ -525,7 +548,8 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     ui.add_space(10.0);
                     field(ui, "Title", &mut request.title, "What this change does", true);
                     ui.label(RichText::new("Description").size(12.0).color(p.text_dim));
-                    ui.add(egui::TextEdit::multiline(&mut request.body).desired_rows(6).desired_width(f32::INFINITY).hint_text("Why, how it was tested, anything reviewers should know (Markdown)").margin(egui::Margin::symmetric(8, 6)));
+                    let r = ui.add(egui::TextEdit::multiline(&mut request.body).desired_rows(6).desired_width(f32::INFINITY).hint_text("Why, how it was tested, anything reviewers should know (Markdown)").margin(egui::Margin::symmetric(8, 6)));
+                    remember_multiline(ui, r.id);
                     ui.add_space(6.0);
                     ui.checkbox(&mut request.draft, "Create as draft");
                     ui.add_space(8.0);
@@ -690,18 +714,15 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                             ui.label(RichText::new(if *updated {
                                 "Please read and accept the new Terms of Service and Privacy Policy to keep using Canopy."
                             } else {
-                                "Before you start, please read and accept the Terms of Service and the Privacy Policy. In short:"
+                                "Before you start, please read and accept the Terms of Service and the Privacy Policy."
                             }).color(p.text_dim));
                             ui.add_space(6.0);
                             for (glyph, text) in [
-                                (icon::LOCK_SIMPLE, "Your code, repositories and tokens stay on your computer. They are never sent to NecturaLabs."),
-                                (icon::ARROW_CIRCLE_UP, "Once a day Canopy asks GitHub whether a new version exists. You can turn this off."),
+                                (icon::LOCK_SIMPLE, "Your repositories and tokens are never sent to NecturaLabs. Requests to GitHub and GitLab go straight to them."),
+                                (icon::ARROW_CIRCLE_UP, "At most once a day, Canopy checks GitHub for a new version. You can turn this off."),
                                 (icon::FIRST_AID_KIT, "Crash reports are sent only if you agree. You choose next, and can change it any time."),
                             ] {
-                                ui.horizontal_top(|ui| {
-                                    ui.label(RichText::new(glyph).color(p.accent));
-                                    ui.label(RichText::new(text).size(12.5).color(p.text));
-                                });
+                                bullet(ui, glyph, p.accent, text);
                             }
                             ui.add_space(8.0);
                             read_buttons(ui, reading);
@@ -719,17 +740,14 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         }
                         Pending::CrashReports => {
                             title(ui, icon::FIRST_AID_KIT, "Send crash reports?");
-                            ui.label(RichText::new("If Canopy crashes, it can send a report to NecturaLabs so we can find and fix the problem.").color(p.text_dim));
+                            ui.label(RichText::new("If Canopy crashes, it can send a report to NecturaLabs so we can fix the problem. It also sends a short record of each session: when it started, how long it ran and how it ended.").color(p.text_dim));
                             ui.add_space(6.0);
                             for (glyph, text, color) in [
-                                (icon::CHECK, "A report holds the error, where in Canopy's code it happened, your Canopy version and your operating system.", p.success),
-                                (icon::X, "It never holds your code, repositories, file contents, commit messages, names or tokens.", p.danger),
+                                (icon::CHECK, "A report holds the error message, a stack trace, your Canopy version and your operating system.", p.success),
+                                (icon::X, "Canopy does not add your name, tokens, logs or repository files. An error message can name a file or branch.", p.danger),
                                 (icon::GLOBE_HEMISPHERE_WEST, "Reports are stored in the EU (Germany) by Sentry and deleted after 90 days.", p.accent2),
                             ] {
-                                ui.horizontal_top(|ui| {
-                                    ui.label(RichText::new(glyph).color(color));
-                                    ui.label(RichText::new(text).size(12.5).color(p.text));
-                                });
+                                bullet(ui, glyph, color, text);
                             }
                             ui.add_space(6.0);
                             ui.label(RichText::new("Canopy works the same either way. You can change this at any time in Settings → Privacy.").size(12.0).color(p.text_faint));
@@ -765,10 +783,32 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     }
                 }
                 Dialog::Legal(doc) => {
-                    title(ui, if *doc == Document::Privacy { icon::SHIELD_CHECK } else { icon::SCROLL }, doc.title());
+                    let glyph = match doc {
+                        Document::Privacy => icon::SHIELD_CHECK,
+                        Document::Terms => icon::SCROLL,
+                        Document::Notices => icon::BOOK_OPEN,
+                    };
+                    if *doc == Document::Notices {
+                        // Licence texts are laid out for 80 columns.
+                        ui.set_width(660.0);
+                    }
+                    title(ui, glyph, doc.title());
                     egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
+                        if *doc == Document::Notices {
+                            // Thousands of lines: lay out only the visible ones.
+                            let font = FontId::monospace(11.5);
+                            let row = ui.fonts_mut(|f| f.row_height(&font));
+                            static LINES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+                            let lines = LINES.get_or_init(|| crate::ui::legal::NOTICES.lines().collect());
+                            egui::ScrollArea::both().max_height(420.0).auto_shrink([false, true]).show_rows(ui, row, lines.len(), |ui, range| {
+                                for line in &lines[range] {
+                                    ui.add(egui::Label::new(RichText::new(*line).font(font.clone()).color(p.text_dim)).extend());
+                                }
+                            });
+                        } else {
+                            egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
+                        }
                     });
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
@@ -788,6 +828,9 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         ui.label(RichText::new("A fast, beautiful, Linux-first Git client.").color(p.text_dim));
                         ui.label(RichText::new("© 2026 NecturaLabs. Built with Rust, egui and libgit2.").size(12.0).color(p.text_faint));
                         ui.label(RichText::new("Fonts: Inter and JetBrains Mono (SIL OFL 1.1). Icons: Phosphor (MIT).").size(12.0).color(p.text_faint));
+                        if ui.link(RichText::new("Open-source licences").size(12.0)).clicked() {
+                            outcome = Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Notices))]);
+                        }
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
                             ui.add_space((ui.available_width() - 400.0).max(0.0) / 2.0);

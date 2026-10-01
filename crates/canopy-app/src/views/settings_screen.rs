@@ -61,12 +61,24 @@ enum TokenTest {
 }
 
 /// State of the open settings screen.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct SettingsScreen {
     section: Section,
     token_input: HashMap<String, String>,
     tests: HashMap<String, TokenTest>,
     token_error: Option<String>,
+}
+
+impl std::fmt::Debug for SettingsScreen {
+    // The token fields hold secrets being typed: show only which hosts have one.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SettingsScreen")
+            .field("section", &self.section)
+            .field("token_input", &self.token_input.keys().collect::<Vec<_>>())
+            .field("tests", &self.tests)
+            .field("token_error", &self.token_error)
+            .finish()
+    }
 }
 
 impl SettingsScreen {
@@ -111,11 +123,7 @@ pub fn show(
                 .shadow(ctx.global_style().visuals.window_shadow)
                 .inner_margin(egui::Margin::same(0)),
         )
-        .backdrop_color(egui::Color32::from_black_alpha(if p.dark {
-            150
-        } else {
-            70
-        }))
+        .backdrop_color(p.backdrop())
         .show(ctx, |ui| {
             ui.set_width(width);
             ui.set_height(height);
@@ -581,7 +589,7 @@ fn integrations(ui: &mut Ui, s: &mut Settings) {
     row(
         ui,
         "Pull and merge requests",
-        "Load, review and act on pull/merge requests through the GitHub and GitLab APIs. Off keeps Canopy fully offline apart from git itself.",
+        "Load, review and act on pull/merge requests through the GitHub and GitLab APIs. Requests load when you open a repository hosted there. Off keeps Canopy offline apart from git itself.",
         |ui| {
             toggle(ui, &mut s.hosting_api);
         },
@@ -763,7 +771,7 @@ fn privacy(ui: &mut Ui, s: &mut Settings, actions: &mut Vec<Action>) {
         row(
             ui,
             "Send crash reports",
-            "When Canopy crashes, send the error, where in Canopy's code it happened, the Canopy version and your operating system to NecturaLabs (Sentry, stored in the EU, deleted after 90 days). Never your code, files, names or tokens. Takes effect immediately.",
+            "When Canopy crashes, send the error, a stack trace, the Canopy version and your operating system to NecturaLabs, and a short record of each session. Stored by Sentry in the EU and deleted after 90 days. Takes effect immediately.",
             |ui| {
                 toggle(ui, &mut on);
             },
@@ -834,7 +842,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
     row(
         ui,
         "Check for updates",
-        "Once a day, Canopy reads a small public file on GitHub naming the latest version. Like any web request, GitHub sees your IP address; nothing else about you is sent, and nothing is downloaded or installed by itself.",
+        "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest version. GitHub sees your IP address and your Canopy version, nothing else. Nothing is downloaded or installed by itself.",
         |ui| {
             toggle(ui, &mut s.check_updates);
         },

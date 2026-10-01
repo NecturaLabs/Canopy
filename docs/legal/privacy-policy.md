@@ -2,96 +2,123 @@
 
 Last updated: 1 October 2026
 
-This policy explains what data Canopy collects, why we collect it and what you can do about it.
+This policy explains what Canopy sends over the internet, who receives it and what you can do about it.
 
 ## Who we are
 
-Canopy is made by NecturaLabs, which is responsible for the data described here. If you have a question about your data, email support@necturalabs.com.
+Canopy is made by NecturaLabs, the controller of the crash data described in this policy. For questions about your data, email support@necturalabs.com.
 
-You can read this policy again at any time. In Canopy, open Settings, go to the Privacy section and choose Privacy Policy. It is also shown in the About dialog.
+To read this policy in Canopy, open Settings, choose Privacy and select Read next to Privacy Policy. The About dialog also has a Privacy Policy button.
 
-## The short version
+## Summary
 
-- Canopy sends crash reports only if you agree. It asks the first time you start it and sends nothing until you answer.
-- Your repositories, code, commit messages, branch names, file names and access tokens are never sent to us.
-- Canopy checks once a day whether a new version exists by downloading a small file from GitHub. You can turn this off.
-- When you use pull or merge requests, Canopy talks directly to GitHub or GitLab on your behalf. We are not part of that conversation.
+- Canopy sends crash data to NecturaLabs only if you agree. It asks the first time you start it and sends nothing before you answer.
+- Canopy never sends your repositories or access tokens to NecturaLabs.
+- Canopy checks GitHub for a new version at most once a day. You can turn this off.
+- For repositories on GitHub or GitLab, Canopy talks to that service directly. NecturaLabs receives none of that traffic.
 
-## What Canopy collects
+## What NecturaLabs receives
 
-Canopy collects crash reports, and only if you agree to send them. Apart from that, it collects nothing about you.
+If you turn on crash reports, Canopy sends us crash reports and session records, described below. If you leave them off, NecturaLabs receives nothing from Canopy.
 
-Canopy also saves on your computer which versions of the Terms of Service and this policy you have accepted, and your answer about crash reports, so it can ask you again when one of them changes. This record stays on your computer.
+Canopy also records, on your computer, which versions of the Terms of Service and this policy you accepted and your answer about crash reports. This record stays on your computer.
 
-## What a crash report contains
+## Crash reports
 
-A crash report is sent when Canopy crashes, or when one of its background tasks (such as the one that reads a repository) stops because of an error in Canopy itself. Errors that Git reports, such as a rejected push, are shown to you and never sent. A crash report contains:
+Canopy sends a crash report when it, or one of its background tasks, stops because of a bug in Canopy or in a library it uses. Errors that Git reports, such as a rejected push, are shown to you and are not sent.
 
-- the error message and the place in Canopy's code where it happened, with the chain of Canopy functions that led there (the stack trace);
-- the version and build of Canopy;
-- details of your system: the name and version of your operating system, the processor architecture, and the version of the Rust compiler Canopy was built with;
-- a record that Canopy started and whether it closed normally or crashed.
+A crash report contains:
 
-That last record is tied to a random number that Canopy makes up each time it starts and never stores, so separate sessions cannot be linked to each other or to you. We use it only to count how often Canopy crashes.
+- the error message
+- the source file and line, in Canopy or in one of its libraries, where the error happened
+- the stack trace: the chain of function calls that led to the error, as memory addresses and, in development builds, function names
+- the Canopy version, and whether it is a release or a development build
+- the name and version of your operating system, your processor architecture and the version of the Rust compiler that built Canopy
+- a random report ID, the time of the crash and the version of the crash-reporting library
 
-A crash report does not contain your name, email address, Git identity, access tokens, passwords, the contents of your repositories, your commit messages or Canopy's logs. Folder names that would show your user name are hidden before a report is sent. An error message can occasionally mention a file, folder or branch name that Canopy was working with when it crashed.
+Before sending a report, Canopy removes your computer's name and replaces your home folder and other user folders in file paths with ~ or <user>.
 
-Sending a report reveals your IP address to the server that receives it, as any internet connection does, but the address is not stored with the report.
+The error message comes from the code that failed. It can name a file, folder, branch or remote that Canopy was working with, and occasionally quote other text it was handling. Canopy does not add your name, email address, Git identity, access tokens, logs or repository contents to a report.
 
-Every crash is also written to a file on your computer (see "Data that stays on your computer"), whether or not you agreed to send reports.
+## Session records
 
-## How we use crash reports
+While crash reports are on, Canopy sends one session record each time it runs, when it closes or together with a crash report. A session record contains when the session started, how long it lasted, whether it ended normally or crashed, and the Canopy version and build type. It carries a random ID that Canopy creates at each start and never stores, so session records do not identify you and cannot be linked to each other.
 
-We use crash reports only to find and fix problems in Canopy. We do not use them for advertising, profiling or tracking, and we do not sell them.
+## Your IP address
+
+Every internet connection reveals your IP address to the server at the other end, so Sentry sees it when Canopy sends crash data. Canopy does not put it in the data, and our Sentry project is set not to store it.
+
+## How we use crash data
+
+We use crash reports and session records only to find and fix bugs and to see how stable each version of Canopy is. We do not use them for advertising or profiling, we do not combine them with other data, and we do not sell them. We make no automated decisions about you.
 
 ## Legal basis
 
-We collect crash reports only with your consent (Article 6(1)(a) of the GDPR and UK GDPR). You can withdraw your consent at any time. Withdrawing it does not affect reports that were sent before.
+We process crash data only with your consent (Article 6(1)(a) of the GDPR and the UK GDPR). Giving it is optional, and Canopy works the same either way. You can withdraw your consent at any time. Withdrawing it does not affect data sent before.
 
-## Who processes crash reports
+## Who processes crash data
 
-Crash reports are sent to Sentry (Functional Software, Inc.), a crash-reporting service that processes them for us under a data processing agreement. Our Sentry project stores its data in the EU, in Germany. Sentry and its subprocessors may access the data from the United States or Canada, for example to provide support. Such transfers are covered by the EU-US Data Privacy Framework and the European Commission's Standard Contractual Clauses. Sentry lists its subprocessors at https://sentry.io/legal/subprocessors/.
+Sentry (Functional Software, Inc., United States) receives and stores crash data for us as our processor, under a data processing agreement. Our Sentry project keeps its data in the EU, in Germany. Sentry and its subprocessors may access the data from the United States or Canada, for example to provide support. These transfers are covered by the EU-US Data Privacy Framework and the European Commission's Standard Contractual Clauses. Sentry lists its subprocessors at https://sentry.io/legal/subprocessors/.
 
-## How long we keep crash reports
+## How long we keep crash data
 
-Crash reports are deleted automatically after 90 days.
+Sentry deletes crash reports and session records automatically 90 days after it receives them.
 
 ## Changing your answer
 
-You can turn crash reports on or off at any time with the Send crash reports option in the Privacy section of Settings. The change takes effect immediately.
-
-Sending crash reports is optional. If you choose not to send them, Canopy works the same in every way.
+To turn crash reports on or off, use Send crash reports in the Privacy section of Settings. The change takes effect immediately. When you turn reports off, Canopy sends the record of the current session and then stops sending.
 
 ## Update checks
 
-Once a day, and when you choose Check for updates, Canopy downloads a small file from GitHub (raw.githubusercontent.com) that names the latest version of Canopy. Like any web request, this tells GitHub your IP address, and the request names the version of Canopy you use. The request contains nothing else about you, and NecturaLabs does not receive it. GitHub's privacy statement covers what GitHub does with it.
+When Canopy starts, it checks for a new version if it has not checked in the last 24 hours. It also checks when you choose Check for updates in the About dialog or the command palette, or Check now in the Updates section of Settings. The first automatic check waits until you have accepted the terms and answered about crash reports.
 
-Canopy never downloads or installs an update by itself. To stop update checks, turn off Check for updates in the Updates section of Settings.
+To check, Canopy downloads a small file that names the latest version from the NecturaLabs/app-updates repository on GitHub (raw.githubusercontent.com). If Include pre-releases is on, it downloads a second file for beta versions. The request reveals your IP address to GitHub and names your Canopy version in its User-Agent header. It contains nothing else about you. NecturaLabs does not receive the request or any record of it. GitHub's privacy statement covers what GitHub does with it.
+
+Canopy checks for updates so that you learn about bug and security fixes. Our legal basis is this legitimate interest (Article 6(1)(f) of the GDPR). To object, turn off Check for updates in the Updates section of Settings. Canopy never downloads or installs an update by itself.
 
 ## GitHub and GitLab
 
-If you use Canopy's pull request or merge request features, Canopy sends your requests directly to GitHub or to your GitLab server, using an access token you saved in Canopy, one set in your environment (GH_TOKEN, GITHUB_TOKEN, GITLAB_TOKEN or GL_TOKEN) or one your Git credential helper already holds. Tokens from the environment are only sent to github.com, gitlab.com and GitLab servers you listed in Settings. What you see and do there (lists, comments, reviews, merges) passes only between your computer and that service, and its own privacy policy applies. NecturaLabs never receives your tokens or this data.
+When you open a repository whose remote is on GitHub (github.com) or GitLab (gitlab.com or a self-hosted GitLab server), Canopy loads its pull or merge requests from that service's API. When you comment, review, merge or create a request in Canopy, it sends that to the same API. To stop all of this, turn off Pull and merge requests in the Integrations section of Settings.
 
-Tokens you save in Canopy are kept in a file in Canopy's data folder that only your user account can read. You can remove them at any time in the Accounts section of Settings, or turn these features off in the Integrations section.
+To sign in to the API, Canopy uses the first of these that it finds:
+
+- a token you saved for that server in the Accounts section of Settings
+- a token in your environment: GH_TOKEN or GITHUB_TOKEN for github.com, and GITLAB_TOKEN or GL_TOKEN for gitlab.com, for the server named in GITLAB_HOST or for a GitLab server you listed in the Integrations section of Settings
+- the password your Git credential helper stores for that server, which for GitHub and GitLab is usually a token
+
+Without any of these, Canopy reads public projects without signing in. A token is only sent to the server it belongs to.
+
+These requests go directly between your computer and that server, which receives your IP address, your token and your Canopy version. NecturaLabs receives none of it. The service's own privacy policy applies.
+
+Tokens you save in Canopy are stored in the file tokens.json in Canopy's data folder. The file is not encrypted. On Linux and macOS, Canopy makes it readable only by your user account. On Windows, it is protected by the permissions of your user profile. To delete a saved token, use Remove in the Accounts section of Settings.
 
 ## Git
 
-Fetching, pulling, pushing and cloning run the Git program installed on your computer, which talks to the remotes you configured. That traffic goes directly between your computer and those servers.
+Clone, fetch, pull and push run the Git program installed on your computer. Git connects directly to the remotes you configured, with your own Git settings and credentials. NecturaLabs receives none of this traffic.
 
 ## Data that stays on your computer
 
-Canopy keeps its settings, your list of recent repositories, its log files and its crash reports in its data folder (for example ~/.local/share/canopy on Linux). Logs and crash reports never leave your computer automatically. If you choose to share one with us, check it first: it can contain file paths and branch names. You can open the folder from the command palette with Open log folder, and delete it at any time.
+Canopy keeps its data in one folder: ~/.local/share/canopy on Linux (or canopy inside XDG_DATA_HOME, if you set it), ~/Library/Application Support/canopy on macOS and %APPDATA%\canopy\data on Windows. It contains:
+
+- app.ron: your settings and window layout, the repositories you opened recently or left open, the GitLab servers you listed, the versions of these documents you accepted and your answer about crash reports
+- tokens.json: the access tokens you saved in Canopy
+- logs: Canopy's log, which can contain file paths, branch names, server names and Git's error messages. A new file starts when the log passes 2 MB, and the three previous files are kept.
+- crashes: a text file for each crash, written whether or not you send crash reports. The ten newest are kept.
+
+These files never leave your computer unless you send them yourself. Before you send us a log or crash file, read it: it can contain file paths and branch names. To open the logs folder, choose Open log folder in the command palette or Open folder in the Privacy section of Settings. You can delete the data folder at any time. Canopy then starts as if newly installed and asks the start-up questions again.
 
 ## Your rights
 
-Depending on where you live, you may have the right to access the data we hold about you, to have it corrected or deleted, to restrict or object to its use, to receive it in a portable form and to withdraw your consent. Because crash reports contain no name or account, we may need the approximate time of the crash and your Canopy version to find yours. To use any of these rights, email support@necturalabs.com.
+Under the GDPR and the UK GDPR, you have the right to access the personal data we hold about you, to have it corrected or erased, to restrict or object to its processing, to receive it in a portable form and to withdraw your consent.
 
-You can also complain to a data protection authority. In the EU, that is the authority in the country where you live or work. In the United Kingdom, it is the Information Commissioner's Office.
+Crash data contains no name or account, so we usually cannot tell which reports are yours. If you send us the time of a crash, your Canopy version and your operating system, or the crash file from your computer, we will look for matching reports. To use any of your rights, email support@necturalabs.com.
+
+You can also complain to a data protection authority, in particular the one in the EU country where you live or work. In the United Kingdom, that is the Information Commissioner's Office.
 
 ## Children
 
-Apart from crash reports, which contain no name or account, Canopy collects no data from anyone, including children.
+Canopy is a tool for software developers and is not aimed at children. If you are under 16, ask a parent or guardian before you turn on crash reports.
 
 ## Changes to this policy
 
-If we change what Canopy collects, we will update this policy and its date, and Canopy will ask you again before it collects anything new.
+If we change this policy, we will update the date above. Canopy shows you the new version the next time you start it and asks you to accept it before you continue. If a change adds to what crash data contains, Canopy will also ask you again whether to send crash reports.

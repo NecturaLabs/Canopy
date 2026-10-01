@@ -11,24 +11,30 @@
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
-use sentry::protocol::{Context, Event};
+use sentry::integrations;
+use sentry::protocol::{Context, Event, Exception, Mechanism};
 
-/// Where reports go: Canopy's Sentry project (EU region). Packagers can point a build elsewhere,
-/// or build without crash reporting with an empty value, through the `CANOPY_SENTRY_DSN`
-/// environment variable at compile time.
+/// Where reports go: Canopy's Sentry project (EU region). Packagers can point a build elsewhere
+/// through the `CANOPY_SENTRY_DSN` environment variable at compile time, or build without crash
+/// reporting with the value `off`. An empty value (an unset CI variable) keeps the built-in one.
 pub const DSN: &str = match option_env!("CANOPY_SENTRY_DSN") {
-    Some(dsn) => dsn,
-    None => {
+    Some(dsn) if !dsn.is_empty() => dsn,
+    _ => {
         "https://421ae4df9c4d9c1ee673f85944548015@o4510922848403456.ingest.de.sentry.io/4512180345438288"
     }
 };
+
+/// Bumped whenever a crash report or session record starts carrying more than the Privacy Policy
+/// described when the user agreed. A user who said yes to an older version is asked again.
+pub const DATA_VERSION: u32 = 1;
 
 /// The client while reporting is on. Dropping it flushes and ends the session.
 static GUARD: Mutex<Option<sentry::ClientInitGuard>> = Mutex::new(None);
 
 /// Whether this build can send crash reports at all.
 pub fn available() -> bool {
-    !DSN.trim().is_empty()
+    let dsn = DSN.trim();
+    !dsn.is_empty() && dsn != "off"
 }
 
 /// Turns reporting on or off immediately.
@@ -76,7 +82,41 @@ fn init() -> sentry::ClientInitGuard {
     o.session_mode = sentry::SessionMode::Application;
     o.before_send = Some(Arc::new(move |event| Some(scrub(event, &home))));
     o.before_breadcrumb = Some(Arc::new(|_| None));
+    // The default integrations, except that panics carry the file and line where they happened:
+    // release builds have no symbols, so the stack trace alone would only be addresses.
+    o.default_integrations = false;
+    o.integrations = vec![
+        Arc::new(integrations::backtrace::AttachStacktraceIntegration),
+        Arc::new(integrations::contexts::ContextIntegration::default()),
+        Arc::new(integrations::panic::PanicIntegration::new().add_extractor(panic_event)),
+        Arc::new(integrations::backtrace::ProcessStacktraceIntegration),
+    ];
     sentry::init(o)
+}
+
+/// The event for a panic: its message followed by where it happened, `src/x.rs:12:5`.
+fn panic_event(info: &std::panic::PanicHookInfo<'_>) -> Option<Event<'static>> {
+    let message = integrations::panic::message_from_panic_info(info);
+    let value = match info.location() {
+        Some(l) => format!("{message} (at {}:{}:{})", l.file(), l.line(), l.column()),
+        None => message.to_owned(),
+    };
+    Some(Event {
+        exception: vec![Exception {
+            ty: "panic".into(),
+            mechanism: Some(Mechanism {
+                ty: "panic".into(),
+                handled: Some(false),
+                ..Default::default()
+            }),
+            value: Some(value),
+            stacktrace: integrations::backtrace::current_stacktrace(),
+            ..Default::default()
+        }]
+        .into(),
+        level: sentry::Level::Fatal,
+        ..Default::default()
+    })
 }
 
 /// Replaces `home` with `~`, and the user-name part of other home-folder paths with `<user>`.
@@ -118,6 +158,13 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
     event
         .contexts
         .retain(|k, _| matches!(k.as_str(), "os" | "rust" | "device"));
+    if let Some(Context::Os(os)) = event.contexts.get_mut("os") {
+        // The kernel string can name the distribution's build and date; the name and version
+        // are enough.
+        os.kernel_version = None;
+        os.build = None;
+        os.other.clear();
+    }
     if let Some(Context::Device(device)) = event.contexts.get_mut("device") {
         let arch = device.arch.take();
         **device = Default::default();

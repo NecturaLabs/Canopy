@@ -2,70 +2,80 @@
 
 Last updated: 1 October 2026
 
-These terms are an agreement between you and NecturaLabs about your use of Canopy (the "software"). You accept them when you choose I agree the first time you start Canopy. If you do not agree with them, do not use the software.
+These terms are an agreement between you and NecturaLabs about Canopy (the "software"). You accept them by choosing I agree in Canopy. If you do not accept them, choose Quit and do not use the software.
+
+These terms are the written agreement referred to in the LICENSE file that comes with the software.
 
 ## Your licence
 
-We give you a personal, non-exclusive, non-transferable and revocable licence to install and use the software on devices you own or control, for any lawful purpose, including your work and your employer's or clients' projects.
+We give you a free, non-exclusive and non-transferable licence to install and use the software on computers you own or are allowed to use. You may use it for any lawful purpose, including paid work for yourself, your employer or your clients.
+
+An organisation may install the software on its own computers and let its staff use it under these terms.
 
 ## What you may not do
 
-Unless the law where you live allows it regardless of these terms, you may not:
+You may not:
 
-- sell, rent, lend, sublicense or distribute the software or any part of it, including its code, art and text, except by sharing a link to where we publish it;
-- reverse engineer, decompile or disassemble the software, or change it, except as far as the law allows this to make it work with other software;
-- remove or change any copyright, licence or credit notice in the software;
-- use the software, or anything taken from it, to train artificial intelligence or machine-learning models;
-- use the software for anything unlawful.
+- sell, rent, lend or sublicense the software, or give copies of it to anyone outside your organisation. You may always share a link to where we publish it.
+- reverse engineer, decompile, disassemble or modify the software
+- remove or change any copyright, licence or credit notice in the software
+- use the software's code, art or text to train artificial intelligence or machine-learning models
+- use the software to break the law
+
+These limits do not apply where the law gives you a right that a contract cannot remove, such as the right to decompile the software to make it work with other programs.
 
 ## Your repositories and accounts
 
-Your repositories, code and other content remain yours. The software works on them only when you tell it to, and we claim no rights in them.
+Your repositories, code and other content remain yours. We claim no rights in them.
 
-The software runs Git on your computer, and some of what Git does cannot be undone, for example discarding changes, resetting a branch, deleting a branch or tag, or force pushing. The software asks you to confirm such operations, but you are responsible for the operations you choose and for keeping backups of work you cannot afford to lose.
+The software runs Git on your computer. Some Git operations cannot be undone, such as discarding changes, a hard reset, deleting a branch or tag, or a force push. The software asks you to confirm them, but the choice to run them is yours. Keep backups of work you cannot afford to lose.
 
-When you connect the software to GitHub, GitLab or another service, your use of that service is governed by its own terms, and you are responsible for the access tokens you give the software.
+GitHub, GitLab and the other Git servers you use have their own terms, which apply to your use of them. You are responsible for the access tokens you give the software.
 
 ## Ownership
 
-The software and everything in it, including its code, design, art and text, belong to us or to those who licensed their work to us, and are protected by copyright and other laws. The licence above does not make you the owner of any of it. Open-source components and fonts are used under their own licences, which are listed in the software's files and take precedence for those components.
+The software, including its code, design, art and text, belongs to us or to those who licensed their work to us, and is protected by copyright and other laws. These terms give you a licence, not ownership.
 
-## Updates
+The software includes open-source components and fonts. Their own licences apply to them and take precedence over these terms for those components. Their licence texts come with the software.
 
-We may update, change or remove parts of the software at any time, for example to fix problems or add features. The software tells you when a new version is available but never installs one by itself. Older versions may stop working with GitHub, GitLab or newer versions of Git.
+## Updates and support
 
-## Your data
-
-The Privacy Policy describes the data the software sends, including the crash reports it sends only if you agree, its update checks and how it talks to GitHub and GitLab for you. To read it in the software, open Settings, go to the Privacy section and choose Privacy Policy.
+New versions may add, change or remove features. The software tells you when a new version is available and never installs one by itself. Older versions may stop working with GitHub, GitLab or newer versions of Git. We are not obliged to release updates or to provide support, unless the law requires it. You can ask for help at support@necturalabs.com.
 
 ## Pre-release versions
 
-Beta and other pre-release versions are unfinished. They may be unstable, and their features may change or be removed before release.
+Beta and release-candidate versions are unfinished. They may be unstable, and their features may change or disappear before release.
+
+## Your data
+
+The Privacy Policy explains what the software sends and to whom: crash reports (only if you agree), update checks, and requests to GitHub and GitLab. You can read it in the Privacy section of Settings.
 
 ## No warranty
 
-The software is provided "as is" and "as available". To the extent the law allows, we do not promise that it is free of errors, that it runs on every device or with every version of Git, or that it meets your expectations, and we disclaim all warranties not stated in these terms. Nothing in these terms removes consumer rights that the law does not allow to be removed.
+We provide the software free of charge and as it is. We do not promise that it is free of errors, that it works on every computer or with every version of Git, or that it suits your purpose. This section does not affect rights that the law gives you and does not allow a contract to remove (see Consumer rights).
 
 ## Limitation of liability
 
-To the extent the law allows, we are not liable for any indirect, incidental, special or consequential loss, or for loss of data, profits, revenue or goodwill, arising from the software or these terms. Our total liability to you is limited to the greater of the amount you paid for the software and 50 euros. Nothing in these terms limits liability for death or personal injury caused by negligence, for fraud, or for anything else that the law does not allow to be limited.
+We are not liable for indirect or consequential loss, or for loss of data, profits, revenue or goodwill. Our total liability to you under or in connection with these terms is limited to 50 euros.
+
+These limits do not apply to liability for intent or gross negligence, for death or personal injury, or for fraud, or to any other liability that the law does not allow us to limit.
 
 ## Consumer rights
 
-If you live in the European Union, the United Kingdom or another place with mandatory consumer protection laws, you keep all the rights those laws give you. Where these terms conflict with those laws, the laws apply.
+If you use the software as a consumer, you keep every right that the mandatory consumer protection laws of the country where you live give you. Where these terms conflict with those laws, those laws apply.
 
 ## Ending this agreement
 
-You can end this agreement at any time by uninstalling the software. We may end your licence if you seriously break these terms. When the agreement ends, you must stop using the software and delete your copies of it. The sections on your repositories, ownership, warranty, liability and governing law continue to apply after it ends.
+You can end this agreement at any time by uninstalling the software and deleting your copies. We can end your licence if you seriously break these terms. When the agreement ends, you must stop using the software and delete your copies. The sections on your repositories, ownership, no warranty, limitation of liability and governing law continue to apply.
 
 ## Governing law
 
-These terms are governed by the law of the country where NecturaLabs is established. This does not take away the protection of the mandatory laws of the country where you live. Disputes may be brought before the courts of the country where NecturaLabs is established, or before the courts where you live if your local law gives you that right.
+These terms are governed by the law of the country where NecturaLabs has its registered office, without its conflict-of-law rules and excluding the UN Convention on Contracts for the International Sale of Goods. If you are a consumer, you also keep the protection of the mandatory laws of the country where you live, and you may bring a claim in its courts. Otherwise, disputes go to the courts of the place where NecturaLabs has its registered office.
 
 ## Changes to these terms
 
-We may change these terms. If we do, we will update them and their date, and the software will ask you to accept the new version before you continue to use it. If you do not accept it, you can stop using the software and uninstall it.
+If we change these terms, we will update the date above. Canopy shows you the new version the next time you start it and asks you to accept it. If you do not accept it, choose Quit and stop using the software.
 
 ## Contact
 
-If you have questions about these terms, email support@necturalabs.com.
+Email NecturaLabs at support@necturalabs.com.

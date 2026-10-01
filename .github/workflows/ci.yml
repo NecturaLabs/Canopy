@@ -99,3 +99,18 @@ jobs:
         with:
           tool: cargo-deny
       - run: cargo deny check
+
+  tooling:
+    name: Release tooling and licence notices
+    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
+      - run: python3 tools/release.py selftest
+      - run: cargo fetch --locked
+      # Every release ships docs/legal/third-party-notices.txt; a dependency change must update it.
+      - run: python3 tools/notices.py --check

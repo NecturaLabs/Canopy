@@ -36,9 +36,18 @@ impl TokenSource {
 }
 
 /// Tokens the user saved in Canopy, by host.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct TokenStore {
     tokens: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for TokenStore {
+    // Hosts only: a token must never reach a log line.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenStore")
+            .field("hosts", &self.tokens.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 fn tokens_path() -> Option<PathBuf> {
@@ -69,13 +78,11 @@ impl TokenStore {
         }
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        let written = write_private(&tmp, &json).and_then(|()| std::fs::rename(&tmp, &path));
+        if written.is_err() {
+            let _ = std::fs::remove_file(&tmp);
         }
-        std::fs::rename(&tmp, &path)
+        written
     }
 
     /// The saved token for `host`.
@@ -93,6 +100,22 @@ impl TokenStore {
         }
         self.save()
     }
+}
+
+/// Writes `bytes` to a new file that only the user can read, from the moment it exists (Unix).
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let _ = std::fs::remove_file(path);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 /// Finds a token for `forge` (blocking: may run the git credential helper). Environment tokens
@@ -296,4 +319,36 @@ pub fn test_token(
             ctx.request_repaint();
         });
     rx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_output_never_shows_tokens() {
+        let mut store = TokenStore::default();
+        store
+            .tokens
+            .insert("github.com".into(), "ghp_secretvalue".into());
+        let shown = format!("{store:?}");
+        assert!(shown.contains("github.com"));
+        assert!(!shown.contains("ghp_secretvalue"));
+    }
+
+    #[test]
+    fn private_files_replace_leftovers_and_are_owner_only() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("tokens.json.tmp");
+        std::fs::write(&path, b"stale")?;
+        write_private(&path, b"{}")?;
+        assert_eq!(std::fs::read(&path)?, b"{}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path)?.permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        Ok(())
+    }
 }

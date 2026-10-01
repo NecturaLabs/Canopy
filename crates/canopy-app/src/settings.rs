@@ -158,6 +158,8 @@ pub struct Settings {
     /// Send crash reports to NecturaLabs (Sentry). `None` until the user answers; nothing is
     /// sent before that.
     pub crash_reports: Option<bool>,
+    /// The `crash_reports::DATA_VERSION` the answer was given for.
+    pub crash_reports_version: u32,
 
     // Session.
     /// Recently opened repositories, most recent first.
@@ -204,6 +206,7 @@ impl Default for Settings {
             accepted_terms: String::new(),
             accepted_privacy: String::new(),
             crash_reports: None,
+            crash_reports_version: 0,
             recent: Vec::new(),
             open_tabs: Vec::new(),
             seen_intro: false,

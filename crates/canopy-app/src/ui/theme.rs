@@ -431,6 +431,12 @@ impl Palette {
         self.lanes[usize::from(index) % self.lanes.len()]
     }
 
+    /// The scrim behind modal dialogs, the settings screen, the palette and the cheatsheet: dims
+    /// the window enough to separate the layer without hiding where the user was.
+    pub fn backdrop(&self) -> Color32 {
+        Color32::from_black_alpha(if self.dark { 140 } else { 60 })
+    }
+
     /// A translucent version of `c` for fills behind text.
     pub fn tint(c: Color32, alpha: u8) -> Color32 {
         Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha)

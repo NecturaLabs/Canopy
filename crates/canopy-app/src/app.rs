@@ -171,6 +171,11 @@ impl CanopyApp {
                 seen_intro: true,
                 check_updates: false,
                 hosting_api: std::env::var_os("CANOPY_HOSTING_API_BASE").is_some(),
+                // Answered, so the mock API loads; the consent overlays open the dialog directly.
+                accepted_terms: crate::ui::legal::TERMS_VERSION.to_owned(),
+                accepted_privacy: crate::ui::legal::PRIVACY_VERSION.to_owned(),
+                crash_reports: Some(false),
+                crash_reports_version: crate::crash_reports::DATA_VERSION,
                 ..Settings::default()
             };
         }
@@ -249,6 +254,9 @@ impl CanopyApp {
                 })
             }
             Some("legal") => app.dialog = Some(Dialog::Legal(crate::ui::legal::Document::Privacy)),
+            Some("licences") => {
+                app.dialog = Some(Dialog::Legal(crate::ui::legal::Document::Notices))
+            }
             Some("merge") => {
                 app.dialog = Some(Dialog::Merge {
                     target: "feature/search".into(),
@@ -892,7 +900,7 @@ impl CanopyApp {
             if let Some(Ok(list)) = &tab.requests.list
                 && let Some((_, forge)) = tab.forge()
             {
-                for r in list {
+                for r in list.iter() {
                     v.push((
                         e(
                             icon::GIT_PULL_REQUEST,
@@ -1199,6 +1207,7 @@ impl CanopyApp {
                 }
                 Action::SetCrashReports(on) => {
                     self.settings.crash_reports = Some(on);
+                    self.settings.crash_reports_version = crate::crash_reports::DATA_VERSION;
                     crate::crash_reports::set_enabled(on);
                     if matches!(self.dialog, Some(Dialog::Consent { .. })) {
                         self.consent_done(ctx);
@@ -1236,6 +1245,18 @@ impl CanopyApp {
             .as_ref()
             .and_then(|s| s.remotes.iter().find(|r| r.name == remote))
             .and_then(|r| r.default_branch.clone());
+        let local = t
+            .snap
+            .as_ref()
+            .and_then(|s| s.branches.iter().find(|b| b.name == source));
+        // The request's head is the branch on the remote: a local `topic` tracking
+        // `origin/feature/topic` opens a request from `feature/topic`.
+        let prefix = format!("{remote}/");
+        let source = local
+            .and_then(|b| b.upstream.as_deref())
+            .and_then(|u| u.strip_prefix(&prefix))
+            .map_or(source.clone(), str::to_owned);
+        let head_commit = local.and_then(|b| b.target);
         let has_token = matches!(t.requests.token, Some(Some(_)));
         if !self.settings.hosting_api || !has_token {
             let url = forge.new_request_url(&source, target.as_deref());
@@ -1246,11 +1267,7 @@ impl CanopyApp {
             return;
         }
         // Prefill from the branch's newest commit: its summary and body.
-        let (title, body) = t
-            .snap
-            .as_ref()
-            .and_then(|s| s.current_branch())
-            .and_then(|b| b.target)
+        let (title, body) = head_commit
             .and_then(|oid| t.snap.as_ref()?.commits.iter().find(|c| c.oid == oid))
             .map(|c| (c.summary.clone(), String::new()))
             .unwrap_or_default();
@@ -1354,8 +1371,11 @@ impl CanopyApp {
                 );
             }
         }
-        // Start the pull/merge request thread for the active tab once its remotes are known.
-        if let Some(t) = self.tabs.get_mut(self.active) {
+        // Start the pull/merge request thread for the active tab once its remotes are known, and
+        // not before the start-up questions are answered: until then Canopy contacts no service
+        // (the Privacy Policy promises this).
+        let answered = crate::ui::legal::pending(&self.settings).is_none();
+        if let Some(t) = self.tabs.get_mut(self.active).filter(|_| answered) {
             let saved = t
                 .forge()
                 .and_then(|(_, f)| self.tokens.get(&f.host))
@@ -1570,8 +1590,34 @@ fn save_png(path: &std::path::Path, image: &egui::ColorImage) -> anyhow::Result<
     Ok(())
 }
 
+/// Whether `target` may be handed to the platform opener: a web address (`https://`, or `http://`
+/// for a self-hosted GitLab without TLS) or an absolute path. URLs from API responses and the
+/// update feed pass through here, so other schemes (`file:`, `javascript:`, custom URL handlers)
+/// and option-like strings are refused.
+fn openable(target: &str) -> Result<(), String> {
+    if target.starts_with('-') || target.chars().any(char::is_control) {
+        return Err("refusing to open this address".into());
+    }
+    let lower = target.to_ascii_lowercase();
+    if let Some(rest) = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))
+    {
+        return if rest.is_empty() {
+            Err("empty address".into())
+        } else {
+            Ok(())
+        };
+    }
+    if std::path::Path::new(target).is_absolute() {
+        return Ok(());
+    }
+    Err("only web addresses and folders on this computer can be opened".into())
+}
+
 /// Opens a path or an `https://` URL with the platform's default handler.
 pub fn open_external(target: &str) -> Result<(), String> {
+    openable(target)?;
     #[cfg(target_os = "linux")]
     let r = std::process::Command::new("xdg-open").arg(target).spawn();
     #[cfg(target_os = "macos")]
@@ -1837,5 +1883,30 @@ impl eframe::App for CanopyApp {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         egui::Rgba::from(self.settings.theme.palette().bg).to_array()
+    }
+}
+
+#[cfg(test)]
+mod open_tests {
+    use super::openable;
+
+    #[test]
+    fn only_web_addresses_and_absolute_paths_open() {
+        assert!(openable("https://github.com/o/r/pull/1").is_ok());
+        assert!(openable("HTTPS://gitlab.com/o/r").is_ok());
+        assert!(openable("http://127.0.0.1:8080/o/r/pull/1").is_ok());
+        assert!(openable("http://gitlab.internal/group/repo").is_ok());
+        assert!(openable("file:///etc/passwd").is_err());
+        assert!(openable("javascript:alert(1)").is_err());
+        assert!(openable("vscode://open?x").is_err());
+        assert!(openable("--help").is_err());
+        assert!(openable("relative/path").is_err());
+        assert!(openable("https://").is_err());
+        assert!(openable("https://a\nb").is_err());
+        assert!(openable("https://a\u{0}b").is_err());
+        #[cfg(unix)]
+        assert!(openable("/home/someone/repo").is_ok());
+        #[cfg(windows)]
+        assert!(openable("C:\\Users\\someone").is_ok());
     }
 }

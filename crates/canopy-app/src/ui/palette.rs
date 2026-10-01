@@ -123,11 +123,8 @@ impl CommandPalette {
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
                 let resp = ui.allocate_rect(screen, Sense::click());
-                ui.painter().rect_filled(
-                    screen,
-                    CornerRadius::ZERO,
-                    egui::Color32::from_black_alpha(if p.dark { 110 } else { 50 }),
-                );
+                ui.painter()
+                    .rect_filled(screen, CornerRadius::ZERO, p.backdrop());
                 if resp.clicked() {
                     self.open = false;
                 }

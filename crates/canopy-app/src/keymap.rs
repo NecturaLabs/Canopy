@@ -509,6 +509,13 @@ pub struct Fired {
 /// open; keys of inactive bindings reach the widgets untouched.
 pub fn dispatch(ctx: &egui::Context, active: impl Fn(&Binding) -> bool) -> Vec<Fired> {
     let mut fired = Vec::new();
+    // Outside macOS egui's modifiers do not carry Super, so a window-manager shortcut such as
+    // Super+H would also arrive as a bare `h`. Super belongs to the window manager: while it is
+    // held nothing fires. (egui forgets held keys when the window loses focus, so a release the
+    // window manager swallowed cannot leave the keyboard dead.)
+    if !cfg!(target_os = "macos") && super_held(ctx) {
+        return fired;
+    }
     ctx.input_mut(|i| {
         i.events.retain(|e| {
             let egui::Event::Key {
@@ -553,6 +560,10 @@ pub fn dispatch(ctx: &egui::Context, active: impl Fn(&Binding) -> bool) -> Vec<F
         ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Text(_))));
     }
     fired
+}
+
+fn super_held(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.key_down(Key::SuperLeft) || i.key_down(Key::SuperRight))
 }
 
 #[cfg(test)]
@@ -621,5 +632,38 @@ mod tests {
     fn every_command_with_a_hint() {
         assert!(!hint(Command::Palette).is_empty());
         assert_eq!(hint(Command::Fetch), format!("{}+Shift+F", mod_label()));
+    }
+
+    fn press(key: Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    fn fire(events: Vec<egui::Event>) -> Vec<Fired> {
+        let ctx = egui::Context::default();
+        let mut fired = Vec::new();
+        let raw = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(raw, |ui| fired = dispatch(ui.ctx(), |_| true));
+        output.textures_delta.clear();
+        fired
+    }
+
+    #[test]
+    fn super_combinations_never_reach_bare_keys() {
+        assert!(!fire(vec![press(Key::J)]).is_empty());
+        let held = fire(vec![press(Key::SuperLeft), press(Key::J)]);
+        if cfg!(target_os = "macos") {
+            assert!(!held.is_empty());
+        } else {
+            assert!(held.is_empty());
+        }
     }
 }

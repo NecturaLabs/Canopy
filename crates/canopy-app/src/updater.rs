@@ -114,7 +114,12 @@ impl Updater {
 
     /// Starts a check unless one is running.
     pub fn start(&mut self, ctx: &egui::Context, include_prerelease: bool, manual: bool) {
-        if self.rx.is_some() || !Self::enabled() {
+        if !Self::enabled() {
+            return;
+        }
+        if self.rx.is_some() {
+            // A check is already running: a manual request rides on it and still gets an answer.
+            self.manual |= manual;
             return;
         }
         let (tx, rx) = unbounded();

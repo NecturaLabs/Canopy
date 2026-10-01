@@ -221,7 +221,7 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Actio
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    for r in &items {
+                    for r in items.iter() {
                         if row(ui, r, tab.requests.selected == Some(r.number), now).clicked() {
                             tab.select_request(r.number);
                         }
@@ -375,7 +375,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                         });
                     }
                     ui.add_space(12.0);
-                    action_bar(ui, tab, kind, &summary, details.as_ref(), actions);
+                    action_bar(ui, tab, kind, &summary, details.as_deref(), actions);
                     ui.add_space(16.0);
 
                     let error = match &tab.requests.details {

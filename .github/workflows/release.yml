@@ -11,7 +11,8 @@
 # Secrets (Settings → Secrets and variables → Actions):
 # - APP_UPDATES_TOKEN (required for the update feed): fine-grained token, Contents read/write on
 #   NecturaLabs/app-updates only. Without it the feed step is skipped with a warning.
-# Variables: CANOPY_SENTRY_DSN overrides the built-in crash-report DSN (empty disables it);
+# Variables: CANOPY_SENTRY_DSN overrides the built-in crash-report DSN (`off` disables crash
+# reporting; unset keeps the built-in one);
 # USE_SELF_HOSTED = '0' moves the builds to GitHub-hosted runners, as in CI.
 name: Release
 
@@ -113,7 +114,7 @@ jobs:
           bin="target/$TARGET/release/canopy"
           [[ -f "$bin.exe" ]] && bin="$bin.exe"
           cp "$bin" README.md LICENSE "dist/$name/"
-          cp docs/legal/*.md "dist/$name/legal/"
+          cp docs/legal/*.md docs/legal/third-party-notices.txt "dist/$name/legal/"
           if [[ "$TARGET" == *linux* ]]; then
             cp packaging/linux/io.necturalabs.Canopy.desktop \
                packaging/linux/io.necturalabs.Canopy.metainfo.xml "dist/$name/"

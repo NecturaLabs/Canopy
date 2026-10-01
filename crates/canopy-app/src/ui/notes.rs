@@ -47,10 +47,25 @@ fn blocks(text: &str) -> Vec<String> {
     out
 }
 
-/// Renders a little Markdown.
+#[derive(Default)]
+struct Blocks;
+
+impl egui::cache::ComputerMut<&str, std::sync::Arc<Vec<String>>> for Blocks {
+    fn compute(&mut self, text: &str) -> std::sync::Arc<Vec<String>> {
+        std::sync::Arc::new(blocks(text))
+    }
+}
+
+/// Renders a little Markdown. The parsed blocks are cached while the text stays on screen.
 pub fn markdown(ui: &mut Ui, text: &str) {
     let p = palette(ui.ctx());
-    for block in blocks(text) {
+    let parsed = ui.memory_mut(|m| {
+        m.caches
+            .cache::<egui::cache::FrameCache<std::sync::Arc<Vec<String>>, Blocks>>()
+            .get(text)
+            .clone()
+    });
+    for block in parsed.iter() {
         let trimmed = block.trim_start();
         if let Some(h) = trimmed
             .strip_prefix("### ")

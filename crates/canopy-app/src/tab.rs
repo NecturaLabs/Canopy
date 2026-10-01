@@ -138,10 +138,11 @@ pub struct Notice {
 #[derive(Debug)]
 pub struct Requests {
     pub filter: StateFilter,
-    pub list: Option<Result<Vec<RequestSummary>, String>>,
+    /// Shared so a frame can hold the list while it mutates the tab, without copying it.
+    pub list: Option<Result<Arc<Vec<RequestSummary>>, String>>,
     pub loading: bool,
     pub selected: Option<u64>,
-    pub details: Option<Result<RequestDetails, String>>,
+    pub details: Option<Result<Arc<RequestDetails>, String>>,
     pub details_loading: bool,
     /// An action in flight ("Merging PR #12").
     pub busy: Option<String>,
@@ -784,7 +785,7 @@ impl RepoTab {
                                 .as_ref()
                                 .is_ok_and(|l| l.iter().any(|r| r.number == n))
                         });
-                        self.requests.list = Some(result);
+                        self.requests.list = Some(result.map(Arc::new));
                         if !keep {
                             self.requests.selected = None;
                             self.requests.details = None;
@@ -797,7 +798,7 @@ impl RepoTab {
                 HostEvent::Details(n, result) => {
                     if self.requests.selected == Some(n) {
                         self.requests.details_loading = false;
-                        self.requests.details = Some(*result);
+                        self.requests.details = Some(result.map(Arc::new));
                     }
                 }
                 HostEvent::Created(result) => {
