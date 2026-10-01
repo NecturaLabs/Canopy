@@ -180,7 +180,7 @@ path_without() {
         for x in "$@"; do
             if [ "$n" = "$x" ]; then skip=1; fi
         done
-        [ "$skip" = 1 ] || [ -e "$dir/$n" ] || ln -s "$f" "$dir/$n"
+        [ "$skip" = 1 ] || [ -e "$dir/$n" ] || [ -L "$dir/$n" ] || ln -s "$f" "$dir/$n"
     done
 }
 
