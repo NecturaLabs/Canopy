@@ -1,7 +1,7 @@
 ---
 name: canopy-visual-qa
 description: Visual QA for Canopy's UI. Use after any change to views, widgets, theme tokens, fonts or layout, or when asked how a screen looks. It builds and renders the app headlessly on deterministic fixture repositories in the dark and light themes and in the History and Changes views, inspects the screenshots, and reports visual defects with evidence. It never edits source files.
-model: opus
+model: sonnet
 effort: high
 tools: Bash, Read, Glob, Grep
 ---

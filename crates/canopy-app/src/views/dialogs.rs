@@ -155,6 +155,7 @@ pub enum Dialog {
     Merge {
         target: String,
         rebase: bool,
+        mode: canopy_core::MergeMode,
     },
     AddRemote {
         name: String,
@@ -183,6 +184,8 @@ pub enum Dialog {
         version: String,
         notes: String,
     },
+    /// Canopy crashed last time; offer the local report.
+    Crash(crate::logging::CrashReport),
 }
 
 /// What a dialog wants after this frame.
@@ -421,7 +424,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         outcome = Outcome::Run(vec![Action::Op(Op::StashSave { message: m, untracked: *untracked })]);
                     }
                 }
-                Dialog::Merge { target, rebase } => {
+                Dialog::Merge { target, rebase, mode } => {
                     let current = tab.and_then(|t| t.snap.as_ref()).map(|s| s.head.label()).unwrap_or_default();
                     title(ui, icon::GIT_MERGE, if *rebase { "Rebase" } else { "Merge" });
                     ui.horizontal(|ui| {
@@ -438,14 +441,33 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                             ui.selectable_value(target, b.clone(), b);
                         }
                     });
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
+                    if !*rebase {
+                        ui.label(RichText::new("How").size(12.0).color(p.text_dim));
+                        for m in canopy_core::MergeMode::ALL {
+                            ui.radio_value(mode, m, m.label());
+                        }
+                        ui.add_space(6.0);
+                    }
                     if !target.is_empty() {
-                        let text = if *rebase { format!("Replay {current}'s commits on top of {target}.") } else { format!("Merge {target} into {current}.") };
+                        use canopy_core::MergeMode as M;
+                        let text = match (*rebase, *mode) {
+                            (true, _) => format!("Replay {current}'s commits on top of {target}."),
+                            (false, M::Default) => format!("Merge {target} into {current}, fast-forwarding when {current} has no commits of its own."),
+                            (false, M::NoFastForward) => format!("Merge {target} into {current} with a merge commit, even when a fast-forward is possible."),
+                            (false, M::FastForwardOnly) => format!("Move {current} forward to {target}; stops without changes if they have diverged."),
+                            (false, M::Squash) => format!("Stage all of {target}'s changes on {current} as one change, without committing. Review them in Changes, then commit."),
+                        };
                         ui.label(RichText::new(text).size(12.0).color(p.text_faint));
                     }
                     ui.add_space(8.0);
-                    if primary(ui, if *rebase { "Rebase" } else { "Merge" }, !target.is_empty()) {
-                        let op = if *rebase { Op::Rebase(target.clone()) } else { Op::Merge(target.clone()) };
+                    let verb = match (*rebase, *mode) {
+                        (true, _) => "Rebase",
+                        (false, canopy_core::MergeMode::Squash) => "Squash",
+                        _ => "Merge",
+                    };
+                    if primary(ui, verb, !target.is_empty()) {
+                        let op = if *rebase { Op::Rebase(target.clone()) } else { Op::Merge(target.clone(), *mode) };
                         outcome = Outcome::Run(vec![Action::Op(op)]);
                     }
                 }
@@ -561,6 +583,37 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                             }
                             if ui.add_sized([150.0, 34.0], egui::Button::new(format!("{}  All releases", icon::ARROW_SQUARE_OUT))).clicked() {
                                 outcome = Outcome::Run(vec![Action::OpenExternal(crate::updater::RELEASES_PAGE.to_owned())]);
+                            }
+                        });
+                    });
+                }
+                Dialog::Crash(report) => {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(icon::FIRST_AID_KIT).size(20.0).color(p.warning));
+                        ui.label(RichText::new("Canopy closed unexpectedly").font(FontId::new(17.0, theme::semibold())));
+                    });
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("Sorry about that. A crash report was saved on this computer; nothing was sent anywhere. Sharing it with the developers helps fix the problem.").color(p.text_dim));
+                    if !report.message.is_empty() {
+                        ui.add_space(8.0);
+                        egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(RichText::new(&report.message).font(FontId::monospace(12.0)).color(p.text));
+                        });
+                    }
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if widgets::primary_button(ui, "Open report", true, 130.0).clicked() {
+                                outcome = Outcome::Run(vec![Action::OpenExternal(report.path.display().to_string())]);
+                            }
+                            if ui.add_sized([90.0, 34.0], egui::Button::new("Dismiss")).clicked() {
+                                outcome = Outcome::Close;
+                            }
+                            if let Some(dir) = report.path.parent()
+                                && ui.add_sized([120.0, 34.0], egui::Button::new(format!("{}  Show folder", icon::FOLDER))).clicked()
+                            {
+                                outcome = Outcome::Run(vec![Action::OpenExternal(dir.display().to_string())]);
                             }
                         });
                     });

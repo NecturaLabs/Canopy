@@ -2,6 +2,7 @@
 //! never calls git itself, so a slow disk, a large repository or the network cannot freeze it.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -28,6 +29,16 @@ pub enum Op {
         /// Context lines of the diff the hunk came from.
         context: u32,
     },
+    /// Stage, unstage or discard only some lines of a hunk.
+    Lines {
+        action: HunkAction,
+        path: String,
+        index: usize,
+        key: (u32, u32, u32, u32),
+        /// Indices into the hunk's lines.
+        lines: Vec<usize>,
+        context: u32,
+    },
     Commit {
         message: String,
         amend: bool,
@@ -52,7 +63,7 @@ pub enum Op {
         name: String,
         force: bool,
     },
-    Merge(String),
+    Merge(String, canopy_core::MergeMode),
     Rebase(String),
     ContinueOrAbort {
         state: RepoState,
@@ -130,6 +141,18 @@ impl Op {
                 action: HunkAction::Discard,
                 ..
             } => "Discarding hunk".into(),
+            Op::Lines {
+                action: HunkAction::Stage,
+                ..
+            } => "Staging lines".into(),
+            Op::Lines {
+                action: HunkAction::Unstage,
+                ..
+            } => "Unstaging lines".into(),
+            Op::Lines {
+                action: HunkAction::Discard,
+                ..
+            } => "Discarding lines".into(),
             Op::Commit { amend: true, .. } => "Amending commit".into(),
             Op::Commit { .. } => "Committing".into(),
             Op::CreateBranch { name, .. } => format!("Creating branch {name}"),
@@ -138,7 +161,8 @@ impl Op {
             Op::CheckoutDetached(o) => format!("Checking out {}", canopy_core::short_id(*o)),
             Op::RenameBranch { new, .. } => format!("Renaming to {new}"),
             Op::DeleteBranch { name, .. } => format!("Deleting {name}"),
-            Op::Merge(t) => format!("Merging {t}"),
+            Op::Merge(t, canopy_core::MergeMode::Squash) => format!("Squashing {t}"),
+            Op::Merge(t, _) => format!("Merging {t}"),
             Op::Rebase(t) => format!("Rebasing onto {t}"),
             Op::ContinueOrAbort { state, abort } => format!(
                 "{} {}",
@@ -175,6 +199,7 @@ impl Op {
                 | Op::Unstage(_)
                 | Op::UnstageAll
                 | Op::Hunk { .. }
+                | Op::Lines { .. }
                 | Op::Fetch { quiet: true, .. }
         )
     }
@@ -206,6 +231,8 @@ pub struct DiffKey {
     pub conflicted: bool,
     pub context: u32,
     pub whitespace: Whitespace,
+    /// Also send syntax highlighting.
+    pub highlight: bool,
 }
 
 /// What the repository thread reports back.
@@ -215,6 +242,8 @@ pub enum Event {
     Status(WorkingStatus),
     Details(Box<CommitDetails>),
     Diff(DiffKey, Result<FileDiff, String>),
+    /// Syntax highlighting for the diff sent just before with the same key.
+    Highlight(DiffKey, Arc<crate::highlight::Highlights>),
     HeadMessage(String),
     OpStarted(String),
     Progress(String),
@@ -265,6 +294,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         ctx.request_repaint();
     };
     let mut limit = 2000;
+    let mut highlights = crate::highlight::Cache::default();
     while let Ok(first) = jobs.recv() {
         // Coalesce queued refreshes: only the latest matters.
         let mut batch = vec![first];
@@ -307,7 +337,15 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             key.whitespace,
                         )
                     };
-                    emit(Event::Diff(key, result.map_err(|e| e.to_string())));
+                    let highlighted = match &result {
+                        Ok(d) if key.highlight && !key.conflicted => Some(d.clone()),
+                        _ => None,
+                    };
+                    emit(Event::Diff(key.clone(), result.map_err(|e| e.to_string())));
+                    // After the diff, so it shows at once; cached per file revision.
+                    if let Some(h) = highlighted.and_then(|d| highlights.get(&d)) {
+                        emit(Event::Highlight(key, h));
+                    }
                 }
                 Job::HeadMessage => {
                     if let Ok(m) = repo.head_message() {
@@ -363,6 +401,14 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
             key,
             context,
         } => done(repo.apply_hunk(action, &path, index, key, context)),
+        Op::Lines {
+            action,
+            path,
+            index,
+            key,
+            lines,
+            context,
+        } => done(repo.apply_lines(action, &path, index, key, &lines, context)),
         Op::Commit {
             message,
             amend,
@@ -382,7 +428,7 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
         Op::CheckoutDetached(oid) => done(repo.checkout_detached(oid)),
         Op::RenameBranch { old, new } => done(repo.rename_branch(&old, &new)),
         Op::DeleteBranch { name, force } => done(repo.delete_branch(&name, force)),
-        Op::Merge(t) => repo.merge(&t, false),
+        Op::Merge(t, mode) => repo.merge(&t, mode),
         Op::Rebase(t) => repo.rebase(&t),
         Op::ContinueOrAbort { state, abort } => repo.continue_or_abort(state, abort),
         Op::CherryPick(o) => repo.cherry_pick(o),

@@ -45,7 +45,33 @@ pub fn tabs(
             let galley =
                 ui.painter()
                     .layout_no_wrap(text, FontId::new(13.0, theme::medium()), p.text);
-            let w = galley.size().x + 58.0;
+            // Commits to push and pull, like the status bar, so every tab shows its sync state.
+            let sync = tab
+                .snap
+                .as_ref()
+                .and_then(|s| s.current_branch())
+                .filter(|b| b.upstream.is_some() && (b.ahead > 0 || b.behind > 0))
+                .map(|b| {
+                    let mut job = egui::text::LayoutJob::default();
+                    let font = FontId::new(11.5, theme::medium());
+                    if b.ahead > 0 {
+                        job.append(
+                            &format!("↑{}", b.ahead),
+                            0.0,
+                            egui::TextFormat::simple(font.clone(), p.success),
+                        );
+                    }
+                    if b.behind > 0 {
+                        job.append(
+                            &format!("↓{}", b.behind),
+                            if b.ahead > 0 { 4.0 } else { 0.0 },
+                            egui::TextFormat::simple(font, p.accent2),
+                        );
+                    }
+                    (ui.painter().layout_job(job), b.ahead, b.behind)
+                });
+            let sync_w = sync.as_ref().map_or(0.0, |(g, _, _)| g.size().x + 8.0);
+            let w = galley.size().x + 58.0 + sync_w;
             let (rect, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
             let hover = ui
                 .ctx()
@@ -82,11 +108,21 @@ pub fn tabs(
                 FontId::proportional(14.0),
                 if selected { p.accent } else { p.text_faint },
             );
+            let name_w = galley.size().x;
             ui.painter().galley(
                 rect.left_center() + vec2(26.0, -galley.size().y / 2.0),
                 galley,
                 if selected { p.text } else { p.text_dim },
             );
+            let mut sync_text = String::new();
+            if let Some((g, ahead, behind)) = sync {
+                ui.painter().galley(
+                    rect.left_center() + vec2(26.0 + name_w + 8.0, -g.size().y / 2.0),
+                    g,
+                    p.text_dim,
+                );
+                sync_text = format!(", {ahead} to push, {behind} to pull");
+            }
             let close = egui::Rect::from_center_size(
                 rect.right_center() - vec2(15.0, 0.0),
                 vec2(18.0, 18.0),
@@ -112,7 +148,7 @@ pub fn tabs(
             } else if resp.middle_clicked() {
                 actions.push(Action::CloseTab(i));
             }
-            let label = format!("Repository tab {}", tab.name);
+            let label = format!("Repository tab {}{sync_text}", tab.name);
             resp.widget_info(|| {
                 egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, &label)
             });
@@ -366,6 +402,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
             actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Merge {
                 target: String::new(),
                 rebase: false,
+                mode: canopy_core::MergeMode::Default,
             }));
         }
         let dirty = snap.is_some_and(|s| !s.status.is_clean());

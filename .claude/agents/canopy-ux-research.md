@@ -1,7 +1,7 @@
 ---
 name: canopy-ux-research
 description: UX researcher for Canopy backlog items. Use before designing a feature or interaction (for example interactive rebase, conflict resolution, line staging, blame, credential prompts) to learn how Fork, GitKraken, Sourcetree, Tower, GitButler, Sublime Merge and lazygit solve it. It researches documentation, changelogs and reviews on the web and returns a concise, sourced recommendation for Canopy. It does not write code.
-model: opus
+model: sonnet
 effort: high
 tools: WebFetch, WebSearch, Read, Glob, Grep
 ---

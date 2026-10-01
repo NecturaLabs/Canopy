@@ -8,7 +8,11 @@ no-default-features = false
 [advisories]
 version = 2
 yanked = "warn"
-ignore = []
+ignore = [
+  # bincode 1 is unmaintained, not vulnerable. syntect uses it only to load the syntax
+  # definitions compiled into Canopy (trusted, bundled data), never untrusted input.
+  { id = "RUSTSEC-2025-0141", reason = "syntect loads only bundled syntax dumps with bincode" },
+]
 
 [licenses]
 version = 2

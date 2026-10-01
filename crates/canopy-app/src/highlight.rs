@@ -1,0 +1,355 @@
+//! Syntax highlighting for diffs, computed on the repository thread with `syntect` (grammars
+//! from syntect and bat, through `two-face`).
+//!
+//! A diff is two partial files: the old side (context and removed lines) and the new side
+//! (context and added lines). Each side is parsed in order with its own parser state, so
+//! multi-line constructs such as block comments and strings carry across lines within a hunk.
+//! Grammar scopes map to a handful of [`Token`] kinds; the colours come from the active theme
+//! (`Palette::syntax`), never from a syntect theme.
+
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, OnceLock};
+
+use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
+
+use canopy_core::{FileDiff, LineKind};
+
+/// What a span of code is, for colouring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Token {
+    Keyword,
+    String,
+    Comment,
+    Number,
+    Function,
+    Type,
+    Constant,
+}
+
+/// One coloured span: byte range in the line's text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: u32,
+    pub end: u32,
+    pub token: Token,
+}
+
+/// Spans for every line of a diff: `lines[hunk][line]`. Plain text has no span.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Highlights {
+    pub lines: Vec<Vec<Vec<Span>>>,
+    /// Grammar name, shown in the diff header.
+    pub language: String,
+}
+
+/// Diffs larger than this are not highlighted (they would take too long to parse).
+const MAX_LINES: usize = 40_000;
+/// Lines longer than this (minified code, data) are left plain.
+const MAX_LINE_BYTES: usize = 2_000;
+
+fn syntaxes() -> &'static SyntaxSet {
+    static SET: OnceLock<SyntaxSet> = OnceLock::new();
+    SET.get_or_init(two_face::syntax::extra_newlines)
+}
+
+/// Scope prefixes in priority order, checked from the innermost scope outwards.
+fn rules() -> &'static [(Scope, Token)] {
+    static RULES: OnceLock<Vec<(Scope, Token)>> = OnceLock::new();
+    RULES.get_or_init(|| {
+        let table: &[(&str, Token)] = &[
+            ("comment", Token::Comment),
+            ("punctuation.definition.comment", Token::Comment),
+            ("string", Token::String),
+            ("constant.character", Token::String),
+            ("markup.raw", Token::String),
+            ("markup.inline.raw", Token::String),
+            ("constant.numeric", Token::Number),
+            ("constant.language", Token::Constant),
+            ("constant.other", Token::Constant),
+            ("support.constant", Token::Constant),
+            ("variable.language", Token::Constant),
+            ("markup.underline.link", Token::Constant),
+            ("entity.name.function", Token::Function),
+            ("support.function", Token::Function),
+            ("variable.function", Token::Function),
+            ("meta.function-call.identifier", Token::Function),
+            ("entity.other.attribute-name", Token::Function),
+            ("markup.heading", Token::Function),
+            ("entity.name.type", Token::Type),
+            ("entity.name.class", Token::Type),
+            ("entity.name.struct", Token::Type),
+            ("entity.name.enum", Token::Type),
+            ("entity.name.trait", Token::Type),
+            ("entity.name.interface", Token::Type),
+            ("entity.other.inherited-class", Token::Type),
+            ("support.type", Token::Type),
+            ("support.class", Token::Type),
+            ("storage.type", Token::Keyword),
+            ("storage.modifier", Token::Keyword),
+            ("keyword", Token::Keyword),
+            ("entity.name.tag", Token::Keyword),
+            ("entity.name.section", Token::Function),
+        ];
+        table
+            .iter()
+            .filter_map(|(s, t)| Scope::new(s).ok().map(|scope| (scope, *t)))
+            .collect()
+    })
+}
+
+fn classify(stack: &ScopeStack) -> Option<Token> {
+    let rules = rules();
+    for scope in stack.as_slice().iter().rev() {
+        // Operators and punctuation inside other constructs stay plain unless the construct is
+        // a string or comment (handled by their own prefixes further out).
+        if let Some((_, t)) = rules.iter().find(|(prefix, _)| prefix.is_prefix_of(*scope)) {
+            return Some(*t);
+        }
+    }
+    None
+}
+
+/// The grammar for `path`, else one recognised from `first_line`.
+fn syntax_for<'a>(set: &'a SyntaxSet, path: &str, first_line: &str) -> Option<&'a SyntaxReference> {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let ext = name.rsplit_once('.').map(|(_, e)| e);
+    ext.and_then(|e| set.find_syntax_by_extension(e))
+        .or_else(|| set.find_syntax_by_extension(name))
+        .or_else(|| set.find_syntax_by_first_line(first_line))
+        .filter(|s| s.name != "Plain Text")
+}
+
+/// One side of the diff being parsed.
+struct Side {
+    state: ParseState,
+    stack: ScopeStack,
+}
+
+impl Side {
+    fn new(syntax: &SyntaxReference) -> Self {
+        Self {
+            state: ParseState::new(syntax),
+            stack: ScopeStack::new(),
+        }
+    }
+
+    fn line(&mut self, set: &SyntaxSet, text: &str) -> Vec<Span> {
+        if text.len() > MAX_LINE_BYTES {
+            return Vec::new();
+        }
+        let mut owned = String::with_capacity(text.len() + 1);
+        owned.push_str(text);
+        owned.push('\n');
+        let Ok(ops) = self.state.parse_line(&owned, set) else {
+            return Vec::new();
+        };
+        let mut spans: Vec<Span> = Vec::new();
+        let mut push = |start: usize, end: usize, token: Option<Token>| {
+            let end = end.min(text.len());
+            let (Some(token), true) = (token, start < end) else {
+                return;
+            };
+            let (Ok(start), Ok(end)) = (u32::try_from(start), u32::try_from(end)) else {
+                return;
+            };
+            match spans.last_mut() {
+                Some(last) if last.token == token && last.end == start => last.end = end,
+                _ => spans.push(Span { start, end, token }),
+            }
+        };
+        let mut pos = 0;
+        for (at, op) in ops {
+            if at > pos {
+                push(pos, at, classify(&self.stack));
+                pos = at;
+            }
+            if self.stack.apply(&op).is_err() {
+                return Vec::new();
+            }
+        }
+        if pos < text.len() {
+            push(pos, text.len(), classify(&self.stack));
+        }
+        spans
+    }
+}
+
+/// Highlights a diff, or `None` when its language is unknown or it is too large.
+pub fn highlight(diff: &FileDiff) -> Option<Highlights> {
+    let total: usize = diff.hunks.iter().map(|h| h.lines.len()).sum();
+    if total == 0 || total > MAX_LINES || diff.binary {
+        return None;
+    }
+    let set = syntaxes();
+    let first = diff
+        .hunks
+        .first()
+        .and_then(|h| h.lines.first())
+        .map(|l| l.text.as_str())
+        .unwrap_or("");
+    let syntax = syntax_for(set, &diff.path, first)?;
+    let mut old = Side::new(syntax);
+    let mut new = Side::new(syntax);
+    let mut lines = Vec::with_capacity(diff.hunks.len());
+    for hunk in &diff.hunks {
+        let mut spans = Vec::with_capacity(hunk.lines.len());
+        for line in &hunk.lines {
+            spans.push(match line.kind {
+                LineKind::Removed => old.line(set, &line.text),
+                LineKind::Added => new.line(set, &line.text),
+                LineKind::Context => {
+                    let s = new.line(set, &line.text);
+                    // Keep the old side's parser in step with the shared line.
+                    let _ = old.line(set, &line.text);
+                    s
+                }
+            });
+        }
+        lines.push(spans);
+    }
+    Some(Highlights {
+        lines,
+        language: syntax.name.clone(),
+    })
+}
+
+/// Highlights reused across requests for the same file revision (a refresh after staging, or
+/// returning to a file), keyed by the diff's content.
+#[derive(Debug, Default)]
+pub struct Cache {
+    entries: HashMap<u64, Arc<Highlights>>,
+    order: Vec<u64>,
+}
+
+const CACHE_SIZE: usize = 48;
+
+fn fingerprint(diff: &FileDiff) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    diff.path.hash(&mut h);
+    for hunk in &diff.hunks {
+        for line in &hunk.lines {
+            (line.kind as u8).hash(&mut h);
+            line.text.hash(&mut h);
+        }
+        0xFFu8.hash(&mut h);
+    }
+    h.finish()
+}
+
+impl Cache {
+    /// Highlights for `diff`, computing them on a miss.
+    pub fn get(&mut self, diff: &FileDiff) -> Option<Arc<Highlights>> {
+        let key = fingerprint(diff);
+        if let Some(h) = self.entries.get(&key) {
+            return Some(Arc::clone(h));
+        }
+        let h = Arc::new(highlight(diff)?);
+        if self.order.len() >= CACHE_SIZE {
+            let old = self.order.remove(0);
+            self.entries.remove(&old);
+        }
+        self.order.push(key);
+        self.entries.insert(key, Arc::clone(&h));
+        Some(h)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use canopy_core::diff::{DiffLine, Hunk};
+
+    fn diff(path: &str, lines: &[(LineKind, &str)]) -> FileDiff {
+        FileDiff {
+            path: path.into(),
+            hunks: vec![Hunk {
+                header: "@@".into(),
+                old_start: 1,
+                old_lines: 1,
+                new_start: 1,
+                new_lines: 1,
+                lines: lines
+                    .iter()
+                    .map(|(kind, text)| DiffLine {
+                        kind: *kind,
+                        old_no: None,
+                        new_no: None,
+                        text: (*text).into(),
+                    })
+                    .collect(),
+            }],
+            ..FileDiff::default()
+        }
+    }
+
+    fn tokens(h: &Highlights, line: usize, text: &str) -> Vec<(String, Token)> {
+        h.lines[0][line]
+            .iter()
+            .map(|s| (text[s.start as usize..s.end as usize].to_owned(), s.token))
+            .collect()
+    }
+
+    #[test]
+    fn highlights_common_languages() {
+        let cases = [
+            ("src/main.rs", "fn main() { let x = 42; } // done", "Rust"),
+            ("app.ts", "const n: number = 1; // note", "TypeScript"),
+            ("tool.py", "def run(): return \"ok\"  # note", "Python"),
+            ("README.md", "# Title", "Markdown"),
+        ];
+        for (path, text, language) in cases {
+            let h = highlight(&diff(path, &[(LineKind::Added, text)])).expect(path);
+            assert_eq!(h.language, language);
+            assert!(!h.lines[0][0].is_empty(), "{path} has spans");
+        }
+        let rust = "fn main() { let x = 42; } // done";
+        let h = highlight(&diff("a.rs", &[(LineKind::Added, rust)])).expect("rust");
+        let t = tokens(&h, 0, rust);
+        assert!(t.contains(&("fn".into(), Token::Keyword)), "{t:?}");
+        assert!(t.contains(&("42".into(), Token::Number)), "{t:?}");
+        assert!(
+            t.iter()
+                .any(|(s, k)| *k == Token::Comment && s.contains("done")),
+            "{t:?}"
+        );
+    }
+
+    #[test]
+    fn sides_keep_their_own_state() {
+        // A block comment opened on the removed side must not swallow added lines.
+        let d = diff(
+            "x.rs",
+            &[
+                (LineKind::Removed, "/* old"),
+                (LineKind::Added, "let a = 1;"),
+                (LineKind::Removed, "end */"),
+            ],
+        );
+        let h = highlight(&d).expect("rust");
+        let added = tokens(&h, 1, "let a = 1;");
+        assert!(added.contains(&("let".into(), Token::Keyword)), "{added:?}");
+        let closing = tokens(&h, 2, "end */");
+        assert!(
+            closing.iter().all(|(_, k)| *k == Token::Comment),
+            "{closing:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_and_huge_files_are_plain() {
+        assert!(highlight(&diff("notes.unknownext", &[(LineKind::Added, "hello")])).is_none());
+        let long = "x".repeat(MAX_LINE_BYTES + 1);
+        let h = highlight(&diff("a.rs", &[(LineKind::Added, &long)])).expect("rust");
+        assert!(h.lines[0][0].is_empty());
+    }
+
+    #[test]
+    fn cache_reuses_results() {
+        let d = diff("a.rs", &[(LineKind::Added, "fn x() {}")]);
+        let mut cache = Cache::default();
+        let a = cache.get(&d).expect("first");
+        let b = cache.get(&d).expect("second");
+        assert!(Arc::ptr_eq(&a, &b));
+    }
+}

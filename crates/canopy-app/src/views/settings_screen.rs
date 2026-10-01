@@ -464,7 +464,25 @@ fn git(ui: &mut Ui, s: &mut Settings) {
             );
         },
     );
-    heading(ui, "Diffs (default for every repository)");
+    heading(ui, "Diffs");
+    row(
+        ui,
+        "Layout",
+        "Unified shows old and new lines in one column; side by side puts the old file on the left and the new on the right.",
+        |ui| {
+            ui.selectable_value(&mut s.split_diff, true, "Side by side");
+            ui.selectable_value(&mut s.split_diff, false, "Unified");
+        },
+    );
+    row(
+        ui,
+        "Syntax highlighting",
+        "Colours code in diffs by language (Rust, TypeScript, Python, Markdown and about 200 more).",
+        |ui| {
+            toggle(ui, &mut s.syntax_highlight);
+        },
+    );
+    heading(ui, "Diff defaults (every repository)");
     row(
         ui,
         "Context lines",

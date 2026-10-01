@@ -8,6 +8,7 @@ use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
 use crate::views::dialogs::Dialog;
 use crate::worker::Op;
+use canopy_core::MergeMode;
 
 const ROW_H: f32 = 26.0;
 
@@ -201,7 +202,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         actions.push(Action::Op(Op::Checkout(name.clone())));
                     }
                     if !is_head && ui.button(format!("{}  Merge into current branch", icon::GIT_MERGE)).clicked() {
-                        actions.push(Action::Op(Op::Merge(name.clone())));
+                        actions.push(Action::Op(Op::Merge(name.clone(), MergeMode::Default)));
                     }
                     if !is_head && ui.button(format!("{}  Rebase current branch onto this", icon::GIT_PULL_REQUEST)).clicked() {
                         actions.push(Action::Confirm { title: "Rebase".into(), body: format!("Rebase the current branch onto {name}? This rewrites the current branch's commits."), confirm: "Rebase".into(), danger: false, op: Op::Rebase(name.clone()) });
@@ -301,7 +302,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                             actions.push(Action::Op(Op::CheckoutRemote { remote: remote.clone(), branch: branch.clone() }));
                         }
                         if ui.button(format!("{}  Merge into current branch", icon::GIT_MERGE)).clicked() {
-                            actions.push(Action::Op(Op::Merge(format!("{remote}/{branch}"))));
+                            actions.push(Action::Op(Op::Merge(format!("{remote}/{branch}"), MergeMode::Default)));
                         }
                         if ui.button(format!("{}  Copy name", icon::COPY)).clicked() {
                             actions.push(Action::Copy(format!("{remote}/{branch}")));

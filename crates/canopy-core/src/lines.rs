@@ -128,7 +128,7 @@ impl Repo {
             HunkAction::Unstage => (DiffSource::Staged, true),
             HunkAction::Discard => (DiffSource::Unstaged, true),
         };
-        let diff = self.raw_diff(&source, path, None, context)?;
+        let diff = self.raw_diff(&source, path, None, context, crate::Whitespace::Show)?;
         let Some((file, hunk)) = read_hunk(&diff, index)? else {
             return Err(Error::invalid(
                 "That change no longer exists. Refresh and try again.",

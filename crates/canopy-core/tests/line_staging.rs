@@ -9,7 +9,7 @@ use std::path::Path;
 use std::process::Command;
 
 use canopy_core::ops::HunkAction;
-use canopy_core::{DiffSource, Error, Hunk, HunkKey, LineKind, Repo};
+use canopy_core::{DiffSource, Error, Hunk, HunkKey, LineKind, Repo, Whitespace};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -73,7 +73,9 @@ fn diff_body(p: &Path, args: &[&str]) -> Vec<String> {
 }
 
 fn only_hunk(repo: &Repo, source: &DiffSource, path: &str) -> Hunk {
-    let d = repo.file_diff(source, path, None, 3).expect("diff");
+    let d = repo
+        .file_diff(source, path, None, 3, Whitespace::Show)
+        .expect("diff");
     assert_eq!(d.hunks.len(), 1, "{d:#?}");
     d.hunks.into_iter().next().expect("one hunk")
 }

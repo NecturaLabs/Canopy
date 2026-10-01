@@ -1,13 +1,15 @@
 //! State of one open repository: the latest snapshot, selections and in-flight work.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use canopy_core::forge::Forge;
 use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, RepoSnapshot};
 use canopy_hosting::{MergeMethod, RequestDetails, RequestSummary, StateFilter};
 
+use crate::highlight::Highlights;
 use crate::hosting::{HostEvent, HostJob, HostWorker, TokenSource};
 use crate::settings::DiffPrefs;
 use crate::worker::{DiffKey, Event, Job, Op, Worker};
@@ -29,6 +31,16 @@ pub struct FileSelection {
     pub source: DiffSource,
     pub entry: FileEntry,
     pub conflicted: bool,
+}
+
+/// Lines picked in one hunk of the shown diff, for staging, unstaging or discarding just them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LineSelection {
+    pub hunk: usize,
+    /// Indices into the hunk's lines (added or removed lines only).
+    pub lines: BTreeSet<usize>,
+    /// Where a Shift-click range starts.
+    pub anchor: usize,
 }
 
 /// Outcome of a finished operation, surfaced as a toast by the app.
@@ -96,6 +108,13 @@ pub struct RepoTab {
     pub pending_diff: Option<DiffKey>,
     /// Diff context and whitespace for this repository.
     pub diff_prefs: DiffPrefs,
+    /// Syntax highlighting of `diff`.
+    pub highlights: Option<Arc<Highlights>>,
+    /// Lines picked in the diff for line-level staging.
+    pub line_sel: Option<LineSelection>,
+    /// Side-by-side diff and syntax highlighting (from the settings).
+    pub split_diff: bool,
+    pub highlight_diff: bool,
     pub filter: String,
     pub filtered: Option<Vec<usize>>,
     pub filter_for: String,
@@ -149,6 +168,10 @@ impl RepoTab {
             diff_error: None,
             pending_diff: None,
             diff_prefs,
+            highlights: None,
+            line_sel: None,
+            split_diff: false,
+            highlight_diff: true,
             filter: String::new(),
             filtered: None,
             filter_for: String::new(),
@@ -311,6 +334,7 @@ impl RepoTab {
             conflicted: sel.conflicted,
             context: self.diff_prefs.context,
             whitespace: self.diff_prefs.whitespace.core(),
+            highlight: self.highlight_diff,
         }
     }
 
@@ -322,6 +346,9 @@ impl RepoTab {
             && self.pending_diff.as_ref() == Some(&key)
         {
             return;
+        }
+        if self.file.as_ref() != Some(&sel) {
+            self.line_sel = None;
         }
         self.file = Some(sel);
         self.diff_error = None;
@@ -533,14 +560,25 @@ impl RepoTab {
                     if self.pending_diff.as_ref() == Some(&key) {
                         match result {
                             Ok(d) => {
+                                if self.diff.as_ref() != Some(&d) {
+                                    self.line_sel = None;
+                                    self.highlights = None;
+                                }
                                 self.diff = Some(d);
                                 self.diff_error = None;
                             }
                             Err(e) => {
                                 self.diff = None;
+                                self.highlights = None;
+                                self.line_sel = None;
                                 self.diff_error = Some(e);
                             }
                         }
+                    }
+                }
+                Event::Highlight(key, h) => {
+                    if self.pending_diff.as_ref() == Some(&key) {
+                        self.highlights = Some(h);
                     }
                 }
                 Event::HeadMessage(m) => {

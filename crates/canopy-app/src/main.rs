@@ -3,8 +3,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod highlight;
 mod hosting;
 mod keymap;
+mod logging;
 mod settings;
 mod tab;
 mod ui;
@@ -30,6 +32,7 @@ OPTIONS:
         --theme <THEME>       Start with a theme: midnight, daylight, aurora, ember, neon,
                               forest or paper
         --view <VIEW>         Initial view: history, changes or requests
+        --split               Show diffs side by side
         --overlay <NAME>      Open settings, cheatsheet or palette (for screenshots)
         --size <WxH>          Initial window size [default: 1440x900]
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
@@ -37,7 +40,11 @@ OPTIONS:
     -V, --version             Print version
 
 ENVIRONMENT:
-    CANOPY_LOG    Log filter, e.g. debug or canopy_core=trace (falls back to RUST_LOG)";
+    CANOPY_LOG    Log filter, e.g. debug or canopy_core=trace (falls back to RUST_LOG)
+
+FILES:
+    Logs and crash reports are kept in Canopy's data folder (~/.local/share/canopy on Linux)
+    and never leave your computer.";
 
 fn parse_args() -> Result<(Launch, [f32; 2]), String> {
     let mut launch = Launch::default();
@@ -55,6 +62,7 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 std::process::exit(0);
             }
             "--light" => launch.theme = Some(ui::theme::ThemeId::Daylight),
+            "--split" => launch.split = true,
             "--theme" => {
                 let name = args
                     .next()
@@ -136,9 +144,7 @@ fn main() -> anyhow::Result<()> {
     let filter = std::env::var("CANOPY_LOG")
         .or_else(|_| std::env::var("RUST_LOG"))
         .unwrap_or_else(|_| "warn,canopy_app=info,canopy_core=info".into());
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
-        .init();
+    logging::init(&filter);
 
     let (launch, size) = match parse_args() {
         Ok(v) => v,

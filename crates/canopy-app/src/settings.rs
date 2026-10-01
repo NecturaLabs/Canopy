@@ -124,6 +124,10 @@ pub struct Settings {
     pub diff: DiffPrefs,
     /// Per-repository diff options, keyed by working directory.
     pub repo_diff: HashMap<PathBuf, DiffPrefs>,
+    /// Show diffs side by side (old left, new right) instead of unified.
+    pub split_diff: bool,
+    /// Colour code in diffs by language.
+    pub syntax_highlight: bool,
 
     // Integrations.
     /// Where clones go by default.
@@ -153,6 +157,8 @@ pub struct Settings {
     pub open_tabs: Vec<PathBuf>,
     /// Shown the first-run tips.
     pub seen_intro: bool,
+    /// File name of the last crash report offered, so each is offered once.
+    pub last_crash_seen: String,
 
     /// Pre-0.2 theme flag, read once to migrate light-theme users to Daylight.
     #[serde(skip_serializing)]
@@ -174,6 +180,8 @@ impl Default for Settings {
             commit_page: 2000,
             diff: DiffPrefs::default(),
             repo_diff: HashMap::new(),
+            split_diff: false,
+            syntax_highlight: true,
             clone_dir: String::new(),
             clone_protocol: CloneProtocol::Https,
             gitlab_hosts: String::new(),
@@ -187,6 +195,7 @@ impl Default for Settings {
             recent: Vec::new(),
             open_tabs: Vec::new(),
             seen_intro: false,
+            last_crash_seen: String::new(),
             dark: None,
         }
     }

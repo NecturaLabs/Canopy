@@ -44,8 +44,22 @@ pub struct Palette {
     pub on_button: Color32,
     /// Graph lane colours.
     pub lanes: [Color32; 10],
+    /// Code colours in diffs (at least 4.5:1 on `bg`, `added_bg` and `removed_bg`).
+    pub syntax: Syntax,
     /// Dark theme (egui's dark visuals as the base).
     pub dark: bool,
+}
+
+/// Syntax highlighting colours. Plain code uses `text`.
+#[derive(Debug, Clone, Copy)]
+pub struct Syntax {
+    pub keyword: Color32,
+    pub string: Color32,
+    pub comment: Color32,
+    pub number: Color32,
+    pub function: Color32,
+    pub type_: Color32,
+    pub constant: Color32,
 }
 
 const fn hex(rgb: u32) -> Color32 {
@@ -100,6 +114,15 @@ pub const MIDNIGHT: Palette = Palette {
     button2: hex(0x0E7490),
     on_button: hex(0xFFFFFF),
     lanes: DARK_LANES,
+    syntax: Syntax {
+        keyword: hex(0xC4A7FF),
+        string: hex(0x7EE2B8),
+        comment: hex(0x8A93A6),
+        number: hex(0xF9A86B),
+        function: hex(0x7CC4FF),
+        type_: hex(0xFFD580),
+        constant: hex(0xF59AC8),
+    },
     dark: true,
 };
 
@@ -125,6 +148,15 @@ pub const DAYLIGHT: Palette = Palette {
     button2: hex(0x0E7490),
     on_button: hex(0xFFFFFF),
     lanes: LIGHT_LANES,
+    syntax: Syntax {
+        keyword: hex(0x6D28D9),
+        string: hex(0x0B6E4F),
+        comment: hex(0x5F6B7A),
+        number: hex(0x9A3412),
+        function: hex(0x1D4ED8),
+        type_: hex(0x0E6A7E),
+        constant: hex(0xBE185D),
+    },
     dark: false,
 };
 
@@ -161,6 +193,15 @@ pub const AURORA: Palette = Palette {
         hex(0x5E81AC),
         hex(0xC8A2C8),
     ],
+    syntax: Syntax {
+        keyword: hex(0x81A1C1),
+        string: hex(0xA3BE8C),
+        comment: hex(0x959FB3),
+        number: hex(0xB48EAD),
+        function: hex(0x88C0D0),
+        type_: hex(0x8FBCBB),
+        constant: hex(0xD08770),
+    },
     dark: true,
 };
 
@@ -186,6 +227,15 @@ pub const EMBER: Palette = Palette {
     button2: hex(0xA16207),
     on_button: hex(0xFFFFFF),
     lanes: DARK_LANES,
+    syntax: Syntax {
+        keyword: hex(0xFB923C),
+        string: hex(0xA3E635),
+        comment: hex(0xA39184),
+        number: hex(0xFACC15),
+        function: hex(0x7DD3FC),
+        type_: hex(0xF0ABFC),
+        constant: hex(0xF472B6),
+    },
     dark: true,
 };
 
@@ -222,6 +272,15 @@ pub const NEON: Palette = Palette {
         hex(0xFF7A00),
         hex(0xE040FB),
     ],
+    syntax: Syntax {
+        keyword: hex(0xFF5CAD),
+        string: hex(0x3DF5A0),
+        comment: hex(0xA193CC),
+        number: hex(0xFFD60A),
+        function: hex(0x00E5FF),
+        type_: hex(0xC77DFF),
+        constant: hex(0xFF9E3D),
+    },
     dark: true,
 };
 
@@ -247,6 +306,15 @@ pub const FOREST: Palette = Palette {
     button2: hex(0x4D7C0F),
     on_button: hex(0xFFFFFF),
     lanes: DARK_LANES,
+    syntax: Syntax {
+        keyword: hex(0x6EE7B7),
+        string: hex(0xD9F99D),
+        comment: hex(0x91A79B),
+        number: hex(0xFCD34D),
+        function: hex(0x7DD3FC),
+        type_: hex(0xC4B5FD),
+        constant: hex(0xFDA4AF),
+    },
     dark: true,
 };
 
@@ -283,6 +351,15 @@ pub const PAPER: Palette = Palette {
         hex(0xC2410C),
         hex(0x7E22CE),
     ],
+    syntax: Syntax {
+        keyword: hex(0xA13C07),
+        string: hex(0x3F6212),
+        comment: hex(0x62594B),
+        number: hex(0x7E22CE),
+        function: hex(0x1D4ED8),
+        type_: hex(0x0E6B63),
+        constant: hex(0x9D174D),
+    },
     dark: false,
 };
 
@@ -534,6 +611,28 @@ mod tests {
                 ("on_button on button", p.on_button, p.button, 4.5),
                 ("on_button on button2", p.on_button, p.button2, 4.5),
             ];
+            let sx = p.syntax;
+            let code = [
+                ("keyword", sx.keyword),
+                ("string", sx.string),
+                ("comment", sx.comment),
+                ("number", sx.number),
+                ("function", sx.function),
+                ("type", sx.type_),
+                ("constant", sx.constant),
+            ];
+            for (what, fg) in code {
+                for (on, bg) in [
+                    ("bg", p.bg),
+                    ("added_bg", p.added_bg),
+                    ("removed_bg", p.removed_bg),
+                ] {
+                    let c = contrast(fg, bg);
+                    if c < 4.5 {
+                        failures.push(format!("{}: syntax {what} on {on} is {c:.2}:1", p.name));
+                    }
+                }
+            }
             for (what, fg, bg, min) in checks {
                 let c = contrast(fg, bg);
                 if c < min {

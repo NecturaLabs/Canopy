@@ -1129,7 +1129,8 @@ fn merge_mode_squash_stages_changes_without_committing_or_merge_head() {
         assert_eq!(snap.status.staged[0].path, "f.txt");
         assert_eq!(snap.status.staged[0].kind, ChangeKind::Added);
 
-        repo.commit("feat: squashed f", false, false).expect("commit");
+        repo.commit("feat: squashed f", false, false)
+            .expect("commit");
         assert_eq!(parents(p, "HEAD"), [main], "diverge={diverge}");
     }
 }

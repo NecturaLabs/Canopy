@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: tools/screenshot.sh <repo> <out.png> [--light] [--theme NAME] [--view history|changes|requests]
+# Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
 #                            [--overlay settings|cheatsheet|palette] [--size WxH]
 #
 # <repo> may be "-" to render the welcome screen with no repository open.
@@ -21,6 +21,7 @@ extra=()
 while [[ $# -gt 0 ]]; do
   case $1 in
     --light) extra+=(--light); shift ;;
+    --split) extra+=(--split); shift ;;
     --theme) extra+=(--theme "${2:?--theme needs a name}"); shift 2 ;;
     --view) extra+=(--view "${2:?--view needs history, changes or requests}"); shift 2 ;;
     --overlay) extra+=(--overlay "${2:?--overlay needs settings, cheatsheet or palette}"); shift 2 ;;

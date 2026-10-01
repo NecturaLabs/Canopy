@@ -86,6 +86,10 @@ pub enum Action {
     DiffPrefsChanged,
     /// The user saw the first-run tips.
     DismissIntro,
+    /// Open the folder with Canopy's logs and crash reports.
+    OpenLogs,
+    /// Unified or side-by-side diffs.
+    SetSplitDiff(bool),
 }
 
 /// Options from the command line.
@@ -97,6 +101,8 @@ pub struct Launch {
     pub view: Option<View>,
     /// Open this overlay for a screenshot: settings, cheatsheet or palette.
     pub overlay: Option<String>,
+    /// Side-by-side diffs.
+    pub split: bool,
 }
 
 #[derive(Debug)]
@@ -161,6 +167,9 @@ impl CanopyApp {
         if let Some(t) = launch.theme {
             settings.theme = t;
         }
+        if launch.split {
+            settings.split_diff = true;
+        }
         crate::ui::fonts::install(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
@@ -215,6 +224,17 @@ impl CanopyApp {
         if git_version_missing(&app.git_version) {
             app.toasts.push(&cc.egui_ctx, ToastKind::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
         }
+        // A crash report from last time, offered once.
+        if !shooting
+            && let Some(report) = crate::logging::unseen_crash(&app.settings.last_crash_seen)
+        {
+            app.settings.last_crash_seen = report
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            app.dialog = Some(Dialog::Crash(report));
+        }
         // Release notes once after an upgrade (not on a fresh install).
         let version = env!("CARGO_PKG_VERSION");
         if !shooting && app.settings.last_seen_version != version {
@@ -253,6 +273,8 @@ impl CanopyApp {
                 } else {
                     let prefs = self.settings.diff_for(&root);
                     let mut tab = RepoTab::new(root.clone(), ctx, self.settings.commit_page, prefs);
+                    tab.split_diff = self.settings.split_diff;
+                    tab.highlight_diff = self.settings.syntax_highlight;
                     if let Some(v) = self.initial_view {
                         tab.view = v;
                     }
@@ -353,6 +375,7 @@ impl CanopyApp {
             C::MergeDialog => actions.push(Action::OpenDialog(Dialog::Merge {
                 target: String::new(),
                 rebase: false,
+                mode: canopy_core::MergeMode::Default,
             })),
             C::Commit => {
                 if view == Some(View::Changes) {
@@ -525,6 +548,10 @@ impl CanopyApp {
                 Action::OpenDialog(Dialog::About),
             ),
             (
+                e(icon::FILE_TEXT, "Open log folder", "Help", None),
+                Action::OpenLogs,
+            ),
+            (
                 e(
                     icon::MAGNIFYING_GLASS_PLUS,
                     "Zoom in",
@@ -593,6 +620,7 @@ impl CanopyApp {
                     Action::OpenDialog(Dialog::Merge {
                         target: String::new(),
                         rebase: false,
+                        mode: canopy_core::MergeMode::Default,
                     }),
                 ),
                 (
@@ -600,6 +628,7 @@ impl CanopyApp {
                     Action::OpenDialog(Dialog::Merge {
                         target: String::new(),
                         rebase: true,
+                        mode: canopy_core::MergeMode::Default,
                     }),
                 ),
                 (
@@ -775,7 +804,7 @@ impl CanopyApp {
                             "Branch",
                             None,
                         ),
-                        Action::Op(Op::Merge(b.name.clone())),
+                        Action::Op(Op::Merge(b.name.clone(), canopy_core::MergeMode::Default)),
                     ));
                 }
             }
@@ -955,6 +984,20 @@ impl CanopyApp {
                     }
                 }
                 Action::WhatsNew => self.dialog = whats_new(),
+                Action::OpenLogs => match crate::logging::log_dir() {
+                    Some(dir) => {
+                        let _ = std::fs::create_dir_all(&dir);
+                        if let Err(e) = open_external(&dir.display().to_string()) {
+                            self.toasts.push(ctx, ToastKind::Error, "Could not open", e);
+                        }
+                    }
+                    None => self.toasts.push(
+                        ctx,
+                        ToastKind::Error,
+                        "No log folder",
+                        "This platform has no data folder for Canopy.",
+                    ),
+                },
                 Action::ShowUpdate => {
                     if let UpdateState::Available(a) = &self.updater.state {
                         self.dialog = Some(Dialog::Update(a.clone()));
@@ -1059,6 +1102,12 @@ impl CanopyApp {
                     }
                 }
                 Action::DismissIntro => self.settings.seen_intro = true,
+                Action::SetSplitDiff(split) => {
+                    self.settings.split_diff = split;
+                    for t in &mut self.tabs {
+                        t.split_diff = split;
+                    }
+                }
             }
         }
     }
@@ -1301,6 +1350,15 @@ impl CanopyApp {
             for t in &mut self.tabs {
                 if !self.settings.repo_diff.contains_key(&t.path) {
                     t.diff_prefs = self.settings.diff;
+                    t.reload_diff();
+                }
+            }
+        }
+        if s.split_diff != before.split_diff || s.syntax_highlight != before.syntax_highlight {
+            for t in &mut self.tabs {
+                t.split_diff = s.split_diff;
+                if t.highlight_diff != s.syntax_highlight {
+                    t.highlight_diff = s.syntax_highlight;
                     t.reload_diff();
                 }
             }
