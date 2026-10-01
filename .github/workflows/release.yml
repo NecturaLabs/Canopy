@@ -47,8 +47,47 @@ env:
   TAG: ${{ inputs.tag }}
 
 jobs:
+  # The platforms to build follow the same repository variables as CI's test job: Linux unless
+  # CI_LINUX is '0', macOS and Windows only when CI_MACOS or CI_WINDOWS is '1'. Ubuntu 22.04,
+  # hosted or as the self-hosted container, keeps the glibc requirement at 2.35; aarch64 Linux
+  # (cross-compiled in the same container) and Intel macOS (cross-compiled on Apple silicon)
+  # are experimental: their failure does not hold back the release.
+  platforms:
+    name: Platforms
+    runs-on: ${{ vars.USE_SELF_HOSTED == '0' && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
+    permissions: {}
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        env:
+          CI_LINUX: ${{ vars.CI_LINUX }}
+          CI_MACOS: ${{ vars.CI_MACOS }}
+          CI_WINDOWS: ${{ vars.CI_WINDOWS }}
+        run: |
+          linux='[
+            {"os":"ubuntu-22.04","self-hosted":"[\"self-hosted\", \"linux\", \"wsl\"]","container":"ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02","target":"x86_64-unknown-linux-gnu","archive":"tar.gz"},
+            {"os":"ubuntu-22.04","self-hosted":"[\"self-hosted\", \"linux\", \"wsl\"]","container":"ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02","target":"aarch64-unknown-linux-gnu","archive":"tar.gz","experimental":true}]'
+          macos='[
+            {"os":"macos-latest","target":"aarch64-apple-darwin","archive":"tar.gz"},
+            {"os":"macos-latest","target":"x86_64-apple-darwin","archive":"tar.gz","experimental":true}]'
+          windows='[
+            {"os":"windows-latest","self-hosted":"[\"self-hosted\", \"windows\", \"x64\"]","target":"x86_64-pc-windows-msvc","archive":"zip"}]'
+          on=()
+          [[ $CI_LINUX != 0 ]] && on+=("$linux")
+          [[ $CI_MACOS == 1 ]] && on+=("$macos")
+          [[ $CI_WINDOWS == 1 ]] && on+=("$windows")
+          if (( ${#on[@]} == 0 )); then
+            echo "::error::Every platform is turned off (CI_LINUX, CI_MACOS, CI_WINDOWS)."
+            exit 1
+          fi
+          matrix=$(printf '%s\n' "${on[@]}" | jq -cs 'add')
+          echo "Building: $(jq -r 'map(.target) | join(", ")' <<<"$matrix")"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build (${{ matrix.target }})
+    needs: platforms
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || !matrix.self-hosted) && matrix.os || fromJSON(matrix.self-hosted) }}
     timeout-minutes: 60
     continue-on-error: ${{ matrix.experimental == true }}
@@ -60,36 +99,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Ubuntu 22.04, hosted or as the self-hosted container, keeps the glibc
-          # requirement at 2.35.
-          - os: ubuntu-22.04
-            self-hosted: '["self-hosted", "linux", "wsl"]'
-            container: ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
-            target: x86_64-unknown-linux-gnu
-            archive: tar.gz
-          # The same Linux runner and container, cross-compiling with Ubuntu's aarch64 GCC
-          # (glibc 2.35 as well). Experimental until a release has shipped it: a failure here
-          # does not hold back the other platforms.
-          - os: ubuntu-22.04
-            self-hosted: '["self-hosted", "linux", "wsl"]'
-            container: ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
-            target: aarch64-unknown-linux-gnu
-            archive: tar.gz
-            experimental: true
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            archive: tar.gz
-          # Intel Macs: cross-compiled on the Apple silicon runner (Xcode's SDK covers both).
-          # Experimental until a release has shipped it.
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            archive: tar.gz
-            experimental: true
-          - os: windows-latest
-            self-hosted: '["self-hosted", "windows", "x64"]'
-            target: x86_64-pc-windows-msvc
-            archive: zip
+        include: ${{ fromJSON(needs.platforms.outputs.matrix) }}
     defaults:
       run:
         shell: bash
