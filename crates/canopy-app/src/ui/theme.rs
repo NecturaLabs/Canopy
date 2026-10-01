@@ -23,8 +23,11 @@ pub struct Palette {
     pub elevated: Color32,
     /// Hovered rows and controls.
     pub hover: Color32,
-    /// Hairlines and outlines.
+    /// Hairlines between regions: separators, card outlines. Decorative, so kept quiet.
     pub border: Color32,
+    /// Outlines that identify a control (text fields, checkboxes, switch tracks): at least 3:1
+    /// against every surface (WCAG 1.4.11).
+    pub control_border: Color32,
     pub text: Color32,
     pub text_dim: Color32,
     pub text_faint: Color32,
@@ -84,10 +87,10 @@ const LIGHT_LANES: [Color32; 10] = [
     hex(0x0891B2),
     hex(0xDB2777),
     hex(0x059669),
-    hex(0xD97706),
+    hex(0xB45309),
     hex(0x2563EB),
     hex(0xDC2626),
-    hex(0x65A30D),
+    hex(0x4D7C0F),
     hex(0xEA580C),
     hex(0x9333EA),
 ];
@@ -100,10 +103,11 @@ pub const MIDNIGHT: Palette = Palette {
     elevated: hex(0x171C26),
     hover: hex(0x1E2431),
     border: hex(0x262D3B),
+    control_border: hex(0x696F7A),
     text: hex(0xE6E9EF),
     text_dim: hex(0x9AA3B5),
-    text_faint: hex(0x767F92),
-    accent: hex(0x9161F7),
+    text_faint: hex(0x8991A2),
+    accent: hex(0x9C71F8),
     accent2: hex(0x22D3EE),
     success: hex(0x34D399),
     warning: hex(0xFBBF24),
@@ -134,14 +138,15 @@ pub const DAYLIGHT: Palette = Palette {
     elevated: hex(0xFFFFFF),
     hover: hex(0xEEF1F6),
     border: hex(0xDDE2EA),
+    control_border: hex(0x858A92),
     text: hex(0x161A22),
-    text_dim: hex(0x566074),
-    text_faint: hex(0x687185),
+    text_dim: hex(0x4B5466),
+    text_faint: hex(0x5D6577),
     accent: hex(0x7C3AED),
-    accent2: hex(0x0891B2),
+    accent2: hex(0x0E7490),
     success: hex(0x047857),
-    warning: hex(0xB45309),
-    danger: hex(0xDC2626),
+    warning: hex(0xB05109),
+    danger: hex(0xD12424),
     added_bg: hex(0xE3F7EC),
     removed_bg: hex(0xFDE7E7),
     button: hex(0x7C3AED),
@@ -168,14 +173,15 @@ pub const AURORA: Palette = Palette {
     elevated: hex(0x2B303B),
     hover: hex(0x333A47),
     border: hex(0x3B4252),
+    control_border: hex(0x7E8490),
     text: hex(0xECEFF4),
-    text_dim: hex(0xA9B1C1),
-    text_faint: hex(0x8A93A5),
+    text_dim: hex(0xC0C6D2),
+    text_faint: hex(0xAAB1BF),
     accent: hex(0x88C0D0),
-    accent2: hex(0xB48EAD),
+    accent2: hex(0xBD9CB7),
     success: hex(0xA3BE8C),
     warning: hex(0xEBCB8B),
-    danger: hex(0xE07A84),
+    danger: hex(0xE48D95),
     added_bg: hex(0x253229),
     removed_bg: hex(0x3A262C),
     button: hex(0x88C0D0),
@@ -190,7 +196,7 @@ pub const AURORA: Palette = Palette {
         hex(0xD08770),
         hex(0x8FBCBB),
         hex(0xE07A84),
-        hex(0x5E81AC),
+        hex(0x6486AF),
         hex(0xC8A2C8),
     ],
     syntax: Syntax {
@@ -213,9 +219,10 @@ pub const EMBER: Palette = Palette {
     elevated: hex(0x241C18),
     hover: hex(0x2E241F),
     border: hex(0x3A2E27),
+    control_border: hex(0x796E67),
     text: hex(0xF3E9E2),
     text_dim: hex(0xB9A79B),
-    text_faint: hex(0x8F7D71),
+    text_faint: hex(0xA5958A),
     accent: hex(0xF97316),
     accent2: hex(0xFACC15),
     success: hex(0x4ADE80),
@@ -247,9 +254,10 @@ pub const NEON: Palette = Palette {
     elevated: hex(0x170F2B),
     hover: hex(0x211638),
     border: hex(0x2D1F4A),
+    control_border: hex(0x6F6386),
     text: hex(0xF5EEFF),
     text_dim: hex(0xB3A3D1),
-    text_faint: hex(0x8575B3),
+    text_faint: hex(0x9485BD),
     accent: hex(0xFF2E97),
     accent2: hex(0x00E5FF),
     success: hex(0x3DF5A0),
@@ -292,9 +300,10 @@ pub const FOREST: Palette = Palette {
     elevated: hex(0x18221D),
     hover: hex(0x1F2B25),
     border: hex(0x2A3830),
+    control_border: hex(0x67746D),
     text: hex(0xE4EEE8),
-    text_dim: hex(0x9FB3A8),
-    text_faint: hex(0x76897E),
+    text_dim: hex(0xAABDB2),
+    text_faint: hex(0x93A39A),
     accent: hex(0x34D399),
     accent2: hex(0xA3E635),
     success: hex(0x4ADE80),
@@ -326,11 +335,12 @@ pub const PAPER: Palette = Palette {
     elevated: hex(0xFFFDF8),
     hover: hex(0xEDE6DA),
     border: hex(0xDCD3C4),
+    control_border: hex(0x8B8379),
     text: hex(0x2B2620),
-    text_dim: hex(0x6B6255),
-    text_faint: hex(0x766B5D),
+    text_dim: hex(0x5A5246),
+    text_faint: hex(0x695F53),
     accent: hex(0xA14A08),
-    accent2: hex(0x0F766E),
+    accent2: hex(0x0F726B),
     success: hex(0x166534),
     warning: hex(0x8A5A00),
     danger: hex(0xB91C1C),
@@ -435,6 +445,12 @@ impl Palette {
     /// the window enough to separate the layer without hiding where the user was.
     pub fn backdrop(&self) -> Color32 {
         Color32::from_black_alpha(if self.dark { 140 } else { 60 })
+    }
+
+    /// Fill of the selected row in lists, the graph and the sidebar. Every text colour stays
+    /// readable on it (see the contrast test).
+    pub fn selected(&self) -> Color32 {
+        Palette::tint(self.accent, if self.dark { 46 } else { 30 })
     }
 
     /// A translucent version of `c` for fills behind text.
@@ -596,27 +612,62 @@ mod tests {
         (x.max(y) + 0.05) / (x.min(y) + 0.05)
     }
 
-    /// WCAG 2.2: body text 7:1 (AAA); secondary and faint text (line numbers, dates), status
-    /// colours and labels on filled buttons 4.5:1 (AA).
+    /// Translucent `fg` drawn over `bg`, as the GPU blends it (`Color32` is premultiplied).
+    fn over(fg: Color32, bg: Color32) -> Color32 {
+        let a = f32::from(fg.a()) / 255.0;
+        let mix = |f: u8, b: u8| (f32::from(f) + f32::from(b) * (1.0 - a)).round() as u8;
+        Color32::from_rgb(
+            mix(fg.r(), bg.r()),
+            mix(fg.g(), bg.g()),
+            mix(fg.b(), bg.b()),
+        )
+    }
+
+    /// WCAG 2.2 on every surface text sits on: body text 7:1 (AAA); secondary and faint text
+    /// (line numbers, dates), links, accents and status colours 4.5:1 (AA); control outlines,
+    /// the focus ring and graph lanes 3:1 (non-text contrast).
     #[test]
     fn every_theme_meets_contrast_targets() {
         let mut failures = Vec::new();
         for id in ThemeId::ALL {
             let p = id.palette();
-            let checks = [
-                ("text on bg", p.text, p.bg, 7.0),
-                ("text on panel", p.text, p.panel, 7.0),
-                ("text_dim on bg", p.text_dim, p.bg, 4.5),
-                ("text_dim on panel", p.text_dim, p.panel, 4.5),
-                ("text_faint on bg", p.text_faint, p.bg, 4.5),
-                ("text_faint on panel", p.text_faint, p.panel, 4.5),
-                ("accent on bg", p.accent, p.bg, 4.5),
-                ("success on bg", p.success, p.bg, 4.5),
-                ("warning on bg", p.warning, p.bg, 4.5),
-                ("danger on bg", p.danger, p.bg, 4.5),
-                ("on_button on button", p.on_button, p.button, 4.5),
-                ("on_button on button2", p.on_button, p.button2, 4.5),
+            let surfaces = [
+                ("bg", p.bg),
+                ("panel", p.panel),
+                ("elevated", p.elevated),
+                ("hover", p.hover),
+                ("selected row on panel", over(p.selected(), p.panel)),
+                ("selected row on bg", over(p.selected(), p.bg)),
+                ("added_bg", p.added_bg),
+                ("removed_bg", p.removed_bg),
             ];
+            let mut check = |what: &str, fg: Color32, on: &str, bg: Color32, min: f64| {
+                let c = contrast(fg, bg);
+                if c < min {
+                    failures.push(format!(
+                        "{}: {what} on {on} is {c:.2}:1, needs {min}:1",
+                        p.name
+                    ));
+                }
+            };
+            for (on, bg) in surfaces {
+                check("text", p.text, on, bg, 7.0);
+                check("text_dim", p.text_dim, on, bg, 4.5);
+                check("text_faint", p.text_faint, on, bg, 4.5);
+            }
+            for (on, bg) in &surfaces[..4] {
+                check("accent", p.accent, on, *bg, 4.5);
+                check("accent2", p.accent2, on, *bg, 4.5);
+                check("success", p.success, on, *bg, 4.5);
+                check("warning", p.warning, on, *bg, 4.5);
+                check("danger", p.danger, on, *bg, 4.5);
+                check("control_border", p.control_border, on, *bg, 3.0);
+                for (i, lane) in p.lanes.iter().enumerate() {
+                    check(&format!("lane {i}"), *lane, on, *bg, 3.0);
+                }
+            }
+            check("on_button", p.on_button, "button", p.button, 4.5);
+            check("on_button", p.on_button, "button2", p.button2, 4.5);
             let sx = p.syntax;
             let code = [
                 ("keyword", sx.keyword),
@@ -633,16 +684,7 @@ mod tests {
                     ("added_bg", p.added_bg),
                     ("removed_bg", p.removed_bg),
                 ] {
-                    let c = contrast(fg, bg);
-                    if c < 4.5 {
-                        failures.push(format!("{}: syntax {what} on {on} is {c:.2}:1", p.name));
-                    }
-                }
-            }
-            for (what, fg, bg, min) in checks {
-                let c = contrast(fg, bg);
-                if c < min {
-                    failures.push(format!("{}: {what} is {c:.2}:1, needs {min}:1", p.name));
+                    check(&format!("syntax {what}"), fg, on, bg, 4.5);
                 }
             }
         }

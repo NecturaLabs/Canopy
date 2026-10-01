@@ -22,9 +22,13 @@ fixtures and images under a scratch directory (or `screenshots-out/`, which git 
 1. Create fixtures: `tools/mkfixture.sh "$S/showcase"` and, when relevant, `conflict`, `linear` or
    `big` (use `--force` to recreate).
 2. Render each relevant combination with `tools/screenshot.sh <repo> <out.png>`: dark and
-   `--light`, `--view history` and `--view changes`, at the default 1440x900 and at a small size
-   (`--size 1024x640`) to catch overflow. Render the `conflict` fixture for banners and conflict
-   lists.
+   `--light`, `--view history`, `--view changes` and, for pull and merge requests,
+   `--view requests` (start `tools/mock-hosting.py` and set `CANOPY_HOSTING_API_BASE` as
+   `tools/README.md` describes, so no network or token is needed), at the default 1440x900 and at
+   a small size (`--size 1024x640`) to catch overflow. Render the `conflict` fixture for banners
+   and conflict lists. Dialogs and screens render with `--overlay NAME` (`tools/screenshot.sh -h`
+   lists them). When the change touches `ui/theme.rs`, render every theme in `ThemeId::ALL` with
+   `--theme NAME`, not only the default dark and `--light`.
 3. View every PNG with the Read tool. To inspect detail, crop or enlarge with ImageMagick
    (`convert in.png -crop 480x300+0+120 +repage -scale 200% crop.png`) and read the crop.
 4. If the change has a before state, render the same fixtures from the base commit (in a separate

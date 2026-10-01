@@ -1,87 +1,111 @@
 # Canopy
 
 A fast, beautiful, Linux-first Git client for Linux, macOS and Windows, written in Rust (edition
-2024, MSRV 1.91). Two crates: `crates/canopy-core` is the UI-agnostic Git backend (libgit2 through
-`git2` 0.21 built without HTTPS/SSH, for reads; every mutation runs the `git` CLI); `crates/canopy-app` is the GUI (`eframe`/`egui` 0.36, glow renderer), binary
-`canopy`, app ID `io.necturalabs.Canopy`. Architecture is in `docs/architecture.md`, the visual
-design system in `docs/design.md`, the feature matrix in `docs/features.md`.
+2024, MSRV 1.91). Three crates: `crates/canopy-core`, the UI-agnostic Git backend (libgit2 via
+`git2`, built without HTTPS/SSH, for reads; the `git` CLI for every mutation);
+`crates/canopy-hosting`, the GitHub/GitLab REST client (`ureq`, rustls); `crates/canopy-app`, the
+GUI (`eframe`/`egui` 0.36, glow), binary `canopy`. Docs: `docs/architecture.md`, decisions in
+`docs/adr/`, `docs/design.md`, `docs/features.md`.
 
-**Start here: read `HANDOFF.md`.** It records the state of the work, the owner's requirements and
-the prioritised queue of what to build next.
+**Then read `HANDOFF.md`** for the queue. It is a session note and can lag: where it disagrees
+with this file or the code, they win; fix the note (`memory-hygiene`).
 
 ## Product rules
 
 These come from the owner and override anything else in the repository.
 
 - **Hosting**: GitHub and GitLab only (including self-hosted GitLab), plus local-only repositories
-  with no remote at all. No other providers.
-- **No external services**: no web APIs, backend, telemetry, update checks or avatar downloads.
-  Canopy talks only to the local `git` executable and local files. Provider features are offline:
-  recognise remote URLs locally and open web pages in the user's browser. Never put credentials
-  into a URL Canopy builds or logs.
-- **Toolkit**: egui stays (the owner considered React and chose egui).
-- **Art**: placeholders are SVG files, to be replaced by art generated with Codex/OpenAI using the
-  prompts in `docs/art-prompts.md`. Keep file names and view boxes stable when replacing.
-- **Themes**: ship a handful of well-designed themes, all defined in `ui/theme.rs`, plus a settings
-  screen covering every needed option. Every setting must change behaviour.
+  with no remote at all.
+- **Network**: Canopy contacts exactly four things, each switchable off, none before the user
+  accepted the Terms and Privacy Policy and answered the crash question: the local `git`
+  executable (all Git traffic); the REST API of a repository's own GitHub or GitLab host for
+  pull/merge requests, with a user-supplied token (`crates/canopy-hosting`); Canopy's update check
+  (`updater.rs`); opt-in, scrubbed crash reports to Sentry (`crash_reports.rs`). No other
+  telemetry, analytics, avatar or image downloads, backend or service.
+- **Credentials**: never put credentials into a URL Canopy builds or logs. A hosting token goes
+  only to its own host. Git and ssh prompts go through Canopy's own askpass
+  (`crates/canopy-app/src/askpass.rs`), never a terminal.
+- **Legal and data**: `docs/legal/privacy-policy.md` and `terms-of-service.md` state what leaves
+  the machine. A change to that updates them and their `Last updated` date (matching
+  `ui::legal::PRIVACY_VERSION`/`TERMS_VERSION`); one to what a crash report carries also bumps
+  `crash_reports::DATA_VERSION`. After a dependency change run `python3 tools/notices.py` (writes
+  `docs/legal/third-party-notices.txt`; CI checks it).
+- **Logging**: JSON-lines logs per run (`logging.rs`). Never log secrets or prompt answers; pass
+  URLs through `canopy_core::cli::redact_url`, git arguments through `cli::loggable`.
+- **Toolkit**: egui stays (the owner chose it over React).
+- **Art**: SVG placeholders until Codex/OpenAI art (`docs/art-prompts.md`); keep file names and
+  view boxes stable.
+- **Themes**: a handful of well-designed themes, all in `ui/theme.rs` (`add-theme` skill), and a
+  settings screen covering every needed option. Every setting must change behaviour.
 - **Keybindings** follow the spirit of Omarchy: keyboard-first, a launcher-style palette, a
-  keybinding cheatsheet, vim motions and single-key lazygit-style actions. Never bind Super (it
-  belongs to the window manager); bare keys never fire while a text field has focus.
+  cheatsheet, vim motions and single-key lazygit-style actions, from one table in `keymap.rs`
+  (`add-keybinding` skill). Never bind Super (the window manager's); bare keys never fire while a
+  text field has focus.
+
+## Security-sensitive areas
+
+`askpass.rs`; saved tokens (`tokens.json`, `hosting.rs`) and all of `crates/canopy-hosting/`;
+crash-report scrubbing (`crash_reports.rs`); URL opening in `platform.rs` (web addresses only);
+log redaction (`logging.rs`, `cli.rs`); URL building in `forge.rs`; the update feed; `Cargo.toml`,
+`Cargo.lock`, `deny.toml`; `.github/` (self-hosted runners run code). A change there gets a
+security pass (`/security-review`) before the general review. Ask the owner before storing a
+token anywhere new, contacting a new host or adding a dependency.
 
 ## Commands
 
 - Format: `cargo fmt --all`
-- Lint: `cargo clippy --workspace --all-targets -- -D warnings`
-- Test: `cargo test --workspace` (one test: `cargo test -p canopy-core <name>`)
-- Run: `cargo run -p canopy-app -- <repo>` (add `--release` for realistic speed)
-- All checks, as CI runs them: `tools/check.sh`
-- Demo repository: `tools/mkfixture.sh <dir> [showcase|conflict|linear|big]`
-- Screenshot: `tools/screenshot.sh <repo> <out.png> [--light] [--view history|changes]`
-
-CI (`.github/workflows/ci.yml`) runs fmt, clippy and tests (Linux, macOS, Windows) and
-cargo-deny. Tests need `git` on `PATH` and a git identity; CI sets one. Linux and Windows jobs run
-on the organisation's self-hosted runners (`.github/actions/setup-rust` gives each runner its own
-toolchain); the organisation variable `USE_SELF_HOSTED` set to `0` moves them to GitHub-hosted ones.
+- Lint: `cargo clippy --workspace --all-targets --locked -- -D warnings`
+- Test: `cargo test --workspace --locked` (one: `cargo test -p canopy-core <name>`)
+- Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
+- `tools/check.sh`: `fmt --check`, clippy, workspace tests, `tools/release.py selftest` and
+  `tools/notices.py --check`, on this platform. CI (`ci.yml`) adds `cargo deny check` (run it when
+  `Cargo.toml`, `Cargo.lock` or `deny.toml` change) and tests on Linux, macOS and Windows.
+- Demo repository: `tools/mkfixture.sh <dir> [kind]` (`fixture-repo` skill)
+- Screenshot: `tools/screenshot.sh <repo> <out.png> [--light|--theme NAME|--view V|--overlay NAME]`
+  (`-h` lists the options)
 
 ## Workflow
 
-- `docs/backlog.md` is the task board. Take entries from the top of "Now" down. Tick an entry only
-  when the change is verified in the running app, with a screenshot taken through the
-  `screenshot` skill, not when the code compiles.
-- Any change to what the UI shows needs a screenshot check (dark and light where colours are
-  involved). Unit tests cannot see layout or colour: look at the image with the Read tool.
-- Adding a Git operation follows the `add-git-operation` skill end to end.
-- Project agents in `.claude/agents/`: `canopy-review` (read-only diff review), `canopy-git`
-  (Git semantics, canopy-core), `canopy-visual-qa` (headless rendering and visual defects),
-  `canopy-ux-research` (how other clients solve a UX question).
-- Run `tools/check.sh` before declaring work done.
+- `docs/backlog.md` is the task board: take entries from the top of "Now" down, and tick one only
+  when verified in the running app, not when the code compiles.
+- Any change to what the UI shows needs a screenshot check (`screenshot` skill), dark and light
+  where colours are involved; unit tests cannot see layout or colour.
+- Recipes to follow end to end: `add-git-operation`, `hosting-api`, `add-theme`, `add-keybinding`.
+- Project agents in `.claude/agents/`: `canopy-review`, `canopy-git`, `canopy-visual-qa`,
+  `canopy-ux-research`. Model tier: `opus` for costly, security-sensitive or cross-cutting work,
+  `sonnet` otherwise.
+- Before declaring work done: `tools/check.sh` passes and the `canopy-review` agent has reviewed
+  the diff (brief it per the `independent-review` skill); fix or answer every Blocking finding.
+  Only a typo or formatting-only change skips this.
 
 ## Conventions
 
-- The UI thread never calls git, libgit2 or the filesystem for repository data. Add a `Job`
-  variant in `crates/canopy-app/src/worker.rs`, handle it on the repository's worker thread and
-  return a `Event`. Views render from tab state only.
+- The UI thread never calls git, libgit2, the hosting API, the network or the filesystem for
+  repository data. Add a `Job` or `Op` variant in `crates/canopy-app/src/worker.rs` (hosting: a `HostJob`
+  in `hosting.rs`), handle it off the UI thread and return an `Event`. Views render from tab state
+  only.
 - `canopy-core` has no UI dependencies. Every operation gets a test against a temporary
-  repository (`tempfile`); compare behaviour with the `git` CLI when semantics are subtle.
+  repository (`tempfile`), compared with the `git` CLI where semantics are subtle.
+- Every repository mutation and all Git network traffic run the `git` executable through
+  `canopy_core::cli`, which sets `GIT_TERMINAL_PROMPT=0` and `GIT_EDITOR=true`. Arguments are
+  separate argv entries, with `--` before user-supplied paths and refs. HTTP happens only in
+  `crates/canopy-hosting` (plus Sentry's transport).
 - Colours, spacing and radii come only from `crates/canopy-app/src/ui/theme.rs`. No hex literals
   or `Color32::from_rgb` in views. Icons come from `egui-phosphor`.
 - Destructive operations (discard, hard reset, delete branch or tag, drop stash, force push) go
   through a confirmation dialog. Never force-push without `--force-with-lease`.
-- Network operations (clone, fetch, pull, push) and merge/rebase go through `cli.rs`, which sets
-  `GIT_TERMINAL_PROMPT=0` so git never blocks waiting on a terminal.
-- Errors reach the user as toasts carrying git's own stderr (or the libgit2 message), not a
-  generic "operation failed". Log details with `tracing`.
-- No `unwrap()` or `expect()` outside tests; propagate `canopy_core::Result` or handle the case.
-  `unsafe` is forbidden workspace-wide.
-- Paths are `Path`/`PathBuf`, joined with `join`, never by string concatenation with `/`; do not
-  assume they are UTF-8.
-- When a change adds or alters a feature, update `docs/features.md` and `CHANGELOG.md`
-  (Unreleased) in the same change; when it adds or changes a module, update
-  `docs/architecture.md`; when it changes a token or component, update `docs/design.md`.
-- Fonts and other bundled assets need a licence row (`crates/canopy-app/assets/fonts/README.md`
-  for fonts) and their licence text in the same change. Only OFL, MIT, Apache-2.0, CC0 or
-  similarly permissive assets.
-- Commit messages follow Conventional Commits (`feat(graph): ...`, `fix(worker): ...`).
+- Errors reach the user as toasts carrying git's own stderr (or the libgit2 or server message),
+  never a generic "operation failed"; log details with `tracing`.
+- Propagate `canopy_core::Result`; clippy rejects `unwrap`/`expect` outside tests; no `unsafe`.
+- Paths are `Path`/`PathBuf`, joined with `join`, never concatenated with `/`; not assumed UTF-8.
+- In the same change: a feature updates `docs/features.md` and `CHANGELOG.md` (Unreleased); a
+  module, `docs/architecture.md`; a token or component, `docs/design.md`. A consequential,
+  hard-to-reverse decision gets an ADR in `docs/adr/` (`project-docs` skill).
+- Bundled fonts and assets need a licence row (fonts: `crates/canopy-app/assets/fonts/README.md`)
+  and text in the same change; only OFL, MIT, Apache-2.0, CC0 or similar.
+- Commit messages follow Conventional Commits (`feat(graph): ...`); the type decides the release
+  bump (`tools/release.py`). Never bump versions or tag by hand: releases come from the manual
+  "Create release" workflow (`release` skill).
 
 ## Boundaries
 

@@ -10,9 +10,11 @@ core part to the `canopy-git` agent.
 
 ## 1. Core function (`crates/canopy-core`)
 
-- Decide the layer. Local index, ref or working-tree changes: `git2` in `ops.rs`. Network, hooks
-  users expect, merge/rebase or history rewriting: `cli.rs`, which runs the user's `git` with
-  `GIT_TERMINAL_PROMPT=0` and streams `--progress` lines.
+- Every mutation runs the `git` executable (ADR 0001): add a function to `ops.rs` that calls
+  `cli::run`, `cli::run_with_input` (patches, messages on stdin) or `cli::run_streaming` (long
+  network jobs; streams `--progress` lines). Pass arguments as separate argv entries with `--`
+  before user-supplied paths and refs. Use `git2` only to read state the function needs, such as
+  whether a local branch exists. Never write through libgit2.
 - Check the behaviour with the real CLI in a scratch repository first and note the resulting refs,
   index and working tree.
 - Write a function on `Repo` (or in the module) that takes explicit parameters (no hidden force)
@@ -26,18 +28,23 @@ for the edge cases that apply (unborn branch, detached HEAD, conflicts, nothing 
 
 ## 2. Worker (`crates/canopy-app/src/worker.rs`)
 
-- Add a `Job` variant carrying owned parameters, and handle it on the worker: call the core
-  function, then refresh the snapshot if the repository changed.
-- Return a `Event` that carries success text for the toast or the error. Long CLI jobs send
-  progress lines as they arrive.
+- A mutation is an `Op` variant carrying owned parameters (`Job::Op(Op)` runs it on the worker).
+  Add the variant, its `label()` and `announce()` arms, and its arm in `perform`, which calls the
+  core function; every `Op` is followed by a fresh snapshot. A read that is not a mutation is a
+  new `Job` variant instead.
+- The result comes back as an `Event` (`OpStarted`, `Progress`, `OpFinished`) that carries success
+  text for the toast or the error. Long CLI jobs send progress lines as they arrive.
 
 Done when: the UI thread only sends the job; nothing in `views/` or `app.rs` calls git.
 
 ## 3. UI entry points
 
 - Where users expect it: commit or branch context menu, sidebar item menu, toolbar button for
-  frequent operations, and always a command palette entry (`ui/palette.rs`).
-- A shortcut only if the operation is frequent; add it to the shortcut tables in `README.md`.
+  frequent operations, and always a command palette entry (`palette_entries` in `app.rs`; the
+  palette widget is `ui/palette.rs`).
+- A shortcut only if the operation is frequent: add it to the table in
+  `crates/canopy-app/src/keymap.rs` (`add-keybinding` skill); the cheatsheet and palette hints
+  follow from it.
 - Use `egui-phosphor` icons and `ui/theme.rs` tokens; reuse `ui/widgets.rs` components.
 - Disable or hide the action when it cannot apply (for example, no upstream, detached HEAD),
   with a tooltip saying why.
@@ -68,4 +75,5 @@ git's stderr or the libgit2 message. While running, the status bar shows the job
    resulting state with the CLI (`git log --graph --all --oneline`, `git status`).
 3. Take screenshots of the entry point and result (`screenshot` skill), dark and light.
 4. Tick the backlog entry in `docs/backlog.md` only after steps 1 to 3.
-5. Ask the `canopy-review` agent to review the diff.
+5. Get an independent review: the `independent-review` skill, with the `canopy-review` agent as
+   the reviewer.

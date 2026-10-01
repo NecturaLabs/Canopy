@@ -14,19 +14,23 @@ command palette, Sourcetree's breadth).
 
 1. The backlog entry or question you were given, and its context in `docs/backlog.md`.
 2. `docs/design.md` (layout, components, motion) and `docs/features.md` (what exists).
-3. `AGENTS.md` for constraints: UI thread never blocks, destructive actions need confirmation,
-   network through the user's `git`.
+3. `AGENTS.md` for constraints: GitHub and GitLab only; their REST APIs for pull and merge
+   requests with a user-supplied token, the update check and opt-in crash reports, and nothing
+   else external; Git network operations through the user's `git`; the UI thread never blocks;
+   destructive actions need confirmation.
 
 ## What you check, most important first
 
 1. **How each client does it.** For Fork, GitKraken, Sourcetree, Tower, GitButler, Sublime Merge
-   and lazygit (skip any that lack the feature, and say so): entry points (menu, shortcut, drag),
+   and lazygit, plus GitHub Desktop and GitLab's own web UI for pull and merge request questions
+   (skip any that lack the feature, and say so): entry points (menu, shortcut, drag),
    the flow step by step, how it shows state, how it prevents or undoes mistakes, keyboard support.
    Prefer official documentation, release notes and changelogs; use reviews, forum threads and
    issue trackers for pain points.
 2. **What users praise and complain about.** Recurring complaints are as useful as features.
 3. **Fit for Canopy.** Which pattern suits an immediate-mode egui UI, the worker/Job model and the
-   keyboard-first design; what it needs from `canopy-core` (libgit2 or the CLI).
+   keyboard-first design; what it needs from `canopy-core` (libgit2 reads, the CLI for changes)
+   or `canopy-hosting`.
 4. **Accuracy.** Mark anything you could not confirm from a source as unverified. Never invent a
    feature or shortcut.
 

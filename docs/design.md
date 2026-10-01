@@ -28,11 +28,12 @@ defined. When a token or component changes, update this document in the same cha
 | `panel` | `#12161E` | Sidebar, detail pane, toolbar, status bar |
 | `elevated` | `#171C26` | Popups, dialogs, palette, menus, cards |
 | `hover` | `#1E2431` | Hovered rows and buttons |
-| `border` | `#262D3B` | 1px hairlines, input outlines |
+| `border` | `#262D3B` | 1px hairlines between regions (decorative) |
+| `control-border` | `#696F7A` | Outlines that identify a control: text fields, checkboxes, switch tracks (3:1) |
 | `text` | `#E6E9EF` | Primary text |
 | `text-dim` | `#9AA3B5` | Secondary text: authors, dates, paths |
-| `text-faint` | `#636B7D` | Placeholders, disabled text, line numbers |
-| `accent` | `#8B5CF6` | Focus rings, selection, primary buttons, HEAD |
+| `text-faint` | `#8991A2` | Placeholders, disabled text, line numbers |
+| `accent` | `#9C71F8` | Focus rings, selection, primary buttons, HEAD |
 | `accent-2` | `#22D3EE` | Gradient end, links, progress |
 | `success` | `#34D399` | Added lines, ahead counts, success toasts |
 | `warning` | `#FBBF24` | Conflicts, in-progress banners |
@@ -48,24 +49,31 @@ defined. When a token or component changes, update this document in the same cha
 | `panel` | `#FFFFFF` | Sidebar, detail pane, toolbar, status bar |
 | `elevated` | `#FFFFFF` | Popups, dialogs, palette (separated by border and shadow) |
 | `hover` | `#EEF1F6` | Hovered rows and buttons |
-| `border` | `#DDE2EA` | 1px hairlines, input outlines |
+| `border` | `#DDE2EA` | 1px hairlines between regions (decorative) |
+| `control-border` | `#858A92` | Outlines that identify a control: text fields, checkboxes, switch tracks (3:1) |
 | `text` | `#161A22` | Primary text |
-| `text-dim` | `#566074` | Secondary text |
-| `text-faint` | `#8A93A5` | Placeholders, disabled text, line numbers |
+| `text-dim` | `#4B5466` | Secondary text |
+| `text-faint` | `#5D6577` | Placeholders, disabled text, line numbers |
 | `accent` | `#7C3AED` | Focus rings, selection, primary buttons, HEAD |
-| `accent-2` | `#0891B2` | Gradient end, links, progress |
-| `success` | `#059669` | Added lines, ahead counts, success toasts |
-| `warning` | `#D97706` | Conflicts, in-progress banners |
-| `danger` | `#DC2626` | Removed lines, destructive buttons, error toasts |
+| `accent-2` | `#0E7490` | Gradient end, links, progress |
+| `success` | `#047857` | Added lines, ahead counts, success toasts |
+| `warning` | `#B05109` | Conflicts, in-progress banners |
+| `danger` | `#D12424` | Removed lines, destructive buttons, error toasts |
 | `added-bg` | `#E3F7EC` | Added line background in diffs |
 | `removed-bg` | `#FDE7E7` | Removed line background in diffs |
+
+Every theme passes the contrast test in `theme.rs` on every surface text sits on (`bg`, `panel`,
+`elevated`, `hover`, a selected row, `added-bg`, `removed-bg`): `text` 7:1; `text-dim`,
+`text-faint`, accents, links and status colours 4.5:1; `control-border`, the focus ring and lane
+colours 3:1. The five other themes (Aurora, Ember, Neon, Forest, Paper) define the same tokens;
+`theme.rs` is the reference for their values.
 
 The accent gradient runs from `accent` to `accent-2` (violet to cyan in Midnight). It is used
 sparingly: the primary button, the active tab indicator, the welcome screen mark and progress
 bars.
 
-Selected rows use `accent` at low opacity over the row background (about 18% in Midnight, 12% in
-Daylight) with a 2px `accent` bar on the left edge.
+Selected rows use `Palette::selected()`: `accent` at low opacity over the row background (18% in
+dark themes, 12% in light ones) with a 2px `accent` bar on the left edge.
 
 ### Lane colours
 
