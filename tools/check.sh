@@ -18,4 +18,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 step "cargo test --workspace"
 cargo test --workspace --locked
 
+step "tools/release.py selftest"
+python3 tools/release.py selftest
+
 printf '\n\033[1;32mAll checks passed.\033[0m\n'

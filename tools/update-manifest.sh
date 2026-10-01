@@ -12,7 +12,7 @@ page=${3:?release page}
 base=${4:?download base}
 root=$(cd "$(dirname "$0")/.." && pwd)
 
-notes=$(GITHUB_REF_NAME="v$version" "$root/tools/release-package.sh" notes)
+notes=$(python3 "$root/tools/release.py" notes "$version")
 
 python3 - "$dist" "$version" "$page" "$base" "$notes" <<'PY'
 import datetime, json, os, sys

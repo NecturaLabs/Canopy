@@ -1,113 +1,159 @@
-# Build and publish a release when a `v*` tag is pushed (see the `release` skill).
+# Builds Canopy for every platform from a release tag, publishes the GitHub release and points
+# the update feed at it. It runs when the "Create release" workflow (create-release.yml) has
+# tagged a release, or when someone pushes a `v*` tag by hand; it never decides versions.
 #
-# The Linux build runs on the organisation's self-hosted Linux runners. Its glibc requirement is
-# that of the runner's distribution. The macOS and Windows builds use GitHub-hosted runners and
-# are switched off, not removed: set the repository variable `CANOPY_HOSTED_RELEASE` to `true`
-# (Settings → Secrets and variables → Actions → Variables) to build them again. A release
-# publishes whatever builds ran.
+# `publish-update` copies the builds to NecturaLabs/app-updates and commits the update manifest
+# (`canopy/latest.json`, or `beta.json` for a pre-release), so running copies of Canopy offer the
+# update.
 #
-# Running copies of Canopy learn about the release from the public NecturaLabs/app-updates
-# repository: the last job copies the builds to a `canopy-v<version>` release there and commits
-# the update manifest (`canopy/latest.json`, or `canopy/beta.json` for a pre-release). That job
-# needs the `APP_UPDATES_TOKEN` secret, a fine-grained token with Contents: read and write on
-# NecturaLabs/app-updates only; without it the job is skipped with a warning.
+# Secrets (Settings → Secrets and variables → Actions):
+# - APP_UPDATES_TOKEN (required for the update feed): fine-grained token, Contents read/write on
+#   NecturaLabs/app-updates only. Without it the feed step is skipped with a warning.
+# Variables: CANOPY_SENTRY_DSN overrides the built-in crash-report DSN (empty disables it);
+# USE_SELF_HOSTED = '0' moves the builds to GitHub-hosted runners, as in CI.
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag, e.g. v0.2.0
+        type: string
+        required: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
-  build-linux:
-    name: Build (x86_64-unknown-linux-gnu)
-    runs-on: [self-hosted, linux, wsl]
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          clean: false
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Check build tools
-        run: tools/ci-preflight.sh
-      - name: Check tag matches workspace version
-        run: tools/release-package.sh check-version
-      - name: Build
-        run: cargo build --release --locked -p canopy-app --target x86_64-unknown-linux-gnu
-      - name: Package
-        run: tools/release-package.sh package x86_64-unknown-linux-gnu tar.gz
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: canopy-x86_64-unknown-linux-gnu
-          path: dist/*
-          if-no-files-found: error
-          overwrite: true
-
-  # Switched off: GitHub-hosted macOS and Windows builds. See the note at the top.
-  build-hosted:
+  build:
     name: Build (${{ matrix.target }})
-    if: vars.CANOPY_HOSTED_RELEASE == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || !matrix.self-hosted) && matrix.os || fromJSON(matrix.self-hosted) }}
     timeout-minutes: 60
+    # On the self-hosted runners (Ubuntu 24.04) the Linux build runs in an
+    # Ubuntu 22.04 container to keep the same glibc floor.
+    container: ${{ vars.USE_SELF_HOSTED != '0' && matrix.container || '' }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Ubuntu 22.04, hosted or as the self-hosted container, keeps the glibc
+          # requirement at 2.35.
+          - os: ubuntu-22.04
+            self-hosted: '["self-hosted", "linux", "wsl"]'
+            container: ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
           - os: windows-latest
+            self-hosted: '["self-hosted", "windows", "x64"]'
             target: x86_64-pc-windows-msvc
             archive: zip
     defaults:
       run:
         shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      ARCHIVE: ${{ matrix.archive }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install build tools in the container
+        if: runner.os == 'Linux'
+        run: |
+          [[ -f /.dockerenv ]] || exit 0
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl git pkg-config
+      - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
+          cache-key: ${{ matrix.target }}
+
       - name: Check tag matches workspace version
-        run: tools/release-package.sh check-version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          if [[ "v$version" != "$TAG" ]]; then
+            echo "Tag $TAG does not match workspace version $version" >&2
+            exit 1
+          fi
+
       - name: Build
-        run: cargo build --release --locked -p canopy-app --target ${{ matrix.target }}
+        run: cargo build --release --locked -p canopy-app --target "$TARGET"
+        env:
+          CANOPY_SENTRY_DSN: ${{ vars.CANOPY_SENTRY_DSN }}
+
+      - name: Check the glibc requirement
+        if: runner.os == 'Linux'
+        run: |
+          need=$(objdump -T "target/$TARGET/release/canopy" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n1)
+          echo "Requires $need"
+          [[ "$(printf '%s\n' "$need" GLIBC_2.35 | sort -V | tail -n1)" == GLIBC_2.35 ]] \
+            || { echo "The Linux build requires $need, newer than GLIBC_2.35" >&2; exit 1; }
+
       - name: Package
-        run: tools/release-package.sh package ${{ matrix.target }} ${{ matrix.archive }}
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        run: |
+          name="canopy-${TAG#v}-$TARGET"
+          mkdir -p "dist/$name/legal"
+          bin="target/$TARGET/release/canopy"
+          [[ -f "$bin.exe" ]] && bin="$bin.exe"
+          cp "$bin" README.md LICENSE "dist/$name/"
+          cp docs/legal/*.md "dist/$name/legal/"
+          if [[ "$TARGET" == *linux* ]]; then
+            cp packaging/linux/io.necturalabs.Canopy.desktop \
+               packaging/linux/io.necturalabs.Canopy.metainfo.xml "dist/$name/"
+            cp assets/icon.svg "dist/$name/io.necturalabs.Canopy.svg"
+            cp assets/icon-256.png "dist/$name/io.necturalabs.Canopy.png"
+          fi
+          cd dist
+          if [[ "$ARCHIVE" == zip ]]; then
+            if command -v 7z > /dev/null; then
+              7z a -tzip "$name.zip" "$name" > /dev/null
+            else
+              # The self-hosted runners have no 7-Zip; Windows' own bsdtar writes zip.
+              "$(cygpath -u "$SYSTEMROOT")/System32/tar.exe" -a -cf "$name.zip" "$name"
+            fi
+          else
+            tar -czf "$name.tar.gz" "$name"
+          fi
+          rm -rf "$name"
+
+      - uses: actions/upload-artifact@v7
         with:
           name: canopy-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
-          overwrite: true
+
+      # The container runs as root on the runner's own work folder and home;
+      # hand them back so the runner's next job can clean and reuse them.
+      - name: Return container files to the runner's user
+        if: always() && runner.os == 'Linux'
+        run: |
+          [[ -f /.dockerenv ]] || exit 0
+          owner=$(stat -c %u:%g "$RUNNER_WORKSPACE")
+          chown -R "$owner" "$GITHUB_WORKSPACE" "$HOME"
 
   release:
     name: Publish release
-    needs: [build-linux, build-hosted]
-    # Publish when the Linux build succeeded and the hosted builds either succeeded or were
-    # switched off.
-    if: >-
-      !cancelled() && needs.build-linux.result == 'success' &&
-      (needs.build-hosted.result == 'success' || needs.build-hosted.result == 'skipped')
-    runs-on: [self-hosted, linux, wsl]
+    needs: build
+    runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
-          clean: false
+          ref: ${{ inputs.tag || github.ref_name }}
           persist-credentials: false
-      - name: Clear previous downloads
-        run: rm -rf dist notes.md
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -115,86 +161,109 @@ jobs:
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS
       - name: Release notes from CHANGELOG.md
-        run: tools/release-package.sh notes > notes.md
-      - uses: softprops/action-gh-release@v2
+        run: python3 tools/release.py notes "${TAG#v}" > notes.md
+      - uses: softprops/action-gh-release@v3
         with:
-          name: Canopy ${{ github.ref_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: Canopy ${{ inputs.tag || github.ref_name }}
           body_path: notes.md
+          prerelease: ${{ contains(inputs.tag || github.ref_name, '-') }}
           files: dist/*
           fail_on_unmatched_files: true
 
   publish-update:
     name: Publish to the update feed
     needs: release
-    runs-on: [self-hosted, linux, wsl]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      APP_UPDATES_TOKEN: ${{ secrets.APP_UPDATES_TOKEN }}
     steps:
       - name: Check for the token
         id: token
+        env:
+          HAS_TOKEN: ${{ secrets.APP_UPDATES_TOKEN != '' }}
         run: |
-          if [[ -z "$APP_UPDATES_TOKEN" ]]; then
+          if [[ "$HAS_TOKEN" != true ]]; then
             echo "::warning::APP_UPDATES_TOKEN is not set: running copies of Canopy will not be offered this release."
             echo "present=false" >> "$GITHUB_OUTPUT"
           else
             echo "present=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         if: steps.token.outputs.present == 'true'
         with:
-          clean: false
+          ref: ${{ inputs.tag || github.ref_name }}
           persist-credentials: false
-      - name: Clear previous downloads
-        if: steps.token.outputs.present == 'true'
-        run: rm -rf dist app-updates
       - uses: actions/download-artifact@v8
         if: steps.token.outputs.present == 'true'
         with:
           path: dist
           merge-multiple: true
-      - name: Release the builds on app-updates
+      - name: Prepare the feed release
         if: steps.token.outputs.present == 'true'
         id: feed
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          tag="canopy-v$version"
-          prerelease=false
-          [[ "$version" == *-* ]] && prerelease=true
+          VERSION="${TAG#v}"
           (cd dist && sha256sum * > SHA256SUMS)
-          tools/release-package.sh notes > notes.md
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-      - uses: softprops/action-gh-release@v2
+          python3 tools/release.py notes "$VERSION" > notes.md
+          prerelease=false
+          [[ "$VERSION" == *-* ]] && prerelease=true
+          {
+            echo "tag=canopy-v$VERSION"
+            echo "version=$VERSION"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v3
         if: steps.token.outputs.present == 'true'
         with:
           repository: NecturaLabs/app-updates
           token: ${{ secrets.APP_UPDATES_TOKEN }}
           tag_name: ${{ steps.feed.outputs.tag }}
           target_commitish: main
-          name: Canopy ${{ github.ref_name }}
+          name: Canopy ${{ inputs.tag || github.ref_name }}
           body_path: notes.md
           prerelease: ${{ steps.feed.outputs.prerelease == 'true' }}
           files: dist/*
           fail_on_unmatched_files: true
       - name: Commit the update manifest
         if: steps.token.outputs.present == 'true'
+        env:
+          APP_UPDATES_TOKEN: ${{ secrets.APP_UPDATES_TOKEN }}
+          VERSION: ${{ steps.feed.outputs.version }}
+          FEED_TAG: ${{ steps.feed.outputs.tag }}
+          PRERELEASE: ${{ steps.feed.outputs.prerelease }}
         run: |
-          version="${{ steps.feed.outputs.version }}"
-          tag="${{ steps.feed.outputs.tag }}"
           channel=latest
-          [[ "${{ steps.feed.outputs.prerelease }}" == true ]] && channel=beta
-          git clone --depth 1 "https://x-access-token:${APP_UPDATES_TOKEN}@github.com/NecturaLabs/app-updates.git" app-updates
-          mkdir -p app-updates/canopy
-          tools/update-manifest.sh dist "$version" \
-            "https://github.com/NecturaLabs/app-updates/releases/tag/$tag" \
-            "https://github.com/NecturaLabs/app-updates/releases/download/$tag" \
-            > "app-updates/canopy/$channel.json"
-          cd app-updates
-          git config user.name "Canopy release"
-          git config user.email "releases@necturalabs.invalid"
-          git add "canopy/$channel.json"
-          git commit -m "canopy: publish $version to the $channel channel"
-          git push origin main
-          cd .. && rm -rf app-updates
+          [[ "$PRERELEASE" == true ]] && channel=beta
+          work="$RUNNER_TEMP/app-updates"
+          rm -rf "$work"
+          # The token travels in a header for these commands only: never in a URL, the process
+          # list or the clone's configuration.
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$APP_UPDATES_TOKEN" | base64 -w0)"
+          git -c "http.extraheader=$auth" clone --depth 1 https://github.com/NecturaLabs/app-updates.git "$work"
+          mkdir -p "$work/canopy"
+          manifest="$work/canopy/$channel.json"
+          # Never move a channel backwards (a hotfix tagged after a newer release).
+          if [[ -f $manifest ]]; then
+            current=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$manifest")
+            highest=$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -1)
+            if [[ $current != "$VERSION" && $highest == "$current" ]]; then
+              echo "::warning::The $channel channel already offers $current; not replacing it with $VERSION."
+              exit 0
+            fi
+          fi
+          tools/update-manifest.sh dist "$VERSION" \
+            "https://github.com/NecturaLabs/app-updates/releases/tag/$FEED_TAG" \
+            "https://github.com/NecturaLabs/app-updates/releases/download/$FEED_TAG" \
+            > "$manifest"
+          git -C "$work" config user.name "github-actions[bot]"
+          git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$work" add "canopy/$channel.json"
+          if git -C "$work" diff --cached --quiet; then
+            echo "The $channel manifest already describes $VERSION."
+            exit 0
+          fi
+          git -C "$work" commit -m "canopy: publish $VERSION to the $channel channel"
+          git -C "$work" -c "http.extraheader=$auth" push origin main
+      - name: Clean up
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/app-updates"

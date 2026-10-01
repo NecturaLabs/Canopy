@@ -1,13 +1,16 @@
 # Tools
 
-Shell scripts for development, verification and installation. All are Bash, run from any
-directory, and print usage with `-h` or when called without required arguments.
+Scripts for development, verification, installation and releases. They run from any directory
+and print usage with `-h` or when called without required arguments.
 
 | Script | Purpose |
 |---|---|
 | `check.sh` | The local CI: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`. Must pass before a change is done. |
 | `mkfixture.sh [--force] <dir> [kind]` | Creates a deterministic demo repository with plain `git` (fixed identities and dates, user config ignored). Kinds: `showcase` (default), `conflict`, `linear`, `big`. |
-| `screenshot.sh <repo> <out.png> [--light] [--view history\|changes] [--size WxH]` | Renders Canopy on Xvfb with software OpenGL, saves one frame once the repository has loaded and prints the PNG path. |
+| `screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history\|changes\|requests] [--overlay NAME] [--size WxH]` | Renders Canopy on Xvfb with software OpenGL, saves one frame once the repository has loaded and prints the PNG path. `<repo>` may be `-` for the welcome screen. Overlays: `settings`, `privacy`, `cheatsheet`, `palette`, `consent`, `crash-consent`, `legal`, `merge`. |
+| `mock-hosting.py [port]` | A stand-in GitHub API on `127.0.0.1` with four pull requests, reviews, comments and checks. Start it and set `CANOPY_HOSTING_API_BASE=http://127.0.0.1:<port>` to screenshot the pull request view without a network or token. |
+| `release.py plan\|apply\|notes\|selftest` | Release automation: the next semantic version from Conventional Commits, the version bump, the CHANGELOG and AppStream entries, and a version's release notes. Used by the Create release workflow; `selftest` runs its tests. |
+| `update-manifest.sh <dist> <version> <page> <download-base>` | Writes the update-feed manifest (`latest.json`) for a release's archives and `SHA256SUMS`. Used by the Release workflow. |
 | `install-desktop.sh [--uninstall]` | Builds a release binary and installs it with its desktop entry, AppStream metainfo and icons under `~/.local` (Linux). |
 
 ## Fixture kinds
