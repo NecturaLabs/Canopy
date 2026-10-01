@@ -3,7 +3,7 @@
 use egui::{Align2, CornerRadius, FontId, RichText, Sense, Ui, vec2};
 use egui_phosphor::regular as icon;
 
-use crate::app::Action;
+use crate::app::{Action, forge_icon};
 use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
 use crate::views::dialogs::Dialog;
@@ -182,7 +182,21 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 }
                 let name = b.name.clone();
                 let is_head = b.is_head;
+                // The branch's page on GitHub/GitLab, through its upstream remote.
+                let upstream_forge = b.upstream.as_deref().and_then(|u| {
+                    let (remote, rest) = u.split_once('/')?;
+                    Some((tab.forge_of(remote)?.clone(), rest.to_owned()))
+                });
                 resp.context_menu(|ui| {
+                    if let Some((f, remote_branch)) = &upstream_forge {
+                        if ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
+                            actions.push(Action::OpenExternal(f.branch_url(remote_branch)));
+                        }
+                        if ui.button(format!("{}  Create {}…", icon::GIT_PULL_REQUEST, f.kind.request_noun())).clicked() {
+                            actions.push(Action::CreateRequest { source: name.clone() });
+                        }
+                        ui.separator();
+                    }
                     if !is_head && ui.button(format!("{}  Check out", icon::CHECK)).clicked() {
                         actions.push(Action::Op(Op::Checkout(name.clone())));
                     }
@@ -221,10 +235,24 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
 
         // Remotes.
         if section(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len()) {
+            if snap.remotes.is_empty() {
+                let resp = row(ui, Row { glyph: icon::HARD_DRIVES, label: "Local only — no remote", indent: 6.0, strong: false, color: p.text_faint, ahead: 0, behind: 0, hint: Some("Everything stays on this computer. Publish to GitHub or GitLab to share it.") });
+                if resp.clicked() {
+                    actions.push(Action::Publish);
+                }
+                if ui.add(egui::Button::new(RichText::new(format!("{}  Publish…", icon::CLOUD_ARROW_UP)).size(12.0).color(p.accent)).frame(false)).clicked() {
+                    actions.push(Action::Publish);
+                }
+            }
             for r in &snap.remotes {
                 let key = format!("remote:{}", r.name);
                 let open = !tab.collapsed.contains(&key);
-                let resp = row(ui, Row { glyph: if open { icon::CARET_DOWN } else { icon::CARET_RIGHT }, label: &r.name, indent: 6.0, strong: false, color: p.accent2, ahead: 0, behind: 0, hint: r.url.as_deref() });
+                let forge = tab.forge_of(&r.name).cloned();
+                let label = match &forge {
+                    Some(f) => format!("{}  {}", r.name, forge_icon(f.kind)),
+                    None => r.name.clone(),
+                };
+                let resp = row(ui, Row { glyph: if open { icon::CARET_DOWN } else { icon::CARET_RIGHT }, label: &label, indent: 6.0, strong: false, color: p.accent2, ahead: 0, behind: 0, hint: r.url.as_deref() });
                 if resp.clicked() {
                     if open {
                         tab.collapsed.insert(key.clone());
@@ -235,8 +263,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 let rname = r.name.clone();
                 let url = r.url.clone().unwrap_or_default();
                 resp.context_menu(|ui| {
+                    if let Some(f) = &forge
+                        && ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
+                            actions.push(Action::OpenExternal(f.web_url()));
+                        }
                     if ui.button(format!("{}  Fetch", icon::ARROWS_CLOCKWISE)).clicked() {
-                        actions.push(Action::Op(Op::Fetch));
+                        actions.push(Action::Fetch);
                     }
                     if ui.button(format!("{}  Copy URL", icon::COPY)).clicked() {
                         actions.push(Action::Copy(url.clone()));
@@ -259,7 +291,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     if resp.double_clicked() {
                         actions.push(Action::Op(Op::CheckoutRemote { remote: remote.clone(), branch: branch.clone() }));
                     }
+                    let rb_forge = forge.clone();
                     resp.context_menu(|ui| {
+                        if let Some(f) = &rb_forge
+                            && ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
+                                actions.push(Action::OpenExternal(f.branch_url(&branch)));
+                            }
                         if ui.button(format!("{}  Check out as local branch", icon::CHECK)).clicked() {
                             actions.push(Action::Op(Op::CheckoutRemote { remote: remote.clone(), branch: branch.clone() }));
                         }
@@ -276,8 +313,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     });
                 }
             }
-            if ui.add(egui::Button::new(RichText::new(format!("{}  Add remote", icon::PLUS)).size(12.0).color(p.text_faint)).frame(false)).clicked() {
-                actions.push(Action::OpenDialog(Dialog::AddRemote { name: "origin".into(), url: String::new() }));
+            if ui.add(egui::Button::new(RichText::new(format!("{}  Add remote", icon::PLUS)).size(12.0).color(p.text_dim)).frame(false)).clicked() {
+                actions.push(Action::AddRemoteDialog);
             }
             ui.add_space(8.0);
         }
@@ -293,7 +330,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 let name = t.name.clone();
                 let target = t.target;
                 let remote = snap.remotes.first().map(|r| r.name.clone());
+                let tag_forge = tab.forge().map(|(_, f)| f.clone());
                 resp.context_menu(|ui| {
+                    if let Some(f) = &tag_forge {
+                        let what = if f.kind == canopy_core::forge::ForgeKind::GitHub { "release" } else { "tag" };
+                        if ui.button(format!("{}  Open {what} on {}", forge_icon(f.kind), f.kind.name())).clicked() {
+                            actions.push(Action::OpenExternal(f.tag_url(&name)));
+                        }
+                    }
                     if let Some(oid) = target
                         && ui.button(format!("{}  Check out (detached)", icon::CHECK)).clicked() {
                             actions.push(Action::Op(Op::CheckoutDetached(oid)));

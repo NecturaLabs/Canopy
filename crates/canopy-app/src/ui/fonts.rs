@@ -59,7 +59,11 @@ pub fn install(ctx: &egui::Context) {
         .families
         .insert(FontFamily::Name("semibold".into()), with("inter-semibold"));
     if let Some(mono) = fonts.families.get_mut(&FontFamily::Monospace) {
+        // Icons inside monospace text (branch names in pills) come from Phosphor, ahead of the
+        // default monospace font's own private-use glyphs.
+        mono.retain(|f| f != "phosphor");
         mono.insert(0, "jetbrains-mono".to_owned());
+        mono.insert(1, "phosphor".to_owned());
     }
     ctx.set_fonts(fonts);
 }

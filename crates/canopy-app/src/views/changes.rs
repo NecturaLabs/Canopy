@@ -8,7 +8,7 @@ use canopy_core::{DiffSource, FileEntry};
 use crate::app::Action;
 use crate::tab::{FileSelection, RepoTab};
 use crate::ui::theme::{self, Palette, palette};
-use crate::ui::widgets;
+use crate::ui::{art, widgets};
 use crate::views::{commit_detail, diff};
 use crate::worker::Op;
 
@@ -71,9 +71,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     let st = &snap.status;
                     if st.is_clean() {
                         ui.vertical_centered(|ui| {
-                            ui.add_space(50.0);
-                            ui.label(RichText::new(icon::SPARKLE).size(38.0).color(p.accent));
-                            ui.add_space(4.0);
+                            ui.add_space(40.0);
+                            art::show(ui, art::empty_clean(), vec2(160.0, 120.0));
+                            ui.add_space(6.0);
                             ui.label(RichText::new("Working tree clean").font(FontId::new(15.0, theme::semibold())));
                             ui.label(RichText::new("Nothing to commit. Edit some files and they show up here.").color(p.text_dim).size(12.5));
                         });
@@ -236,7 +236,9 @@ fn list(
                 .button(format!("{}  Open file", icon::ARROW_SQUARE_OUT))
                 .clicked()
             {
-                actions.push(Action::OpenPath(tab.path.join(&entry.path)));
+                actions.push(Action::OpenExternal(
+                    tab.path.join(&entry.path).display().to_string(),
+                ));
             }
             if ui.button(format!("{}  Copy path", icon::COPY)).clicked() {
                 actions.push(Action::Copy(entry.path.clone()));
@@ -273,13 +275,18 @@ fn composer(
         });
     });
     ui.add_space(4.0);
-    ui.add(
+    let summary = ui.add(
         egui::TextEdit::singleline(&mut tab.commit_summary)
+            .id(egui::Id::new("commit-summary"))
             .hint_text("Summary (required)")
             .font(FontId::new(13.5, theme::medium()))
             .desired_width(f32::INFINITY)
             .margin(egui::Margin::symmetric(8, 6)),
     );
+    if tab.focus_summary {
+        summary.request_focus();
+        tab.focus_summary = false;
+    }
     ui.add_space(6.0);
     ui.add(
         egui::TextEdit::multiline(&mut tab.commit_body)
@@ -315,7 +322,7 @@ fn composer(
         "Stage files to commit".to_owned()
     };
     if widgets::primary_button(ui, &label, can, ui.available_width())
-        .on_hover_text("Ctrl+Enter")
+        .on_hover_text(crate::keymap::hint(crate::keymap::Command::Commit))
         .clicked()
         && can
     {

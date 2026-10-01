@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Usage: tools/screenshot.sh <repo> <out.png> [--light] [--view history|changes] [--size WxH]
+# Usage: tools/screenshot.sh <repo> <out.png> [--light] [--theme NAME] [--view history|changes|requests]
+#                            [--overlay settings|cheatsheet|palette] [--size WxH]
+#
+# <repo> may be "-" to render the welcome screen with no repository open.
 #
 # Renders Canopy headlessly on a virtual X server (Xvfb, software OpenGL via Mesa llvmpipe) with
 # <repo> open, saves one frame to <out.png> once the repository has loaded, and prints the output
@@ -18,14 +21,20 @@ extra=()
 while [[ $# -gt 0 ]]; do
   case $1 in
     --light) extra+=(--light); shift ;;
-    --view) extra+=(--view "${2:?--view needs history or changes}"); shift 2 ;;
+    --theme) extra+=(--theme "${2:?--theme needs a name}"); shift 2 ;;
+    --view) extra+=(--view "${2:?--view needs history, changes or requests}"); shift 2 ;;
+    --overlay) extra+=(--overlay "${2:?--overlay needs settings, cheatsheet or palette}"); shift 2 ;;
     --size) size=${2:?--size needs WxH}; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage; exit 2 ;;
   esac
 done
 if [[ ! $size =~ ^[0-9]+x[0-9]+$ ]]; then echo "invalid --size: $size (expected WxH)" >&2; exit 2; fi
-[[ -d $repo ]] || { echo "not a directory: $repo" >&2; exit 1; }
+repo_args=()
+if [[ $repo != - ]]; then
+  [[ -d $repo ]] || { echo "not a directory: $repo" >&2; exit 1; }
+  repo_args=("$repo")
+fi
 command -v xvfb-run >/dev/null || { echo "xvfb-run not found (apt install xvfb)" >&2; exit 1; }
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -41,7 +50,7 @@ rm -f "$out_abs"
 # Force X11 inside Xvfb even when called from a Wayland session.
 env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 \
   timeout 60 xvfb-run -a -s "-screen 0 ${size}x24" \
-  "$CANOPY_BIN" --screenshot "$out_abs" --size "$size" "${extra[@]}" "$repo"
+  "$CANOPY_BIN" --screenshot "$out_abs" --size "$size" "${extra[@]}" "${repo_args[@]}"
 
 [[ -s $out_abs ]] || { echo "no screenshot was written" >&2; exit 1; }
 echo "$out_abs"

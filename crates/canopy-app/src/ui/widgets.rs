@@ -217,7 +217,31 @@ pub fn tool_button(
         FontId::new(11.0, theme::medium()),
         color,
     );
+    let name = label.to_owned();
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &name));
     resp.on_hover_text(tooltip)
+}
+
+/// A button for a dangerous action: danger-coloured label on a tinted fill, readable in every
+/// theme.
+pub fn danger_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
+    let p = palette(ui.ctx());
+    ui.add(
+        egui::Button::new(RichText::new(text).color(p.danger).strong())
+            .fill(Palette::tint(p.danger, if p.dark { 40 } else { 26 }))
+            .stroke(Stroke::new(1.0, Palette::tint(p.danger, 170)))
+            .min_size(min_size),
+    )
+}
+
+/// The filled accent button used outside gradients (confirmations).
+pub fn accent_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
+    let p = palette(ui.ctx());
+    ui.add(
+        egui::Button::new(RichText::new(text).color(p.on_button).strong())
+            .fill(p.button)
+            .min_size(min_size),
+    )
 }
 
 /// The primary call to action: a gradient button.
@@ -231,11 +255,13 @@ pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Res
             Sense::hover()
         },
     );
-    let hover = ui
-        .ctx()
-        .animate_bool_with_time(resp.id, enabled && resp.hovered(), 0.12);
+    let hover = ui.ctx().animate_bool_with_time(
+        resp.id,
+        enabled && resp.hovered(),
+        theme::fade(ui.ctx(), 0.12),
+    );
     let (a, b) = if enabled {
-        (p.accent, p.accent2)
+        (p.button, p.button2)
     } else {
         (p.border, p.border)
     };
@@ -255,11 +281,7 @@ pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Res
             egui::StrokeKind::Outside,
         );
     }
-    let fg = if enabled {
-        Color32::WHITE
-    } else {
-        p.text_faint
-    };
+    let fg = if enabled { p.on_button } else { p.text_faint };
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,
@@ -267,6 +289,8 @@ pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Res
         FontId::new(13.5, theme::semibold()),
         fg,
     );
+    let label = text.to_owned();
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
     resp
 }
 
@@ -320,49 +344,6 @@ pub fn glow(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Col
         mesh.add_triangle(0, i, i + 1);
     }
     painter.add(mesh);
-}
-
-/// The Canopy mark: a trunk with two branches curving out, drawn with the accent gradient.
-pub fn paint_logo(painter: &egui::Painter, center: egui::Pos2, size: f32, p: &Palette) {
-    let s = size / 24.0;
-    let pt = |x: f32, y: f32| center + vec2((x - 12.0) * s, (y - 12.0) * s);
-    let stroke = |c: Color32| egui::epaint::PathStroke::new(2.0 * s, c);
-    let curve = |a: egui::Pos2, b: egui::Pos2, c: egui::Pos2, d: egui::Pos2, col: Color32| {
-        painter.add(egui::epaint::CubicBezierShape::from_points_stroke(
-            [a, b, c, d],
-            false,
-            Color32::TRANSPARENT,
-            stroke(col),
-        ));
-    };
-    let mid = p.accent.lerp_to_gamma(p.accent2, 0.5);
-    painter.line_segment(
-        [pt(12.0, 21.0), pt(12.0, 5.0)],
-        egui::Stroke::new(2.0 * s, p.accent),
-    );
-    curve(
-        pt(12.0, 15.0),
-        pt(12.0, 11.0),
-        pt(5.0, 11.0),
-        pt(5.0, 7.0),
-        mid,
-    );
-    curve(
-        pt(12.0, 13.0),
-        pt(12.0, 9.5),
-        pt(19.0, 10.0),
-        pt(19.0, 6.0),
-        p.accent2,
-    );
-    for (x, y, c) in [
-        (12.0, 21.0, p.accent),
-        (12.0, 4.5, p.accent),
-        (5.0, 6.5, mid),
-        (19.0, 5.5, p.accent2),
-    ] {
-        painter.circle_filled(pt(x, y), 2.6 * s, c);
-        painter.circle_filled(pt(x, y), 1.1 * s, p.bg);
-    }
 }
 
 /// A section heading in small capitals.

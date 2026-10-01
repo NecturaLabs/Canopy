@@ -4,9 +4,10 @@ use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Ui, vec2};
 use egui_phosphor::regular as icon;
 
 use crate::app::Action;
+use crate::keymap::{Command, hint};
 use crate::settings::Settings;
 use crate::ui::theme::{self, Palette, palette};
-use crate::ui::widgets;
+use crate::ui::{art, widgets};
 use crate::views::dialogs::Dialog;
 
 /// Draws the welcome screen.
@@ -14,7 +15,12 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let rect = ui.max_rect();
     // Ambient glow.
-    let t = ui.input(|i| i.time) as f32;
+    let still = settings.reduce_motion;
+    let t = if still {
+        0.0
+    } else {
+        ui.input(|i| i.time) as f32
+    };
     let drift = vec2((t * 0.25).sin() * 30.0, (t * 0.2).cos() * 20.0);
     widgets::glow(
         ui.painter(),
@@ -28,24 +34,19 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
         480.0,
         Palette::tint(p.accent2, if p.dark { 30 } else { 22 }),
     );
-    ui.ctx()
-        .request_repaint_after(std::time::Duration::from_millis(33));
+    if !still {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(33));
+    }
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space((rect.height() * 0.12).max(30.0));
-                let (logo, _) = ui.allocate_exact_size(vec2(88.0, 88.0), Sense::hover());
-                ui.painter().rect(
-                    logo,
-                    CornerRadius::same(22),
-                    p.elevated,
-                    Stroke::new(1.0, Palette::tint(p.accent, 110)),
-                    egui::StrokeKind::Inside,
-                );
-                widgets::paint_logo(ui.painter(), logo.center(), 60.0, p);
-                ui.add_space(16.0);
+                ui.add_space((rect.height() * 0.04).max(16.0));
+                let art_w = (rect.width() * 0.5).clamp(320.0, 520.0);
+                art::show(ui, art::welcome(), vec2(art_w, art_w * 9.0 / 16.0));
+                ui.add_space(4.0);
                 ui.label(
                     RichText::new("Canopy")
                         .font(FontId::new(38.0, theme::semibold()))
@@ -70,7 +71,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                             icon::FOLDER_OPEN,
                             "Open",
                             "A repository on disk",
-                            "Ctrl O",
+                            &hint(Command::Open),
                             card_w,
                         ) {
                             actions.push(Action::OpenDialog(Dialog::open()));
@@ -79,11 +80,11 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                             ui,
                             icon::CLOUD_ARROW_DOWN,
                             "Clone",
-                            "From a URL",
-                            "Ctrl Shift N",
+                            "GitHub, GitLab or any URL",
+                            &hint(Command::Clone),
                             card_w,
                         ) {
-                            actions.push(Action::OpenDialog(Dialog::clone_default()));
+                            actions.push(Action::OpenDialog(Dialog::clone_default(settings)));
                         }
                         if card(
                             ui,
@@ -99,7 +100,12 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                         }
                     },
                 );
-                ui.add_space(34.0);
+                ui.add_space(24.0);
+
+                if !settings.seen_intro {
+                    intro(ui, total, actions);
+                    ui.add_space(20.0);
+                }
 
                 if !settings.recent.is_empty() {
                     ui.allocate_ui_with_layout(
@@ -169,12 +175,54 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                 }
                 ui.add_space(24.0);
                 ui.label(
-                    RichText::new("Press Ctrl+K anywhere for the command palette")
-                        .size(12.0)
-                        .color(p.text_faint),
+                    RichText::new(format!(
+                        "{} for the command palette   ·   ? for keyboard shortcuts",
+                        hint(Command::Palette)
+                    ))
+                    .size(12.0)
+                    .color(p.text_faint),
                 );
             });
         });
+}
+
+/// First-run tips: how Canopy is meant to be driven.
+fn intro(ui: &mut Ui, width: f32, actions: &mut Vec<Action>) {
+    let p = palette(ui.ctx());
+    ui.allocate_ui_with_layout(
+        vec2(width, 10.0),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            egui::Frame::new()
+                .fill(Palette::tint(p.accent, if p.dark { 26 } else { 18 }))
+                .stroke(Stroke::new(1.0, Palette::tint(p.accent, 90)))
+                .corner_radius(CornerRadius::same(theme::RADIUS_LG))
+                .inner_margin(egui::Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_width(width - 28.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(icon::LIGHTBULB).size(18.0).color(p.accent));
+                        ui.label(
+                            RichText::new("Canopy is keyboard-first")
+                                .font(FontId::new(14.0, theme::semibold())),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Got it").clicked() {
+                                actions.push(Action::DismissIntro);
+                            }
+                        });
+                    });
+                    ui.add_space(4.0);
+                    for line in [
+                        format!("{}  opens the command palette: every action, branch and repository.", hint(Command::Palette)),
+                        "?  shows every shortcut. 1 / 2 / 3 switch views, j / k move, f / p / P fetch, pull, push.".to_owned(),
+                        "Settings (Ctrl+,) has themes, Git defaults and your GitHub / GitLab tokens for pull requests.".to_owned(),
+                    ] {
+                        ui.label(RichText::new(line).size(12.5).color(p.text_dim));
+                    }
+                });
+        },
+    );
 }
 
 fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) -> bool {
@@ -220,6 +268,8 @@ fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) ->
         FontId::proportional(12.0),
         p.text_dim,
     );
+    let name = title.to_owned();
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
     if !keys.is_empty() {
         ui.painter().text(
             r.right_top() + vec2(-14.0, 28.0),

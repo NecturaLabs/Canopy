@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120" viewBox="0 0 160 120">
+  <defs>
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#34D399" stop-opacity="0.18"/>
+      <stop offset="0.6" stop-color="#8B5CF6" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="stem" gradientUnits="userSpaceOnUse" x1="0" y1="88" x2="0" y2="34">
+      <stop offset="0" stop-color="#10B981"/>
+      <stop offset="1" stop-color="#34D399"/>
+    </linearGradient>
+    <linearGradient id="pot" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8A93A5"/>
+      <stop offset="1" stop-color="#636B7D"/>
+    </linearGradient>
+  </defs>
+  <circle cx="80" cy="60" r="50" fill="url(#halo)"/>
+  <!-- pot -->
+  <path d="M63 92 H97 L93.5 106 Q92.8 109 89.8 109 H70.2 Q67.2 109 66.5 106 Z" fill="url(#pot)"/>
+  <rect x="58" y="85" width="44" height="8" rx="4" fill="#9AA3B5"/>
+  <!-- leaves -->
+  <path d="M80 78 C72 79 66 75 64 69 C71 68 77 71 80 78 Z" fill="#34D399" opacity="0.85"/>
+  <path d="M80 72 C87 73 93 69 95 63 C88 62 83 65 80 72 Z" fill="#34D399" opacity="0.7"/>
+  <!-- stem and branches -->
+  <g fill="none" stroke="url(#stem)" stroke-width="2.5" stroke-linecap="round">
+    <path d="M80 85 V38"/>
+    <path d="M80 66 C80 58 63 60 63 50"/>
+    <path d="M80 58 C80 50 97 52 97 42"/>
+  </g>
+  <!-- commit nodes -->
+  <g fill="#8B5CF6">
+    <circle cx="63" cy="48" r="4"/>
+    <circle cx="97" cy="40" r="4"/>
+    <circle cx="80" cy="35" r="4.5"/>
+  </g>
+  <g fill="#C4B5FD" opacity="0.9">
+    <circle cx="63" cy="48" r="1.5"/>
+    <circle cx="97" cy="40" r="1.5"/>
+    <circle cx="80" cy="35" r="1.7"/>
+  </g>
+  <!-- sparkles -->
+  <g fill="#22D3EE">
+    <path d="M42 26 Q42 34 50 34 Q42 34 42 42 Q42 34 34 34 Q42 34 42 26 Z"/>
+    <path d="M120 22 Q120 28 126 28 Q120 28 120 34 Q120 28 114 28 Q120 28 120 22 Z" opacity="0.85"/>
+    <path d="M118 66 Q118 70.5 122.5 70.5 Q118 70.5 118 75 Q118 70.5 113.5 70.5 Q118 70.5 118 66 Z" opacity="0.7"/>
+  </g>
+  <circle cx="50" cy="60" r="1.6" fill="#8B5CF6" opacity="0.6"/>
+  <circle cx="110" cy="50" r="1.4" fill="#22D3EE" opacity="0.6"/>
+</svg>

@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
-use canopy_core::ops::{HunkAction, ResetMode};
+use canopy_core::ops::{HunkAction, PullStrategy, ResetMode};
 use canopy_core::{
-    CommitDetails, DiffSource, FileDiff, FileEntry, Oid, Repo, RepoSnapshot, RepoState,
+    CommitDetails, DiffSource, FileDiff, FileEntry, Oid, Repo, RepoSnapshot, RepoState, Whitespace,
     WorkingStatus,
 };
 
@@ -25,10 +25,13 @@ pub enum Op {
         path: String,
         index: usize,
         key: (u32, u32, u32, u32),
+        /// Context lines of the diff the hunk came from.
+        context: u32,
     },
     Commit {
         message: String,
         amend: bool,
+        signoff: bool,
     },
     CreateBranch {
         name: String,
@@ -80,9 +83,13 @@ pub enum Op {
         pop: bool,
     },
     StashDrop(usize),
-    Fetch,
+    /// Fetch every remote. `quiet` skips the success toast (auto-fetch).
+    Fetch {
+        prune: bool,
+        quiet: bool,
+    },
     Pull {
-        rebase: bool,
+        strategy: PullStrategy,
     },
     Push {
         force: bool,
@@ -94,6 +101,12 @@ pub enum Op {
     RemoveRemote(String),
     DeleteRemoteBranch {
         remote: String,
+        branch: String,
+    },
+    /// Fetch a pull/merge request's head into a local branch and check it out.
+    CheckoutRequest {
+        remote: String,
+        remote_ref: String,
         branch: String,
     },
 }
@@ -142,13 +155,14 @@ impl Op {
             Op::StashApply { pop: true, .. } => "Popping stash".into(),
             Op::StashApply { .. } => "Applying stash".into(),
             Op::StashDrop(_) => "Dropping stash".into(),
-            Op::Fetch => "Fetching".into(),
+            Op::Fetch { .. } => "Fetching".into(),
             Op::Pull { .. } => "Pulling".into(),
             Op::Push { force: true } => "Force pushing".into(),
             Op::Push { .. } => "Pushing".into(),
             Op::AddRemote { name, .. } => format!("Adding remote {name}"),
             Op::RemoveRemote(r) => format!("Removing remote {r}"),
             Op::DeleteRemoteBranch { remote, branch } => format!("Deleting {remote}/{branch}"),
+            Op::CheckoutRequest { branch, .. } => format!("Checking out {branch}"),
         }
     }
 
@@ -156,7 +170,12 @@ impl Op {
     pub fn announce(&self) -> bool {
         !matches!(
             self,
-            Op::Stage(_) | Op::StageAll | Op::Unstage(_) | Op::UnstageAll | Op::Hunk { .. }
+            Op::Stage(_)
+                | Op::StageAll
+                | Op::Unstage(_)
+                | Op::UnstageAll
+                | Op::Hunk { .. }
+                | Op::Fetch { quiet: true, .. }
         )
     }
 }
@@ -186,6 +205,7 @@ pub struct DiffKey {
     pub old_path: Option<String>,
     pub conflicted: bool,
     pub context: u32,
+    pub whitespace: Whitespace,
 }
 
 /// What the repository thread reports back.
@@ -279,7 +299,13 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     let result = if key.conflicted {
                         repo.conflict_view(&key.path)
                     } else {
-                        repo.file_diff(&key.source, &key.path, key.old_path.as_deref(), key.context)
+                        repo.file_diff(
+                            &key.source,
+                            &key.path,
+                            key.old_path.as_deref(),
+                            key.context,
+                            key.whitespace,
+                        )
                     };
                     emit(Event::Diff(key, result.map_err(|e| e.to_string())));
                 }
@@ -335,8 +361,15 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
             path,
             index,
             key,
-        } => done(repo.apply_hunk(action, &path, index, key, 3)),
-        Op::Commit { message, amend } => repo.commit(&message, amend).map(canopy_core::short_id),
+            context,
+        } => done(repo.apply_hunk(action, &path, index, key, context)),
+        Op::Commit {
+            message,
+            amend,
+            signoff,
+        } => repo
+            .commit(&message, amend, signoff)
+            .map(canopy_core::short_id),
         Op::CreateBranch {
             name,
             start,
@@ -367,14 +400,19 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
         }
         Op::StashApply { index, pop } => done(repo.stash_apply(index, pop)),
         Op::StashDrop(i) => done(repo.stash_drop(i)),
-        Op::Fetch => repo.fetch(None, progress),
-        Op::Pull { rebase } => repo.pull(rebase, progress),
+        Op::Fetch { prune, .. } => repo.fetch(None, prune, progress),
+        Op::Pull { strategy } => repo.pull(strategy, progress),
         Op::Push { force } => repo.push(force, progress),
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
         Op::DeleteRemoteBranch { remote, branch } => {
             repo.delete_remote_branch(&remote, &branch, progress)
         }
+        Op::CheckoutRequest {
+            remote,
+            remote_ref,
+            branch,
+        } => repo.checkout_request(&remote, &remote_ref, &branch, progress),
     }
 }
 

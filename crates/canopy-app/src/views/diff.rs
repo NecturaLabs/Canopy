@@ -8,6 +8,7 @@ use canopy_core::ops::HunkAction;
 use canopy_core::{DiffSource, LineKind};
 
 use crate::app::Action;
+use crate::settings::WhitespaceMode;
 use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
 use crate::ui::widgets;
@@ -49,6 +50,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    diff_options(ui, tab, actions);
                     if let Some(d) = &tab.diff {
                         ui.label(
                             RichText::new(format!("−{}", d.deletions))
@@ -161,6 +163,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let source = sel.source.clone();
     let path = sel.entry.path.clone();
     let conflicted = sel.conflicted;
+    let context = tab.diff_prefs.context;
+    // A whitespace-insensitive diff cannot be applied as a patch: no hunk actions then.
+    let hunk_actions = tab.diff_prefs.whitespace == WhitespaceMode::Show;
     egui::ScrollArea::both().auto_shrink([false, false]).id_salt(("diff", &path)).show_viewport(ui, |ui, viewport| {
         let total: f32 = heights.iter().sum();
         ui.set_min_size(vec2(content_w, total + 16.0));
@@ -183,7 +188,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     ui.painter().rect_filled(band, CornerRadius::ZERO, Palette::tint(p.accent, if p.dark { 22 } else { 16 }));
                     let visible_left = viewport.min.x + origin.x;
                     ui.painter().text(pos2(visible_left + 12.0, band.center().y), Align2::LEFT_CENTER, &hunk.header, FontId::monospace(11.5), p.accent.lerp_to_gamma(p.text_dim, 0.4));
-                    if !conflicted {
+                    if !conflicted && !hunk_actions && !matches!(source, DiffSource::Commit(_)) {
+                        let note = "Hunk actions are off while whitespace is ignored";
+                        ui.painter().text(pos2(origin.x + viewport.max.x - 12.0, band.center().y), Align2::RIGHT_CENTER, note, FontId::proportional(11.5), p.text_faint);
+                    }
+                    if !conflicted && hunk_actions {
                         let buttons: &[(HunkAction, &str, &str)] = match source {
                             DiffSource::Unstaged => &[(HunkAction::Discard, icon::ARROW_COUNTER_CLOCKWISE, "Discard hunk"), (HunkAction::Stage, icon::PLUS, "Stage hunk")],
                             DiffSource::Staged => &[(HunkAction::Unstage, icon::MINUS, "Unstage hunk")],
@@ -201,7 +210,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                             ui.painter().rect(br, CornerRadius::same(theme::RADIUS_SM), fill, Stroke::new(1.0, Palette::tint(base, 140)), egui::StrokeKind::Inside);
                             ui.painter().galley(br.center() - g.size() / 2.0, g, if danger { p.danger } else { p.text });
                             if resp.clicked() {
-                                let op = Op::Hunk { action: *action, path: path.clone(), index: *h, key: hunk.key() };
+                                let op = Op::Hunk { action: *action, path: path.clone(), index: *h, key: hunk.key(), context };
                                 if danger {
                                     actions.push(Action::Confirm { title: "Discard hunk".into(), body: format!("Throw away this change to {path}? It cannot be recovered."), confirm: "Discard".into(), danger: true, op });
                                 } else {
@@ -248,6 +257,39 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         let gx = origin.x + num_w * 2.0 + 2.0;
         ui.painter().vline(gx, (origin.y + viewport.min.y)..=(origin.y + viewport.max.y), Stroke::new(1.0, p.border));
     });
+}
+
+/// Context lines and whitespace handling for this repository's diffs.
+fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
+    let p = palette(ui.ctx());
+    let prefs = &mut tab.diff_prefs;
+    let mut changed = false;
+    let resp = ui
+        .add(egui::Button::new(
+            RichText::new(format!("{}  {}", icon::SLIDERS_HORIZONTAL, prefs.context))
+                .size(12.0)
+                .color(p.text_dim),
+        ))
+        .on_hover_text("Diff options: context lines and whitespace (this repository)");
+    egui::Popup::menu(&resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_min_width(230.0);
+            ui.label(RichText::new("Context lines").size(12.0).color(p.text_dim));
+            changed |= ui
+                .add(egui::Slider::new(&mut prefs.context, 0..=25))
+                .changed();
+            ui.add_space(6.0);
+            ui.label(RichText::new("Whitespace").size(12.0).color(p.text_dim));
+            for mode in WhitespaceMode::ALL {
+                changed |= ui
+                    .radio_value(&mut prefs.whitespace, mode, mode.label())
+                    .changed();
+            }
+        });
+    if changed {
+        actions.push(Action::DiffPrefsChanged);
+    }
 }
 
 fn empty(ui: &mut Ui, glyph: &str, title: &str, body: &str) {

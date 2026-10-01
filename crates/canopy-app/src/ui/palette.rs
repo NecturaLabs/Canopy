@@ -14,8 +14,8 @@ pub struct Entry {
     pub label: String,
     /// Secondary text (a group such as "Branch" or a path).
     pub detail: String,
-    /// Keyboard shortcut hint.
-    pub shortcut: &'static str,
+    /// Keyboard shortcut hint (from the keymap).
+    pub shortcut: String,
 }
 
 /// Scores how well `query` matches `text` as a subsequence. Consecutive and word-start matches
@@ -243,7 +243,7 @@ impl CommandPalette {
                                         ui.painter().text(
                                             rect.right_center() - vec2(10.0, 0.0),
                                             Align2::RIGHT_CENTER,
-                                            e.shortcut,
+                                            &e.shortcut,
                                             FontId::monospace(11.5),
                                             p.text_faint,
                                         );

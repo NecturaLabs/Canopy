@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120" viewBox="0 0 160 120">
+  <defs>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#22D3EE" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="soil" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A4356"/>
+      <stop offset="1" stop-color="#262D3B"/>
+    </linearGradient>
+    <linearGradient id="seed" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A78BFA"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+  <!-- future trunk -->
+  <path d="M80 52 V38 M80 22 V14" fill="none" stroke="#9AA3B5" stroke-width="2" stroke-linecap="round" stroke-dasharray="0.1 7" opacity="0.7"/>
+  <circle cx="80" cy="30" r="4" fill="none" stroke="#9AA3B5" stroke-width="1.5" stroke-dasharray="2.5 3" opacity="0.5"/>
+  <!-- soil -->
+  <ellipse cx="80" cy="97" rx="36" ry="9" fill="url(#soil)"/>
+  <ellipse cx="80" cy="95" rx="28" ry="5" fill="#9AA3B5" opacity="0.12"/>
+  <!-- seed -->
+  <ellipse cx="80" cy="94" rx="7" ry="5" fill="url(#seed)"/>
+  <!-- sprout -->
+  <g fill="none" stroke="#8B5CF6" stroke-width="2.5" stroke-linecap="round">
+    <path d="M80 91 C80 84 79 78 80 66"/>
+  </g>
+  <path d="M80 82 C73 82 68 77 67 71 C74 71 79 75 80 82 Z" fill="#8B5CF6" opacity="0.85"/>
+  <path d="M80 76 C85 76 90 72 91 67 C86 67 81 70 80 76 Z" fill="#8B5CF6" opacity="0.6"/>
+  <!-- first commit node -->
+  <circle cx="80" cy="62" r="12" fill="url(#glow)"/>
+  <circle cx="80" cy="62" r="5" fill="#22D3EE"/>
+  <circle cx="80" cy="62" r="2" fill="#0E7490" opacity="0.8"/>
+</svg>

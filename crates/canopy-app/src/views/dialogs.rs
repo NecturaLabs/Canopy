@@ -3,13 +3,123 @@
 use egui::{FontId, Id, Key, RichText, Ui};
 use egui_phosphor::regular as icon;
 
+use canopy_core::forge::{self, ForgeKind};
 use canopy_core::{Oid, short_id};
+use canopy_hosting::NewRequest;
 
 use crate::app::Action;
+use crate::hosting::HostJob;
+use crate::settings::{CloneProtocol, Settings};
 use crate::tab::RepoTab;
 use crate::ui::theme::{self, palette};
-use crate::ui::widgets;
+use crate::ui::{art, widgets};
 use crate::worker::Op;
+
+/// Where a remote URL comes from in the clone and add-remote dialogs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UrlSource {
+    GitHub,
+    GitLab,
+    Url,
+}
+
+/// Builds a remote URL from `owner/repo` (GitHub, GitLab) or takes it verbatim.
+#[derive(Debug, Clone)]
+pub struct UrlBuilder {
+    pub source: UrlSource,
+    pub url: String,
+    pub project: String,
+    /// GitLab host; empty means gitlab.com.
+    pub host: String,
+    pub ssh: bool,
+}
+
+impl UrlBuilder {
+    fn new(settings: &Settings) -> Self {
+        Self {
+            source: UrlSource::GitHub,
+            url: String::new(),
+            project: String::new(),
+            host: String::new(),
+            ssh: settings.clone_protocol == CloneProtocol::Ssh,
+        }
+    }
+
+    /// The URL to use, if complete.
+    pub fn resolve(&self) -> Option<String> {
+        let kind = match self.source {
+            UrlSource::Url => {
+                let u = self.url.trim();
+                return (!u.is_empty()).then(|| u.to_owned());
+            }
+            UrlSource::GitHub => ForgeKind::GitHub,
+            UrlSource::GitLab => ForgeKind::GitLab,
+        };
+        let host = (kind == ForgeKind::GitLab)
+            .then(|| self.host.trim())
+            .filter(|h| !h.is_empty());
+        forge::clone_url(kind, host, self.project.trim(), self.ssh)
+    }
+
+    fn ui(&mut self, ui: &mut Ui, focus: bool) {
+        let p = palette(ui.ctx());
+        ui.horizontal(|ui| {
+            for (s, glyph, label) in [
+                (UrlSource::GitHub, icon::GITHUB_LOGO, "GitHub"),
+                (UrlSource::GitLab, icon::GITLAB_LOGO_SIMPLE, "GitLab"),
+                (UrlSource::Url, icon::LINK, "URL"),
+            ] {
+                ui.selectable_value(&mut self.source, s, format!("{glyph}  {label}"));
+            }
+        });
+        ui.add_space(8.0);
+        match self.source {
+            UrlSource::Url => {
+                field(
+                    ui,
+                    "Repository URL",
+                    &mut self.url,
+                    "https://host/owner/repo.git or git@host:owner/repo.git",
+                    focus,
+                );
+            }
+            UrlSource::GitHub | UrlSource::GitLab => {
+                if self.source == UrlSource::GitLab {
+                    field(
+                        ui,
+                        "Host (empty for gitlab.com)",
+                        &mut self.host,
+                        "gitlab.example.com",
+                        false,
+                    );
+                }
+                let hint = if self.source == UrlSource::GitHub {
+                    "owner/repository"
+                } else {
+                    "group/subgroup/project"
+                };
+                field(ui, "Project", &mut self.project, hint, focus);
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.ssh, false, "HTTPS");
+                    ui.selectable_value(&mut self.ssh, true, "SSH");
+                });
+                ui.add_space(4.0);
+                match self.resolve() {
+                    Some(u) => {
+                        ui.label(RichText::new(u).monospace().size(11.5).color(p.text_faint))
+                    }
+                    None if !self.project.trim().is_empty() => ui.label(
+                        RichText::new("Use the form owner/repository")
+                            .size(12.0)
+                            .color(p.danger),
+                    ),
+                    None => ui.label(""),
+                };
+                ui.add_space(4.0);
+            }
+        }
+    }
+}
 
 /// Every dialog Canopy shows.
 #[derive(Debug, Clone)]
@@ -18,7 +128,7 @@ pub enum Dialog {
         path: String,
     },
     Clone {
-        url: String,
+        builder: UrlBuilder,
         parent: String,
     },
     Init {
@@ -48,7 +158,15 @@ pub enum Dialog {
     },
     AddRemote {
         name: String,
-        url: String,
+        builder: UrlBuilder,
+        /// Push the current branch after adding (publishing a local-only repository).
+        publish: bool,
+    },
+    NewRequest {
+        kind: ForgeKind,
+        request: NewRequest,
+        /// Branches on the remote, for the target picker.
+        branches: Vec<String>,
     },
     Confirm {
         title: String,
@@ -57,8 +175,14 @@ pub enum Dialog {
         danger: bool,
         op: Op,
     },
-    Settings,
     About,
+    /// What's new in an available update.
+    Update(Box<crate::updater::Available>),
+    /// What's new in this version (after an upgrade, or from the palette).
+    WhatsNew {
+        version: String,
+        notes: String,
+    },
 }
 
 /// What a dialog wants after this frame.
@@ -69,10 +193,7 @@ pub enum Outcome {
 }
 
 fn home() -> String {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(|h| h.to_string_lossy().into_owned())
-        .unwrap_or_default()
+    crate::settings::home_dir().display().to_string()
 }
 
 impl Dialog {
@@ -81,19 +202,29 @@ impl Dialog {
         Dialog::Open { path: home() }
     }
 
-    /// The clone dialog with `~/src` (or home) as the destination.
-    pub fn clone_default() -> Self {
-        let h = home();
-        let src = std::path::Path::new(&h).join("src");
-        let parent = if src.is_dir() {
-            src.display().to_string()
-        } else {
-            h
-        };
+    /// The clone dialog with the default clone folder as the destination.
+    pub fn clone_default(settings: &Settings) -> Self {
         Dialog::Clone {
-            url: String::new(),
-            parent,
+            builder: UrlBuilder::new(settings),
+            parent: settings.clone_parent(),
         }
+    }
+
+    /// The add-remote dialog.
+    pub fn add_remote(settings: &Settings) -> Self {
+        Dialog::AddRemote {
+            name: "origin".into(),
+            builder: UrlBuilder::new(settings),
+            publish: false,
+        }
+    }
+
+    /// Turns an add-remote dialog into "Publish": add, then push the current branch.
+    pub fn publishing(mut self) -> Self {
+        if let Dialog::AddRemote { publish, .. } = &mut self {
+            *publish = true;
+        }
+        self
     }
 
     /// New branch starting at `start` (HEAD when `None`).
@@ -195,9 +326,10 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         outcome = Outcome::Run(vec![Action::OpenRepo(path.trim().into())]);
                     }
                 }
-                Dialog::Clone { url, parent } => {
+                Dialog::Clone { builder, parent } => {
                     title(ui, icon::CLOUD_ARROW_DOWN, "Clone repository");
-                    field(ui, "Repository URL", url, "https://github.com/owner/repo.git or git@host:owner/repo.git", true);
+                    builder.ui(ui, true);
+                    let url = builder.resolve().unwrap_or_default();
                     ui.label(RichText::new("Clone into").size(12.0).color(p.text_dim));
                     ui.horizontal(|ui| {
                         ui.add(egui::TextEdit::singleline(parent).desired_width(340.0).margin(egui::Margin::symmetric(8, 6)));
@@ -211,6 +343,9 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     ui.add_space(4.0);
                     ui.label(RichText::new(format!("→ {}", dest.display())).size(12.0).color(p.text_faint));
                     ui.add_space(8.0);
+                    if dest.exists() && !name.is_empty() {
+                        ui.label(RichText::new("That folder already exists").size(12.0).color(p.danger));
+                    }
                     let ok = !url.trim().is_empty() && !name.is_empty() && !dest.exists();
                     if primary(ui, "Clone", ok) {
                         outcome = Outcome::Run(vec![Action::Clone { url: url.trim().to_owned(), dest }]);
@@ -314,13 +449,49 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         outcome = Outcome::Run(vec![Action::Op(op)]);
                     }
                 }
-                Dialog::AddRemote { name, url } => {
-                    title(ui, icon::CLOUD, "Add remote");
+                Dialog::AddRemote { name, builder, publish } => {
+                    if *publish {
+                        title(ui, icon::CLOUD_ARROW_UP, "Publish repository");
+                        ui.label(RichText::new("This repository is local only. Create an empty repository on GitHub or GitLab, enter it here, and Canopy adds it as a remote and pushes the current branch.").size(12.5).color(p.text_dim));
+                        ui.add_space(10.0);
+                    } else {
+                        title(ui, icon::CLOUD, "Add remote");
+                    }
                     field(ui, "Name", name, "origin", false);
-                    field(ui, "URL", url, "git@github.com:owner/repo.git", true);
-                    let ok = valid_ref_name(name.trim()) && !url.trim().is_empty();
-                    if primary(ui, "Add remote", ok) {
-                        outcome = Outcome::Run(vec![Action::Op(Op::AddRemote { name: name.trim().to_owned(), url: url.trim().to_owned() })]);
+                    builder.ui(ui, true);
+                    let url = builder.resolve();
+                    let ok = valid_ref_name(name.trim()) && url.is_some();
+                    if primary(ui, if *publish { "Add and push" } else { "Add remote" }, ok)
+                        && let Some(url) = url
+                    {
+                        let mut run = vec![Action::Op(Op::AddRemote { name: name.trim().to_owned(), url })];
+                        if *publish {
+                            run.push(Action::Op(Op::Push { force: false }));
+                        }
+                        outcome = Outcome::Run(run);
+                    }
+                }
+                Dialog::NewRequest { kind, request, branches } => {
+                    title(ui, icon::GIT_PULL_REQUEST, &format!("New {}", kind.request_noun()));
+                    ui.label(RichText::new(format!("{}  {}  →", icon::GIT_BRANCH, request.source)).size(12.5).color(p.text_dim));
+                    ui.add_space(4.0);
+                    egui::ComboBox::from_id_salt("request-target").width(410.0).selected_text(format!("{}  {}", icon::GIT_BRANCH, request.target)).show_ui(ui, |ui| {
+                        for b in branches.iter().filter(|b| **b != request.source) {
+                            ui.selectable_value(&mut request.target, b.clone(), b);
+                        }
+                    });
+                    ui.add_space(10.0);
+                    field(ui, "Title", &mut request.title, "What this change does", true);
+                    ui.label(RichText::new("Description").size(12.0).color(p.text_dim));
+                    ui.add(egui::TextEdit::multiline(&mut request.body).desired_rows(6).desired_width(f32::INFINITY).hint_text("Why, how it was tested, anything reviewers should know (Markdown)").margin(egui::Margin::symmetric(8, 6)));
+                    ui.add_space(6.0);
+                    ui.checkbox(&mut request.draft, "Create as draft");
+                    ui.add_space(8.0);
+                    let ok = !request.title.trim().is_empty() && !request.target.is_empty() && request.target != request.source;
+                    if primary(ui, &format!("Create {}", kind.request_abbrev()), ok) {
+                        let mut r = request.clone();
+                        r.title = r.title.trim().to_owned();
+                        outcome = Outcome::Run(vec![Action::Host(HostJob::Create(r))]);
                     }
                 }
                 Dialog::Confirm { title: t, body, confirm, danger, op } => {
@@ -334,8 +505,9 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     ui.add_space(16.0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let b = egui::Button::new(RichText::new(confirm.as_str()).color(egui::Color32::WHITE).strong()).fill(if *danger { p.danger } else { p.accent }).min_size(egui::vec2(120.0, 34.0));
-                            if ui.add(b).clicked() {
+                            let size = egui::vec2(120.0, 34.0);
+                            let b = if *danger { widgets::danger_button(ui, confirm, size) } else { widgets::accent_button(ui, confirm, size) };
+                            if b.clicked() {
                                 outcome = Outcome::Run(vec![Action::Op(op.clone())]);
                             }
                             if ui.add_sized([90.0, 34.0], egui::Button::new("Cancel")).clicked() {
@@ -344,12 +516,58 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         });
                     });
                 }
-                // Rendered by the app, which owns the settings.
-                Dialog::Settings => {}
+                Dialog::Update(a) => {
+                    title(ui, icon::ARROW_CIRCLE_UP, &format!("Canopy {} is available", a.version));
+                    ui.label(RichText::new(format!("You have {}.{}", env!("CARGO_PKG_VERSION"), a.manifest.pub_date.as_deref().and_then(|d| d.get(..10)).map(|d| format!(" Released {d}.")).unwrap_or_default())).size(12.5).color(p.text_dim));
+                    ui.add_space(8.0);
+                    egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                            let notes = a.manifest.notes.trim();
+                            if notes.is_empty() {
+                                ui.label(RichText::new("No release notes.").color(p.text_faint));
+                            } else {
+                                crate::ui::notes::markdown(ui, notes);
+                            }
+                        });
+                    });
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let download = a.manifest.artifact().is_some();
+                            if widgets::primary_button(ui, if download { "Download" } else { "Open release" }, true, 150.0).clicked() {
+                                outcome = Outcome::Run(vec![Action::OpenExternal(a.download())]);
+                            }
+                            if ui.add_sized([90.0, 34.0], egui::Button::new("Later")).clicked() {
+                                outcome = Outcome::Close;
+                            }
+                            if ui.add_sized([130.0, 34.0], egui::Button::new("Skip this version")).clicked() {
+                                outcome = Outcome::Run(vec![Action::SkipVersion(a.version.to_string())]);
+                            }
+                        });
+                    });
+                }
+                Dialog::WhatsNew { version, notes } => {
+                    title(ui, icon::SPARKLE, &format!("What's new in Canopy {version}"));
+                    egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| crate::ui::notes::markdown(ui, notes));
+                    });
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if widgets::primary_button(ui, "Continue", true, 120.0).clicked() || enter {
+                                outcome = Outcome::Close;
+                            }
+                            if ui.add_sized([150.0, 34.0], egui::Button::new(format!("{}  All releases", icon::ARROW_SQUARE_OUT))).clicked() {
+                                outcome = Outcome::Run(vec![Action::OpenExternal(crate::updater::RELEASES_PAGE.to_owned())]);
+                            }
+                        });
+                    });
+                }
                 Dialog::About => {
                     ui.vertical_centered(|ui| {
-                        let (r, _) = ui.allocate_exact_size(egui::vec2(64.0, 64.0), egui::Sense::hover());
-                        widgets::paint_logo(ui.painter(), r.center(), 56.0, p);
+                        art::show(ui, art::logo(), egui::vec2(64.0, 64.0));
                         ui.label(RichText::new("Canopy").font(FontId::new(24.0, theme::semibold())));
                         ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(p.text_dim));
                         ui.add_space(8.0);
@@ -357,9 +575,21 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         ui.label(RichText::new("© 2026 NecturaLabs. Built with Rust, egui and libgit2.").size(12.0).color(p.text_faint));
                         ui.label(RichText::new("Fonts: Inter and JetBrains Mono (SIL OFL 1.1). Icons: Phosphor (MIT).").size(12.0).color(p.text_faint));
                         ui.add_space(10.0);
-                        if ui.button("Close").clicked() {
-                            outcome = Outcome::Close;
-                        }
+                        ui.horizontal(|ui| {
+                            ui.add_space((ui.available_width() - 400.0).max(0.0) / 2.0);
+                            if ui.button(format!("{}  Check for updates", icon::ARROW_CIRCLE_UP)).clicked() {
+                                outcome = Outcome::Run(vec![Action::CheckUpdates]);
+                            }
+                            if ui.button(format!("{}  What's new", icon::SPARKLE)).clicked() {
+                                outcome = Outcome::Run(vec![Action::WhatsNew]);
+                            }
+                            if ui.button(format!("{}  Releases", icon::ARROW_SQUARE_OUT)).clicked() {
+                                outcome = Outcome::Run(vec![Action::OpenExternal(crate::updater::RELEASES_PAGE.to_owned())]);
+                            }
+                            if ui.button("Close").clicked() {
+                                outcome = Outcome::Close;
+                            }
+                        });
                     });
                 }
             }

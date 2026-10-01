@@ -2,18 +2,25 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::time::Instant;
 
+use canopy_core::forge::Forge;
 use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, RepoSnapshot};
+use canopy_hosting::{MergeMethod, RequestDetails, RequestSummary, StateFilter};
 
+use crate::hosting::{HostEvent, HostJob, HostWorker, TokenSource};
+use crate::settings::DiffPrefs;
 use crate::worker::{DiffKey, Event, Job, Op, Worker};
 
-/// The two main views of a repository.
+/// The main views of a repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
     /// Commit graph and details.
     History,
     /// Staging area and commit composer.
     Changes,
+    /// Pull requests (GitHub) or merge requests (GitLab).
+    Requests,
 }
 
 /// A file whose diff is shown.
@@ -32,6 +39,46 @@ pub struct Notice {
     pub body: String,
 }
 
+/// Pull or merge requests of the tab's forge.
+#[derive(Debug)]
+pub struct Requests {
+    pub filter: StateFilter,
+    pub list: Option<Result<Vec<RequestSummary>, String>>,
+    pub loading: bool,
+    pub selected: Option<u64>,
+    pub details: Option<Result<RequestDetails, String>>,
+    pub details_loading: bool,
+    /// An action in flight ("Merging PR #12").
+    pub busy: Option<String>,
+    pub comment: String,
+    pub merge_method: MergeMethod,
+    /// An action waiting for a second click ("merge", "close"), with when it was armed.
+    pub arming: Option<(String, f64)>,
+    /// Where the token came from; `None` while unknown, `Some(None)` without a token.
+    pub token: Option<Option<TokenSource>>,
+    /// When the list was last loaded.
+    pub loaded_at: Option<Instant>,
+}
+
+impl Default for Requests {
+    fn default() -> Self {
+        Self {
+            filter: StateFilter::Open,
+            list: None,
+            loading: false,
+            selected: None,
+            details: None,
+            details_loading: false,
+            busy: None,
+            comment: String::new(),
+            merge_method: MergeMethod::Merge,
+            arming: None,
+            token: None,
+            loaded_at: None,
+        }
+    }
+}
+
 /// One repository tab.
 #[derive(Debug)]
 pub struct RepoTab {
@@ -47,22 +94,41 @@ pub struct RepoTab {
     pub diff: Option<FileDiff>,
     pub diff_error: Option<String>,
     pub pending_diff: Option<DiffKey>,
+    /// Diff context and whitespace for this repository.
+    pub diff_prefs: DiffPrefs,
     pub filter: String,
     pub filtered: Option<Vec<usize>>,
     pub filter_for: String,
     pub commit_summary: String,
     pub commit_body: String,
     pub amend: bool,
+    /// Move keyboard focus to the commit summary next frame.
+    pub focus_summary: bool,
     pub running: Option<String>,
     pub progress: Option<String>,
     pub commit_limit: usize,
+    /// Centre the selected commit next frame.
     pub scroll_to_selected: bool,
+    /// Scroll just enough to show the selected commit next frame.
+    pub reveal_selected: bool,
     pub collapsed: HashSet<String>,
+    /// GitHub and GitLab remotes: (remote name, forge).
+    pub forges: Vec<(String, Forge)>,
+    /// The API thread for the main forge remote.
+    pub host: Option<HostWorker>,
+    pub requests: Requests,
+    /// The last fetch, for auto-fetch.
+    pub last_fetch: Instant,
 }
 
 impl RepoTab {
     /// Opens a tab and asks for the first snapshot.
-    pub fn new(path: PathBuf, ctx: &egui::Context, commit_limit: usize) -> Self {
+    pub fn new(
+        path: PathBuf,
+        ctx: &egui::Context,
+        commit_limit: usize,
+        diff_prefs: DiffPrefs,
+    ) -> Self {
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -82,17 +148,24 @@ impl RepoTab {
             diff: None,
             diff_error: None,
             pending_diff: None,
+            diff_prefs,
             filter: String::new(),
             filtered: None,
             filter_for: String::new(),
             commit_summary: String::new(),
             commit_body: String::new(),
             amend: false,
+            focus_summary: false,
             running: None,
             progress: None,
             commit_limit,
             scroll_to_selected: false,
+            reveal_selected: false,
             collapsed: HashSet::new(),
+            forges: Vec::new(),
+            host: None,
+            requests: Requests::default(),
+            last_fetch: Instant::now(),
         }
     }
 
@@ -104,6 +177,118 @@ impl RepoTab {
     /// Requests a full refresh.
     pub fn refresh(&self) {
         self.worker.send(Job::Refresh(self.commit_limit));
+    }
+
+    /// The repository has no remote at all.
+    pub fn is_local_only(&self) -> bool {
+        self.snap.as_ref().is_some_and(|s| s.remotes.is_empty())
+    }
+
+    /// Recomputes which remotes are GitHub or GitLab.
+    pub fn update_forges(&mut self, gitlab_hosts: &[String]) {
+        self.forges = self
+            .snap
+            .as_ref()
+            .map(|s| {
+                s.remotes
+                    .iter()
+                    .filter_map(|r| {
+                        let url = r.url.as_deref()?;
+                        Some((r.name.clone(), Forge::parse(url, gitlab_hosts)?))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+
+    /// The forge of `remote`.
+    pub fn forge_of(&self, remote: &str) -> Option<&Forge> {
+        self.forges
+            .iter()
+            .find(|(r, _)| r == remote)
+            .map(|(_, f)| f)
+    }
+
+    /// The main forge remote: the current branch's upstream remote, else `origin`, else the
+    /// first GitHub or GitLab remote.
+    pub fn forge(&self) -> Option<&(String, Forge)> {
+        let upstream_remote = self
+            .snap
+            .as_ref()
+            .and_then(|s| s.current_branch())
+            .and_then(|b| b.upstream.as_deref())
+            .and_then(|u| u.split('/').next());
+        upstream_remote
+            .and_then(|r| self.forges.iter().find(|(n, _)| n == r))
+            .or_else(|| self.forges.iter().find(|(n, _)| n == "origin"))
+            .or_else(|| self.forges.first())
+    }
+
+    /// `branch` is the main forge remote's default branch (`refs/remotes/<r>/HEAD`).
+    pub fn is_default_branch(&self, branch: &str) -> bool {
+        let Some((remote, _)) = self.forge() else {
+            return false;
+        };
+        self.snap
+            .as_ref()
+            .and_then(|s| s.remotes.iter().find(|r| &r.name == remote))
+            .and_then(|r| r.default_branch.as_deref())
+            .is_some_and(|d| d == branch)
+    }
+
+    /// Starts (or restarts, when the forge changed) the API thread.
+    pub fn ensure_host(&mut self, ctx: &egui::Context, saved_token: Option<String>, enabled: bool) {
+        let want = if enabled {
+            self.forge().map(|(_, f)| f.clone())
+        } else {
+            None
+        };
+        if self.host.as_ref().map(|h| &h.forge) == want.as_ref() {
+            return;
+        }
+        self.requests = Requests::default();
+        self.host = want.map(|f| HostWorker::spawn(f, saved_token, ctx.clone()));
+        self.load_requests();
+    }
+
+    /// Restarts the API thread, e.g. after the token changed.
+    pub fn restart_host(
+        &mut self,
+        ctx: &egui::Context,
+        saved_token: Option<String>,
+        enabled: bool,
+    ) {
+        self.host = None;
+        self.ensure_host(ctx, saved_token, enabled);
+    }
+
+    /// Reloads the request list.
+    pub fn load_requests(&mut self) {
+        if let Some(h) = &self.host {
+            self.requests.loading = true;
+            h.send(HostJob::List(self.requests.filter));
+        }
+    }
+
+    /// Shows one request.
+    pub fn select_request(&mut self, number: u64) {
+        if self.requests.selected == Some(number) && self.requests.details.is_some() {
+            return;
+        }
+        self.requests.selected = Some(number);
+        self.requests.details = None;
+        self.requests.comment.clear();
+        if let Some(h) = &self.host {
+            self.requests.details_loading = true;
+            h.send(HostJob::Details(number));
+        }
+    }
+
+    /// Runs an API action.
+    pub fn host_job(&mut self, job: HostJob) {
+        if let Some(h) = &self.host {
+            h.send(job);
+        }
     }
 
     /// Selects a commit and loads its details.
@@ -118,16 +303,24 @@ impl RepoTab {
         self.worker.send(Job::Details(oid));
     }
 
-    /// Shows the diff of a file.
-    pub fn select_file(&mut self, sel: FileSelection) {
-        let key = DiffKey {
+    fn diff_key(&self, sel: &FileSelection) -> DiffKey {
+        DiffKey {
             source: sel.source.clone(),
             path: sel.entry.path.clone(),
             old_path: sel.entry.old_path.clone(),
             conflicted: sel.conflicted,
-            context: 3,
-        };
-        if self.file.as_ref() == Some(&sel) && self.diff.is_some() {
+            context: self.diff_prefs.context,
+            whitespace: self.diff_prefs.whitespace.core(),
+        }
+    }
+
+    /// Shows the diff of a file.
+    pub fn select_file(&mut self, sel: FileSelection) {
+        let key = self.diff_key(&sel);
+        if self.file.as_ref() == Some(&sel)
+            && self.diff.is_some()
+            && self.pending_diff.as_ref() == Some(&key)
+        {
             return;
         }
         self.file = Some(sel);
@@ -136,11 +329,110 @@ impl RepoTab {
         self.worker.send(Job::Diff(key));
     }
 
-    fn reload_diff(&mut self) {
+    /// Reloads the open diff, keeping the old one on screen until the new one arrives.
+    pub fn reload_diff(&mut self) {
         if let Some(sel) = self.file.clone() {
-            self.diff = None;
-            self.select_file(sel);
+            let key = self.diff_key(&sel);
+            self.diff_error = None;
+            self.pending_diff = Some(key.clone());
+            self.worker.send(Job::Diff(key));
         }
+    }
+
+    /// Commits in display order (filtered or all).
+    pub fn visible_rows(&mut self) -> Vec<usize> {
+        let filtered = self.filtered_rows().map(<[usize]>::to_vec);
+        filtered.unwrap_or_else(|| (0..self.snap.as_ref().map_or(0, |s| s.commits.len())).collect())
+    }
+
+    /// Moves the commit selection by `delta` rows (clamped); `None` jumps to the first row and
+    /// `Some(isize::MAX)` to the last.
+    pub fn move_commit(&mut self, delta: isize) {
+        let rows = self.visible_rows();
+        let Some(snap) = &self.snap else { return };
+        if rows.is_empty() {
+            return;
+        }
+        let pos = self
+            .selected_commit
+            .and_then(|s| rows.iter().position(|&i| snap.commits[i].oid == s));
+        let last = rows.len() - 1;
+        let next = match (pos, delta) {
+            (_, isize::MIN) => 0,
+            (_, isize::MAX) => last,
+            (None, _) => 0,
+            (Some(p), d) => p.saturating_add_signed(d).min(last),
+        };
+        let oid = snap.commits[rows[next]].oid;
+        self.select_commit(oid);
+        self.reveal_selected = true;
+    }
+
+    /// Working-copy files in display order: conflicts, unstaged, staged.
+    pub fn change_rows(&self) -> Vec<FileSelection> {
+        let Some(s) = &self.snap else {
+            return Vec::new();
+        };
+        let st = &s.status;
+        let mut v: Vec<FileSelection> = st
+            .conflicted
+            .iter()
+            .map(|e| FileSelection {
+                source: DiffSource::Unstaged,
+                entry: e.clone(),
+                conflicted: true,
+            })
+            .collect();
+        v.extend(st.unstaged.iter().map(|e| FileSelection {
+            source: DiffSource::Unstaged,
+            entry: e.clone(),
+            conflicted: false,
+        }));
+        v.extend(st.staged.iter().map(|e| FileSelection {
+            source: DiffSource::Staged,
+            entry: e.clone(),
+            conflicted: false,
+        }));
+        v
+    }
+
+    /// Moves the file selection in Changes.
+    pub fn move_file(&mut self, delta: isize) {
+        let rows = self.change_rows();
+        if rows.is_empty() {
+            return;
+        }
+        let pos = self
+            .file
+            .as_ref()
+            .and_then(|f| rows.iter().position(|r| r == f));
+        let last = rows.len() - 1;
+        let next = match pos {
+            None => 0,
+            Some(p) => p.saturating_add_signed(delta).min(last),
+        };
+        self.select_file(rows[next].clone());
+    }
+
+    /// Moves the request selection.
+    pub fn move_request(&mut self, delta: isize) {
+        let numbers: Vec<u64> = match &self.requests.list {
+            Some(Ok(l)) => l.iter().map(|r| r.number).collect(),
+            _ => return,
+        };
+        if numbers.is_empty() {
+            return;
+        }
+        let pos = self
+            .requests
+            .selected
+            .and_then(|n| numbers.iter().position(|x| *x == n));
+        let last = numbers.len() - 1;
+        let next = match pos {
+            None => 0,
+            Some(p) => p.saturating_add_signed(delta).min(last),
+        };
+        self.select_request(numbers[next]);
     }
 
     /// Keeps the selected working-copy file valid after the status changed.
@@ -181,8 +473,8 @@ impl RepoTab {
         }
     }
 
-    /// Applies events from the worker. Returns notices for the app to show.
-    pub fn poll(&mut self) -> Vec<Notice> {
+    /// Applies events from the workers. Returns notices for the app to show.
+    pub fn poll(&mut self, gitlab_hosts: &[String]) -> Vec<Notice> {
         let mut notices = Vec::new();
         while let Ok(ev) = self.worker.events.try_recv() {
             match ev {
@@ -191,6 +483,7 @@ impl RepoTab {
                     let head = s.head.oid;
                     let had = self.snap.is_some();
                     self.snap = Some(*s);
+                    self.update_forges(gitlab_hosts);
                     self.load_error = None;
                     self.filter_for = String::from("\u{0}");
                     if !had || self.selected_commit.is_none() {
@@ -275,6 +568,9 @@ impl RepoTab {
                                 self.amend = false;
                                 self.selected_commit = None;
                             }
+                            if label.starts_with("Fetch") {
+                                self.last_fetch = Instant::now();
+                            }
                             if announce {
                                 notices.push(Notice {
                                     ok: true,
@@ -302,7 +598,106 @@ impl RepoTab {
                 }
             }
         }
+        self.poll_host(&mut notices);
         notices
+    }
+
+    fn poll_host(&mut self, notices: &mut Vec<Notice>) {
+        let Some(host) = &self.host else { return };
+        let kind = host.forge.kind;
+        let events: Vec<HostEvent> = host.events.try_iter().collect();
+        for ev in events {
+            match ev {
+                HostEvent::Token(t) => self.requests.token = Some(t),
+                HostEvent::List(filter, result) => {
+                    if filter == self.requests.filter {
+                        self.requests.loading = false;
+                        self.requests.loaded_at = Some(Instant::now());
+                        let first = result
+                            .as_ref()
+                            .ok()
+                            .and_then(|l| l.first())
+                            .map(|r| r.number);
+                        let keep = self.requests.selected.is_some_and(|n| {
+                            result
+                                .as_ref()
+                                .is_ok_and(|l| l.iter().any(|r| r.number == n))
+                        });
+                        self.requests.list = Some(result);
+                        if !keep {
+                            self.requests.selected = None;
+                            self.requests.details = None;
+                            if let Some(n) = first {
+                                self.select_request(n);
+                            }
+                        }
+                    }
+                }
+                HostEvent::Details(n, result) => {
+                    if self.requests.selected == Some(n) {
+                        self.requests.details_loading = false;
+                        self.requests.details = Some(*result);
+                    }
+                }
+                HostEvent::Created(result) => {
+                    self.requests.busy = None;
+                    match result {
+                        Ok(r) => {
+                            notices.push(Notice {
+                                ok: true,
+                                title: format!("{} #{} created", kind.request_abbrev(), r.number),
+                                body: r.title.clone(),
+                            });
+                            self.requests.filter = StateFilter::Open;
+                            self.load_requests();
+                            self.select_request(r.number);
+                        }
+                        Err(e) => notices.push(Notice {
+                            ok: false,
+                            title: format!("Could not create the {}", kind.request_noun()),
+                            body: e,
+                        }),
+                    }
+                }
+                HostEvent::Done {
+                    label,
+                    number,
+                    result,
+                } => {
+                    self.requests.busy = None;
+                    match result {
+                        Ok(()) => {
+                            if label.starts_with("Commenting") {
+                                self.requests.comment.clear();
+                            }
+                            notices.push(Notice {
+                                ok: true,
+                                title: format!("{label} — done"),
+                                body: String::new(),
+                            });
+                            if label.starts_with("Merging") {
+                                // The target branch moved on the remote.
+                                self.op(Op::Fetch {
+                                    prune: false,
+                                    quiet: true,
+                                });
+                            }
+                        }
+                        Err(e) => notices.push(Notice {
+                            ok: false,
+                            title: format!("{label} failed"),
+                            body: e,
+                        }),
+                    }
+                    self.load_requests();
+                    if let Some(n) = number {
+                        self.requests.details = None;
+                        self.requests.selected = None;
+                        self.select_request(n);
+                    }
+                }
+            }
+        }
     }
 
     /// Indices of commits matching the filter (recomputed only when the filter changes).

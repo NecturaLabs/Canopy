@@ -3,9 +3,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod hosting;
+mod keymap;
 mod settings;
 mod tab;
 mod ui;
+mod updater;
 mod views;
 mod worker;
 
@@ -23,8 +26,11 @@ ARGS:
     [PATH]...    Repositories to open (any folder inside one works)
 
 OPTIONS:
-        --light               Start with the light theme
-        --view <VIEW>         Initial view: history or changes
+        --light               Start with the Daylight theme
+        --theme <THEME>       Start with a theme: midnight, daylight, aurora, ember, neon,
+                              forest or paper
+        --view <VIEW>         Initial view: history, changes or requests
+        --overlay <NAME>      Open settings, cheatsheet or palette (for screenshots)
         --size <WxH>          Initial window size [default: 1440x900]
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
     -h, --help                Print help
@@ -48,7 +54,28 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 println!("canopy {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
-            "--light" => launch.light = true,
+            "--light" => launch.theme = Some(ui::theme::ThemeId::Daylight),
+            "--theme" => {
+                let name = args
+                    .next()
+                    .ok_or("--theme needs a name")?
+                    .to_string_lossy()
+                    .to_lowercase();
+                launch.theme = Some(
+                    ui::theme::ThemeId::ALL
+                        .into_iter()
+                        .find(|t| t.name().to_lowercase() == name)
+                        .ok_or_else(|| format!("unknown theme {name}; see --help"))?,
+                );
+            }
+            "--overlay" => {
+                launch.overlay = Some(
+                    args.next()
+                        .ok_or("--overlay needs settings, cheatsheet or palette")?
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
             "--screenshot" => {
                 launch.screenshot = Some(args.next().ok_or("--screenshot needs a file")?.into())
             }
@@ -61,7 +88,8 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                     {
                         Some("history") => tab::View::History,
                         Some("changes") => tab::View::Changes,
-                        _ => return Err("--view takes history or changes".into()),
+                        Some("requests") => tab::View::Requests,
+                        _ => return Err("--view takes history, changes or requests".into()),
                     },
                 );
             }

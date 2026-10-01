@@ -1,0 +1,756 @@
+//! Pull requests (GitHub) and merge requests (GitLab): a list on the left, the selected request
+//! on the right with its checks, reviews, description and conversation, and the actions a
+//! reviewer needs (check out, approve, comment, merge, close or reopen).
+
+use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Ui, vec2};
+use egui_phosphor::regular as icon;
+
+use canopy_core::forge::ForgeKind;
+use canopy_hosting::{
+    CheckState, MergeMethod, RequestDetails, RequestState, RequestSummary, StateFilter,
+};
+
+use crate::app::{Action, forge_icon};
+use crate::hosting::{HostJob, TokenSource};
+use crate::tab::RepoTab;
+use crate::ui::theme::{self, Palette, palette};
+use crate::ui::{art, widgets};
+
+/// Seconds an armed action waits for its confirming click.
+const ARM_SECONDS: f64 = 4.0;
+
+/// Draws the view.
+pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec<Action>) {
+    let p = palette(ui.ctx());
+    let Some((_, forge)) = tab.forge().cloned() else {
+        empty(
+            ui,
+            art::local_only(),
+            "No GitHub or GitLab remote",
+            "Pull and merge requests appear here for repositories hosted on GitHub or GitLab.",
+            None,
+            actions,
+        );
+        return;
+    };
+    let kind = forge.kind;
+    if !api_enabled {
+        empty(
+            ui,
+            art::local_only(),
+            &format!("{}s are turned off", cap(kind.request_noun())),
+            "Turn on pull and merge requests in Settings → Integrations to load them from the API.",
+            Some((
+                format!("{}  Open on {}", forge_icon(kind), kind.name()),
+                Action::OpenExternal(format!(
+                    "{}/{}",
+                    forge.web_url(),
+                    if kind == ForgeKind::GitHub {
+                        "pulls"
+                    } else {
+                        "-/merge_requests"
+                    }
+                )),
+            )),
+            actions,
+        );
+        return;
+    }
+
+    egui::Panel::left("requests-list")
+        .resizable(true)
+        .default_size(380.0)
+        .min_size(280.0)
+        .max_size(640.0)
+        .frame(
+            egui::Frame::new()
+                .fill(p.panel)
+                .stroke(Stroke::new(1.0, p.border)),
+        )
+        .show(ui, |ui| list(ui, tab, kind, actions));
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(p.bg))
+        .show(ui, |ui| detail(ui, tab, kind, actions));
+}
+
+fn cap(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+        .unwrap_or_default()
+}
+
+fn empty(
+    ui: &mut Ui,
+    image: egui::ImageSource<'static>,
+    title: &str,
+    body: &str,
+    button: Option<(String, Action)>,
+    actions: &mut Vec<Action>,
+) {
+    let p = palette(ui.ctx());
+    ui.vertical_centered(|ui| {
+        ui.add_space((ui.available_height() * 0.22).max(30.0));
+        art::show(ui, image, vec2(160.0, 120.0));
+        ui.add_space(8.0);
+        ui.label(RichText::new(title).font(FontId::new(16.0, theme::semibold())));
+        ui.add_space(2.0);
+        ui.label(RichText::new(body).color(p.text_dim));
+        if let Some((label, action)) = button {
+            ui.add_space(12.0);
+            if ui.button(label).clicked() {
+                actions.push(action);
+            }
+        }
+    });
+}
+
+fn state_style(p: &Palette, r: &RequestSummary) -> (&'static str, egui::Color32, &'static str) {
+    match (r.state, r.draft) {
+        (RequestState::Open, true) => (icon::GIT_PULL_REQUEST, p.text_dim, "Draft"),
+        (RequestState::Open, false) => (icon::GIT_PULL_REQUEST, p.success, "Open"),
+        (RequestState::Merged, _) => (icon::GIT_MERGE, p.accent, "Merged"),
+        (RequestState::Closed, _) => (icon::GIT_PULL_REQUEST, p.danger, "Closed"),
+    }
+}
+
+fn list(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Action>) {
+    let p = palette(ui.ctx());
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(10, 10))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for f in StateFilter::ALL {
+                    if ui
+                        .selectable_label(tab.requests.filter == f, f.label())
+                        .clicked()
+                        && tab.requests.filter != f
+                    {
+                        tab.requests.filter = f;
+                        tab.requests.list = None;
+                        tab.load_requests();
+                    }
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if tab.requests.loading {
+                        ui.spinner();
+                    } else if widgets::icon_button(ui, icon::ARROWS_CLOCKWISE, "Reload").clicked() {
+                        tab.load_requests();
+                    }
+                    let current = tab
+                        .snap
+                        .as_ref()
+                        .and_then(|s| s.current_branch())
+                        .filter(|b| b.upstream.is_some())
+                        .map(|b| b.name.clone());
+                    if let Some(branch) = current
+                        && !tab.is_default_branch(&branch)
+                        && ui
+                            .button(format!("{}  New {}", icon::PLUS, kind.request_abbrev()))
+                            .on_hover_text(format!("Create a {} for {branch}", kind.request_noun()))
+                            .clicked()
+                    {
+                        actions.push(Action::CreateRequest { source: branch });
+                    }
+                });
+            });
+        });
+    let r = ui.available_rect_before_wrap();
+    ui.painter()
+        .hline(r.x_range(), r.min.y, Stroke::new(1.0, p.border));
+
+    match tab.requests.list.clone() {
+        None => {
+            ui.add_space(30.0);
+            ui.vertical_centered(|ui| {
+                ui.spinner();
+                ui.label(
+                    RichText::new(format!("Loading {}s…", kind.request_noun())).color(p.text_dim),
+                );
+            });
+        }
+        Some(Err(e)) => {
+            let no_token = tab.requests.token == Some(None);
+            ui.add_space(24.0);
+            ui.vertical_centered(|ui| {
+                ui.set_max_width(ui.available_width() - 32.0);
+                art::show(ui, art::empty_error(), vec2(120.0, 90.0));
+                ui.label(
+                    RichText::new(if no_token {
+                        format!("Connect {} to see {}s", kind.name(), kind.request_noun())
+                    } else {
+                        format!("Could not load {}s", kind.request_noun())
+                    })
+                    .font(FontId::new(14.0, theme::semibold())),
+                );
+                ui.label(RichText::new(&e).size(12.0).color(p.text_dim));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.add_space((ui.available_width() - 230.0).max(0.0) / 2.0);
+                    if ui.button(format!("{}  Add a token…", icon::KEY)).clicked() {
+                        actions.push(Action::Settings);
+                    }
+                    if ui
+                        .button(format!("{}  Retry", icon::ARROWS_CLOCKWISE))
+                        .clicked()
+                    {
+                        tab.load_requests();
+                    }
+                });
+            });
+        }
+        Some(Ok(items)) if items.is_empty() => {
+            ui.add_space(30.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new(icon::CHECK_CIRCLE)
+                        .size(30.0)
+                        .color(p.success),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "No {} {}s",
+                        tab.requests.filter.label().to_lowercase(),
+                        kind.request_noun()
+                    ))
+                    .color(p.text_dim),
+                );
+            });
+        }
+        Some(Ok(items)) => {
+            let now = chrono::Utc::now().timestamp();
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for r in &items {
+                        if row(ui, r, tab.requests.selected == Some(r.number), now).clicked() {
+                            tab.select_request(r.number);
+                        }
+                    }
+                });
+        }
+    }
+}
+
+fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Response {
+    let p = palette(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::click());
+    if selected {
+        ui.painter().rect_filled(
+            rect,
+            CornerRadius::ZERO,
+            Palette::tint(p.accent, if p.dark { 46 } else { 30 }),
+        );
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
+            CornerRadius::ZERO,
+            p.accent,
+        );
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, p.hover);
+    }
+    let (glyph, color, state) = state_style(p, r);
+    ui.painter().text(
+        rect.left_top() + vec2(18.0, 18.0),
+        Align2::CENTER_CENTER,
+        glyph,
+        FontId::proportional(16.0),
+        color,
+    );
+    let clip = egui::Rect::from_min_max(
+        rect.left_top() + vec2(34.0, 0.0),
+        rect.right_bottom() - vec2(10.0, 0.0),
+    );
+    let painter = ui.painter().with_clip_rect(clip);
+    let title = painter.layout_no_wrap(r.title.clone(), FontId::new(13.5, theme::medium()), p.text);
+    painter.galley(
+        egui::pos2(clip.min.x, rect.min.y + 18.0 - title.size().y / 2.0),
+        title,
+        p.text,
+    );
+    let meta = format!(
+        "#{}  ·  {}  ·  {}  ·  {} → {}",
+        r.number,
+        r.author,
+        widgets::relative_time(r.updated_at, now),
+        r.source_branch,
+        r.target_branch
+    );
+    painter.text(
+        egui::pos2(clip.min.x, rect.min.y + 40.0),
+        Align2::LEFT_CENTER,
+        meta,
+        FontId::proportional(11.5),
+        p.text_faint,
+    );
+    let info = format!("{state} request #{} {} by {}", r.number, r.title, r.author);
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &info)
+    });
+    resp.on_hover_text(&r.title)
+}
+
+fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Action>) {
+    let p = palette(ui.ctx());
+    let Some(number) = tab.requests.selected else {
+        ui.centered_and_justified(|ui| {
+            ui.label(
+                RichText::new(format!("Select a {} to see it", kind.request_noun()))
+                    .color(p.text_faint),
+            )
+        });
+        return;
+    };
+    let summary = match &tab.requests.list {
+        Some(Ok(l)) => l.iter().find(|r| r.number == number).cloned(),
+        _ => None,
+    };
+    let details = match &tab.requests.details {
+        Some(Ok(d)) => Some(d.clone()),
+        _ => None,
+    };
+    let Some(summary) = details.as_ref().map(|d| d.summary.clone()).or(summary) else {
+        ui.centered_and_justified(|ui| ui.spinner());
+        return;
+    };
+    let now_f = ui.input(|i| i.time);
+    if let Some((_, at)) = &tab.requests.arming
+        && now_f - at > ARM_SECONDS
+    {
+        tab.requests.arming = None;
+    }
+    let now = chrono::Utc::now().timestamp();
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(22, 18))
+                .show(ui, |ui| {
+                    // Header.
+                    let (glyph, color, state) = state_style(p, &summary);
+                    ui.horizontal(|ui| {
+                        egui::Frame::new()
+                            .fill(Palette::tint(color, 40))
+                            .corner_radius(CornerRadius::same(11))
+                            .inner_margin(egui::Margin::symmetric(9, 3))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(format!("{glyph}  {state}"))
+                                        .size(12.0)
+                                        .color(color)
+                                        .strong(),
+                                )
+                            });
+                        ui.label(
+                            RichText::new(format!("#{}", summary.number))
+                                .size(14.0)
+                                .color(p.text_faint),
+                        );
+                    });
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(&summary.title).font(FontId::new(19.0, theme::semibold())),
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(&summary.author).color(p.text).strong());
+                        ui.label(RichText::new("wants to merge").color(p.text_dim));
+                        branch_pill(ui, &summary.source_branch);
+                        ui.label(RichText::new("into").color(p.text_dim));
+                        branch_pill(ui, &summary.target_branch);
+                        ui.label(
+                            RichText::new(format!(
+                                "· updated {}",
+                                widgets::relative_time(summary.updated_at, now)
+                            ))
+                            .color(p.text_faint)
+                            .size(12.0),
+                        );
+                    });
+                    if !summary.labels.is_empty() {
+                        ui.add_space(4.0);
+                        ui.horizontal_wrapped(|ui| {
+                            for l in &summary.labels {
+                                egui::Frame::new()
+                                    .fill(Palette::tint(p.accent2, 30))
+                                    .corner_radius(CornerRadius::same(9))
+                                    .inner_margin(egui::Margin::symmetric(8, 1))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(l).size(11.5).color(p.accent2))
+                                    });
+                            }
+                        });
+                    }
+                    ui.add_space(12.0);
+                    action_bar(ui, tab, kind, &summary, details.as_ref(), now_f, actions);
+                    ui.add_space(16.0);
+
+                    let error = match &tab.requests.details {
+                        Some(Err(e)) => Some(e.clone()),
+                        _ => None,
+                    };
+                    match (error, details.as_ref()) {
+                        (Some(e), _) => {
+                            ui.label(
+                                RichText::new(format!("{}  {e}", icon::WARNING)).color(p.danger),
+                            );
+                        }
+                        (None, Some(d)) => {
+                            body(ui, d, now);
+                            comment_box(ui, tab, number, actions);
+                        }
+                        (None, None) => {
+                            ui.spinner();
+                        }
+                    }
+                });
+        });
+}
+
+fn branch_pill(ui: &mut Ui, name: &str) {
+    let p = palette(ui.ctx());
+    egui::Frame::new()
+        .fill(Palette::tint(p.accent2, 26))
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(6, 1))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(format!("{}  {name}", icon::GIT_BRANCH))
+                    .monospace()
+                    .size(12.0)
+                    .color(p.accent2),
+            )
+        });
+}
+
+/// The action buttons. Merge and close take a second click to confirm.
+fn action_bar(
+    ui: &mut Ui,
+    tab: &mut RepoTab,
+    kind: ForgeKind,
+    r: &RequestSummary,
+    d: Option<&RequestDetails>,
+    now: f64,
+    actions: &mut Vec<Action>,
+) {
+    let p = palette(ui.ctx());
+    let busy = tab.requests.busy.is_some() || tab.running.is_some();
+    let armed = |what: &str| tab.requests.arming.as_ref().is_some_and(|(a, _)| a == what);
+    let mut arm: Option<String> = None;
+    let mut disarm = false;
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add_enabled(
+                !busy,
+                egui::Button::new(format!("{}  Check out", icon::DOWNLOAD_SIMPLE)),
+            )
+            .on_hover_text("Fetch the request's branch and check it out locally")
+            .clicked()
+        {
+            actions.push(Action::CheckoutRequest(r.clone()));
+        }
+        if ui
+            .button(format!("{}  Open on {}", forge_icon(kind), kind.name()))
+            .clicked()
+        {
+            actions.push(Action::OpenExternal(r.web_url.clone()));
+        }
+        if widgets::icon_button(ui, icon::LINK, "Copy link").clicked() {
+            actions.push(Action::Copy(r.web_url.clone()));
+        }
+        if r.state == RequestState::Open {
+            ui.separator();
+            if ui
+                .add_enabled(
+                    !busy,
+                    egui::Button::new(
+                        RichText::new(format!("{}  Approve", icon::CHECK)).color(p.success),
+                    ),
+                )
+                .clicked()
+            {
+                actions.push(Action::Host(HostJob::Approve(r.number)));
+            }
+            // Merge: method picker and a confirming second click.
+            let mergeable = d.and_then(|d| d.mergeable).unwrap_or(true) && !r.draft;
+            egui::ComboBox::from_id_salt("merge-method")
+                .selected_text(tab.requests.merge_method.label())
+                .width(170.0)
+                .show_ui(ui, |ui| {
+                    for m in MergeMethod::ALL {
+                        ui.selectable_value(&mut tab.requests.merge_method, m, m.label());
+                    }
+                });
+            let merge_label = if armed("merge") {
+                format!("{}  Confirm merge", icon::WARNING)
+            } else {
+                format!("{}  Merge", icon::GIT_MERGE)
+            };
+            let resp = if armed("merge") {
+                widgets::danger_button(ui, &merge_label, vec2(0.0, 0.0))
+            } else {
+                ui.add_enabled(!busy && mergeable, egui::Button::new(merge_label))
+            };
+            let resp = if r.draft {
+                resp.on_disabled_hover_text("Drafts cannot be merged")
+            } else if !mergeable {
+                resp.on_disabled_hover_text("This request has conflicts or is blocked")
+            } else {
+                resp.on_hover_text(format!(
+                    "{} into {}",
+                    tab.requests.merge_method.label(),
+                    r.target_branch
+                ))
+            };
+            if resp.clicked() {
+                if armed("merge") {
+                    disarm = true;
+                    actions.push(Action::Host(HostJob::Merge(
+                        r.number,
+                        tab.requests.merge_method,
+                    )));
+                } else {
+                    arm = Some("merge".into());
+                }
+            }
+            let close_label = if armed("close") {
+                format!("{}  Confirm close", icon::WARNING)
+            } else {
+                format!("{}  Close", icon::X_CIRCLE)
+            };
+            let close = if armed("close") {
+                widgets::danger_button(ui, &close_label, vec2(0.0, 0.0))
+            } else {
+                ui.add_enabled(!busy, egui::Button::new(close_label))
+            };
+            if close.clicked() {
+                if armed("close") {
+                    disarm = true;
+                    actions.push(Action::Host(HostJob::SetOpen(r.number, false)));
+                } else {
+                    arm = Some("close".into());
+                }
+            }
+        } else if r.state == RequestState::Closed
+            && ui
+                .add_enabled(
+                    !busy,
+                    egui::Button::new(format!("{}  Reopen", icon::ARROW_COUNTER_CLOCKWISE)),
+                )
+                .clicked()
+        {
+            actions.push(Action::Host(HostJob::SetOpen(r.number, true)));
+        }
+        if let Some(b) = &tab.requests.busy {
+            ui.spinner();
+            ui.label(RichText::new(b).size(12.0).color(p.accent));
+        }
+    });
+    if let Some(a) = arm {
+        tab.requests.arming = Some((a, now));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(ARM_SECONDS));
+    }
+    if disarm {
+        tab.requests.arming = None;
+    }
+    if tab.requests.arming.is_some() {
+        ui.label(
+            RichText::new("Click again to confirm.")
+                .size(11.5)
+                .color(p.text_faint),
+        );
+    }
+    if let Some(Some(source)) = tab.requests.token
+        && source != TokenSource::Saved
+    {
+        ui.label(
+            RichText::new(format!("{}  Using the token {}", icon::KEY, source.label()))
+                .size(11.5)
+                .color(p.text_faint),
+        );
+    }
+}
+
+fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
+    let p = palette(ui.ctx());
+    // Stats.
+    let mut stats = Vec::new();
+    if let Some(c) = d.commits {
+        stats.push(format!("{c} commit{}", if c == 1 { "" } else { "s" }));
+    }
+    if let Some(f) = d.changed_files {
+        stats.push(format!("{f} file{} changed", if f == 1 { "" } else { "s" }));
+    }
+    if let (Some(a), Some(r)) = (d.additions, d.deletions) {
+        stats.push(format!("+{a} −{r}"));
+    }
+    if let Some(m) = d.mergeable {
+        stats.push(if m {
+            "no conflicts".into()
+        } else {
+            "has conflicts".into()
+        });
+    }
+    if !stats.is_empty() {
+        ui.label(
+            RichText::new(stats.join("  ·  "))
+                .size(12.5)
+                .color(p.text_dim),
+        );
+        ui.add_space(12.0);
+    }
+
+    // Checks.
+    if !d.checks.is_empty() {
+        let failed = d
+            .checks
+            .iter()
+            .filter(|c| c.state == CheckState::Failure)
+            .count();
+        let pending = d
+            .checks
+            .iter()
+            .filter(|c| c.state == CheckState::Pending)
+            .count();
+        let (glyph, color, text) = if failed > 0 {
+            (
+                icon::X_CIRCLE,
+                p.danger,
+                format!("{failed} of {} checks failed", d.checks.len()),
+            )
+        } else if pending > 0 {
+            (
+                icon::CIRCLE_DASHED,
+                p.warning,
+                format!("{pending} of {} checks running", d.checks.len()),
+            )
+        } else {
+            (
+                icon::CHECK_CIRCLE,
+                p.success,
+                format!("All {} checks passed", d.checks.len()),
+            )
+        };
+        egui::CollapsingHeader::new(
+            RichText::new(format!("{glyph}  {text}"))
+                .color(color)
+                .strong(),
+        )
+        .id_salt("checks")
+        .default_open(failed > 0)
+        .show(ui, |ui| {
+            for c in &d.checks {
+                let (g, col, word) = match c.state {
+                    CheckState::Success => (icon::CHECK_CIRCLE, p.success, "passed"),
+                    CheckState::Failure => (icon::X_CIRCLE, p.danger, "failed"),
+                    CheckState::Pending => (icon::CIRCLE_DASHED, p.warning, "running"),
+                    CheckState::Neutral => (icon::MINUS_CIRCLE, p.text_faint, "neutral"),
+                };
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(g).color(col)).on_hover_text(word);
+                    match &c.url {
+                        Some(u) => {
+                            ui.hyperlink_to(&c.name, u);
+                        }
+                        None => {
+                            ui.label(&c.name);
+                        }
+                    }
+                });
+            }
+        });
+        ui.add_space(8.0);
+    }
+
+    // Reviews.
+    if !d.reviews.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Reviews").size(12.5).color(p.text_dim));
+            for r in &d.reviews {
+                let (g, c) = match r.state.as_str() {
+                    "Approved" => (icon::CHECK_CIRCLE, p.success),
+                    "Changes requested" => (icon::WARNING_CIRCLE, p.danger),
+                    _ => (icon::CHAT_CIRCLE, p.text_dim),
+                };
+                ui.label(
+                    RichText::new(format!("{g} {}", r.author))
+                        .size(12.5)
+                        .color(c),
+                )
+                .on_hover_text(&r.state);
+            }
+        });
+        ui.add_space(12.0);
+    }
+
+    // Description.
+    egui::Frame::new()
+        .fill(p.panel)
+        .stroke(Stroke::new(1.0, p.border))
+        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .inner_margin(egui::Margin::same(14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            if d.body.trim().is_empty() {
+                ui.label(
+                    RichText::new("No description.")
+                        .italics()
+                        .color(p.text_faint),
+                );
+            } else {
+                crate::ui::notes::markdown(ui, d.body.trim());
+            }
+        });
+    ui.add_space(16.0);
+
+    // Conversation.
+    if !d.comments.is_empty() {
+        widgets::section_label(ui, &format!("Conversation · {}", d.comments.len()));
+        ui.add_space(6.0);
+        for c in &d.comments {
+            ui.horizontal_top(|ui| {
+                widgets::avatar(ui, 26.0, &c.author, &c.author);
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&c.author).strong());
+                        ui.label(
+                            RichText::new(widgets::relative_time(c.created_at, now))
+                                .size(11.5)
+                                .color(p.text_faint),
+                        );
+                    });
+                    crate::ui::notes::markdown(ui, c.body.trim());
+                });
+            });
+            ui.add_space(10.0);
+        }
+    }
+}
+
+/// The comment box under the conversation.
+fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Action>) {
+    ui.add(
+        egui::TextEdit::multiline(&mut tab.requests.comment)
+            .hint_text("Leave a comment (Markdown)")
+            .desired_rows(3)
+            .desired_width(f32::INFINITY),
+    );
+    ui.add_space(6.0);
+    let can = !tab.requests.comment.trim().is_empty() && tab.requests.busy.is_none();
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(
+                can,
+                egui::Button::new(format!("{}  Comment", icon::CHAT_CIRCLE_TEXT)),
+            )
+            .clicked()
+        {
+            actions.push(Action::Host(HostJob::Comment(
+                number,
+                tab.requests.comment.trim().to_owned(),
+            )));
+        }
+    });
+}

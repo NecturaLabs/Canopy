@@ -3,11 +3,19 @@
 use egui::{RichText, Ui};
 use egui_phosphor::regular as icon;
 
+use crate::app::Action;
 use crate::tab::RepoTab;
-use crate::ui::theme::palette;
+use crate::ui::theme::{Palette, palette};
+use crate::updater::UpdateState;
 
 /// Draws the status bar.
-pub fn show(ui: &mut Ui, tab: Option<&RepoTab>, git_version: &str) {
+pub fn show(
+    ui: &mut Ui,
+    tab: Option<&RepoTab>,
+    git_version: &str,
+    update: &UpdateState,
+    actions: &mut Vec<Action>,
+) {
     let p = palette(ui.ctx());
     ui.horizontal_centered(|ui| {
         ui.add_space(10.0);
@@ -29,6 +37,13 @@ pub fn show(ui: &mut Ui, tab: Option<&RepoTab>, git_version: &str) {
                         }
                         Some(u) => {
                             ui.label(small(format!("↑{} ↓{}  {u}", b.ahead, b.behind), p.accent2));
+                        }
+                        None if s.remotes.is_empty() => {
+                            ui.label(small(
+                                format!("{}  local only", icon::HARD_DRIVES),
+                                p.text_faint,
+                            ))
+                            .on_hover_text("This repository has no remote");
                         }
                         None => {
                             ui.label(small(
@@ -64,6 +79,44 @@ pub fn show(ui: &mut Ui, tab: Option<&RepoTab>, git_version: &str) {
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(10.0);
+            if let UpdateState::Available(a) = update {
+                let v = &a.version;
+                let resp = egui::Frame::new()
+                    .fill(Palette::tint(p.accent, 50))
+                    .corner_radius(egui::CornerRadius::same(9))
+                    .inner_margin(egui::Margin::symmetric(8, 1))
+                    .show(ui, |ui| {
+                        ui.label(small(
+                            format!("{}  Canopy {v} is available", icon::ARROW_CIRCLE_UP),
+                            p.text,
+                        ))
+                    })
+                    .response
+                    .interact(egui::Sense::click())
+                    .on_hover_text("See what's new and download it");
+                let version = v.to_string();
+                let page = a.page();
+                resp.context_menu(|ui| {
+                    if ui
+                        .button(format!(
+                            "{}  Release notes and downloads",
+                            icon::ARROW_SQUARE_OUT
+                        ))
+                        .clicked()
+                    {
+                        actions.push(Action::OpenExternal(page.clone()));
+                    }
+                    if ui
+                        .button(format!("{}  Skip this version", icon::X))
+                        .clicked()
+                    {
+                        actions.push(Action::SkipVersion(version.clone()));
+                    }
+                });
+                if resp.clicked() {
+                    actions.push(Action::ShowUpdate);
+                }
+            }
             ui.label(small(git_version.to_owned(), p.text_faint));
             if let Some(tab) = tab {
                 ui.label(small(tab.path.display().to_string(), p.text_faint));

@@ -1,20 +1,28 @@
-//! The application: tabs, global shortcuts, dialogs, the command palette and toasts.
+//! The application: tabs, keyboard commands, dialogs, the command palette, toasts and the
+//! update check.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, unbounded};
-use egui::{Key, KeyboardShortcut, Modifiers, RichText, Stroke};
+use egui::{RichText, Stroke};
 use egui_phosphor::regular as icon;
 
 use canopy_core::{Oid, Repo};
+use canopy_hosting::{NewRequest, RequestSummary};
 
+use crate::hosting::{HostJob, TokenStore};
+use crate::keymap::{self, Command};
 use crate::settings::{self, Settings};
 use crate::tab::{RepoTab, View};
+use crate::ui::cheatsheet::Cheatsheet;
 use crate::ui::palette::{CommandPalette, Entry};
-use crate::ui::theme::{self, palette};
+use crate::ui::theme::{self, ThemeId, palette};
 use crate::ui::toast::{ToastKind, Toasts};
+use crate::updater::{self, UpdateState, Updater};
 use crate::views::dialogs::{self, Dialog, Outcome};
-use crate::views::{changes, history, sidebar, statusbar, toolbar, welcome};
+use crate::views::settings_screen::{self, SettingsScreen};
+use crate::views::{changes, history, requests, sidebar, statusbar, toolbar, welcome};
 use crate::worker::{Job, Op};
 
 /// Something the user asked for, collected during a frame and applied after it.
@@ -42,23 +50,53 @@ pub enum Action {
     Reveal(Oid),
     Refresh,
     LoadMore,
+    Fetch,
     Pull,
+    Push,
     Commit,
     PrefillAmend,
-    ToggleTheme,
+    SetTheme(ThemeId),
+    NextTheme,
     Palette,
+    Cheatsheet,
+    Settings,
     Copy(String),
-    OpenPath(PathBuf),
+    /// Open a file, folder or web page with the system's default handler.
+    OpenExternal(String),
     OpenTerminal(PathBuf),
+    /// Run a keyboard command (from the palette).
+    Command(Command),
+    CheckUpdates,
+    SkipVersion(String),
+    /// Show what's new in an available update.
+    ShowUpdate,
+    /// Show this version's release notes.
+    WhatsNew,
+    /// Add a remote to a repository without one, then push.
+    Publish,
+    AddRemoteDialog,
+    /// Start a pull/merge request for `source` (dialog, or the browser without an API token).
+    CreateRequest {
+        source: String,
+    },
+    /// Run a pull/merge request API action.
+    Host(HostJob),
+    CheckoutRequest(RequestSummary),
+    /// Repository diff options changed: re-render the open diff.
+    DiffPrefsChanged,
+    /// The user saw the first-run tips.
+    DismissIntro,
 }
 
 /// Options from the command line.
 #[derive(Debug, Default, Clone)]
 pub struct Launch {
     pub paths: Vec<PathBuf>,
-    pub light: bool,
+    pub theme: Option<ThemeId>,
     pub screenshot: Option<PathBuf>,
     pub view: Option<View>,
+    /// Open this overlay for a screenshot: settings, cheatsheet or palette.
+    pub overlay: Option<String>,
 }
 
 #[derive(Debug)]
@@ -81,12 +119,17 @@ pub struct CanopyApp {
     tabs: Vec<RepoTab>,
     active: usize,
     dialog: Option<Dialog>,
+    settings_screen: Option<SettingsScreen>,
     palette: CommandPalette,
+    cheatsheet: Cheatsheet,
     toasts: Toasts,
     screenshot: Option<Screenshot>,
     initial_view: Option<View>,
     clone: Option<(String, Receiver<CloneMsg>, String)>,
     git_version: String,
+    tokens: TokenStore,
+    updater: Updater,
+    gitlab_hosts: Vec<String>,
 }
 
 impl std::fmt::Debug for CanopyApp {
@@ -104,20 +147,36 @@ impl CanopyApp {
             .storage
             .and_then(|s| eframe::get_value(s, settings::KEY))
             .unwrap_or_default();
-        if launch.light {
-            settings.dark = false;
+        settings.migrate();
+        let shooting = launch.screenshot.is_some();
+        if shooting {
+            // Screenshots are deterministic: default settings, nothing remembered.
+            settings = Settings {
+                seen_intro: true,
+                check_updates: false,
+                hosting_api: std::env::var_os("CANOPY_HOSTING_API_BASE").is_some(),
+                ..Settings::default()
+            };
+        }
+        if let Some(t) = launch.theme {
+            settings.theme = t;
         }
         crate::ui::fonts::install(&cc.egui_ctx);
-        theme::apply(&cc.egui_ctx, settings.dark);
+        egui_extras::install_image_loaders(&cc.egui_ctx);
+        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
+        theme::apply(&cc.egui_ctx, settings.theme, settings.reduce_motion);
         cc.egui_ctx.set_zoom_factor(settings.zoom);
 
         let git_version = canopy_core::cli::version().unwrap_or_else(|_| "git not found".into());
+        let gitlab_hosts = settings.gitlab_host_list();
         let mut app = Self {
             settings,
             tabs: Vec::new(),
             active: 0,
             dialog: None,
+            settings_screen: None,
             palette: CommandPalette::default(),
+            cheatsheet: Cheatsheet::default(),
             toasts: Toasts::default(),
             screenshot: launch.screenshot.map(|path| Screenshot {
                 path,
@@ -128,8 +187,15 @@ impl CanopyApp {
             initial_view: launch.view,
             clone: None,
             git_version,
+            tokens: if shooting {
+                TokenStore::default()
+            } else {
+                TokenStore::load()
+            },
+            updater: Updater::default(),
+            gitlab_hosts,
         };
-        let restore = if launch.paths.is_empty() && app.screenshot.is_none() {
+        let restore = if launch.paths.is_empty() && !shooting {
             app.settings.open_tabs.clone()
         } else {
             launch.paths
@@ -140,8 +206,30 @@ impl CanopyApp {
         if !app.tabs.is_empty() {
             app.active = 0;
         }
+        match launch.overlay.as_deref() {
+            Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
+            Some("cheatsheet") => app.cheatsheet.open = true,
+            Some("palette") => app.palette.open(),
+            _ => {}
+        }
         if git_version_missing(&app.git_version) {
             app.toasts.push(&cc.egui_ctx, ToastKind::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
+        }
+        // Release notes once after an upgrade (not on a fresh install).
+        let version = env!("CARGO_PKG_VERSION");
+        if !shooting && app.settings.last_seen_version != version {
+            if !app.settings.last_seen_version.is_empty() && app.dialog.is_none() {
+                app.dialog = whats_new();
+            }
+            app.settings.last_seen_version = version.to_owned();
+        }
+        let now = chrono::Utc::now().timestamp();
+        if app.settings.check_updates
+            && now - app.settings.last_update_check >= updater::CHECK_INTERVAL_SECS
+        {
+            app.settings.last_update_check = now;
+            app.updater
+                .start(&cc.egui_ctx, app.settings.include_prereleases, false);
         }
         app
     }
@@ -152,10 +240,7 @@ impl CanopyApp {
 
     fn open_repo(&mut self, ctx: &egui::Context, path: PathBuf) {
         let path = if let Some(rest) = path.to_str().and_then(|s| s.strip_prefix("~/")) {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default()
-                .join(rest)
+            settings::home_dir().join(rest)
         } else {
             path
         };
@@ -166,7 +251,8 @@ impl CanopyApp {
                 if let Some(i) = self.tabs.iter().position(|t| t.path == root) {
                     self.active = i;
                 } else {
-                    let mut tab = RepoTab::new(root.clone(), ctx, self.settings.commit_page);
+                    let prefs = self.settings.diff_for(&root);
+                    let mut tab = RepoTab::new(root.clone(), ctx, self.settings.commit_page, prefs);
                     if let Some(v) = self.initial_view {
                         tab.view = v;
                     }
@@ -184,95 +270,208 @@ impl CanopyApp {
         }
     }
 
-    fn shortcuts(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
-        if self.dialog.is_some() || self.palette.open {
-            return;
+    /// Runs the keyboard table for this frame.
+    fn keyboard(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        let modal = self.dialog.is_some() || self.settings_screen.is_some() || self.palette.open;
+        let overlay = modal || self.cheatsheet.open;
+        let typing = ctx.egui_wants_keyboard_input();
+        let fired = keymap::dispatch(ctx, |b| {
+            if b.command == Command::Dismiss {
+                return overlay;
+            }
+            if modal {
+                return false;
+            }
+            !b.section.is_bare() || !typing
+        });
+        for f in fired {
+            self.command(ctx, f.command, f.chord, actions);
         }
-        let cmd = Modifiers::COMMAND;
-        let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
-        let take = |m: Modifiers, k: Key| {
-            ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)))
-        };
-        if take(cmd, Key::K) || take(cmd_shift, Key::P) {
-            actions.push(Action::Palette);
-        }
-        if take(cmd, Key::O) {
-            actions.push(Action::OpenDialog(Dialog::open()));
-        }
-        if take(cmd_shift, Key::N) {
-            actions.push(Action::OpenDialog(Dialog::clone_default()));
-        }
-        if take(cmd, Key::Comma) {
-            actions.push(Action::OpenDialog(Dialog::Settings));
-        }
-        if self.tabs.is_empty() {
-            return;
-        }
-        if take(cmd, Key::W) {
-            actions.push(Action::CloseTab(self.active));
-        }
-        if take(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab) {
-            actions.push(Action::SwitchTab(
+    }
+
+    /// Turns a command into actions. `chord` is the matched chord's index (for tab jumps).
+    fn command(
+        &mut self,
+        ctx: &egui::Context,
+        command: Command,
+        chord: usize,
+        actions: &mut Vec<Action>,
+    ) {
+        use Command as C;
+        let has_tab = !self.tabs.is_empty();
+        let view = self.tabs.get(self.active).map(|t| t.view);
+        match command {
+            C::Palette => actions.push(Action::Palette),
+            C::Cheatsheet => self.cheatsheet.toggle(),
+            C::Dismiss => {
+                if self.cheatsheet.open {
+                    self.cheatsheet.open = false;
+                } else if self.palette.open {
+                    self.palette.open = false;
+                } else if self.settings_screen.is_some() {
+                    self.settings_screen = None;
+                } else {
+                    self.dialog = None;
+                }
+            }
+            C::Open => actions.push(Action::OpenDialog(Dialog::open())),
+            C::Clone => actions.push(Action::OpenDialog(Dialog::clone_default(&self.settings))),
+            C::Settings => actions.push(Action::Settings),
+            C::ZoomIn | C::ZoomOut | C::ZoomReset => {
+                self.settings.zoom = match command {
+                    C::ZoomIn => (self.settings.zoom + 0.1).min(1.6),
+                    C::ZoomOut => (self.settings.zoom - 0.1).max(0.8),
+                    _ => 1.0,
+                };
+                ctx.set_zoom_factor(self.settings.zoom);
+            }
+            C::NextTheme => actions.push(Action::NextTheme),
+            _ if !has_tab => {}
+            C::CloseTab => actions.push(Action::CloseTab(self.active)),
+            C::NextTab => actions.push(Action::SwitchTab((self.active + 1) % self.tabs.len())),
+            C::PrevTab => actions.push(Action::SwitchTab(
                 (self.active + self.tabs.len() - 1) % self.tabs.len(),
-            ));
-        } else if take(Modifiers::CTRL, Key::Tab) {
-            actions.push(Action::SwitchTab((self.active + 1) % self.tabs.len()));
-        }
-        if take(cmd, Key::Num1) {
-            actions.push(Action::SetView(View::History));
-        }
-        if take(cmd, Key::Num2) {
-            actions.push(Action::SetView(View::Changes));
-        }
-        if take(Modifiers::NONE, Key::F5) || take(cmd, Key::R) {
-            actions.push(Action::Refresh);
-        }
-        if take(cmd_shift, Key::F) {
-            actions.push(Action::Op(Op::Fetch));
-        }
-        if take(cmd_shift, Key::L) {
-            actions.push(Action::Pull);
-        }
-        if take(cmd_shift, Key::K) {
-            actions.push(Action::Op(Op::Push { force: false }));
-        }
-        if take(cmd_shift, Key::S) {
-            actions.push(Action::OpenDialog(Dialog::Stash {
+            )),
+            C::JumpTab => {
+                if chord < self.tabs.len() {
+                    actions.push(Action::SwitchTab(chord));
+                }
+            }
+            C::Refresh => actions.push(Action::Refresh),
+            C::Fetch => actions.push(Action::Fetch),
+            C::Pull => actions.push(Action::Pull),
+            C::Push => actions.push(Action::Push),
+            C::NewBranch => actions.push(Action::OpenDialog(Dialog::new_branch(None))),
+            C::Stash => actions.push(Action::OpenDialog(Dialog::Stash {
                 message: String::new(),
                 untracked: true,
-            }));
-        }
-        if take(cmd, Key::B) {
-            actions.push(Action::OpenDialog(Dialog::new_branch(None)));
-        }
-        if take(cmd, Key::Enter)
-            && self
-                .tabs
-                .get(self.active)
-                .is_some_and(|t| t.view == View::Changes)
-        {
-            actions.push(Action::Commit);
-        }
-        if take(cmd, Key::F) {
-            actions.push(Action::SetView(View::History));
-            ctx.memory_mut(|m| m.request_focus(egui::Id::new("history-filter")));
+            })),
+            C::PopStash => actions.push(Action::Op(Op::StashApply {
+                index: 0,
+                pop: true,
+            })),
+            C::MergeDialog => actions.push(Action::OpenDialog(Dialog::Merge {
+                target: String::new(),
+                rebase: false,
+            })),
+            C::Commit => {
+                if view == Some(View::Changes) {
+                    actions.push(Action::Commit);
+                }
+            }
+            C::Filter => {
+                actions.push(Action::SetView(View::History));
+                ctx.memory_mut(|m| m.request_focus(egui::Id::new("history-filter")));
+            }
+            C::History => actions.push(Action::SetView(View::History)),
+            C::Changes => actions.push(Action::SetView(View::Changes)),
+            C::Requests => actions.push(Action::SetView(View::Requests)),
+            C::Down | C::Up | C::First | C::Last => {
+                let delta = match command {
+                    C::Down => 1,
+                    C::Up => -1,
+                    C::First => isize::MIN,
+                    _ => isize::MAX,
+                };
+                if let Some(t) = self.tab() {
+                    match t.view {
+                        View::History => t.move_commit(delta),
+                        View::Changes => t.move_file(delta.clamp(-1, 1)),
+                        View::Requests => t.move_request(delta.clamp(-1, 1)),
+                    }
+                }
+            }
+            C::Tag => {
+                if let Some(oid) = self.tabs.get(self.active).and_then(|t| t.selected_commit) {
+                    actions.push(Action::OpenDialog(Dialog::NewTag {
+                        name: String::new(),
+                        target: oid,
+                        message: String::new(),
+                    }));
+                }
+            }
+            C::CopySha => {
+                if let Some(oid) = self.tabs.get(self.active).and_then(|t| t.selected_commit) {
+                    actions.push(Action::Copy(oid.to_string()));
+                }
+            }
+            C::OpenOnForge => {
+                if let Some(t) = self.tabs.get(self.active)
+                    && let Some((_, forge)) = t.forge()
+                {
+                    let url = match (t.view, t.selected_commit, &t.requests.list) {
+                        (View::Requests, _, Some(Ok(list))) => t
+                            .requests
+                            .selected
+                            .and_then(|n| list.iter().find(|r| r.number == n))
+                            .map(|r| r.web_url.clone())
+                            .unwrap_or_else(|| forge.web_url()),
+                        (View::History, Some(oid), _) => forge.commit_url(&oid.to_string()),
+                        _ => forge.web_url(),
+                    };
+                    actions.push(Action::OpenExternal(url));
+                }
+            }
+            C::FocusCommit => {
+                if let Some(t) = self.tab() {
+                    t.view = View::Changes;
+                    t.focus_summary = true;
+                }
+            }
+            C::ToggleStage | C::Discard => {
+                let Some(t) = self.tabs.get(self.active) else {
+                    return;
+                };
+                let Some(sel) = t.file.clone().filter(|_| t.view == View::Changes) else {
+                    return;
+                };
+                let path = sel.entry.path.clone();
+                if command == C::Discard {
+                    if sel.source == canopy_core::DiffSource::Unstaged && !sel.conflicted {
+                        actions.push(Action::Confirm {
+                            title: "Discard changes".into(),
+                            body: format!(
+                                "Throw away the unstaged changes to {path}? This cannot be undone."
+                            ),
+                            confirm: "Discard".into(),
+                            danger: true,
+                            op: Op::Discard(vec![sel.entry]),
+                        });
+                    }
+                } else if sel.source == canopy_core::DiffSource::Staged {
+                    actions.push(Action::Op(Op::Unstage(vec![path])));
+                } else {
+                    actions.push(Action::Op(Op::Stage(vec![path])));
+                }
+            }
+            C::StageAll => {
+                if view == Some(View::Changes) {
+                    actions.push(Action::Op(Op::StageAll));
+                }
+            }
+            C::UnstageAll => {
+                if view == Some(View::Changes) {
+                    actions.push(Action::Op(Op::UnstageAll));
+                }
+            }
         }
     }
 
     fn palette_entries(&self) -> Vec<(Entry, Action)> {
-        let e = |icon: &'static str, label: &str, detail: &str, shortcut: &'static str| Entry {
+        let e = |icon: &'static str, label: &str, detail: &str, cmd: Option<Command>| Entry {
             icon,
             label: label.to_owned(),
             detail: detail.to_owned(),
-            shortcut,
+            shortcut: cmd.map(keymap::hint).unwrap_or_default(),
         };
+        use Command as C;
         let mut v = vec![
             (
                 e(
                     icon::FOLDER_OPEN,
                     "Open repository…",
                     "Repository",
-                    "Ctrl O",
+                    Some(C::Open),
                 ),
                 Action::OpenDialog(Dialog::open()),
             ),
@@ -281,59 +480,241 @@ impl CanopyApp {
                     icon::CLOUD_ARROW_DOWN,
                     "Clone repository…",
                     "Repository",
-                    "Ctrl Shift N",
+                    Some(C::Clone),
                 ),
-                Action::OpenDialog(Dialog::clone_default()),
+                Action::OpenDialog(Dialog::clone_default(&self.settings)),
             ),
             (
-                e(icon::PLANT, "Init new repository…", "Repository", ""),
+                e(icon::PLANT, "Init new repository…", "Repository", None),
                 Action::OpenDialog(Dialog::Init {
                     path: String::new(),
                 }),
             ),
             (
                 e(
-                    if self.settings.dark {
-                        icon::SUN
-                    } else {
-                        icon::MOON
-                    },
-                    "Toggle theme",
-                    "View",
-                    "",
+                    icon::PALETTE,
+                    "Next theme",
+                    "Appearance",
+                    Some(C::NextTheme),
                 ),
-                Action::ToggleTheme,
+                Action::NextTheme,
             ),
             (
-                e(icon::GEAR_SIX, "Settings", "View", "Ctrl ,"),
-                Action::OpenDialog(Dialog::Settings),
+                e(icon::GEAR_SIX, "Settings", "Canopy", Some(C::Settings)),
+                Action::Settings,
             ),
             (
-                e(icon::INFO, "About Canopy", "Help", ""),
+                e(
+                    icon::KEYBOARD,
+                    "Keyboard shortcuts",
+                    "Help",
+                    Some(C::Cheatsheet),
+                ),
+                Action::Cheatsheet,
+            ),
+            (
+                e(icon::ARROW_CIRCLE_UP, "Check for updates", "Canopy", None),
+                Action::CheckUpdates,
+            ),
+            (
+                e(icon::SPARKLE, "What's new in Canopy", "Help", None),
+                Action::WhatsNew,
+            ),
+            (
+                e(icon::INFO, "About Canopy", "Help", None),
                 Action::OpenDialog(Dialog::About),
             ),
+            (
+                e(
+                    icon::MAGNIFYING_GLASS_PLUS,
+                    "Zoom in",
+                    "Appearance",
+                    Some(C::ZoomIn),
+                ),
+                Action::Command(C::ZoomIn),
+            ),
+            (
+                e(
+                    icon::MAGNIFYING_GLASS_MINUS,
+                    "Zoom out",
+                    "Appearance",
+                    Some(C::ZoomOut),
+                ),
+                Action::Command(C::ZoomOut),
+            ),
         ];
+        for t in ThemeId::ALL {
+            v.push((
+                e(
+                    icon::PALETTE,
+                    &format!("Theme: {}", t.name()),
+                    "Appearance",
+                    None,
+                ),
+                Action::SetTheme(t),
+            ));
+        }
         if let Some(tab) = self.tabs.get(self.active) {
+            let local_only = tab.is_local_only();
             v.extend([
-                (e(icon::GRAPH, "Show history", "View", "Ctrl 1"), Action::SetView(View::History)),
-                (e(icon::PENCIL_SIMPLE_LINE, "Show changes", "View", "Ctrl 2"), Action::SetView(View::Changes)),
-                (e(icon::ARROWS_CLOCKWISE, "Refresh", "Repository", "F5"), Action::Refresh),
-                (e(icon::ARROWS_CLOCKWISE, "Fetch all remotes", "Remote", "Ctrl Shift F"), Action::Op(Op::Fetch)),
-                (e(icon::ARROW_FAT_LINE_DOWN, "Pull", "Remote", "Ctrl Shift L"), Action::Pull),
-                (e(icon::ARROW_FAT_LINE_UP, "Push", "Remote", "Ctrl Shift K"), Action::Op(Op::Push { force: false })),
-                (e(icon::WARNING, "Force push (with lease)…", "Remote", ""), Action::Confirm { title: "Force push".into(), body: "Overwrite the remote branch with your local one? --force-with-lease refuses if someone else pushed in the meantime.".into(), confirm: "Force push".into(), danger: true, op: Op::Push { force: true } }),
-                (e(icon::CLOUD, "Add remote…", "Remote", ""), Action::OpenDialog(Dialog::AddRemote { name: "origin".into(), url: String::new() })),
-                (e(icon::GIT_BRANCH, "New branch…", "Branch", "Ctrl B"), Action::OpenDialog(Dialog::new_branch(None))),
-                (e(icon::GIT_MERGE, "Merge…", "Branch", ""), Action::OpenDialog(Dialog::Merge { target: String::new(), rebase: false })),
-                (e(icon::GIT_PULL_REQUEST, "Rebase…", "Branch", ""), Action::OpenDialog(Dialog::Merge { target: String::new(), rebase: true })),
-                (e(icon::ARCHIVE, "Stash changes…", "Stash", "Ctrl Shift S"), Action::OpenDialog(Dialog::Stash { message: String::new(), untracked: true })),
-                (e(icon::TRAY_ARROW_UP, "Pop latest stash", "Stash", ""), Action::Op(Op::StashApply { index: 0, pop: true })),
-                (e(icon::PLUS, "Stage all changes", "Changes", ""), Action::Op(Op::StageAll)),
-                (e(icon::MINUS, "Unstage all changes", "Changes", ""), Action::Op(Op::UnstageAll)),
-                (e(icon::TERMINAL_WINDOW, "Open terminal here", "Repository", ""), Action::OpenTerminal(tab.path.clone())),
-                (e(icon::FOLDER_OPEN, "Show in file manager", "Repository", ""), Action::OpenPath(tab.path.clone())),
-                (e(icon::X, "Close repository", "Repository", "Ctrl W"), Action::CloseTab(self.active)),
+                (
+                    e(icon::GRAPH, "Show history", "View", Some(C::History)),
+                    Action::SetView(View::History),
+                ),
+                (
+                    e(
+                        icon::PENCIL_SIMPLE_LINE,
+                        "Show changes",
+                        "View",
+                        Some(C::Changes),
+                    ),
+                    Action::SetView(View::Changes),
+                ),
+                (
+                    e(
+                        icon::ARROWS_CLOCKWISE,
+                        "Refresh",
+                        "Repository",
+                        Some(C::Refresh),
+                    ),
+                    Action::Refresh,
+                ),
+                (
+                    e(
+                        icon::GIT_BRANCH,
+                        "New branch…",
+                        "Branch",
+                        Some(C::NewBranch),
+                    ),
+                    Action::OpenDialog(Dialog::new_branch(None)),
+                ),
+                (
+                    e(icon::GIT_MERGE, "Merge…", "Branch", Some(C::MergeDialog)),
+                    Action::OpenDialog(Dialog::Merge {
+                        target: String::new(),
+                        rebase: false,
+                    }),
+                ),
+                (
+                    e(icon::GIT_PULL_REQUEST, "Rebase…", "Branch", None),
+                    Action::OpenDialog(Dialog::Merge {
+                        target: String::new(),
+                        rebase: true,
+                    }),
+                ),
+                (
+                    e(icon::ARCHIVE, "Stash changes…", "Stash", Some(C::Stash)),
+                    Action::OpenDialog(Dialog::Stash {
+                        message: String::new(),
+                        untracked: true,
+                    }),
+                ),
+                (
+                    e(
+                        icon::TRAY_ARROW_UP,
+                        "Pop latest stash",
+                        "Stash",
+                        Some(C::PopStash),
+                    ),
+                    Action::Op(Op::StashApply {
+                        index: 0,
+                        pop: true,
+                    }),
+                ),
+                (
+                    e(
+                        icon::PLUS,
+                        "Stage all changes",
+                        "Changes",
+                        Some(C::StageAll),
+                    ),
+                    Action::Op(Op::StageAll),
+                ),
+                (
+                    e(
+                        icon::MINUS,
+                        "Unstage all changes",
+                        "Changes",
+                        Some(C::UnstageAll),
+                    ),
+                    Action::Op(Op::UnstageAll),
+                ),
+                (
+                    e(icon::CLOUD, "Add remote…", "Remote", None),
+                    Action::OpenDialog(Dialog::add_remote(&self.settings)),
+                ),
+                (
+                    e(
+                        icon::TERMINAL_WINDOW,
+                        "Open terminal here",
+                        "Repository",
+                        None,
+                    ),
+                    Action::OpenTerminal(tab.path.clone()),
+                ),
+                (
+                    e(
+                        icon::FOLDER_OPEN,
+                        "Show in file manager",
+                        "Repository",
+                        None,
+                    ),
+                    Action::OpenExternal(tab.path.display().to_string()),
+                ),
+                (
+                    e(icon::X, "Close repository", "Repository", Some(C::CloseTab)),
+                    Action::CloseTab(self.active),
+                ),
             ]);
+            if local_only {
+                v.push((
+                    e(icon::CLOUD_ARROW_UP, "Publish repository…", "Remote", None),
+                    Action::Publish,
+                ));
+            } else {
+                v.extend([
+                    (e(icon::ARROWS_CLOCKWISE, "Fetch all remotes", "Remote", Some(C::Fetch)), Action::Fetch),
+                    (e(icon::ARROW_FAT_LINE_DOWN, "Pull", "Remote", Some(C::Pull)), Action::Pull),
+                    (e(icon::ARROW_FAT_LINE_UP, "Push", "Remote", Some(C::Push)), Action::Push),
+                    (e(icon::WARNING, "Force push (with lease)…", "Remote", None), Action::Confirm { title: "Force push".into(), body: "Overwrite the remote branch with your local one? --force-with-lease refuses if someone else pushed in the meantime.".into(), confirm: "Force push".into(), danger: true, op: Op::Push { force: true } }),
+                ]);
+            }
+            if let Some((_, forge)) = tab.forge() {
+                let kind = forge.kind;
+                v.push((
+                    e(
+                        forge_icon(kind),
+                        &format!("Open repository on {}", kind.name()),
+                        "Remote",
+                        None,
+                    ),
+                    Action::OpenExternal(forge.web_url()),
+                ));
+                v.push((
+                    e(
+                        icon::GIT_PULL_REQUEST,
+                        &format!("Show {}s", kind.request_noun()),
+                        "View",
+                        Some(C::Requests),
+                    ),
+                    Action::SetView(View::Requests),
+                ));
+                if let Some(b) = tab.snap.as_ref().and_then(|s| s.current_branch())
+                    && b.upstream.is_some()
+                {
+                    v.push((
+                        e(
+                            icon::GIT_PULL_REQUEST,
+                            &format!("Create {} for {}…", kind.request_noun(), b.name),
+                            "Remote",
+                            None,
+                        ),
+                        Action::CreateRequest {
+                            source: b.name.clone(),
+                        },
+                    ));
+                }
+            }
             if let Some(s) = &tab.snap {
                 if let Some(op) = s.state.command().map(|_| s.state) {
                     v.push((
@@ -341,7 +722,7 @@ impl CanopyApp {
                             icon::PLAY,
                             &format!("Continue {}", op.label().to_lowercase()),
                             "Repository",
-                            "",
+                            None,
                         ),
                         Action::Op(Op::ContinueOrAbort {
                             state: op,
@@ -353,7 +734,7 @@ impl CanopyApp {
                             icon::X_CIRCLE,
                             &format!("Abort {}", op.label().to_lowercase()),
                             "Repository",
-                            "",
+                            None,
                         ),
                         Action::Op(Op::ContinueOrAbort {
                             state: op,
@@ -367,7 +748,7 @@ impl CanopyApp {
                             icon::GIT_BRANCH,
                             &format!("Check out {}", b.name),
                             "Branch",
-                            "",
+                            None,
                         ),
                         Action::Op(Op::Checkout(b.name.clone())),
                     ));
@@ -378,7 +759,7 @@ impl CanopyApp {
                             icon::CLOUD,
                             &format!("Check out {}", b.full_name()),
                             "Remote branch",
-                            "",
+                            None,
                         ),
                         Action::Op(Op::CheckoutRemote {
                             remote: b.remote.clone(),
@@ -392,9 +773,24 @@ impl CanopyApp {
                             icon::GIT_MERGE,
                             &format!("Merge {} into current", b.name),
                             "Branch",
-                            "",
+                            None,
                         ),
                         Action::Op(Op::Merge(b.name.clone())),
+                    ));
+                }
+            }
+            if let Some(Ok(list)) = &tab.requests.list
+                && let Some((_, forge)) = tab.forge()
+            {
+                for r in list {
+                    v.push((
+                        e(
+                            icon::GIT_PULL_REQUEST,
+                            &format!("#{} {}", r.number, r.title),
+                            forge.kind.request_noun(),
+                            None,
+                        ),
+                        Action::Command(C::Requests),
                     ));
                 }
             }
@@ -405,7 +801,7 @@ impl CanopyApp {
                     icon::FOLDER_SIMPLE,
                     &format!("Switch to {}", t.name),
                     "Tab",
-                    "",
+                    None,
                 ),
                 Action::SwitchTab(i),
             ));
@@ -420,12 +816,17 @@ impl CanopyApp {
                     icon::CLOCK_COUNTER_CLOCKWISE,
                     &format!("Open {name}"),
                     &r.display().to_string(),
-                    "",
+                    None,
                 ),
                 Action::OpenRepo(r.clone()),
             ));
         }
         v
+    }
+
+    fn set_theme(&mut self, ctx: &egui::Context, id: ThemeId) {
+        self.settings.theme = id;
+        theme::apply(ctx, id, self.settings.reduce_motion);
     }
 
     fn apply(&mut self, ctx: &egui::Context, actions: Vec<Action>) {
@@ -497,6 +898,10 @@ impl CanopyApp {
                             && let Some(oid) = t.selected_commit.take()
                         {
                             t.select_commit(oid);
+                            t.reveal_selected = true;
+                        }
+                        if v == View::Requests && t.requests.list.is_none() {
+                            t.load_requests();
                         }
                     }
                 }
@@ -511,6 +916,9 @@ impl CanopyApp {
                 Action::Refresh => {
                     if let Some(t) = self.tab() {
                         t.refresh();
+                        if t.view == View::Requests {
+                            t.load_requests();
+                        }
                     }
                 }
                 Action::LoadMore => {
@@ -520,13 +928,46 @@ impl CanopyApp {
                         t.refresh();
                     }
                 }
-                Action::Pull => {
-                    let rebase = self.settings.pull_rebase;
+                Action::Fetch => {
+                    let prune = self.settings.prune_on_fetch;
                     if let Some(t) = self.tab() {
-                        t.op(Op::Pull { rebase });
+                        t.op(Op::Fetch {
+                            prune,
+                            quiet: false,
+                        });
                     }
                 }
+                Action::Pull => {
+                    let strategy = self.settings.pull_mode.strategy();
+                    if let Some(t) = self.tab() {
+                        t.op(Op::Pull { strategy });
+                    }
+                }
+                Action::Push => {
+                    if self
+                        .tabs
+                        .get(self.active)
+                        .is_some_and(RepoTab::is_local_only)
+                    {
+                        self.dialog = Some(Dialog::add_remote(&self.settings).publishing());
+                    } else if let Some(t) = self.tab() {
+                        t.op(Op::Push { force: false });
+                    }
+                }
+                Action::WhatsNew => self.dialog = whats_new(),
+                Action::ShowUpdate => {
+                    if let UpdateState::Available(a) = &self.updater.state {
+                        self.dialog = Some(Dialog::Update(a.clone()));
+                    }
+                }
+                Action::AddRemoteDialog => {
+                    self.dialog = Some(Dialog::add_remote(&self.settings));
+                }
+                Action::Publish => {
+                    self.dialog = Some(Dialog::add_remote(&self.settings).publishing());
+                }
                 Action::Commit => {
+                    let signoff = self.settings.signoff;
                     if let Some(t) = self.tab() {
                         let mut message = t.commit_summary.trim().to_owned();
                         if !t.commit_body.trim().is_empty() {
@@ -537,6 +978,7 @@ impl CanopyApp {
                             t.op(Op::Commit {
                                 message,
                                 amend: t.amend,
+                                signoff,
                             });
                         }
                     }
@@ -546,18 +988,174 @@ impl CanopyApp {
                         t.worker.send(Job::HeadMessage);
                     }
                 }
-                Action::ToggleTheme => {
-                    self.settings.dark = !self.settings.dark;
-                    theme::apply(ctx, self.settings.dark);
+                Action::SetTheme(id) => self.set_theme(ctx, id),
+                Action::NextTheme => {
+                    let next = self.settings.theme.next();
+                    self.set_theme(ctx, next);
+                    self.toasts
+                        .push(ctx, ToastKind::Info, format!("Theme: {}", next.name()), "");
                 }
                 Action::Palette => self.palette.open(),
+                Action::Cheatsheet => self.cheatsheet.toggle(),
+                Action::Settings => self.settings_screen = Some(SettingsScreen::default()),
                 Action::Copy(text) => {
                     ctx.copy_text(text.clone());
                     self.toasts.push(ctx, ToastKind::Info, "Copied", text);
                 }
-                Action::OpenPath(p) => open_path(&p),
-                Action::OpenTerminal(p) => open_terminal(&p),
+                Action::OpenExternal(target) => {
+                    if let Err(e) = open_external(&target) {
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Error,
+                            "Could not open",
+                            format!("{target}: {e}"),
+                        );
+                    }
+                }
+                Action::OpenTerminal(p) => {
+                    if let Err(e) = open_terminal(&p, &self.settings.terminal) {
+                        self.toasts
+                            .push(ctx, ToastKind::Error, "Could not open a terminal", e);
+                    }
+                }
+                Action::Command(c) => {
+                    let mut more = Vec::new();
+                    self.command(ctx, c, 0, &mut more);
+                    self.apply(ctx, more);
+                }
+                Action::CheckUpdates => {
+                    self.settings.last_update_check = chrono::Utc::now().timestamp();
+                    self.updater
+                        .start(ctx, self.settings.include_prereleases, true);
+                }
+                Action::SkipVersion(v) => {
+                    self.settings.skipped_version = Some(v);
+                    self.updater.state = UpdateState::UpToDate;
+                }
+                Action::CreateRequest { source } => self.create_request(ctx, source),
+                Action::Host(job) => {
+                    if let Some(t) = self.tab() {
+                        let kind = t.host.as_ref().map(|h| h.forge.kind);
+                        if let Some(kind) = kind {
+                            t.requests.busy = Some(match &job {
+                                HostJob::Create(_) => format!("Creating {}", kind.request_noun()),
+                                _ => "Working…".into(),
+                            });
+                        }
+                        t.host_job(job);
+                    }
+                }
+                Action::CheckoutRequest(r) => self.checkout_request(r),
+                Action::DiffPrefsChanged => {
+                    if let Some(t) = self.tabs.get_mut(self.active) {
+                        let prefs = t.diff_prefs;
+                        let path = t.path.clone();
+                        t.reload_diff();
+                        if prefs == self.settings.diff {
+                            self.settings.repo_diff.remove(&path);
+                        } else {
+                            self.settings.repo_diff.insert(path, prefs);
+                        }
+                    }
+                }
+                Action::DismissIntro => self.settings.seen_intro = true,
             }
+        }
+    }
+
+    /// Opens the new pull/merge request dialog, or the provider's page when the API is off or
+    /// has no token.
+    fn create_request(&mut self, ctx: &egui::Context, source: String) {
+        let Some(t) = self.tabs.get(self.active) else {
+            return;
+        };
+        let Some((remote, forge)) = t.forge().cloned() else {
+            return;
+        };
+        let target = t
+            .snap
+            .as_ref()
+            .and_then(|s| s.remotes.iter().find(|r| r.name == remote))
+            .and_then(|r| r.default_branch.clone());
+        let has_token = matches!(t.requests.token, Some(Some(_)));
+        if !self.settings.hosting_api || !has_token {
+            let url = forge.new_request_url(&source, target.as_deref());
+            if let Err(e) = open_external(&url) {
+                self.toasts
+                    .push(ctx, ToastKind::Error, "Could not open the browser", e);
+            }
+            return;
+        }
+        // Prefill from the branch's newest commit: its summary and body.
+        let (title, body) = t
+            .snap
+            .as_ref()
+            .and_then(|s| s.current_branch())
+            .and_then(|b| b.target)
+            .and_then(|oid| t.snap.as_ref()?.commits.iter().find(|c| c.oid == oid))
+            .map(|c| (c.summary.clone(), String::new()))
+            .unwrap_or_default();
+        let branches: Vec<String> = t
+            .snap
+            .as_ref()
+            .map(|s| {
+                s.remote_branches
+                    .iter()
+                    .filter(|b| b.remote == remote)
+                    .map(|b| b.branch.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.dialog = Some(Dialog::NewRequest {
+            kind: forge.kind,
+            request: NewRequest {
+                title,
+                body,
+                source,
+                target: target.unwrap_or_else(|| "main".into()),
+                draft: false,
+            },
+            branches,
+        });
+    }
+
+    fn checkout_request(&mut self, r: RequestSummary) {
+        let Some(t) = self.tabs.get(self.active) else {
+            return;
+        };
+        let Some((remote, forge)) = t.forge().cloned() else {
+            return;
+        };
+        let same_repo_branch = !r.from_fork
+            && t.snap.as_ref().is_some_and(|s| {
+                s.remote_branches
+                    .iter()
+                    .any(|b| b.remote == remote && b.branch == r.source_branch)
+            });
+        let local_exists = t
+            .snap
+            .as_ref()
+            .is_some_and(|s| s.branches.iter().any(|b| b.name == r.source_branch));
+        let op = if same_repo_branch && local_exists {
+            Op::Checkout(r.source_branch.clone())
+        } else if same_repo_branch {
+            Op::CheckoutRemote {
+                remote,
+                branch: r.source_branch.clone(),
+            }
+        } else {
+            let prefix = match forge.kind {
+                canopy_core::forge::ForgeKind::GitHub => "pr",
+                canopy_core::forge::ForgeKind::GitLab => "mr",
+            };
+            Op::CheckoutRequest {
+                remote,
+                remote_ref: canopy_hosting::checkout_ref(forge.kind, r.number),
+                branch: format!("{prefix}/{}", r.number),
+            }
+        };
+        if let Some(t) = self.tab() {
+            t.op(op);
         }
     }
 
@@ -584,7 +1182,7 @@ impl CanopyApp {
 
     fn poll(&mut self, ctx: &egui::Context) {
         for tab in &mut self.tabs {
-            for n in tab.poll() {
+            for n in tab.poll(&self.gitlab_hosts) {
                 self.toasts.push(
                     ctx,
                     if n.ok {
@@ -596,6 +1194,14 @@ impl CanopyApp {
                     n.body,
                 );
             }
+        }
+        // Start the pull/merge request thread for the active tab once its remotes are known.
+        if let Some(t) = self.tabs.get_mut(self.active) {
+            let saved = t
+                .forge()
+                .and_then(|(_, f)| self.tokens.get(&f.host))
+                .map(str::to_owned);
+            t.ensure_host(ctx, saved, self.settings.hosting_api);
         }
         let mut finished = None;
         if let Some((_, rx, status)) = &mut self.clone {
@@ -621,97 +1227,94 @@ impl CanopyApp {
                 Err(e) => self.toasts.push(ctx, ToastKind::Error, "Clone failed", e),
             }
         }
+        if self.updater.poll() {
+            let manual = self.updater.manual;
+            match &self.updater.state {
+                UpdateState::Available(a) => {
+                    let v = &a.version;
+                    let skipped = self.settings.skipped_version.as_deref() == Some(&v.to_string());
+                    if manual {
+                        self.dialog = Some(Dialog::Update(a.clone()));
+                    } else if !skipped {
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Info,
+                            format!("Canopy {v} is available"),
+                            "Click the update badge in the status bar for what's new.",
+                        );
+                    } else {
+                        self.updater.state = UpdateState::UpToDate;
+                    }
+                }
+                UpdateState::UpToDate if manual => self.toasts.push(
+                    ctx,
+                    ToastKind::Success,
+                    "Canopy is up to date",
+                    format!("Version {}", env!("CARGO_PKG_VERSION")),
+                ),
+                UpdateState::Failed(e) if manual => self.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    "Could not check for updates",
+                    e.clone(),
+                ),
+                _ => {}
+            }
+        }
     }
 
-    fn settings_dialog(&mut self, ctx: &egui::Context) -> bool {
-        let p = palette(ctx);
-        let mut close = false;
-        let mut theme_changed = false;
-        let modal = egui::Modal::new(egui::Id::new("settings"))
-            .frame(
-                egui::Frame::new()
-                    .fill(p.elevated)
-                    .stroke(Stroke::new(1.0, p.border))
-                    .corner_radius(egui::CornerRadius::same(theme::RADIUS_LG))
-                    .inner_margin(egui::Margin::same(22)),
-            )
-            .show(ctx, |ui| {
-                ui.set_width(420.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(icon::GEAR_SIX).size(20.0).color(p.accent));
-                    ui.label(
-                        RichText::new("Settings").font(egui::FontId::new(17.0, theme::semibold())),
-                    );
-                });
-                ui.add_space(14.0);
-                egui::Grid::new("settings-grid")
-                    .num_columns(2)
-                    .spacing([24.0, 12.0])
-                    .show(ui, |ui| {
-                        ui.label("Theme");
-                        ui.horizontal(|ui| {
-                            theme_changed |= ui
-                                .selectable_value(
-                                    &mut self.settings.dark,
-                                    true,
-                                    format!("{}  Midnight", icon::MOON),
-                                )
-                                .changed();
-                            theme_changed |= ui
-                                .selectable_value(
-                                    &mut self.settings.dark,
-                                    false,
-                                    format!("{}  Daylight", icon::SUN),
-                                )
-                                .changed();
-                        });
-                        ui.end_row();
-                        ui.label("Zoom");
-                        ui.add(
-                            egui::Slider::new(&mut self.settings.zoom, 0.8..=1.6)
-                                .step_by(0.05)
-                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
-                        );
-                        ui.end_row();
-                        ui.label("Pull strategy");
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(&mut self.settings.pull_rebase, false, "Merge");
-                            ui.selectable_value(&mut self.settings.pull_rebase, true, "Rebase");
-                        });
-                        ui.end_row();
-                        ui.label("Commits per page");
-                        ui.add(
-                            egui::DragValue::new(&mut self.settings.commit_page)
-                                .range(200..=50_000)
-                                .speed(50),
-                        );
-                        ui.end_row();
-                    });
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(
-                        "The pull strategy applies only when git's pull.rebase is not set.",
-                    )
-                    .size(11.5)
-                    .color(p.text_faint),
-                );
-                ui.add_space(12.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_sized([90.0, 32.0], egui::Button::new("Done"))
-                        .clicked()
-                    {
-                        close = true;
-                    }
-                });
-            });
-        if theme_changed {
-            theme::apply(ctx, self.settings.dark);
+    /// Queues background fetches for tabs whose auto-fetch interval has passed.
+    fn auto_fetch(&mut self, ctx: &egui::Context) {
+        let minutes = self.settings.auto_fetch_minutes;
+        if minutes == 0 || self.screenshot.is_some() {
+            return;
         }
-        if (ctx.zoom_factor() - self.settings.zoom).abs() > f32::EPSILON {
-            ctx.set_zoom_factor(self.settings.zoom);
+        let every = Duration::from_secs(u64::from(minutes) * 60);
+        let prune = self.settings.prune_on_fetch;
+        for t in &mut self.tabs {
+            let idle = t.running.is_none();
+            let has_remote = t.snap.as_ref().is_some_and(|s| !s.remotes.is_empty());
+            if idle && has_remote && t.last_fetch.elapsed() >= every {
+                t.last_fetch = Instant::now();
+                t.op(Op::Fetch { prune, quiet: true });
+            }
         }
-        close || modal.should_close()
+        ctx.request_repaint_after(Duration::from_secs(30));
+    }
+
+    /// Applies settings that changed in the settings screen.
+    fn settings_changed(&mut self, ctx: &egui::Context, before: &Settings) {
+        let s = &self.settings;
+        if s.theme != before.theme || s.reduce_motion != before.reduce_motion {
+            theme::apply(ctx, s.theme, s.reduce_motion);
+        }
+        if (ctx.zoom_factor() - s.zoom).abs() > f32::EPSILON {
+            ctx.set_zoom_factor(s.zoom);
+        }
+        if s.gitlab_hosts != before.gitlab_hosts {
+            self.gitlab_hosts = s.gitlab_host_list();
+            for t in &mut self.tabs {
+                t.update_forges(&self.gitlab_hosts);
+            }
+        }
+        if s.diff != before.diff {
+            for t in &mut self.tabs {
+                if !self.settings.repo_diff.contains_key(&t.path) {
+                    t.diff_prefs = self.settings.diff;
+                    t.reload_diff();
+                }
+            }
+        }
+        if s.hosting_api != before.hosting_api {
+            let enabled = s.hosting_api;
+            for t in &mut self.tabs {
+                let saved = t
+                    .forge()
+                    .and_then(|(_, f)| self.tokens.get(&f.host))
+                    .map(str::to_owned);
+                t.restart_host(ctx, saved, enabled);
+            }
+        }
     }
 
     fn handle_screenshot(&mut self, ctx: &egui::Context) {
@@ -723,7 +1326,15 @@ impl CanopyApp {
             shot.started = now;
         }
         let ready = self.tabs.iter().all(|t| {
-            t.snap.is_some() && t.running.is_none() && (t.diff.is_some() || t.file.is_none())
+            let requests_ready = t.view != View::Requests
+                || t.host.is_none()
+                || (!t.requests.loading
+                    && !t.requests.details_loading
+                    && t.requests.list.is_some());
+            t.snap.is_some()
+                && t.running.is_none()
+                && (t.diff.is_some() || t.file.is_none())
+                && requests_ready
         });
         if ready {
             shot.ready_frames += 1;
@@ -746,6 +1357,25 @@ impl CanopyApp {
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+    }
+}
+
+/// The "What's new" dialog for this version, from the bundled changelog (the Unreleased
+/// section in development builds).
+fn whats_new() -> Option<Dialog> {
+    use crate::ui::notes::{CHANGELOG, changelog_section};
+    let version = env!("CARGO_PKG_VERSION");
+    changelog_section(CHANGELOG, version)
+        .map(|notes| (version.to_owned(), notes))
+        .or_else(|| changelog_section(CHANGELOG, "Unreleased").map(|n| (format!("{version}+"), n)))
+        .map(|(version, notes)| Dialog::WhatsNew { version, notes })
+}
+
+/// The Phosphor icon of a forge.
+pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
+    match kind {
+        canopy_core::forge::ForgeKind::GitHub => icon::GITHUB_LOGO,
+        canopy_core::forge::ForgeKind::GitLab => icon::GITLAB_LOGO_SIMPLE,
     }
 }
 
@@ -772,22 +1402,43 @@ fn save_png(path: &std::path::Path, image: &egui::ColorImage) -> anyhow::Result<
     Ok(())
 }
 
-fn open_path(path: &std::path::Path) {
+/// Opens a path or an `https://` URL with the platform's default handler.
+pub fn open_external(target: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    let r = std::process::Command::new("xdg-open").arg(path).spawn();
+    let r = std::process::Command::new("xdg-open").arg(target).spawn();
     #[cfg(target_os = "macos")]
-    let r = std::process::Command::new("open").arg(path).spawn();
+    let r = std::process::Command::new("open").arg(target).spawn();
     #[cfg(target_os = "windows")]
-    let r = std::process::Command::new("explorer").arg(path).spawn();
+    let r = if target.starts_with("http://") || target.starts_with("https://") {
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", target])
+            .spawn()
+    } else {
+        std::process::Command::new("explorer").arg(target).spawn()
+    };
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     let r: std::io::Result<std::process::Child> =
         Err(std::io::Error::other("unsupported platform"));
-    if let Err(e) = r {
-        tracing::warn!("could not open {}: {e}", path.display());
-    }
+    r.map(drop).map_err(|e| {
+        tracing::warn!("could not open {target}: {e}");
+        e.to_string()
+    })
 }
 
-fn open_terminal(path: &std::path::Path) {
+/// Opens a terminal in `path`: the configured command first, then the platform's usual ones.
+fn open_terminal(path: &std::path::Path, configured: &str) -> Result<(), String> {
+    let configured = configured.trim();
+    if !configured.is_empty() {
+        let mut parts = configured.split_whitespace();
+        if let Some(program) = parts.next() {
+            return std::process::Command::new(program)
+                .args(parts)
+                .current_dir(path)
+                .spawn()
+                .map(drop)
+                .map_err(|e| format!("{configured}: {e}"));
+        }
+    }
     #[cfg(target_os = "linux")]
     {
         let candidates: Vec<String> = std::env::var("TERMINAL")
@@ -803,6 +1454,7 @@ fn open_terminal(path: &std::path::Path) {
                     "kitty",
                     "foot",
                     "wezterm",
+                    "ghostty",
                     "xterm",
                 ]
                 .map(String::from),
@@ -814,24 +1466,33 @@ fn open_terminal(path: &std::path::Path) {
                 .spawn()
                 .is_ok()
             {
-                return;
+                return Ok(());
             }
         }
-        tracing::warn!("no terminal emulator found; set $TERMINAL");
+        Err("No terminal emulator found. Set one in Settings → Integrations.".into())
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open")
+        std::process::Command::new("open")
             .args(["-a", "Terminal"])
             .arg(path)
-            .spawn();
+            .spawn()
+            .map(drop)
+            .map_err(|e| e.to_string())
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("cmd")
+        std::process::Command::new("cmd")
             .args(["/C", "start", "cmd"])
             .current_dir(path)
-            .spawn();
+            .spawn()
+            .map(drop)
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        let _ = path;
+        Err("unsupported platform".into())
     }
 }
 
@@ -840,8 +1501,9 @@ impl eframe::App for CanopyApp {
         let ctx = ui.ctx().clone();
         let p = palette(&ctx);
         self.poll(&ctx);
+        self.auto_fetch(&ctx);
         let mut actions = Vec::new();
-        self.shortcuts(&ctx, &mut actions);
+        self.keyboard(&ctx, &mut actions);
 
         // Refresh when the window regains focus: files may have changed in an editor.
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
@@ -862,7 +1524,13 @@ impl eframe::App for CanopyApp {
             .exact_size(40.0)
             .frame(egui::Frame::new().fill(p.bg))
             .show(ui, |ui| {
-                toolbar::tabs(ui, &self.tabs, self.active, &mut actions)
+                toolbar::tabs(
+                    ui,
+                    &self.tabs,
+                    self.active,
+                    self.settings.theme,
+                    &mut actions,
+                )
             });
         if let Some(tab) = self.tabs.get(self.active) {
             egui::Panel::top("actions")
@@ -893,7 +1561,13 @@ impl eframe::App for CanopyApp {
                         ui.label(RichText::new(s).size(12.0).color(p.accent));
                     });
                 } else {
-                    statusbar::show(ui, self.tabs.get(self.active), &self.git_version);
+                    statusbar::show(
+                        ui,
+                        self.tabs.get(self.active),
+                        &self.git_version,
+                        &self.updater.state,
+                        &mut actions,
+                    );
                 }
             });
 
@@ -913,8 +1587,11 @@ impl eframe::App for CanopyApp {
             egui::CentralPanel::default()
                 .frame(egui::Frame::new().fill(p.bg))
                 .show(ui, |ui| match tab.view {
-                    View::History => history::show(ui, tab, &mut actions),
+                    View::History => history::show(ui, tab, &self.settings, &mut actions),
                     View::Changes => changes::show(ui, tab, &mut actions),
+                    View::Requests => {
+                        requests::show(ui, tab, self.settings.hosting_api, &mut actions)
+                    }
                 });
         } else {
             egui::CentralPanel::default()
@@ -923,10 +1600,36 @@ impl eframe::App for CanopyApp {
         }
 
         // Overlays.
-        if matches!(self.dialog, Some(Dialog::Settings)) {
-            if self.settings_dialog(&ctx) {
-                self.dialog = None;
+        if let Some(screen) = &mut self.settings_screen {
+            let before = self.settings.clone();
+            let forges: Vec<canopy_core::forge::Forge> = self
+                .tabs
+                .iter()
+                .flat_map(|t| t.forges.iter().map(|(_, f)| f.clone()))
+                .collect();
+            let result = settings_screen::show(
+                &ctx,
+                screen,
+                &mut self.settings,
+                &mut self.tokens,
+                &forges,
+                &self.updater.state,
+                &mut actions,
+            );
+            if result.tokens_changed {
+                let enabled = self.settings.hosting_api;
+                for t in &mut self.tabs {
+                    let saved = t
+                        .forge()
+                        .and_then(|(_, f)| self.tokens.get(&f.host))
+                        .map(str::to_owned);
+                    t.restart_host(&ctx, saved, enabled);
+                }
             }
+            if result.close {
+                self.settings_screen = None;
+            }
+            self.settings_changed(&ctx, &before);
         } else if let Some(d) = &mut self.dialog {
             match dialogs::show(&ctx, d, self.tabs.get(self.active)) {
                 Outcome::Keep => {}
@@ -946,6 +1649,7 @@ impl eframe::App for CanopyApp {
                 actions.push(a);
             }
         }
+        self.cheatsheet.show(&ctx);
         self.toasts.show(&ctx);
         self.apply(&ctx, actions);
         self.handle_screenshot(&ctx);
@@ -960,11 +1664,6 @@ impl eframe::App for CanopyApp {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        let c = if self.settings.dark {
-            theme::DARK.bg
-        } else {
-            theme::LIGHT.bg
-        };
-        egui::Rgba::from(c).to_array()
+        egui::Rgba::from(self.settings.theme.palette().bg).to_array()
     }
 }

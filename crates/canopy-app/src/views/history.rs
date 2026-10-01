@@ -1,17 +1,20 @@
 //! The commit graph: a virtualised table with coloured lanes, ref pills and the details pane.
 
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Key, Pos2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2,
+    Align2, Color32, CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
 use canopy_core::ops::ResetMode;
 use canopy_core::{GraphRow, LineEnd, Oid, short_id};
 
-use crate::app::Action;
+use canopy_core::forge::Forge;
+
+use crate::app::{Action, forge_icon};
+use crate::settings::Settings;
 use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
-use crate::ui::widgets;
+use crate::ui::{art, widgets};
 use crate::views::{commit_detail, dialogs::Dialog};
 use crate::worker::Op;
 
@@ -20,7 +23,7 @@ const LANE_W: f32 = 16.0;
 const MAX_LANES: u16 = 18;
 
 /// Draws the history view.
-pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
+pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     if tab.snap.is_none() {
         loading(ui, tab);
@@ -40,7 +43,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .show(ui, |ui| commit_detail::show(ui, tab, actions));
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(p.bg))
-        .show(ui, |ui| table(ui, tab, actions));
+        .show(ui, |ui| table(ui, tab, settings, actions));
 }
 
 fn loading(ui: &mut Ui, tab: &RepoTab) {
@@ -48,11 +51,7 @@ fn loading(ui: &mut Ui, tab: &RepoTab) {
     ui.vertical_centered(|ui| {
         ui.add_space(ui.available_height() * 0.35);
         if let Some(e) = &tab.load_error {
-            ui.label(
-                RichText::new(icon::WARNING_CIRCLE)
-                    .size(36.0)
-                    .color(p.danger),
-            );
+            art::show(ui, art::empty_error(), vec2(160.0, 120.0));
             ui.label(RichText::new("Could not read this repository").heading());
             ui.label(RichText::new(e).color(p.text_dim));
         } else {
@@ -62,7 +61,7 @@ fn loading(ui: &mut Ui, tab: &RepoTab) {
     });
 }
 
-fn table(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
+fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     // Filter bar.
     egui::Frame::new()
@@ -85,7 +84,10 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         let edit = ui.add(
                             egui::TextEdit::singleline(&mut tab.filter)
                                 .id(id)
-                                .hint_text("Filter by message, author or SHA   (Ctrl+F)")
+                                .hint_text(format!(
+                                    "Filter by message, author or SHA   ({})",
+                                    crate::keymap::hint(crate::keymap::Command::Filter)
+                                ))
                                 .frame(egui::Frame::NONE)
                                 .desired_width(340.0),
                         );
@@ -116,6 +118,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         });
 
     let filtered: Option<Vec<usize>> = tab.filtered_rows().map(<[usize]>::to_vec);
+    let forge = tab.forge().map(|(_, f)| f.clone());
     let Some(snap) = tab.snap.as_ref() else {
         return;
     };
@@ -138,8 +141,9 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
 
     if snap.commits.is_empty() {
         ui.vertical_centered(|ui| {
-            ui.add_space(80.0);
-            ui.label(RichText::new(icon::PLANT).size(40.0).color(p.accent));
+            ui.add_space(60.0);
+            art::show(ui, art::empty_history(), vec2(160.0, 120.0));
+            ui.add_space(8.0);
             ui.label(RichText::new("No commits yet").heading());
             ui.label(
                 RichText::new("Stage some files in Changes and make the first commit.")
@@ -154,6 +158,8 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let sha_w = 74.0;
     let date_w = 112.0;
     let author_w = (full.width() * 0.17).clamp(110.0, 200.0);
+    let avatars = settings.show_avatars;
+    let name_x = if avatars { 32.0 } else { 6.0 };
     let desc_x = full.min.x + graph_w + 10.0;
     let author_x = full.max.x - sha_w - date_w - author_w;
     let date_x = full.max.x - sha_w - date_w;
@@ -180,32 +186,18 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     ui.painter()
         .hline(full.x_range(), hdr.max.y, Stroke::new(1.0, p.border));
 
-    // Keyboard navigation.
+    // Keyboard navigation (keymap: j/k, g/G) moves the selection and asks to reveal it.
     let selected_pos = tab
         .selected_commit
         .and_then(|s| rows.iter().position(|&i| snap.commits[i].oid == s));
-    let mut nav: Option<usize> = None;
-    if !ui.ctx().egui_wants_keyboard_input() {
-        let (down, up) = ui.input(|i| {
-            (
-                i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::J),
-                i.key_pressed(Key::ArrowUp) || i.key_pressed(Key::K),
-            )
-        });
-        if down {
-            nav = Some(selected_pos.map_or(0, |s| (s + 1).min(rows.len().saturating_sub(1))));
-        } else if up {
-            nav = Some(selected_pos.map_or(0, |s| s.saturating_sub(1)));
-        }
-    }
-    let scroll_target = if tab.scroll_to_selected {
+    let scroll_target = if tab.scroll_to_selected || tab.reveal_selected {
         selected_pos
     } else {
-        nav
+        None
     };
 
     let now = chrono::Utc::now().timestamp();
-    let mut clicked: Option<Oid> = nav.map(|n| snap.commits[rows[n]].oid);
+    let mut clicked: Option<Oid> = None;
     let mut area = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .id_salt("history-rows");
@@ -224,6 +216,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         }
     }
     tab.scroll_to_selected = false;
+    tab.reveal_selected = false;
 
     let total_rows = rows.len() + usize::from(snap.truncated && filtered.is_none());
     area.show_rows(ui, ROW_H, total_rows, |ui, range| {
@@ -320,13 +313,15 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             );
 
             // Author.
-            widgets::paint_avatar(
-                ui,
-                pos2(author_x + 16.0, cy),
-                10.0,
-                &c.author.name,
-                &c.author.email,
-            );
+            if avatars {
+                widgets::paint_avatar(
+                    ui,
+                    pos2(author_x + 16.0, cy),
+                    10.0,
+                    &c.author.name,
+                    &c.author.email,
+                );
+            }
             let ag = ui.painter().layout_no_wrap(
                 c.author.name.clone(),
                 FontId::proportional(12.5),
@@ -334,18 +329,22 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             );
             ui.painter()
                 .with_clip_rect(Rect::from_min_max(
-                    pos2(author_x + 30.0, rect.min.y),
+                    pos2(author_x + name_x - 2.0, rect.min.y),
                     pos2(date_x - 8.0, rect.max.y),
                 ))
                 .galley(
-                    pos2(author_x + 32.0, cy - ag.size().y / 2.0),
+                    pos2(author_x + name_x, cy - ag.size().y / 2.0),
                     ag,
                     p.text_dim,
                 );
             ui.painter().text(
                 pos2(date_x, cy),
                 Align2::LEFT_CENTER,
-                widgets::relative_time(c.author.time, now),
+                if settings.relative_dates {
+                    widgets::relative_time(c.author.time, now)
+                } else {
+                    widgets::absolute_date(c.author.time)
+                },
                 FontId::proportional(12.5),
                 p.text_faint,
             );
@@ -364,12 +363,22 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 c.author.email,
                 widgets::full_date(c.author.time, c.author.offset_minutes)
             ));
+            let info = format!(
+                "Commit {}, {}, by {}, {}",
+                short_id(c.oid),
+                c.summary,
+                c.author.name,
+                widgets::relative_time(c.author.time, now)
+            );
+            resp.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &info)
+            });
             if resp.clicked() {
                 clicked = Some(c.oid);
             }
             let oid = c.oid;
             let summary = c.summary.clone();
-            resp.context_menu(|ui| commit_menu(ui, oid, &summary, actions));
+            resp.context_menu(|ui| commit_menu(ui, oid, &summary, forge.as_ref(), actions));
         }
     });
 
@@ -411,9 +420,28 @@ fn state_banner(ui: &mut Ui, state: canopy_core::RepoState, actions: &mut Vec<Ac
 }
 
 /// The context menu of a commit row.
-pub fn commit_menu(ui: &mut Ui, oid: Oid, summary: &str, actions: &mut Vec<Action>) {
+pub fn commit_menu(
+    ui: &mut Ui,
+    oid: Oid,
+    summary: &str,
+    forge: Option<&Forge>,
+    actions: &mut Vec<Action>,
+) {
     let p = palette(ui.ctx());
     ui.set_min_width(240.0);
+    if let Some(f) = forge {
+        if ui
+            .button(format!(
+                "{}  Open commit on {}",
+                forge_icon(f.kind),
+                f.kind.name()
+            ))
+            .clicked()
+        {
+            actions.push(Action::OpenExternal(f.commit_url(&oid.to_string())));
+        }
+        ui.separator();
+    }
     if ui
         .button(format!("{}  Check out (detached HEAD)", icon::CHECK))
         .clicked()
