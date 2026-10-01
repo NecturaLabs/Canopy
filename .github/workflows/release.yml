@@ -46,7 +46,7 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential ca-certificates curl git pkg-config
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.target }}
@@ -97,7 +97,7 @@ jobs:
           fi
           rm -rf "$name"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: canopy-${{ matrix.target }}
           path: dist/*
@@ -117,8 +117,8 @@ jobs:
     needs: build
     runs-on: ${{ vars.USE_SELF_HOSTED == '0' && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -134,7 +134,7 @@ jobs:
             found { print }
           ' CHANGELOG.md > notes.md
           [[ -s notes.md ]] || { echo "No CHANGELOG.md section for $version" >&2; exit 1; }
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           name: Canopy ${{ github.ref_name }}
           body_path: notes.md
