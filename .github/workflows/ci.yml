@@ -99,6 +99,41 @@ jobs:
           git config --global user.email "ci@canopy.invalid"
           git config --global init.defaultBranch main
       - run: cargo test --workspace --locked
+      # install.ps1 cannot run on Linux: parse it with Windows PowerShell 5.1 (the oldest version
+      # it supports) and PowerShell 7, run its argument handling in both, and lint it with
+      # PSScriptAnalyzer where the runner has it. The Linux installer is tested in `tooling`.
+      - name: Check the PowerShell installer
+        if: matrix.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Native commands below are expected to fail; their exit codes are checked by hand.
+          $ErrorActionPreference = 'Continue'
+          $env:CANOPY_PS1 = (Resolve-Path packaging/install.ps1).Path
+          $parse = '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:CANOPY_PS1, [ref]$null, [ref]$e); if ($e.Count) { $e | Format-List | Out-String | Write-Host; exit 1 }; exit 0'
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($parse))
+          foreach ($ps in @('powershell.exe', 'pwsh')) {
+            & $ps -NoProfile -EncodedCommand $encoded
+            if ($LASTEXITCODE -ne 0) { throw "${ps} could not parse install.ps1" }
+            & $ps -NoProfile -ExecutionPolicy Bypass -File $env:CANOPY_PS1 -Help | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "${ps}: install.ps1 -Help exited with $LASTEXITCODE" }
+            & $ps -NoProfile -ExecutionPolicy Bypass -File $env:CANOPY_PS1 -NoSuchOption *>&1 | Out-Null
+            if ($LASTEXITCODE -ne 1) { throw "${ps}: install.ps1 accepted an unknown option" }
+            $env:CANOPY_INSTALL_BASE_URL = 'https://example.invalid'
+            & $ps -NoProfile -ExecutionPolicy Bypass -File $env:CANOPY_PS1 *>&1 | Out-Null
+            $code = $LASTEXITCODE
+            Remove-Item Env:CANOPY_INSTALL_BASE_URL
+            if ($code -ne 1) { throw "${ps}: install.ps1 accepted a non-loopback test feed" }
+            Write-Host "${ps}: install.ps1 parses and handles its arguments"
+          }
+          if (Get-Module -ListAvailable -Name PSScriptAnalyzer) {
+            # Write-Host is the installer's intended output; helpers such as Fail are no cmdlets.
+            $found = @(Invoke-ScriptAnalyzer -Path $env:CANOPY_PS1 -Severity Warning, Error -ExcludeRule PSAvoidUsingWriteHost, PSUseApprovedVerbs)
+            $found | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+            if ($found | Where-Object Severity -eq 'Error') { throw 'PSScriptAnalyzer reported errors in install.ps1' }
+          } else {
+            Write-Host '::notice::PSScriptAnalyzer is not installed on this runner; install.ps1 was parsed and smoke-tested only.'
+          }
+          exit 0
 
   deny:
     name: cargo-deny
@@ -134,6 +169,29 @@ jobs:
         with:
           cache: "false"
       - run: python3 tools/release.py selftest
+      # A pinned, checksum-verified ShellCheck, so every runner reports the same findings.
+      # packaging/ is held to every rule; tools/ to warnings and errors.
+      - name: ShellCheck
+        env:
+          SHELLCHECK_VERSION: v0.10.0
+          SHELLCHECK_SHA256: 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
+        run: |
+          dir="$RUNNER_TEMP/shellcheck"
+          rm -rf "$dir" && mkdir -p "$dir"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+            --output "$dir/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/$SHELLCHECK_VERSION/shellcheck-$SHELLCHECK_VERSION.linux.x86_64.tar.xz"
+          echo "$SHELLCHECK_SHA256  $dir/shellcheck.tar.xz" | sha256sum --check --quiet -
+          tar -xJf "$dir/shellcheck.tar.xz" -C "$dir"
+          shellcheck="$dir/shellcheck-$SHELLCHECK_VERSION/shellcheck"
+          "$shellcheck" --version
+          "$shellcheck" packaging/*.sh
+          "$shellcheck" --severity=warning tools/*.sh
+          rm -rf "$dir"
+      # Installs, upgrades, refuses a bad checksum and uninstalls against a fake feed on
+      # 127.0.0.1, in a temporary HOME.
+      - name: Test the Linux installer
+        run: packaging/test-install.sh
       - run: cargo fetch --locked
       # Every release ships docs/legal/third-party-notices.txt; a dependency change must update it.
       - run: python3 tools/notices.py --check
