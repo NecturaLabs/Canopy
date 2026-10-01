@@ -11,6 +11,16 @@ verified in the running app.
       an old semver as older. Releases stay manual (`workflow_dispatch` only). A partial attempt
       (installers, `build.rs`, test fixtures; not finished) is saved outside the repository at
       `/run/media/nectura/Programming SSD/tmp/canopy-build-versions-partial.patch`.
+- [ ] In-app update: today "Download" only opens the archive URL in a browser
+      (`views/dialogs/mod.rs`, `updater.rs` never installs). Owner's design: a native updater for
+      installer-managed installs (`.canopy-install` receipt whose `root=` holds the running exe):
+      download over HTTPS (installer's URL rule), check the manifest's SHA-256, stage into
+      `<root>/.staging.*` and swap with the installer's two-phase rollback, update the receipt,
+      `VERSION`, `uninstall.sh` and the registered desktop entry/icon copies (uninstall needs them
+      identical), take `.lock`, then offer Restart. Any other install runs the one-line installer
+      with `--version X`. Both remove every old file and `.previous.*`/`.staging.*` leftover and
+      never touch settings, tokens, logs or caches. Owner approval: `sha2` + tar/zip crates,
+      privacy policy text; Windows needs the rename-running-exe swap.
 - [ ] Git identity in Settings: show the effective `user.name` / `user.email` and where each comes
       from (local, global, env); edit them for this repository or globally through `git config`
       via `canopy_core::cli` on a worker `Op`; core tests against temporary repositories.
