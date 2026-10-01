@@ -450,7 +450,10 @@ impl Palette {
 
     /// Fill of the selected row in lists, the graph and the sidebar. Every text colour stays
     /// readable on it (see the contrast test).
-    #[cfg_attr(not(test), expect(dead_code, reason = "views adopt it in the controls pass"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "views adopt it in the controls pass")
+    )]
     pub fn selected(&self) -> Color32 {
         Palette::tint(self.accent, if self.dark { 46 } else { 30 })
     }
@@ -550,6 +553,7 @@ fn visuals(p: &Palette) -> Visuals {
 /// animations.
 pub fn apply(ctx: &egui::Context, id: ThemeId, reduce_motion: bool) {
     ACTIVE.store(id.index(), Ordering::Relaxed);
+    super::motion::set_reduced(reduce_motion);
     let p = id.palette();
     let theme = if p.dark { Theme::Dark } else { Theme::Light };
     let mut style = (*ctx.style_of(theme)).clone();
@@ -579,18 +583,14 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, reduce_motion: bool) {
     style.spacing.scroll.bar_width = 8.0;
     style.spacing.scroll.floating = true;
     style.interaction.selectable_labels = false;
-    style.animation_time = if reduce_motion { 0.0 } else { 0.18 };
+    style.animation_time = super::motion::time(super::motion::BASE);
     ctx.set_style_of(theme, style);
     ctx.set_theme(theme);
 }
 
-/// How long hover and selection fades take; zero with reduced motion.
-pub fn fade(ctx: &egui::Context, seconds: f32) -> f32 {
-    if ctx.global_style().animation_time == 0.0 {
-        0.0
-    } else {
-        seconds
-    }
+/// How long a fade takes: `seconds`, or zero with reduced motion.
+pub fn fade(_ctx: &egui::Context, seconds: f32) -> f32 {
+    super::motion::time(seconds)
 }
 
 #[cfg(test)]

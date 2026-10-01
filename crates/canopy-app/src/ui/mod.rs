@@ -4,6 +4,7 @@ pub mod art;
 pub mod cheatsheet;
 pub mod fonts;
 pub mod legal;
+pub mod motion;
 pub mod notes;
 pub mod palette;
 pub mod theme;
