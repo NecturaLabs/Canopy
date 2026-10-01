@@ -44,7 +44,9 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
         .show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space((rect.height() * 0.04).max(16.0));
-                let art_w = (rect.width() * 0.5).clamp(320.0, 520.0);
+                let art_w = (rect.width() * 0.5)
+                    .min(rect.height() * 0.50)
+                    .clamp(120.0, 520.0);
                 art::show(ui, art::welcome(), vec2(art_w, art_w * 9.0 / 16.0));
                 ui.add_space(4.0);
                 ui.label(
@@ -57,10 +59,10 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                         .size(15.0)
                         .color(p.text_dim),
                 );
-                ui.add_space(30.0);
+                ui.add_space(theme::LG);
 
-                let card_w = 190.0;
-                let total = card_w * 3.0 + 24.0;
+                let total = (ui.available_width() - theme::XL * 2.0).min(594.0);
+                let card_w = (total - theme::MD * 2.0) / 3.0;
                 ui.allocate_ui_with_layout(
                     vec2(total, 110.0),
                     egui::Layout::left_to_right(egui::Align::Center),
@@ -258,7 +260,7 @@ fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) ->
         r.left_top() + vec2(18.0, 62.0),
         Align2::LEFT_CENTER,
         title,
-        FontId::new(15.0, theme::semibold()),
+        FontId::new(theme::TITLE_SIZE, theme::semibold()),
         p.text,
     );
     ui.painter().text(

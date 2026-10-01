@@ -70,7 +70,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 );
                 ui.label(
                     RichText::new("No conflict markers left")
-                        .font(FontId::new(15.0, theme::semibold())),
+                        .font(FontId::new(theme::TITLE_SIZE, theme::semibold())),
                 );
                 ui.label(
                     RichText::new("The file looks resolved. Mark it resolved to stage it.")
@@ -95,7 +95,7 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
         .fill(p.panel)
         .inner_margin(egui::Margin::symmetric(14, 8))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(icon::GIT_DIFF).size(16.0).color(p.warning));
                 let (name, dir) = widgets::split_path(&r.path);
                 ui.label(
@@ -114,7 +114,7 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
                             .background_color(Palette::tint(p.warning, 30)),
                     );
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui
                         .button(format!("{}  Open in editor", icon::ARROW_SQUARE_OUT))
                         .on_hover_text("Open the file in your editor (Settings → Integrations)")
@@ -197,7 +197,7 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
         ui.label(RichText::new(icon::GIT_DIFF).size(34.0).color(p.warning));
-        ui.label(RichText::new(title).font(FontId::new(15.0, theme::semibold())));
+        ui.label(RichText::new(title).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
         if !body.is_empty() {
             ui.label(RichText::new(body).color(p.text_dim));
         }
@@ -230,7 +230,7 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
     egui::Panel::bottom(egui::Id::new(("resolve-footer", &r.path)))
         .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin::symmetric(14, 10)).stroke(Stroke::new(1.0, p.border)))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.vertical(|ui| {
                 use crate::keymap::{Command, hint};
                 let keys = format!(
                     "{}  {} {} previous/next · {} ours · {} theirs · {} both · {} undo",
@@ -242,9 +242,9 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                     hint(Command::TakeBoth),
                     hint(Command::ClearChoice),
                 );
-                ui.label(RichText::new(keys).size(11.5).color(p.text_faint))
+                ui.add(egui::Label::new(RichText::new(keys).size(theme::SMALL_SIZE).color(p.text_faint)).truncate())
                     .on_hover_text("Press ? for every shortcut");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.horizontal_wrapped(|ui| {
                     let all = done == n;
                     let mark = widgets::primary_button(ui, "Save and mark resolved", all, 200.0)
                         .on_disabled_hover_text("Choose a resolution for every conflict first");

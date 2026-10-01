@@ -39,12 +39,12 @@ Works also while typing.
 | Ctrl+Shift+S | Stage all changes |
 | Ctrl+B | Create a branch |
 | Ctrl+Enter | Commit staged changes |
-| Ctrl+F | Filter history |
+| Ctrl+F | Show or hide History search (closing clears the query) |
 | Ctrl+, | Open settings |
 | Ctrl+= (also Ctrl++) / Ctrl+− | Zoom in / out |
 | Ctrl+0 | Reset zoom |
 | Ctrl+Q | Quit Canopy |
-| Esc | Close the dialog, palette or cheatsheet |
+| Esc | Close the dialog, palette, cheatsheet or History search |
 
 ## Lists and views
 
@@ -60,7 +60,7 @@ Only when no text field has focus.
 | PgUp or Ctrl+U | Up a page |
 | gg (press G twice), also Home | Go to the top |
 | Shift+G, also End | Go to the bottom |
-| / | Filter history |
+| / | Show or hide History search |
 | Shift+R | Refresh |
 
 ## History

@@ -57,11 +57,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec
         return;
     }
 
+    let pane_max = (ui.available_width() * 0.4).max(160.0);
     egui::Panel::left("requests-list")
         .resizable(true)
-        .default_size(380.0)
-        .min_size(280.0)
-        .max_size(640.0)
+        .default_size(pane_max.min(380.0))
+        .min_size(pane_max.min(220.0))
+        .max_size(pane_max.min(640.0))
         .frame(
             egui::Frame::new()
                 .fill(p.panel)
@@ -409,16 +410,16 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
 
 fn branch_pill(ui: &mut Ui, name: &str) {
     let p = palette(ui.ctx());
+    let fill = Palette::pill_fill(p.accent2, false);
     egui::Frame::new()
-        .fill(Palette::tint(p.accent2, 26))
+        .fill(fill)
         .corner_radius(CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(6, 1))
         .show(ui, |ui| {
             ui.label(
                 RichText::new(format!("{}  {name}", icon::GIT_BRANCH))
-                    .monospace()
-                    .size(12.0)
-                    .color(p.accent2),
+                    .font(egui::FontId::new(theme::SMALL_SIZE, theme::medium()))
+                    .color(p.ink(p.text, fill)),
             )
         });
 }
@@ -475,11 +476,15 @@ fn action_bar(
             {
                 actions.push(Action::Host(HostJob::Approve(r.number)));
             }
+            if ui.available_size_before_wrap().x < 194.0 {
+                ui.end_row();
+            }
             // Merge: method picker and a confirming second click.
             let mergeable = d.and_then(|d| d.mergeable).unwrap_or(true) && !r.draft;
             egui::ComboBox::from_id_salt("merge-method")
                 .selected_text(tab.requests.merge_method.label())
-                .width(170.0)
+                .width(170.0_f32.min(ui.max_rect().width()))
+                .wrap_mode(egui::TextWrapMode::Truncate)
                 .show_ui(ui, |ui| {
                     for m in MergeMethod::ALL {
                         ui.selectable_value(&mut tab.requests.merge_method, m, m.label());

@@ -25,6 +25,32 @@ pub enum View {
     Requests,
 }
 
+/// How the history list and selected commit share the content area.
+#[derive(Debug, Clone, Copy)]
+pub struct HistoryLayout {
+    pub expanded: bool,
+    pub compact_details: bool,
+    /// The current viewport shows either the list or details at a time.
+    pub compact: bool,
+}
+
+impl Default for HistoryLayout {
+    fn default() -> Self {
+        Self {
+            expanded: false,
+            compact_details: true,
+            compact: false,
+        }
+    }
+}
+
+impl HistoryLayout {
+    pub fn show_list(&mut self) {
+        self.expanded = false;
+        self.compact_details = false;
+    }
+}
+
 /// Why the details of a commit could not be loaded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetailsError {
@@ -298,6 +324,11 @@ pub struct RepoTab {
     pub load_error: Option<String>,
     pub view: View,
     pub selected_commit: Option<Oid>,
+    pub history_layout: HistoryLayout,
+    /// Whether the on-demand history search field is visible.
+    pub history_filter_open: bool,
+    /// Focus the history filter when the list next renders.
+    pub focus_history_filter: bool,
     pub details: Option<Arc<CommitDetails>>,
     /// Set when loading the details of `selected_commit` failed.
     pub details_error: Option<DetailsError>,
@@ -371,6 +402,9 @@ impl RepoTab {
             load_error: None,
             view: View::History,
             selected_commit: None,
+            history_layout: HistoryLayout::default(),
+            history_filter_open: false,
+            focus_history_filter: false,
             details: None,
             details_error: None,
             file: None,
@@ -528,6 +562,28 @@ impl RepoTab {
         if let Some(h) = &self.host {
             h.send(job);
         }
+    }
+
+    /// Toggles the on-demand history filter.
+    pub fn filter_history(&mut self, ctx: &egui::Context) {
+        let list_visible = !self.history_layout.expanded
+            && !(self.history_layout.compact && self.history_layout.compact_details);
+        if self.history_filter_open && self.view == View::History && list_visible {
+            self.close_history_filter(ctx);
+            return;
+        }
+        self.history_layout.show_list();
+        self.history_filter_open = true;
+        self.focus_history_filter = true;
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("history-filter")));
+    }
+
+    /// Hides history search and restores the unfiltered graph.
+    pub fn close_history_filter(&mut self, ctx: &egui::Context) {
+        self.history_filter_open = false;
+        self.focus_history_filter = false;
+        self.filter.clear();
+        ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new("history-filter")));
     }
 
     /// Selects a commit and loads its details.

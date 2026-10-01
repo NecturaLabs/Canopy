@@ -74,14 +74,14 @@ pub fn markdown(ui: &mut Ui, text: &str) {
             ui.add_space(6.0);
             ui.label(
                 RichText::new(h.trim())
-                    .font(FontId::new(13.5, theme::semibold()))
+                    .font(FontId::new(theme::BODY_SIZE, theme::semibold()))
                     .color(p.text),
             );
             ui.add_space(2.0);
         } else if let Some(h) = trimmed.strip_prefix("# ") {
             ui.label(
                 RichText::new(h.trim())
-                    .font(FontId::new(15.0, theme::semibold()))
+                    .font(FontId::new(theme::TITLE_SIZE, theme::semibold()))
                     .color(p.text),
             );
         } else if let Some(item) = trimmed
@@ -91,10 +91,12 @@ pub fn markdown(ui: &mut Ui, text: &str) {
             ui.horizontal_top(|ui| {
                 ui.add_space(4.0);
                 ui.label(RichText::new("•").color(p.accent));
-                ui.label(RichText::new(clean_inline(item)).color(p.text_dim));
+                ui.add(
+                    egui::Label::new(RichText::new(clean_inline(item)).color(p.text_dim)).wrap(),
+                );
             });
         } else {
-            ui.label(RichText::new(clean_inline(trimmed)).color(p.text_dim));
+            ui.add(egui::Label::new(RichText::new(clean_inline(trimmed)).color(p.text_dim)).wrap());
             ui.add_space(4.0);
         }
     }
@@ -124,6 +126,31 @@ mod tests {
     fn joins_wrapped_bullets() {
         let b = blocks("- One\n  continued.\n- Two\n\nPara\nline");
         assert_eq!(b, vec!["- One continued.", "- Two", "Para line"]);
+    }
+
+    #[test]
+    fn markdown_wraps_bullets_within_its_column() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut width = 0.0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(296.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    ui.set_width(280.0);
+                    markdown(ui, crate::ui::legal::Document::Privacy.body());
+                    width = ui.min_rect().width();
+                });
+            },
+        );
+        output.textures_delta.clear();
+        assert!(width <= 280.0, "legal text grew to {width}");
     }
 
     #[test]

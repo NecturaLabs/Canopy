@@ -101,6 +101,7 @@ thread.
 | `ui/fonts.rs` | Registers the bundled Inter, JetBrains Mono and Phosphor fonts. |
 | `ui/art.rs` | The SVG art in `assets/art/`, rendered through egui's image loaders. |
 | `ui/widgets.rs` | Ref pills, avatars, icon buttons, badges. |
+| `ui/folder_picker.rs` | Native folder selection on a background thread; a bounded result channel and requesting-field lifetime keep the event loop responsive. |
 | `ui/toast.rs` | Toast queue and animation. |
 | `ui/palette.rs` | Command palette with fuzzy matching; entries built on opening, ranked on query change. |
 | `ui/cheatsheet.rs` | The keyboard cheatsheet, drawn from `keymap::BINDINGS`. |
@@ -139,6 +140,11 @@ thread.
 
 - The UI thread never calls git, libgit2 or reads repository files. A frame only reads tab state,
   so rendering cost does not depend on repository size or disk speed.
+- Clone destination validation runs on the clone thread. The submitted form waits for completion;
+  failure preserves its input, success closes it, and Continue in background closes only the form.
+- Native folder choosers run on a separate thread and return through a bounded channel polled
+  with `try_recv`. Dialogs share a picker; Settings owns its own. Closing the requesting field
+  drops its receiver, so a late result cannot update a replacement field.
 - Each open repository owns one worker thread with its own `git2::Repository` handle
   (`Repository` is not `Sync`). Jobs for one repository therefore run in order, which keeps
   operations like "stage, then commit" consistent without locking.

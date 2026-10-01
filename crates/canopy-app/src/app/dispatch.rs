@@ -24,7 +24,10 @@ impl CanopyApp {
                     danger,
                     op,
                 }),
-                Action::OpenDialog(d) => self.dialogs.open(d),
+                Action::OpenDialog(d) => {
+                    self.folder_picker.cancel();
+                    self.dialogs.open(d);
+                }
                 Action::OpenRepo(p) => self.open_repo(ctx, p),
                 Action::Clone { url, dest } => self.start_clone(ctx, url, dest),
                 Action::Init(p) => self.init_repo(ctx, p),
@@ -44,26 +47,30 @@ impl CanopyApp {
                     }
                 }
                 Action::SetView(v) => {
-                    if let Some(t) = self.tab()
-                        && t.view != v
-                    {
-                        t.view = v;
-                        t.file = None;
-                        t.diff = None;
-                        if v == View::History
-                            && let Some(oid) = t.selected_commit.take()
-                        {
-                            t.select_commit(oid);
-                            t.reveal_selected = true;
+                    if let Some(t) = self.tab() {
+                        if v == View::History {
+                            t.history_layout.show_list();
                         }
-                        if v == View::Requests && t.requests.list.is_none() {
-                            t.load_requests();
+                        if t.view != v {
+                            t.view = v;
+                            t.file = None;
+                            t.diff = None;
+                            if v == View::History
+                                && let Some(oid) = t.selected_commit.take()
+                            {
+                                t.select_commit(oid);
+                                t.reveal_selected = true;
+                            }
+                            if v == View::Requests && t.requests.list.is_none() {
+                                t.load_requests();
+                            }
                         }
                     }
                 }
                 Action::Reveal(oid) => {
                     if let Some(t) = self.tab() {
                         t.view = View::History;
+                        t.history_layout.show_list();
                         t.filter.clear();
                         t.select_commit(oid);
                         t.scroll_to_selected = true;

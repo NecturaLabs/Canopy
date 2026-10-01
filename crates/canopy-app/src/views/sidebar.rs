@@ -6,7 +6,7 @@ use egui_phosphor::regular as icon;
 use crate::action::Action;
 use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
-use crate::ui::widgets::forge_icon;
+use crate::ui::widgets::{self, forge_icon};
 use crate::views::commit_detail::virtual_rows;
 use crate::views::dialogs::Dialog;
 use crate::worker::Op;
@@ -194,7 +194,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     let (remote, rest) = u.split_once('/')?;
                     Some((tab.forge_of(remote)?.clone(), rest.to_owned()))
                 });
-                resp.context_menu(|ui| {
+                widgets::context_menu(&resp, |ui| {
                     if let Some((f, remote_branch)) = &upstream_forge {
                         if ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
                             actions.push(Action::OpenUrl(f.branch_url(remote_branch)));
@@ -269,7 +269,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 }
                 let rname = r.name.clone();
                 let url = r.url.clone().unwrap_or_default();
-                resp.context_menu(|ui| {
+                widgets::context_menu(&resp, |ui| {
                     if let Some(f) = &forge
                         && ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
                             actions.push(Action::OpenUrl(f.web_url()));
@@ -301,7 +301,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         actions.push(Action::Op(Op::CheckoutRemote { remote: remote.clone(), branch: branch.clone() }));
                     }
                     let rb_forge = forge.clone();
-                    resp.context_menu(|ui| {
+                    widgets::context_menu(&resp, |ui| {
                         if let Some(f) = &rb_forge
                             && ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
                                 actions.push(Action::OpenUrl(f.branch_url(&branch)));
@@ -341,7 +341,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                 let name = t.name.clone();
                 let target = t.target;
-                resp.context_menu(|ui| {
+                widgets::context_menu(&resp, |ui| {
                     if let Some(f) = &tag_forge {
                         let what = if f.kind == canopy_core::forge::ForgeKind::GitHub { "release" } else { "tag" };
                         if ui.button(format!("{}  Open {what} on {}", forge_icon(f.kind), f.kind.name())).clicked() {
@@ -378,7 +378,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 if resp.clicked() {
                     actions.push(Action::Reveal(s.oid));
                 }
-                resp.context_menu(|ui| {
+                widgets::context_menu(&resp, |ui| {
                     if ui.button(format!("{}  Apply", icon::TRAY_ARROW_DOWN)).clicked() {
                         actions.push(Action::Op(Op::StashApply { index, pop: false }));
                     }

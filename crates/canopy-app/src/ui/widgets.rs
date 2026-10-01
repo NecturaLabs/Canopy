@@ -9,6 +9,22 @@ use canopy_core::{ChangeKind, RefKind, RefLabel};
 
 use super::theme::{self, Palette, palette};
 
+/// Shows context actions above their containing navigation popup.
+pub fn context_menu(
+    response: &Response,
+    content: impl FnOnce(&mut Ui),
+) -> Option<egui::InnerResponse<()>> {
+    let menu = response.context_menu(content);
+    if let Some(menu) = &menu
+        && response.layer_id.order == egui::Order::Foreground
+    {
+        response
+            .ctx
+            .set_sublayer(response.layer_id, menu.response.layer_id);
+    }
+    menu
+}
+
 fn ref_icon(kind: RefKind) -> &'static str {
     match kind {
         RefKind::Head => icon::CROSSHAIR,
@@ -33,27 +49,38 @@ pub fn ref_color(p: &Palette, kind: RefKind, lane: Color32) -> Color32 {
 
 /// Paints a ref pill with its left edge at `x`, vertically centred on `cy`. Returns its width.
 pub fn paint_ref_pill(ui: &Ui, x: f32, cy: f32, label: &RefLabel, lane: Color32) -> f32 {
-    let p = palette(ui.ctx());
+    paint_ref_pill_with_palette(ui, x, cy, label, lane, palette(ui.ctx()))
+}
+
+fn paint_ref_pill_with_palette(
+    ui: &Ui,
+    x: f32,
+    cy: f32,
+    label: &RefLabel,
+    lane: Color32,
+    p: &Palette,
+) -> f32 {
     let color = ref_color(p, label.kind, lane);
+    let strong = label.kind == RefKind::CurrentBranch || label.kind == RefKind::Head;
+    let fill = Palette::pill_fill(color, strong);
+    let ink = p.ink(p.text, fill);
     let text = format!("{} {}", ref_icon(label.kind), label.name);
     let galley = ui
         .painter()
-        .layout_no_wrap(text, FontId::new(11.5, theme::medium()), color);
+        .layout_no_wrap(text, FontId::new(11.5, theme::medium()), ink);
     let size = vec2(galley.size().x + 14.0, 19.0);
     let rect = egui::Rect::from_min_size(pos2(x, cy - size.y / 2.0), size);
-    let strong = label.kind == RefKind::CurrentBranch || label.kind == RefKind::Head;
-    let fill = Palette::pill_fill(color, strong);
     ui.painter().rect(
         rect,
         CornerRadius::same(10),
         fill,
-        Stroke::new(1.0, Palette::tint(color, if strong { 220 } else { 110 })),
+        Stroke::new(1.0, Palette::pill_border(color, strong)),
         egui::StrokeKind::Inside,
     );
     ui.painter().galley(
         pos2(rect.min.x + 7.0, cy - galley.size().y / 2.0),
         galley,
-        p.ink(color, fill),
+        ink,
     );
     size.x
 }
@@ -154,12 +181,17 @@ pub fn count_badge(ui: &mut Ui, n: usize, color: Color32) {
 /// An icon-only button with a tooltip.
 pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
     let p = palette(ui.ctx());
-    ui.add(
-        egui::Button::new(RichText::new(glyph).size(15.0).color(p.text_dim))
-            .frame(false)
-            .min_size(vec2(26.0, 26.0)),
-    )
-    .on_hover_text(tooltip)
+    let response = ui
+        .add(
+            egui::Button::new(RichText::new(glyph).size(15.0).color(p.text_dim))
+                .frame(false)
+                .min_size(vec2(26.0, 26.0)),
+        )
+        .on_hover_text(tooltip);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
+    });
+    response
 }
 
 /// A toolbar action: icon above a small label, like Fork and Sourcetree.
@@ -171,7 +203,14 @@ pub fn tool_button(
     enabled: bool,
 ) -> Response {
     let p = palette(ui.ctx());
-    let size = vec2(58.0, 46.0);
+    let size = vec2(
+        if ui.ctx().content_rect().width() < theme::COMPACT_WIDTH {
+            48.0
+        } else {
+            58.0
+        },
+        46.0,
+    );
     let (rect, resp) = ui.allocate_exact_size(
         size,
         if enabled {
@@ -211,6 +250,14 @@ pub fn tool_button(
         FontId::new(11.0, theme::medium()),
         color,
     );
+    if resp.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(theme::RADIUS),
+            Stroke::new(1.5, p.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
     let name = label.to_owned();
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &name));
     resp.on_hover_text(tooltip)
@@ -430,5 +477,62 @@ mod tests {
         assert_eq!(relative_time(0, 120), "2 minutes ago");
         assert_eq!(relative_time(0, 3600), "1 hour ago");
         assert_eq!(relative_time(0, 86_400 * 3), "3 days ago");
+    }
+    #[test]
+    fn rendered_ref_pills_use_readable_neutral_text_in_every_theme() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        for id in theme::ThemeId::ALL {
+            let p = id.palette();
+            for kind in [
+                RefKind::CurrentBranch,
+                RefKind::LocalBranch,
+                RefKind::RemoteBranch,
+                RefKind::Tag,
+                RefKind::Head,
+            ] {
+                for lane in p.lanes {
+                    let label = RefLabel {
+                        name: "feature/readability".into(),
+                        kind,
+                    };
+                    let mut output = ctx.run_ui(Default::default(), |ui| {
+                        paint_ref_pill_with_palette(ui, 20.0, 30.0, &label, lane, p);
+                    });
+                    output.textures_delta.clear();
+                    let text = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| {
+                            if let egui::Shape::Text(text) = &shape.shape {
+                                Some(text)
+                            } else {
+                                None
+                            }
+                        })
+                        .expect("painted ref text");
+                    let actual = text
+                        .override_text_color
+                        .unwrap_or(text.galley.job.sections[0].format.color);
+                    let fill = Palette::pill_fill(
+                        ref_color(p, kind, lane),
+                        matches!(kind, RefKind::CurrentBranch | RefKind::Head),
+                    );
+                    for surface in p.component_surfaces() {
+                        let ratio = theme::contrast(actual, theme::over(fill, surface));
+                        assert!(
+                            ratio >= 4.5,
+                            "{} {kind:?}: painted ink {actual:?} contrast {ratio:.2}:1",
+                            p.name
+                        );
+                    }
+                    assert_eq!(
+                        actual, p.text,
+                        "{} ref text keeps a consistent neutral tone",
+                        p.name
+                    );
+                }
+            }
+        }
     }
 }

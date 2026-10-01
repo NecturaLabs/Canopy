@@ -122,9 +122,6 @@ pub fn show(
                 }
             }
             ui.label(small(git_version.to_owned(), p.text_faint));
-            if let Some(tab) = tab {
-                ui.label(small(tab.path.display().to_string(), p.text_faint));
-            }
         });
     });
 }

@@ -38,6 +38,7 @@ pub enum Dialog {
     Clone {
         builder: UrlBuilder,
         parent: String,
+        pending: bool,
     },
     Init {
         path: String,
@@ -127,6 +128,7 @@ pub enum Outcome {
     Keep,
     Close,
     Run(Vec<Action>),
+    RunKeep(Vec<Action>),
 }
 
 impl Dialog {
@@ -149,6 +151,7 @@ impl Dialog {
         Dialog::Clone {
             builder: UrlBuilder::new(settings),
             parent: settings.clone_parent(),
+            pending: false,
         }
     }
 
@@ -180,14 +183,28 @@ impl Dialog {
 }
 
 /// Draws the dialog. `tab` is the active repository, for branch lists and defaults.
-pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> Outcome {
+pub fn show(
+    ctx: &egui::Context,
+    dialog: &mut Dialog,
+    tab: Option<&RepoTab>,
+    picker: &mut crate::ui::folder_picker::FolderPicker,
+    clone_running: bool,
+) -> Outcome {
     let p = palette(ctx);
     let mut outcome = Outcome::Keep;
     let modal = egui::Modal::new(Id::new("dialog"))
         .frame(egui::Frame::new().fill(p.elevated).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS_LG)).shadow(ctx.global_style().visuals.window_shadow).inner_margin(egui::Margin::same(22)))
         .backdrop_color(p.backdrop())
         .show(ctx, |ui| {
-            ui.set_width(460.0);
+            ui.set_width((ctx.content_rect().width() - theme::XL * 4.0).clamp(0.0, 460.0));
+            ui.set_max_height((ctx.content_rect().height() - theme::XL * 4.0).max(0.0));
+            ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+            egui::ScrollArea::vertical()
+                .id_salt(("dialog-body", std::mem::discriminant(dialog)))
+                .max_height((ctx.content_rect().height() - theme::XL * 4.0).max(0.0))
+                .min_scrolled_height(0.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
             // Enter submits, except in a multi-line field, where it starts a new line and
             // Ctrl+Enter submits instead.
             let in_multiline = ctx.data(|d| d.get_temp::<Id>(multiline_key())).is_some_and(|id| ctx.memory(|m| m.has_focus(id)));
@@ -208,7 +225,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
             let title = |ui: &mut Ui, glyph: &str, text: &str| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(glyph).size(20.0).color(p.accent));
-                    ui.label(RichText::new(text).font(FontId::new(17.0, theme::semibold())));
+                    ui.label(RichText::new(text).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
                 });
                 ui.add_space(12.0);
             };
@@ -219,13 +236,12 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         ui.label(RichText::new("Folder").size(12.0).color(p.text_dim));
                     });
                     ui.horizontal(|ui| {
-                        let r = ui.add(egui::TextEdit::singleline(path).desired_width(340.0).margin(egui::Margin::symmetric(8, 6)));
+                        let r = ui.add(egui::TextEdit::singleline(path).desired_width((ui.available_width() - 110.0).max(80.0)).margin(egui::Margin::symmetric(8, 6)));
                         if ui.memory(|m| m.focused().is_none()) {
                             r.request_focus();
                         }
-                        if ui.button(format!("{}  Browse…", icon::FOLDER)).clicked()
-                            && let Some(picked) = pick_folder(path) {
-                                *path = picked;
+                        if let Some(picked) = picker.show(ui, "open", &crate::settings::expand_home(path)) {
+                                *path = picked.display().to_string();
                             }
                     });
                     ui.add_space(8.0);
@@ -234,42 +250,44 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         outcome = Outcome::Run(vec![Action::OpenRepo(path.trim().into())]);
                     }
                 }
-                Dialog::Clone { builder, parent } => {
+                Dialog::Clone { builder, parent, pending } => {
                     title(ui, icon::CLOUD_ARROW_DOWN, "Clone repository");
-                    builder.ui(ui, true);
-                    let url = builder.resolve().unwrap_or_default();
-                    ui.label(RichText::new("Clone into").size(12.0).color(p.text_dim));
-                    ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(parent).desired_width(340.0).margin(egui::Margin::symmetric(8, 6)));
-                        if ui.button(format!("{}  Browse…", icon::FOLDER)).clicked()
-                            && let Some(picked) = pick_folder(parent) {
-                                *parent = picked;
+                    let (url, dest, ok) = ui.add_enabled_ui(!*pending, |ui| {
+                        builder.ui(ui, true);
+                        let url = builder.resolve().unwrap_or_default();
+                        ui.label(RichText::new("Clone into").size(12.0).color(p.text_dim));
+                        ui.horizontal(|ui| {
+                            ui.add(egui::TextEdit::singleline(parent).desired_width((ui.available_width() - 110.0).max(80.0)).margin(egui::Margin::symmetric(8, 6)));
+                            if let Some(picked) = picker.show(ui, "clone", &crate::settings::expand_home(parent)) {
+                                *parent = picked.display().to_string();
                             }
-                    });
-                    let name = url.trim().trim_end_matches('/').trim_end_matches(".git").rsplit(['/', ':']).next().unwrap_or("").to_owned();
-                    let dest = crate::settings::expand_home(parent).join(&name);
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(format!("→ {}", dest.display())).size(12.0).color(p.text_faint));
+                        });
+                        let name = url.trim().trim_end_matches('/').trim_end_matches(".git").rsplit(['/', ':']).next().unwrap_or("").to_owned();
+                        let dest = crate::settings::expand_home(parent).join(&name);
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(format!("→ {}", dest.display())).size(12.0).color(p.text_faint));
+                        let ok = !url.trim().is_empty() && !name.is_empty();
+                        (url, dest, ok)
+                    }).inner;
                     ui.add_space(8.0);
-                    if dest.exists() && !name.is_empty() {
-                        ui.label(RichText::new("That folder already exists").size(12.0).color(p.danger));
-                    }
-                    let ok = !url.trim().is_empty() && !name.is_empty() && !dest.exists();
-                    if primary(ui, "Clone", ok) {
-                        outcome = Outcome::Run(vec![Action::Clone { url: url.trim().to_owned(), dest }]);
+                    if *pending {
+                        ui.horizontal(|ui| { ui.spinner(); ui.label("Cloning repository…"); });
+                        if ui.button("Continue in background").clicked() { outcome = Outcome::Close; }
+                    } else if primary(ui, "Clone", ok && !clone_running) {
+                        *pending = true;
+                        outcome = Outcome::RunKeep(vec![Action::Clone { url: url.trim().to_owned(), dest }]);
                     }
                 }
                 Dialog::Init { path } => {
                     title(ui, icon::PLANT, "New repository");
                     ui.label(RichText::new("Folder (created if missing)").size(12.0).color(p.text_dim));
                     ui.horizontal(|ui| {
-                        let r = ui.add(egui::TextEdit::singleline(path).desired_width(340.0).hint_text("~/src/my-project").margin(egui::Margin::symmetric(8, 6)));
+                        let r = ui.add(egui::TextEdit::singleline(path).desired_width((ui.available_width() - 110.0).max(80.0)).hint_text("~/src/my-project").margin(egui::Margin::symmetric(8, 6)));
                         if ui.memory(|m| m.focused().is_none()) {
                             r.request_focus();
                         }
-                        if ui.button(format!("{}  Browse…", icon::FOLDER)).clicked()
-                            && let Some(picked) = pick_folder(&home()) {
-                                *path = picked;
+                        if let Some(picked) = picker.show(ui, "init", &crate::settings::expand_home(&home())) {
+                                *path = picked.display().to_string();
                             }
                     });
                     ui.add_space(8.0);
@@ -422,7 +440,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     let glyph = if *danger { icon::WARNING } else { icon::QUESTION };
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(glyph).size(20.0).color(if *danger { p.danger } else { p.accent }));
-                        ui.label(RichText::new(t.as_str()).font(FontId::new(17.0, theme::semibold())));
+                        ui.label(RichText::new(t.as_str()).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
                     });
                     ui.add_space(10.0);
                     ui.label(RichText::new(body.as_str()).color(p.text_dim));
@@ -437,7 +455,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     let glyph = if *danger { icon::WARNING } else { icon::GIT_MERGE };
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(glyph).size(20.0).color(if *danger { p.danger } else { p.accent }));
-                        ui.label(RichText::new(t.as_str()).font(FontId::new(17.0, theme::semibold())));
+                        ui.label(RichText::new(t.as_str()).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
                     });
                     ui.add_space(10.0);
                     ui.label(RichText::new(body.as_str()).color(p.text_dim));
@@ -456,7 +474,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     ui.label(RichText::new(format!("You have {}.{}", env!("CARGO_PKG_VERSION"), a.manifest.pub_date.as_deref().and_then(|d| d.get(..10)).map(|d| format!(" Released {d}.")).unwrap_or_default())).size(12.5).color(p.text_dim));
                     ui.add_space(8.0);
                     egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
+                        ui.set_max_width(ui.available_width());
                         egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                             let notes = a.manifest.notes.trim();
                             if notes.is_empty() {
@@ -485,7 +503,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                 Dialog::WhatsNew { version, notes } => {
                     title(ui, icon::SPARKLE, &format!("What's new in Canopy {version}"));
                     egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
+                        ui.set_max_width(ui.available_width());
                         egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| crate::ui::notes::markdown(ui, notes));
                     });
                     ui.add_space(12.0);
@@ -503,14 +521,14 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                 Dialog::Crash(report) => {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(icon::FIRST_AID_KIT).size(20.0).color(p.warning));
-                        ui.label(RichText::new("Canopy closed unexpectedly").font(FontId::new(17.0, theme::semibold())));
+                        ui.label(RichText::new("Canopy closed unexpectedly").font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
                     });
                     ui.add_space(10.0);
                     ui.label(RichText::new("Sorry about that. A crash report was saved on this computer; nothing was sent anywhere. Sharing it with the developers helps fix the problem.").color(p.text_dim));
                     if !report.message.is_empty() {
                         ui.add_space(8.0);
                         egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
-                            ui.set_width(ui.available_width());
+                            ui.set_max_width(ui.available_width());
                             ui.label(RichText::new(&report.message).font(FontId::monospace(12.0)).color(p.text));
                         });
                     }
@@ -545,7 +563,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         if let Some(doc) = *reading {
                             ui.add_space(6.0);
                             egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                                ui.set_width(ui.available_width());
+                                ui.set_max_width(ui.available_width());
                                 egui::ScrollArea::vertical().id_salt(("legal", doc.title())).max_height(260.0).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
                             });
                         }
@@ -610,7 +628,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                             if reading.is_some() {
                                 ui.add_space(6.0);
                                 egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
+                                    ui.set_max_width(ui.available_width());
                                     egui::ScrollArea::vertical().id_salt("legal-privacy").max_height(240.0).show(ui, |ui| crate::ui::notes::markdown(ui, Document::Privacy.body()));
                                 });
                             }
@@ -637,24 +655,24 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     };
                     if *doc == Document::Notices {
                         // Licence texts are laid out for 80 columns.
-                        ui.set_width(660.0);
+                        ui.set_width((ctx.content_rect().width() - theme::XL * 4.0).clamp(0.0, 660.0));
                     }
                     title(ui, glyph, doc.title());
                     egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
+                        ui.set_max_width(ui.available_width());
                         if *doc == Document::Notices {
                             // Thousands of lines: lay out only the visible ones.
                             let font = FontId::monospace(11.5);
                             let row = ui.fonts_mut(|f| f.row_height(&font));
                             static LINES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
                             let lines = LINES.get_or_init(|| crate::ui::legal::NOTICES.lines().collect());
-                            egui::ScrollArea::both().max_height(420.0).auto_shrink([false, true]).show_rows(ui, row, lines.len(), |ui, range| {
+                            egui::ScrollArea::both().max_height((ctx.content_rect().height() - 180.0).clamp(0.0, 420.0)).auto_shrink([false, true]).show_rows(ui, row, lines.len(), |ui, range| {
                                 for line in &lines[range] {
                                     ui.add(egui::Label::new(RichText::new(*line).font(font.clone()).color(p.text_dim)).extend());
                                 }
                             });
                         } else {
-                            egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
+                            egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 180.0).clamp(0.0, 420.0)).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
                         }
                     });
                     ui.add_space(12.0);
@@ -706,6 +724,8 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     });
                 }
             }
+            ui.add_space(theme::SM);
+            });
         });
     if modal.should_close()
         && matches!(outcome, Outcome::Keep)
@@ -910,5 +930,146 @@ mod tests {
         assert!(!valid_ref_name("-x"));
         assert!(!valid_ref_name("x.lock"));
         assert!(!valid_ref_name("x~1"));
+    }
+    #[test]
+    fn clone_submission_keeps_its_form_until_the_worker_answers() {
+        use super::{Key, Outcome, Settings, show};
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut dialog = Dialog::clone_default(&Settings::default());
+        if let Dialog::Clone {
+            builder, parent, ..
+        } = &mut dialog
+        {
+            builder.project = "example/repository".into();
+            *parent = "existing-parent".into();
+        }
+        let mut picker = crate::ui::folder_picker::FolderPicker::default();
+        let mut kept = false;
+        for pressed in [false, true] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events: if pressed {
+                        vec![egui::Event::Key {
+                            key: Key::Enter,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: Default::default(),
+                        }]
+                    } else {
+                        Vec::new()
+                    },
+                    ..Default::default()
+                },
+                |_| {
+                    let result = show(&ctx, &mut dialog, None, &mut picker, false);
+                    if pressed {
+                        kept = matches!(result, Outcome::RunKeep(_));
+                    }
+                },
+            );
+            output.textures_delta.clear();
+        }
+        assert!(
+            kept,
+            "clone input must remain available after a destination refusal"
+        );
+    }
+    #[test]
+    fn clone_completion_preserves_failed_input_and_only_closes_its_pending_form() {
+        let mut stack = DialogStack::default();
+        let mut pending = Dialog::clone_default(&crate::settings::Settings::default());
+        if let Dialog::Clone {
+            builder,
+            parent,
+            pending,
+        } = &mut pending
+        {
+            builder.project = "example/repository".into();
+            *parent = "chosen-parent".into();
+            *pending = true;
+        }
+        stack.open(pending);
+        stack.open(Dialog::Legal(Document::Privacy));
+        stack.finish_clone(false);
+        stack.close();
+        assert!(
+            matches!(stack.current(), Some(Dialog::Clone { builder, parent, pending: false }) if builder.project == "example/repository" && parent == "chosen-parent")
+        );
+        if let Some(Dialog::Clone { pending, .. }) = stack.current_mut() {
+            *pending = true;
+        }
+        stack.open(Dialog::clone_default(&crate::settings::Settings::default()));
+        stack.finish_clone(true);
+        stack.close();
+        assert!(
+            stack.current().is_none(),
+            "only the completed pending form closes"
+        );
+    }
+    #[test]
+    fn clone_form_title_and_actions_are_reachable_at_minimum_window_scale() {
+        use super::{Settings, show};
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::theme::apply(&ctx, crate::ui::theme::ThemeId::Midnight, true);
+        let mut dialog = Dialog::clone_default(&Settings::default());
+        if let Dialog::Clone { builder, .. } = &mut dialog {
+            builder.project = "example/repository".into();
+        }
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(562.5, 350.0));
+        let mut picker = crate::ui::folder_picker::FolderPicker::default();
+        for scrolling in [false, true] {
+            let mut visible = false;
+            for frame in 0..15 {
+                let mut events = vec![egui::Event::PointerMoved(viewport.center())];
+                if scrolling && frame == 0 {
+                    events.push(egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        phase: egui::TouchPhase::Move,
+                        delta: egui::vec2(0.0, -1000.0),
+                        modifiers: Default::default(),
+                    });
+                }
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(viewport),
+                        events,
+                        ..Default::default()
+                    },
+                    |_| {
+                        show(&ctx, &mut dialog, None, &mut picker, false);
+                    },
+                );
+                output.textures_delta.clear();
+                let label = if scrolling {
+                    "Clone"
+                } else {
+                    "Clone repository"
+                };
+                visible = output.shapes.iter().any(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && text.galley.text() == label
+                    {
+                        let bounds = text.visual_bounding_rect();
+                        return viewport.contains_rect(bounds)
+                            && shape.clip_rect.contains_rect(bounds);
+                    }
+                    false
+                });
+            }
+            let bounds = egui::containers::AreaState::load(&ctx, egui::Id::new("dialog"))
+                .expect("clone dialog area")
+                .rect();
+            assert!(
+                viewport.contains_rect(bounds),
+                "dialog frame must fit the viewport: {bounds:?}"
+            );
+            assert!(
+                visible,
+                "Clone title and scrolled action must fit the minimum scaled window (scrolling={scrolling})"
+            );
+        }
     }
 }

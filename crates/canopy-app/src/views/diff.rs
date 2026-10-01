@@ -355,6 +355,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         egui::ScrollArea::both()
     };
     scroll
+        .min_scrolled_height(0.0)
         .auto_shrink([false, false])
         .id_salt(("diff", &sel.entry.path, split))
         .show_viewport(ui, |ui, viewport| {
@@ -458,84 +459,155 @@ fn header(
     actions: &mut Vec<Action>,
 ) {
     let p = palette(ui.ctx());
+    let compact =
+        matches!(sel.source, DiffSource::Commit(_)) && ui.available_height() < theme::XL * 10.0;
+    let vertical_padding = if compact { theme::XS } else { theme::SM };
+    let detail_toggle = matches!(sel.source, DiffSource::Commit(_)) && !tab.history_layout.compact;
+    let mut expanded = tab.history_layout.expanded;
+    let mut toggle_changed = false;
     egui::Frame::new()
         .fill(p.panel)
-        .inner_margin(egui::Margin::symmetric(14, 8))
+        .inner_margin(egui::Margin::symmetric(14, vertical_padding as i8))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.set_min_width(ui.available_width());
+            let identity = |ui: &mut Ui| {
                 widgets::change_badge(ui, sel.entry.kind);
                 let (name, dir) = widgets::split_path(&sel.entry.path);
-                ui.label(
-                    RichText::new(name)
-                        .font(FontId::new(13.5, theme::semibold()))
-                        .color(p.text),
-                );
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(name)
+                            .font(FontId::new(13.5, theme::semibold()))
+                            .color(p.text),
+                    )
+                    .truncate(),
+                )
+                .on_hover_text(&sel.entry.path);
                 if !dir.is_empty() {
-                    ui.label(RichText::new(dir).size(12.0).color(p.text_faint));
+                    ui.add(
+                        egui::Label::new(RichText::new(dir).size(12.0).color(p.text_faint))
+                            .truncate(),
+                    )
+                    .on_hover_text(dir);
                 }
                 if let Some(old) = &sel.entry.old_path {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("← {old}"))
+                                .size(12.0)
+                                .color(p.text_faint),
+                        )
+                        .truncate(),
+                    )
+                    .on_hover_text(old);
+                }
+            };
+            let mut controls = |ui: &mut Ui| {
+                diff_options(ui, tab, actions);
+                if !sel.conflicted {
+                    layout_toggle(ui, tab.split_diff, actions);
+                }
+                if let Some(lang) = tab
+                    .highlights
+                    .as_ref()
+                    .filter(|_| tab.highlight_diff)
+                    .map(|h| h.language.clone())
+                {
+                    ui.label(RichText::new(lang).size(11.5).color(p.text_faint));
+                }
+                if let Some(d) = &tab.diff {
                     ui.label(
-                        RichText::new(format!("← {old}"))
-                            .size(12.0)
-                            .color(p.text_faint),
+                        RichText::new(format!("+{}", d.additions))
+                            .color(p.success)
+                            .size(12.0),
+                    );
+                    ui.label(
+                        RichText::new(format!("−{}", d.deletions))
+                            .color(p.danger)
+                            .size(12.0),
                     );
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    diff_options(ui, tab, actions);
-                    if !sel.conflicted {
-                        layout_toggle(ui, tab.split_diff, actions);
-                    }
-                    if let Some(lang) = tab
-                        .highlights
-                        .as_ref()
-                        .filter(|_| tab.highlight_diff)
-                        .map(|h| h.language.clone())
-                    {
-                        ui.label(RichText::new(lang).size(11.5).color(p.text_faint));
-                    }
-                    if let Some(d) = &tab.diff {
-                        ui.label(
-                            RichText::new(format!("−{}", d.deletions))
-                                .color(p.danger)
-                                .size(12.0),
-                        );
-                        ui.label(
-                            RichText::new(format!("+{}", d.additions))
-                                .color(p.success)
-                                .size(12.0),
-                        );
-                    }
-                    let path = sel.entry.path.clone();
-                    match (&sel.source, sel.conflicted) {
-                        (_, true) => {
-                            if ui
-                                .button(
-                                    RichText::new(format!("{}  Mark resolved", icon::CHECK))
-                                        .color(p.success),
-                                )
-                                .clicked()
-                            {
-                                actions.push(Action::Op(Op::Stage(vec![path])));
-                            }
+                let path = sel.entry.path.clone();
+                match (&sel.source, sel.conflicted) {
+                    (_, true) => {
+                        if ui
+                            .button(
+                                RichText::new(format!("{}  Mark resolved", icon::CHECK))
+                                    .color(p.success),
+                            )
+                            .clicked()
+                        {
+                            actions.push(Action::Op(Op::Stage(vec![path])));
                         }
-                        (DiffSource::Unstaged, false) => {
-                            if ui.button(format!("{}  Stage file", icon::PLUS)).clicked() {
-                                actions.push(Action::Op(Op::Stage(vec![path])));
-                            }
-                        }
-                        (DiffSource::Staged, false) => {
-                            if ui
-                                .button(format!("{}  Unstage file", icon::MINUS))
-                                .clicked()
-                            {
-                                actions.push(Action::Op(Op::Unstage(vec![path])));
-                            }
-                        }
-                        (DiffSource::Commit(_), _) => {}
                     }
+                    (DiffSource::Unstaged, false) => {
+                        if ui.button(format!("{}  Stage file", icon::PLUS)).clicked() {
+                            actions.push(Action::Op(Op::Stage(vec![path])));
+                        }
+                    }
+                    (DiffSource::Staged, false) => {
+                        if ui
+                            .button(format!("{}  Unstage file", icon::MINUS))
+                            .clicked()
+                        {
+                            actions.push(Action::Op(Op::Unstage(vec![path])));
+                        }
+                    }
+                    (DiffSource::Commit(_), _) => {}
+                }
+            };
+            if detail_toggle {
+                let text = if expanded {
+                    format!("{}  Back to history", icon::ARROWS_IN_SIMPLE)
+                } else {
+                    format!("{}  Expand", icon::ARROWS_OUT_SIMPLE)
+                };
+                let width = ui
+                    .painter()
+                    .layout_no_wrap(
+                        text.clone(),
+                        FontId::new(theme::BODY_SIZE, theme::medium()),
+                        p.text,
+                    )
+                    .size()
+                    .x
+                    + ui.spacing().button_padding.x * 2.0;
+                let (row, _) = ui.allocate_exact_size(
+                    vec2(ui.available_width(), ui.spacing().interact_size.y),
+                    Sense::hover(),
+                );
+                let button_rect = Rect::from_min_max(pos2(row.max.x - width, row.min.y), row.max);
+                let identity_rect = Rect::from_min_max(
+                    row.min,
+                    pos2((button_rect.min.x - theme::SM).max(row.min.x), row.max.y),
+                );
+                let mut identity_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(identity_rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                identity_ui.set_clip_rect(identity_rect.intersect(ui.clip_rect()));
+                identity(&mut identity_ui);
+                if ui.put(button_rect, egui::Button::new(text)).clicked() {
+                    expanded = !expanded;
+                    toggle_changed = true;
+                }
+                ui.horizontal_wrapped(controls);
+            } else if compact {
+                ui.horizontal_wrapped(|ui| {
+                    identity(ui);
+                    controls(ui);
                 });
-            });
+            } else {
+                ui.vertical(|ui| {
+                    ui.horizontal_wrapped(identity);
+                    ui.horizontal_wrapped(controls);
+                });
+            }
         });
+    if toggle_changed {
+        tab.history_layout.expanded = expanded;
+        tab.history_layout.compact_details = true;
+    }
     ui.painter().hline(
         ui.min_rect().x_range(),
         ui.min_rect().max.y,
@@ -699,25 +771,54 @@ fn hunk_header(
     );
     let visible_left = viewport.min.x + origin.x;
     let right = origin.x + viewport.max.x - 10.0;
-    ui.painter().text(
-        pos2(visible_left + 12.0, band.center().y),
-        Align2::LEFT_CENTER,
-        &hunk.header,
-        FontId::monospace(11.5),
-        p.accent.lerp_to_gamma(p.text_dim, 0.4),
-    );
     if cx.conflicted || matches!(cx.source, DiffSource::Commit(_)) {
+        ui.painter().text(
+            pos2(visible_left + theme::MD, band.center().y),
+            Align2::LEFT_CENTER,
+            &hunk.header,
+            FontId::monospace(theme::SMALL_SIZE),
+            p.text_dim,
+        );
         return;
     }
     if !cx.editable {
-        let note = "Hunk and line actions are off while whitespace is ignored";
-        ui.painter().text(
-            pos2(right - 2.0, band.center().y),
-            Align2::RIGHT_CENTER,
-            note,
-            FontId::proportional(11.5),
-            p.text_faint,
-        );
+        let note = "Actions are off while whitespace is ignored";
+        let note_width = ui
+            .painter()
+            .layout_no_wrap(
+                note.into(),
+                FontId::proportional(theme::SMALL_SIZE),
+                p.text_faint,
+            )
+            .size()
+            .x;
+        let show_note = right - visible_left > note_width + 160.0;
+        let header_right = if show_note {
+            right - note_width - theme::LG
+        } else {
+            right
+        };
+        ui.painter()
+            .with_clip_rect(ui.clip_rect().intersect(Rect::from_min_max(
+                pos2(visible_left, band.min.y),
+                pos2(header_right, band.max.y),
+            )))
+            .text(
+                pos2(visible_left + theme::MD, band.center().y),
+                Align2::LEFT_CENTER,
+                &hunk.header,
+                FontId::monospace(theme::SMALL_SIZE),
+                p.text_dim,
+            );
+        if show_note {
+            ui.painter().text(
+                pos2(right, band.center().y),
+                Align2::RIGHT_CENTER,
+                note,
+                FontId::proportional(theme::SMALL_SIZE),
+                p.text_faint,
+            );
+        }
         return;
     }
     let picked: Vec<usize> = line_sel
@@ -766,7 +867,11 @@ fn hunk_header(
     };
     let mut bx = right;
     for (action, glyph, label) in buttons.iter().rev() {
-        let text = format!("{glyph}  {label}");
+        let text = if viewport.width() < 420.0 {
+            glyph.to_string()
+        } else {
+            format!("{glyph}  {label}")
+        };
         let g = ui
             .painter()
             .layout_no_wrap(text, FontId::new(12.0, theme::medium()), p.text);
@@ -774,11 +879,13 @@ fn hunk_header(
             pos2(bx - g.size().x - 16.0, band.min.y + 2.0),
             pos2(bx, band.max.y - 2.0),
         );
-        let resp = ui.interact(
-            br,
-            ui.id().with(("hunk", h, label.as_str())),
-            Sense::click(),
-        );
+        let resp = ui
+            .interact(
+                br,
+                ui.id().with(("hunk", h, label.as_str())),
+                Sense::click(),
+            )
+            .on_hover_text(label);
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
         let danger = *action == Some(HunkAction::Discard);
         let base = match action {
@@ -847,7 +954,19 @@ fn hunk_header(
         }
         bx = br.min.x - 8.0;
     }
-    if n == 0 && h == 0 {
+    ui.painter()
+        .with_clip_rect(Rect::from_min_max(
+            pos2(visible_left, band.min.y),
+            pos2(bx - theme::SM, band.max.y),
+        ))
+        .text(
+            pos2(visible_left + 12.0, band.center().y),
+            Align2::LEFT_CENTER,
+            &hunk.header,
+            FontId::monospace(11.5),
+            p.accent.lerp_to_gamma(p.text_dim, 0.4),
+        );
+    if n == 0 && h == 0 && bx - visible_left > 360.0 {
         ui.painter().text(
             pos2(bx - 6.0, band.center().y),
             Align2::RIGHT_CENTER,
@@ -896,7 +1015,7 @@ fn empty(ui: &mut Ui, glyph: &str, title: &str, body: &str) {
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
         ui.label(RichText::new(glyph).size(34.0).color(p.text_faint));
-        ui.label(RichText::new(title).font(FontId::new(15.0, theme::semibold())));
+        ui.label(RichText::new(title).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
         ui.label(RichText::new(body).color(p.text_dim));
     });
 }
@@ -926,6 +1045,46 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn ignoring_whitespace_keeps_the_hunk_coordinates_visible() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let d = FileDiff {
+            hunks: vec![hunk("+")],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let cx = Ctx {
+                p: palette(ui.ctx()),
+                source: &DiffSource::Unstaged,
+                path: "file.rs",
+                conflicted: false,
+                editable: false,
+                context: 3,
+                highlights: None,
+                mono: FontId::monospace(theme::MONO_SIZE),
+            };
+            let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, HUNK_H));
+            hunk_header(
+                ui,
+                &cx,
+                &d,
+                0,
+                rect,
+                egui::Pos2::ZERO,
+                rect,
+                &mut None,
+                &mut Vec::new(),
+            );
+        });
+        output.textures_delta.clear();
+        assert!(
+            output.shapes.iter().any(|s| matches!(&s.shape,
+            egui::Shape::Text(t) if t.galley.text() == "@@")),
+            "hunk coordinates disappeared"
+        );
     }
 
     #[test]

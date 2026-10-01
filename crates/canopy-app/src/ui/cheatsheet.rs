@@ -40,12 +40,14 @@ impl Cheatsheet {
                     self.open = false;
                 }
             });
-        let width = 860.0_f32.min(screen.width() - 40.0);
-        let height = (screen.height() - 120.0).max(240.0);
+        let width = 860.0_f32
+            .min(screen.width() - theme::XL * 2.0 - theme::LG * 2.0)
+            .max(0.0);
+        let height = (screen.height() - theme::XL * 2.0 - theme::LG * 2.0).max(0.0);
         egui::Area::new(Id::new("cheatsheet"))
             .order(Order::Tooltip)
             .pivot(Align2::CENTER_TOP)
-            .fixed_pos(egui::pos2(screen.center().x, screen.min.y + 60.0))
+            .fixed_pos(egui::pos2(screen.center().x, screen.min.y + theme::XL))
             .show(ctx, |ui| {
                 egui::Frame::new()
                     .fill(p.elevated)
@@ -55,11 +57,12 @@ impl Cheatsheet {
                     .inner_margin(egui::Margin::same(16))
                     .show(ui, |ui| {
                         ui.set_width(width);
-                        ui.horizontal(|ui| {
+                        let content_top = ui.cursor().min.y;
+                        ui.horizontal_wrapped(|ui| {
                             ui.label(RichText::new(icon::KEYBOARD).size(20.0).color(p.accent));
                             ui.label(
                                 RichText::new("Keyboard shortcuts")
-                                    .font(FontId::new(17.0, theme::semibold())),
+                                    .font(FontId::new(theme::TITLE_SIZE, theme::semibold())),
                             );
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
@@ -85,26 +88,32 @@ impl Cheatsheet {
                             );
                         });
                         ui.add_space(4.0);
-                        ui.label(
+                        ui.add(egui::Label::new(
                             RichText::new(
                                 "Single keys work when no text field has focus. Super is left to your window manager.",
                             )
                             .size(12.0)
                             .color(p.text_dim),
-                        );
+                        ).wrap());
                         ui.add_space(10.0);
                         let q = self.query.trim().to_lowercase();
+                        let remaining = (height - (ui.cursor().min.y - content_top)).max(0.0);
                         egui::ScrollArea::vertical()
-                            .max_height(height - 90.0)
-                            .min_scrolled_height(height - 90.0)
+                            .max_height(remaining)
+                            .min_scrolled_height(remaining)
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
-                                ui.columns(2, |cols| {
-                                    for (i, section) in Section::ALL.iter().enumerate() {
-                                        let col = &mut cols[usize::from(i >= 1)];
-                                        rows(col, *section, &q);
+                                if width < 800.0 {
+                                    for section in Section::ALL {
+                                        rows(ui, section, &q);
                                     }
-                                });
+                                } else {
+                                    ui.columns(2, |cols| {
+                                        for (i, section) in Section::ALL.iter().enumerate() {
+                                            rows(&mut cols[usize::from(i >= 1)], *section, &q);
+                                        }
+                                    });
+                                }
                             });
                     });
             });
@@ -129,14 +138,47 @@ fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
     super::widgets::section_label(ui, section.title());
     ui.add_space(2.0);
     for (b, keys) in items {
-        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
-        ui.painter().text(
-            rect.left_center() + vec2(4.0, 0.0),
-            Align2::LEFT_CENTER,
-            b.description,
-            FontId::proportional(13.0),
+        let key_width: f32 = keys
+            .iter()
+            .map(|key| {
+                ui.painter()
+                    .layout_no_wrap(
+                        key.to_owned(),
+                        FontId::monospace(theme::SMALL_SIZE),
+                        p.text_dim,
+                    )
+                    .size()
+                    .x
+                    + 18.0
+            })
+            .sum();
+        let description = ui.painter().layout_no_wrap(
+            b.description.to_owned(),
+            FontId::proportional(theme::BODY_SIZE),
             p.text,
         );
+        let stacked = description.size().x + key_width + theme::LG > ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(
+            vec2(ui.available_width(), if stacked { 46.0 } else { 24.0 }),
+            Sense::hover(),
+        );
+        let description_y = if stacked {
+            rect.min.y + 12.0
+        } else {
+            rect.center().y
+        };
+        ui.painter()
+            .with_clip_rect(rect.intersect(ui.clip_rect()))
+            .galley(
+                egui::pos2(rect.min.x + 4.0, description_y - description.size().y / 2.0),
+                description,
+                p.text,
+            );
+        let key_y = if stacked {
+            rect.min.y + 34.0
+        } else {
+            rect.center().y
+        };
         // Key caps, right-aligned.
         let mut x = rect.right() - 4.0;
         for chord in keys.iter().rev() {
@@ -144,8 +186,8 @@ fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
                 ui.painter()
                     .layout_no_wrap(chord.to_owned(), FontId::monospace(11.5), p.text_dim);
             let r = egui::Rect::from_min_max(
-                egui::pos2(x - g.size().x - 12.0, rect.center().y - 10.0),
-                egui::pos2(x, rect.center().y + 10.0),
+                egui::pos2(x - g.size().x - 12.0, key_y - 10.0),
+                egui::pos2(x, key_y + 10.0),
             );
             ui.painter().rect(
                 r,

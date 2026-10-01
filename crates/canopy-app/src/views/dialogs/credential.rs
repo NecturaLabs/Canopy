@@ -23,7 +23,7 @@ pub(super) fn credential(
     };
     ui.horizontal(|ui| {
         ui.label(RichText::new(glyph).size(20.0).color(color));
-        ui.label(RichText::new(heading).font(FontId::new(17.0, theme::semibold())));
+        ui.label(RichText::new(heading).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
     });
     ui.add_space(10.0);
     let asker = if lower.contains("passphrase for key")

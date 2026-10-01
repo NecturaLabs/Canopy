@@ -309,7 +309,12 @@ pub const BINDINGS: &[Binding] = &[
         &[ctrl(Key::Enter)],
         "Commit staged changes",
     ),
-    b(S::Anywhere, C::Filter, &[ctrl(Key::F)], "Filter history"),
+    b(
+        S::Anywhere,
+        C::Filter,
+        &[ctrl(Key::F)],
+        "Toggle history search",
+    ),
     b(
         S::Anywhere,
         C::Settings,
@@ -329,7 +334,7 @@ pub const BINDINGS: &[Binding] = &[
         S::Anywhere,
         C::Dismiss,
         &[bare(Key::Escape)],
-        "Close the dialog, palette or cheatsheet",
+        "Close the dialog, palette, cheatsheet or search",
     ),
     // Lists and views.
     b(
@@ -390,7 +395,7 @@ pub const BINDINGS: &[Binding] = &[
         S::Navigate,
         C::Filter,
         &[symbol(Key::Slash)],
-        "Filter history",
+        "Toggle history search",
     ),
     b(S::Navigate, C::Refresh, &[shifted(Key::R)], "Refresh"),
     // History.

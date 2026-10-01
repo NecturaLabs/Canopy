@@ -20,13 +20,6 @@ pub(super) fn valid_ref_name(name: &str) -> bool {
             .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c))
 }
 
-pub(super) fn pick_folder(start: &str) -> Option<String> {
-    rfd::FileDialog::new()
-        .set_directory(start)
-        .pick_folder()
-        .map(|p| p.display().to_string())
-}
-
 /// Cancel and confirm buttons with keyboard hints. The safe choice has the initial focus: Cancel
 /// when the action destroys something, otherwise the action, so Enter does what is least
 /// surprising. `Some(true)` confirms, `Some(false)` cancels.

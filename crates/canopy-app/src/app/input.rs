@@ -8,12 +8,16 @@ impl CanopyApp {
         let modal =
             self.dialogs.current().is_some() || self.settings_screen.is_some() || self.palette.open;
         let overlay = modal || self.cheatsheet.open;
+        let search_open = self
+            .tabs
+            .get(self.active)
+            .is_some_and(|tab| tab.view == View::History && tab.history_filter_open);
         let typing = ctx.egui_wants_keyboard_input();
         // A button or checkbox reached with Tab keeps Space, Enter and the arrows for itself.
         let widget_focused = !typing && ctx.memory(|m| m.focused().is_some());
         let fired = keymap::dispatch(ctx, |b, chord| {
             if b.command == Command::Dismiss {
-                return overlay;
+                return overlay || search_open;
             }
             if modal {
                 return false;
@@ -54,6 +58,11 @@ impl CanopyApp {
                 } else if self.dialogs.current().is_some() {
                     // The consent stays (it must be answered); a credential prompt is declined.
                     self.dialogs.dismiss();
+                } else if let Some(tab) = self.tab()
+                    && tab.view == View::History
+                    && tab.history_filter_open
+                {
+                    tab.close_history_filter(ctx);
                 } else {
                     self.settings_screen = None;
                 }
@@ -67,7 +76,7 @@ impl CanopyApp {
                     C::ZoomOut => (self.settings.zoom - 0.1).max(0.8),
                     _ => 1.0,
                 };
-                ctx.set_zoom_factor(self.settings.zoom);
+                super::apply_zoom(ctx, self.settings.zoom);
             }
             C::Quit => actions.push(Action::Quit),
             _ if !has_tab => {}
@@ -106,7 +115,9 @@ impl CanopyApp {
             }
             C::Filter => {
                 actions.push(Action::SetView(View::History));
-                ctx.memory_mut(|m| m.request_focus(egui::Id::new("history-filter")));
+                if let Some(tab) = self.tab() {
+                    tab.filter_history(ctx);
+                }
             }
             C::History => actions.push(Action::SetView(View::History)),
             C::Changes => actions.push(Action::SetView(View::Changes)),

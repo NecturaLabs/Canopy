@@ -41,6 +41,7 @@ OPTIONS:
                               palette, consent, crash-consent, legal, licences,
                               credential, host-key or merge
         --size <WxH>          Initial window size [default: 1440x900]
+        --zoom <FACTOR>       Initial interface zoom, from 0.8 to 1.6
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
     -h, --help                Print help
     -V, --version             Print version
@@ -95,6 +96,10 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 }
                 launch.overlay = Some(name);
             }
+            "--zoom" => {
+                let value = args.next().ok_or("--zoom needs a factor from 0.8 to 1.6")?;
+                launch.zoom = Some(parse_zoom(&value.to_string_lossy())?);
+            }
             "--screenshot" => {
                 launch.screenshot = Some(args.next().ok_or("--screenshot needs a file")?.into())
             }
@@ -131,6 +136,14 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
         }
     }
     Ok((launch, size))
+}
+
+fn parse_zoom(value: &str) -> Result<f32, String> {
+    value
+        .parse::<f32>()
+        .ok()
+        .filter(|v| v.is_finite() && (0.8..=1.6).contains(v))
+        .ok_or_else(|| "--zoom needs a factor from 0.8 to 1.6".to_owned())
 }
 
 fn icon() -> Option<egui::IconData> {
@@ -171,8 +184,7 @@ fn main() -> anyhow::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Canopy")
         .with_app_id("io.necturalabs.Canopy")
-        .with_inner_size(size)
-        .with_min_inner_size([900.0, 560.0]);
+        .with_inner_size(size);
     if let Some(icon) = icon() {
         viewport = viewport.with_icon(icon);
     }
@@ -195,6 +207,15 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initial_zoom_requires_a_finite_supported_factor() {
+        assert_eq!(parse_zoom("0.8"), Ok(0.8));
+        assert_eq!(parse_zoom("1.6"), Ok(1.6));
+        for input in ["NaN", "inf", "0", "1.7", "100%", ""] {
+            assert!(parse_zoom(input).is_err(), "{input}");
+        }
+    }
 
     #[test]
     fn help_lists_every_overlay() {

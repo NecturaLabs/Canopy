@@ -2,10 +2,10 @@
 
 use std::ops::Range;
 
-use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Ui, vec2};
+use egui::{Align2, CornerRadius, FontId, RichText, Sense, Ui, vec2};
 use egui_phosphor::regular as icon;
 
-use canopy_core::{DiffSource, FileEntry, short_id};
+use canopy_core::{CommitDetails, DiffSource, FileEntry, short_id};
 
 use crate::action::Action;
 use crate::tab::{DetailsError, FileSelection, RepoTab};
@@ -36,150 +36,226 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         });
         return;
     };
+    let pane_max = (ui.available_width() * 0.4).max(160.0);
     egui::Panel::left("detail-meta")
         .resizable(true)
-        .default_size(380.0)
-        .min_size(260.0)
-        .max_size(640.0)
+        .default_size(pane_max.min(380.0))
+        .min_size(pane_max.min(220.0))
+        .max_size(pane_max.min(640.0))
         .frame(
             egui::Frame::new()
                 .fill(p.panel)
                 .inner_margin(egui::Margin::same(14)),
         )
         .show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    let mut lines = d.message.trim().splitn(2, '\n');
-                    let summary = lines.next().unwrap_or("").trim();
-                    let body = lines.next().unwrap_or("").trim();
-                    ui.label(
-                        RichText::new(summary)
-                            .font(FontId::new(15.5, theme::semibold()))
-                            .color(p.text),
-                    );
-                    if !body.is_empty() {
-                        ui.add_space(4.0);
-                        ui.label(RichText::new(body).color(p.text_dim).size(12.5));
-                    }
-                    ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        widgets::avatar(ui, 32.0, &d.author.name, &d.author.email);
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 1.0;
-                            ui.label(
-                                RichText::new(&d.author.name)
-                                    .font(FontId::new(13.0, theme::medium()))
-                                    .color(p.text),
-                            );
-                            ui.label(
-                                RichText::new(&d.author.email)
-                                    .size(11.5)
-                                    .color(p.text_faint),
-                            );
-                        });
-                    });
-                    ui.add_space(6.0);
-                    meta_row(
-                        ui,
-                        icon::CALENDAR_BLANK,
-                        &widgets::full_date(d.author.time, d.author.offset_minutes),
-                    );
-                    if d.committer.email != d.author.email || d.committer.name != d.author.name {
-                        meta_row(
-                            ui,
-                            icon::USER_SWITCH,
-                            &format!("Committed by {}", d.committer.name),
-                        );
-                    }
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(icon::HASH).color(p.text_faint));
-                        ui.label(
-                            RichText::new(d.oid.to_string())
-                                .monospace()
-                                .size(11.5)
-                                .color(p.accent2),
-                        );
-                        if widgets::icon_button(ui, icon::COPY, "Copy SHA").clicked() {
-                            actions.push(Action::Copy(d.oid.to_string()));
-                        }
-                    });
-                    if !d.parents.is_empty() {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(icon::GIT_COMMIT).color(p.text_faint));
-                            ui.label(
-                                RichText::new(if d.parents.len() > 1 {
-                                    "Parents"
-                                } else {
-                                    "Parent"
-                                })
-                                .size(12.0)
-                                .color(p.text_faint),
-                            );
-                            for parent in &d.parents {
-                                if ui
-                                    .link(RichText::new(short_id(*parent)).monospace().size(11.5))
-                                    .clicked()
-                                {
-                                    actions.push(Action::Reveal(*parent));
-                                }
-                            }
-                        });
-                    }
-                    ui.add_space(12.0);
-                    let (adds, dels) = d
-                        .files
-                        .iter()
-                        .fold((0, 0), |(a, r), f| (a + f.additions, r + f.deletions));
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "{} file{} changed",
-                                d.files.len(),
-                                if d.files.len() == 1 { "" } else { "s" }
-                            ))
-                            .font(FontId::new(12.5, theme::semibold()))
-                            .color(p.text_dim),
-                        );
-                        if d.stats_known {
-                            ui.label(
-                                RichText::new(format!("+{adds}"))
-                                    .color(p.success)
-                                    .size(12.0),
-                            );
-                            ui.label(RichText::new(format!("−{dels}")).color(p.danger).size(12.0));
-                        } else {
-                            // A partial clone that has not downloaded the file contents.
-                            ui.label(
-                                RichText::new("line counts not downloaded")
-                                    .color(p.text_faint)
-                                    .size(11.5),
+            ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+            let compact = ui.available_height() < theme::XL * 10.0;
+            if compact {
+                ui.horizontal(|ui| {
+                    let title_width = (ui.available_width() - theme::XL - theme::SM).max(0.0);
+                    ui.allocate_ui_with_layout(
+                        vec2(title_width, theme::XL),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(d.message.lines().next().unwrap_or("").trim())
+                                        .font(FontId::new(theme::TITLE_SIZE, theme::semibold()))
+                                        .color(p.text),
+                                )
+                                .truncate(),
                             )
-                            .on_hover_text(
-                                "This is a partial clone: the line counts and renamed files \
-                                 need file contents that were not downloaded. Open a file \
-                                 to download it.",
-                            );
-                        }
-                    });
-                    ui.add_space(4.0);
-                    virtual_rows(ui, d.files.len(), FILE_ROW_H, |ui, i| {
-                        let f = &d.files[i];
-                        let selected = tab.file.as_ref().is_some_and(|s| s.entry.path == f.path);
-                        let id = ui.id().with(("commit-file", &f.path, &f.old_path, f.kind));
-                        if file_row(ui, f, selected, id).clicked() {
-                            tab.select_file(FileSelection {
-                                source: DiffSource::Commit(d.oid),
-                                entry: f.clone(),
-                                conflicted: false,
-                            });
-                        }
-                    });
+                            .on_hover_text(&d.message);
+                        },
+                    );
+                    ui.menu_button(icon::INFO, |ui| {
+                        ui.set_max_width(
+                            (ui.ctx().content_rect().width() - theme::XL * 2.0).min(380.0),
+                        );
+                        message(ui, &d);
+                        ui.add_space(theme::SM);
+                        metadata(ui, &d, actions);
+                    })
+                    .response
+                    .on_hover_text("Commit information");
                 });
+                ui.add_space(theme::XS);
+                author(ui, &d);
+            } else {
+                let files_min = FILE_ROW_H * 2.0 + theme::XL + theme::SM + theme::XS;
+                egui::ScrollArea::vertical()
+                    .id_salt("commit-metadata")
+                    .max_height((ui.available_height() - files_min).max(0.0))
+                    .min_scrolled_height(0.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        message(ui, &d);
+                        ui.add_space(theme::SM);
+                        author(ui, &d);
+                        ui.add_space(theme::XS);
+                        metadata(ui, &d, actions);
+                    });
+            }
+            ui.add_space(theme::SM);
+            file_stats(ui, &d);
+            ui.add_space(theme::XS);
+            egui::ScrollArea::vertical()
+                .id_salt("commit-file-list")
+                .min_scrolled_height(0.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| files(ui, &d, tab));
         });
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(p.bg))
         .show(ui, |ui| diff::show(ui, tab, actions));
+}
+
+fn message(ui: &mut Ui, d: &CommitDetails) {
+    let p = palette(ui.ctx());
+    let mut lines = d.message.trim().splitn(2, '\n');
+    let summary = lines.next().unwrap_or("").trim();
+    let body = lines.next().unwrap_or("").trim();
+    ui.add(
+        egui::Label::new(
+            RichText::new(summary)
+                .font(FontId::new(theme::TITLE_SIZE, theme::semibold()))
+                .color(p.text),
+        )
+        .wrap(),
+    );
+    if !body.is_empty() {
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(RichText::new(body).color(p.text_dim).size(12.5)).wrap());
+    }
+}
+
+fn author(ui: &mut Ui, d: &CommitDetails) {
+    let p = palette(ui.ctx());
+    ui.horizontal_wrapped(|ui| {
+        widgets::avatar(ui, 32.0, &d.author.name, &d.author.email);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.label(
+                RichText::new(&d.author.name)
+                    .font(FontId::new(13.0, theme::medium()))
+                    .color(p.text),
+            );
+            ui.add(
+                egui::Label::new(
+                    RichText::new(&d.author.email)
+                        .size(theme::SMALL_SIZE)
+                        .color(p.text_faint),
+                )
+                .truncate(),
+            )
+            .on_hover_text(&d.author.email);
+        });
+    });
+}
+
+fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
+    let p = palette(ui.ctx());
+    meta_row(
+        ui,
+        icon::CALENDAR_BLANK,
+        &widgets::full_date(d.author.time, d.author.offset_minutes),
+    );
+    if d.committer.email != d.author.email || d.committer.name != d.author.name {
+        meta_row(
+            ui,
+            icon::USER_SWITCH,
+            &format!("Committed by {}", d.committer.name),
+        );
+    }
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(icon::HASH).color(p.text_faint));
+        ui.label(
+            RichText::new(short_id(d.oid))
+                .monospace()
+                .size(theme::SMALL_SIZE)
+                .color(p.accent2),
+        )
+        .on_hover_text(d.oid.to_string());
+        if widgets::icon_button(ui, icon::COPY, "Copy SHA").clicked() {
+            actions.push(Action::Copy(d.oid.to_string()));
+        }
+    });
+    if !d.parents.is_empty() {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(icon::GIT_COMMIT).color(p.text_faint));
+            ui.label(
+                RichText::new(if d.parents.len() > 1 {
+                    "Parents"
+                } else {
+                    "Parent"
+                })
+                .size(12.0)
+                .color(p.text_faint),
+            );
+            for parent in &d.parents {
+                if ui
+                    .link(RichText::new(short_id(*parent)).monospace().size(11.5))
+                    .clicked()
+                {
+                    actions.push(Action::Reveal(*parent));
+                }
+            }
+        });
+    }
+}
+
+fn file_stats(ui: &mut Ui, d: &CommitDetails) {
+    let p = palette(ui.ctx());
+    let (adds, dels) = d
+        .files
+        .iter()
+        .fold((0, 0), |(a, r), f| (a + f.additions, r + f.deletions));
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!(
+                "{} file{} changed",
+                d.files.len(),
+                if d.files.len() == 1 { "" } else { "s" }
+            ))
+            .font(FontId::new(12.5, theme::semibold()))
+            .color(p.text_dim),
+        );
+        if d.stats_known {
+            ui.label(
+                RichText::new(format!("+{adds}"))
+                    .color(p.success)
+                    .size(12.0),
+            );
+            ui.label(RichText::new(format!("−{dels}")).color(p.danger).size(12.0));
+        } else {
+            // A partial clone that has not downloaded the file contents.
+            ui.label(
+                RichText::new("line counts not downloaded")
+                    .color(p.text_faint)
+                    .size(11.5),
+            )
+            .on_hover_text(
+                "This is a partial clone: the line counts and renamed files \
+                 need file contents that were not downloaded. Open a file \
+                 to download it.",
+            );
+        }
+    });
+}
+
+fn files(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
+    virtual_rows(ui, d.files.len(), FILE_ROW_H, |ui, i| {
+        let f = &d.files[i];
+        let selected = tab.file.as_ref().is_some_and(|s| s.entry.path == f.path);
+        let id = ui.id().with(("commit-file", &f.path, &f.old_path, f.kind));
+        if file_row(ui, f, selected, id).clicked() {
+            tab.select_file(FileSelection {
+                source: DiffSource::Commit(d.oid),
+                entry: f.clone(),
+                conflicted: false,
+            });
+        }
+    });
 }
 
 /// The details could not be loaded: git's reason and, when downloading can fix it (a partial
@@ -217,7 +293,7 @@ fn meta_row(ui: &mut Ui, glyph: &str, text: &str) {
     let p = palette(ui.ctx());
     ui.horizontal(|ui| {
         ui.label(RichText::new(glyph).color(p.text_faint));
-        ui.label(RichText::new(text).size(12.0).color(p.text_dim));
+        ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.text_dim)).wrap());
     });
 }
 
@@ -337,7 +413,6 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egu
         Some(old) => format!("{} → {}", old, f.path),
         None => f.path.clone(),
     };
-    let _ = Stroke::NONE;
     resp.on_hover_text(tip)
 }
 

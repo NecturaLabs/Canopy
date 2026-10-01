@@ -19,7 +19,7 @@ use crate::ui::widgets::forge_icon;
 use crate::updater::{self, UpdateState, Updater};
 
 /// The sections, in order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Section {
     #[default]
     Appearance,
@@ -65,6 +65,8 @@ enum TokenTest {
 #[derive(Default)]
 pub struct SettingsScreen {
     section: Section,
+    zoom_preview: Option<f32>,
+    picker: crate::ui::folder_picker::FolderPicker,
     token_input: HashMap<String, String>,
     tests: HashMap<String, TokenTest>,
     token_error: Option<String>,
@@ -112,93 +114,137 @@ pub fn show(
 ) -> SettingsResult {
     let p = palette(ctx);
     let mut result = SettingsResult::default();
+    screen.picker.begin_frame();
     let screen_rect = ctx.content_rect();
-    let width = (screen_rect.width() - 80.0).clamp(560.0, 900.0);
-    let height = (screen_rect.height() - 120.0).clamp(380.0, 640.0);
+    let width = (screen_rect.width() - theme::XL * 2.0).clamp(0.0, 900.0);
+    let height = (screen_rect.height() - theme::XL * 2.0).clamp(0.0, 640.0);
+    let sidebar = width >= 720.0;
+    let nav_width = 180.0;
     let modal = egui::Modal::new(egui::Id::new("settings"))
         .frame(
             egui::Frame::new()
                 .fill(p.elevated)
                 .stroke(Stroke::new(1.0, p.border))
-                .corner_radius(egui::CornerRadius::same(theme::RADIUS_LG))
+                .corner_radius(CornerRadius::same(theme::RADIUS_LG))
                 .shadow(ctx.global_style().visuals.window_shadow)
-                .inner_margin(egui::Margin::same(0)),
+                .inner_margin(egui::Margin::ZERO),
         )
         .backdrop_color(p.backdrop())
         .show(ctx, |ui| {
             ui.set_width(width);
             ui.set_height(height);
+            ui.spacing_mut().item_spacing.x = 0.0;
             ui.horizontal_top(|ui| {
-                // Section list.
+                if sidebar {
+                    egui::Frame::new()
+                        .fill(p.panel)
+                        .corner_radius(CornerRadius {
+                            nw: theme::RADIUS_LG,
+                            sw: theme::RADIUS_LG,
+                            ne: 0,
+                            se: 0,
+                        })
+                        .inner_margin(egui::Margin::same(theme::MD as i8))
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.set_width(nav_width - theme::MD * 2.0);
+                                ui.set_height(height - theme::MD * 2.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(icon::GEAR_SIX)
+                                            .size(theme::TITLE_SIZE)
+                                            .color(p.accent),
+                                    );
+                                    ui.label(
+                                        RichText::new("Settings").font(FontId::new(
+                                            theme::TITLE_SIZE,
+                                            theme::semibold(),
+                                        )),
+                                    );
+                                });
+                                ui.add_space(theme::LG);
+                                egui::ScrollArea::vertical().show(ui, |ui| {
+                                    for s in Section::ALL {
+                                        nav_item(ui, &mut screen.section, s);
+                                    }
+                                });
+                            })
+                        });
+                }
                 egui::Frame::new()
-                    .fill(p.panel)
-                    .corner_radius(CornerRadius {
-                        nw: theme::RADIUS_LG,
-                        sw: theme::RADIUS_LG,
-                        ne: 0,
-                        se: 0,
-                    })
-                    .inner_margin(egui::Margin::same(12))
+                    .inner_margin(egui::Margin::same(theme::LG as i8))
                     .show(ui, |ui| {
                         ui.vertical(|ui| {
-                            ui.set_width(170.0);
-                            ui.set_height(height - 24.0);
+                            ui.set_width(
+                                width - if sidebar { nav_width } else { 0.0 } - theme::LG * 2.0,
+                            );
+                            ui.spacing_mut().item_spacing.x = theme::SM;
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(icon::GEAR_SIX).size(18.0).color(p.accent));
+                                let (glyph, title) = screen.section.label();
                                 ui.label(
-                                    RichText::new("Settings")
-                                        .font(FontId::new(16.0, theme::semibold())),
+                                    RichText::new(glyph).size(theme::TITLE_SIZE).color(p.accent),
+                                );
+                                if sidebar {
+                                    ui.label(
+                                        RichText::new(title).font(FontId::new(
+                                            theme::TITLE_SIZE,
+                                            theme::semibold(),
+                                        )),
+                                    );
+                                } else {
+                                    egui::ComboBox::from_id_salt("settings-section")
+                                        .selected_text(title)
+                                        .show_ui(ui, |ui| {
+                                            for section in Section::ALL {
+                                                ui.selectable_value(
+                                                    &mut screen.section,
+                                                    section,
+                                                    section.label().1,
+                                                );
+                                            }
+                                        });
+                                }
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if widgets::icon_button(ui, icon::X, "Close settings (Esc)")
+                                            .clicked()
+                                        {
+                                            result.close = true;
+                                        }
+                                    },
                                 );
                             });
-                            ui.add_space(12.0);
-                            for s in Section::ALL {
-                                nav_item(ui, &mut screen.section, s);
-                            }
-                        });
-                    });
-                // Content.
-                ui.vertical(|ui| {
-                    ui.add_space(14.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(4.0);
-                        let (glyph, title) = screen.section.label();
-                        ui.label(RichText::new(glyph).size(18.0).color(p.accent));
-                        ui.label(RichText::new(title).font(FontId::new(17.0, theme::semibold())));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.add_space(14.0);
-                            if widgets::icon_button(ui, icon::X, "Close (Esc)").clicked() {
-                                result.close = true;
-                            }
-                        });
-                    });
-                    ui.add_space(8.0);
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false, false])
-                        .max_height(height - 60.0)
-                        .show(ui, |ui| {
-                            egui::Frame::new()
-                                .inner_margin(egui::Margin {
-                                    left: 6,
-                                    right: 18,
-                                    top: 0,
-                                    bottom: 14,
-                                })
-                                .show(ui, |ui| match screen.section {
-                                    Section::Appearance => appearance(ui, settings),
-                                    Section::Git => git(ui, settings),
-                                    Section::Integrations => integrations(ui, settings),
-                                    Section::Accounts => {
-                                        result.tokens_changed |=
-                                            accounts(ui, screen, settings, tokens, forges, actions)
+                            ui.add_space(theme::MD);
+                            egui::ScrollArea::vertical()
+                                .id_salt(("settings-content", screen.section))
+                                .auto_shrink([false, false])
+                                .max_height((height - theme::LG * 2.0 - 26.0 - theme::MD).max(0.0))
+                                .show(ui, |ui| {
+                                    ui.set_max_width(ui.available_width());
+                                    match screen.section {
+                                        Section::Appearance => {
+                                            appearance(ui, settings, &mut screen.zoom_preview)
+                                        }
+                                        Section::Git => git(ui, settings),
+                                        Section::Integrations => {
+                                            integrations(ui, settings, &mut screen.picker)
+                                        }
+                                        Section::Accounts => {
+                                            result.tokens_changed |= accounts(
+                                                ui, screen, settings, tokens, forges, actions,
+                                            )
+                                        }
+                                        Section::Updates => updates(ui, settings, update, actions),
+                                        Section::Privacy => privacy(ui, settings, actions),
+                                        Section::Keyboard => keyboard(ui),
                                     }
-                                    Section::Updates => updates(ui, settings, update, actions),
-                                    Section::Privacy => privacy(ui, settings, actions),
-                                    Section::Keyboard => keyboard(ui),
                                 });
-                        });
-                });
+                        })
+                    });
             });
         });
+    screen.picker.end_frame();
     result.close |= modal.should_close();
     result
 }
@@ -207,6 +253,14 @@ fn nav_item(ui: &mut Ui, current: &mut Section, s: Section) {
     let p = palette(ui.ctx());
     let selected = *current == s;
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
+    if resp.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(theme::RADIUS),
+            Stroke::new(1.5, p.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
     if selected {
         ui.painter().rect_filled(
             rect,
@@ -240,40 +294,46 @@ fn nav_item(ui: &mut Ui, current: &mut Section, s: Section) {
     }
 }
 
-/// A labelled row: the title and help on the left, the control on the right.
-///
-/// The text takes whatever width the control leaves. The control's width is measured each frame
-/// and remembered, so a row with two buttons never runs its help text underneath them.
+/// A preference and its controls. Compact columns stack the controls below the help.
 fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
     let p = palette(ui.ctx());
-    let id = ui.id().with(("settings-row-control", title));
-    let control_w = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(240.0);
-    ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width((ui.available_width() - control_w - 16.0).max(180.0));
-            ui.label(RichText::new(title).font(FontId::new(13.5, theme::medium())));
-            if !help.is_empty() {
-                ui.label(RichText::new(help).size(12.0).color(p.text_dim));
-            }
-        });
-        let used = ui
-            .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                control(ui);
-                ui.min_rect().width()
-            })
-            .inner;
-        if (used - control_w).abs() > 0.5 {
-            ui.data_mut(|d| d.insert_temp(id, used));
-            // Lay the row out again this frame with the measured width.
-            ui.ctx()
-                .request_discard("settings row measured its control");
+    let width = ui.available_width();
+    let label = |ui: &mut Ui| {
+        ui.label(RichText::new(title).font(FontId::new(theme::BODY_SIZE, theme::medium())));
+        if !help.is_empty() {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(help)
+                        .size(theme::SMALL_SIZE)
+                        .color(p.text_dim),
+                )
+                .wrap(),
+            );
+        }
+    };
+    ui.push_id(title, |ui| {
+        if width < 620.0 {
+            label(ui);
+            ui.add_space(theme::XS);
+            ui.horizontal_wrapped(control);
+        } else {
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(
+                    vec2(width * 0.50, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    label,
+                );
+                ui.allocate_ui_with_layout(
+                    vec2(width * 0.50 - theme::SM, 0.0),
+                    egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
+                    control,
+                );
+            });
         }
     });
-    ui.add_space(6.0);
-    let r = ui.available_rect_before_wrap();
-    ui.painter()
-        .hline(r.x_range(), r.min.y, Stroke::new(1.0, p.border));
-    ui.add_space(10.0);
+    ui.add_space(theme::SM);
+    ui.separator();
+    ui.add_space(theme::SM);
 }
 
 fn heading(ui: &mut Ui, text: &str) {
@@ -282,7 +342,7 @@ fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(8.0);
 }
 
-fn appearance(ui: &mut Ui, s: &mut Settings) {
+fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     heading(ui, "Theme");
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
@@ -303,11 +363,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings) {
             crate::keymap::hint(crate::keymap::Command::ZoomOut)
         ),
         |ui| {
-            ui.add(
-                egui::Slider::new(&mut s.zoom, 0.8..=1.6)
-                    .step_by(0.05)
-                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
-            );
+            zoom_slider(ui, s, preview);
         },
     );
     row(
@@ -337,12 +393,47 @@ fn appearance(ui: &mut Ui, s: &mut Settings) {
     );
 }
 
+fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> egui::Response {
+    let mut preview = draft.unwrap_or(s.zoom);
+    ui.spacing_mut().slider_width = 160.0_f32.min((ui.available_width() - 72.0).max(48.0));
+    let response = ui.add(
+        egui::Slider::new(&mut preview, 0.8..=1.6)
+            .step_by(0.05)
+            .update_while_editing(false)
+            .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+            .custom_parser(|text| {
+                text.trim()
+                    .trim_end_matches('%')
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .map(|v| v / 100.0)
+            }),
+    );
+    response.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), f64::from(preview), "Zoom"));
+    if response.dragged() || response.is_pointer_button_down_on() {
+        *draft = Some(preview);
+    } else {
+        if response.changed() || draft.is_some() {
+            s.zoom = preview;
+        }
+        *draft = None;
+    }
+    response
+}
+
 /// A theme preview: a miniature of the window drawn from the theme's own palette.
 fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool) -> egui::Response {
     let p = palette(ui.ctx());
     let tp = id.palette();
-    let (rect, resp) = ui.allocate_exact_size(vec2(150.0, 112.0), Sense::click());
-    let hover = resp.hovered();
+    let (rect, resp) = ui.allocate_exact_size(
+        vec2(
+            150.0_f32.min((ui.available_width() - theme::MD).max(120.0)),
+            112.0,
+        ),
+        Sense::click(),
+    );
+    let hover = resp.hovered() || resp.has_focus();
     let painter = ui.painter();
     let mock = egui::Rect::from_min_size(rect.min, vec2(rect.width(), 82.0));
     painter.rect_filled(mock, CornerRadius::same(theme::RADIUS), tp.bg);
@@ -565,16 +656,22 @@ fn git(ui: &mut Ui, s: &mut Settings) {
     }
 }
 
-fn integrations(ui: &mut Ui, s: &mut Settings) {
+fn integrations(
+    ui: &mut Ui,
+    s: &mut Settings,
+    picker: &mut crate::ui::folder_picker::FolderPicker,
+) {
     heading(ui, "Cloning");
     row(
         ui,
         "Default clone folder",
         "Where the clone dialog puts new repositories. Empty uses ~/src when it exists, else your home folder.",
         |ui| {
-            if ui.button(format!("{}  Browse…", icon::FOLDER)).clicked()
-                && let Some(dir) = rfd::FileDialog::new().pick_folder()
-            {
+            if let Some(dir) = picker.show(
+                ui,
+                "default-clone-folder",
+                &crate::settings::expand_home(&s.clone_dir),
+            ) {
                 s.clone_dir = dir.display().to_string();
             }
             let hint = s.clone_parent();
@@ -1007,5 +1104,156 @@ fn keyboard(ui: &mut Ui) {
                 }
             });
         ui.add_space(8.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zoom_changes_only_after_the_drag_ends() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut settings = Settings::default();
+        let mut draft = None;
+        let mut rect = egui::Rect::NOTHING;
+        let mut draw = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(600.0, 400.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        rect = zoom_slider(ui, &mut settings, &mut draft).rect;
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            (settings.zoom, rect)
+        };
+        let (_, rect) = draw(Vec::new());
+        let pos = rect.left_center() + vec2(80.0, 0.0);
+        let (zoom, _) = draw(vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+        ]);
+        assert_eq!(zoom, 1.0, "applying zoom while dragging moves the control");
+        let (zoom, _) = draw(vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        assert!(zoom > 1.0, "released slider must apply its preview");
+    }
+
+    #[test]
+    fn typing_a_zoom_percentage_waits_for_enter() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut settings = Settings::default();
+        let mut draft = None;
+        let mut time = 1.0;
+        let mut draw = |events| {
+            time += 0.05;
+            let mut rect = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    rect = zoom_slider(ui, &mut settings, &mut draft).rect;
+                },
+            );
+            output.textures_delta.clear();
+            (settings.zoom, rect)
+        };
+        let (_, rect) = draw(Vec::new());
+        let pos = rect.right_center() - vec2(16.0, 0.0);
+        for _ in 0..2 {
+            draw(vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ]);
+            draw(vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }]);
+        }
+        assert!(
+            ctx.egui_wants_keyboard_input(),
+            "zoom value must have editing focus"
+        );
+        let (zoom, _) = draw(vec![egui::Event::Text("1".into())]);
+        assert_eq!(zoom, 1.0, "a partial percentage must not rescale the app");
+        draw(vec![egui::Event::Text("50".into())]);
+        let (zoom, _) = draw(vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        assert_eq!(zoom, 1.5, "Enter must apply the complete percentage");
+    }
+
+    #[test]
+    fn settings_fit_a_compact_zoomed_window() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, true);
+        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(600.0, 375.0));
+        let mut settings = Settings::default();
+        let mut tokens = TokenStore::default();
+        for section in Section::ALL {
+            let mut screen = SettingsScreen::at(section);
+            for _ in 0..4 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(bounds),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(
+                            ui.ctx(),
+                            &mut screen,
+                            &mut settings,
+                            &mut tokens,
+                            &[],
+                            &UpdateState::Idle,
+                            &mut Vec::new(),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            let rect = ctx
+                .memory(|m| m.area_rect(egui::Id::new("settings")))
+                .expect("settings area");
+            assert!(
+                bounds.contains_rect(rect),
+                "{section:?}: {rect:?} exceeds {bounds:?}"
+            );
+        }
     }
 }

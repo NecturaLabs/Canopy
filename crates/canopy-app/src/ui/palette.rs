@@ -212,11 +212,12 @@ impl<T: Clone> CommandPalette<T> {
                 }
             });
 
-        let width = 620.0_f32.min(screen.width() - 40.0);
+        let width = 620.0_f32.min(screen.width() - theme::XL * 2.0).max(0.0);
+        let top = theme::XL.min(screen.height() * 0.08);
         egui::Area::new(Id::new("palette"))
             .order(Order::Tooltip)
             .pivot(Align2::CENTER_TOP)
-            .fixed_pos(egui::pos2(screen.center().x, screen.min.y + 90.0))
+            .fixed_pos(egui::pos2(screen.center().x, screen.min.y + top))
             .show(ctx, |ui| {
                 egui::Frame::new()
                     .fill(p.elevated)
@@ -263,7 +264,9 @@ impl<T: Clone> CommandPalette<T> {
                             return;
                         }
                         egui::ScrollArea::vertical()
-                            .max_height(380.0)
+                            .max_height(
+                                (screen.height() - top - theme::XL * 2.0 - 60.0).clamp(0.0, 380.0),
+                            )
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
                                 for (row, (_, i)) in ranked.iter().enumerate() {
@@ -304,7 +307,21 @@ impl<T: Clone> CommandPalette<T> {
                                         FontId::proportional(16.0),
                                         if selected { p.accent } else { p.text_dim },
                                     );
-                                    let label = ui.painter().text(
+                                    let shortcut_width = ui
+                                        .painter()
+                                        .layout_no_wrap(
+                                            e.shortcut.clone(),
+                                            FontId::monospace(theme::SMALL_SIZE),
+                                            p.text_faint,
+                                        )
+                                        .size()
+                                        .x;
+                                    let label_clip = egui::Rect::from_min_max(
+                                        rect.min + vec2(30.0, 0.0),
+                                        rect.max - vec2(shortcut_width + theme::XL, 0.0),
+                                    );
+                                    let painter = ui.painter().with_clip_rect(label_clip);
+                                    let label = painter.text(
                                         c + vec2(34.0, 0.0),
                                         Align2::LEFT_CENTER,
                                         &e.label,
@@ -312,7 +329,7 @@ impl<T: Clone> CommandPalette<T> {
                                         p.text,
                                     );
                                     if !e.detail.is_empty() {
-                                        ui.painter().text(
+                                        painter.text(
                                             egui::pos2(label.max.x + 10.0, c.y),
                                             Align2::LEFT_CENTER,
                                             &e.detail,

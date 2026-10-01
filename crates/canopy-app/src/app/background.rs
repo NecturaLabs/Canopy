@@ -87,6 +87,7 @@ impl CanopyApp {
         }
         if let Some(r) = finished {
             self.clone = None;
+            self.dialogs.finish_clone(r.is_ok());
             match r {
                 Ok(p) => {
                     self.toasts.push(

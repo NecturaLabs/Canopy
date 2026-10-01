@@ -18,7 +18,8 @@ verified in the running app.
       timeout; a Retry for failed diffs; a "not downloaded" marker per file.
 - [ ] `cli::run_with_input`: show git's stderr, not "Broken pipe", when git exits early.
 - [ ] `Repo::pull` reads `pull.rebase` through libgit2; read it through `git config`, and isolate
-      the pull tests from the developer's git config.
+      the pull tests from the developer's git config; Git 2.55 still requires an explicit
+      reconciliation strategy with isolated config.
 - [ ] `packaging/test-install.sh`: the two "interrupted install exits 130" checks fail when
       `/bin/sh` is bash.
 - [ ] Security review of the installer fixes (`85d2961`); review canopy-3's core when the app
@@ -39,7 +40,7 @@ verified in the running app.
 - [ ] Symlinks and type changes: show and diff them; never follow links; Windows
       `core.symlinks=false`.
 - [ ] Missing tools: detect git, git-lfs, ssh and signing tools; show install steps per OS.
-- [ ] Architecture: shared widgets, file dialogs off the UI thread, tab-state and palette tests,
+- [ ] Architecture: shared widgets, tab-state and palette tests,
       a lint against colours outside `theme.rs`, the merge dialog's per-frame branch list.
 - [ ] Settings: every preference in the UI, consent review, search/reset/import/export, Git
       identity, remappable keybindings.

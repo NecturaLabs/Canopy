@@ -10,6 +10,18 @@ use egui::{
 };
 use serde::{Deserialize, Serialize};
 
+pub const XS: f32 = 4.0;
+pub const SM: f32 = 8.0;
+pub const MD: f32 = 12.0;
+pub const LG: f32 = 16.0;
+pub const XL: f32 = 24.0;
+pub const COMPACT_WIDTH: f32 = 1000.0;
+pub const BODY_SIZE: f32 = 13.0;
+pub const SMALL_SIZE: f32 = 11.5;
+pub const TITLE_SIZE: f32 = 16.0;
+pub const MONO_SIZE: f32 = 12.5;
+pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
+
 /// Colours of one theme.
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
@@ -27,7 +39,6 @@ pub struct Palette {
     pub border: Color32,
     /// Outlines that identify a control (text fields, checkboxes, switch tracks): at least 3:1
     /// against every surface (WCAG 1.4.11).
-    #[cfg_attr(not(test), expect(dead_code, reason = "adopted by the controls pass"))]
     pub control_border: Color32,
     pub text: Color32,
     pub text_dim: Color32,
@@ -497,7 +508,12 @@ impl Palette {
 
     /// Fill of a ref pill in colour `c`; the current branch and HEAD are stronger.
     pub fn pill_fill(c: Color32, strong: bool) -> Color32 {
-        Palette::tint(c, if strong { 60 } else { 30 })
+        Palette::tint(c, if strong { 64 } else { 56 })
+    }
+
+    /// The outline reinforces ref identity while its text stays neutral.
+    pub fn pill_border(c: Color32, strong: bool) -> Color32 {
+        Palette::tint(c, if strong { 190 } else { 125 })
     }
 
     /// Fill of an initials avatar in colour `c`.
@@ -625,7 +641,7 @@ fn visuals(p: &Palette) -> Visuals {
     w.noninteractive.corner_radius = r;
     w.inactive.bg_fill = p.elevated;
     w.inactive.weak_bg_fill = p.elevated;
-    w.inactive.bg_stroke = Stroke::new(1.0, p.border);
+    w.inactive.bg_stroke = Stroke::new(1.0, p.control_border);
     w.inactive.fg_stroke = Stroke::new(1.0, p.text);
     w.inactive.corner_radius = r;
     w.hovered.bg_fill = p.hover;
@@ -640,7 +656,7 @@ fn visuals(p: &Palette) -> Visuals {
     w.active.fg_stroke = Stroke::new(1.5, p.text);
     w.active.corner_radius = r;
     w.active.expansion = 0.0;
-    w.open = w.active;
+    w.open = w.hovered;
     v
 }
 
@@ -654,19 +670,19 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, reduce_motion: bool) {
     let mut style = (*ctx.style_of(theme)).clone();
     style.visuals = visuals(p);
     style.text_styles = [
-        (TextStyle::Heading, FontId::new(20.0, semibold())),
-        (TextStyle::Body, FontId::new(13.5, FontFamily::Proportional)),
+        (TextStyle::Heading, FontId::new(TITLE_SIZE, semibold())),
         (
-            TextStyle::Button,
-            FontId::new(13.5, FontFamily::Proportional),
+            TextStyle::Body,
+            FontId::new(BODY_SIZE, FontFamily::Proportional),
         ),
+        (TextStyle::Button, FontId::new(BODY_SIZE, medium())),
         (
             TextStyle::Small,
-            FontId::new(11.5, FontFamily::Proportional),
+            FontId::new(SMALL_SIZE, FontFamily::Proportional),
         ),
         (
             TextStyle::Monospace,
-            FontId::new(12.5, FontFamily::Monospace),
+            FontId::new(MONO_SIZE, FontFamily::Monospace),
         ),
     ]
     .into();
@@ -818,5 +834,21 @@ mod tests {
             t = t.next();
         }
         assert_eq!(t, ThemeId::Midnight);
+    }
+    #[test]
+    fn open_menu_items_keep_the_same_surface_as_hovered_items() {
+        for id in ThemeId::ALL {
+            let v = visuals(id.palette());
+            assert_eq!(
+                v.widgets.open.weak_bg_fill,
+                v.widgets.hovered.weak_bg_fill,
+                "{} submenu must keep its hover fill when the pointer enters a child",
+                id.palette().name
+            );
+            assert_eq!(
+                v.widgets.open.fg_stroke.color,
+                v.widgets.hovered.fg_stroke.color
+            );
+        }
     }
 }

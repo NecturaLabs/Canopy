@@ -63,6 +63,23 @@ All notable changes to Canopy are documented here. The format follows
 
 ### Fixed
 
+- Commit details restore a readable height after a small window is enlarged. Expand and a
+  compact History/Commit details switch give the author, changed files and diff useful space.
+  A shorter initial pane leaves less empty space under short diffs.
+- History search now appears only when invoked with Ctrl+F or `/`; those shortcuts, Esc and the
+  close button hide it and restore the full graph. The redundant commit count and status-bar
+  repository path are removed.
+- Commit detail Expand and Back sit at the right end of the filename row instead of adding another
+  header row. Ref and request pills use clearer color fills and legible text; opened context submenu
+  items match hovered menu items rather than flashing purple.
+
+- Interface zoom no longer moves the Settings slider during a drag; percentage entry now parses
+  correctly; increasing zoom no longer increases the native window minimum size.
+- Clone destination validation runs off the UI thread and keeps the entered values on failure.
+- Native folder selection keeps the app event loop running while browsing instead of causing
+  operating-system unresponsive warnings.
+- Compact settings, legal text, shortcuts, palette, diff controls and history labels stay within
+  their viewport; long paths no longer overlap status counts.
 - Staging, unstaging and discarding use each path literally: a file named `*` or `[ab].txt` no
   longer touches other files (discarding an untracked `[ab].txt` used to delete an untracked
   `b.txt` too).
@@ -100,6 +117,11 @@ All notable changes to Canopy are documented here. The format follows
 
 ### Changed
 
+- Compact windows move repository navigation into a menu, adapt pane widths and history columns,
+  and scroll tabs and toolbar actions. Shared typography, control outlines and keyboard focus
+  indicators are more consistent across themes.
+- Screenshot tooling supports native Hyprland capture when Xvfb is unavailable, workspace
+  selection and `--zoom` for scaled-layout checks; captures reset saved panel layout.
 - Stage all leaves out a folder that holds its own Git repository instead of adding it as a
   submodule entry.
 - A new branch never tracks its start point on its own (pushing sets the upstream), and a branch

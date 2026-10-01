@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
 #                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|licences|credential|host-key|merge]
-#                            [--size WxH]
+#                            [--size WxH] [--zoom 0.8..1.6]
 #
 # <repo> may be "-" to render the welcome screen with no repository open.
 #
 # Renders Canopy headlessly on a virtual X server (Xvfb, software OpenGL via Mesa llvmpipe) with
 # <repo> open, saves one frame to <out.png> once the repository has loaded, and prints the output
 # path. Builds the release binary first (a no-op when it is up to date); set CANOPY_BIN to use a
-# different binary and skip the build. Requires xvfb-run (Debian/Ubuntu: `apt install xvfb`).
+# different binary and skip the build. Uses Xvfb when available, else a native Hyprland window
+# on CANOPY_WORKSPACE (default 3). Output and native-run temporary files stay beside <out.png>.
 set -euo pipefail
 
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; }
 
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then usage; exit 0; fi
 if [[ $# -lt 2 ]]; then usage; exit 2; fi
 repo=$1 out=$2
 shift 2
@@ -26,6 +28,7 @@ while [[ $# -gt 0 ]]; do
     --theme) extra+=(--theme "${2:?--theme needs a name}"); shift 2 ;;
     --view) extra+=(--view "${2:?--view needs history, changes or requests}"); shift 2 ;;
     --overlay) extra+=(--overlay "${2:?--overlay needs a name, see --help}"); shift 2 ;;
+    --zoom) extra+=(--zoom "${2:?--zoom needs a factor}"); shift 2 ;;
     --size) size=${2:?--size needs WxH}; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage; exit 2 ;;
@@ -35,9 +38,12 @@ if [[ ! $size =~ ^[0-9]+x[0-9]+$ ]]; then echo "invalid --size: $size (expected 
 repo_args=()
 if [[ $repo != - ]]; then
   [[ -d $repo ]] || { echo "not a directory: $repo" >&2; exit 1; }
-  repo_args=("$repo")
+  repo_args=("$(realpath "$repo")")
 fi
-command -v xvfb-run >/dev/null || { echo "xvfb-run not found (apt install xvfb)" >&2; exit 1; }
+if ! command -v xvfb-run >/dev/null && [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+  echo "screenshots need xvfb-run or a running Hyprland session" >&2
+  exit 1
+fi
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 if [[ -z ${CANOPY_BIN:-} ]]; then
@@ -49,10 +55,43 @@ mkdir -p "$(dirname "$out")"
 out_abs="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
 rm -f "$out_abs"
 
-# Force X11 inside Xvfb even when called from a Wayland session.
-env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 \
-  timeout 60 xvfb-run -a -s "-screen 0 ${size}x24" \
-  "$CANOPY_BIN" --screenshot "$out_abs" --size "$size" "${extra[@]}" "${repo_args[@]}"
+if command -v xvfb-run >/dev/null; then
+  # Force X11 inside Xvfb even when called from a Wayland session.
+  env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 \
+    timeout 60 xvfb-run -a -s "-screen 0 ${size}x24" \
+    "$CANOPY_BIN" --screenshot "$out_abs" --size "$size" "${extra[@]}" "${repo_args[@]}"
+else
+  workspace=${CANOPY_WORKSPACE:-3}
+  [[ $workspace =~ ^[1-9][0-9]*$ ]] || { echo "invalid CANOPY_WORKSPACE: $workspace" >&2; exit 2; }
+  native_dir=$(mktemp -d "$(dirname "$out_abs")/.canopy-shot.XXXXXX")
+  trap 'rm -f "$native_dir/run.sh" "$native_dir/run.log" "$native_dir/status"; rmdir "$native_dir"' EXIT
+  CANOPY_BIN=$(realpath "$CANOPY_BIN")
+  command=(env)
+  if [[ -z ${WAYLAND_DISPLAY:-} ]]; then command+=(-u WAYLAND_DISPLAY); fi
+  for name in XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME TMPDIR CANOPY_HOSTING_API_BASE; do
+    if [[ -v $name ]]; then command+=("$name=${!name}"); fi
+  done
+  command+=(timeout 60 "$CANOPY_BIN" --screenshot "$out_abs" --size "$size" "${extra[@]}" "${repo_args[@]}")
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf '%q ' "${command[@]}"
+    printf '> %q 2>&1\n' "$native_dir/run.log"
+    printf 'printf "%%s\\n" "$?" > %q\n' "$native_dir/status"
+  } > "$native_dir/run.sh"
+  python3 - "$workspace" "$size" "$native_dir/run.sh" <<'PYTHON'
+import json, shlex, subprocess, sys
+workspace, size, runner = sys.argv[1:]
+command = f"[workspace {workspace} silent; float; size {size.replace('x', ' ')}; center; renderunfocused] " + shlex.join(["bash", runner])
+subprocess.run(["hyprctl", "eval", "hl.exec_cmd(" + json.dumps(command, ensure_ascii=False) + ")"], check=True, stdout=subprocess.DEVNULL)
+PYTHON
+  for ((i=0; i<650; i++)); do
+    [[ -f $native_dir/status ]] && break
+    sleep 0.1
+  done
+  [[ -f $native_dir/status ]] || { echo "native screenshot timed out" >&2; exit 1; }
+  status=$(cat "$native_dir/status")
+  [[ $status == 0 ]] || { cat "$native_dir/run.log" >&2; exit "$status"; }
+fi
 
 [[ -s $out_abs ]] || { echo "no screenshot was written" >&2; exit 1; }
 echo "$out_abs"

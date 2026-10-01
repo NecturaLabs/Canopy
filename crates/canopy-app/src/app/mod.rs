@@ -58,6 +58,7 @@ pub const OVERLAYS: &[&str] = &[
 pub struct Launch {
     pub paths: Vec<PathBuf>,
     pub theme: Option<ThemeId>,
+    pub zoom: Option<f32>,
     pub screenshot: Option<PathBuf>,
     pub view: Option<View>,
     /// Open this overlay for a screenshot: settings, privacy, cheatsheet, palette, consent,
@@ -70,6 +71,27 @@ pub struct Launch {
 /// Rows a Page Down / Ctrl+D moves in a list.
 const PAGE_ROWS: isize = 12;
 
+fn apply_zoom(ctx: &egui::Context, zoom: f32) {
+    ctx.set_zoom_factor(zoom);
+}
+
+fn update_window_minimum(ctx: &egui::Context) {
+    let zoom = ctx.zoom_factor();
+    let scale = (zoom, ctx.pixels_per_point());
+    let id = egui::Id::new(("native-window-scale", ctx.viewport_id()));
+    let changed = ctx.data_mut(|data| {
+        let previous = data.get_temp::<(f32, f32)>(id);
+        data.insert_temp(id, scale);
+        previous != Some(scale)
+    });
+    if changed {
+        // egui applies a requested zoom next pass; native commands use this pass's scale.
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(
+            theme::MIN_WINDOW_SIZE / zoom,
+        ));
+    }
+}
+
 /// The Canopy application state.
 pub struct CanopyApp {
     settings: Settings,
@@ -79,6 +101,7 @@ pub struct CanopyApp {
     /// dialogs that arrived while a credential prompt was open).
     dialogs: DialogStack,
     settings_screen: Option<SettingsScreen>,
+    folder_picker: crate::ui::folder_picker::FolderPicker,
     palette: CommandPalette<Action>,
     cheatsheet: Cheatsheet,
     toasts: Toasts,
@@ -120,6 +143,8 @@ impl CanopyApp {
         settings.migrate();
         let shooting = launch.screenshot.is_some();
         if shooting {
+            cc.egui_ctx
+                .memory_mut(|memory| *memory = egui::Memory::default());
             // Screenshots are deterministic: default settings, nothing remembered.
             settings = Settings {
                 seen_intro: true,
@@ -136,6 +161,9 @@ impl CanopyApp {
         if let Some(t) = launch.theme {
             settings.theme = t;
         }
+        if let Some(zoom) = launch.zoom {
+            settings.zoom = zoom;
+        }
         if launch.split {
             settings.split_diff = true;
         }
@@ -144,7 +172,7 @@ impl CanopyApp {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         theme::apply(&cc.egui_ctx, settings.theme, settings.reduce_motion);
-        cc.egui_ctx.set_zoom_factor(settings.zoom);
+        apply_zoom(&cc.egui_ctx, settings.zoom);
 
         let git_version = canopy_core::cli::version().unwrap_or_else(|_| "git not found".into());
         let gitlab_hosts = settings.gitlab_host_list();
@@ -154,12 +182,14 @@ impl CanopyApp {
             active: 0,
             dialogs: DialogStack::default(),
             settings_screen: None,
+            folder_picker: Default::default(),
             palette: CommandPalette::default(),
             cheatsheet: Cheatsheet::default(),
             toasts: Toasts::default(),
             screenshot: launch.screenshot.map(|path| Screenshot {
                 path,
                 ready_frames: 0,
+                ready_since: None,
                 requested: false,
                 started: 0.0,
             }),
@@ -356,7 +386,7 @@ impl CanopyApp {
             theme::apply(ctx, s.theme, s.reduce_motion);
         }
         if (ctx.zoom_factor() - s.zoom).abs() > f32::EPSILON {
-            ctx.set_zoom_factor(s.zoom);
+            apply_zoom(ctx, s.zoom);
         }
         if s.gitlab_hosts != before.gitlab_hosts {
             self.gitlab_hosts = s.gitlab_host_list();
@@ -441,7 +471,9 @@ fn start_askpass(ctx: &egui::Context) -> Option<crate::askpass::Server> {
 impl eframe::App for CanopyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        update_window_minimum(&ctx);
         let p = palette(&ctx);
+        let compact = ctx.content_rect().width() < theme::COMPACT_WIDTH;
         self.poll(&ctx);
         self.auto_fetch(&ctx);
         let mut actions = Vec::new();
@@ -474,7 +506,7 @@ impl eframe::App for CanopyApp {
                     &mut actions,
                 )
             });
-        if let Some(tab) = self.tabs.get(self.active) {
+        if let Some(tab) = self.tabs.get_mut(self.active) {
             egui::Panel::top("actions")
                 .exact_size(56.0)
                 .frame(
@@ -482,7 +514,28 @@ impl eframe::App for CanopyApp {
                         .fill(p.panel)
                         .stroke(Stroke::new(1.0, p.border)),
                 )
-                .show(ui, |ui| toolbar::actions_bar(ui, tab, &mut actions));
+                .show(ui, |ui| {
+                    if compact {
+                        ui.horizontal_centered(|ui| {
+                            let menu = navigation_menu(ui, |ui| {
+                                ui.set_width(240.0);
+                                ui.set_max_height(ctx.content_rect().height() * 0.7);
+                                sidebar::show(ui, tab, &mut actions);
+                            })
+                            .on_hover_text("Branches, remotes, tags and stashes");
+                            menu.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    "Branches, remotes, tags and stashes",
+                                )
+                            });
+                            toolbar::actions_bar(ui, tab, &mut actions);
+                        });
+                    } else {
+                        toolbar::actions_bar(ui, tab, &mut actions);
+                    }
+                });
         }
         let clone_status = self
             .clone
@@ -514,18 +567,20 @@ impl eframe::App for CanopyApp {
             });
 
         if let Some(tab) = self.tabs.get_mut(self.active) {
-            egui::Panel::left("sidebar")
-                .resizable(true)
-                .default_size(250.0)
-                .min_size(190.0)
-                .max_size(460.0)
-                .frame(
-                    egui::Frame::new()
-                        .fill(p.panel)
-                        .stroke(Stroke::new(1.0, p.border))
-                        .inner_margin(egui::Margin::symmetric(6, 0)),
-                )
-                .show(ui, |ui| sidebar::show(ui, tab, &mut actions));
+            if !compact {
+                egui::Panel::left("sidebar")
+                    .resizable(true)
+                    .default_size(250.0)
+                    .min_size(190.0)
+                    .max_size(460.0)
+                    .frame(
+                        egui::Frame::new()
+                            .fill(p.panel)
+                            .stroke(Stroke::new(1.0, p.border))
+                            .inner_margin(egui::Margin::symmetric(6, 0)),
+                    )
+                    .show(ui, |ui| sidebar::show(ui, tab, &mut actions));
+            }
             egui::CentralPanel::default()
                 .frame(egui::Frame::new().fill(p.bg))
                 .show(ui, |ui| match tab.view {
@@ -542,6 +597,7 @@ impl eframe::App for CanopyApp {
         }
 
         // Overlays.
+        self.folder_picker.begin_frame();
         if let Some(screen) = &mut self.settings_screen {
             let before = self.settings.clone();
             let forges: Vec<canopy_core::forge::Forge> = self
@@ -569,6 +625,7 @@ impl eframe::App for CanopyApp {
                 }
             }
             if result.close {
+                self.folder_picker.cancel();
                 self.settings_screen = None;
             }
             self.settings_changed(&ctx, &before);
@@ -576,9 +633,22 @@ impl eframe::App for CanopyApp {
         // Dialogs draw above the settings screen (the Privacy Policy opens from there).
         if let Some(d) = self.dialogs.current_mut() {
             let consent = is_consent(d);
-            match dialogs::show(&ctx, d, self.tabs.get(self.active)) {
+            match dialogs::show(
+                &ctx,
+                d,
+                self.tabs.get(self.active),
+                &mut self.folder_picker,
+                self.clone.is_some(),
+            ) {
                 Outcome::Keep => {}
-                Outcome::Close => self.dialogs.close(),
+                Outcome::Close => {
+                    self.folder_picker.cancel();
+                    self.dialogs.close();
+                }
+                Outcome::RunKeep(a) => {
+                    self.folder_picker.cancel();
+                    actions.extend(a);
+                }
                 Outcome::Run(a) => {
                     // The consent dialog's actions decide what comes next themselves.
                     if !consent {
@@ -588,6 +658,7 @@ impl eframe::App for CanopyApp {
                 }
             }
         }
+        self.folder_picker.end_frame();
         if self.palette.open {
             // Built when the palette opens or its inputs change, not every frame.
             let inputs = self.palette_inputs();
@@ -615,5 +686,216 @@ impl eframe::App for CanopyApp {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         egui::Rgba::from(self.settings.theme.palette().bg).to_array()
+    }
+}
+
+fn navigation_menu(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> egui::Response {
+    let button = ui.button(RichText::new(icon::LIST).size(theme::TITLE_SIZE));
+    let id = button.id.with("navigation-open");
+    let mut open = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
+    if button.clicked() {
+        open = !open;
+    }
+    let shown = egui::Popup::menu(&button)
+        .open_bool(&mut open)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(content)
+        .is_some();
+    // Context menus use egui's single popup slot; the navigation must keep their rows alive.
+    if shown && egui::Popup::is_any_open(ui.ctx()) {
+        open = true;
+    }
+    ui.data_mut(|data| data.insert_temp(id, open));
+    button
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_navigation_stays_open_for_context_actions() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let draw = |events| {
+            let mut menu = egui::Rect::NOTHING;
+            let mut branch = egui::Rect::NOTHING;
+            let mut seen = false;
+            let mut nested = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    menu = navigation_menu(ui, |ui| {
+                        ui.set_width(240.0);
+                        ui.set_min_height(420.0);
+                        seen = true;
+                        let response = ui.button("main");
+                        branch = response.rect;
+                        let navigation_layer = response.layer_id;
+                        if let Some(menu) = crate::ui::widgets::context_menu(&response, |ui| {
+                            ui.label("Rename branch");
+                        }) {
+                            nested = Some((menu.response.rect.center(), menu.response.layer_id));
+                        }
+                        ctx.move_to_top(navigation_layer);
+                    })
+                    .rect;
+                },
+            );
+            output.textures_delta.clear();
+            (menu, branch, seen, nested)
+        };
+        let (menu, _, _, _) = draw(Vec::new());
+        let click = |pos, button, pressed| egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: Default::default(),
+        };
+        draw(vec![
+            egui::Event::PointerMoved(menu.center()),
+            click(menu.center(), egui::PointerButton::Primary, true),
+        ]);
+        let (_, branch, _, _) = draw(vec![click(
+            menu.center(),
+            egui::PointerButton::Primary,
+            false,
+        )]);
+        assert!(branch.is_positive(), "menu must open");
+        let (_, branch, _, _) = draw(Vec::new());
+        draw(vec![
+            egui::Event::PointerMoved(branch.center()),
+            click(branch.center(), egui::PointerButton::Secondary, true),
+        ]);
+        draw(vec![click(
+            branch.center(),
+            egui::PointerButton::Secondary,
+            false,
+        )]);
+        for _ in 0..3 {
+            let (_, _, seen, nested) = draw(Vec::new());
+            assert!(
+                seen,
+                "a context click must preserve repository navigation across frames"
+            );
+            let (pos, layer) = nested.expect("branch context menu must stay open");
+            assert_eq!(
+                ctx.layer_id_at(pos),
+                Some(layer),
+                "context actions must paint above navigation"
+            );
+        }
+    }
+
+    #[test]
+    fn zoom_transitions_use_the_current_frame_scale_for_window_constraints() {
+        for (from, to) in [(1.5, 1.0), (1.0, 1.6), (1.6, 0.8)] {
+            let ctx = egui::Context::default();
+            ctx.set_zoom_factor(from);
+            let mut warmup = ctx.run_ui(egui::RawInput::default(), |_| {});
+            warmup.textures_delta.clear();
+            let mut current = 0.0;
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                current = ui.ctx().zoom_factor();
+                update_window_minimum(ui.ctx());
+                apply_zoom(ui.ctx(), to);
+            });
+            output.textures_delta.clear();
+            let minimum = output.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .iter()
+                .find_map(|cmd| {
+                    if let egui::ViewportCommand::MinInnerSize(size) = cmd {
+                        Some(*size)
+                    } else {
+                        None
+                    }
+                })
+                .expect("native window constraint during transition");
+            assert_eq!(
+                minimum * current,
+                theme::MIN_WINDOW_SIZE,
+                "zoom {from} -> {to}"
+            );
+            let mut next = ctx.run_ui(egui::RawInput::default(), |ui| {
+                update_window_minimum(ui.ctx())
+            });
+            next.textures_delta.clear();
+            assert_eq!(ctx.zoom_factor(), to);
+            let next_minimum = next.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .iter()
+                .find_map(|cmd| {
+                    if let egui::ViewportCommand::MinInnerSize(size) = cmd {
+                        Some(*size)
+                    } else {
+                        None
+                    }
+                })
+                .expect("constraint for the newly active zoom");
+            assert_eq!(next_minimum * to, theme::MIN_WINDOW_SIZE);
+        }
+    }
+
+    #[test]
+    fn zoom_constraints_stay_constant_in_steady_and_discarded_passes() {
+        for (from, to) in [(1.1, 1.3), (1.3, 1.5), (1.5, 0.8)] {
+            let ctx = egui::Context::default();
+            apply_zoom(&ctx, from);
+            for _ in 0..2 {
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    update_window_minimum(ui.ctx())
+                });
+                output.textures_delta.clear();
+            }
+            let mut requested = false;
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                update_window_minimum(ui.ctx());
+                if !requested {
+                    requested = true;
+                    apply_zoom(ui.ctx(), to);
+                    ui.ctx().request_discard("zoom transition");
+                }
+            });
+            output.textures_delta.clear();
+            assert_eq!(ctx.zoom_factor(), to);
+            let commands = &output.viewport_output[&egui::ViewportId::ROOT].commands;
+            let mut constraints = 0;
+            for command in commands {
+                if let egui::ViewportCommand::MinInnerSize(minimum) = command {
+                    constraints += 1;
+                    let physical = (*minimum * ctx.zoom_factor()).round();
+                    assert_eq!(physical, theme::MIN_WINDOW_SIZE, "zoom {from} -> {to}");
+                }
+            }
+            assert!(
+                constraints > 0,
+                "new zoom must synchronize its native constraint"
+            );
+        }
+    }
+
+    #[test]
+    fn interface_zoom_keeps_the_native_window_minimum_constant() {
+        let ctx = egui::Context::default();
+        for zoom in [0.8, 1.0, 1.6] {
+            apply_zoom(&ctx, zoom);
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                update_window_minimum(ui.ctx())
+            });
+            output.textures_delta.clear();
+            let minimum = output.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .iter()
+                .find_map(|command| match command {
+                    egui::ViewportCommand::MinInnerSize(size) => Some(*size),
+                    _ => None,
+                })
+                .expect("native window constraint");
+            assert_eq!(minimum * zoom, egui::vec2(900.0, 560.0));
+        }
     }
 }

@@ -6,6 +6,7 @@ use super::*;
 pub(super) struct Screenshot {
     pub(super) path: PathBuf,
     pub(super) ready_frames: u32,
+    pub(super) ready_since: Option<f64>,
     pub(super) requested: bool,
     pub(super) started: f64,
 }
@@ -33,8 +34,14 @@ impl CanopyApp {
             });
         if ready {
             shot.ready_frames += 1;
+            shot.ready_since.get_or_insert(now);
+        } else {
+            shot.ready_frames = 0;
+            shot.ready_since = None;
         }
-        if !shot.requested && (shot.ready_frames > 30 || now - shot.started > 12.0) {
+        let settled =
+            shot.ready_frames > 30 && shot.ready_since.is_some_and(|since| now - since > 0.3);
+        if !shot.requested && (settled || now - shot.started > 12.0) {
             shot.requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
         }

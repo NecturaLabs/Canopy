@@ -54,8 +54,8 @@ list anything, and says why when it cannot. Repositories made by Git before 2.24
 | Commit graph with coloured lanes | Done | Yes | Yes | Yes |
 | Ref labels (HEAD, local, remote, tags) | Done | Yes | Yes | Yes |
 | Author avatars | Done (initials) | Yes | Yes | Yes |
-| Filter by message, author or SHA | Done | Yes | Yes | Yes |
-| Commit details: metadata, parents, files with +/- counts, per-file diff | Done | Yes | Yes | Yes |
+| On-demand History search by message, author or SHA (Ctrl+F or `/` toggles it) | Done | Yes | Yes | Yes |
+| Commit details: metadata, parents, files with +/- counts, per-file diff; expandable and compact full view | Done | Yes | Yes | Yes |
 | Incremental loading ("Load more") | Done | ? | ? | ? |
 | Search file contents across history (pickaxe) | Planned | ? | ? | ? |
 | File history | Planned | Yes | Yes | Yes |
@@ -134,7 +134,9 @@ list anything, and says why when it cannot. Repositories made by Git before 2.24
 | Command palette | Done | Yes | Yes | No |
 | Keyboard shortcuts for common operations | Done | Yes | Yes | Yes |
 | Keyboard cheatsheet and vim-style single-key actions | Unreleased | ? | ? | ? |
-| Settings screen (appearance, Git, integrations, accounts, updates, privacy) | Unreleased | ? | ? | ? |
+| Settings screen (appearance, Git, integrations, accounts, updates, privacy, keyboard) | Unreleased | ? | ? | ? |
+| Compact layouts and 80–160% interface zoom | Unreleased | ? | ? | ? |
+| Native folder chooser without blocking the app | Unreleased | ? | ? | ? |
 | Configurable keybindings | Planned | ? | ? | ? |
 | Dark and light themes (two in v0.1, seven in `main`) | Done | Yes | Yes | ? |
 | Custom themes | Planned | No | Yes | No |

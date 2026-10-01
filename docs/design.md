@@ -102,19 +102,22 @@ Avatar backgrounds are picked from the same ten colours by a stable hash of the 
 ## Typography
 
 Inter for interface text, JetBrains Mono for SHAs, diffs, paths in diffs and anything that must
-align. Both are bundled (SIL OFL 1.1).
+align. Both are bundled (SIL OFL 1.1), so metrics are consistent on Linux, macOS and Windows.
+Inter Regular, Medium and SemiBold distinguish body text, controls and headings; monospace is
+reserved for code and identifiers. Sizes scale with the interface zoom and display density.
 
 | Style | Font | Size (pt) | Use |
 |---|---|---|---|
 | Display | Inter SemiBold | 22 | Welcome screen title |
 | Title | Inter SemiBold | 16 | Dialog titles, commit summary in details |
-| Heading | Inter SemiBold | 12, uppercase, +0.5 tracking | Sidebar section headers |
+| Section label | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Compact sidebar and settings group headers |
 | Body | Inter Regular | 13 | Default text, table rows |
 | Body strong | Inter Medium | 13 | Branch names, selected items, buttons |
 | Small | Inter Regular | 11.5 | Dates, counts, status bar, badges |
 | Mono | JetBrains Mono Regular | 12.5 | Diffs, SHAs, commit message editor |
 
-Line height is 1.4 for body text; history rows are 28px tall, diff lines 20px.
+The global Body, Button, Small and Heading styles use the typography tokens in `theme.rs`.
+History rows are 30 points tall, diff lines 20 points.
 
 ## Spacing
 
@@ -174,43 +177,63 @@ always have a tooltip naming the action and its shortcut.
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ Tabs:  [● canopy] [tidepool] [+]                                         │
+│ Tabs:  [canopy] [tidepool] [+]                        Search   Settings  │
 ├──────────────────────────────────────────────────────────────────────────┤
-│ Toolbar: Fetch  Pull  Push │ Branch  Stash │ History|Changes     Palette │
-├──────────────┬──────────────────────────────────────┬────────────────────┤
-│ Sidebar      │ Centre                               │ Detail             │
-│  BRANCHES    │  History: graph │ message │ author │ │  commit metadata   │
-│  REMOTES     │           date │ SHA                 │  changed files     │
-│  TAGS        │  or Changes: unstaged / staged lists │  diff              │
-│  STASHES     │  and commit composer                 │                    │
-├──────────────┴──────────────────────────────────────┴────────────────────┤
-│ Status bar: branch  ↑2 ↓0   MERGING   ⟳ Fetching origin…                 │
+│ Toolbar: History|Changes|Requests  Fetch Pull Push Branch Merge Stash   │
+├──────────────┬───────────────────────────────────────────────────────────┤
+│ Sidebar      │ History: graph │ message │ author │ date │ SHA           │
+│ BRANCHES     ├───────────────────┬───────────────────────────────────────┤
+│ REMOTES      │ Commit metadata   │ Selected file diff                    │
+│ TAGS/STASHES │ and changed files │                                       │
+├──────────────┴───────────────────┴───────────────────────────────────────┤
+│ Status: branch  ↑2 ↓0  changed files                    path / Git       │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- Sidebar default width 240px (resizable, 180 to 400px); detail pane default 40% of the remaining
-  width.
-- In Changes, the centre holds the file lists and composer and the detail pane holds the diff.
-- The in-progress banner (merge, rebase, cherry-pick) spans the centre column above the table, in
-  `warning` with continue and abort buttons.
-- Minimum window size 900x560 (`main.rs`); the layouts are designed for 960x600 and up.
+- Sidebar defaults to 250 points (resizable, 190–460). Below 1000 logical points it moves into
+  the toolbar's navigation menu, preserving room for repository content. It stays open for
+  section toggles, double-click checkout and context menus.
+- History details sit below the graph, initially 40% of its available height capped to 300–320
+  points where space permits. The resizable pane can shrink to 260 points; its maximum leaves
+  history controls and two complete rows. Expand opens the details in the content area, with Back
+  to history to restore the split. When that readable split cannot fit, History and Commit details
+  share the area through two explicit mode controls; a selected commit initially shows its details.
+- Commit metadata, the Changes file list, and the request list take at most 40% of their
+  available width, leaving the rest for the diff or request details. Pane limits follow the
+  current viewport. Read-only diff headers share a wrapping row at short heights to keep more
+  changed lines visible without reducing text size.
+- History hides date, author and SHA columns as space decreases; full metadata remains in
+  commit details and row tooltips. Row content is clipped to the table's scroll viewport.
+- History search stays hidden until Ctrl+F or `/` opens it and focuses the field. The same
+  shortcut, Esc or the close button hides it and clears the query. The commit count does not
+  occupy the table header; an in-progress operation banner remains visible without search.
+- Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has a visible
+  scrollbar. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
+  a tooltip. Diff controls wrap below the filename, and hunk actions use named icons in narrow
+  panes.
+- The in-progress banner (merge, rebase, cherry-pick) appears above the history table with
+  continue and abort buttons.
+- Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
+  interface zoom up to 160%; dimensions above are logical points after zoom.
 
 ## Components
 
 ### Ref pill
 
-Rounded rectangle (`radius-sm`, height 18px, horizontal padding 6px) with a Small Medium label and a
-leading icon. Local branches use the lane colour of their commit at 20% opacity with a 1px border
-in the same colour; remote branches use an outlined style with a cloud icon; tags use `text-dim`
-outline with a tag icon. `HEAD` and the current branch are filled with `accent` and white text.
+Rounded rectangle (10-point radius, height 19px, horizontal padding 7px) with a Small Medium label and a
+leading icon. Branch, remote, tag and HEAD colours use distinct tinted fills and outlines;
+the actual drawn text uses a neutral ink with at least 4.5:1 contrast against its fill.
 When a local branch and its upstream point to the same commit they merge into one pill showing
 both icons. Pills that do not fit collapse to a `+N` badge with a tooltip.
+
+### Context menu
+
+An opened submenu item uses the same neutral surface as a hovered menu item.
 
 ### Avatar
 
 A circle, 20px in tables and 32px in details, filled with a lane colour chosen by hashing the
-author's email, showing up to two initials in Small SemiBold white. Optional remote avatar images
-are a planned, opt-in setting.
+author's email, showing up to two initials in Small SemiBold white. Avatars use local initials only; no images are downloaded.
 
 ### Toast
 
@@ -221,21 +244,21 @@ after 4 seconds, pausing while hovered.
 
 ### Command palette
 
-Centred at the top third of the window, 560px wide, `radius-lg`, overlay elevation. A search field
-at the top, then up to ten results: icon, command name with matched characters in `accent`, and
+Placed near the top of the window, up to 620 points wide, `radius-lg`, overlay elevation. Its
+height stays inside the viewport. A search field at the top, then scrollable results: icon, command name with matched characters in `accent`, and
 the shortcut right-aligned in `text-faint`. Up/Down move, Enter runs, Esc closes. Branch names
 appear as "Checkout <branch>" entries.
 
 ### Dialog
 
-Overlay card, `radius-lg`, `xl` padding, 440px wide by default. Title, body, then right-aligned
+Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, bounded by the viewport. Title, body, then right-aligned
 buttons: secondary (outlined) then primary (accent gradient). Destructive confirmations use a
 `danger` primary button whose label names the action ("Delete branch", "Discard 3 files"), never
 "OK"; Enter does not confirm a destructive dialog unless the button has focus.
 
 ### Graph node and edges
 
-- Lane spacing 14px, node radius 4.5px, edge width 2px, all in the lane colour.
+- Lane spacing 16px, node radius 4.5px, edge width 2px, all in the lane colour.
 - Edges within a lane are straight vertical lines; lane changes are cubic Bezier curves spanning
   one row, with control points at half the row height so curves leave and enter vertically.
 - Regular commits are filled circles with a 1.5px ring in the background colour to separate them
@@ -243,5 +266,22 @@ buttons: secondary (outlined) then primary (accent gradient). Destructive confir
 - Merge commits (two or more parents) are hollow: background-filled with a 2px ring in the lane
   colour.
 - The `HEAD` commit has an additional soft glow ring (`accent` at 35%, radius +4px).
-- Rows not matching the active filter are dimmed to 35% opacity rather than removed, so the graph
-  stays connected.
+- Filtering shows matching commits without graph lanes; clearing the filter restores the graph.
+
+### Settings and native selection
+
+Settings stay within the viewport with an independently scrolling content area. A section menu
+replaces the left navigation below 720 points. Below 620 points of content width, each setting's
+label and help sit above its controls. Shortcut descriptions and keycaps stack when they cannot
+fit together. Zoom shows a percentage preview while dragging and applies
+on release, so the control stays under the pointer; typing a percentage applies on Enter or
+when the field loses focus.
+
+Browse opens the native folder chooser on a background thread. The requesting button displays
+“Choosing…” while it is open; the app keeps processing events. A closed requesting field discards
+late results. Cancellation leaves the field unchanged, and a failed chooser allows retry. Clone destination
+validation runs in the clone worker; an existing folder is refused before Git runs. The Clone form
+keeps its values on failure, disables edits while running, and offers Continue in background.
+Constrained commit metadata and diff scrollers can shrink below their toolkit default height.
+Dialog bodies scroll within the viewport with a visible scrollbar, keeping the frame on screen
+at maximum zoom and minimum desktop size.

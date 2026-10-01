@@ -87,6 +87,19 @@ impl DialogStack {
         });
     }
 
+    /// Keeps a failed clone's input, or closes its submitted form after success.
+    pub fn finish_clone(&mut self, success: bool) {
+        self.dialogs.retain_mut(|dialog| {
+            if let Dialog::Clone { pending, .. } = dialog
+                && *pending
+            {
+                *pending = false;
+                return !success;
+            }
+            true
+        });
+    }
+
     /// Closes the credential prompts git or ssh stopped waiting for.
     pub fn drop_withdrawn(&mut self) {
         self.close_where(
