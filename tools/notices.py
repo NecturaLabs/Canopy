@@ -6,6 +6,13 @@ dependencies only; build scripts, proc macros and test-only crates ship nothing)
 version, licence expression and the licence and notice files from its source package, plus the
 bundled fonts. Crates that share a licence text are grouped under it, so the file stays readable.
 
+Some crates embed third-party assets under licences that are not the crate's own (egui-phosphor's
+icon fonts, two-face's syntax grammars and colour themes). EMBEDDED_ASSETS lists them and where
+each licence text comes from; the file gets an "Assets embedded in crates" section for them.
+`--check` also fails when a listed crate is no longer shipped or has a new major version (0.x: a
+new minor), so an upgrade forces a review of the table. two-face's texts are decoded from the
+crate's own `generated/acknowledgements_full.bin`, so they always follow the locked version.
+
     tools/notices.py           regenerate the file
     tools/notices.py --check   exit 1 if the committed file is out of date (CI)
 
@@ -17,8 +24,11 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import struct
 import subprocess
 import sys
+import textwrap
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -155,6 +165,103 @@ def read(path: Path) -> str:
     return text.strip() + "\n"
 
 
+def decode_two_face(package: dict) -> list[tuple[list[str], str]]:
+    """Licence texts of two-face's embedded syntaxes and themes: [(files they came from, text)].
+
+    Reads the dump behind `two_face::acknowledgement::listing()`: syntect's `from_binary` format,
+    zlib-compressed bincode (fixed-width little-endian integers) of two lists (syntaxes, themes)
+    of `License { ty: u32, text: String, rel_path: PathBuf }`. It holds the licences that need
+    acknowledgement (MIT, BSD, Apache-2.0); Sublime's, the Unlicense and the WTFPL do not.
+    """
+    path = Path(package["manifest_path"]).parent / "generated" / "acknowledgements_full.bin"
+    data = zlib.decompress(path.read_bytes())
+    pos = 0
+
+    def number(fmt: str) -> int:
+        nonlocal pos
+        (value,) = struct.unpack_from(fmt, data, pos)
+        pos += struct.calcsize(fmt)
+        return value
+
+    def string() -> str:
+        nonlocal pos
+        size = number("<Q")
+        pos += size
+        return data[pos - size:pos].decode("utf-8")
+
+    by_text: dict[str, list[str]] = {}
+    try:
+        for _ in range(2):
+            for _ in range(number("<Q")):
+                number("<I")
+                text = string().replace("\r\n", "\n").strip() + "\n"
+                by_text.setdefault(text, []).append(string())
+    except (struct.error, UnicodeDecodeError, zlib.error) as err:
+        sys.exit(f"cannot read {path}: {err}\nThe format changed: update decode_two_face().")
+    if pos != len(data) or not by_text:
+        sys.exit(f"{path}: unexpected layout: update decode_two_face() in tools/notices.py.")
+    return [(sorted(names), text) for text, names in by_text.items()]
+
+
+def vendored(name: str):
+    """A licence text kept in tools/licenses/ because the crate does not ship it."""
+    return lambda package: [([], read(STANDARD / name))]
+
+
+# Crates that embed third-party assets under licences of their own. Each maps to the series it
+# was reviewed for (see `series`) and its assets: a heading and a function that returns
+# [(files the text applies to, text)] for the crate's package. When --check reports a change,
+# compare the new release's `res/` or `generated/` files with the entry, then bump the series.
+EMBEDDED_ASSETS = {
+    "egui-phosphor": (
+        "0.14",
+        [("Phosphor icon fonts (res/Phosphor*.ttf in egui-phosphor), by Phosphor Icons",
+          vendored("Phosphor-MIT.txt"))],  # from phosphor-icons/web, which its README names
+    ),
+    "two-face": (
+        "0.5",
+        [("Syntax definitions and colour themes in two-face, from the bat project's "
+          "curation of Sublime Text packages", decode_two_face)],
+    ),
+}
+
+
+def series(version: str) -> str:
+    """The semver-compatible series of a version: `1.4.2` is `1`, `0.14.0+x` is `0.14`."""
+    major, minor = (version.split("+")[0].split(".") + ["0"])[:2]
+    return major if major != "0" else f"0.{minor}"
+
+
+def check_embedded(packages: dict[str, dict]) -> None:
+    versions = {p["name"]: p["version"] for p in packages.values()}
+    problems = []
+    for name, (reviewed, _) in EMBEDDED_ASSETS.items():
+        if name not in versions:
+            problems.append(f"{name} is no longer shipped: remove it from EMBEDDED_ASSETS")
+        elif series(versions[name]) != reviewed:
+            problems.append(
+                f"{name} is now {versions[name]}, reviewed for {reviewed}: check what it embeds "
+                "still matches its EMBEDDED_ASSETS entry, then update the series"
+            )
+    if problems:
+        sys.exit("EMBEDDED_ASSETS in tools/notices.py needs review:\n  " + "\n  ".join(problems))
+
+
+def embedded_section(packages: dict[str, dict], rule: str) -> list[str]:
+    by_name = {p["name"]: p for p in packages.values()}
+    out = ["", "Assets embedded in crates", "-------------------------", ""]
+    for name in sorted(EMBEDDED_ASSETS):
+        package = by_name[name]
+        origin = f"{name} {package['version']}"
+        for heading, texts in EMBEDDED_ASSETS[name][1]:
+            out += [rule, *textwrap.wrap(f"{heading} [{origin}]", 76, subsequent_indent="  ")]
+            out += [rule, ""]
+            for files, text in sorted(texts(package)):
+                out += [f"--- {f} ---" for f in files]
+                out += [*([""] if files else []), text, ""]
+    return out
+
+
 def render() -> str:
     packages: dict[str, dict] = {}
     for target in TARGETS:
@@ -162,6 +269,7 @@ def render() -> str:
         by_id = {p["id"]: p for p in meta["packages"]}
         for pid in shipped(meta):
             packages[pid] = by_id[pid]
+    check_embedded(packages)
 
     mit: list[str] = []  # crates under the standard MIT text, with their copyright notices
     apache: list[str] = []  # crates under the standard Apache-2.0 text
@@ -237,6 +345,7 @@ def render() -> str:
             read(STANDARD / "Apache-2.0.txt"), ""]
     for text, labels in sorted(groups.items(), key=lambda g: g[1][0]):
         out += [rule, *labels, rule, "", text, ""]
+    out += embedded_section(packages, rule)
     return "\n".join(out).rstrip() + "\n"
 
 
