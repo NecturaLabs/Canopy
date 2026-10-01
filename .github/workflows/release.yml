@@ -1,3 +1,16 @@
+# Build and publish a release when a `v*` tag is pushed (see the `release` skill).
+#
+# The Linux build runs on the organisation's self-hosted Linux runners. Its glibc requirement is
+# that of the runner's distribution. The macOS and Windows builds use GitHub-hosted runners and
+# are switched off, not removed: set the repository variable `CANOPY_HOSTED_RELEASE` to `true`
+# (Settings → Secrets and variables → Actions → Variables) to build them again. A release
+# publishes whatever builds ran.
+#
+# Running copies of Canopy learn about the release from the public NecturaLabs/app-updates
+# repository: the last job copies the builds to a `canopy-v<version>` release there and commits
+# the update manifest (`canopy/latest.json`, or `canopy/beta.json` for a pre-release). That job
+# needs the `APP_UPDATES_TOKEN` secret, a fine-grained token with Contents: read and write on
+# NecturaLabs/app-updates only; without it the job is skipped with a warning.
 name: Release
 
 on:
@@ -11,17 +24,41 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build-linux:
+    name: Build (x86_64-unknown-linux-gnu)
+    runs-on: [self-hosted, linux, wsl]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          clean: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check build tools
+        run: tools/ci-preflight.sh
+      - name: Check tag matches workspace version
+        run: tools/release-package.sh check-version
+      - name: Build
+        run: cargo build --release --locked -p canopy-app --target x86_64-unknown-linux-gnu
+      - name: Package
+        run: tools/release-package.sh package x86_64-unknown-linux-gnu tar.gz
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canopy-x86_64-unknown-linux-gnu
+          path: dist/*
+          if-no-files-found: error
+          overwrite: true
+
+  # Switched off: GitHub-hosted macOS and Windows builds. See the note at the top.
+  build-hosted:
     name: Build (${{ matrix.target }})
+    if: vars.CANOPY_HOSTED_RELEASE == 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          # The oldest supported Ubuntu runner keeps the glibc requirement low.
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            archive: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
@@ -32,77 +69,132 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-
       - name: Check tag matches workspace version
-        run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
-          if [[ "v$version" != "$GITHUB_REF_NAME" ]]; then
-            echo "Tag $GITHUB_REF_NAME does not match workspace version $version" >&2
-            exit 1
-          fi
-
+        run: tools/release-package.sh check-version
       - name: Build
         run: cargo build --release --locked -p canopy-app --target ${{ matrix.target }}
-
       - name: Package
-        run: |
-          name="canopy-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
-          mkdir -p "dist/$name"
-          bin=target/${{ matrix.target }}/release/canopy
-          [[ -f "$bin.exe" ]] && bin="$bin.exe"
-          cp "$bin" README.md LICENSE "dist/$name/"
-          if [[ "${{ matrix.target }}" == *linux* ]]; then
-            cp packaging/linux/io.necturalabs.Canopy.desktop \
-               packaging/linux/io.necturalabs.Canopy.metainfo.xml "dist/$name/"
-            cp assets/icon.svg "dist/$name/io.necturalabs.Canopy.svg"
-            cp assets/icon-256.png "dist/$name/io.necturalabs.Canopy.png"
-          fi
-          cd dist
-          if [[ "${{ matrix.archive }}" == zip ]]; then
-            7z a -tzip "$name.zip" "$name" > /dev/null
-          else
-            tar -czf "$name.tar.gz" "$name"
-          fi
-          rm -rf "$name"
-
-      - uses: actions/upload-artifact@v4
+        run: tools/release-package.sh package ${{ matrix.target }} ${{ matrix.archive }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: canopy-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
+          overwrite: true
 
   release:
     name: Publish release
-    needs: build
-    runs-on: ubuntu-latest
+    needs: [build-linux, build-hosted]
+    # Publish when the Linux build succeeded and the hosted builds either succeeded or were
+    # switched off.
+    if: >-
+      !cancelled() && needs.build-linux.result == 'success' &&
+      (needs.build-hosted.result == 'success' || needs.build-hosted.result == 'skipped')
+    runs-on: [self-hosted, linux, wsl]
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          clean: false
+          persist-credentials: false
+      - name: Clear previous downloads
+        run: rm -rf dist notes.md
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS
       - name: Release notes from CHANGELOG.md
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          awk -v v="$version" '
-            $0 ~ "^## \\[" v "\\]" { found = 1; next }
-            found && /^## \[/ { exit }
-            found && /^\[.*\]: / { exit }
-            found { print }
-          ' CHANGELOG.md > notes.md
-          [[ -s notes.md ]] || { echo "No CHANGELOG.md section for $version" >&2; exit 1; }
+        run: tools/release-package.sh notes > notes.md
       - uses: softprops/action-gh-release@v2
         with:
           name: Canopy ${{ github.ref_name }}
           body_path: notes.md
           files: dist/*
           fail_on_unmatched_files: true
+
+  publish-update:
+    name: Publish to the update feed
+    needs: release
+    runs-on: [self-hosted, linux, wsl]
+    timeout-minutes: 15
+    env:
+      APP_UPDATES_TOKEN: ${{ secrets.APP_UPDATES_TOKEN }}
+    steps:
+      - name: Check for the token
+        id: token
+        run: |
+          if [[ -z "$APP_UPDATES_TOKEN" ]]; then
+            echo "::warning::APP_UPDATES_TOKEN is not set: running copies of Canopy will not be offered this release."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.token.outputs.present == 'true'
+        with:
+          clean: false
+          persist-credentials: false
+      - name: Clear previous downloads
+        if: steps.token.outputs.present == 'true'
+        run: rm -rf dist app-updates
+      - uses: actions/download-artifact@v8
+        if: steps.token.outputs.present == 'true'
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release the builds on app-updates
+        if: steps.token.outputs.present == 'true'
+        id: feed
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          tag="canopy-v$version"
+          prerelease=false
+          [[ "$version" == *-* ]] && prerelease=true
+          (cd dist && sha256sum * > SHA256SUMS)
+          tools/release-package.sh notes > notes.md
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v2
+        if: steps.token.outputs.present == 'true'
+        with:
+          repository: NecturaLabs/app-updates
+          token: ${{ secrets.APP_UPDATES_TOKEN }}
+          tag_name: ${{ steps.feed.outputs.tag }}
+          target_commitish: main
+          name: Canopy ${{ github.ref_name }}
+          body_path: notes.md
+          prerelease: ${{ steps.feed.outputs.prerelease == 'true' }}
+          files: dist/*
+          fail_on_unmatched_files: true
+      - name: Commit the update manifest
+        if: steps.token.outputs.present == 'true'
+        run: |
+          version="${{ steps.feed.outputs.version }}"
+          tag="${{ steps.feed.outputs.tag }}"
+          channel=latest
+          [[ "${{ steps.feed.outputs.prerelease }}" == true ]] && channel=beta
+          git clone --depth 1 "https://x-access-token:${APP_UPDATES_TOKEN}@github.com/NecturaLabs/app-updates.git" app-updates
+          mkdir -p app-updates/canopy
+          tools/update-manifest.sh dist "$version" \
+            "https://github.com/NecturaLabs/app-updates/releases/tag/$tag" \
+            "https://github.com/NecturaLabs/app-updates/releases/download/$tag" \
+            > "app-updates/canopy/$channel.json"
+          cd app-updates
+          git config user.name "Canopy release"
+          git config user.email "releases@necturalabs.invalid"
+          git add "canopy/$channel.json"
+          git commit -m "canopy: publish $version to the $channel channel"
+          git push origin main
+          cd .. && rm -rf app-updates
