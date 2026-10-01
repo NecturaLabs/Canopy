@@ -208,6 +208,47 @@ pub fn run(workdir: &Path, args: &[&str]) -> Result<String> {
     }
 }
 
+/// The result of a command whose exit code carries an answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Output {
+    /// The exit code; `None` when a signal ended the process.
+    pub code: Option<i32>,
+    /// Standard output, as bytes.
+    pub stdout: Vec<u8>,
+    /// Standard error, as bytes.
+    pub stderr: Vec<u8>,
+}
+
+impl Output {
+    /// The error [`run`] would have returned for this output.
+    pub(crate) fn error(&self, args: &[&str]) -> Error {
+        failure(args, &self.stdout, &self.stderr)
+    }
+}
+
+/// Like [`run`], but a non-zero exit is not an error: for commands such as `merge-tree` and
+/// `diff --quiet` that answer through their exit code. Only failing to start git is an error.
+pub fn run_unchecked(workdir: &Path, args: &[&str]) -> Result<Output> {
+    let started = Instant::now();
+    let out = command(Some(workdir))
+        .args(args)
+        .output()
+        .map_err(Error::GitMissing)?;
+    let code = out.status.code();
+    // Exit code 1 is an answer for these commands, not a failure worth a warning.
+    record(
+        args,
+        started,
+        code.map(|c| if c == 1 { 0 } else { c }),
+        &out.stderr,
+    );
+    Ok(Output {
+        code,
+        stdout: out.stdout,
+        stderr: out.stderr,
+    })
+}
+
 /// Like [`run`], feeding `input` to standard input.
 pub fn run_with_input(workdir: &Path, args: &[&str], input: &[u8]) -> Result<String> {
     let started = Instant::now();
@@ -312,6 +353,31 @@ pub fn version() -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
+/// The installed git's major and minor version, e.g. `(2, 43)`; `None` when git cannot run or
+/// prints something unexpected.
+pub fn version_number() -> Option<(u32, u32)> {
+    static VERSION: OnceLock<Option<(u32, u32)>> = OnceLock::new();
+    *VERSION.get_or_init(|| parse_version(&version().ok()?))
+}
+
+/// Parses `git version 2.43.0` (or `git version 2.39.3 (Apple Git-146)`, or
+/// `git version 2.45.1.windows.1`) into `(2, 43)`.
+fn parse_version(text: &str) -> Option<(u32, u32)> {
+    let number = text
+        .strip_prefix("git version ")?
+        .split_whitespace()
+        .next()?;
+    let mut parts = number.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
+/// Whether git has `merge-tree --write-tree` (Git 2.38 or later).
+pub(crate) fn has_merge_tree_write_tree() -> bool {
+    version_number().is_some_and(|v| v >= (2, 38))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,6 +410,28 @@ mod tests {
         assert_eq!(redact_url("ssh://git@host/x"), "ssh://<redacted>@host/x");
         assert_eq!(redact_url("https://host/a@b"), "https://host/a@b");
         assert_eq!(redact_url("no url"), "no url");
+    }
+
+    #[test]
+    fn parses_git_versions() {
+        assert_eq!(parse_version("git version 2.43.0"), Some((2, 43)));
+        assert_eq!(
+            parse_version("git version 2.39.3 (Apple Git-146)"),
+            Some((2, 39))
+        );
+        assert_eq!(parse_version("git version 2.45.1.windows.1"), Some((2, 45)));
+        assert_eq!(parse_version("git found"), None);
+        assert!(version_number().is_some());
+    }
+
+    #[test]
+    fn unchecked_runs_return_the_exit_code() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = run_unchecked(dir.path(), &["rev-parse", "--git-dir"]).expect("git runs");
+        assert_ne!(out.code, Some(0));
+        assert!(!out.stderr.is_empty());
+        let out = run_unchecked(dir.path(), &["--version"]).expect("git runs");
+        assert_eq!(out.code, Some(0));
     }
 
     #[test]

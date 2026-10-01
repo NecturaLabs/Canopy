@@ -206,6 +206,8 @@ pub struct FileEntry {
     pub additions: usize,
     /// Lines removed, when known.
     pub deletions: usize,
+    /// The path has the `filter=lfs` attribute: Git LFS stores its content.
+    pub lfs: bool,
 }
 
 /// The working tree split the way the staging area shows it.
