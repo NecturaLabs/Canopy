@@ -15,6 +15,7 @@ pub mod diff;
 mod error;
 pub mod forge;
 pub mod graph;
+mod lines;
 pub mod model;
 pub mod ops;
 pub mod repo;
