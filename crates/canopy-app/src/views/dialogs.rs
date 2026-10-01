@@ -298,6 +298,48 @@ fn pick_folder(start: &str) -> Option<String> {
         .map(|p| p.display().to_string())
 }
 
+/// Cancel and confirm buttons with keyboard hints. The safe choice has the initial focus: Cancel
+/// when the action destroys something, otherwise the action, so Enter does what is least
+/// surprising. `Some(true)` confirms, `Some(false)` cancels.
+fn confirm_buttons(ui: &mut Ui, confirm: &str, danger: bool) -> Option<bool> {
+    let p = palette(ui.ctx());
+    let mut answer = None;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(if danger {
+                "Enter cancels · Esc closes"
+            } else {
+                "Enter confirms · Esc cancels"
+            })
+            .size(12.0)
+            .color(p.text_faint),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let size = egui::vec2(120.0, 34.0);
+            let yes = if danger {
+                widgets::danger_button(ui, confirm, size)
+            } else {
+                widgets::accent_button(ui, confirm, size)
+            };
+            let no = ui.add_sized([90.0, 34.0], egui::Button::new("Cancel"));
+            if ui.memory(|m| m.focused().is_none()) {
+                if danger {
+                    no.request_focus()
+                } else {
+                    yes.request_focus()
+                }
+            }
+            if yes.clicked() {
+                answer = Some(true);
+            }
+            if no.clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    answer
+}
+
 /// The credential prompt: the question as git or ssh asked it, and the answer.
 fn credential(
     ui: &mut Ui,
@@ -725,18 +767,11 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     ui.add_space(10.0);
                     ui.label(RichText::new(body.as_str()).color(p.text_dim));
                     ui.add_space(16.0);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let size = egui::vec2(120.0, 34.0);
-                            let b = if *danger { widgets::danger_button(ui, confirm, size) } else { widgets::accent_button(ui, confirm, size) };
-                            if b.clicked() {
-                                outcome = Outcome::Run(vec![Action::Op(op.clone())]);
-                            }
-                            if ui.add_sized([90.0, 34.0], egui::Button::new("Cancel")).clicked() {
-                                outcome = Outcome::Close;
-                            }
-                        });
-                    });
+                    match confirm_buttons(ui, confirm, *danger) {
+                        Some(true) => outcome = Outcome::Run(vec![Action::Op(op.clone())]),
+                        Some(false) => outcome = Outcome::Close,
+                        None => {}
+                    }
                 }
                 Dialog::ConfirmHost { title: t, body, confirm, danger, job } => {
                     let glyph = if *danger { icon::WARNING } else { icon::GIT_MERGE };
@@ -747,18 +782,11 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     ui.add_space(10.0);
                     ui.label(RichText::new(body.as_str()).color(p.text_dim));
                     ui.add_space(16.0);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let size = egui::vec2(120.0, 34.0);
-                            let b = if *danger { widgets::danger_button(ui, confirm, size) } else { widgets::accent_button(ui, confirm, size) };
-                            if b.clicked() {
-                                outcome = Outcome::Run(vec![Action::Host(job.clone())]);
-                            }
-                            if ui.add_sized([90.0, 34.0], egui::Button::new("Cancel")).clicked() {
-                                outcome = Outcome::Close;
-                            }
-                        });
-                    });
+                    match confirm_buttons(ui, confirm, *danger) {
+                        Some(true) => outcome = Outcome::Run(vec![Action::Host(job.clone())]),
+                        Some(false) => outcome = Outcome::Close,
+                        None => {}
+                    }
                 }
                 Dialog::Credential { prompt, answer, reveal } => {
                     outcome = credential(ui, prompt, answer, reveal, enter);

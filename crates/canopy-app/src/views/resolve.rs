@@ -227,7 +227,19 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
         .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin::symmetric(14, 10)).stroke(Stroke::new(1.0, p.border)))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{}  [ ] next/previous conflict · h ours · l theirs · B both", icon::KEYBOARD)).size(11.5).color(p.text_faint));
+                use crate::keymap::{Command, hint};
+                let keys = format!(
+                    "{}  {} {} previous/next · {} ours · {} theirs · {} both · {} undo",
+                    icon::KEYBOARD,
+                    hint(Command::PrevConflict),
+                    hint(Command::NextConflict),
+                    hint(Command::TakeOurs),
+                    hint(Command::TakeTheirs),
+                    hint(Command::TakeBoth),
+                    hint(Command::ClearChoice),
+                );
+                ui.label(RichText::new(keys).size(11.5).color(p.text_faint))
+                    .on_hover_text("Press ? for every shortcut");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let all = done == n;
                     let mark = widgets::primary_button(ui, "Save and mark resolved", all, 200.0)

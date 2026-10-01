@@ -280,7 +280,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings) {
     row(
         ui,
         "Zoom",
-        "Scales the whole interface. Ctrl+= and Ctrl+− also work.",
+        &format!(
+            "Scales the whole interface. {} and {} also work.",
+            crate::keymap::hint(crate::keymap::Command::ZoomIn),
+            crate::keymap::hint(crate::keymap::Command::ZoomOut)
+        ),
         |ui| {
             ui.add(
                 egui::Slider::new(&mut s.zoom, 0.8..=1.6)
@@ -920,7 +924,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
 fn keyboard(ui: &mut Ui) {
     let p = palette(ui.ctx());
     ui.label(
-        RichText::new("Press ? (or Ctrl+/) anywhere for this list as an overlay. Single keys work when no text field has focus; Super is never used.")
+        RichText::new(format!("Press ? (or {}) anywhere for this list as an overlay. Single keys work when no text field has focus; Super is never used.", crate::keymap::hint(crate::keymap::Command::Cheatsheet).split(" · ").next().unwrap_or_default()))
             .size(12.5)
             .color(p.text_dim),
     );

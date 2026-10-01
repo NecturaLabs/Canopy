@@ -216,7 +216,7 @@ fn intro(ui: &mut Ui, width: f32, actions: &mut Vec<Action>) {
                     for line in [
                         format!("{}  opens the command palette: every action, branch and repository.", hint(Command::Palette)),
                         "?  shows every shortcut. 1 / 2 / 3 switch views, j / k move, f / p / P fetch, pull, push.".to_owned(),
-                        "Settings (Ctrl+,) has themes, Git defaults and your GitHub / GitLab tokens for pull requests.".to_owned(),
+                        format!("Settings ({}) has themes, Git defaults and your GitHub / GitLab tokens for pull requests.", hint(Command::Settings)),
                     ] {
                         ui.label(RichText::new(line).size(12.5).color(p.text_dim));
                     }

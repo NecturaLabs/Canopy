@@ -13,6 +13,7 @@ pub enum Command {
     Palette,
     Cheatsheet,
     Dismiss,
+    Quit,
     Open,
     Clone,
     CloseTab,
@@ -38,6 +39,8 @@ pub enum Command {
     Requests,
     Down,
     Up,
+    PageDown,
+    PageUp,
     First,
     Last,
     MergeDialog,
@@ -49,12 +52,15 @@ pub enum Command {
     Discard,
     CopySha,
     OpenOnForge,
-    NextTheme,
     NextConflict,
     PrevConflict,
     TakeOurs,
     TakeTheirs,
     TakeBoth,
+    TakeBothTheirsFirst,
+    TakeBase,
+    EditConflict,
+    ClearChoice,
 }
 
 /// A key with modifiers. `ctrl` is Ctrl on Linux and Windows and Cmd on macOS.
@@ -63,8 +69,9 @@ pub struct Chord {
     pub key: Key,
     pub ctrl: bool,
     pub shift: bool,
-    /// Shift is part of the character (`?`, `+`) and is not checked.
-    pub any_shift: bool,
+    /// The key is a character (`?`, `+`, `[`) whatever modifiers the layout needs to type it:
+    /// Shift and AltGr are not checked.
+    pub symbol: bool,
 }
 
 const fn bare(key: Key) -> Chord {
@@ -72,7 +79,7 @@ const fn bare(key: Key) -> Chord {
         key,
         ctrl: false,
         shift: false,
-        any_shift: false,
+        symbol: false,
     }
 }
 
@@ -81,7 +88,7 @@ const fn shifted(key: Key) -> Chord {
         key,
         ctrl: false,
         shift: true,
-        any_shift: false,
+        symbol: false,
     }
 }
 
@@ -90,7 +97,7 @@ const fn symbol(key: Key) -> Chord {
         key,
         ctrl: false,
         shift: false,
-        any_shift: true,
+        symbol: true,
     }
 }
 
@@ -99,7 +106,7 @@ const fn ctrl(key: Key) -> Chord {
         key,
         ctrl: true,
         shift: false,
-        any_shift: false,
+        symbol: false,
     }
 }
 
@@ -108,7 +115,7 @@ const fn ctrl_shift(key: Key) -> Chord {
         key,
         ctrl: true,
         shift: true,
-        any_shift: false,
+        symbol: false,
     }
 }
 
@@ -117,7 +124,7 @@ const fn ctrl_symbol(key: Key) -> Chord {
         key,
         ctrl: true,
         shift: false,
-        any_shift: true,
+        symbol: true,
     }
 }
 
@@ -126,12 +133,13 @@ const fn ctrl_symbol(key: Key) -> Chord {
 pub enum Section {
     /// Works everywhere, also while typing.
     Anywhere,
-    /// Bare keys, when no text field has focus.
+    /// Moving through lists and switching views. Like every section below it, only when no text
+    /// field has focus.
     Navigate,
     History,
     Changes,
     Resolve,
-    Remote,
+    Repository,
 }
 
 impl Section {
@@ -141,21 +149,21 @@ impl Section {
         Section::History,
         Section::Changes,
         Section::Resolve,
-        Section::Remote,
+        Section::Repository,
     ];
 
     pub fn title(self) -> &'static str {
         match self {
             Section::Anywhere => "Anywhere",
-            Section::Navigate => "Navigate (no text field focused)",
+            Section::Navigate => "Lists and views",
             Section::History => "History",
             Section::Changes => "Changes",
             Section::Resolve => "Resolving a conflicted file",
-            Section::Remote => "Branches and remotes",
+            Section::Repository => "Repository actions",
         }
     }
 
-    /// Bindings of this section are bare keys.
+    /// Bindings of this section do not fire while a text field has focus.
     pub fn is_bare(self) -> bool {
         self != Section::Anywhere
     }
@@ -172,6 +180,8 @@ pub struct Binding {
     pub section: Section,
     /// Fires again while the key is held.
     pub repeat: bool,
+    /// The first chord must be pressed twice in a row (vim's `gg`).
+    pub double: bool,
 }
 
 const fn b(
@@ -187,6 +197,20 @@ const fn b(
         description,
         section,
         repeat: false,
+        double: false,
+    }
+}
+
+/// A binding that repeats while the key is held (motions).
+const fn held(
+    section: Section,
+    command: Command,
+    chords: &'static [Chord],
+    description: &'static str,
+) -> Binding {
+    Binding {
+        repeat: true,
+        ..b(section, command, chords, description)
     }
 }
 
@@ -205,29 +229,41 @@ const JUMP: [Chord; 9] = [
 use Command as C;
 use Section as S;
 
-/// The keymap. Order matters only within a section (more specific chords first).
+/// The keymap. Chords follow, in order of precedence: Omarchy's layering (one modifier for the
+/// app's global actions, `?`-style help one key away), lazygit's single keys for Git actions,
+/// vim's motions, and Fork's Ctrl+Shift chords for the same actions while typing.
 pub const BINDINGS: &[Binding] = &[
     // Anywhere.
     b(
         S::Anywhere,
         C::Palette,
-        &[ctrl(Key::K), ctrl_shift(Key::P), ctrl(Key::Space)],
-        "Command palette",
+        &[ctrl(Key::K), ctrl(Key::P), ctrl(Key::Space)],
+        "Open the command palette",
     ),
     b(
         S::Anywhere,
         C::Cheatsheet,
         &[ctrl(Key::Slash)],
-        "Keyboard shortcuts",
+        "Show keyboard shortcuts",
     ),
-    b(S::Anywhere, C::Open, &[ctrl(Key::O)], "Open repository"),
+    b(
+        S::Anywhere,
+        C::Open,
+        &[ctrl(Key::O), ctrl(Key::T)],
+        "Open a repository in a new tab",
+    ),
     b(
         S::Anywhere,
         C::Clone,
         &[ctrl_shift(Key::N)],
-        "Clone repository",
+        "Clone a repository",
     ),
-    b(S::Anywhere, C::CloseTab, &[ctrl(Key::W)], "Close tab"),
+    b(
+        S::Anywhere,
+        C::CloseTab,
+        &[ctrl(Key::W)],
+        "Close the tab (not while typing)",
+    ),
     b(
         S::Anywhere,
         C::PrevTab,
@@ -236,12 +272,8 @@ pub const BINDINGS: &[Binding] = &[
     ),
     b(S::Anywhere, C::NextTab, &[ctrl(Key::Tab)], "Next tab"),
     Binding {
-        command: C::JumpTab,
-        chords: &JUMP,
         keys_label: "Ctrl+1…9",
-        description: "Jump to tab 1–9",
-        section: S::Anywhere,
-        repeat: false,
+        ..b(S::Anywhere, C::JumpTab, &JUMP, "Go to tab 1–9")
     },
     b(
         S::Anywhere,
@@ -251,22 +283,38 @@ pub const BINDINGS: &[Binding] = &[
     ),
     b(S::Anywhere, C::Fetch, &[ctrl_shift(Key::F)], "Fetch"),
     b(S::Anywhere, C::Pull, &[ctrl_shift(Key::L)], "Pull"),
-    b(S::Anywhere, C::Push, &[ctrl_shift(Key::K)], "Push"),
+    b(S::Anywhere, C::Push, &[ctrl_shift(Key::P)], "Push"),
     b(
         S::Anywhere,
         C::Stash,
-        &[ctrl_shift(Key::S)],
+        &[ctrl_shift(Key::H)],
         "Stash changes",
     ),
-    b(S::Anywhere, C::NewBranch, &[ctrl(Key::B)], "New branch"),
+    b(
+        S::Anywhere,
+        C::StageAll,
+        &[ctrl_shift(Key::S)],
+        "Stage all changes",
+    ),
+    b(
+        S::Anywhere,
+        C::NewBranch,
+        &[ctrl(Key::B)],
+        "Create a branch",
+    ),
     b(
         S::Anywhere,
         C::Commit,
         &[ctrl(Key::Enter)],
-        "Commit (in Changes)",
+        "Commit staged changes",
     ),
     b(S::Anywhere, C::Filter, &[ctrl(Key::F)], "Filter history"),
-    b(S::Anywhere, C::Settings, &[ctrl(Key::Comma)], "Settings"),
+    b(
+        S::Anywhere,
+        C::Settings,
+        &[ctrl(Key::Comma)],
+        "Open settings",
+    ),
     b(
         S::Anywhere,
         C::ZoomIn,
@@ -275,99 +323,136 @@ pub const BINDINGS: &[Binding] = &[
     ),
     b(S::Anywhere, C::ZoomOut, &[ctrl(Key::Minus)], "Zoom out"),
     b(S::Anywhere, C::ZoomReset, &[ctrl(Key::Num0)], "Reset zoom"),
+    b(S::Anywhere, C::Quit, &[ctrl(Key::Q)], "Quit Canopy"),
     b(
         S::Anywhere,
         C::Dismiss,
         &[bare(Key::Escape)],
-        "Close dialog, palette or cheatsheet",
+        "Close the dialog, palette or cheatsheet",
     ),
-    // Navigate.
+    // Lists and views.
     b(
         S::Navigate,
         C::Cheatsheet,
         &[symbol(Key::Questionmark)],
-        "Keyboard shortcuts",
+        "Show keyboard shortcuts",
     ),
-    b(S::Navigate, C::History, &[bare(Key::Num1)], "History"),
-    b(S::Navigate, C::Changes, &[bare(Key::Num2)], "Changes"),
+    b(S::Navigate, C::History, &[bare(Key::Num1)], "Go to History"),
+    b(S::Navigate, C::Changes, &[bare(Key::Num2)], "Go to Changes"),
     b(
         S::Navigate,
         C::Requests,
         &[bare(Key::Num3)],
-        "Pull / merge requests",
+        "Go to pull / merge requests",
+    ),
+    held(
+        S::Navigate,
+        C::Down,
+        &[bare(Key::J), bare(Key::ArrowDown)],
+        "Next commit, file or request",
+    ),
+    held(
+        S::Navigate,
+        C::Up,
+        &[bare(Key::K), bare(Key::ArrowUp)],
+        "Previous commit, file or request",
+    ),
+    held(
+        S::Navigate,
+        C::PageDown,
+        &[bare(Key::PageDown), ctrl(Key::D)],
+        "Down a page",
+    ),
+    held(
+        S::Navigate,
+        C::PageUp,
+        &[bare(Key::PageUp), ctrl(Key::U)],
+        "Up a page",
     ),
     Binding {
-        command: C::Down,
-        chords: &[bare(Key::J), bare(Key::ArrowDown)],
-        keys_label: "",
-        description: "Next commit, file or request",
-        section: S::Navigate,
-        repeat: true,
+        double: true,
+        keys_label: "gg  ·  Home",
+        ..b(
+            S::Navigate,
+            C::First,
+            &[bare(Key::G), bare(Key::Home)],
+            "Go to the top",
+        )
     },
-    Binding {
-        command: C::Up,
-        chords: &[bare(Key::K), bare(Key::ArrowUp)],
-        keys_label: "",
-        description: "Previous commit, file or request",
-        section: S::Navigate,
-        repeat: true,
-    },
-    b(S::Navigate, C::Refresh, &[shifted(Key::R)], "Refresh"),
-    b(S::Navigate, C::NextTheme, &[shifted(Key::T)], "Next theme"),
-    // History.
-    b(S::History, C::First, &[bare(Key::G)], "First commit"),
     b(
-        S::History,
+        S::Navigate,
         C::Last,
-        &[shifted(Key::G)],
-        "Last loaded commit",
+        &[shifted(Key::G), bare(Key::End)],
+        "Go to the bottom",
     ),
     b(
-        S::History,
+        S::Navigate,
         C::Filter,
         &[symbol(Key::Slash)],
         "Filter history",
     ),
-    b(S::History, C::Tag, &[bare(Key::T)], "Tag selected commit"),
-    b(S::History, C::CopySha, &[bare(Key::Y)], "Copy selected SHA"),
+    b(S::Navigate, C::Refresh, &[shifted(Key::R)], "Refresh"),
+    // History.
+    b(
+        S::History,
+        C::Tag,
+        &[shifted(Key::T)],
+        "Tag the selected commit",
+    ),
+    b(
+        S::History,
+        C::CopySha,
+        &[bare(Key::Y)],
+        "Copy the selected commit's SHA",
+    ),
     b(
         S::History,
         C::OpenOnForge,
         &[bare(Key::O)],
-        "Open commit (or request) on GitHub / GitLab",
+        "Open the commit (or request) on GitHub / GitLab",
     ),
     // Changes.
     b(
         S::Changes,
         C::FocusCommit,
         &[bare(Key::C)],
-        "Write commit message",
+        "Write the commit message",
     ),
     b(
         S::Changes,
         C::ToggleStage,
         &[bare(Key::Space)],
-        "Stage / unstage selected file",
+        "Stage or unstage the selected file",
     ),
-    b(S::Changes, C::StageAll, &[bare(Key::A)], "Stage all"),
-    b(S::Changes, C::UnstageAll, &[bare(Key::U)], "Unstage all"),
+    b(
+        S::Changes,
+        C::StageAll,
+        &[bare(Key::A)],
+        "Stage all changes",
+    ),
+    b(
+        S::Changes,
+        C::UnstageAll,
+        &[bare(Key::U)],
+        "Unstage all changes",
+    ),
     b(
         S::Changes,
         C::Discard,
         &[bare(Key::D)],
-        "Discard selected file (asks first)",
+        "Discard the selected file (asks first)",
     ),
     // Conflict resolver.
     b(
         S::Resolve,
         C::NextConflict,
-        &[bare(Key::CloseBracket)],
+        &[symbol(Key::CloseBracket)],
         "Next conflict",
     ),
     b(
         S::Resolve,
         C::PrevConflict,
-        &[bare(Key::OpenBracket)],
+        &[symbol(Key::OpenBracket)],
         "Previous conflict",
     ),
     b(S::Resolve, C::TakeOurs, &[bare(Key::H)], "Take ours (left)"),
@@ -380,28 +465,66 @@ pub const BINDINGS: &[Binding] = &[
     b(
         S::Resolve,
         C::TakeBoth,
-        &[shifted(Key::B)],
+        &[bare(Key::B)],
         "Take both, ours first",
     ),
-    // Remote and branches.
-    b(S::Remote, C::Fetch, &[bare(Key::F)], "Fetch"),
-    b(S::Remote, C::Pull, &[bare(Key::P)], "Pull"),
-    b(S::Remote, C::Push, &[shifted(Key::P)], "Push"),
-    b(S::Remote, C::NewBranch, &[bare(Key::B)], "New branch"),
     b(
-        S::Remote,
+        S::Resolve,
+        C::TakeBothTheirsFirst,
+        &[shifted(Key::B)],
+        "Take both, theirs first",
+    ),
+    b(
+        S::Resolve,
+        C::TakeBase,
+        &[shifted(Key::A)],
+        "Take the common ancestor",
+    ),
+    b(
+        S::Resolve,
+        C::EditConflict,
+        &[bare(Key::E)],
+        "Edit the conflict by hand",
+    ),
+    b(
+        S::Resolve,
+        C::ClearChoice,
+        &[bare(Key::Z)],
+        "Undo the choice for this conflict",
+    ),
+    // Repository actions.
+    b(S::Repository, C::Fetch, &[bare(Key::F)], "Fetch"),
+    b(S::Repository, C::Pull, &[bare(Key::P)], "Pull"),
+    b(S::Repository, C::Push, &[shifted(Key::P)], "Push"),
+    b(
+        S::Repository,
+        C::NewBranch,
+        &[bare(Key::N)],
+        "Create a branch",
+    ),
+    b(
+        S::Repository,
         C::MergeDialog,
         &[bare(Key::M)],
         "Merge or rebase",
     ),
-    b(S::Remote, C::Stash, &[bare(Key::S)], "Stash changes"),
+    b(S::Repository, C::Stash, &[bare(Key::S)], "Stash changes"),
     b(
-        S::Remote,
+        S::Repository,
         C::PopStash,
         &[shifted(Key::S)],
-        "Pop latest stash",
+        "Pop the latest stash",
     ),
 ];
+
+/// The keys a focused button, checkbox or list keeps for itself: Space and Enter activate it,
+/// the arrows move within it.
+pub fn widget_key(key: Key) -> bool {
+    matches!(
+        key,
+        Key::Space | Key::Enter | Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight
+    )
+}
 
 fn mod_label() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -419,6 +542,10 @@ fn key_name(key: Key) -> &'static str {
         Key::Tab => "Tab",
         Key::ArrowDown => "↓",
         Key::ArrowUp => "↑",
+        Key::PageDown => "PgDn",
+        Key::PageUp => "PgUp",
+        Key::Home => "Home",
+        Key::End => "End",
         Key::Slash => "/",
         Key::OpenBracket => "[",
         Key::CloseBracket => "]",
@@ -458,11 +585,17 @@ impl Chord {
     }
 
     fn matches(&self, key: Key, m: &Modifiers) -> bool {
-        if key != self.key || m.alt {
+        if key != self.key {
             return false;
         }
         let ctrl = m.command || m.ctrl;
-        ctrl == self.ctrl && (self.any_shift || m.shift == self.shift)
+        if self.symbol {
+            // AltGr arrives as Alt, or as Ctrl+Alt on Windows; either way it only types the
+            // character.
+            let altgr = m.alt && (!ctrl || cfg!(windows));
+            return if altgr { !self.ctrl } else { ctrl == self.ctrl };
+        }
+        !m.alt && ctrl == self.ctrl && m.shift == self.shift
     }
 }
 
@@ -470,7 +603,10 @@ impl Binding {
     /// Keys as the cheatsheet and menus show them, e.g. `Ctrl+K  ·  Ctrl+Shift+P`.
     pub fn keys(&self) -> String {
         if !self.keys_label.is_empty() {
-            return self.keys_label.to_owned();
+            // Written with "Ctrl"; macOS says Cmd.
+            return self
+                .keys_label
+                .replace("Ctrl+", &format!("{}+", mod_label()));
         }
         self.chords
             .iter()
@@ -480,21 +616,32 @@ impl Binding {
     }
 }
 
-/// The first chord bound to `command`, as a hint for menus, tooltips and the palette
-/// ("Ctrl+Shift+F"). Prefers the always-available chord over a bare key.
+/// The keys for `command`, as a hint for menus, tooltips and the palette: the chord that works
+/// everywhere, then the single key that works outside text fields ("Ctrl+Shift+F · f").
 pub fn hint(command: Command) -> String {
-    BINDINGS
-        .iter()
-        .filter(|b| b.command == command)
-        .min_by_key(|b| b.section.is_bare())
-        .and_then(|b| {
-            if b.keys_label.is_empty() {
-                b.chords.first().map(Chord::label)
-            } else {
-                Some(b.keys_label.to_owned())
-            }
-        })
-        .unwrap_or_default()
+    let first = |bare: bool| {
+        BINDINGS
+            .iter()
+            .find(|b| b.command == command && b.section.is_bare() == bare)
+            .and_then(|b| {
+                if b.keys_label.is_empty() {
+                    b.chords.first().map(Chord::label)
+                } else {
+                    Some(
+                        b.keys_label
+                            .split("  ·  ")
+                            .next()
+                            .unwrap_or_default()
+                            .to_owned(),
+                    )
+                }
+            })
+    };
+    [first(false), first(true)]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// A command that fired, with the index of the chord that matched (for [`Command::JumpTab`]).
@@ -504,10 +651,39 @@ pub struct Fired {
     pub chord: usize,
 }
 
-/// Consumes this frame's key presses that match a binding that `active` allows. The caller turns
-/// bare-key sections off while a text field has focus, and most bindings off while a dialog is
-/// open; keys of inactive bindings reach the widgets untouched.
-pub fn dispatch(ctx: &egui::Context, active: impl Fn(&Binding) -> bool) -> Vec<Fired> {
+/// Every key for `command` across sections, the always-available chords first, for the
+/// cheatsheet's one row per command.
+pub fn all_keys(command: Command) -> Vec<String> {
+    let mut bindings: Vec<&Binding> = BINDINGS.iter().filter(|b| b.command == command).collect();
+    bindings.sort_by_key(|b| b.section.is_bare());
+    bindings
+        .into_iter()
+        .flat_map(|b| {
+            b.keys()
+                .split("  ·  ")
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Whether the cheatsheet lists `binding`'s command under its section: a command with a bare
+/// key is listed once, where that key works; its global chord is shown in the same row.
+pub fn listed_here(binding: &Binding) -> bool {
+    binding.section.is_bare()
+        || !BINDINGS
+            .iter()
+            .any(|b| b.command == binding.command && b.section.is_bare())
+}
+
+/// How long the second key of a double press (`gg`) may take.
+const DOUBLE_PRESS_SECONDS: f64 = 1.0;
+
+/// Consumes this frame's key presses that match a binding that `active` allows for the pressed
+/// chord. The caller turns bare-key sections off while a text field has focus, keeps the keys a
+/// focused widget needs, and turns most bindings off while a dialog is open; keys of inactive
+/// bindings reach the widgets untouched.
+pub fn dispatch(ctx: &egui::Context, active: impl Fn(&Binding, &Chord) -> bool) -> Vec<Fired> {
     let mut fired = Vec::new();
     // Outside macOS egui's modifiers do not carry Super, so a window-manager shortcut such as
     // Super+H would also arrive as a bare `h`. Super belongs to the window manager: while it is
@@ -516,7 +692,10 @@ pub fn dispatch(ctx: &egui::Context, active: impl Fn(&Binding) -> bool) -> Vec<F
     if !cfg!(target_os = "macos") && super_held(ctx) {
         return fired;
     }
+    let pending_id = egui::Id::new("keymap-double-press");
+    let mut pending: Option<(Key, f64)> = ctx.data(|d| d.get_temp(pending_id));
     ctx.input_mut(|i| {
+        let now = i.time;
         i.events.retain(|e| {
             let egui::Event::Key {
                 key,
@@ -528,27 +707,44 @@ pub fn dispatch(ctx: &egui::Context, active: impl Fn(&Binding) -> bool) -> Vec<F
             else {
                 return true;
             };
+            let waiting = pending.take();
             for binding in BINDINGS {
-                if !active(binding) {
-                    continue;
-                }
                 if *repeat && !binding.repeat {
                     continue;
                 }
-                if let Some(chord) = binding
+                let Some(index) = binding
                     .chords
                     .iter()
                     .position(|c| c.matches(*key, modifiers))
-                {
-                    fired.push(Fired {
-                        command: binding.command,
-                        chord,
-                    });
-                    return false;
+                else {
+                    continue;
+                };
+                if !active(binding, &binding.chords[index]) {
+                    continue;
                 }
+                if binding.double && index == 0 {
+                    let second =
+                        waiting.is_some_and(|(k, t)| k == *key && now - t <= DOUBLE_PRESS_SECONDS);
+                    if !second {
+                        // The first press only arms the binding.
+                        pending = Some((*key, now));
+                        return false;
+                    }
+                }
+                fired.push(Fired {
+                    command: binding.command,
+                    chord: index,
+                });
+                return false;
             }
             true
         });
+    });
+    ctx.data_mut(|d| match pending {
+        Some(p) => {
+            d.insert_temp(pending_id, p);
+        }
+        None => d.remove::<(Key, f64)>(pending_id),
     });
     // A bare key also produces a text event; drop those so a widget focused by the command
     // (the filter box after `/`) does not receive the character.
@@ -556,7 +752,8 @@ pub fn dispatch(ctx: &egui::Context, active: impl Fn(&Binding) -> bool) -> Vec<F
         BINDINGS
             .iter()
             .any(|b| b.command == f.command && b.section.is_bare())
-    }) {
+    }) || pending.is_some()
+    {
         ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Text(_))));
     }
     fired
@@ -605,7 +802,9 @@ mod tests {
         for b in BINDINGS {
             for c in b.chords {
                 if b.section.is_bare() {
-                    assert!(!c.ctrl, "{} in a bare section", c.label());
+                    // Vim's half-page motions are the one Ctrl exception, and only in lists.
+                    let half_page = matches!(b.command, Command::PageDown | Command::PageUp);
+                    assert!(!c.ctrl || half_page, "{} in a bare section", c.label());
                 } else {
                     assert!(
                         c.ctrl || matches!(c.key, Key::F5 | Key::Escape),
@@ -626,12 +825,17 @@ mod tests {
         assert!(symbol(Key::Questionmark).matches(Key::Questionmark, &Modifiers::SHIFT));
         assert!(!bare(Key::G).matches(Key::G, &Modifiers::ALT));
         assert!(ctrl(Key::K).matches(Key::K, &Modifiers::COMMAND));
+        // `[` typed with AltGr (German, Nordic layouts) is still `[`.
+        assert!(symbol(Key::OpenBracket).matches(Key::OpenBracket, &Modifiers::ALT));
+        assert!(!symbol(Key::OpenBracket).matches(Key::OpenBracket, &Modifiers::COMMAND));
     }
 
     #[test]
     fn every_command_with_a_hint() {
         assert!(!hint(Command::Palette).is_empty());
-        assert_eq!(hint(Command::Fetch), format!("{}+Shift+F", mod_label()));
+        assert_eq!(hint(Command::Fetch), format!("{}+Shift+F · f", mod_label()));
+        assert_eq!(hint(Command::TakeOurs), "h");
+        assert_eq!(hint(Command::First), "gg");
     }
 
     fn press(key: Key) -> egui::Event {
@@ -644,6 +848,16 @@ mod tests {
         }
     }
 
+    fn release(key: Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
     fn fire(events: Vec<egui::Event>) -> Vec<Fired> {
         let ctx = egui::Context::default();
         let mut fired = Vec::new();
@@ -651,7 +865,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        let mut output = ctx.run_ui(raw, |ui| fired = dispatch(ui.ctx(), |_| true));
+        let mut output = ctx.run_ui(raw, |ui| fired = dispatch(ui.ctx(), |_, _| true));
         output.textures_delta.clear();
         fired
     }
@@ -665,5 +879,47 @@ mod tests {
         } else {
             assert!(held.is_empty());
         }
+    }
+
+    #[test]
+    fn gg_needs_two_presses() {
+        assert!(fire(vec![press(Key::G)]).is_empty());
+        let both = fire(vec![press(Key::G), release(Key::G), press(Key::G)]);
+        assert_eq!(both.first().map(|f| f.command), Some(Command::First));
+        // Held down, the key repeats: that is not a double press.
+        assert!(fire(vec![press(Key::G), press(Key::G)]).is_empty());
+        assert!(
+            fire(vec![
+                press(Key::G),
+                release(Key::G),
+                press(Key::J),
+                press(Key::G)
+            ])
+            .iter()
+            .all(|f| f.command != Command::First)
+        );
+        let home = fire(vec![press(Key::Home)]);
+        assert_eq!(home.first().map(|f| f.command), Some(Command::First));
+    }
+
+    #[test]
+    fn the_cheatsheet_lists_each_command_once() {
+        let listed: Vec<Command> = BINDINGS
+            .iter()
+            .filter(|b| listed_here(b))
+            .map(|b| b.command)
+            .collect();
+        for b in BINDINGS {
+            assert_eq!(
+                listed.iter().filter(|c| **c == b.command).count(),
+                1,
+                "{:?}",
+                b.command
+            );
+        }
+        assert_eq!(
+            all_keys(Command::Fetch),
+            vec![format!("{}+Shift+F", mod_label()), "f".to_owned()]
+        );
     }
 }

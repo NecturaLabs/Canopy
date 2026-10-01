@@ -125,6 +125,9 @@ enum CloneMsg {
     Done(Result<PathBuf, String>),
 }
 
+/// Rows a Page Down / Ctrl+D moves in a list.
+const PAGE_ROWS: isize = 12;
+
 /// The Canopy application state.
 pub struct CanopyApp {
     settings: Settings,
@@ -385,14 +388,23 @@ impl CanopyApp {
         let modal = self.dialog.is_some() || self.settings_screen.is_some() || self.palette.open;
         let overlay = modal || self.cheatsheet.open;
         let typing = ctx.egui_wants_keyboard_input();
-        let fired = keymap::dispatch(ctx, |b| {
+        // A button or checkbox reached with Tab keeps Space, Enter and the arrows for itself.
+        let widget_focused = !typing && ctx.memory(|m| m.focused().is_some());
+        let fired = keymap::dispatch(ctx, |b, chord| {
             if b.command == Command::Dismiss {
                 return overlay;
             }
             if modal {
                 return false;
             }
-            !b.section.is_bare() || !typing
+            if b.command == Command::CloseTab {
+                // Ctrl+W while typing a commit message must not throw the draft away.
+                return !typing;
+            }
+            if !b.section.is_bare() {
+                return true;
+            }
+            !typing && !(widget_focused && keymap::widget_key(chord.key))
         });
         for f in fired {
             self.command(ctx, f.command, f.chord, actions);
@@ -437,7 +449,7 @@ impl CanopyApp {
                 };
                 ctx.set_zoom_factor(self.settings.zoom);
             }
-            C::NextTheme => actions.push(Action::NextTheme),
+            C::Quit => actions.push(Action::Quit),
             _ if !has_tab => {}
             C::CloseTab => actions.push(Action::CloseTab(self.active)),
             C::NextTab => actions.push(Action::SwitchTab((self.active + 1) % self.tabs.len())),
@@ -479,18 +491,20 @@ impl CanopyApp {
             C::History => actions.push(Action::SetView(View::History)),
             C::Changes => actions.push(Action::SetView(View::Changes)),
             C::Requests => actions.push(Action::SetView(View::Requests)),
-            C::Down | C::Up | C::First | C::Last => {
+            C::Down | C::Up | C::PageDown | C::PageUp | C::First | C::Last => {
                 let delta = match command {
                     C::Down => 1,
                     C::Up => -1,
+                    C::PageDown => PAGE_ROWS,
+                    C::PageUp => -PAGE_ROWS,
                     C::First => isize::MIN,
                     _ => isize::MAX,
                 };
                 if let Some(t) = self.tab() {
                     match t.view {
                         View::History => t.move_commit(delta),
-                        View::Changes => t.move_file(delta.clamp(-1, 1)),
-                        View::Requests => t.move_request(delta.clamp(-1, 1)),
+                        View::Changes => t.move_file(delta),
+                        View::Requests => t.move_request(delta),
                     }
                 }
             }
@@ -557,7 +571,15 @@ impl CanopyApp {
                     actions.push(Action::Op(Op::Stage(vec![path])));
                 }
             }
-            C::NextConflict | C::PrevConflict | C::TakeOurs | C::TakeTheirs | C::TakeBoth => {
+            C::NextConflict
+            | C::PrevConflict
+            | C::TakeOurs
+            | C::TakeTheirs
+            | C::TakeBoth
+            | C::TakeBothTheirsFirst
+            | C::TakeBase
+            | C::EditConflict
+            | C::ClearChoice => {
                 if let Some(r) = self
                     .tabs
                     .get_mut(self.active)
@@ -569,7 +591,11 @@ impl CanopyApp {
                         C::PrevConflict => r.move_focus(-1),
                         C::TakeOurs => r.choose(canopy_core::Choice::Ours),
                         C::TakeTheirs => r.choose(canopy_core::Choice::Theirs),
-                        _ => r.choose(canopy_core::Choice::OursThenTheirs),
+                        C::TakeBoth => r.choose(canopy_core::Choice::OursThenTheirs),
+                        C::TakeBothTheirsFirst => r.choose(canopy_core::Choice::TheirsThenOurs),
+                        C::TakeBase => r.choose(canopy_core::Choice::Base),
+                        C::EditConflict => r.edit_focused(),
+                        _ => r.clear_focused(),
                     }
                 }
             }
@@ -620,12 +646,7 @@ impl CanopyApp {
                 }),
             ),
             (
-                e(
-                    icon::PALETTE,
-                    "Next theme",
-                    "Appearance",
-                    Some(C::NextTheme),
-                ),
+                e(icon::PALETTE, "Next theme", "Appearance", None),
                 Action::NextTheme,
             ),
             (
@@ -656,6 +677,10 @@ impl CanopyApp {
             (
                 e(icon::FILE_TEXT, "Open log folder", "Help", None),
                 Action::OpenLogs,
+            ),
+            (
+                e(icon::SIGN_OUT, "Quit Canopy", "Canopy", Some(C::Quit)),
+                Action::Quit,
             ),
             (
                 e(

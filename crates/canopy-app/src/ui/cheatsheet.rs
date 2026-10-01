@@ -5,7 +5,7 @@ use egui::{Align2, CornerRadius, FontId, Id, Order, RichText, Sense, Stroke, vec
 use egui_phosphor::regular as icon;
 
 use super::theme::{self, Palette, palette};
-use crate::keymap::{BINDINGS, Section};
+use crate::keymap::{self, BINDINGS, Section};
 
 /// Cheatsheet state.
 #[derive(Debug, Default)]
@@ -115,11 +115,12 @@ fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
     let p = palette(ui.ctx());
     let items: Vec<_> = BINDINGS
         .iter()
-        .filter(|b| b.section == section)
-        .filter(|b| {
+        .filter(|b| b.section == section && keymap::listed_here(b))
+        .map(|b| (b, keymap::all_keys(b.command)))
+        .filter(|(b, keys)| {
             query.is_empty()
                 || b.description.to_lowercase().contains(query)
-                || b.keys().to_lowercase().contains(query)
+                || keys.iter().any(|k| k.to_lowercase().contains(query))
         })
         .collect();
     if items.is_empty() {
@@ -127,7 +128,7 @@ fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
     }
     super::widgets::section_label(ui, section.title());
     ui.add_space(2.0);
-    for b in items {
+    for (b, keys) in items {
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
         ui.painter().text(
             rect.left_center() + vec2(4.0, 0.0),
@@ -138,13 +139,7 @@ fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
         );
         // Key caps, right-aligned.
         let mut x = rect.right() - 4.0;
-        for chord in b
-            .keys()
-            .split("  ·  ")
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-        {
+        for chord in keys.iter().rev() {
             let g =
                 ui.painter()
                     .layout_no_wrap(chord.to_owned(), FontId::monospace(11.5), p.text_dim);

@@ -115,6 +115,34 @@ impl Resolver {
         self.reveal = true;
     }
 
+    /// Clears the focused conflict's choice (and any hand edit of it).
+    pub fn clear_focused(&mut self) {
+        if let Some(slot) = self.choices.get_mut(self.focus) {
+            *slot = None;
+            if self.editing.as_ref().is_some_and(|(i, _)| *i == self.focus) {
+                self.editing = None;
+            }
+            self.reveal = true;
+        }
+    }
+
+    /// Starts editing the focused conflict by hand, from its current result or our side.
+    pub fn edit_focused(&mut self) {
+        let Some(Ok(file)) = &self.file else { return };
+        let Some(region) = file.regions().nth(self.focus) else {
+            return;
+        };
+        // The same starting text as the Edit button: the current result, or both sides.
+        let choice = self
+            .choices
+            .get(self.focus)
+            .cloned()
+            .flatten()
+            .unwrap_or(canopy_core::Choice::OursThenTheirs);
+        self.editing = Some((self.focus, region.resolve(&choice).join("\n")));
+        self.reveal = true;
+    }
+
     /// Sets the focused conflict's choice and moves on to the next unresolved one.
     pub fn choose(&mut self, choice: canopy_core::Choice) {
         if let Some(slot) = self.choices.get_mut(self.focus) {
