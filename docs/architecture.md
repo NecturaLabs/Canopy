@@ -1,8 +1,11 @@
 # Architecture
 
-Canopy is a Cargo workspace with two crates. The split is strict: everything that knows about Git
+Canopy is a Cargo workspace with three crates. The split is strict: everything that knows about Git
 lives in `canopy-core`, everything that draws lives in `canopy-app`, and the only bridge is a
-background worker per repository.
+background worker per repository. `canopy-hosting` is the one HTTP client: the GitHub and GitLab
+REST APIs and Canopy's update manifest. `canopy-core` never makes an HTTP request, and
+`canopy-app` reaches the network only through `git` and `canopy-hosting` (plus the opt-in crash
+report transport).
 
 ```text
 ┌──────────────────────────── canopy-app ─────────────────────────────┐
@@ -27,21 +30,52 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | Module | Responsibility |
 |---|---|
 | `lib.rs` | Public re-exports. |
-| `error.rs` | `Error` and `Result` (thiserror). Wraps libgit2 errors, I/O errors and failed `git` invocations with their stderr. |
-| `model.rs` | Plain data passed to the UI: `RepoSnapshot`, `BranchInfo`, `RemoteInfo`, `TagInfo`, `StashInfo`, `FileEntry`, `CommitSummary`, `CommitDetails`, `RefLabel`. |
+| `error.rs` | `Error` and `Result` (thiserror). Wraps libgit2 errors, I/O errors and failed `git` invocations with their stderr; `NotDownloaded` for objects a partial clone has not fetched, `UnsafePath` for a path `paths.rs` refused. |
+| `model.rs` | Plain data passed to the UI: `RepoSnapshot`, `BranchInfo`, `RemoteInfo`, `TagInfo`, `StashInfo`, `FileEntry`, `WorkingStatus`, `CommitSummary`, `CommitDetails`, `RefLabel`. |
 | `repo.rs` | `Repo`: open, discover (walking upward), init. `snapshot()` gathers HEAD, repository state, branches with ahead/behind, remotes, tags, stashes, status and the first N commits in topological order. |
 | `graph.rs` | Lane layout for the commit graph (below). Unit tested. |
-| `diff.rs` | `FileDiff`, `Hunk`, `DiffLine`; builds single-hunk patches for hunk staging. |
-| `status.rs` | Working-tree status split into staged, unstaged and conflicted. In a partial clone it never downloads; a missing `HEAD` tree is `Error::NotDownloaded`, and `snapshot()` then carries `status_unavailable` instead of failing. |
+| `diff.rs` | `FileDiff`, `Hunk`, `DiffLine`, `Whitespace`; context and whitespace options; builds single-hunk patches for hunk staging. |
+| `lines.rs` | Line-level staging: stage, unstage or discard chosen lines of one hunk, as an edited patch piped to `git apply`. |
+| `status.rs` | Working-tree status split into staged, unstaged and conflicted, with file mode and type changes and a limit above which untracked folders collapse into one entry (`untracked_children` expands one level). In a partial clone it never downloads; a missing `HEAD` tree is `Error::NotDownloaded`, and `snapshot()` then carries `status_unavailable` instead of failing. |
 | `partial.rs` | Partial clones: recognising them (`promisor` remotes, `*.promisor` packs) and downloading the objects a read needs through `git fetch --filter=blob:none --stdin` via `cli.rs`, the command git itself uses for a lazy fetch. Reads (`commit_details`, `file_diff`, `status`) run libgit2 first and take a `MissingObjects` argument: `Fail` stays offline and returns `Error::NotDownloaded`, `Download` fetches exactly the missing trees and blobs and retries. Remote names that start with `-` are refused. |
-| `ops.rs` | Every mutation, run through the `git` executable via `cli.rs`: stage, unstage, discard; hunk stage/unstage/discard (`git apply`); commit and amend; branch create, checkout, rename, delete; merge, rebase, continue/abort; tag create, delete, push; stash save, apply, pop, drop; reset soft, mixed, hard; detached checkout; cherry-pick; revert; remotes; clone, fetch, pull, push. |
-| `cli.rs` | Runs the `git` executable non-interactively (`GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`, no console window on Windows), returns git's stderr on failure and streams `--progress` output line by line for long operations. |
+| `ops.rs` | Every mutation, run through the `git` executable via `cli.rs`: stage, unstage, discard (paths passed literally); hunk and line stage/unstage/discard (`git apply`); commit and amend; branch create, checkout, rename, delete (`-d`, or `-D` as a separate call), publish; merge in four modes, rebase, continue/abort; tag create, delete, push; stash save, apply, pop, drop; reset soft, mixed, hard; detached checkout; cherry-pick; revert; remotes; clone, fetch, pull, push; fetching a pull request's head. |
+| `conflict.rs` | Merge conflicts: parsing conflict markers, rendering a partial resolution, and resolving a conflicted path (the one plain file write, saving a hand-edited resolution, goes through `paths::safe_join`, and staging it goes through git). |
+| `paths.rs` | `safe_join`: the only way `canopy-core` touches a file inside a working tree. Refuses empty, absolute, `..` and `.git` paths and any symbolic link component. |
+| `ignore.rs` | Ignore rules: add a rule to `.gitignore`, `info/exclude` or the global file, preview what it would ignore, ask git why a path is ignored (`check-ignore -v`), stop tracking a path. |
+| `flow.rs` | git-flow without the `git flow` binary: the AVH config keys, start and finish for feature, bugfix, release and hotfix, with a `merge-tree` pre-flight that refuses on conflicts. |
+| `merged.rs` | Which local branches are merged into a base (reachable, upstream gone, squash-merged) and which check proved it. |
+| `lfs.rs` | Git LFS awareness without `git-lfs`: pointer parsing, which paths use `filter=lfs`, and whether an object has been downloaded. |
+| `submodule.rs` | Submodule status, update, sync, add and remove, and the commit pair a submodule's diff shows. |
+| `forge.rs` | Recognises GitHub and GitLab remotes and builds their web, request and clone URLs. Pure string handling; credentials in a remote URL are dropped, never emitted. |
+| `update.rs` | Semantic-version parsing and ordering for the update check. |
+| `cli.rs` | Runs the `git` executable non-interactively (`GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`, no console window on Windows), returns git's stderr on failure and streams `--progress` output line by line for long operations. Registers Canopy's askpass hook and redacts URLs and arguments for the log (`redact_url`, `loggable`). |
+
+The app still calls `delete_branch(name, force)` and `stage_all()`, thin wrappers over the newer
+calls. It does not yet use `ignore.rs`, `flow.rs`, `merged.rs`, `lfs.rs`, `submodule.rs`,
+`paths::safe_join`, `publish_branch`, `untracked_children`, `stage_all_except_repositories` or the
+file-mode fields outside the core's own code and tests; the backlog entries for those features
+are the UI work.
+
+## canopy-hosting
+
+Blocking (no async runtime) and synchronous like `canopy-core`; callers run it on a background
+thread.
+
+| Module | Responsibility |
+|---|---|
+| `client.rs` | `Client`: provider-neutral entry point for listing, reading, creating, merging, closing, commenting on and approving pull and merge requests. |
+| `github.rs`, `gitlab.rs` | The two providers' REST calls (GitHub API v3, GitLab API v4 including self-hosted hosts). |
+| `http.rs` | One `ureq` agent per client, the common headers, timeouts, and HTTP failures mapped to `Error` with the server's own message. The token travels only in an `Authorization` header. |
+| `model.rs` | Provider-neutral request, review, check and comment types. |
+| `token.rs` | Finding a token: provider environment variables (offered only to their own host) or git's credential helpers. |
+| `updates.rs` | Canopy's own update manifest, fetched anonymously from the public `NecturaLabs/app-updates` repository. |
+| `error.rs` | Errors, carrying the server's message. |
 
 ## canopy-app
 
 | Module | Responsibility |
 |---|---|
-| `main.rs` | Argument parsing, logging (`tracing-subscriber`, filter from `CANOPY_LOG` or `RUST_LOG`), eframe launch. |
+| `main.rs` | Argument parsing, logging, eframe launch; also the entry point of the askpass client (the same executable, started by git or ssh). |
 | `action.rs` | `Action`: what the user asked for during a frame. Views emit actions and never import `app`. |
 | `app/mod.rs` | `CanopyApp`: state, start-up, the frame (`eframe::App::ui`), opening repositories, theme. |
 | `app/input.rs` | Keyboard: bare keys, chords and the commands they run. |
@@ -51,25 +85,38 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. |
 | `app/clone.rs`, `app/request_flow.rs` | Cloning on a background thread; creating and checking out pull and merge requests. |
 | `app/screenshot.rs` | Headless screenshots for `--screenshot`. |
+| `tab.rs` | `RepoTab`: one open repository's snapshot, selections, in-flight work and the state a failed or superseded job leaves behind. |
 | `worker.rs` | One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; debounced file watcher. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it. |
+| `hosting.rs` | A background thread per repository tab for pull and merge requests through `canopy-hosting` (`HostJob`), and the token store (`tokens.json`, per host and port). |
+| `askpass.rs` | Credential prompts for git and ssh: Canopy's own executable is `GIT_ASKPASS`/`SSH_ASKPASS`, and the running app answers over loopback (ADR 0005). |
+| `updater.rs` | The update check against the manifest; never downloads or installs anything itself. |
+| `crash_reports.rs` | Opt-in, scrubbed crash reports to Sentry, and what a report may carry (`DATA_VERSION`). |
+| `logging.rs` | Structured per-run JSON-lines logs, timed spans, local crash files and the diagnostics Settings copies. |
 | `highlight.rs` | Diff syntax highlighting (`syntect`) on two shared highlighter threads, cached per file revision; stale requests are abandoned. |
-| `settings.rs` | Settings persisted through eframe storage: theme, recent repositories, UI scale. |
-| `ui/theme.rs` | Design tokens: palette, lane colours, spacing, radii. The only place colours are defined. |
-| `ui/motion.rs` | Motion tokens (100/150/200 ms), the reduce-motion preference and whether motion is currently reduced. |
+| `keymap.rs` | Every keyboard shortcut in one table (`BINDINGS`) that dispatches keys and renders the cheatsheet and Settings → Keyboard; see `docs/keybindings.md`. |
+| `settings.rs` | Settings persisted through eframe storage: appearance, Git, integrations, updates, privacy answers, recent and open repositories. |
 | `platform.rs` | Handing things to the operating system (web pages, folders, files in an editor, a terminal) and reading its settings, such as reduced motion, off the UI thread. |
-| `ui/fonts.rs` | Registers the bundled Inter and JetBrains Mono fonts. |
+| `ui/theme.rs` | Design tokens: the seven palettes, lane colours, syntax colours, spacing, radii. The only place colours are defined. |
+| `ui/motion.rs` | Motion tokens (100/150/200 ms), the reduce-motion preference and whether motion is currently reduced. |
+| `ui/fonts.rs` | Registers the bundled Inter, JetBrains Mono and Phosphor fonts. |
+| `ui/art.rs` | The SVG art in `assets/art/`, rendered through egui's image loaders. |
 | `ui/widgets.rs` | Ref pills, avatars, icon buttons, badges. |
 | `ui/toast.rs` | Toast queue and animation. |
 | `ui/palette.rs` | Command palette with fuzzy matching; entries built on opening, ranked on query change. |
+| `ui/cheatsheet.rs` | The keyboard cheatsheet, drawn from `keymap::BINDINGS`. |
+| `ui/legal.rs` | The Terms and Privacy Policy as shipped (`docs/legal/`) and the versions a user accepts. |
+| `ui/notes.rs` | Release notes ("What's new") and the small Markdown renderer for notes and request text. |
 | `views/welcome.rs` | Welcome screen and recent repositories. |
-| `views/toolbar.rs` | Top toolbar: fetch, pull, push, branch, stash, view switch. |
+| `views/toolbar.rs` | Tab strip and top toolbar: fetch, pull, push, branch, stash, view switch. |
 | `views/sidebar.rs` | Branches, remotes, tags and stashes. |
 | `views/history.rs` | Virtualised commit-graph table. |
 | `views/commit_detail.rs` | Selected commit: metadata, parents, changed files, diff. |
 | `views/changes.rs` | Staging area and commit composer. |
-| `views/diff.rs` | Diff viewer with line numbers and hunk actions; row layout cached per diff. |
+| `views/diff.rs` | Unified and side-by-side diff viewer with line numbers, hunk and line actions; row layout cached per diff. |
 | `views/resolve.rs` | Conflict resolver; off-screen cards skipped by measured height. |
-| `views/dialogs/mod.rs` | `Dialog` and `show`: the modal dialogs (clone, new branch, confirmations, ...). |
+| `views/requests.rs` | Pull and merge requests: list, details, checks, reviews and actions. |
+| `views/settings_screen.rs` | The settings screen: appearance, Git, integrations, accounts, updates, privacy, keyboard. |
+| `views/dialogs/mod.rs` | `Dialog` and `show`: the modal dialogs (clone, new branch, confirmations, consent, ...). |
 | `views/dialogs/stack.rs` | `DialogStack`: credentials in front, the consent never replaced, a closed prompt always answered. |
 | `views/dialogs/{url,start,credential,common}.rs` | The remote URL builder, where a new branch starts, credential prompts, shared fields and buttons. |
 | `views/statusbar.rs` | Branch, ahead/behind, repository state, running job. |
@@ -180,9 +227,14 @@ which covers file systems where watching is unreliable (network mounts, some WSL
 
 ## Persistence
 
-Settings (theme, recent repositories, UI scale) are serialised with serde through eframe's
-storage, which writes to the platform's application data directory. Repository state is never
-cached on disk; it is always read from the repository.
+Settings (appearance, Git and integration preferences, the terms and crash-report answers, recent
+and open repositories) are serialised with serde through eframe's storage under the key
+`canopy-settings-v1`, which writes to the platform's application data directory
+(`~/.local/share/canopy/` on Linux). Saved hosting tokens are in `tokens.json` beside it (mode 0600
+on Unix, not the operating system's keychain), and `logs/` and `crashes/` hold the per-run logs
+and local crash reports. Repository state is never cached on disk; it is always read from the
+repository. The backlog's "Persistent, secured storage" entry moves all of this into
+Canopy-specific folders.
 
 ## Error handling
 
@@ -202,7 +254,8 @@ cached on disk; it is always read from the repository.
 - **canopy-app**: logic that can be separated from drawing (fuzzy matching, argument parsing,
   settings) is unit tested. Rendering is verified by screenshots of deterministic fixtures
   (`tools/mkfixture.sh` and `tools/screenshot.sh`), which agents and reviewers inspect.
-- CI runs the suite on Linux, macOS and Windows.
+- CI runs the suite on Linux; macOS and Windows are switched on by repository variables (see
+  `.github/workflows/ci.yml`). `tools/check.sh` runs the local equivalent.
 
 ## Performance
 

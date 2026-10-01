@@ -1,7 +1,10 @@
 # Feature matrix
 
 Canopy's status per feature, next to three established clients. **Done** means shipped in v0.1;
-**Planned** means it has an entry in [backlog.md](backlog.md). Competitor columns reflect their
+**Unreleased** means merged into `main` and in the code, but in no release yet (the backlog's
+"Implemented, awaiting in-app verification" list says which of these the owner has not yet
+confirmed in the running app); **Planned** means it has an entry in [backlog.md](backlog.md),
+and "backend merged" means `canopy-core` has it but no screen uses it yet. Competitor columns reflect their
 current desktop releases to the best of our knowledge: Yes, No, Partial, or ? where we have not
 verified it. Correct any cell you can verify, citing the source in the pull request.
 
@@ -15,7 +18,7 @@ Update this table in the same change that adds or alters a feature.
 | macOS | Done | Yes | Yes | Yes |
 | Windows | Done | Yes | Yes | Yes |
 | Native (non-Electron) UI | Done | Yes | No | Yes |
-| One-line install into its own folder, with uninstall (Linux, macOS, Windows) | Done | No | No | No |
+| One-line install into its own folder, with uninstall (Linux, macOS, Windows) | Unreleased | No | No | No |
 | Builds for Linux arm64 and Intel macOS | Experimental | No | Yes | Yes |
 | Network operations through the system `git` (credential helpers, SSH config, hooks) | Done | Yes | ? | Partial |
 
@@ -28,11 +31,12 @@ Update this table in the same change that adds or alters a feature.
 | Several repositories in tabs | Done | Yes | Yes | Yes |
 | Welcome screen with recent repositories | Done | Yes | Yes | Yes |
 | Auto refresh (file watcher, window focus) | Done | Yes | Yes | Yes |
-| Submodules | Planned | Yes | Yes | Yes |
+| Submodules | Planned (backend merged) | Yes | Yes | Yes |
 | Worktrees | Planned | ? | Yes | ? |
-| Git LFS indicator and commands | Planned | Yes | Yes | Yes |
-| Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Done | Yes | ? | ? |
+| Git LFS indicator and commands | Planned (status backend merged) | Yes | Yes | Yes |
+| Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Unreleased | Yes | ? | ? |
 | Very large repositories | Planned | ? | ? | ? |
+| Local-only repositories (no remote), with Publish to add one and push | Unreleased | ? | ? | ? |
 
 Partial clones differ from a full clone in what the views can show without the network. Commit
 details list the changed files at once and fetch the line counts afterwards (a commit with more
@@ -68,12 +72,12 @@ list anything, and says why when it cannot. Repositories made by Git before 2.24
 | Unstaged, staged and conflicted lists | Done | Yes | Yes | Yes |
 | Stage, unstage, discard per file and all | Done | Yes | Yes | Yes |
 | Hunk staging, unstaging and discard | Done | Yes | Yes | Yes |
-| Line-level staging | Planned | Yes | Yes | Yes |
+| Line-level staging | Unreleased | Yes | Yes | Yes |
 | Diff with old and new line numbers | Done | Yes | Yes | Yes |
-| Side-by-side diff | Planned | Yes | Yes | No |
-| Syntax highlighting in diffs | Planned | Yes | Yes | ? |
+| Side-by-side diff | Unreleased | Yes | Yes | No |
+| Syntax highlighting in diffs | Unreleased | Yes | Yes | ? |
 | Image diff | Planned | Yes | Yes | ? |
-| Ignore whitespace, context lines setting | Planned | Yes | Yes | Yes |
+| Ignore whitespace, context lines setting | Unreleased | Yes | Yes | Yes |
 | Commit composer with summary counter | Done | Yes | Yes | Partial |
 | Amend | Done | Yes | Yes | Yes |
 | Commit signing (GPG/SSH) | Planned | Yes | Yes | Yes |
@@ -84,15 +88,17 @@ list anything, and says why when it cannot. Repositories made by Git before 2.24
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
 |---|---|---|---|---|
 | Create (from any commit), checkout, rename, delete | Done | Yes | Yes | Yes |
+| Delete with `git branch -d`, forcing only after Git refuses and you confirm | Unreleased | ? | ? | ? |
 | Checkout remote branch as tracking branch | Done | Yes | Yes | Yes |
 | Ahead/behind badges | Done | Yes | Yes | Yes |
 | Merge into current | Done | Yes | Yes | Yes |
 | Rebase current onto | Done | Yes | Yes | Yes |
 | Merge, rebase, cherry-pick in progress: continue and abort | Done | Yes | Yes | Yes |
 | Interactive rebase editor | Planned | Yes | Yes | Yes |
-| Built-in 3-way conflict resolver | Planned | Yes | Yes | No |
+| Merge modes: fast-forward when possible, no fast-forward, fast-forward only, squash | Unreleased | ? | ? | ? |
+| Built-in 3-way conflict resolver | Unreleased | Yes | Yes | No |
 | Drag a branch onto another to merge or rebase | Planned | Yes | Yes | ? |
-| git-flow | Planned | Yes | Yes | Yes |
+| git-flow | Planned (backend merged) | Yes | Yes | Yes |
 | Bisect | Planned | ? | ? | ? |
 
 ## Remotes
@@ -103,8 +109,10 @@ list anything, and says why when it cannot. Repositories made by Git before 2.24
 | Pull (fast-forward or rebase per git config) | Done | Yes | Yes | Yes |
 | Push, setting upstream when missing | Done | Yes | Yes | Yes |
 | Force push with lease | Done | Yes | ? | ? |
-| In-app credential and SSH passphrase prompts | Planned | Yes | Yes | Yes |
-| Pull request integration (GitHub) | Planned | ? | Yes | ? |
+| In-app credential and SSH passphrase prompts | Unreleased | Yes | Yes | Yes |
+| Pull request integration (GitHub) | Unreleased | ? | Yes | ? |
+| Merge request integration (GitLab, including self-hosted) | Unreleased | ? | ? | ? |
+| Open a commit, branch or remote on GitHub or GitLab | Unreleased | ? | ? | ? |
 
 ## Commits, tags and stashes
 
@@ -125,10 +133,14 @@ list anything, and says why when it cannot. Repositories made by Git before 2.24
 |---|---|---|---|---|
 | Command palette | Done | Yes | Yes | No |
 | Keyboard shortcuts for common operations | Done | Yes | Yes | Yes |
+| Keyboard cheatsheet and vim-style single-key actions | Unreleased | ? | ? | ? |
+| Settings screen (appearance, Git, integrations, accounts, updates, privacy) | Unreleased | ? | ? | ? |
 | Configurable keybindings | Planned | ? | ? | ? |
-| Dark and light themes | Done | Yes | Yes | ? |
+| Dark and light themes (two in v0.1, seven in `main`) | Done | Yes | Yes | ? |
 | Custom themes | Planned | No | Yes | No |
 | Confirmation for destructive operations | Done | Yes | Yes | Yes |
 | Toast notifications with git's error output | Done | ? | ? | ? |
 | Localisation | Planned | ? | ? | Yes |
+| Update check, which can be turned off (nothing is sent before you accept the Terms) | Unreleased | ? | ? | ? |
+| Opt-in, scrubbed crash reports | Unreleased | ? | ? | ? |
 | Screen reader support (AccessKit) | Planned | ? | ? | ? |

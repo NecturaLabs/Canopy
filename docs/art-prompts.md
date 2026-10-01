@@ -2,10 +2,9 @@
 
 Canopy's artwork will be generated with Codex / OpenAI. Until then the app uses placeholders: the
 app icon in `assets/icon.svg` (rasterised to `assets/icon-*.png` and
-`crates/canopy-app/assets/icon-256.png`) and vector shapes drawn in code (the logo mark in
-`widgets::paint_logo`, the empty-state glyphs in the views). The plan in `HANDOFF.md` moves every
-in-app illustration to an SVG file in `crates/canopy-app/assets/art/`, rendered through egui's image
-loaders, so finished art replaces a file without code changes.
+`crates/canopy-app/assets/icon-256.png`) and original, hand-written SVG illustrations in
+`crates/canopy-app/assets/art/` (logo, welcome, empty states, local-only, error), rendered through
+egui's image loaders by `ui/art.rs`. Finished art replaces a file there without code changes.
 
 ## Rules for every asset
 

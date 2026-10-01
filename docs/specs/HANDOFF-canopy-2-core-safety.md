@@ -1,5 +1,15 @@
 # Handoff: canopy-2/core-safety
 
+**Status: merged, kept as the reference for wiring the app.** The branch was merged into `main` as
+`d0782bf` (commits `51c58a7`, `329293c`, `76b160d`); the session, its local branch and its
+worktree are gone (`origin/canopy-2/core-safety` still exists). The app has taken up only part of
+it: branch delete asks `git branch -d` first (section 1, `7003ef0`), and `51c58a7` and
+`paths::safe_join` are live. The rest still sits behind compatibility wrappers, and each piece of
+UI work is a `docs/backlog.md` entry (`.gitignore`, file and directory links, research bugs, and
+the app's calls to `publish_branch`, `untracked_children` and `stage_all_except_repositories`).
+Delete this file when the last of those lands and the wrappers are gone. Sections below describe
+the branch as it was handed over; "Left out, and known issues" says what became of each item.
+
 Core only (`crates/canopy-core`). One test fixture in the app also changed, with the owner's
 approval: `tab.rs` `entry()` gains `old_mode: None, new_mode: None`. Rebased on `main` after the
 canopy-3 merge.
@@ -16,9 +26,11 @@ worker to the new ones, then delete the wrappers.
   `Error::Cli { command: "branch", stderr }`, and the stderr contains "not fully merged".
 - `Repo::force_delete_branch(name)`: `git branch -D -- name`.
 - Wrapper: `delete_branch(name, force)` dispatches to the two.
-- UI: the sidebar sends `Op::DeleteBranch { force: true }` today (`views/sidebar.rs:229`). Send
-  `force: false` (better: an op calling `delete_merged_branch`). On the "not fully merged" error,
-  open a danger confirmation, then call `force_delete_branch`.
+- UI: done in `7003ef0`. The sidebar sends `Op::DeleteBranch { force: false }`, which the worker
+  reports as `OpKind::SafeDelete`; on "not fully merged" the tab offers a forced delete behind a
+  danger confirmation (`RepoTab::force_delete_offer`). The wrapper `delete_branch(name, force)`
+  is still what the worker calls, and nothing calls `delete_merged_branch` or
+  `force_delete_branch` directly yet.
 
 ### 2. New branches and publishing (`ops.rs`)
 - `create_branch` now always passes `--no-track` (including from `origin/main`, and under
@@ -99,7 +111,7 @@ worker to the new ones, then delete the wrappers.
   without reading the target.
 - UI (not core): open-in-editor and any app-side file access should call `safe_join`, warning
   for links that point outside the repository. The watcher's `follow_symlinks(false)` (spec D2) is
-  app-side and not done.
+  app-side and now done in `main` (`worker.rs`).
 
 ### 7. Ignore rules (`ignore.rs`, `cli.rs`)
 - `IgnoreRule::{File(path), Extension(path), Folder(path), Custom { pattern, near }}` and
@@ -154,11 +166,12 @@ worker to the new ones, then delete the wrappers.
 
 ## Left out, and known issues
 
-- Not built (out of brief): gitignore templates, the show-ignored view, the watcher symlink and
-  git-dir fixes (app), and "Update from base".
-- Docs that the project rules require for these features, which the brief kept out of this branch:
-  `docs/features.md`, the `CHANGELOG.md` Unreleased section, and `docs/architecture.md` (new
-  `paths` and `ignore` modules).
+- Not built (out of brief): gitignore templates, the show-ignored view, and "Update from base"
+  (backlog: `.gitignore`, Feature-branch workflows). The watcher symlink and git-dir fixes were
+  done in the app afterwards.
+- Docs the brief kept out of this branch: `docs/architecture.md` now has the `paths` and `ignore`
+  rows, and `CHANGELOG.md` records the user-visible changes (literal pathspecs, Stage all and
+  nested repositories, `--no-track`, safe paths). `docs/features.md` gets rows when the UI lands.
 - Above the limit, every top-level untracked folder collapses, even a small one. A
   `.gitignore` starting with a UTF-8 BOM defeats de-duplication on its first line.
   `conflict_view` on a conflicted file behind a symlinked folder now errors instead of reading
@@ -168,8 +181,9 @@ worker to the new ones, then delete the wrappers.
   have a commit checked out", which surfaces as an error toast. Nothing is staged.
 - macOS HFS+ ignorable-Unicode `.git` spellings and Windows alternate data streams are not checked
   by `safe_join`. git's own path checks cover checkout.
-- `tests/operations.rs` pull tests read the developer's global git config through libgit2 (`Repo::pull`
-  checks `pull.rebase`). With `pull.rebase=true` in `~/.config/git/config`,
+- Now a backlog entry ("Pull reads `pull.rebase` through libgit2"): `tests/operations.rs` pull
+  tests read the developer's global git config through libgit2 (`Repo::pull` checks
+  `pull.rebase`). With `pull.rebase=true` in `~/.config/git/config`,
   `pull_merge_creates_a_merge_commit` and `pull_fast_forward_only_refuses_diverged_branches`
   fail locally. CI is unaffected. They pass with an isolated `HOME`/`XDG_CONFIG_HOME`.
 - Path checks and the later file access are not atomic: a symlink swapped in between is not

@@ -8,6 +8,33 @@ All notable changes to Canopy are documented here. The format follows
 
 ### Added
 
+- GitHub and GitLab (self-hosted GitLab included): forge icons on remotes, "Open on" links for
+  commits, branches and remotes, and a pull and merge request view with checks, reviews and the
+  conversation, plus create, check out, comment, approve, merge and close, through the host's REST
+  API with a token you provide (Settings → Accounts, kept per host and port; an environment
+  variable or git's credential helper also works). Requests can be turned off in Settings →
+  Integrations.
+- Local-only repositories show a "local only" badge, and Publish adds a remote and pushes. The
+  clone and add-remote dialogs build the address from `owner/repo` with an HTTPS or SSH choice.
+- Seven themes (Midnight, Daylight, Aurora, Ember, Neon, Forest and Paper), interface zoom, reduced
+  motion and a settings screen (Ctrl+,) for appearance, Git, integrations, accounts, updates and
+  privacy. Every option applies at once.
+- A keyboard map in one table: palette, a searchable cheatsheet (`?` or Ctrl+/), vim motions and
+  single-key Git actions, never Super and never while typing. `docs/keybindings.md` lists it.
+- Credential and SSH passphrase prompts, and host-key questions, in Canopy's own dialog instead of
+  failing, whenever git or ssh needs one.
+- Staging, unstaging and discarding single lines of a hunk, side-by-side diffs, syntax highlighting,
+  and context-line and whitespace options for diffs, global or per repository.
+- A three-way conflict resolver (ours, theirs, both, the common ancestor or an edit by hand), and
+  merge modes: default, no fast-forward, fast-forward only and squash.
+- Each repository tab shows its commits to push and pull.
+- An update check against Canopy's own feed, a "What's new" dialog after an upgrade, and the option
+  to turn the check off.
+- Structured JSON-lines logs per run and local crash reports in Canopy's data folder, with Settings
+  → Copy diagnostics. Opt-in, scrubbed crash reports to NecturaLabs, asked on first start together
+  with the Terms of Service and Privacy Policy, which can be read in the app.
+- SVG illustrations for the empty states and the welcome screen (placeholders until the final
+  art).
 - One-line installers for Linux and macOS (`curl -fsSL …/canopy/install.sh | sh`) and Windows
   (`irm …/canopy/install.ps1 | iex`): per-user, no sudo, a folder of Canopy's own, SHA-256
   checked downloads, in-place upgrades and a clean uninstall. macOS builds are now a
@@ -15,6 +42,9 @@ All notable changes to Canopy are documented here. The format follows
 
 ### Security
 
+- Files Canopy reads or writes inside a repository (the conflict resolver) refuse paths that leave
+  the working tree, name `.git`, or cross a symbolic link; a conflicted file behind a symlinked
+  folder now gives an error instead of opening.
 - A credential or host-key prompt can no longer be replaced or dropped by another dialog; dialogs
   queue behind it, and Escape on a host-key question answers "no".
 - Crash reports also scrub credentials in every URL, GitHub and GitLab token patterns, `Bearer`
@@ -33,6 +63,9 @@ All notable changes to Canopy are documented here. The format follows
 
 ### Fixed
 
+- Staging, unstaging and discarding use each path literally: a file named `*` or `[ab].txt` no
+  longer touches other files (discarding an untracked `[ab].txt` used to delete an untracked
+  `b.txt` too).
 - Deleting a branch from the sidebar runs `git branch -d`: a branch with unmerged commits is no
   longer deleted silently, and Canopy asks before forcing it.
 - Opening a large repository no longer freezes the window: the repository is opened and its file
@@ -67,6 +100,10 @@ All notable changes to Canopy are documented here. The format follows
 
 ### Changed
 
+- Stage all leaves out a folder that holds its own Git repository instead of adding it as a
+  submodule entry.
+- A new branch never tracks its start point on its own (pushing sets the upstream), and a branch
+  or start point whose name begins with `-` is refused instead of being read by git as an option.
 - Interface transitions are shorter (150 ms instead of 180 ms), in line with the new motion
   tokens.
 - After accepting the Privacy Policy and Terms on first run, start-up notices and the update

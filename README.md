@@ -30,30 +30,52 @@ Screenshots are rendered by Canopy itself from the deterministic fixture reposit
 
 ## Features
 
-- **Repositories**: welcome screen with recent repositories; open, clone (with live progress) and
-  init; several repositories open at once in tabs.
+- **Repositories**: welcome screen with recent repositories; open, clone (with live progress; an
+  `owner/repo` field for GitHub and GitLab builds the HTTPS or SSH address) and init; several
+  repositories open at once in tabs, restored on the next start. Partial clones
+  (`--filter=blob:none`, `--filter=tree:0`) download the objects a view needs through `git` on
+  demand.
 - **History**: commit graph with coloured lanes and curved merge edges, ref labels for `HEAD`,
-  local and remote branches and tags, author avatars, relative dates, and filtering by message,
+  local and remote branches and tags, initials avatars, relative dates, and filtering by message,
   author or SHA.
 - **Commit details**: metadata, parents, changed files with added/removed line counts and a diff
   per file.
 - **Working copy**: unstaged, staged and conflicted files; stage, unstage and discard per file, for
-  everything, or per hunk; diff viewer with old and new line numbers.
-- **Committing**: summary and description fields with a character counter, and amend.
-- **Branches**: create (from any commit), checkout, rename, delete, merge into the current branch,
-  rebase the current branch onto another, ahead/behind badges, and checkout of remote branches as
-  tracking branches.
-- **Remotes**: fetch (all remotes, with prune), pull (fast-forward or rebase, following your git
-  config), push (sets the upstream when missing; optional force-with-lease).
+  everything, per hunk or per line; unified or side-by-side diffs with syntax highlighting, old
+  and new line numbers, and settings for context lines and whitespace (global, with per-repository
+  overrides).
+- **Conflicts**: a three-way resolver (take ours, theirs, both or the common ancestor, or edit by
+  hand) and merge modes (default, no fast-forward, fast-forward only, squash).
+- **Committing**: summary and description fields with a character counter, amend and optional
+  `--signoff`.
+- **Branches**: create (from any commit), checkout, rename, delete (`git branch -d` first; Canopy
+  offers to force only when Git refuses), merge into the current branch, rebase the current branch
+  onto another, ahead/behind badges, and checkout of remote branches as tracking branches.
+- **Remotes**: fetch (all remotes, with prune, optionally every few minutes), pull (following your
+  git config, else the strategy chosen in Settings), push (sets the upstream when missing;
+  optional force-with-lease). A repository without a remote is shown as local only and offers
+  Publish, which adds a remote and pushes.
 - **Tags and stashes**: lightweight and annotated tags with push and delete; stash save (with a
   message, optionally including untracked files), apply, pop and drop.
 - **Commit actions**: checkout (detached), new branch or tag here, cherry-pick, revert, reset the
   current branch here (soft, mixed or hard), copy SHA or message.
 - **In-progress operations**: a banner for merge, rebase and cherry-pick with continue and abort.
-- **Workflow**: command palette for every command and branch checkout, keyboard shortcuts, toasts,
-  automatic refresh on file changes and window focus, status bar with branch, ahead/behind, repository
-  state and the running job.
-- **Appearance**: dark "Midnight" theme (default) and light "Daylight" theme.
+- **GitHub and GitLab**: open a commit, branch or remote on its host, and list, read, create,
+  check out, comment on, approve, merge and close pull and merge requests (self-hosted GitLab
+  included) through the host's REST API with a token you provide. Requests and the update check are
+  the only network use besides `git`, and each has an off switch; see the
+  [privacy policy](docs/legal/privacy-policy.md).
+- **Credentials**: git and ssh ask for passwords, passphrases and host-key confirmation in Canopy's
+  own dialog, never in a terminal.
+- **Workflow**: command palette for every command and branch checkout, keyboard shortcuts with a
+  cheatsheet, toasts that carry git's own error output, automatic refresh on file changes and
+  window focus, status bar with branch, ahead/behind, repository state and the running job.
+- **Appearance and settings**: seven themes (Midnight, the default, then Daylight, Aurora, Ember,
+  Neon, Forest and Paper), interface zoom, reduced motion, and a settings screen (Ctrl+,) for
+  appearance, Git, integrations, accounts, updates and privacy.
+- **Diagnostics and privacy**: structured per-run logs and local crash reports in Canopy's data
+  folder; opt-in, scrubbed crash reports to NecturaLabs after you accept the Terms and Privacy
+  Policy and answer the question. The update check can be turned off.
 
 Destructive operations (discard, hard reset, deleting a branch or tag, dropping a stash, force
 push) always ask for confirmation. The full matrix, including what is planned, is in
@@ -151,52 +173,57 @@ tools/install-desktop.sh            # tools/install-desktop.sh --uninstall to re
 ## Usage
 
 ```text
-canopy [OPTIONS] [PATH]
+canopy [OPTIONS] [PATH]...
 ```
 
-`PATH` opens that repository; Canopy searches upward from it for the repository root. Without a
+Each `PATH` opens as a tab; Canopy searches upward from it for the repository root. Without a
 path, the welcome screen lists recent repositories.
 
 | Option | Effect |
 |---|---|
-| `--light` | Start in the light theme. |
-| `--view <history\|changes>` | Initial view. |
+| `--light` | Start with the Daylight theme. |
+| `--theme <THEME>` | Start with a theme: `midnight`, `daylight`, `aurora`, `ember`, `neon`, `forest` or `paper`. |
+| `--view <history\|changes\|requests>` | Initial view. |
+| `--split` | Show diffs side by side. |
+| `--overlay <NAME>` | Open an overlay (for screenshots): `settings`, `privacy`, `cheatsheet`, `palette`, `consent`, `crash-consent`, `legal`, `licences`, `credential`, `host-key` or `merge`. |
 | `--size <WxH>` | Initial window size (default `1440x900`). |
 | `--screenshot <FILE.png>` | Render the window once the repository has loaded, save a PNG and exit. Used by `tools/screenshot.sh`. |
 | `-h`, `--help` / `-V`, `--version` | Help and version. |
 
-Logging goes to stderr. Set `CANOPY_LOG` (or `RUST_LOG`), for example `CANOPY_LOG=canopy=debug`.
+Each run writes a JSON-lines log to `logs/` in Canopy's data folder (`~/.local/share/canopy` on
+Linux) and the same events to stderr. Set `CANOPY_LOG` (or `RUST_LOG`), for example
+`CANOPY_LOG=canopy=debug`, to choose the level; it overrides Settings → Privacy → Log detail.
 
 ### Keyboard shortcuts
 
+Ctrl+K opens the command palette, `?` (or Ctrl+/) the cheatsheet, and Settings → Keyboard lists
+every binding. A few to start with:
+
 | Shortcut | Action |
 |---|---|
-| Ctrl+K, Ctrl+Shift+P | Command palette |
-| Ctrl+O | Open repository |
-| Ctrl+Shift+N | Clone repository |
-| Ctrl+W | Close tab |
-| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
-| Ctrl+1 / Ctrl+2 | History / Changes |
-| F5, Ctrl+R | Refresh |
-| Ctrl+Shift+F | Fetch |
-| Ctrl+Shift+L | Pull |
-| Ctrl+Shift+K | Push |
-| Ctrl+B | New branch |
-| Ctrl+Shift+S | Stash |
+| Ctrl+K | Command palette |
+| `?` | Keyboard shortcuts |
+| Ctrl+O / Ctrl+Shift+N | Open / clone repository |
+| Ctrl+W, Ctrl+Tab, Ctrl+1…9 | Close tab, next tab, go to tab N |
+| `1` / `2` / `3` | History / Changes / pull and merge requests |
+| `j` / `k`, `gg` / `G` | Move the selection, first / last |
+| `f` / `p` / `P` | Fetch / pull / push |
 | Ctrl+Enter | Commit (in Changes) |
-| Ctrl+F | Filter history |
-| Up / Down, J / K | Move selection |
-| Esc | Close dialogs and the palette |
-| Ctrl+, | Settings |
-| Ctrl+= / Ctrl+- | Zoom in / out |
+
+Bare keys never fire while a text field has focus, and Super is never bound. The whole table is in
+[docs/keybindings.md](docs/keybindings.md).
 
 ## Architecture
 
-Two crates:
+Three crates:
 
 - **`canopy-core`**: the UI-agnostic Git backend. Repository snapshots, commit graph lane layout,
-  diffs, status and local operations through libgit2 (`git2`, built without network transports);
-  clone, fetch, pull, push, merge, rebase and hunk application through the `git` CLI.
+  diffs, status and local reads through libgit2 (`git2`, built without network transports);
+  every mutation and all Git network traffic through the `git` CLI. It also parses GitHub and
+  GitLab remote URLs (`forge.rs`, offline).
+- **`canopy-hosting`**: the GitHub and GitLab REST client (pull and merge requests, `ureq` with
+  rustls) and the update-manifest fetch. It contacts only the host a repository's own remote
+  points at, with a token the user supplied.
 - **`canopy-app`**: the GUI, built on `eframe`/`egui` with the glow (OpenGL) renderer. Each open
   repository has a background worker thread; the UI thread sends it jobs and never calls git.
 
@@ -211,7 +238,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo run -p canopy-app -- <repo>
-tools/check.sh                       # fmt check, clippy and tests, as CI runs them
+tools/check.sh                       # fmt, clippy, tests, release and notices checks, installer test
 tools/mkfixture.sh /tmp/demo         # deterministic demo repository
 tools/screenshot.sh /tmp/demo out.png --view changes
 ```
@@ -225,17 +252,19 @@ convention and pull request checklist, and [docs/backlog.md](docs/backlog.md) fo
 ```text
 .
 ├── crates/
-│   ├── canopy-core/        Git backend: snapshots, graph layout, diffs, status, operations
-│   │   └── src/            lib, error, model, repo, graph, diff, status, ops, cli
+│   ├── canopy-core/        Git backend: snapshots, graph layout, diffs, status, operations,
+│   │                       git-flow, ignore rules, LFS, submodules, forge URLs, conflicts
+│   ├── canopy-hosting/     GitHub and GitLab REST client and the update-manifest fetch
 │   └── canopy-app/         GUI binary `canopy`
-│       ├── assets/         bundled fonts (OFL) and window icon
-│       └── src/            main, app, worker, settings, ui/, views/
+│       ├── assets/         bundled fonts (OFL), SVG art and window icon
+│       └── src/            main, app/, worker, tab, settings, keymap, hosting, askpass, ui/, views/
 ├── assets/                 application icon (SVG and PNG)
-├── docs/                   architecture, design system, feature matrix, backlog, screenshots
-├── packaging/linux/        desktop entry and AppStream metainfo
-├── tools/                  check, fixture, screenshot and install scripts
+├── docs/                   architecture, design system, feature matrix, keybindings, backlog,
+│                           ADRs, specs, legal texts, screenshots
+├── packaging/              one-line installers and their test; Linux desktop entry, macOS bundle
+├── tools/                  check, fixture, screenshot, install, release and stress scripts
 ├── .claude/                agents and skills for AI coding agents
-└── .github/                CI, release workflow, templates
+└── .github/                CI, release workflows, templates
 ```
 
 ## Working with AI agents
@@ -246,7 +275,10 @@ The repository is set up for coding agents. [AGENTS.md](AGENTS.md) (loaded by Cl
 - **Agents** (`.claude/agents/`): `canopy-review` (read-only diff review), `canopy-git` (Git
   semantics and canopy-core operations), `canopy-visual-qa` (renders the app headlessly and
   reports visual defects), `canopy-ux-research` (how other Git clients solve a UX question).
-- **Skills** (`.claude/skills/`): `screenshot`, `fixture-repo`, `add-git-operation`, `release`.
+- **Skills** (`.claude/skills/`): project recipes (`screenshot`, `fixture-repo`, `add-git-operation`,
+  `hosting-api`, `add-theme`, `add-keybinding`, `release`) and working-method skills
+  (`independent-review`, `testing`, `project-docs`, `memory-hygiene`, `agent-instructions`,
+  `agent-orchestration`).
 - **Tools** (`tools/`): the scripts above let an agent build, check, create a reproducible
   repository and look at the result as an image.
 

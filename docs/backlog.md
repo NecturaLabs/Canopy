@@ -8,17 +8,19 @@ of the release it ships in. Add new entries where their priority puts them, not 
 
 Workflow: every entry is worked on its own short branch from `main` and merged straight into
 `main` (no pull requests) once `tools/check.sh` passes, the `canopy-review` agent has reviewed it
-and CI is green on the branch. Parallel sessions follow `docs/specs/parallel-sessions.md`.
+and CI is green on the branch. `docs/specs/parallel-sessions.md` holds the setup and briefs of the
+first two parallel sessions, as a template for the next.
 
 ## In flight
 
-Who works on what, on which branch. Remove a row when its branch is merged. Merged so far:
-the working branch, `fix/installer-review` (every security-review finding; independent review and
-a Windows PowerShell 5.1 run still owed), `perf/views` (frame cost 119–209 ms → 0.3–0.9 ms on huge data) 
-`canopy-3/core-workflows` (git-flow, merged detection, LFS status, submodules in core) and
-`feat/partial-clones` (partial-clone reads, downloads and Retry), `canopy-2/core-safety` (safe branch delete, publish, mode and type changes, collapsed untracked
-folders, nested repositories, safe paths, ignore rules in core; the app still calls compatibility
-wrappers: see `docs/specs/HANDOFF-canopy-2-core-safety.md`).
+Who works on what, on which branch. Remove a row when its branch is merged. Nothing is in flight
+at the moment. Merged into `main` so far: the original working branch, `perf/views` (frame cost
+119–209 ms → 0.3–0.9 ms on huge data), `fix/installer-review` (every security-review finding),
+`canopy-3/core-workflows` (git-flow, merged detection, LFS status, submodules in core),
+`canopy-2/core-safety` (safe branch delete, publish, mode and type changes, collapsed untracked
+folders, nested repositories, safe paths and ignore rules in core; the app still calls
+compatibility wrappers, see `docs/specs/HANDOFF-canopy-2-core-safety.md`) and
+`feat/partial-clones` (partial-clone reads, downloads and Retry), plus the branch-delete fix.
 
 | Entry | Branch | Who | State |
 | --- | --- | --- | --- |
@@ -27,6 +29,29 @@ wrappers: see `docs/specs/HANDOFF-canopy-2-core-safety.md`).
 
 In order. The UI entries come before accessibility, and accessibility before the docs sweep.
 
+- [ ] **Reviews and passes still owed on merged work** (security-sensitive areas first): a security
+  pass on the partial-clone code (`cli.rs`, `partial.rs` and the merged `status.rs` and `repo.rs`
+  hunks); an independent security review of the installer fixes (`85d2961`) and a Windows
+  PowerShell 5.1 run of `install.ps1`; a review of canopy-3's core (`flow.rs`, `merged.rs`,
+  `lfs.rs`, `submodule.rs`) when the app starts calling it (canopy-2's live changes, the literal
+  pathspecs and `paths.rs`, were reviewed with no findings). Accept: each review's findings are
+  fixed or answered, and the entry is deleted.
+- [ ] **Pull reads `pull.rebase` through libgit2**: `Repo::pull` (`ops.rs`) decides whether to pass
+  `--rebase`/`--no-rebase`/`--ff-only` from `config_string("pull.rebase")`, which is libgit2's view
+  of the configuration. libgit2 ignores `GIT_CONFIG_GLOBAL` and resolves `includeIf` differently
+  from git, so when they disagree git gets no flag and fails with "Need to specify how to
+  reconcile divergent branches". Read the value with `git config --get pull.rebase` through
+  `cli`, and give the pull tests in `crates/canopy-core/tests/operations.rs` an isolated
+  `HOME`/`XDG_CONFIG_HOME` (they read the developer's global config today). Accept: with
+  `pull.rebase=true` in `~/.gitconfig`, `cargo test -p canopy-core` passes, and a regression test
+  covers a value only git sees.
+- [ ] **`packaging/test-install.sh` aborts on a dangling link in `/usr/bin`**: `path_without`
+  (line 173) links every entry of `/usr/local/bin`, `/usr/bin` and `/bin` into a folder and skips
+  names already there with `[ -e ]`, which is false for a link whose target is missing. Where
+  `/bin` is `/usr/bin` every entry is visited twice, so the second `ln -s` fails with "File
+  exists" and `set -e` ends the test at "no curl and no wget" (seen on Arch with a dangling
+  `/usr/bin/QtWebEngineProcess6`), and `tools/check.sh` fails with it. Test with `[ -e ] || [ -L ]`.
+  Accept: `sh packaging/test-install.sh` passes on a host with a dangling link in `/usr/bin`.
 - [ ] **Architecture split, rest** (done in `main`: `app/` and `views/dialogs/` modules,
   `action.rs`, typed `OpKind`/`HostAction`, repositories opened and watched off the UI thread):
   shared widgets (inset frame, file header, empty state), native file dialogs off the UI thread,
@@ -51,13 +76,20 @@ In order. The UI entries come before accessibility, and accessibility before the
   available" state, a Retry for a failed diff (only commit details have one), and a per-file
   "not downloaded" marker before the diff is opened.
 - [ ] **Git LFS** (core status, pointer and not-downloaded detection merged from canopy-3; see
-  `docs/specs/HANDOFF-canopy-3-core-workflows.md`): correct status for LFS files, an LFS indicator and pointer-only state, LFS
-  diffs, `git lfs pull`/fetch, track and untrack, locks, and a prompt when `git-lfs` is missing.
-  Accept: an LFS fixture shows no phantom changes, marks pointer-only files and pulls them.
-- [ ] **Feature-branch workflows** (git-flow and merged detection in core, merged from canopy-3): git-flow start and finish (feature, bugfix, release, hotfix,
-  AVH config) without the `git flow` binary, branch folders by prefix in the sidebar, publish with
-  upstream, merged and squash-merged indicators, delete merged branches (`-d`, force only after
-  confirmation). Accept: refs, tags and merges match the spec's command table.
+  `docs/specs/HANDOFF-canopy-3-core-workflows.md`): correct status for LFS files, an LFS indicator
+  and pointer-only state, LFS diffs, `git lfs pull`/fetch, track and untrack, locks, and a prompt
+  when `git-lfs` is missing. The status fix is not finished: the SHA-256 step that drops
+  stat-dirty but unchanged LFS files needs a hashing crate (`sha2`, MIT/Apache-2.0) in
+  `Cargo.toml`, which is the owner's call to add. Accept: an LFS fixture shows no phantom changes,
+  marks pointer-only files and pulls them.
+- [ ] **Feature-branch workflows** (git-flow and merged detection in core, merged from canopy-3):
+  git-flow start and finish (feature, bugfix, release, hotfix, AVH config) without the `git flow`
+  binary, branch folders by prefix in the sidebar, publish with upstream, merged and
+  squash-merged indicators, delete merged branches (`-d`, force only after confirmation), and
+  "Update from base" (`docs/specs/lfs-flow-spec.md`, part B). Known limits of the core: finishing
+  always merges with `--no-ff` and needs Git 2.38 or newer; "rebase before finish" and
+  hotfix-into-an-open-release are not offered. Accept: refs, tags and merges match the spec's
+  command table.
 - [ ] **.gitignore** (core rules, why-ignored, stop tracking and preview merged from canopy-2): ignore a file, extension, folder or pattern from the changes list, local-only
   exclude, stop tracking and ignore, show ignored files, "why ignored", templates on init.
   Accept: each action's result matches `git check-ignore -v`.
@@ -102,11 +134,13 @@ In order. The UI entries come before accessibility, and accessibility before the
 - [ ] **Accessibility**: AccessKit names and roles for every control, focus order and visible
   focus, keyboard reachability, contrast, reduced motion. Accept: Orca navigates the history list,
   the changes list and the commit composer.
-- [ ] **Docs sweep**: HANDOFF, README, architecture, features, design (all seven themes),
-  keybindings, CHANGELOG, CONTRIBUTING, tools/README, screenshots. Accept: every doc matches the
+- [ ] **Docs sweep**: README, architecture, features, keybindings, CHANGELOG and tools/README were
+  brought up to date once `canopy-2` and `canopy-3` merged; what is left is `docs/design.md`
+  (a table for each of the five other themes and the type-scale tokens once they exist),
+  CONTRIBUTING (it still describes pull requests and an older `check.sh`), the screenshots in
+  `docs/screenshots/` (rendered at v0.1.0, before the themes and the settings screen), and
+  retiring HANDOFF.md when its notes are all folded into the docs. Accept: every doc matches the
   code.
-- [ ] **Push and pull counts in tab headers**: ahead/behind next to each tab name. Accept: counts
-  update after fetch and match the status bar.
 - [ ] **Verify the one-line installers on real machines** after the first stable release that
   publishes them (CI tests `install.sh` end to end against a fake feed on Linux and macOS and
   only smoke-tests `install.ps1`). Accept: on Ubuntu 22.04, Fedora, macOS (Apple silicon) and Windows 11 (Windows
@@ -181,6 +215,13 @@ In order. The UI entries come before accessibility, and accessibility before the
 In the code and tested, not yet ticked by a check in the running app.
 
 - [ ] Credential prompts for git and SSH passphrases through Canopy's askpass.
+- [ ] Ahead and behind counts in each repository tab header, matching the status bar.
+- [ ] Branch delete runs `git branch -d` and offers a forced delete only when Git refuses.
+- [ ] Local-only repositories: the badge and Publish; GitHub and GitLab "Open on" links and the
+  clone and add-remote address builders.
+- [ ] The settings screen, the keymap table with its cheatsheet, and the update check with "What's
+  new".
+- [ ] Merge modes (default, no fast-forward, fast-forward only, squash).
 - [ ] Line-level stage, unstage and discard.
 - [ ] Structured per-run JSON logs; opt-in, scrubbed crash reports with consent.
 - [ ] Diff settings (context lines, ignore whitespace), syntax highlighting, side-by-side diffs.

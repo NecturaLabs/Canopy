@@ -5,7 +5,7 @@ and print usage with `-h` or when called without required arguments.
 
 | Script | Purpose |
 |---|---|
-| `check.sh` | The local CI: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, the `release.py` self-test and `notices.py --check`. Must pass before a change is done. |
+| `check.sh` | The local CI: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked` (with git's configuration isolated to a fixed identity), the `release.py` self-test, `notices.py --check`, `packaging/test-install.sh` (Linux and macOS), and ShellCheck and `cargo deny check` when they are installed. Must pass before a change is done. |
 | `mkfixture.sh [--force] <dir> [kind]` | Creates a deterministic demo repository with plain `git` (fixed identities and dates, user config ignored). Kinds: `showcase` (default), `conflict`, `linear`, `big`. |
 | `screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history\|changes\|requests] [--overlay NAME] [--size WxH]` | Renders Canopy on Xvfb with software OpenGL, saves one frame once the repository has loaded and prints the PNG path. `<repo>` may be `-` for the welcome screen. Overlays: `settings`, `privacy`, `cheatsheet`, `palette`, `consent`, `crash-consent`, `legal`, `licences`, `credential`, `host-key`, `merge`. |
 | `mock-hosting.py [port]` | A stand-in GitHub API on `127.0.0.1` with four pull requests, reviews, comments and checks. Start it and set `CANOPY_HOSTING_API_BASE=http://127.0.0.1:<port>` to screenshot the pull request view without a network or token. |

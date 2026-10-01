@@ -31,8 +31,8 @@ defined. When a token or component changes, update this document in the same cha
 | `border` | `#262D3B` | 1px hairlines between regions (decorative) |
 | `control-border` | `#696F7A` | Outlines that identify a control: text fields, checkboxes, switch tracks (3:1) |
 | `text` | `#E6E9EF` | Primary text |
-| `text-dim` | `#9AA3B5` | Secondary text: authors, dates, paths |
-| `text-faint` | `#8991A2` | Placeholders, disabled text, line numbers |
+| `text-dim` | `#A5ADBD` | Secondary text: authors, dates, paths |
+| `text-faint` | `#979EAD` | Placeholders, disabled text, line numbers |
 | `accent` | `#9C71F8` | Focus rings, selection, primary buttons, HEAD |
 | `accent-2` | `#22D3EE` | Gradient end, links, progress |
 | `success` | `#34D399` | Added lines, ahead counts, success toasts |
@@ -40,6 +40,7 @@ defined. When a token or component changes, update this document in the same cha
 | `danger` | `#F87171` | Removed lines, destructive buttons, error toasts |
 | `added-bg` | `#0F2A21` | Added line background in diffs |
 | `removed-bg` | `#2E1518` | Removed line background in diffs |
+| `button`, `button2` | `#7C3AED`, `#0E7490` | Ends of the primary button's gradient, labelled `on-button` (`#FFFFFF`) |
 
 ### Daylight (light)
 
@@ -53,14 +54,15 @@ defined. When a token or component changes, update this document in the same cha
 | `control-border` | `#858A92` | Outlines that identify a control: text fields, checkboxes, switch tracks (3:1) |
 | `text` | `#161A22` | Primary text |
 | `text-dim` | `#4B5466` | Secondary text |
-| `text-faint` | `#5D6577` | Placeholders, disabled text, line numbers |
+| `text-faint` | `#586071` | Placeholders, disabled text, line numbers |
 | `accent` | `#7C3AED` | Focus rings, selection, primary buttons, HEAD |
-| `accent-2` | `#0E7490` | Gradient end, links, progress |
-| `success` | `#047857` | Added lines, ahead counts, success toasts |
-| `warning` | `#B05109` | Conflicts, in-progress banners |
-| `danger` | `#D12424` | Removed lines, destructive buttons, error toasts |
+| `accent-2` | `#0D6F8A` | Gradient end, links, progress |
+| `success` | `#047555` | Added lines, ahead counts, success toasts |
+| `warning` | `#A04A08` | Conflicts, in-progress banners |
+| `danger` | `#C72222` | Removed lines, destructive buttons, error toasts |
 | `added-bg` | `#E3F7EC` | Added line background in diffs |
 | `removed-bg` | `#FDE7E7` | Removed line background in diffs |
+| `button`, `button2` | `#7C3AED`, `#0E7490` | Ends of the primary button's gradient, labelled `on-button` (`#FFFFFF`) |
 
 Every theme passes the contrast test in `theme.rs` for every pairing the views draw: `text` 7:1
 and `text-dim` and `text-faint` 4.5:1 on every surface (`bg`, `panel`, `elevated`, `hover`, a
@@ -71,8 +73,8 @@ lines, `danger` on removed lines and `warning` on its tint; `accent` 4.5:1 on pl
 `theme.rs` is the reference for their values.
 
 The accent gradient runs from `accent` to `accent-2` (violet to cyan in Midnight). It is used
-sparingly: the primary button, the active tab indicator, the welcome screen mark and progress
-bars.
+sparingly: the active tab indicator, the welcome screen mark and progress bars. The primary
+button uses the `button` pair instead, chosen so its label stays readable on both ends.
 
 Selected rows will all use `Palette::selected()`: `accent` at low opacity over the row background
 (18% in dark themes, 12% in light ones), with an `accent` bar on the left edge (3px in the history
@@ -153,10 +155,13 @@ and only fade; closing a menu, tooltip or the palette is instant. Spinners turn 
 linearly.
 
 Running jobs show a spinner in the status bar and on the triggering toolbar button. No animation
-loops while idle, so an idle Canopy does not repaint. Reduce motion (Settings → Appearance:
-match the system, reduced or full) makes every duration zero; the system setting is read from
-the desktop portal or GNOME settings on Linux, `com.apple.universalaccess` on macOS and the
-client-area animation setting on Windows, off the UI thread.
+loops while idle, so an idle Canopy does not repaint. Reduce motion makes every duration
+zero. Today it is an on/off switch in Settings → Appearance; the three-way preference (match the
+system, reduced or full) and the `FAST` and `SLOW` tokens exist in `ui/motion.rs` but are not
+wired up yet (the backlog's "Motion" entry). The system setting it will follow is read by
+`platform::prefers_reduced_motion` from the desktop portal or GNOME settings on Linux,
+`com.apple.universalaccess` on macOS and the client-area animation setting on Windows, off the UI
+thread.
 
 ## Iconography
 
@@ -188,7 +193,7 @@ always have a tooltip naming the action and its shortcut.
 - In Changes, the centre holds the file lists and composer and the detail pane holds the diff.
 - The in-progress banner (merge, rebase, cherry-pick) spans the centre column above the table, in
   `warning` with continue and abort buttons.
-- Minimum window size 960x600.
+- Minimum window size 900x560 (`main.rs`); the layouts are designed for 960x600 and up.
 
 ## Components
 
