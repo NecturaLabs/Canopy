@@ -113,10 +113,10 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .button(format!("{}  Open in editor", icon::ARROW_SQUARE_OUT))
-                        .on_hover_text("Open the file in your default editor")
+                        .on_hover_text("Open the file in your editor (Settings → Integrations)")
                         .clicked()
                     {
-                        actions.push(Action::OpenExternal(abs.display().to_string()));
+                        actions.push(Action::OpenInEditor(abs.to_path_buf()));
                     }
                     let n = r.conflicts();
                     if n > 0 {

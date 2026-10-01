@@ -40,7 +40,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec
             "Turn on pull and merge requests in Settings → Integrations to load them from the API.",
             Some((
                 format!("{}  Open on {}", forge_icon(kind), kind.name()),
-                Action::OpenExternal(format!(
+                Action::OpenUrl(format!(
                     "{}/{}",
                     forge.web_url(),
                     if kind == ForgeKind::GitHub {
@@ -450,7 +450,7 @@ fn action_bar(
             .button(format!("{}  Open on {}", forge_icon(kind), kind.name()))
             .clicked()
         {
-            actions.push(Action::OpenExternal(r.web_url.clone()));
+            actions.push(Action::OpenUrl(r.web_url.clone()));
         }
         if widgets::icon_button(ui, icon::LINK, "Copy link").clicked() {
             actions.push(Action::Copy(r.web_url.clone()));

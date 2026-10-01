@@ -627,6 +627,18 @@ fn integrations(ui: &mut Ui, s: &mut Settings) {
             );
         },
     );
+    row(
+        ui,
+        "Editor",
+        "The command \"Open in editor\" runs, with the file added at the end. Empty uses your system's text editor.",
+        |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut s.editor)
+                    .hint_text("code, zed, gnome-text-editor")
+                    .desired_width(240.0),
+            );
+        },
+    );
 }
 
 /// Returns true when a token was saved or removed.
@@ -769,7 +781,7 @@ fn accounts(
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(scopes).size(11.5).color(p.text_faint));
                     if ui.link(RichText::new(format!("Create a token {}", icon::ARROW_SQUARE_OUT)).size(11.5)).clicked() {
-                        actions.push(Action::OpenExternal(hosting::token_page(kind, &host)));
+                        actions.push(Action::OpenUrl(hosting::token_page(kind, &host)));
                     }
                 });
             });
@@ -944,7 +956,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
             actions.push(Action::ShowUpdate);
         }
         if ui.button(format!("{}  All releases", icon::LIST)).clicked() {
-            actions.push(Action::OpenExternal(updater::RELEASES_PAGE.to_owned()));
+            actions.push(Action::OpenUrl(updater::RELEASES_PAGE.to_owned()));
         }
     });
     if let Some(v) = s.skipped_version.clone() {

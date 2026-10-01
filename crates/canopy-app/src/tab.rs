@@ -115,6 +115,41 @@ impl Resolver {
         self.reveal = true;
     }
 
+    /// Takes a fresh parse of the file. A choice survives only if its conflict is still there
+    /// with the same content at the same position; edits in an editor reset the rest.
+    pub fn reload(
+        &mut self,
+        kind: Option<canopy_core::ConflictKind>,
+        file: Result<canopy_core::ConflictFile, String>,
+    ) {
+        let old: Vec<canopy_core::ConflictRegion> = match &self.file {
+            Some(Ok(f)) => f.regions().cloned().collect(),
+            _ => Vec::new(),
+        };
+        let new: Vec<&canopy_core::ConflictRegion> = match &file {
+            Ok(f) => f.regions().collect(),
+            Err(_) => Vec::new(),
+        };
+        let choices: Vec<Option<canopy_core::Choice>> = new
+            .iter()
+            .enumerate()
+            .map(|(i, region)| {
+                (old.get(i) == Some(*region))
+                    .then(|| self.choices.get(i).cloned().flatten())
+                    .flatten()
+            })
+            .collect();
+        if choices.len() != self.choices.len()
+            || choices.iter().zip(&self.choices).any(|(a, b)| a != b)
+        {
+            self.editing = None;
+        }
+        self.focus = self.focus.min(choices.len().saturating_sub(1));
+        self.choices = choices;
+        self.kind = kind;
+        self.file = Some(file);
+    }
+
     /// Clears the focused conflict's choice (and any hand edit of it).
     pub fn clear_focused(&mut self) {
         if let Some(slot) = self.choices.get_mut(self.focus) {
@@ -715,16 +750,7 @@ impl RepoTab {
                 }
                 Event::Conflict { path, kind, file } => {
                     if let Some(r) = self.resolver.as_mut().filter(|r| r.path == path) {
-                        let n = file
-                            .as_ref()
-                            .map_or(0, canopy_core::ConflictFile::conflicts);
-                        if r.choices.len() != n {
-                            r.choices = vec![None; n];
-                            r.focus = 0;
-                            r.editing = None;
-                        }
-                        r.kind = kind;
-                        r.file = Some(file);
+                        r.reload(kind, file);
                     }
                 }
                 Event::HeadMessage(m) => {
@@ -744,6 +770,11 @@ impl RepoTab {
                 } => {
                     self.running = None;
                     self.progress = None;
+                    // Any operation can change the file being resolved (a save, a stash, a
+                    // checkout): parse it again so choices and the save guard match the disk.
+                    if let Some(r) = &self.resolver {
+                        self.worker.send(Job::Conflict(r.path.clone()));
+                    }
                     match result {
                         Ok(out) => {
                             if label.starts_with("Commit") || label.starts_with("Amend") {
@@ -915,5 +946,53 @@ impl RepoTab {
             self.filter_for = q;
         }
         self.filtered.as_deref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use canopy_core::{Choice, ConflictFile};
+
+    const TWO: &str = "a\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nb\n<<<<<<< ours\n1\n=======\n2\n>>>>>>> theirs\n";
+
+    #[test]
+    fn reloading_keeps_choices_only_for_unchanged_conflicts() {
+        let mut r = Resolver::new("f".into());
+        r.reload(None, Ok(ConflictFile::parse(TWO)));
+        assert_eq!(r.choices, vec![None, None]);
+        r.choose(Choice::Ours);
+        r.choose(Choice::Theirs);
+        assert_eq!(r.resolved(), 2);
+        // Same text: both choices stay.
+        r.reload(None, Ok(ConflictFile::parse(TWO)));
+        assert_eq!(r.resolved(), 2);
+        // The second conflict edited in an editor: only the first choice stays.
+        r.reload(
+            None,
+            Ok(ConflictFile::parse(&TWO.replace("\n2\n", "\n3\n"))),
+        );
+        assert_eq!(r.choices, vec![Some(Choice::Ours), None]);
+        // One conflict resolved by hand: the remaining one is a different region now.
+        let one = "a\nx\nb\n<<<<<<< ours\n1\n=======\n3\n>>>>>>> theirs\n";
+        r.reload(None, Ok(ConflictFile::parse(one)));
+        assert_eq!(r.choices, vec![None]);
+        assert_eq!(r.focus, 0);
+    }
+
+    #[test]
+    fn focus_moves_to_unresolved_conflicts_and_wraps() {
+        let mut r = Resolver::new("f".into());
+        r.reload(None, Ok(ConflictFile::parse(TWO)));
+        r.choose(Choice::Ours);
+        assert_eq!(r.focus, 1);
+        r.move_focus(1);
+        assert_eq!(r.focus, 1, "the only unresolved conflict");
+        r.clear_focused();
+        r.focus = 0;
+        r.clear_focused();
+        assert_eq!(r.resolved(), 0);
+        r.move_focus(-1);
+        assert_eq!(r.focus, 1, "wraps backwards");
     }
 }

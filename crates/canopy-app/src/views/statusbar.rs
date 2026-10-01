@@ -104,7 +104,7 @@ pub fn show(
                         ))
                         .clicked()
                     {
-                        actions.push(Action::OpenExternal(page.clone()));
+                        actions.push(Action::OpenUrl(page.clone()));
                     }
                     if ui
                         .button(format!("{}  Skip this version", icon::X))

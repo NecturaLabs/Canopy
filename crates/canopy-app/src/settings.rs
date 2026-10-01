@@ -137,6 +137,9 @@ pub struct Settings {
     pub gitlab_hosts: String,
     /// Terminal command for "Open terminal here", run in the repository folder.
     pub terminal: String,
+    /// Editor command for "Open in editor"; the file is added as the last argument. Empty uses
+    /// the platform's text editor.
+    pub editor: String,
     /// Load pull/merge requests from GitHub and GitLab.
     pub hosting_api: bool,
 
@@ -199,6 +202,7 @@ impl Default for Settings {
             clone_protocol: CloneProtocol::Https,
             gitlab_hosts: String::new(),
             terminal: String::new(),
+            editor: String::new(),
             hosting_api: true,
             check_updates: true,
             include_prereleases: false,

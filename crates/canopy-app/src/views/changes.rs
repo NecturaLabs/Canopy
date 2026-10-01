@@ -242,9 +242,7 @@ fn list(
                 .button(format!("{}  Open file", icon::ARROW_SQUARE_OUT))
                 .clicked()
             {
-                actions.push(Action::OpenExternal(
-                    tab.path.join(&entry.path).display().to_string(),
-                ));
+                actions.push(Action::OpenInEditor(tab.path.join(&entry.path)));
             }
             if ui.button(format!("{}  Copy path", icon::COPY)).clicked() {
                 actions.push(Action::Copy(entry.path.clone()));

@@ -811,7 +811,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let download = a.manifest.artifact().is_some();
                             if widgets::primary_button(ui, if download { "Download" } else { "Open release" }, true, 150.0).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenExternal(a.download())]);
+                                outcome = Outcome::Run(vec![Action::OpenUrl(a.download())]);
                             }
                             if ui.add_sized([90.0, 34.0], egui::Button::new("Later")).clicked() {
                                 outcome = Outcome::Close;
@@ -835,7 +835,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                                 outcome = Outcome::Close;
                             }
                             if ui.add_sized([150.0, 34.0], egui::Button::new(format!("{}  All releases", icon::ARROW_SQUARE_OUT))).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenExternal(crate::updater::RELEASES_PAGE.to_owned())]);
+                                outcome = Outcome::Run(vec![Action::OpenUrl(crate::updater::RELEASES_PAGE.to_owned())]);
                             }
                         });
                     });
@@ -858,7 +858,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if widgets::primary_button(ui, "Open report", true, 130.0).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenExternal(report.path.display().to_string())]);
+                                outcome = Outcome::Run(vec![Action::OpenInEditor(report.path.clone())]);
                             }
                             if ui.add_sized([90.0, 34.0], egui::Button::new("Dismiss")).clicked() {
                                 outcome = Outcome::Close;
@@ -866,7 +866,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                             if let Some(dir) = report.path.parent()
                                 && ui.add_sized([120.0, 34.0], egui::Button::new(format!("{}  Show folder", icon::FOLDER))).clicked()
                             {
-                                outcome = Outcome::Run(vec![Action::OpenExternal(dir.display().to_string())]);
+                                outcome = Outcome::Run(vec![Action::OpenPath(dir.to_path_buf())]);
                             }
                         });
                     });
@@ -1028,7 +1028,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                                 outcome = Outcome::Run(vec![Action::WhatsNew]);
                             }
                             if ui.button(format!("{}  Releases", icon::ARROW_SQUARE_OUT)).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenExternal(crate::updater::RELEASES_PAGE.to_owned())]);
+                                outcome = Outcome::Run(vec![Action::OpenUrl(crate::updater::RELEASES_PAGE.to_owned())]);
                             }
                         });
                         ui.horizontal(|ui| {

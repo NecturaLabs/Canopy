@@ -191,7 +191,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 resp.context_menu(|ui| {
                     if let Some((f, remote_branch)) = &upstream_forge {
                         if ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
-                            actions.push(Action::OpenExternal(f.branch_url(remote_branch)));
+                            actions.push(Action::OpenUrl(f.branch_url(remote_branch)));
                         }
                         if ui.button(format!("{}  Create {}…", icon::GIT_PULL_REQUEST, f.kind.request_noun())).clicked() {
                             actions.push(Action::CreateRequest { source: name.clone() });
@@ -266,7 +266,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 resp.context_menu(|ui| {
                     if let Some(f) = &forge
                         && ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
-                            actions.push(Action::OpenExternal(f.web_url()));
+                            actions.push(Action::OpenUrl(f.web_url()));
                         }
                     if ui.button(format!("{}  Fetch", icon::ARROWS_CLOCKWISE)).clicked() {
                         actions.push(Action::Fetch);
@@ -296,7 +296,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     resp.context_menu(|ui| {
                         if let Some(f) = &rb_forge
                             && ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
-                                actions.push(Action::OpenExternal(f.branch_url(&branch)));
+                                actions.push(Action::OpenUrl(f.branch_url(&branch)));
                             }
                         if ui.button(format!("{}  Check out as local branch", icon::CHECK)).clicked() {
                             actions.push(Action::Op(Op::CheckoutRemote { remote: remote.clone(), branch: branch.clone() }));
@@ -336,7 +336,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     if let Some(f) = &tag_forge {
                         let what = if f.kind == canopy_core::forge::ForgeKind::GitHub { "release" } else { "tag" };
                         if ui.button(format!("{}  Open {what} on {}", forge_icon(f.kind), f.kind.name())).clicked() {
-                            actions.push(Action::OpenExternal(f.tag_url(&name)));
+                            actions.push(Action::OpenUrl(f.tag_url(&name)));
                         }
                     }
                     if let Some(oid) = target

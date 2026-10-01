@@ -62,7 +62,12 @@ pub enum Action {
     Settings,
     Copy(String),
     /// Open a file, folder or web page with the system's default handler.
-    OpenExternal(String),
+    /// A web page (http or https only: API data and the update feed reach this).
+    OpenUrl(String),
+    /// A folder in the file manager.
+    OpenPath(PathBuf),
+    /// A file in the editor from Settings, or the platform's text editor; never run.
+    OpenInEditor(PathBuf),
     OpenTerminal(PathBuf),
     /// Run a keyboard command (from the palette).
     Command(Command),
@@ -539,7 +544,7 @@ impl CanopyApp {
                         (View::History, Some(oid), _) => forge.commit_url(&oid.to_string()),
                         _ => forge.web_url(),
                     };
-                    actions.push(Action::OpenExternal(url));
+                    actions.push(Action::OpenUrl(url));
                 }
             }
             C::FocusCommit => {
@@ -822,7 +827,7 @@ impl CanopyApp {
                         "Repository",
                         None,
                     ),
-                    Action::OpenExternal(tab.path.display().to_string()),
+                    Action::OpenPath(tab.path.clone()),
                 ),
                 (
                     e(icon::X, "Close repository", "Repository", Some(C::CloseTab)),
@@ -851,7 +856,7 @@ impl CanopyApp {
                         "Remote",
                         None,
                     ),
-                    Action::OpenExternal(forge.web_url()),
+                    Action::OpenUrl(forge.web_url()),
                 ));
                 v.push((
                     e(
@@ -1130,7 +1135,7 @@ impl CanopyApp {
                 Action::OpenLogs => match crate::logging::log_dir() {
                     Some(dir) => {
                         let _ = std::fs::create_dir_all(&dir);
-                        if let Err(e) = open_external(&dir.display().to_string()) {
+                        if let Err(e) = crate::platform::open_folder(&dir) {
                             self.toasts.push(ctx, ToastKind::Error, "Could not open", e);
                         }
                     }
@@ -1188,18 +1193,26 @@ impl CanopyApp {
                     ctx.copy_text(text.clone());
                     self.toasts.push(ctx, ToastKind::Info, "Copied", text);
                 }
-                Action::OpenExternal(target) => {
-                    if let Err(e) = open_external(&target) {
-                        self.toasts.push(
-                            ctx,
-                            ToastKind::Error,
-                            "Could not open",
-                            format!("{target}: {e}"),
-                        );
+                Action::OpenUrl(url) => {
+                    if let Err(e) = crate::platform::open_url(&url) {
+                        self.toasts
+                            .push(ctx, ToastKind::Error, "Could not open the page", e);
+                    }
+                }
+                Action::OpenPath(dir) => {
+                    if let Err(e) = crate::platform::open_folder(&dir) {
+                        self.toasts
+                            .push(ctx, ToastKind::Error, "Could not open the folder", e);
+                    }
+                }
+                Action::OpenInEditor(file) => {
+                    if let Err(e) = crate::platform::open_in_editor(&file, &self.settings.editor) {
+                        self.toasts
+                            .push(ctx, ToastKind::Error, "Could not open the file", e);
                     }
                 }
                 Action::OpenTerminal(p) => {
-                    if let Err(e) = open_terminal(&p, &self.settings.terminal) {
+                    if let Err(e) = crate::platform::open_terminal(&p, &self.settings.terminal) {
                         self.toasts
                             .push(ctx, ToastKind::Error, "Could not open a terminal", e);
                     }
@@ -1389,7 +1402,7 @@ impl CanopyApp {
         let has_token = matches!(t.requests.token, Some(Some(_)));
         if !self.settings.hosting_api || !has_token {
             let url = forge.new_request_url(&source, target.as_deref());
-            if let Err(e) = open_external(&url) {
+            if let Err(e) = crate::platform::open_url(&url) {
                 self.toasts
                     .push(ctx, ToastKind::Error, "Could not open the browser", e);
             }
@@ -1745,126 +1758,6 @@ fn start_askpass(ctx: &egui::Context) -> Option<crate::askpass::Server> {
     }
 }
 
-/// Whether `target` may be handed to the platform opener: a web address (`https://`, or `http://`
-/// for a self-hosted GitLab without TLS) or an absolute path. URLs from API responses and the
-/// update feed pass through here, so other schemes (`file:`, `javascript:`, custom URL handlers)
-/// and option-like strings are refused.
-fn openable(target: &str) -> Result<(), String> {
-    if target.starts_with('-') || target.chars().any(char::is_control) {
-        return Err("refusing to open this address".into());
-    }
-    let lower = target.to_ascii_lowercase();
-    if let Some(rest) = lower
-        .strip_prefix("https://")
-        .or_else(|| lower.strip_prefix("http://"))
-    {
-        return if rest.is_empty() {
-            Err("empty address".into())
-        } else {
-            Ok(())
-        };
-    }
-    if std::path::Path::new(target).is_absolute() {
-        return Ok(());
-    }
-    Err("only web addresses and folders on this computer can be opened".into())
-}
-
-/// Opens a path or an `https://` URL with the platform's default handler.
-pub fn open_external(target: &str) -> Result<(), String> {
-    openable(target)?;
-    #[cfg(target_os = "linux")]
-    let r = std::process::Command::new("xdg-open").arg(target).spawn();
-    #[cfg(target_os = "macos")]
-    let r = std::process::Command::new("open").arg(target).spawn();
-    #[cfg(target_os = "windows")]
-    let r = if target.starts_with("http://") || target.starts_with("https://") {
-        std::process::Command::new("rundll32")
-            .args(["url.dll,FileProtocolHandler", target])
-            .spawn()
-    } else {
-        std::process::Command::new("explorer").arg(target).spawn()
-    };
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    let r: std::io::Result<std::process::Child> =
-        Err(std::io::Error::other("unsupported platform"));
-    r.map(drop).map_err(|e| {
-        tracing::warn!("could not open {target}: {e}");
-        e.to_string()
-    })
-}
-
-/// Opens a terminal in `path`: the configured command first, then the platform's usual ones.
-fn open_terminal(path: &std::path::Path, configured: &str) -> Result<(), String> {
-    let configured = configured.trim();
-    if !configured.is_empty() {
-        let mut parts = configured.split_whitespace();
-        if let Some(program) = parts.next() {
-            return std::process::Command::new(program)
-                .args(parts)
-                .current_dir(path)
-                .spawn()
-                .map(drop)
-                .map_err(|e| format!("{configured}: {e}"));
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let candidates: Vec<String> = std::env::var("TERMINAL")
-            .ok()
-            .into_iter()
-            .chain(
-                [
-                    "x-terminal-emulator",
-                    "kgx",
-                    "gnome-terminal",
-                    "konsole",
-                    "alacritty",
-                    "kitty",
-                    "foot",
-                    "wezterm",
-                    "ghostty",
-                    "xterm",
-                ]
-                .map(String::from),
-            )
-            .collect();
-        for term in candidates {
-            if std::process::Command::new(&term)
-                .current_dir(path)
-                .spawn()
-                .is_ok()
-            {
-                return Ok(());
-            }
-        }
-        Err("No terminal emulator found. Set one in Settings → Integrations.".into())
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .args(["-a", "Terminal"])
-            .arg(path)
-            .spawn()
-            .map(drop)
-            .map_err(|e| e.to_string())
-    }
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "cmd"])
-            .current_dir(path)
-            .spawn()
-            .map(drop)
-            .map_err(|e| e.to_string())
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-        let _ = path;
-        Err("unsupported platform".into())
-    }
-}
-
 impl eframe::App for CanopyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -2038,30 +1931,5 @@ impl eframe::App for CanopyApp {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         egui::Rgba::from(self.settings.theme.palette().bg).to_array()
-    }
-}
-
-#[cfg(test)]
-mod open_tests {
-    use super::openable;
-
-    #[test]
-    fn only_web_addresses_and_absolute_paths_open() {
-        assert!(openable("https://github.com/o/r/pull/1").is_ok());
-        assert!(openable("HTTPS://gitlab.com/o/r").is_ok());
-        assert!(openable("http://127.0.0.1:8080/o/r/pull/1").is_ok());
-        assert!(openable("http://gitlab.internal/group/repo").is_ok());
-        assert!(openable("file:///etc/passwd").is_err());
-        assert!(openable("javascript:alert(1)").is_err());
-        assert!(openable("vscode://open?x").is_err());
-        assert!(openable("--help").is_err());
-        assert!(openable("relative/path").is_err());
-        assert!(openable("https://").is_err());
-        assert!(openable("https://a\nb").is_err());
-        assert!(openable("https://a\u{0}b").is_err());
-        #[cfg(unix)]
-        assert!(openable("/home/someone/repo").is_ok());
-        #[cfg(windows)]
-        assert!(openable("C:\\Users\\someone").is_ok());
     }
 }

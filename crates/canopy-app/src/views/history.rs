@@ -438,7 +438,7 @@ pub fn commit_menu(
             ))
             .clicked()
         {
-            actions.push(Action::OpenExternal(f.commit_url(&oid.to_string())));
+            actions.push(Action::OpenUrl(f.commit_url(&oid.to_string())));
         }
         ui.separator();
     }

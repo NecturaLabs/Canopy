@@ -9,6 +9,7 @@ mod highlight;
 mod hosting;
 mod keymap;
 mod logging;
+mod platform;
 mod settings;
 mod tab;
 mod ui;

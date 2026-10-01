@@ -451,7 +451,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
             if widgets::tool_button(ui, icon::FOLDER_OPEN, "Files", "Show in file manager", true)
                 .clicked()
             {
-                actions.push(Action::OpenExternal(tab.path.display().to_string()));
+                actions.push(Action::OpenPath(tab.path.clone()));
             }
             if let Some((_, f)) = forge
                 && widgets::tool_button(
@@ -463,7 +463,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 )
                 .clicked()
             {
-                actions.push(Action::OpenExternal(f.web_url()));
+                actions.push(Action::OpenUrl(f.web_url()));
             }
             if local_only {
                 egui::Frame::new()
