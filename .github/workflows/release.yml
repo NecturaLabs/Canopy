@@ -13,32 +13,43 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || !matrix.self-hosted) && matrix.os || fromJSON(matrix.self-hosted) }}
+    # On the self-hosted runners (Ubuntu 24.04) the Linux build runs in an
+    # Ubuntu 22.04 container to keep the same glibc floor.
+    container: ${{ vars.USE_SELF_HOSTED != '0' && matrix.container || '' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           # The oldest supported Ubuntu runner keeps the glibc requirement low.
           - os: ubuntu-22.04
+            self-hosted: '["self-hosted", "linux", "wsl"]'
+            container: ubuntu:22.04
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
           - os: windows-latest
+            self-hosted: '["self-hosted", "windows", "x64"]'
             target: x86_64-pc-windows-msvc
             archive: zip
     defaults:
       run:
         shell: bash
     steps:
+      - name: Install build tools in the container
+        if: runner.os == 'Linux'
+        run: |
+          [[ -f /.dockerenv ]] || exit 0
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl git pkg-config
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
+          cache-key: ${{ matrix.target }}
 
       - name: Check tag matches workspace version
         run: |
@@ -66,7 +77,8 @@ jobs:
           fi
           cd dist
           if [[ "${{ matrix.archive }}" == zip ]]; then
-            7z a -tzip "$name.zip" "$name" > /dev/null
+            # Windows' own bsdtar writes zip; the self-hosted runners have no 7-Zip.
+            "$(cygpath -u "$SYSTEMROOT")/System32/tar.exe" -a -cf "$name.zip" "$name"
           else
             tar -czf "$name.tar.gz" "$name"
           fi
@@ -81,7 +93,7 @@ jobs:
   release:
     name: Publish release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.USE_SELF_HOSTED == '0' && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
