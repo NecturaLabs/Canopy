@@ -15,6 +15,8 @@ Update this table in the same change that adds or alters a feature.
 | macOS | Done | Yes | Yes | Yes |
 | Windows | Done | Yes | Yes | Yes |
 | Native (non-Electron) UI | Done | Yes | No | Yes |
+| One-line install into its own folder, with uninstall (Linux, macOS, Windows) | Done | No | No | No |
+| Builds for Linux arm64 and Intel macOS | Experimental | No | Yes | Yes |
 | Network operations through the system `git` (credential helpers, SSH config, hooks) | Done | Yes | ? | Partial |
 
 ## Repositories

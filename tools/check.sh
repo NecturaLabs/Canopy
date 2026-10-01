@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Usage: tools/check.sh
 #
-# The local equivalent of CI: formatting check, clippy with warnings denied, the full test suite,
-# the release tooling's self-test and the licence notices check (cargo-deny runs only in CI).
+# The local part of CI: formatting check, clippy with warnings denied, the full test suite, the
+# release tooling's self-test, the licence notices check, the installer test, and ShellCheck and
+# cargo-deny when they are installed. CI also tests on macOS and Windows and parses install.ps1.
 # Run it before every commit; it must pass before a change is considered done.
 set -euo pipefail
 
@@ -31,5 +32,23 @@ python3 tools/release.py selftest
 
 step "tools/notices.py --check"
 python3 tools/notices.py --check
+
+step "packaging/test-install.sh"
+sh packaging/test-install.sh >/dev/null
+
+if command -v shellcheck >/dev/null; then
+  step "shellcheck"
+  shellcheck packaging/*.sh
+  shellcheck --severity=warning tools/*.sh
+else
+  printf '\n(shellcheck not installed; CI runs it)\n'
+fi
+
+if command -v cargo-deny >/dev/null; then
+  step "cargo deny check"
+  cargo deny check
+else
+  printf '(cargo-deny not installed; CI runs it)\n'
+fi
 
 printf '\n\033[1;32mAll checks passed.\033[0m\n'
