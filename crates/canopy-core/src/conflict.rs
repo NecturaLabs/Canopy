@@ -11,9 +11,9 @@
 //! being replayed. The labels git writes after the markers ([`ConflictRegion::ours_label`],
 //! [`ConflictRegion::theirs_label`]) say which is which.
 
-use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
+use crate::paths::{check_relative, safe_join, write_atomic};
 use crate::{Error, Repo, Result};
 
 /// The marker length git uses unless the `conflict-marker-size` attribute says otherwise.
@@ -469,68 +469,22 @@ impl ConflictFile {
     }
 }
 
-/// Checks that `path` is a plain path relative to the working directory.
-fn relative_path(path: &str) -> Result<&Path> {
-    let p = Path::new(path);
-    let plain = !path.is_empty()
-        && p.components().all(|c| match c {
-            Component::Normal(name) => !name.eq_ignore_ascii_case(".git"),
-            Component::CurDir => true,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => false,
-        });
-    if plain {
-        Ok(p)
-    } else {
-        Err(Error::invalid(format!(
-            "{path} is not a path inside the working tree."
-        )))
-    }
+/// Whether the working copy of `path` is itself a symbolic link (a link further up is caught by
+/// [`safe_join`]).
+fn is_link(root: &Path, path: &str) -> Result<bool> {
+    let probe = root.join(check_relative(path)?);
+    Ok(std::fs::symlink_metadata(probe).is_ok_and(|m| m.file_type().is_symlink()))
 }
 
-/// Writes `content` to `dest` through a temporary file in the same directory, keeping the
-/// permissions (and so the executable bit) of the file it replaces.
-fn write_atomic(dest: &Path, content: &[u8]) -> Result<()> {
-    let dir = dest
-        .parent()
-        .ok_or_else(|| Error::invalid(format!("{} has no parent folder.", dest.display())))?;
-    std::fs::create_dir_all(dir)?;
-    let permissions = std::fs::metadata(dest).ok().map(|m| m.permissions());
-    let name = dest
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let mut attempt = 0u32;
-    let (tmp, mut file) = loop {
-        let tmp: PathBuf = dir.join(format!(
-            ".{name}.canopy-{}-{attempt}.tmp",
-            std::process::id()
-        ));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-        {
-            Ok(f) => break (tmp, f),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < 100 => {
-                attempt += 1;
-            }
-            Err(e) => return Err(e.into()),
-        }
-    };
-    let result = (|| -> Result<()> {
-        file.write_all(content)?;
-        file.sync_all()?;
-        drop(file);
-        if let Some(p) = permissions {
-            std::fs::set_permissions(&tmp, p)?;
-        }
-        std::fs::rename(&tmp, dest)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
+/// [`safe_join`] for a conflicted file the resolver reads or writes, refusing a symbolic link
+/// with the advice to pick a side.
+fn text_file(root: &Path, path: &str) -> Result<PathBuf> {
+    if is_link(root, path)? {
+        return Err(Error::invalid(format!(
+            "{path} is a symbolic link. Choose our or their version."
+        )));
     }
-    result
+    safe_join(root, path)
 }
 
 impl Repo {
@@ -560,13 +514,8 @@ impl Repo {
     /// [`Error::Invalid`] for a file that is missing, a symbolic link, binary (contains a NUL
     /// byte) or not UTF-8, which can only be resolved by choosing a whole side.
     pub fn conflict_file(&self, path: &str) -> Result<ConflictFile> {
-        let full = self.workdir().join(relative_path(path)?);
+        let full = text_file(self.workdir(), path)?;
         match std::fs::symlink_metadata(&full) {
-            Ok(m) if m.file_type().is_symlink() => {
-                return Err(Error::invalid(format!(
-                    "{path} is a symbolic link. Choose our or their version."
-                )));
-            }
             Ok(m) if !m.is_file() => {
                 return Err(Error::invalid(format!(
                     "{path} is not a regular file. Choose our or their version."
@@ -607,7 +556,7 @@ impl Repo {
     /// files, which have no parse to fingerprint. Callers should confirm first, since edits in
     /// the working copy cannot be recovered.
     pub fn resolve_with_side(&self, path: &str, side: Side) -> Result<()> {
-        relative_path(path)?;
+        check_relative(path)?;
         let Some(kind) = self.conflict_kind(path)? else {
             return Err(Error::invalid(format!("{path} is not conflicted.")));
         };
@@ -638,16 +587,10 @@ impl Repo {
         mark_resolved: bool,
         expected: u64,
     ) -> Result<()> {
-        let rel = relative_path(path)?;
         if mark_resolved && has_conflict_markers(content) {
             return Err(unresolved_markers(path));
         }
-        let full = self.workdir().join(rel);
-        if std::fs::symlink_metadata(&full).is_ok_and(|m| m.file_type().is_symlink()) {
-            return Err(Error::invalid(format!(
-                "{path} is a symbolic link. Choose our or their version."
-            )));
-        }
+        let full = text_file(self.workdir(), path)?;
         // The check and the write are not atomic: a save landing between them is still lost.
         // That window is the microseconds between this read and the rename in `write_atomic`,
         // instead of the file watcher's debounce, and editors honour no lock that could close it.
@@ -669,12 +612,14 @@ impl Repo {
     /// Marks `path` resolved with `git add` (a deleted working copy stages the deletion). Refuses
     /// while the working copy still contains a conflict region.
     pub fn mark_resolved(&self, path: &str) -> Result<()> {
-        let rel = relative_path(path)?;
-        let full = self.workdir().join(rel);
-        if std::fs::symlink_metadata(&full).is_ok_and(|m| m.is_file()) {
-            let bytes = std::fs::read(&full)?;
-            if !bytes.contains(&0) && has_conflict_markers(&String::from_utf8_lossy(&bytes)) {
-                return Err(unresolved_markers(path));
+        // A symbolic link is staged as a link; its target is never read.
+        if !is_link(self.workdir(), path)? {
+            let full = safe_join(self.workdir(), path)?;
+            if std::fs::symlink_metadata(&full).is_ok_and(|m| m.is_file()) {
+                let bytes = std::fs::read(&full)?;
+                if !bytes.contains(&0) && has_conflict_markers(&String::from_utf8_lossy(&bytes)) {
+                    return Err(unresolved_markers(path));
+                }
             }
         }
         self.git_cmd(&["--literal-pathspecs", "add", "--", path])
@@ -949,10 +894,10 @@ tail
     #[test]
     fn rejects_paths_outside_the_working_tree() {
         for bad in ["", "../x", "/etc/passwd", "a/../../x", ".git/config"] {
-            assert!(relative_path(bad).is_err(), "{bad}");
+            assert!(check_relative(bad).is_err(), "{bad}");
         }
         for good in ["a.txt", "dir/with space/f", "./a"] {
-            assert!(relative_path(good).is_ok(), "{good}");
+            assert!(check_relative(good).is_ok(), "{good}");
         }
     }
 }

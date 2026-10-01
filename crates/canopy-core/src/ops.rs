@@ -199,9 +199,40 @@ impl Repo {
             .map(drop)
     }
 
-    /// Stages every change, including untracked files.
+    /// Stages every change, including untracked files, except folders holding a repository of
+    /// their own (see [`Self::stage_all_except_repositories`]).
     pub fn stage_all(&self) -> Result<()> {
-        self.git_cmd(&["add", "-A"]).map(drop)
+        self.stage_all_except_repositories().map(drop)
+    }
+
+    /// Stages every change, including untracked files (`git add -A`), but leaves out untracked
+    /// folders that hold a Git repository of their own and are not submodules: `git add` would
+    /// record each as a gitlink with no `.gitmodules` entry, which nobody can clone. Returns those
+    /// folders (relative, ending in `/`) so the caller can ask what to do with them; staging one
+    /// on purpose is [`Self::stage`] with its path.
+    pub fn stage_all_except_repositories(&self) -> Result<Vec<String>> {
+        let repositories: Vec<String> = crate::status::collect_with(self.git(), usize::MAX)?
+            .untracked_dirs
+            .into_iter()
+            .filter(|d| d.repository)
+            .map(|d| d.path)
+            .collect();
+        // A name that is not UTF-8 cannot be passed as an exclusion, and staging it would add a
+        // gitlink, so refuse instead.
+        if let Some(bad) = repositories.iter().find(|r| r.contains('\u{FFFD}')) {
+            return Err(Error::invalid(format!(
+                "The folder {bad} holds a repository of its own and its name is not UTF-8, so \
+                 Stage all cannot leave it out. Stage files one by one, or rename the folder."
+            )));
+        }
+        let excludes: Vec<String> = repositories
+            .iter()
+            .map(|d| format!(":(top,exclude,literal){}", d.trim_end_matches('/')))
+            .collect();
+        let mut args = vec!["add", "-A", "--", ":/"];
+        args.extend(excludes.iter().map(String::as_str));
+        self.git_cmd(&args)?;
+        Ok(repositories)
     }
 
     /// Removes files from the index, keeping the working tree. Paths are literal, never globs.
@@ -303,13 +334,30 @@ impl Repo {
         Ok(self.git().head()?.peel_to_commit()?.id())
     }
 
-    /// Creates a branch at `start` (a commit, branch or tag; `HEAD` when `None`), optionally
-    /// switching to it.
+    /// Creates a branch at `start` (a commit, branch, tag or remote-tracking branch such as
+    /// `origin/main`; `HEAD` when `None`), optionally switching to it.
+    ///
+    /// The new branch never gets an upstream (`--no-track`), whatever `branch.autoSetupMerge`
+    /// says: a branch started from `origin/main` would otherwise track `origin/main`, and a plain
+    /// `git push` would then fail under `push.default=simple` or push to `main` under `upstream`.
+    /// Use [`Self::publish_branch`] to give it its own upstream.
     pub fn create_branch(&self, name: &str, start: Option<&str>, checkout: bool) -> Result<()> {
+        // Git refuses such names anyway; without this check they would be read as options.
+        if name.is_empty() || name.starts_with('-') {
+            return Err(Error::invalid(format!(
+                "'{name}' is not a valid branch name."
+            )));
+        }
+        if start.is_some_and(|s| s.is_empty() || s.starts_with('-')) {
+            return Err(Error::invalid(format!(
+                "'{}' is not a valid start point.",
+                start.unwrap_or_default()
+            )));
+        }
         let mut args = if checkout {
-            vec!["switch", "-q", "-c", name]
+            vec!["switch", "-q", "--no-track", "-c", name]
         } else {
-            vec!["branch", name]
+            vec!["branch", "--no-track", "--", name]
         };
         if let Some(s) = start {
             args.push(s);
@@ -348,10 +396,27 @@ impl Repo {
         self.git_cmd(&["branch", "-m", old, new]).map(drop)
     }
 
-    /// Deletes a local branch; `force` also deletes it when unmerged.
+    /// Deletes a local branch: [`Self::force_delete_branch`] when `force` is set, otherwise
+    /// [`Self::delete_merged_branch`]. Kept for existing callers; new code calls those two.
     pub fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
-        self.git_cmd(&["branch", if force { "-D" } else { "-d" }, name])
-            .map(drop)
+        if force {
+            self.force_delete_branch(name)
+        } else {
+            self.delete_merged_branch(name)
+        }
+    }
+
+    /// Deletes a local branch with `git branch -d`, which refuses (with git's "not fully merged"
+    /// message in [`Error::Cli`]) unless the branch is merged into its upstream, or into `HEAD`
+    /// when it has none. The default way to delete a branch.
+    pub fn delete_merged_branch(&self, name: &str) -> Result<()> {
+        self.git_cmd(&["branch", "-d", "--", name]).map(drop)
+    }
+
+    /// Deletes a local branch with `git branch -D`, even when its commits are merged nowhere.
+    /// Call it only after the user confirmed losing those commits (they stay in the reflog).
+    pub fn force_delete_branch(&self, name: &str) -> Result<()> {
+        self.git_cmd(&["branch", "-D", "--", name]).map(drop)
     }
 
     /// Merges `target` into the current branch as `mode` says and returns git's standard output.
@@ -525,6 +590,33 @@ impl Repo {
         }
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
+    /// Publishes the local branch `name` (checked out or not) to `remote` and makes the remote
+    /// branch of the same name its upstream: `git push -u <remote> refs/heads/<name>:refs/heads/<name>`.
+    /// Returns git's summary.
+    pub fn publish_branch(
+        &self,
+        name: &str,
+        remote: &str,
+        progress: impl FnMut(&str),
+    ) -> Result<String> {
+        if remote.is_empty() || remote.starts_with('-') || self.git().find_remote(remote).is_err() {
+            return Err(Error::invalid(format!("'{remote}' is not a remote.")));
+        }
+        if self
+            .git()
+            .find_branch(name, git2::BranchType::Local)
+            .is_err()
+        {
+            return Err(Error::invalid(format!("'{name}' is not a local branch.")));
+        }
+        let refspec = format!("refs/heads/{name}:refs/heads/{name}");
+        cli::run_streaming(
+            Some(self.workdir()),
+            &["push", "--progress", "--set-upstream", remote, &refspec],
+            progress,
+        )
     }
 
     /// Pushes one tag to `remote`.

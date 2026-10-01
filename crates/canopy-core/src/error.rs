@@ -46,6 +46,16 @@ pub enum Error {
     /// retry.
     #[error("{0} changed on disk since it was loaded. Reload it before saving.")]
     ChangedOnDisk(String),
+
+    /// A path was refused before any file was read or written: it is empty, absolute, contains
+    /// `..` or a `.git` component, or goes through a symbolic link. Nothing was read or written.
+    #[error("{path} {reason}.")]
+    UnsafePath {
+        /// The path as given (relative to the working tree, or the file Canopy refused).
+        path: String,
+        /// Why it was refused, e.g. "goes through a symbolic link".
+        reason: &'static str,
+    },
 }
 
 impl Error {

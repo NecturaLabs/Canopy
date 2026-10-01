@@ -17,11 +17,13 @@ mod error;
 pub mod flow;
 pub mod forge;
 pub mod graph;
+pub mod ignore;
 pub mod lfs;
 mod lines;
 mod merged;
 pub mod model;
 pub mod ops;
+pub mod paths;
 pub mod repo;
 pub mod status;
 pub mod submodule;
@@ -37,6 +39,9 @@ pub use forge::{Forge, ForgeKind};
 pub use git2::Oid;
 // `Segment` at the crate root is the conflict-file segment; the graph's is `GraphSegment`.
 pub use graph::{GraphRow, LineEnd, Segment as GraphSegment};
+pub use ignore::{
+    IgnoreDestination, IgnoreMatch, IgnoreOutcome, IgnorePreview, IgnoreRule, IgnoreTarget,
+};
 pub use lfs::{LfsFile, LfsPointer};
 pub use merged::{MergedBranch, MergedReason};
 pub use model::*;
