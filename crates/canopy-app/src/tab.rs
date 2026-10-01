@@ -1184,6 +1184,7 @@ mod perf {
             kind: ChangeKind::Modified,
             additions: 3,
             deletions: 1,
+            lfs: false,
         }
     }
 

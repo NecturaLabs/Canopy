@@ -17,10 +17,9 @@ Who works on what, on which branch. Remove a row when its branch is merged.
 | Entry | Branch | Who | State |
 | --- | --- | --- | --- |
 | Installer security-review fixes (1 blocking, 9 should-fix, nits) | `fix/installer-review` | canopy-1 agent | In progress |
-| Performance: shared snapshots and diffs, diff layout cache, virtualised diff and resolver rows, highlighting thread, palette cache | `perf/views` | canopy-1 | Done (2cc3cad: 119–209 ms → 0.3–0.9 ms per frame on huge data); in review, then merge |
+| Performance: shared snapshots and diffs, diff layout cache, virtualised diff and resolver rows, highlighting thread, palette cache | `perf/views` | canopy-1 | Merged into main (6efeba8) |
 | Partial clones in core (missing objects fetched through git) | `feat/partial-clones` | canopy-1 | Core done (85bf861, 15 new tests); in review, then merge |
 | Core safety: `branch -d` by default, publish any branch, mode and type changes, collapsed untracked folders, nested repositories in Stage all, safe paths, ignore rules | `canopy-2/core-safety` | canopy-2 | In progress (core only; canopy-1 wires the UI) |
-| Core workflows: git-flow, merged detection, LFS status, submodules | `canopy-3/core-workflows` | canopy-3 | In progress (core only; canopy-1 wires the UI) |
 
 ## Now
 
@@ -42,17 +41,18 @@ In order. The UI entries come before accessibility, and accessibility before the
 - [ ] **Partial clones in the views**: a "not downloaded yet" state for blobs missing from a
   partial clone, fetched on demand off the UI thread. Accept: a `--filter=blob:none` clone browses
   history without blocking and shows file contents after fetching.
-- [ ] **Git LFS**: correct status for LFS files, an LFS indicator and pointer-only state, LFS
+- [ ] **Git LFS** (core status, pointer and not-downloaded detection merged from canopy-3; see
+  `docs/specs/HANDOFF-canopy-3-core-workflows.md`): correct status for LFS files, an LFS indicator and pointer-only state, LFS
   diffs, `git lfs pull`/fetch, track and untrack, locks, and a prompt when `git-lfs` is missing.
   Accept: an LFS fixture shows no phantom changes, marks pointer-only files and pulls them.
-- [ ] **Feature-branch workflows**: git-flow start and finish (feature, bugfix, release, hotfix,
+- [ ] **Feature-branch workflows** (git-flow and merged detection in core, merged from canopy-3): git-flow start and finish (feature, bugfix, release, hotfix,
   AVH config) without the `git flow` binary, branch folders by prefix in the sidebar, publish with
   upstream, merged and squash-merged indicators, delete merged branches (`-d`, force only after
   confirmation). Accept: refs, tags and merges match the spec's command table.
 - [ ] **.gitignore**: ignore a file, extension, folder or pattern from the changes list, local-only
   exclude, stop tracking and ignore, show ignored files, "why ignored", templates on init.
   Accept: each action's result matches `git check-ignore -v`.
-- [ ] **Submodules**: sidebar list with state, open in a tab, init, update, sync, add, remove,
+- [ ] **Submodules** (core status and operations merged from canopy-3): sidebar list with state, open in a tab, init, update, sync, add, remove,
   pointer diffs as commit ranges, recurse on pull, checkout and clone. Accept: an out-of-date
   submodule fixture shows its state and updates.
 - [ ] **File and directory links**: show and diff symlinks, file/symlink type changes and mode
