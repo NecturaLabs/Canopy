@@ -10,8 +10,8 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 
 use canopy_core::ops::{HunkAction, PullStrategy, ResetMode};
 use canopy_core::{
-    CommitDetails, DiffSource, FileDiff, FileEntry, Oid, Repo, RepoSnapshot, RepoState, Whitespace,
-    WorkingStatus,
+    CommitDetails, DiffSource, FileDiff, FileEntry, MissingObjects, Oid, Repo, RepoSnapshot,
+    RepoState, Whitespace, WorkingStatus,
 };
 
 /// A request to change the repository. Each one is followed by a refresh.
@@ -392,7 +392,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             let kind = job.kind();
             let started = std::time::Instant::now();
             match job {
-                Job::Details(oid) => match repo.commit_details(oid) {
+                // Partial clones: download missing objects like `git show` does (network).
+                Job::Details(oid) => match repo.commit_details(oid, MissingObjects::Download) {
                     Ok(d) => emit(Event::Details(Arc::new(d))),
                     Err(e) => emit(Event::Failed(e.to_string())),
                 },
@@ -406,6 +407,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             key.old_path.as_deref(),
                             key.context,
                             key.whitespace,
+                            MissingObjects::Download,
                         )
                     };
                     let result = result.map(Arc::new).map_err(|e| e.to_string());

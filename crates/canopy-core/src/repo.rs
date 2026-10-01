@@ -8,6 +8,7 @@ use git2::{BranchType, Oid, Repository, Sort};
 use crate::diff::{self, DiffSource, FileDiff, Whitespace};
 use crate::graph;
 use crate::model::*;
+use crate::partial::{self, MissingObjects};
 use crate::{Error, Result, status};
 
 /// An open repository with a working directory.
@@ -38,7 +39,10 @@ impl Repo {
     pub fn open(path: &Path) -> Result<Self> {
         let git = Repository::discover(path).map_err(|e| match e.code() {
             git2::ErrorCode::NotFound => Error::NotARepository(path.to_path_buf()),
-            _ => Error::Git(e),
+            _ => match partial::legacy_extension(path) {
+                Some(remote) => Error::LegacyPartialClone { remote },
+                None => Error::Git(e),
+            },
         })?;
         let workdir = git.workdir().ok_or(Error::Bare)?.to_path_buf();
         Ok(Self { git, workdir })
@@ -350,8 +354,59 @@ impl Repo {
         })
     }
 
+    /// Whether this repository is a partial clone (`git clone --filter=...`), whose reads may need
+    /// objects that are still on the server. Reads the configuration; not cached.
+    pub fn is_partial_clone(&self) -> bool {
+        partial::is_partial_clone(&self.git)
+    }
+
+    /// The working-tree status, as [`status::collect`] reads it (and [`Repo::snapshot`] includes).
+    ///
+    /// The only object status ever needs from a partial clone's remote is the tree of `HEAD`,
+    /// missing in a treeless clone after a soft reset or similar. With [`MissingObjects::Fail`]
+    /// that is [`Error::NotDownloaded`]; with [`MissingObjects::Download`] the tree (without
+    /// blobs) is fetched through `git` (network) and status read again.
+    pub fn status(&self, missing: MissingObjects) -> Result<WorkingStatus> {
+        match status::collect(&self.git) {
+            Err(Error::NotDownloaded { .. }) if missing == MissingObjects::Download => {
+                if let Some(tree) = partial::missing_head_tree(&self.git) {
+                    partial::download(&self.git, &self.workdir, &[tree])?;
+                }
+                status::collect(&self.git)
+            }
+            other => other,
+        }
+    }
+
     /// Full message, signatures and changed files of one commit.
-    pub fn commit_details(&self, oid: Oid) -> Result<CommitDetails> {
+    ///
+    /// In a partial clone the file statistics need the blobs (and, in a treeless clone, the
+    /// trees) of the commit and its parent. With [`MissingObjects::Download`] missing ones are
+    /// fetched from the promisor remote through `git` (network); with [`MissingObjects::Fail`]
+    /// the read returns [`Error::NotDownloaded`]. Full clones never touch the network.
+    pub fn commit_details(&self, oid: Oid, missing: MissingObjects) -> Result<CommitDetails> {
+        partial::read_with_download(
+            &self.git,
+            &self.workdir,
+            missing,
+            || self.commit_details_local(oid),
+            || {
+                let commit = self.git.find_commit(oid)?;
+                let trees = partial::missing_commit_trees(&self.git, &commit);
+                if !trees.is_empty() {
+                    return Ok(trees);
+                }
+                let tree = commit.tree()?;
+                let parent = commit.parents().next().map(|p| p.tree()).transpose()?;
+                let d = self
+                    .git
+                    .diff_tree_to_tree(parent.as_ref(), Some(&tree), None)?;
+                Ok(partial::missing_blobs(&self.git, &d, true, true))
+            },
+        )
+    }
+
+    fn commit_details_local(&self, oid: Oid) -> Result<CommitDetails> {
         let commit = self.git.find_commit(oid)?;
         let tree = commit.tree()?;
         let parent_tree = commit.parents().next().map(|p| p.tree()).transpose()?;
@@ -413,7 +468,13 @@ impl Repo {
         let d = match source {
             DiffSource::Unstaged => self.git.diff_index_to_workdir(None, Some(&mut opts))?,
             DiffSource::Staged => {
-                let head = self.git.head().ok().and_then(|h| h.peel_to_tree().ok());
+                // No HEAD (unborn branch) diffs against nothing; a HEAD whose tree cannot be
+                // read is an error, never an empty tree. (`peel_to_tree` would report a missing
+                // tree as a peel failure rather than as a missing object.)
+                let head = match self.git.head() {
+                    Ok(h) => Some(h.peel_to_commit()?.tree()?),
+                    Err(_) => None,
+                };
                 self.git
                     .diff_tree_to_index(head.as_ref(), None, Some(&mut opts))?
             }
@@ -433,9 +494,71 @@ impl Repo {
         Ok(d)
     }
 
+    /// Runs `read` (which reads the diff of `path` for `source`) and, if it fails on objects a
+    /// partial clone has not downloaded, fetches them when `missing` allows it and runs `read`
+    /// again (see [`Repo::file_diff`]).
+    pub(crate) fn read_diff<T>(
+        &self,
+        source: &DiffSource,
+        path: &str,
+        old_path: Option<&str>,
+        missing: MissingObjects,
+        read: impl FnMut() -> Result<T>,
+    ) -> Result<T> {
+        partial::read_with_download(&self.git, &self.workdir, missing, read, || {
+            self.missing_for_diff(source, path, old_path)
+        })
+    }
+
+    /// The objects a diff of one file needs that a partial clone has not downloaded: first any
+    /// missing tree (treeless clones), then the missing blobs of the file's old and new sides.
+    fn missing_for_diff(
+        &self,
+        source: &DiffSource,
+        path: &str,
+        old_path: Option<&str>,
+    ) -> Result<Vec<Oid>> {
+        let mut opts = diff::options(path, old_path, 0, Whitespace::Show);
+        match source {
+            DiffSource::Commit(oid) => {
+                let commit = self.git.find_commit(*oid)?;
+                let trees = partial::missing_commit_trees(&self.git, &commit);
+                if !trees.is_empty() {
+                    return Ok(trees);
+                }
+                let tree = commit.tree()?;
+                let parent = commit.parents().next().map(|p| p.tree()).transpose()?;
+                let d =
+                    self.git
+                        .diff_tree_to_tree(parent.as_ref(), Some(&tree), Some(&mut opts))?;
+                Ok(partial::missing_blobs(&self.git, &d, true, true))
+            }
+            DiffSource::Staged => {
+                if let Some(tree) = partial::missing_head_tree(&self.git) {
+                    return Ok(vec![tree]);
+                }
+                let head = self.git.head().ok().and_then(|h| h.peel_to_tree().ok());
+                let d = self
+                    .git
+                    .diff_tree_to_index(head.as_ref(), None, Some(&mut opts))?;
+                Ok(partial::missing_blobs(&self.git, &d, true, true))
+            }
+            DiffSource::Unstaged => {
+                let d = self.git.diff_index_to_workdir(None, Some(&mut opts))?;
+                // The new side is the working tree: file hashes, not objects to download.
+                Ok(partial::missing_blobs(&self.git, &d, true, false))
+            }
+        }
+    }
+
     /// The diff of one file with `context` lines around each hunk. `whitespace` hides
     /// whitespace-only changes; such a diff is for reading only, since its hunks cannot be applied
     /// as patches.
+    ///
+    /// In a partial clone the diff may need blobs (or, in a treeless clone, trees) that were not
+    /// downloaded. With [`MissingObjects::Download`] they are fetched from the promisor remote
+    /// through `git`, which is a network operation; with [`MissingObjects::Fail`] the read
+    /// returns [`Error::NotDownloaded`] instead. Full clones never touch the network.
     pub fn file_diff(
         &self,
         source: &DiffSource,
@@ -443,9 +566,12 @@ impl Repo {
         old_path: Option<&str>,
         context: u32,
         whitespace: Whitespace,
+        missing: MissingObjects,
     ) -> Result<FileDiff> {
-        let d = self.raw_diff(source, path, old_path, context, whitespace)?;
-        diff::to_file_diff(&d, path)
+        self.read_diff(source, path, old_path, missing, || {
+            let d = self.raw_diff(source, path, old_path, context, whitespace)?;
+            diff::to_file_diff(&d, path)
+        })
     }
 
     /// The working copy of a conflicted file, every line as context, so conflict markers show.

@@ -9,7 +9,7 @@ use std::process::Command;
 use canopy_core::ops::{HunkAction, MergeMode, ResetMode};
 use canopy_core::{
     ChangeKind, Choice, ConflictFile, ConflictKind, ConflictRegion, DiffSource, LineKind,
-    PullStrategy, RefKind, Repo, RepoState, Side, Whitespace,
+    MissingObjects, PullStrategy, RefKind, Repo, RepoState, Side, Whitespace,
 };
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -131,7 +131,9 @@ fn stage_unstage_discard_and_commit() {
     let oid = repo
         .commit("fix: change a\n\nBody.", false, false)
         .expect("commit");
-    let details = repo.commit_details(oid).expect("details");
+    let details = repo
+        .commit_details(oid, MissingObjects::Fail)
+        .expect("details");
     assert_eq!(details.message.trim(), "fix: change a\n\nBody.");
     assert_eq!(details.files.len(), 1);
     assert_eq!(details.files[0].path, "a.txt");
@@ -154,7 +156,14 @@ fn hunk_staging_stages_only_the_chosen_hunk() {
     .expect("write");
 
     let d = repo
-        .file_diff(&DiffSource::Unstaged, "a.txt", None, 1, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Unstaged,
+            "a.txt",
+            None,
+            1,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("diff");
     assert_eq!(d.hunks.len(), 2, "{d:#?}");
     assert_eq!(d.additions, 2);
@@ -168,12 +177,26 @@ fn hunk_staging_stages_only_the_chosen_hunk() {
     repo.apply_hunk(HunkAction::Stage, "a.txt", 1, d.hunks[1].key(), 1)
         .expect("stage hunk");
     let staged = repo
-        .file_diff(&DiffSource::Staged, "a.txt", None, 1, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Staged,
+            "a.txt",
+            None,
+            1,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("staged");
     assert_eq!(staged.hunks.len(), 1);
     assert!(staged.hunks[0].lines.iter().any(|l| l.text == "TEN"));
     let unstaged = repo
-        .file_diff(&DiffSource::Unstaged, "a.txt", None, 1, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Unstaged,
+            "a.txt",
+            None,
+            1,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("unstaged");
     assert_eq!(unstaged.hunks.len(), 1);
     assert!(unstaged.hunks[0].lines.iter().any(|l| l.text == "ONE"));
@@ -181,14 +204,28 @@ fn hunk_staging_stages_only_the_chosen_hunk() {
     repo.apply_hunk(HunkAction::Unstage, "a.txt", 0, staged.hunks[0].key(), 1)
         .expect("unstage hunk");
     assert!(
-        repo.file_diff(&DiffSource::Staged, "a.txt", None, 1, Whitespace::Show)
-            .expect("staged")
-            .hunks
-            .is_empty()
+        repo.file_diff(
+            &DiffSource::Staged,
+            "a.txt",
+            None,
+            1,
+            Whitespace::Show,
+            MissingObjects::Fail
+        )
+        .expect("staged")
+        .hunks
+        .is_empty()
     );
 
     let d = repo
-        .file_diff(&DiffSource::Unstaged, "a.txt", None, 1, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Unstaged,
+            "a.txt",
+            None,
+            1,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("diff");
     repo.apply_hunk(HunkAction::Discard, "a.txt", 0, d.hunks[0].key(), 1)
         .expect("discard hunk");
@@ -222,7 +259,14 @@ fn hunk_staging_works_without_context_lines() {
     )
     .expect("write");
     let d = repo
-        .file_diff(&DiffSource::Unstaged, "a.txt", None, 0, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Unstaged,
+            "a.txt",
+            None,
+            0,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("diff");
     assert_eq!(d.hunks.len(), 3, "{d:#?}");
 
@@ -234,7 +278,14 @@ fn hunk_staging_works_without_context_lines() {
     );
 
     let staged = repo
-        .file_diff(&DiffSource::Staged, "a.txt", None, 0, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Staged,
+            "a.txt",
+            None,
+            0,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("staged");
     assert_eq!(staged.hunks.len(), 1);
     repo.apply_hunk(HunkAction::Unstage, "a.txt", 0, staged.hunks[0].key(), 0)
@@ -242,7 +293,14 @@ fn hunk_staging_works_without_context_lines() {
     assert_eq!(index_blob(p, "a.txt"), original);
 
     let d = repo
-        .file_diff(&DiffSource::Unstaged, "a.txt", None, 0, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Unstaged,
+            "a.txt",
+            None,
+            0,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("diff");
     repo.apply_hunk(HunkAction::Discard, "a.txt", 1, d.hunks[1].key(), 0)
         .expect("discard the middle hunk");
@@ -259,7 +317,14 @@ fn hunk_staging_works_without_context_lines() {
     )
     .expect("write");
     let d = repo
-        .file_diff(&DiffSource::Unstaged, "a.txt", None, 0, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Unstaged,
+            "a.txt",
+            None,
+            0,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("diff");
     assert_eq!(d.hunks.len(), 2, "{d:#?}");
     repo.apply_hunk(HunkAction::Stage, "a.txt", 0, d.hunks[0].key(), 0)
@@ -269,7 +334,14 @@ fn hunk_staging_works_without_context_lines() {
         "one\ntwo\nthree\nfour\nfive\nNEW\nsix\nseven\neight\nnine\nten\n"
     );
     let d = repo
-        .file_diff(&DiffSource::Unstaged, "a.txt", None, 0, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Unstaged,
+            "a.txt",
+            None,
+            0,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("diff");
     repo.apply_hunk(HunkAction::Stage, "a.txt", 0, d.hunks[0].key(), 0)
         .expect("stage the deletion");
@@ -298,7 +370,14 @@ fn hunk_staging_handles_unusual_paths() {
         git(p, &["commit", "-q", "-m", "test: add file"]);
         fs::write(p.join(name), "1\n2\nTHREE\n4\n5\n6\n7\nEIGHT\n9\n").expect("write");
         let d = repo
-            .file_diff(&DiffSource::Unstaged, name, None, 1, Whitespace::Show)
+            .file_diff(
+                &DiffSource::Unstaged,
+                name,
+                None,
+                1,
+                Whitespace::Show,
+                MissingObjects::Fail,
+            )
             .expect("diff");
         assert_eq!(d.hunks.len(), 2, "{name}: {d:#?}");
         repo.apply_hunk(HunkAction::Stage, name, 1, d.hunks[1].key(), 1)
@@ -309,13 +388,27 @@ fn hunk_staging_handles_unusual_paths() {
             "{name}"
         );
         let staged = repo
-            .file_diff(&DiffSource::Staged, name, None, 1, Whitespace::Show)
+            .file_diff(
+                &DiffSource::Staged,
+                name,
+                None,
+                1,
+                Whitespace::Show,
+                MissingObjects::Fail,
+            )
             .expect("staged");
         repo.apply_hunk(HunkAction::Unstage, name, 0, staged.hunks[0].key(), 1)
             .unwrap_or_else(|e| panic!("unstage {name:?}: {e}"));
         assert_eq!(index_blob(p, name), "1\n2\n3\n4\n5\n6\n7\n8\n9\n", "{name}");
         let d = repo
-            .file_diff(&DiffSource::Unstaged, name, None, 1, Whitespace::Show)
+            .file_diff(
+                &DiffSource::Unstaged,
+                name,
+                None,
+                1,
+                Whitespace::Show,
+                MissingObjects::Fail,
+            )
             .expect("diff");
         repo.apply_hunk(HunkAction::Discard, name, 0, d.hunks[0].key(), 1)
             .unwrap_or_else(|e| panic!("discard {name:?}: {e}"));
@@ -330,7 +423,14 @@ fn hunk_staging_handles_unusual_paths() {
     let name = "new caf\u{e9}.txt";
     fs::write(p.join(name), "x\n").expect("write");
     let d = repo
-        .file_diff(&DiffSource::Unstaged, name, None, 3, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Unstaged,
+            name,
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("diff");
     repo.apply_hunk(HunkAction::Stage, name, 0, d.hunks[0].key(), 3)
         .expect("stage new file");
@@ -549,10 +649,17 @@ fn whitespace_modes_hide_whitespace_only_changes() {
     .expect("write");
 
     let hunks = |ws: Whitespace| {
-        repo.file_diff(&DiffSource::Unstaged, "a.txt", None, 1, ws)
-            .expect("diff")
-            .hunks
-            .len()
+        repo.file_diff(
+            &DiffSource::Unstaged,
+            "a.txt",
+            None,
+            1,
+            ws,
+            MissingObjects::Fail,
+        )
+        .expect("diff")
+        .hunks
+        .len()
     };
     let cli_hunks = |flag: &str| {
         let mut args = vec!["diff", "-U1"];
@@ -578,6 +685,7 @@ fn whitespace_modes_hide_whitespace_only_changes() {
             None,
             1,
             Whitespace::IgnoreEol,
+            MissingObjects::Fail,
         )
         .expect("diff");
     assert!(eol.hunks[0].lines.iter().any(|l| l.text == "    nine"));
@@ -587,10 +695,17 @@ fn whitespace_modes_hide_whitespace_only_changes() {
     // Staged and commit diffs honour the mode too.
     repo.stage_all().expect("stage");
     let staged = |ws| {
-        repo.file_diff(&DiffSource::Staged, "a.txt", None, 1, ws)
-            .expect("diff")
-            .hunks
-            .len()
+        repo.file_diff(
+            &DiffSource::Staged,
+            "a.txt",
+            None,
+            1,
+            ws,
+            MissingObjects::Fail,
+        )
+        .expect("diff")
+        .hunks
+        .len()
     };
     assert_eq!(
         (staged(Whitespace::Show), staged(Whitespace::IgnoreAll)),
@@ -600,10 +715,17 @@ fn whitespace_modes_hide_whitespace_only_changes() {
         .commit("style: whitespace", false, false)
         .expect("commit");
     let commit = |ws| {
-        repo.file_diff(&DiffSource::Commit(oid), "a.txt", None, 1, ws)
-            .expect("diff")
-            .hunks
-            .len()
+        repo.file_diff(
+            &DiffSource::Commit(oid),
+            "a.txt",
+            None,
+            1,
+            ws,
+            MissingObjects::Fail,
+        )
+        .expect("diff")
+        .hunks
+        .len()
     };
     assert_eq!(
         (

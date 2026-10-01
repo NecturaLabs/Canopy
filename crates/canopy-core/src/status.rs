@@ -2,8 +2,8 @@
 
 use git2::{Repository, Status, StatusOptions};
 
-use crate::Result;
 use crate::model::{ChangeKind, FileEntry, WorkingStatus};
+use crate::{Error, Result, partial};
 
 fn entry(path: String, old_path: Option<String>, kind: ChangeKind) -> FileEntry {
     FileEntry {
@@ -16,12 +16,36 @@ fn entry(path: String, old_path: Option<String>, kind: ChangeKind) -> FileEntry 
 }
 
 /// Reads the status of every changed, untracked or conflicted file.
+///
+/// Never touches the network. Detecting a staged rename compares file contents; in a partial
+/// clone whose `HEAD` blobs were not downloaded (after `git reset --soft` to an old commit, or in
+/// a `--no-checkout` clone) that comparison is impossible offline, so status is read again
+/// without rename detection and such a rename shows as a deletion plus an addition, where
+/// `git status` would download the blobs and show the rename.
+///
+/// When the tree of `HEAD` itself is missing (a treeless clone after `git reset --soft` to a
+/// commit whose tree was never downloaded), libgit2 would treat `HEAD` as unborn and report
+/// every file as added; this returns [`Error::NotDownloaded`] instead, and
+/// [`crate::Repo::status`] with [`crate::MissingObjects::Download`] fetches the tree.
 pub fn collect(repo: &Repository) -> Result<WorkingStatus> {
+    if partial::missing_head_tree(repo).is_some() && partial::is_partial_clone(repo) {
+        return Err(partial::not_downloaded(repo, None));
+    }
+    match statuses(repo, true) {
+        Err(Error::Git(e)) if partial::is_missing_object(&e) && partial::is_partial_clone(repo) => {
+            tracing::debug!(error = e.message(), "status without rename detection");
+            statuses(repo, false)
+        }
+        other => other,
+    }
+}
+
+fn statuses(repo: &Repository, renames: bool) -> Result<WorkingStatus> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(true)
         .include_ignored(false)
-        .renames_head_to_index(true)
+        .renames_head_to_index(renames)
         .exclude_submodules(false);
     let statuses = repo.statuses(Some(&mut opts))?;
 

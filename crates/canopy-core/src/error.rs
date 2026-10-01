@@ -46,9 +46,56 @@ pub enum Error {
     /// retry.
     #[error("{0} changed on disk since it was loaded. Reload it before saving.")]
     ChangedOnDisk(String),
+
+    /// The repository is a partial clone (`git clone --filter=...`) and the read needs objects
+    /// that were not downloaded. Retrying with [`crate::MissingObjects::Download`] fetches them
+    /// when `remote` is set and reachable.
+    #[error("{}", not_downloaded_message(.remote.as_deref(), .reason.as_deref()))]
+    NotDownloaded {
+        /// The promisor remote the objects can come from; `None` when no remote is configured
+        /// (for example after `git remote remove`), so downloading is impossible.
+        remote: Option<String>,
+        /// Why downloading failed (git's stderr); `None` when no download was attempted.
+        reason: Option<String>,
+    },
+
+    /// A partial clone made by Git before 2.24 records its promisor remote in
+    /// `extensions.partialClone`, a repository extension libgit2 refuses to open.
+    #[error(
+        "This partial clone uses the old extensions.partialClone setting, which Canopy cannot \
+         open. Git 2.24 and newer record the same thing as remote.{remote}.promisor; to convert \
+         it, run `git config remote.{remote}.promisor true` and then \
+         `git config --unset extensions.partialClone` in the repository."
+    )]
+    LegacyPartialClone {
+        /// The promisor remote named by `extensions.partialClone`.
+        remote: String,
+    },
+}
+
+fn not_downloaded_message(remote: Option<&str>, reason: Option<&str>) -> String {
+    let what = "This content hasn't been downloaded yet (partial clone).";
+    match (remote, reason) {
+        (Some(r), None) => format!("{what} It can be fetched from {r}."),
+        (Some(r), Some(why)) => format!("{what} Fetching it from {r} failed: {why}"),
+        (None, Some(why)) => format!("{what} {why}"),
+        (None, None) => format!("{what} No promisor remote is configured to fetch it from."),
+    }
 }
 
 impl Error {
+    /// The read failed only because a partial clone has not downloaded what it needs, and
+    /// retrying with [`crate::MissingObjects::Download`] can fetch it (a remote is configured).
+    pub fn can_download(&self) -> bool {
+        matches!(
+            self,
+            Self::NotDownloaded {
+                remote: Some(_),
+                ..
+            }
+        )
+    }
+
     pub(crate) fn invalid(msg: impl Into<String>) -> Self {
         Self::Invalid(msg.into())
     }
