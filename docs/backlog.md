@@ -13,12 +13,12 @@ and CI is green on the branch. Parallel sessions follow `docs/specs/parallel-ses
 ## In flight
 
 Who works on what, on which branch. Remove a row when its branch is merged. Merged so far:
-the working branch, `perf/views` (frame cost 119–209 ms → 0.3–0.9 ms on huge data) and
+the working branch, `fix/installer-review` (every security-review finding; independent review and
+a Windows PowerShell 5.1 run still owed), `perf/views` (frame cost 119–209 ms → 0.3–0.9 ms on huge data) and
 `canopy-3/core-workflows` (git-flow, merged detection, LFS status, submodules in core).
 
 | Entry | Branch | Who | State |
 | --- | --- | --- | --- |
-| Installer security-review fixes (1 blocking, 9 should-fix, nits) | `fix/installer-review` | canopy-1 agent | In progress |
 | Partial clones in core (missing objects fetched through git) | `feat/partial-clones` | canopy-1 agent | Fixing review findings (snapshot recovery after a soft reset, coalesced fetch jobs, retry in the details pane, docs, privacy policy); then merge |
 | Core safety: `branch -d` by default, publish any branch, mode and type changes, collapsed untracked folders, nested repositories in Stage all, safe paths, ignore rules | `canopy-2/core-safety` | canopy-2 | In progress (core only; canopy-1 wires the UI) |
 
@@ -101,7 +101,8 @@ In order. The UI entries come before accessibility, and accessibility before the
 - [ ] **Push and pull counts in tab headers**: ahead/behind next to each tab name. Accept: counts
   update after fetch and match the status bar.
 - [ ] **Verify the one-line installers on real machines** after the first stable release that
-  publishes them. Accept: on Ubuntu 22.04, Fedora, macOS (Apple silicon) and Windows 11 (Windows
+  publishes them (CI tests `install.sh` end to end against a fake feed on Linux and macOS and
+  only smoke-tests `install.ps1`). Accept: on Ubuntu 22.04, Fedora, macOS (Apple silicon) and Windows 11 (Windows
   PowerShell 5.1 and PowerShell 7) the one-liner installs, Canopy starts from the launcher, Start
   Menu or Spotlight with its icon, a re-run upgrades, and uninstall leaves only the user data.
 

@@ -99,9 +99,15 @@ jobs:
           git config --global user.email "ci@canopy.invalid"
           git config --global init.defaultBranch main
       - run: cargo test --workspace --locked
+      # install.sh's macOS flow, natively (the `tooling` job runs the Linux flow, and the macOS
+      # one under a fake uname). Fake releases on 127.0.0.1, in a temporary HOME.
+      - name: Test the installer on macOS
+        if: matrix.os == 'macOS'
+        run: packaging/test-install.sh
       # install.ps1 cannot run on Linux: parse it with Windows PowerShell 5.1 (the oldest version
-      # it supports) and PowerShell 7, run its argument handling in both, and lint it with
-      # PSScriptAnalyzer where the runner has it. The Linux installer is tested in `tooling`.
+      # it supports) and PowerShell 7, run its argument handling in both, check that `irm | iex`
+      # leaves the caller's session clean, and lint it with PSScriptAnalyzer where the runner has
+      # it. The Linux installer is tested in `tooling`.
       - name: Check the PowerShell installer
         if: matrix.os == 'Windows'
         shell: pwsh
@@ -109,8 +115,41 @@ jobs:
           # Native commands below are expected to fail; their exit codes are checked by hand.
           $ErrorActionPreference = 'Continue'
           $env:CANOPY_PS1 = (Resolve-Path packaging/install.ps1).Path
+          # Every run below must stop before it installs anything. Should one not, it installs
+          # into this job's temporary folder, with -NoPath, and the checks at the end catch a
+          # Start Menu shortcut, Apps & features entry or user PATH change it made (compared with
+          # before: a self-hosted runner's user may have Canopy installed).
+          $env:CANOPY_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'canopy-install-smoke'
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'Canopy.lnk'
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\io.necturalabs.Canopy'
+          $state = { "$(Test-Path -LiteralPath $lnk) $(Test-Path -LiteralPath $key) $([Environment]::GetEnvironmentVariable('Path', 'User'))" }
+          $before = & $state
           $parse = '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:CANOPY_PS1, [ref]$null, [ref]$e); if ($e.Count) { $e | Format-List | Out-String | Write-Host; exit 1 }; exit 0'
           $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($parse))
+          # Through iex the script runs in the caller's scope: none of its helpers, variables,
+          # StrictMode or preferences may be left there, and it must throw rather than exit.
+          $iex = @'
+          $ErrorActionPreference = 'Continue'
+          $ProgressPreference = 'Continue'
+          $protocols = [Net.ServicePointManager]::SecurityProtocol
+          $env:CANOPY_INSTALL_BASE_URL = 'https://example.invalid'
+          $threw = $false
+          try { Get-Content -LiteralPath $env:CANOPY_PS1 -Raw | Invoke-Expression 6>$null } catch { $threw = $true }
+          $problems = @()
+          if (-not $threw) { $problems += 'it did not throw' }
+          $fns = @(Get-Command -CommandType Function -Name Fail, Say, Get-File, Invoke-Install, Invoke-Uninstall -ErrorAction SilentlyContinue)
+          if ($fns.Count) { $problems += "functions left: $($fns.Name -join ', ')" }
+          $vars = @(Get-Variable -Name AppId, FeedUrl, ReleasesUrl, UninstallKey, LocalHost, LocalPort, ScriptFile, InstalledEntries, ExtraArgs, Invocation, savedProtocols, failed, root, mode -ErrorAction SilentlyContinue)
+          if ($vars.Count) { $problems += "variables left: $($vars.Name -join ', ')" }
+          if ($ErrorActionPreference -ne 'Continue') { $problems += "ErrorActionPreference is $ErrorActionPreference" }
+          if ($ProgressPreference -ne 'Continue') { $problems += "ProgressPreference is $ProgressPreference" }
+          if ([Net.ServicePointManager]::SecurityProtocol -ne $protocols) { $problems += 'SecurityProtocol changed' }
+          try { $null = $notDefinedAnywhere } catch { $problems += 'StrictMode left on' }
+          if ($problems.Count) { $problems | Write-Host; exit 1 }
+          exit 0
+          '@
+          $iexEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($iex))
+          $badFeeds = @('https://example.invalid', 'http://127.0.0.1:1@example.invalid', 'http://localhost:1@x', 'http://127.0.0.1:1/x')
           foreach ($ps in @('powershell.exe', 'pwsh')) {
             & $ps -NoProfile -EncodedCommand $encoded
             if ($LASTEXITCODE -ne 0) { throw "${ps} could not parse install.ps1" }
@@ -118,13 +157,19 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "${ps}: install.ps1 -Help exited with $LASTEXITCODE" }
             & $ps -NoProfile -ExecutionPolicy Bypass -File $env:CANOPY_PS1 -NoSuchOption *>&1 | Out-Null
             if ($LASTEXITCODE -ne 1) { throw "${ps}: install.ps1 accepted an unknown option" }
-            $env:CANOPY_INSTALL_BASE_URL = 'https://example.invalid'
-            & $ps -NoProfile -ExecutionPolicy Bypass -File $env:CANOPY_PS1 *>&1 | Out-Null
-            $code = $LASTEXITCODE
-            Remove-Item Env:CANOPY_INSTALL_BASE_URL
-            if ($code -ne 1) { throw "${ps}: install.ps1 accepted a non-loopback test feed" }
-            Write-Host "${ps}: install.ps1 parses and handles its arguments"
+            foreach ($bad in $badFeeds) {
+              $env:CANOPY_INSTALL_BASE_URL = $bad
+              & $ps -NoProfile -ExecutionPolicy Bypass -File $env:CANOPY_PS1 -NoPath *>&1 | Out-Null
+              $code = $LASTEXITCODE
+              Remove-Item Env:CANOPY_INSTALL_BASE_URL
+              if ($code -ne 1) { throw "${ps}: install.ps1 accepted the test feed $bad" }
+            }
+            & $ps -NoProfile -ExecutionPolicy Bypass -EncodedCommand $iexEncoded
+            if ($LASTEXITCODE -ne 0) { throw "${ps}: install.ps1 run through iex left state in the session" }
+            Write-Host "${ps}: install.ps1 parses, handles its arguments and leaves an iex session clean"
           }
+          if (Test-Path -LiteralPath $env:CANOPY_INSTALL_DIR) { throw 'a smoke run created the install folder' }
+          if ((& $state) -ne $before) { throw 'a smoke run changed the Start Menu, Apps & features or the user PATH' }
           if (Get-Module -ListAvailable -Name PSScriptAnalyzer) {
             # Write-Host is the installer's intended output; helpers such as Fail are no cmdlets.
             $found = @(Invoke-ScriptAnalyzer -Path $env:CANOPY_PS1 -Severity Warning, Error -ExcludeRule PSAvoidUsingWriteHost, PSUseApprovedVerbs)

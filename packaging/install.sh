@@ -19,8 +19,9 @@
 # Layout (macOS): ~/Applications/Canopy.app (CANOPY_INSTALL_DIR names the .app), and the
 # ~/.local/bin/canopy symlink unless --no-path.
 #
-# Canopy's own settings and data (~/.local/share/canopy and friends) are never touched, except by
-# --uninstall --purge.
+# Canopy's own settings and data are never touched, except by --uninstall --purge.
+#
+# Everything runs from main(), called on the last line, so a download cut short runs nothing.
 #
 # Maintainers: packaging/README.md. The source is packaging/install.sh in NecturaLabs/Canopy;
 # the release workflow publishes it to NecturaLabs/app-updates/canopy/install.sh.
@@ -33,24 +34,40 @@ MIN_GLIBC=2.35
 
 # ---------------------------------------------------------------------------------------------
 # Canopy's user data, removed only by --purge. Keep this list in step with the app (and with
-# packaging/install.ps1). Old (eframe::storage_dir) and current vendor-specific locations.
+# packaging/install.ps1); the contract is in packaging/README.md ("Canopy's data folders").
+# One "<kind> <path>" line per folder:
+#   vendor  a vendor-specific name: deleted when it is a folder.
+#   eframe  the folder eframe::storage_dir("canopy") gives today: deleted only when it holds
+#           .canopy-data or Canopy's own files (is_eframe_canopy).
+#   marker  a generic name: deleted only when it holds the .canopy-data marker file.
 purge_targets() {
     case $OS in
         linux)
             printf '%s\n' \
-                "${XDG_DATA_HOME:-$HOME/.local/share}/canopy" \
-                "${XDG_CONFIG_HOME:-$HOME/.config}/canopy" \
-                "${XDG_STATE_HOME:-$HOME/.local/state}/canopy" \
-                "${XDG_CACHE_HOME:-$HOME/.cache}/canopy"
+                "eframe $(xdg_home "${XDG_DATA_HOME:-}" "$HOME/.local/share")/canopy" \
+                "marker $(xdg_home "${XDG_CONFIG_HOME:-}" "$HOME/.config")/canopy" \
+                "marker $(xdg_home "${XDG_STATE_HOME:-}" "$HOME/.local/state")/canopy" \
+                "marker $(xdg_home "${XDG_CACHE_HOME:-}" "$HOME/.cache")/canopy"
             ;;
         darwin)
             printf '%s\n' \
-                "$HOME/Library/Application Support/canopy" \
-                "$HOME/Library/Application Support/$APP_ID" \
-                "$HOME/Library/Logs/Canopy" \
-                "$HOME/Library/Caches/$APP_ID"
+                "eframe $HOME/Library/Application Support/canopy" \
+                "vendor $HOME/Library/Application Support/$APP_ID" \
+                "marker $HOME/Library/Logs/Canopy" \
+                "vendor $HOME/Library/Caches/$APP_ID"
             ;;
     esac
+}
+
+# Whether eframe folder $1 is recognisably Canopy's: its settings key, saved tokens, or logs and
+# crash reports named the way Canopy names them.
+is_eframe_canopy() {
+    [ -f "$1/tokens.json" ] && return 0
+    if [ -f "$1/app.ron" ] && grep -q 'canopy-settings-v1' "$1/app.ron" 2>/dev/null; then return 0; fi
+    for f in "$1"/logs/canopy-*.jsonl "$1"/crashes/crash-*.txt; do
+        if [ -f "$f" ]; then return 0; fi
+    done
+    return 1
 }
 # ---------------------------------------------------------------------------------------------
 
@@ -64,7 +81,8 @@ Usage:
 
 Options:
   --beta           Install the newest build, including pre-releases (the beta channel).
-  --version X      Install version X (for example 0.2.0) instead of the newest one.
+  --version X      Install version X (for example 0.2.0) instead of the newest one; also the
+                   way to go back to an older version.
   --no-path        Do not create the ~/.local/bin/canopy symlink.
   --uninstall      Remove Canopy: exactly the files this script created. Settings and data stay.
   --purge          With --uninstall: also delete Canopy's settings, logs and caches (asks first).
@@ -77,184 +95,118 @@ Environment:
   XDG_DATA_HOME        Where the desktop entry and icons are registered (Linux).
 
 Running the installed copy of this script, ~/.local/opt/canopy/uninstall.sh, uninstalls.
-Re-running the installer upgrades in place; a failed upgrade keeps the installed version.
+Re-running the installer upgrades in place; a failed upgrade keeps the installed version. It
+never replaces a newer installed version with an older one unless --version asks for it.
 EOF
 }
 
+# Messages go to fd 3, a copy of the original stderr made in main(), so that an error raised
+# while a command's stderr is redirected (fetch 2>file) still reaches the user.
 say() { printf '%s\n' "$*"; }
-warn() { printf 'warning: %s\n' "$*" >&2; }
+warn() { printf 'warning: %s\n' "$*" >&3; }
 die() {
-    printf 'error: %s\n' "$*" >&2
+    printf 'error: %s\n' "$*" >&3
     exit 1
 }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# ---------------------------------------------------------------------------------------------
-# Options
-
-MODE=install
-CHANNEL=latest
-PIN=
-LINK=1
-PURGE=0
-YES=0
-SELF_DIR=
-case ${0##*/} in
-    uninstall.sh)
-        MODE=uninstall
-        SELF_DIR=$(cd "$(dirname "$0")" && pwd -P)
-        ;;
-esac
-
-while [ $# -gt 0 ]; do
+# $1 when it is an absolute path (the XDG base directory rules ignore relative ones), else $2.
+xdg_home() {
     case $1 in
-        --beta) CHANNEL=beta ;;
-        --version)
-            [ $# -ge 2 ] || die "--version needs a value, for example --version 0.2.0"
-            PIN=$2
-            shift
-            ;;
-        --version=*) PIN=${1#--version=} ;;
-        --no-path) LINK=0 ;;
-        --uninstall) MODE=uninstall ;;
-        --purge) PURGE=1 ;;
-        -y | --yes) YES=1 ;;
-        -h | --help)
-            usage
-            exit 0
-            ;;
-        *)
-            printf 'error: unknown option: %s (see --help)\n' "$1" >&2
-            exit 2
-            ;;
+        /*) printf '%s' "$1" ;;
+        *) printf '%s' "$2" ;;
     esac
-    shift
-done
-if [ "$PURGE" = 1 ] && [ "$MODE" != uninstall ]; then
-    die "--purge only goes with --uninstall"
-fi
-PIN=${PIN#v}
-
-# Test-only: tools and CI point the script at a fake feed on this machine. Only plain-HTTP
-# loopback URLs are accepted, so this can never redirect a real install anywhere else.
-INSECURE_LOCAL=0
-if [ -n "${CANOPY_INSTALL_BASE_URL:-}" ]; then
-    case $CANOPY_INSTALL_BASE_URL in
-        http://127.0.0.1:[0-9]* | http://localhost:[0-9]*) ;;
-        *) die "CANOPY_INSTALL_BASE_URL is for tests and only accepts http://127.0.0.1:<port> or http://localhost:<port>" ;;
-    esac
-    base=${CANOPY_INSTALL_BASE_URL%/}
-    FEED_URL=$base/canopy
-    RELEASES_URL=$base/releases/download
-    INSECURE_LOCAL=1
-    warn "test mode: using the feed at $base"
-fi
-
-# ---------------------------------------------------------------------------------------------
-# Platform
-
-[ -n "${HOME:-}" ] || die "HOME is not set"
-case $(uname -s) in
-    Linux) OS=linux ;;
-    Darwin) OS=darwin ;;
-    MINGW* | MSYS* | CYGWIN* | Windows_NT)
-        die "on Windows, run this in PowerShell instead:
-  irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1 | iex"
-        ;;
-    *) die "Canopy has no build for $(uname -s); it runs on Linux, macOS and Windows" ;;
-esac
-case $(uname -m) in
-    x86_64 | amd64) ARCH=x86_64 ;;
-    aarch64 | arm64) ARCH=aarch64 ;;
-    *) die "Canopy has no build for $(uname -m) processors yet (only x86_64 and arm64)" ;;
-esac
-# An x86_64 shell under Rosetta on an Apple silicon Mac should still get the native build.
-if [ "$OS" = darwin ] && [ "$ARCH" = x86_64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
-    ARCH=aarch64
-fi
-KEY=$OS-$ARCH
-case $KEY in
-    linux-x86_64) TARGET=x86_64-unknown-linux-gnu ;;
-    linux-aarch64) TARGET=aarch64-unknown-linux-gnu ;;
-    darwin-x86_64) TARGET=x86_64-apple-darwin ;;
-    darwin-aarch64) TARGET=aarch64-apple-darwin ;;
-esac
-case $OS in
-    linux) PRETTY="Linux $ARCH" ;;
-    darwin) PRETTY="macOS $ARCH" ;;
-esac
+}
 
 # Paths with these characters cannot be written safely into a desktop entry's Exec= line or the
 # receipt, so they are refused rather than mangled.
 check_path() {
     case $1 in
         *'
-'* | *'"'* | *'`'* | *'$'* | *\\* | *'%'*)
+'* | *'"'* | *'`'* | *'$'* | *\\* | *'%'* | *'|'*)
             die "unsupported character in path: $1 (choose a folder with CANOPY_INSTALL_DIR)"
             ;;
     esac
 }
 
-DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
-BIN_DIR=$HOME/.local/bin
-if [ "$OS" = linux ]; then
-    # The installed uninstall.sh always removes the folder it sits in.
-    ROOT=${SELF_DIR:-${CANOPY_INSTALL_DIR:-$HOME/.local/opt/canopy}}
-else
-    ROOT=${CANOPY_INSTALL_DIR:-$HOME/Applications/Canopy.app}
-    case $ROOT in
-        *.app) ;;
-        *) die "on macOS, CANOPY_INSTALL_DIR names the app bundle and must end in .app" ;;
-    esac
-fi
-case $ROOT in
-    /*) ;;
-    *) ROOT=$(pwd -P)/$ROOT ;;
-esac
-ROOT=${ROOT%/}
-for p in "$ROOT" "$HOME" "$DATA_HOME"; do check_path "$p"; done
-case $ROOT in
-    "" | / | "$HOME" | "$HOME/.local" | "$HOME/.local/opt" | "$HOME/.local/bin" | "$HOME/.local/share" | "$HOME/Applications" | /Applications | /usr | /usr/* | /opt | /bin | /etc)
-        die "refusing to use $ROOT as Canopy's own folder; it must be a folder for Canopy alone"
-        ;;
-esac
-LINK_PATH=$BIN_DIR/canopy
-if [ "$OS" = linux ]; then
-    APP_BIN=$ROOT/bin/canopy
-else
-    APP_BIN=$ROOT/Contents/MacOS/canopy
-fi
+# Refuses $1 as Canopy's own folder when it is a folder other things live in.
+check_root() {
+    for h in "$HOME" "$HOME_P"; do
+        case $1 in
+            "" | / | "$h" | "$h/.local" | "$h/.local/opt" | "$h/.local/bin" | "$h/.local/share" | "$h/Applications" | /Applications | /usr | /usr/* | /opt | /bin | /etc)
+                die "refusing to use $1 as Canopy's own folder; it must be a folder for Canopy alone"
+                ;;
+        esac
+    done
+}
+
+# Records, deepest first, the folders `mkdir -p $1` is about to create, so a failed first install
+# removes exactly those (and only while they are empty).
+note_created_dirs() {
+    d=$1
+    while [ ! -e "$d" ] && [ ! -L "$d" ]; do
+        CREATED_DIRS="$CREATED_DIRS$d
+"
+        d=$(dirname "$d")
+    done
+}
+
+remove_created_dirs() {
+    [ -n "$CREATED_DIRS" ] || return 0
+    printf '%s' "$CREATED_DIRS" | while IFS= read -r d; do
+        rmdir -- "$d" 2>/dev/null || break
+    done
+    CREATED_DIRS=
+}
 
 # ---------------------------------------------------------------------------------------------
-# Helpers
+# Downloads
 
-# Downloads $1 to $2. HTTPS with TLS 1.2 or newer only, also across redirects; plain HTTP only to
-# the loopback test feed.
+# Picks curl, or GNU wget, before anything is downloaded; refuses clearly when neither exists.
+pick_downloader() {
+    if have curl; then
+        DOWNLOADER=curl
+    elif have wget && wget --version 2>/dev/null | grep -q 'GNU Wget'; then
+        DOWNLOADER=wget
+        # --no-config (wget 1.17 and later) keeps a ~/.wgetrc from changing what is fetched.
+        if wget --no-config --version >/dev/null 2>&1; then WGET_NOCONFIG=--no-config; fi
+    else
+        die "this installer needs curl or GNU wget to download Canopy; install one with your package manager and run it again"
+    fi
+}
+
+# Downloads $1 to $2. HTTPS with TLS 1.2 or newer only. curl also refuses a redirect to anything
+# but HTTPS (--proto-redir) and ignores ~/.curlrc (-q). wget has no such switch: it follows the
+# server's redirects as they come (GitHub's all go to HTTPS); the archive is protected either way
+# by its SHA-256, which comes from the manifest. Plain HTTP only to the loopback test feed, never
+# redirected.
 fetch() {
     case $1 in
-        https://*) ;;
-        http://127.0.0.1:* | http://localhost:*)
-            [ "$INSECURE_LOCAL" = 1 ] || die "refusing to download over plain HTTP: $1"
+        https://*) plain=0 ;;
+        *)
+            [ -n "$LOCAL_BASE" ] || die "refusing to download over plain HTTP: $1"
+            case $1 in
+                "$LOCAL_BASE"/*) plain=1 ;;
+                *) die "refusing to download from $1" ;;
+            esac
             ;;
-        *) die "refusing to download from $1" ;;
     esac
-    if have curl; then
-        if [ "$INSECURE_LOCAL" = 1 ]; then
-            curl --fail --silent --show-error --location --proto '=http' --proto-redir '=http' \
-                --noproxy '127.0.0.1,localhost' --output "$2" "$1"
+    [ -n "$DOWNLOADER" ] || pick_downloader
+    if [ "$DOWNLOADER" = curl ]; then
+        if [ "$plain" = 1 ]; then
+            curl -q --fail --silent --show-error --proto '=http' --noproxy '*' --output "$2" "$1"
         else
-            curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            curl -q --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
                 --tlsv1.2 --retry 3 --connect-timeout 20 --output "$2" "$1"
         fi
-    elif have wget && wget --version 2>/dev/null | grep -q 'GNU Wget'; then
-        if [ "$INSECURE_LOCAL" = 1 ]; then
-            wget --quiet --no-proxy --output-document="$2" "$1"
-        else
-            wget --quiet --https-only --secure-protocol=TLSv1_2 --tries=3 --timeout=20 \
-                --output-document="$2" "$1"
-        fi
     else
-        die "need curl or GNU wget to download Canopy"
+        if [ "$plain" = 1 ]; then
+            wget ${WGET_NOCONFIG:+"$WGET_NOCONFIG"} --quiet --no-proxy --max-redirect=0 \
+                --output-document="$2" "$1"
+        else
+            wget ${WGET_NOCONFIG:+"$WGET_NOCONFIG"} --quiet --https-only --secure-protocol=TLSv1_2 \
+                --tries=3 --timeout=20 --output-document="$2" "$1"
+        fi
     fi
 }
 
@@ -352,7 +304,12 @@ version_gt() {
     BEGIN { exit !(cmp(a, b) > 0) }'
 }
 
+# A version like 0.2.0 or 0.3.0-beta.1. The case refuses every other character, newlines
+# included, so the line-based grep below only ever sees one line.
 valid_version() {
+    case $1 in
+        '' | *[!0-9A-Za-z.-]*) return 1 ;;
+    esac
     printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
 }
 
@@ -360,7 +317,7 @@ valid_version() {
 read_channel() {
     if ! fetch "$FEED_URL/$1.json" "$WORK/$1.json" 2>"$WORK/$1.err"; then
         if [ "$1" = beta ]; then return 1; fi
-        cat "$WORK/$1.err" >&2
+        cat "$WORK/$1.err" >&3
         die "could not read the update manifest $FEED_URL/$1.json"
     fi
     json_flat "$WORK/$1.json" >"$WORK/$1.flat"
@@ -379,13 +336,15 @@ confirm() {
     return 1
 }
 
+# Refreshes only caches that already exist. Canopy's desktop entry declares no MIME types, so
+# update-desktop-database matters only to keep an existing mimeinfo.cache current; run on a
+# folder without one, it would create one, a file this script does not need. The same goes for
+# a GTK icon cache.
 refresh_desktop_caches() {
     [ "$OS" = linux ] || return 0
-    if have update-desktop-database && [ -d "$DATA_HOME/applications" ]; then
+    if have update-desktop-database && [ -f "$DATA_HOME/applications/mimeinfo.cache" ]; then
         update-desktop-database -q "$DATA_HOME/applications" 2>/dev/null || true
     fi
-    # Only refresh an icon cache that already exists: creating one in the user's hicolor folder
-    # would leave a file behind that this script did not need.
     if have gtk-update-icon-cache && [ -f "$DATA_HOME/icons/hicolor/icon-theme.cache" ]; then
         gtk-update-icon-cache -q -t -f "$DATA_HOME/icons/hicolor" 2>/dev/null || true
     elif [ -d "$DATA_HOME/icons/hicolor" ]; then
@@ -395,6 +354,16 @@ refresh_desktop_caches() {
 
 # Whether $1 is a symlink pointing at $2.
 links_to() { [ -L "$1" ] && [ "$(readlink "$1")" = "$2" ]; }
+
+# Writes file $1 to $2 through a temporary file and a rename, so that nothing is ever written
+# through a symlink or other file already at $2.
+put_file() {
+    tmpf=$2.canopy-new.$$
+    rm -f -- "$tmpf"
+    if cp -- "$1" "$tmpf" && mv -f -- "$tmpf" "$2"; then return 0; fi
+    rm -f -- "$tmpf"
+    return 1
+}
 
 git_report() {
     say ""
@@ -428,16 +397,34 @@ git_report() {
     fi
 }
 
+# Takes the install lock, folder $1, shared by install and uninstall.
+take_lock() {
+    mkdir "$1" 2>/dev/null || die "another Canopy install or uninstall is running (remove $1 if it is not)"
+    LOCK=$1
+}
+
 # ---------------------------------------------------------------------------------------------
 # Uninstall
 
+# What the installer puts in the Linux install folder; uninstall removes these and nothing else.
+INSTALLED_ENTRIES="bin share legal LICENSE README.md VERSION uninstall.sh .canopy-install .canopy-install.new"
+
 uninstall_linux() {
-    receipt=$ROOT/.canopy-install
-    if [ ! -e "$ROOT" ]; then
+    if [ ! -e "$ROOT" ] && [ ! -L "$ROOT" ]; then
         say "Canopy is not installed in $ROOT; nothing to remove."
         return 0
     fi
+    [ -d "$ROOT" ] || die "$ROOT is not a folder; not touching it"
+    ROOT=$(cd "$ROOT" && pwd -P)
+    check_path "$ROOT"
+    check_root "$ROOT"
+    receipt=$ROOT/.canopy-install
     [ -f "$receipt" ] || die "$ROOT has no .canopy-install receipt, so this script did not create it; not touching it"
+    take_lock "$ROOT/.lock"
+    recorded=$(sed -n 's/^root=//p' "$receipt" | head -n 1)
+    if [ -n "$recorded" ] && [ "$recorded" != "$ROOT" ]; then
+        warn "Canopy was installed as $recorded; the command, desktop entry and icons that point there are left alone"
+    fi
     say "Removing Canopy from $ROOT"
     while IFS= read -r line; do
         case $line in
@@ -447,7 +434,7 @@ uninstall_linux() {
                 ;;
             desktop=*)
                 f=${line#desktop=}
-                if [ -f "$f" ] && grep -qxF "X-Canopy-Install-Dir=$ROOT" "$f"; then
+                if [ -f "$f" ] && [ ! -L "$f" ] && grep -qxF "X-Canopy-Install-Dir=$ROOT" "$f"; then
                     rm -f -- "$f" && say "  removed $f"
                 fi
                 ;;
@@ -456,19 +443,40 @@ uninstall_linux() {
                 pair=${line#icon=}
                 f=${pair%%|*}
                 src=${pair#*|}
-                if [ -f "$f" ] && cmp -s -- "$f" "$src"; then rm -f -- "$f" && say "  removed $f"; fi
+                if [ -f "$f" ] && [ ! -L "$f" ] && cmp -s -- "$f" "$src"; then rm -f -- "$f" && say "  removed $f"; fi
                 ;;
         esac
     done <"$receipt"
-    rm -rf -- "$ROOT"
-    say "  removed $ROOT"
+    for name in $INSTALLED_ENTRIES; do
+        if [ -e "$ROOT/$name" ] || [ -L "$ROOT/$name" ]; then rm -rf -- "${ROOT:?}/$name"; fi
+    done
+    # Leftovers of an interrupted install.
+    for e in "$ROOT"/.staging.* "$ROOT"/.previous.*; do
+        if [ -e "$e" ] || [ -L "$e" ]; then rm -rf -- "$e"; fi
+    done
+    rmdir -- "$LOCK" 2>/dev/null || true
+    LOCK=
+    if rmdir -- "$ROOT" 2>/dev/null; then
+        say "  removed $ROOT"
+    else
+        warn "$ROOT holds files the installer did not put there, so it was kept with them:"
+        for e in "$ROOT"/* "$ROOT"/.[!.]* "$ROOT"/..?*; do
+            if [ -e "$e" ] || [ -L "$e" ]; then printf '  %s\n' "$e" >&3; fi
+        done
+    fi
     refresh_desktop_caches
 }
 
 uninstall_darwin() {
-    if [ -e "$ROOT" ]; then
+    parent=$(dirname "$ROOT")
+    if [ -d "$parent" ]; then ROOT=$(cd "$parent" && pwd -P)/${ROOT##*/}; fi
+    APP_BIN=$ROOT/Contents/MacOS/canopy
+    if [ -L "$ROOT" ]; then
+        die "$ROOT is a symlink, not an app this script installed; not touching it"
+    elif [ -e "$ROOT" ]; then
         id=$(bundle_id "$ROOT")
         [ "$id" = "$APP_ID" ] || die "$ROOT is not Canopy (bundle id '${id:-none}'); not touching it"
+        take_lock "$(dirname "$ROOT")/.Canopy-install.lock"
         rm -rf -- "$ROOT"
         say "Removed $ROOT"
     else
@@ -483,19 +491,45 @@ bundle_id() {
     awk '/<key>CFBundleIdentifier<\/key>/ { getline; gsub(/.*<string>|<\/string>.*/, ""); print; exit }' "$plist"
 }
 
+# What --purge does with target $2 of kind $1: prints "delete", "keep" (it exists but is not
+# recognisably Canopy's), or nothing when it does not exist. A symlink is never followed.
+purge_verdict() {
+    if [ -L "$2" ]; then
+        echo keep
+    elif [ ! -e "$2" ]; then
+        return 0
+    elif [ ! -d "$2" ]; then
+        echo keep
+    elif [ -f "$2/.canopy-data" ] || [ "$1" = vendor ]; then
+        echo delete
+    elif [ "$1" = eframe ] && is_eframe_canopy "$2"; then
+        echo delete
+    else
+        echo keep
+    fi
+}
+
 # Asks, before anything is removed, whether to delete the user data --purge would delete.
 # Sets PURGE_OK=1 when there is something to delete and the user agreed.
 confirm_purge() {
     PURGE_OK=0
-    existing=$(purge_targets | while IFS= read -r d; do
-        if [ -e "$d" ]; then printf '  %s\n' "$d"; fi
+    PURGE_LIST=$(purge_targets | while IFS= read -r line; do
+        v=$(purge_verdict "${line%% *}" "${line#* }")
+        if [ -n "$v" ]; then printf '%s %s\n' "$v" "${line#* }"; fi
     done)
-    if [ -z "$existing" ]; then
+    keep=$(printf '%s\n' "$PURGE_LIST" | sed -n 's/^keep /  /p')
+    del=$(printf '%s\n' "$PURGE_LIST" | sed -n 's/^delete /  /p')
+    if [ -n "$keep" ]; then
+        say "--purge leaves these: each has a generic name and no .canopy-data marker file, or is a"
+        say "symlink, so it may belong to another program. Check them, and remove them by hand if they are Canopy's:"
+        say "$keep"
+    fi
+    if [ -z "$del" ]; then
         say "No Canopy settings or data found to purge."
         return 0
     fi
     say "--purge deletes Canopy's settings, logs and caches:"
-    say "$existing"
+    say "$del"
     if confirm "Delete them?"; then
         PURGE_OK=1
     else
@@ -505,8 +539,17 @@ confirm_purge() {
 
 purge() {
     if [ "$PURGE_OK" = 1 ]; then
-        purge_targets | while IFS= read -r d; do
-            if [ -e "$d" ]; then rm -rf -- "$d" && say "  removed $d"; fi
+        printf '%s\n' "$PURGE_LIST" | while IFS= read -r line; do
+            case $line in
+                "delete "*)
+                    d=${line#delete }
+                    # Checked again: only what was listed and still qualifies goes.
+                    kind=$(purge_targets | while IFS= read -r t; do
+                        if [ "${t#* }" = "$d" ]; then printf '%s' "${t%% *}"; fi
+                    done)
+                    if [ "$(purge_verdict "$kind" "$d")" = delete ]; then rm -rf -- "$d" && say "  removed $d"; fi
+                    ;;
+            esac
         done
     fi
     say ""
@@ -517,24 +560,22 @@ purge() {
 # ---------------------------------------------------------------------------------------------
 # Install
 
-LOCK=
-WORK=
-CREATED_ROOT=0
+# Runs on every exit, including Ctrl+C: puts back a swap in progress, then removes the staging
+# folder, the lock, and the folders a failed first install created.
 cleanup() {
-    [ -n "$WORK" ] && rm -rf -- "$WORK"
-    [ -n "$LOCK" ] && rmdir -- "$LOCK" 2>/dev/null
-    # A first install that failed leaves nothing behind but its own receipt.
-    if [ "$CREATED_ROOT" = 1 ] && [ -d "$ROOT" ] && only_receipt_in "$ROOT"; then
-        rm -rf -- "$ROOT"
+    trap '' INT TERM HUP
+    if [ -n "$SWAP_PHASE" ]; then
+        swap_rollback || warn "the previous version could not be fully put back; its remaining files are in $SWAP_OLD"
     fi
-    return 0
-}
-
-only_receipt_in() {
-    for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
-        [ -e "$e" ] || [ -L "$e" ] || continue
-        [ "$e" = "$1/.canopy-install" ] || return 1
-    done
+    if [ -n "$MAC_PHASE" ]; then
+        if ! mac_rollback; then
+            warn "the previous version could not be put back; it is at $WORK/previous.app"
+            WORK=
+        fi
+    fi
+    if [ -n "$WORK" ]; then rm -rf -- "$WORK"; fi
+    if [ -n "$LOCK" ]; then rmdir -- "$LOCK" 2>/dev/null || true; fi
+    remove_created_dirs
     return 0
 }
 
@@ -562,6 +603,14 @@ resolve_release() {
     mv=$(json_get "$WORK/$use.flat" version)
     if [ -z "$PIN" ] || [ "$PIN" = "$mv" ]; then
         VERSION=$mv
+        # Never a silent downgrade: an older version only when --version asks for it.
+        if [ -z "$PIN" ] && valid_version "$OLD_VERSION" && version_gt "$OLD_VERSION" "$VERSION"; then
+            chan="stable channel"
+            [ "$CHANNEL" = beta ] && chan="beta channel"
+            die "Canopy $OLD_VERSION is installed, which is newer than $VERSION, the newest on the $chan; nothing was changed.
+  To keep getting pre-releases, run the installer with --beta.
+  To install $VERSION anyway, run it with --version $VERSION."
+        fi
         ASSET_URL=$(json_get "$WORK/$use.flat" "platforms.$KEY.url")
         ASSET_SHA=$(json_get "$WORK/$use.flat" "platforms.$KEY.sha256")
         if [ -z "$ASSET_URL" ]; then
@@ -618,11 +667,20 @@ stage_linux() {
     done
     if [ -d "$SRC/legal" ]; then cp -R "$SRC/legal" "$new/legal"; fi
     if [ -f "$SRC/$APP_ID.desktop" ]; then
+        entry=$new/share/applications/$APP_ID.desktop
+        # Exec= and the install marker belong to the [Desktop Entry] group only; other groups
+        # (desktop actions) keep their own Exec= lines.
         awk -v ex="Exec=\"$ROOT/bin/canopy\" %F" -v marker="X-Canopy-Install-Dir=$ROOT" '
-            /^Exec=/ { print ex; next }
-            /^X-Canopy-Install-Dir=/ { next }
+            function close_main() { if (main && !done) { print marker; done = 1 } }
+            /^[ \t]*\[/ { close_main(); main = ($0 == "[Desktop Entry]") }
+            main && /^Exec[ \t]*=/ { print ex; next }
+            main && /^X-Canopy-Install-Dir[ \t]*=/ { next }
             { print }
-            END { print marker }' "$SRC/$APP_ID.desktop" >"$new/share/applications/$APP_ID.desktop"
+            END { close_main() }' "$SRC/$APP_ID.desktop" >"$entry"
+        if ! grep -qxF "X-Canopy-Install-Dir=$ROOT" "$entry"; then
+            warn "$ASSET has a desktop entry without a [Desktop Entry] group; not registering it"
+            rm -f -- "$entry"
+        fi
     fi
     if [ -f "$SRC/$APP_ID.metainfo.xml" ]; then cp "$SRC/$APP_ID.metainfo.xml" "$new/share/metainfo/"; fi
     if [ -f "$SRC/$APP_ID.png" ]; then cp "$SRC/$APP_ID.png" "$new/share/icons/hicolor/256x256/apps/"; fi
@@ -646,56 +704,118 @@ install_self() {
     chmod 755 "$1"
 }
 
-# Moves the staged content ($1) into $ROOT, replacing the old version. On any failure the old
-# version is put back.
+# Moves the staged content ($1) into $ROOT, replacing the old version, in two phases: "aside"
+# moves the old entries into .previous.*, "in" moves the staged ones into place. On a failure,
+# or an interrupt (cleanup), swap_rollback undoes exactly the phase reached.
 swap_in() {
     new=$1
-    old=$(mktemp -d "$ROOT/.previous.XXXXXX")
-    for e in "$ROOT"/* ; do
+    SWAP_NAMES=$WORK/staged-names
+    for e in "$new"/*; do
+        if [ -e "$e" ] || [ -L "$e" ]; then printf '%s\n' "${e##*/}"; fi
+    done >"$SWAP_NAMES"
+    SWAP_OLD=$(mktemp -d "$ROOT/.previous.XXXXXX") || return 1
+    SWAP_PHASE=aside
+    for e in "$ROOT"/*; do
         [ -e "$e" ] || [ -L "$e" ] || continue
-        mv -- "$e" "$old/" || { restore "$old"; return 1; }
+        mv -- "$e" "$SWAP_OLD/" || {
+            swap_abort
+            return 1
+        }
     done
-    for e in "$new"/* ; do
+    SWAP_PHASE=in
+    for e in "$new"/*; do
         [ -e "$e" ] || [ -L "$e" ] || continue
-        mv -- "$e" "$ROOT/" || { restore "$old"; return 1; }
+        mv -- "$e" "$ROOT/" || {
+            swap_abort
+            return 1
+        }
     done
-    rm -rf -- "$old"
+    SWAP_PHASE=
+    rm -rf -- "$SWAP_OLD"
+    SWAP_OLD=
 }
 
-restore() {
-    for e in "$ROOT"/* ; do
+swap_abort() {
+    kept=$SWAP_OLD
+    swap_rollback || die "could not install the new version, nor put all of the previous one back.
+  Its remaining files are in $kept: move them back into $ROOT, or run the installer again."
+}
+
+# Puts the previous version back. In phase "in" it first removes the entries that came from the
+# staging folder (by then every old entry is aside, so nothing else has those names). It never
+# deletes an old entry, and never moves one over an existing name. Returns 1 when something
+# could not be put back; the rest stays in $SWAP_OLD.
+swap_rollback() {
+    phase=$SWAP_PHASE
+    SWAP_PHASE=
+    ok=1
+    if [ "$phase" = in ]; then
+        while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            if [ -e "$ROOT/$name" ] || [ -L "$ROOT/$name" ]; then rm -rf -- "${ROOT:?}/$name" || ok=0; fi
+        done <"$SWAP_NAMES"
+    fi
+    for e in "$SWAP_OLD"/*; do
         [ -e "$e" ] || [ -L "$e" ] || continue
-        rm -rf -- "$e"
+        if [ -e "$ROOT/${e##*/}" ] || [ -L "$ROOT/${e##*/}" ]; then
+            ok=0
+            continue
+        fi
+        mv -- "$e" "$ROOT/" || ok=0
     done
-    for e in "$1"/* ; do
-        [ -e "$e" ] || [ -L "$e" ] || continue
-        mv -- "$e" "$ROOT/"
-    done
-    rmdir -- "$1" 2>/dev/null || true
+    [ "$ok" = 1 ] || return 1
+    rmdir -- "$SWAP_OLD" 2>/dev/null || true
+    SWAP_OLD=
+    return 0
 }
 
 # Registers the desktop entry, icons and command outside the install folder; writes the receipt.
+# Each is written only where nothing else owns the name: a desktop entry must carry this
+# install's X-Canopy-Install-Dir marker, an icon must be in this install's receipt, and a
+# symlink at either is never written through.
 integrate_linux() {
     receipt=$ROOT/.canopy-install
     tmp_receipt=$ROOT/.canopy-install.new
     {
         printf '# Written by the Canopy installer: what it created outside %s.\n' "$ROOT"
+        printf 'root=%s\n' "$ROOT"
         printf 'version=%s\n' "$VERSION"
     } >"$tmp_receipt"
 
     apps=$DATA_HOME/applications
+    entry=$apps/$APP_ID.desktop
     if [ -f "$ROOT/share/applications/$APP_ID.desktop" ]; then
-        mkdir -p "$apps"
-        cp "$ROOT/share/applications/$APP_ID.desktop" "$apps/$APP_ID.desktop"
-        printf 'desktop=%s\n' "$apps/$APP_ID.desktop" >>"$tmp_receipt"
+        if [ -L "$entry" ]; then
+            warn "$entry is a symlink, not this installer's desktop entry; left it alone (remove it, then re-run, to get Canopy in the app menu)"
+        elif { [ -e "$entry" ] && [ ! -f "$entry" ]; } ||
+            { [ -f "$entry" ] && ! grep -qxF "X-Canopy-Install-Dir=$ROOT" "$entry"; }; then
+            warn "$entry is not this installer's desktop entry; left it alone (remove it, then re-run, to get Canopy in the app menu)"
+        elif mkdir -p "$apps" && put_file "$ROOT/share/applications/$APP_ID.desktop" "$entry"; then
+            printf 'desktop=%s\n' "$entry" >>"$tmp_receipt"
+        else
+            warn "could not write $entry"
+        fi
     fi
-    for rel in 256x256/apps/$APP_ID.png scalable/apps/$APP_ID.svg; do
+    for rel in "256x256/apps/$APP_ID.png" "scalable/apps/$APP_ID.svg"; do
         src=$ROOT/share/icons/hicolor/$rel
         [ -f "$src" ] || continue
         dst=$DATA_HOME/icons/hicolor/$rel
-        mkdir -p "$(dirname "$dst")"
-        cp "$src" "$dst"
-        printf 'icon=%s|%s\n' "$dst" "$src" >>"$tmp_receipt"
+        if [ -L "$dst" ]; then
+            warn "$dst is a symlink, not this installer's icon; left it alone"
+            continue
+        fi
+        if [ -e "$dst" ] && ! grep -qxF "icon=$dst|$src" "$receipt" 2>/dev/null; then
+            # Someone else's copy; an identical one shows the same icon and needs no warning.
+            if [ ! -f "$dst" ] || ! cmp -s -- "$dst" "$src"; then
+                warn "$dst was not installed by this installer; left it alone"
+            fi
+            continue
+        fi
+        if mkdir -p "$(dirname "$dst")" && put_file "$src" "$dst"; then
+            printf 'icon=%s|%s\n' "$dst" "$src" >>"$tmp_receipt"
+        else
+            warn "could not write $dst"
+        fi
     done
     link_command "$ROOT/bin/canopy" "$tmp_receipt"
     mv -f -- "$tmp_receipt" "$receipt"
@@ -723,67 +843,84 @@ link_command() {
 }
 
 install_linux() {
+    if [ -L "$ROOT" ] && [ ! -e "$ROOT" ]; then die "$ROOT is a broken symlink"; fi
     if [ -e "$ROOT" ] && [ ! -d "$ROOT" ]; then die "$ROOT exists and is not a folder"; fi
-    if [ -d "$ROOT" ] && [ ! -f "$ROOT/.canopy-install" ] && [ -n "$(ls -A "$ROOT")" ]; then
+    if [ ! -d "$ROOT" ]; then
+        note_created_dirs "$ROOT"
+        mkdir -p "$ROOT"
+    fi
+    # The real path, so the symlink, desktop entry and receipt name the folder exactly as the
+    # installed uninstall.sh sees it (it resolves its own folder with pwd -P).
+    ROOT=$(cd "$ROOT" && pwd -P)
+    check_path "$ROOT"
+    check_root "$ROOT"
+    if [ ! -f "$ROOT/.canopy-install" ] && [ -n "$(ls -A "$ROOT")" ]; then
         die "$ROOT is not empty and was not created by this installer; choose another CANOPY_INSTALL_DIR"
     fi
-    if [ ! -d "$ROOT" ]; then
-        mkdir -p "$ROOT"
-        CREATED_ROOT=1
-    fi
-    LOCK=$ROOT/.lock
-    mkdir "$LOCK" 2>/dev/null || {
-        LOCK=
-        die "another Canopy install is running (remove $ROOT/.lock if it is not)"
-    }
-    if [ ! -f "$ROOT/.canopy-install" ]; then
-        printf '# Written by the Canopy installer.\n' >"$ROOT/.canopy-install"
-    fi
+    take_lock "$ROOT/.lock"
     WORK=$(mktemp -d "$ROOT/.staging.XXXXXX")
-    old_version=
-    if [ -f "$ROOT/VERSION" ]; then old_version=$(cat "$ROOT/VERSION"); fi
+    if [ -f "$ROOT/.canopy-install" ] && [ -f "$ROOT/VERSION" ]; then OLD_VERSION=$(head -n 1 "$ROOT/VERSION"); fi
 
     resolve_release
     download_and_verify
     mkdir "$WORK/new"
     stage_linux "$WORK/new"
     swap_in "$WORK/new" || die "could not move the new version into $ROOT; the previous one was kept"
-    CREATED_ROOT=0
+    # The folder is Canopy's from here on: keep it, and claim it with a receipt at once.
+    CREATED_DIRS=
+    if [ ! -f "$ROOT/.canopy-install" ]; then
+        printf '# Written by the Canopy installer.\nroot=%s\n' "$ROOT" >"$ROOT/.canopy-install"
+    fi
     integrate_linux
 
     say ""
-    if [ -z "$old_version" ]; then
+    if [ -z "$OLD_VERSION" ]; then
         say "Installed Canopy $VERSION in $ROOT"
-    elif [ "$old_version" = "$VERSION" ]; then
+    elif [ "$OLD_VERSION" = "$VERSION" ]; then
         say "Reinstalled Canopy $VERSION in $ROOT"
     else
-        say "Updated Canopy $old_version -> $VERSION in $ROOT"
+        say "Updated Canopy $OLD_VERSION -> $VERSION in $ROOT"
     fi
     if [ "$LINK" = 1 ] && links_to "$LINK_PATH" "$ROOT/bin/canopy"; then
         say "Command:  $LINK_PATH -> $ROOT/bin/canopy"
     fi
-    if [ -f "$DATA_HOME/applications/$APP_ID.desktop" ]; then
+    if grep -q '^desktop=' "$ROOT/.canopy-install"; then
         say "Launcher: $DATA_HOME/applications/$APP_ID.desktop"
     fi
     say "Remove:   $ROOT/uninstall.sh"
 }
 
+# Puts the previous app bundle back after an interrupted or failed swap (see install_darwin).
+mac_rollback() {
+    phase=$MAC_PHASE
+    MAC_PHASE=
+    prev=$WORK/previous.app
+    [ -e "$prev" ] || return 0
+    if [ "$phase" = in ] && { [ -e "$ROOT" ] || [ -L "$ROOT" ]; }; then
+        mv -- "$ROOT" "$WORK/failed.app" || return 1
+    fi
+    if [ -e "$ROOT" ] || [ -L "$ROOT" ]; then return 1; fi
+    mv -- "$prev" "$ROOT"
+}
+
 install_darwin() {
     parent=$(dirname "$ROOT")
+    if [ ! -d "$parent" ]; then
+        note_created_dirs "$parent"
+        mkdir -p "$parent"
+    fi
+    ROOT=$(cd "$parent" && pwd -P)/${ROOT##*/}
+    check_path "$ROOT"
+    APP_BIN=$ROOT/Contents/MacOS/canopy
+    if [ -L "$ROOT" ]; then die "$ROOT is a symlink; not replacing it"; fi
     if [ -e "$ROOT" ]; then
         id=$(bundle_id "$ROOT")
         [ "$id" = "$APP_ID" ] || die "$ROOT exists and is not Canopy (bundle id '${id:-none}'); not replacing it"
     fi
-    mkdir -p "$parent"
-    LOCK=$parent/.Canopy-install.lock
-    mkdir "$LOCK" 2>/dev/null || {
-        LOCK=
-        die "another Canopy install is running (remove $parent/.Canopy-install.lock if it is not)"
-    }
-    WORK=$(mktemp -d "$parent/.Canopy-install.XXXXXX")
-    old_version=
+    take_lock "$(dirname "$ROOT")/.Canopy-install.lock"
+    WORK=$(mktemp -d "$(dirname "$ROOT")/.Canopy-install.XXXXXX")
     if [ -f "$ROOT/Contents/Info.plist" ]; then
-        old_version=$(awk '/<key>CFBundleShortVersionString<\/key>/ { getline; gsub(/.*<string>|<\/string>.*/, ""); print; exit }' "$ROOT/Contents/Info.plist")
+        OLD_VERSION=$(awk '/<key>CFBundleShortVersionString<\/key>/ { getline; gsub(/.*<string>|<\/string>.*/, ""); print; exit }' "$ROOT/Contents/Info.plist")
     fi
 
     resolve_release
@@ -792,23 +929,34 @@ install_darwin() {
     [ "$(bundle_id "$SRC/Canopy.app")" = "$APP_ID" ] || die "$ASSET holds an app with the wrong bundle id"
     mv -- "$SRC/Canopy.app" "$WORK/Canopy.app"
     if [ -e "$ROOT" ]; then
-        mv -- "$ROOT" "$WORK/previous.app" || die "could not move the old $ROOT aside; nothing changed"
+        # Two renames; MAC_PHASE lets cleanup put the old app back if either is interrupted.
+        MAC_PHASE=aside
+        if ! mv -- "$ROOT" "$WORK/previous.app"; then
+            MAC_PHASE=
+            die "could not move the old $ROOT aside; nothing changed"
+        fi
+        MAC_PHASE=in
         if ! mv -- "$WORK/Canopy.app" "$ROOT"; then
-            mv -- "$WORK/previous.app" "$ROOT"
+            mac_rollback || {
+                WORK=
+                die "could not install the new version, nor put the previous one back; it is at $prev"
+            }
             die "could not install the new version; the previous one was kept"
         fi
+        MAC_PHASE=
     else
         mv -- "$WORK/Canopy.app" "$ROOT" || die "could not create $ROOT"
     fi
+    CREATED_DIRS=
     link_command "$APP_BIN" ""
 
     say ""
-    if [ -z "$old_version" ]; then
+    if [ -z "$OLD_VERSION" ]; then
         say "Installed Canopy $VERSION as $ROOT"
-    elif [ "$old_version" = "$VERSION" ]; then
+    elif [ "$OLD_VERSION" = "$VERSION" ]; then
         say "Reinstalled Canopy $VERSION as $ROOT"
     else
-        say "Updated Canopy $old_version -> $VERSION at $ROOT"
+        say "Updated Canopy $OLD_VERSION -> $VERSION at $ROOT"
     fi
     if [ "$LINK" = 1 ] && links_to "$LINK_PATH" "$APP_BIN"; then
         say "Command:  $LINK_PATH -> $APP_BIN"
@@ -818,52 +966,213 @@ install_darwin() {
 
 # ---------------------------------------------------------------------------------------------
 
-PATH_HINT=0
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+main() {
+    # fd 3: the user's stderr, for say/warn/die (see die).
+    exec 3>&2
+    # A CDPATH would make `cd` print, and $(cd ... && pwd -P) return two lines.
+    unset CDPATH
 
-if [ "$MODE" = uninstall ]; then
-    if [ "$PURGE" = 1 ]; then confirm_purge; fi
-    case $OS in
-        linux) uninstall_linux ;;
-        darwin) uninstall_darwin ;;
+    MODE=install
+    CHANNEL=latest
+    PIN=
+    LINK=1
+    PURGE=0
+    YES=0
+    SELF_DIR=
+    LOCAL_BASE=
+    DOWNLOADER=
+    WGET_NOCONFIG=
+    WORK=
+    LOCK=
+    SWAP_PHASE=
+    SWAP_OLD=
+    SWAP_NAMES=
+    MAC_PHASE=
+    CREATED_DIRS=
+    OLD_VERSION=
+    PATH_HINT=0
+    PURGE_OK=0
+    PURGE_LIST=
+
+    case ${0##*/} in
+        uninstall.sh)
+            MODE=uninstall
+            SELF_DIR=$(cd "$(dirname "$0")" && pwd -P)
+            ;;
     esac
-    if [ "$PURGE" = 1 ]; then
-        purge
-    else
-        say "Settings and data were kept (--uninstall --purge removes them)."
-    fi
-    exit 0
-fi
 
-say "Installing Canopy for $PRETTY"
-for tool in tar gzip awk mktemp uname; do
-    have "$tool" || die "this installer needs '$tool'"
-done
-if [ "$OS" = linux ]; then
-    # The Linux build needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later).
-    glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}' || true)
-    if [ -n "$glibc" ]; then
-        if version_gt "$MIN_GLIBC.0" "$glibc.0"; then
-            die "Canopy needs glibc $MIN_GLIBC or newer; this system has $glibc"
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --beta) CHANNEL=beta ;;
+            --version)
+                [ $# -ge 2 ] || die "--version needs a value, for example --version 0.2.0"
+                PIN=$2
+                shift
+                ;;
+            --version=*) PIN=${1#--version=} ;;
+            --no-path) LINK=0 ;;
+            --uninstall) MODE=uninstall ;;
+            --purge) PURGE=1 ;;
+            -y | --yes) YES=1 ;;
+            -h | --help)
+                usage
+                exit 0
+                ;;
+            *)
+                printf 'error: unknown option: %s (see --help)\n' "$1" >&3
+                exit 2
+                ;;
+        esac
+        shift
+    done
+    if [ "$PURGE" = 1 ] && [ "$MODE" != uninstall ]; then
+        die "--purge only goes with --uninstall"
+    fi
+    PIN=${PIN#v}
+
+    # Test-only: tools and CI point the script at a fake feed on this machine. Only a plain-HTTP
+    # loopback URL with nothing but a port after the host is accepted, so this can never send a
+    # real install anywhere else; fetch() then allows plain HTTP to exactly that base.
+    if [ -n "${CANOPY_INSTALL_BASE_URL:-}" ]; then
+        url=$CANOPY_INSTALL_BASE_URL
+        only="CANOPY_INSTALL_BASE_URL is for tests and only accepts http://127.0.0.1:<port> or http://localhost:<port>"
+        case $url in
+            http://127.0.0.1:*) host=127.0.0.1 ;;
+            http://localhost:*) host=localhost ;;
+            *) die "$only" ;;
+        esac
+        # Everything after "host:", less one trailing slash, must be digits: no path, no
+        # user-info trick such as http://127.0.0.1:1@elsewhere.example.
+        port=${url#"http://$host:"}
+        port=${port%/}
+        case $port in
+            '' | *[!0-9]*) die "$only" ;;
+        esac
+        [ ${#port} -le 5 ] || die "$only"
+        LOCAL_BASE=http://$host:$port
+        FEED_URL=$LOCAL_BASE/canopy
+        RELEASES_URL=$LOCAL_BASE/releases/download
+        warn "test mode: using the feed at $LOCAL_BASE"
+    fi
+
+    # Platform
+    [ -n "${HOME:-}" ] || die "HOME is not set"
+    case $HOME in
+        /*) ;;
+        *) die "HOME must be an absolute path (it is $HOME)" ;;
+    esac
+    case $(uname -s) in
+        Linux) OS=linux ;;
+        Darwin) OS=darwin ;;
+        MINGW* | MSYS* | CYGWIN* | Windows_NT)
+            die "on Windows, run this in PowerShell instead:
+  irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1 | iex"
+            ;;
+        *) die "Canopy has no build for $(uname -s); it runs on Linux, macOS and Windows" ;;
+    esac
+    case $(uname -m) in
+        x86_64 | amd64) ARCH=x86_64 ;;
+        aarch64 | arm64) ARCH=aarch64 ;;
+        *) die "Canopy has no build for $(uname -m) processors yet (only x86_64 and arm64)" ;;
+    esac
+    # An x86_64 shell under Rosetta on an Apple silicon Mac should still get the native build.
+    if [ "$OS" = darwin ] && [ "$ARCH" = x86_64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
+        ARCH=aarch64
+    fi
+    KEY=$OS-$ARCH
+    case $KEY in
+        linux-x86_64) TARGET=x86_64-unknown-linux-gnu ;;
+        linux-aarch64) TARGET=aarch64-unknown-linux-gnu ;;
+        darwin-x86_64) TARGET=x86_64-apple-darwin ;;
+        darwin-aarch64) TARGET=aarch64-apple-darwin ;;
+    esac
+    case $OS in
+        linux) PRETTY="Linux $ARCH" ;;
+        darwin) PRETTY="macOS $ARCH" ;;
+    esac
+
+    # Paths
+    DATA_HOME=$(xdg_home "${XDG_DATA_HOME:-}" "$HOME/.local/share")
+    BIN_DIR=$HOME/.local/bin
+    LINK_PATH=$BIN_DIR/canopy
+    HOME_P=$HOME
+    if [ -d "$HOME" ]; then HOME_P=$(cd "$HOME" && pwd -P); fi
+    if [ "$OS" = linux ]; then
+        # The installed uninstall.sh always removes the folder it sits in.
+        ROOT=${SELF_DIR:-${CANOPY_INSTALL_DIR:-$HOME/.local/opt/canopy}}
+    else
+        ROOT=${CANOPY_INSTALL_DIR:-$HOME/Applications/Canopy.app}
+    fi
+    case $ROOT in
+        /*) ;;
+        *) ROOT=$(pwd -P)/$ROOT ;;
+    esac
+    while :; do
+        case $ROOT in
+            ?*/) ROOT=${ROOT%/} ;;
+            *) break ;;
+        esac
+    done
+    if [ "$OS" = darwin ]; then
+        case $ROOT in
+            *.app) ;;
+            *) die "on macOS, CANOPY_INSTALL_DIR names the app bundle and must end in .app" ;;
+        esac
+    fi
+    for p in "$ROOT" "$HOME" "$DATA_HOME"; do check_path "$p"; done
+    check_root "$ROOT"
+    APP_BIN=$ROOT/bin/canopy
+
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+
+    if [ "$MODE" = uninstall ]; then
+        if [ "$PURGE" = 1 ]; then confirm_purge; fi
+        case $OS in
+            linux) uninstall_linux ;;
+            darwin) uninstall_darwin ;;
+        esac
+        if [ "$PURGE" = 1 ]; then
+            purge
+        else
+            say "Settings and data were kept (--uninstall --purge removes them)."
         fi
-    elif ldd --version 2>&1 | grep -qi musl; then
-        die "Canopy's Linux build needs glibc; musl systems (such as Alpine) are not supported yet"
-    else
-        warn "could not tell the C library version; Canopy needs glibc $MIN_GLIBC or newer"
+        exit 0
     fi
-fi
 
-case $OS in
-    linux) install_linux ;;
-    darwin) install_darwin ;;
-esac
+    say "Installing Canopy for $PRETTY"
+    for tool in tar gzip awk mktemp uname; do
+        have "$tool" || die "this installer needs '$tool'"
+    done
+    pick_downloader
+    if [ "$OS" = linux ]; then
+        # The Linux build needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later).
+        glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}' || true)
+        if [ -n "$glibc" ]; then
+            if version_gt "$MIN_GLIBC.0" "$glibc.0"; then
+                die "Canopy needs glibc $MIN_GLIBC or newer; this system has $glibc"
+            fi
+        elif ldd --version 2>&1 | grep -qi musl; then
+            die "Canopy's Linux build needs glibc; musl systems (such as Alpine) are not supported yet"
+        else
+            warn "could not tell the C library version; Canopy needs glibc $MIN_GLIBC or newer"
+        fi
+    fi
 
-if [ "$PATH_HINT" = 1 ]; then
-    say ""
-    say "Note: $BIN_DIR is not on your PATH, so 'canopy' will not run by name yet. Add this to"
-    say "your shell profile (~/.profile, ~/.bashrc or ~/.zshrc) and open a new terminal:"
-    say "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-fi
-git_report
+    case $OS in
+        linux) install_linux ;;
+        darwin) install_darwin ;;
+    esac
+
+    if [ "$PATH_HINT" = 1 ]; then
+        say ""
+        say "Note: $BIN_DIR is not on your PATH, so 'canopy' will not run by name yet. Add this to"
+        say "your shell profile (~/.profile, ~/.bashrc or ~/.zshrc) and open a new terminal:"
+        say "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
+    git_report
+}
+
+main "$@"
