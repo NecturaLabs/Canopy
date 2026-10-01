@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::client::{PER_PAGE, optional, unix};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, head_changed, map_head_conflict};
 use crate::http::{Http, Method, encode};
 use crate::model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
@@ -332,22 +332,43 @@ pub(crate) fn create(http: &Http, project: &str, req: &NewRequest) -> Result<Req
 /// method (merge commit, semi-linear or fast-forward). `Rebase` first rebases the source branch
 /// onto the target (GitLab does this asynchronously, so Canopy polls for up to 30 seconds) and
 /// then merges exactly the rebased head.
-pub(crate) fn merge(http: &Http, project: &str, iid: u64, method: MergeMethod) -> Result<()> {
+///
+/// With `head_sha`, the merge happens only while the source branch head is still that commit:
+/// it is sent as `sha`, which GitLab checks and answers 409 ("SHA does not match HEAD of source
+/// branch") when it does not match, mapped to [`crate::error::head_changed`]. For `Rebase` the
+/// head is compared before GitLab is asked to rebase, and the merge then names the rebased head.
+pub(crate) fn merge(
+    http: &Http,
+    project: &str,
+    iid: u64,
+    method: MergeMethod,
+    head_sha: Option<&str>,
+) -> Result<()> {
     let mr_path = format!("{project}/merge_requests/{iid}");
     let mut body = json!({ "squash": method == MergeMethod::Squash });
-    if method == MergeMethod::Rebase {
-        let sha = rebase(http, &mr_path)?;
-        if let Some(sha) = sha {
-            body["sha"] = Value::String(sha);
-        }
+    let sha = if method == MergeMethod::Rebase {
+        rebase(http, &mr_path, head_sha)?
+    } else {
+        head_sha.map(str::to_owned)
+    };
+    let sha_sent = sha.is_some();
+    if let Some(sha) = sha {
+        body["sha"] = Value::String(sha);
     }
-    http.call(Method::Put, &format!("{mr_path}/merge"), Some(&body))
+    let result = http.call(Method::Put, &format!("{mr_path}/merge"), Some(&body));
+    map_head_conflict(result, sha_sent, "merge request")
 }
 
-/// Rebases the source branch and waits for it; returns the new head.
-fn rebase(http: &Http, mr_path: &str) -> Result<Option<String>> {
+/// Rebases the source branch and waits for it; returns the new head. With `expected`, refuses
+/// (before rebasing) when the head is no longer that commit.
+fn rebase(http: &Http, mr_path: &str, expected: Option<&str>) -> Result<Option<String>> {
     let poll_path = format!("{mr_path}?include_rebase_in_progress=true");
     let before: Mr = http.json(Method::Get, &poll_path, None)?;
+    if let Some(expected) = expected
+        && before.sha.as_deref() != Some(expected)
+    {
+        return Err(head_changed("merge request"));
+    }
     http.call(Method::Put, &format!("{mr_path}/rebase"), None)?;
     let deadline = Instant::now() + REBASE_WAIT;
     loop {

@@ -41,6 +41,31 @@ pub enum Error {
 /// Result alias for hosting API calls.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// The error for a merge refused because the request's head is no longer the commit the user
+/// reviewed (GitHub and GitLab both answer 409 when the `sha` sent with a merge does not match).
+pub(crate) fn head_changed(noun: &str) -> Error {
+    Error::Api {
+        status: 409,
+        message: format!(
+            "The {noun} changed since you loaded it. Refresh and review before merging."
+        ),
+    }
+}
+
+/// Replaces a 409 from a merge that carried an expected head SHA with [`head_changed`].
+pub(crate) fn map_head_conflict<T>(result: Result<T>, sha_sent: bool, noun: &str) -> Result<T> {
+    match result {
+        Err(Error::Api {
+            status: 409,
+            message,
+        }) if sha_sent => {
+            tracing::info!(server = %message, "merge refused: the request head moved");
+            Err(head_changed(noun))
+        }
+        other => other,
+    }
+}
+
 fn rate_limited(reset: Option<i64>) -> String {
     match reset.and_then(|t| DateTime::<Utc>::from_timestamp(t, 0)) {
         Some(at) => format!(

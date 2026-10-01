@@ -1,10 +1,10 @@
 //! GitHub REST API v3 (`https://api.github.com`): pull requests.
 
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::client::{PER_PAGE, optional, unix};
-use crate::error::Result;
+use crate::error::{Result, map_head_conflict};
 use crate::http::{Http, Method, encode};
 use crate::model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
@@ -328,13 +328,26 @@ pub(crate) fn create(http: &Http, repo: &str, req: &NewRequest) -> Result<Reques
     Ok(pull.summary())
 }
 
-pub(crate) fn merge(http: &Http, repo: &str, number: u64, method: MergeMethod) -> Result<()> {
-    let body = json!({ "merge_method": method.github_name() });
-    http.call(
+/// Merges pull request `number`. With `head_sha`, GitHub merges only while the head is still
+/// that commit (`sha` in the body) and answers 409 otherwise, which becomes
+/// [`crate::error::head_changed`].
+pub(crate) fn merge(
+    http: &Http,
+    repo: &str,
+    number: u64,
+    method: MergeMethod,
+    head_sha: Option<&str>,
+) -> Result<()> {
+    let mut body = json!({ "merge_method": method.github_name() });
+    if let Some(sha) = head_sha {
+        body["sha"] = Value::String(sha.to_owned());
+    }
+    let result = http.call(
         Method::Put,
         &format!("{repo}/pulls/{number}/merge"),
         Some(&body),
-    )
+    );
+    map_head_conflict(result, head_sha.is_some(), "pull request")
 }
 
 pub(crate) fn set_open(http: &Http, repo: &str, number: u64, open: bool) -> Result<()> {

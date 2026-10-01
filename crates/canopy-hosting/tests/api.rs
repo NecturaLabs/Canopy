@@ -501,7 +501,9 @@ fn github_writes() {
         })
         .expect("create");
     assert_eq!(created.number, 9);
-    client.merge(9, MergeMethod::Squash).expect("merge");
+    client
+        .merge(9, MergeMethod::Squash, Some("abc123"))
+        .expect("merge");
     client.set_open(9, false).expect("close");
     client.set_open(9, true).expect("reopen");
     client.comment(9, "Thanks!").expect("comment");
@@ -527,7 +529,10 @@ fn github_writes() {
         writes[0].json(),
         json!({ "title": "Add feature", "body": "Details", "head": "feature-9", "base": "main", "draft": true })
     );
-    assert_eq!(writes[1].json(), json!({ "merge_method": "squash" }));
+    assert_eq!(
+        writes[1].json(),
+        json!({ "merge_method": "squash", "sha": "abc123" })
+    );
     assert_eq!(writes[2].json(), json!({ "state": "closed" }));
     assert_eq!(writes[3].json(), json!({ "state": "open" }));
     assert_eq!(writes[4].json(), json!({ "body": "Thanks!" }));
@@ -591,7 +596,7 @@ fn github_error_mapping() {
             reset: Some(1_800_000_000)
         }
     );
-    let err = client.merge(3, MergeMethod::Merge).expect_err("405");
+    let err = client.merge(3, MergeMethod::Merge, None).expect_err("405");
     assert_eq!(
         err,
         Error::Api {
@@ -879,8 +884,10 @@ fn gitlab_writes() {
         })
         .expect("create");
     assert_eq!(created.number, 12);
-    client.merge(12, MergeMethod::Squash).expect("squash");
-    client.merge(12, MergeMethod::Merge).expect("merge");
+    client
+        .merge(12, MergeMethod::Squash, Some("def456"))
+        .expect("squash");
+    client.merge(12, MergeMethod::Merge, None).expect("merge");
     client.set_open(12, false).expect("close");
     client.set_open(12, true).expect("reopen");
     client.comment(12, "Thanks!").expect("comment");
@@ -907,7 +914,7 @@ fn gitlab_writes() {
         writes[0].json(),
         json!({ "source_branch": "topic-12", "target_branch": "main", "title": "Draft: Add feature", "description": "Details" })
     );
-    assert_eq!(writes[1].json(), json!({ "squash": true }));
+    assert_eq!(writes[1].json(), json!({ "squash": true, "sha": "def456" }));
     assert_eq!(writes[2].json(), json!({ "squash": false }));
     assert_eq!(writes[3].json(), json!({ "state_event": "close" }));
     assert_eq!(writes[4].json(), json!({ "state_event": "reopen" }));
@@ -938,7 +945,7 @@ fn gitlab_rebase_merge_rebases_then_merges_the_new_head() {
     );
     server.route("PUT", &format!("{GL}/merge_requests/8/merge"), 200, "{}");
     gitlab(&server, Some(TOKEN))
-        .merge(8, MergeMethod::Rebase)
+        .merge(8, MergeMethod::Rebase, None)
         .expect("rebase and merge");
     let reqs = server.requests();
     let calls: Vec<(&str, String)> = reqs
@@ -981,13 +988,129 @@ fn gitlab_rebase_merge_rebases_then_merges_the_new_head() {
         r#"{"rebase_in_progress":true}"#,
     );
     let err = gitlab(&server, Some(TOKEN))
-        .merge(8, MergeMethod::Rebase)
+        .merge(8, MergeMethod::Rebase, None)
         .expect_err("rebase failed");
     assert!(
         err.to_string().contains("Rebase failed: conflicts"),
         "{err}"
     );
     assert!(!server.writes().iter().any(|r| r.target.ends_with("/merge")));
+}
+
+/// The message for a merge refused because the head moved after the review.
+fn head_changed(noun: &str) -> Error {
+    Error::Api {
+        status: 409,
+        message: format!(
+            "The {noun} changed since you loaded it. Refresh and review before merging."
+        ),
+    }
+}
+
+#[test]
+fn github_merge_refuses_a_head_that_moved() {
+    let server = Server::start();
+    server.route(
+        "PUT",
+        "/repos/octo/hello/pulls/9/merge",
+        409,
+        r#"{"message":"Head branch was modified. Review and try the merge again.","documentation_url":"https://docs.github.com/rest"}"#,
+    );
+    let client = github(&server, Some(TOKEN));
+    let err = client
+        .merge(9, MergeMethod::Merge, Some(" reviewed1 "))
+        .expect_err("409");
+    assert_eq!(err, head_changed("pull request"));
+    assert!(
+        err.to_string()
+            .contains("changed since you loaded it. Refresh and review before merging."),
+        "{err}"
+    );
+    let writes = server.writes();
+    assert_eq!(
+        writes[0].json(),
+        json!({ "merge_method": "merge", "sha": "reviewed1" })
+    );
+
+    // Without an expected head (or a blank one) no sha is sent and a 409 keeps its own message.
+    let err = client
+        .merge(9, MergeMethod::Merge, Some("  "))
+        .expect_err("409");
+    assert_eq!(
+        err,
+        Error::Api {
+            status: 409,
+            message: "Head branch was modified. Review and try the merge again.".into()
+        }
+    );
+    assert_eq!(
+        server.writes()[1].json(),
+        json!({ "merge_method": "merge" })
+    );
+}
+
+#[test]
+fn gitlab_merge_refuses_a_head_that_moved() {
+    let server = Server::start();
+    server.route(
+        "PUT",
+        &format!("{GL}/merge_requests/12/merge"),
+        409,
+        r#"{"message":"SHA does not match HEAD of source branch: 0123abc"}"#,
+    );
+    let client = gitlab(&server, Some(TOKEN));
+    let err = client
+        .merge(12, MergeMethod::Squash, Some("reviewed1"))
+        .expect_err("409");
+    assert_eq!(err, head_changed("merge request"));
+    assert_eq!(
+        server.writes()[0].json(),
+        json!({ "squash": true, "sha": "reviewed1" })
+    );
+}
+
+#[test]
+fn gitlab_rebase_merge_checks_the_head_before_rebasing() {
+    let server = Server::start();
+    let mut mr = gl_mr(8, "opened", "2024-02-03T00:00:00Z");
+    mr["sha"] = json!("pushed-after-review");
+    mr["rebase_in_progress"] = json!(false);
+    server.route(
+        "GET",
+        &format!("{GL}/merge_requests/8"),
+        200,
+        &mr.to_string(),
+    );
+    server.route(
+        "PUT",
+        &format!("{GL}/merge_requests/8/rebase"),
+        202,
+        r#"{"rebase_in_progress":true}"#,
+    );
+    server.route("PUT", &format!("{GL}/merge_requests/8/merge"), 200, "{}");
+    let client = gitlab(&server, Some(TOKEN));
+
+    // The head moved: nothing is rebased or merged.
+    let err = client
+        .merge(8, MergeMethod::Rebase, Some("reviewed1"))
+        .expect_err("stale head");
+    assert_eq!(err, head_changed("merge request"));
+    assert!(server.writes().is_empty(), "{:?}", server.writes());
+
+    // The head is the reviewed one: rebased, then the rebased head is merged.
+    client
+        .merge(8, MergeMethod::Rebase, Some("pushed-after-review"))
+        .expect("rebase and merge");
+    let writes = server.writes();
+    let targets: Vec<String> = writes.iter().map(|r| r.target.replace(GL, "")).collect();
+    assert_eq!(
+        targets,
+        ["/merge_requests/8/rebase", "/merge_requests/8/merge"]
+    );
+    assert_eq!(
+        writes[1].json(),
+        json!({ "squash": false, "sha": "pushed-after-review" })
+    );
 }
 
 #[test]
@@ -1052,7 +1175,7 @@ fn gitlab_error_mapping() {
         }
     );
     assert_eq!(
-        client.merge(3, MergeMethod::Squash).expect_err("405"),
+        client.merge(3, MergeMethod::Squash, None).expect_err("405"),
         Error::Api {
             status: 405,
             message: "405 Method Not Allowed".into()

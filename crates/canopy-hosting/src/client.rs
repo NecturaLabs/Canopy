@@ -143,10 +143,17 @@ impl Client {
     /// Merges a request. On GitLab, `Merge` and `Rebase` follow the project's merge method
     /// setting, and `Rebase` rebases the source branch first (waiting up to 30 s for GitLab to
     /// finish), then merges the rebased head.
-    pub fn merge(&self, number: u64, method: MergeMethod) -> Result<()> {
+    ///
+    /// `head_sha` is the head commit the user reviewed (from [`RequestDetails::head_sha`]). When
+    /// given, the provider merges only while the head is still that commit, so a push after the
+    /// review makes the merge fail with [`crate::Error::Api`] (status 409, "The pull request
+    /// changed since you loaded it. Refresh and review before merging.", or "merge request" on
+    /// GitLab) instead of merging commits nobody reviewed. A blank `head_sha` counts as `None`.
+    pub fn merge(&self, number: u64, method: MergeMethod, head_sha: Option<&str>) -> Result<()> {
+        let head_sha = head_sha.map(str::trim).filter(|s| !s.is_empty());
         match self.kind {
-            ForgeKind::GitHub => github::merge(&self.http, &self.project, number, method),
-            ForgeKind::GitLab => gitlab::merge(&self.http, &self.project, number, method),
+            ForgeKind::GitHub => github::merge(&self.http, &self.project, number, method, head_sha),
+            ForgeKind::GitLab => gitlab::merge(&self.http, &self.project, number, method, head_sha),
         }
     }
 
