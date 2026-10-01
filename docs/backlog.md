@@ -19,7 +19,7 @@ Who works on what, on which branch. Remove a row when its branch is merged.
 | Merge the working branch into `main` | `a merged session branch` | canopy-1 | Windows and installer-test CI fixes pushed; fast-forward `main` when CI is green |
 | Installer security-review fixes (1 blocking, 9 should-fix, nits) | `fix/installer-review` | canopy-1 agent | In progress |
 | Performance: shared snapshots and diffs, diff layout cache, virtualised diff and resolver rows, highlighting thread, palette cache | `perf/views` | canopy-1 agent | Finishing; then review and merge |
-| Partial clones in core (missing objects fetched through git) | `feat/partial-clones` | canopy-1 agent | Rebasing; then the "not downloaded" state in the views |
+| Partial clones in core (missing objects fetched through git) | `feat/partial-clones` | canopy-1 | Core done (85bf861, 15 new tests); in review, then merge |
 | Core safety: `branch -d` by default, publish any branch, mode and type changes, collapsed untracked folders, nested repositories in Stage all, safe paths, ignore rules | `canopy-2/core-safety` | canopy-2 | In progress (core only; canopy-1 wires the UI) |
 | Core workflows: git-flow, merged detection, LFS status, submodules | `canopy-3/core-workflows` | canopy-3 | In progress (core only; canopy-1 wires the UI) |
 
