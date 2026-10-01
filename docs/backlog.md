@@ -1,46 +1,113 @@
 # Backlog
 
-The task board. Take entries from the top of **Now** down. Each entry ends with its acceptance
-criterion. Tick an entry (`- [x]`) only when the change is verified in the running app, with a
-screenshot from the `screenshot` skill for anything visible, and move it to the Done section of
-the release it ships in. Add new entries where their priority puts them, not at the bottom.
+The task board, kept current during work sessions: update it in the same change that starts,
+merges or finishes an entry. Take entries from the top of **Now** down. Each entry ends with its
+acceptance criterion. Tick an entry (`- [x]`) only when the change is verified in the running app,
+with a screenshot from the `screenshot` skill for anything visible, and move it to the Done section
+of the release it ships in. Add new entries where their priority puts them, not at the bottom.
+
+Workflow: every entry is worked on its own short branch from `main` and merged straight into
+`main` (no pull requests) once `tools/check.sh` passes, the `canopy-review` agent has reviewed it
+and CI is green on the branch. Parallel sessions follow `docs/specs/parallel-sessions.md`.
+
+## In flight
+
+Who works on what, on which branch. Remove a row when its branch is merged.
+
+| Entry | Branch | Who | State |
+| --- | --- | --- | --- |
+| Merge the working branch into `main` | `a merged session branch` | canopy-1 | Windows and installer-test CI fixes pushed; fast-forward `main` when CI is green |
+| Installer security-review fixes (1 blocking, 9 should-fix, nits) | `fix/installer-review` | canopy-1 agent | In progress |
+| Performance: shared snapshots and diffs, diff layout cache, virtualised diff and resolver rows, highlighting thread, palette cache | `perf/views` | canopy-1 agent | Finishing; then review and merge |
+| Partial clones in core (missing objects fetched through git) | `feat/partial-clones` | canopy-1 agent | Rebasing; then the "not downloaded" state in the views |
+| Core safety: `branch -d` by default, publish any branch, mode and type changes, collapsed untracked folders, nested repositories in Stage all, safe paths, ignore rules | `canopy-2/core-safety` | canopy-2 | In progress (core only; canopy-1 wires the UI) |
+| Core workflows: git-flow, merged detection, LFS status, submodules | `canopy-3/core-workflows` | canopy-3 | In progress (core only; canopy-1 wires the UI) |
 
 ## Now
 
+In order. The UI entries come before accessibility, and accessibility before the docs sweep.
+
+- [ ] **Architecture split**: `app/` and `views/dialogs/` modules, `OpKind` instead of label
+  prefixes, views stop importing from `app`, shared widgets, repository IO off the UI thread
+  (open, canonicalise, init, the watcher, async file dialogs), tests for tab state, the dialog stack
+  and the palette model, and a clippy lint against colours outside `theme.rs`. Accept: no file over
+  1,500 lines in `app/` or `views/`, check.sh passes, and no behaviour change in screenshots.
+- [ ] **Persistent, secured storage**: Canopy-specific per-OS folders for config, data, state and
+  cache (Linux `~/.config/canopy` etc., macOS `io.necturalabs.Canopy`, Windows
+  `NecturaLabs\Canopy`), each with a `.canopy-data` marker the installer's `--purge` relies on;
+  migration from today's folder; settings written atomically on change with a schema version and
+  corruption recovery; 0700/0600 permissions; tokens in the OS keychain with a file fallback;
+  redirects never forward the Authorization header; session restore. Accept: a corrupted
+  settings.json is set aside and defaults load with a toast; tokens survive a restart from the
+  keychain; the old folder migrates once.
+- [ ] **Partial clones in the views**: a "not downloaded yet" state for blobs missing from a
+  partial clone, fetched on demand off the UI thread. Accept: a `--filter=blob:none` clone browses
+  history without blocking and shows file contents after fetching.
+- [ ] **Git LFS**: correct status for LFS files, an LFS indicator and pointer-only state, LFS
+  diffs, `git lfs pull`/fetch, track and untrack, locks, and a prompt when `git-lfs` is missing.
+  Accept: an LFS fixture shows no phantom changes, marks pointer-only files and pulls them.
+- [ ] **Feature-branch workflows**: git-flow start and finish (feature, bugfix, release, hotfix,
+  AVH config) without the `git flow` binary, branch folders by prefix in the sidebar, publish with
+  upstream, merged and squash-merged indicators, delete merged branches (`-d`, force only after
+  confirmation). Accept: refs, tags and merges match the spec's command table.
+- [ ] **.gitignore**: ignore a file, extension, folder or pattern from the changes list, local-only
+  exclude, stop tracking and ignore, show ignored files, "why ignored", templates on init.
+  Accept: each action's result matches `git check-ignore -v`.
+- [ ] **Submodules**: sidebar list with state, open in a tab, init, update, sync, add, remove,
+  pointer diffs as commit ranges, recurse on pull, checkout and clone. Accept: an out-of-date
+  submodule fixture shows its state and updates.
+- [ ] **File and directory links**: show and diff symlinks, file/symlink type changes and mode
+  changes; never follow links when reading, watching or opening (targets outside the repository,
+  loops); Windows `core.symlinks=false`. Accept: a fixture with each case shows the right rows and
+  nothing outside the repository is read.
+- [ ] **Research bugs**: the watcher follows symlinks, a worktree's or submodule's `.git` file is
+  not watched, nested repositories in Stage all, 100,000 untracked rows. Accept: each has a test.
+- [ ] **Missing tools**: detect git (minimum version), git-lfs, ssh and signing tools when a
+  repository needs them, with the macOS Finder PATH and Windows Git locations; prompt with
+  OS-specific install steps. Accept: removing git-lfs from PATH on an LFS repository shows the
+  prompt with working steps.
+- [ ] **Colour adoption in views**: `Palette::selected()`, `warning_tint()`, `ink()` and
+  `control_border` everywhere; remove ad-hoc tints that fail contrast. Accept: the contrast test
+  covers every tint the views draw, and screenshots of all seven themes read cleanly.
+- [ ] **Typography**: type-scale tokens in `theme.rs` (`docs/specs/ui-spec.md` section 2) and every
+  ad-hoc size migrated. Accept: no `.size(` or `FontId::new` literal outside `theme.rs`.
+- [ ] **UI controls**: switches, checkboxes, segmented controls, sliders, inputs and buttons to
+  modern conventions (`docs/specs/ui-spec.md` section 1). Accept: every control has hover, focus,
+  pressed and disabled states in all themes.
+- [ ] **Motion**: a reduce-motion setting (system, reduced, full) with the system query on a
+  background thread; token durations; no row-hover or selection animation; transitions for
+  dialogs, toasts and popovers. Accept: with reduced motion, nothing animates.
+- [ ] **Settings fully in the UI**: every persisted preference has a control; consent review and
+  withdrawal; recent-list and session controls; search, reset, import and export; a Git config
+  section (identity, signing); remappable keybindings with conflict detection. Accept: no setting
+  needs a file edit.
+- [ ] **Responsive layout**: no overlap or clipping from 960x600 to 4K at scale 1 to 2 (legal
+  dialog width, diff header, resolver header and footer, toolbar, history pill clip, status bar,
+  ellipsis truncation). Accept: the size matrix screenshots are clean.
+- [ ] **Visual polish**: resolver cards, choice buttons, chips, gutter, sidebar, PR view, keycaps,
+  palette, merged pills, graph seams, welcome banding, horizontal scroll in split diffs; a final
+  whole-app design review. Accept: the design review has no open findings.
+- [ ] **Stress readiness in code** (the test itself runs only when the owner says so): lazy
+  background tabs, bounded threads, staggered auto-fetch, one shared watcher, the watcher-failure
+  warning, frame-time and first-frame log events. Accept: 100 tabs open without a thread per tab.
+- [ ] **Accessibility**: AccessKit names and roles for every control, focus order and visible
+  focus, keyboard reachability, contrast, reduced motion. Accept: Orca navigates the history list,
+  the changes list and the commit composer.
+- [ ] **Docs sweep**: HANDOFF, README, architecture, features, design (all seven themes),
+  keybindings, CHANGELOG, CONTRIBUTING, tools/README, screenshots. Accept: every doc matches the
+  code.
+- [ ] **Push and pull counts in tab headers**: ahead/behind next to each tab name. Accept: counts
+  update after fetch and match the status bar.
 - [ ] **Verify the one-line installers on real machines** after the first stable release that
-  publishes them (`packaging/install.sh`, `packaging/install.ps1`; only the Linux script is tested
-  end to end, in CI). Accept: on Ubuntu 22.04, Fedora, macOS (Apple silicon) and Windows 11
-  (Windows PowerShell 5.1 and PowerShell 7) the one-liner installs, Canopy starts from the
-  launcher, Start Menu or Spotlight with its icon, a re-run upgrades, and uninstall leaves nothing
-  but the user data.
-- [ ] **Credential prompt (`canopy askpass`)**: add an `askpass` subcommand and set `GIT_ASKPASS`
-  and `SSH_ASKPASS` for CLI jobs so git asks Canopy for usernames, passwords and tokens through a
-  dialog. Accept: fetch from an HTTPS remote with no credential helper prompts in-app and succeeds.
-- [ ] **SSH passphrase prompt**: route `SSH_ASKPASS` (with `SSH_ASKPASS_REQUIRE=force`) through the
-  same dialog. Accept: push over SSH with a passphrase-protected key and no agent prompts in-app.
-- [ ] **Line-level staging**: select one or more lines in a hunk and stage, unstage or discard just
-  those. Accept: staging two of five added lines leaves the other three unstaged, matching `git add -p` edit mode.
-- [ ] **Log file and crash report**: write logs to the platform data directory with rotation and
-  record panics with a backtrace, locally only (nothing is uploaded). Accept: a forced panic leaves a report and the next launch offers
-  to open it.
-- [ ] **Diff settings**: context lines (0 to 25) and ignore whitespace (none, at end of line, all)
-  per repository. Accept: changing either re-renders the open diff without reselecting the file.
-- [ ] **Syntax highlighting in diffs**: highlight with `syntect` on the worker, cached per file
-  revision. Accept: Rust, TypeScript, Python and Markdown diffs are highlighted in both themes,
-  and a 10,000-line diff scrolls without frame drops.
-- [ ] **Side-by-side diff**: toggle between unified and split views, remembered per user. Accept:
-  hunks align line by line, with filler rows for unbalanced changes.
-- [ ] **Push and pull counts in tab headers**: show ahead/behind next to each tab name. Accept:
-  counts update after fetch and match the status bar.
+  publishes them. Accept: on Ubuntu 22.04, Fedora, macOS (Apple silicon) and Windows 11 (Windows
+  PowerShell 5.1 and PowerShell 7) the one-liner installs, Canopy starts from the launcher, Start
+  Menu or Spotlight with its icon, a re-run upgrades, and uninstall leaves only the user data.
 
 ## Next
 
 - [ ] **Interactive rebase editor**: list commits from a chosen base; drag to reorder, and mark
   pick, reword, squash, fixup or drop. Accept: a reorder plus squash plus reword produces the same
   history as the equivalent `git rebase -i` todo list.
-- [ ] **3-way conflict resolver**: base, ours and theirs with a result pane; take a side per hunk or
-  edit manually, then mark resolved. Accept: resolving the `conflict` fixture in-app completes the
-  merge with the expected file content.
 - [ ] **File history**: commits that touched a path (following renames) with a diff per commit.
   Accept: history for a renamed file in the showcase fixture includes commits before the rename.
 - [ ] **Blame view**: per-line author, date and commit, with click-through to the commit. Accept:
@@ -57,15 +124,11 @@ the release it ships in. Add new entries where their priority puts them, not at 
   a fixture with each case.
 - [ ] **Image diff**: side-by-side and swipe views for PNG, JPEG, GIF, WebP and SVG. Accept:
   changed images in a commit render both versions with their dimensions.
-- [ ] **Submodules**: list submodules in the sidebar with status; open one in a new tab; update
-  and init. Accept: a fixture with an out-of-date submodule shows it and updates it.
 - [ ] **Worktrees**: list worktrees, open in a tab, add and remove (with confirmation). Accept:
   actions match `git worktree list` before and after.
 - [ ] **Commit message templates and linting**: honour `commit.template`; optional Conventional
   Commits check with inline hints. Accept: the template pre-fills the composer and an invalid type
   is flagged before commit.
-- [ ] **Configurable keybindings**: edit shortcuts in settings with conflict detection. Accept:
-  a rebound command works from the keyboard and the palette shows the new shortcut.
 - [ ] **Performance budget tests**: benchmarks for snapshot and graph layout on the `big` fixture
   and a generated one-million-commit history. Accept: CI fails if layout of 100,000 commits
   exceeds its recorded budget by more than 20%.
@@ -89,30 +152,32 @@ the release it ships in. Add new entries where their priority puts them, not at 
   packages install on Ubuntu LTS and Fedora and show the launcher icon.
 - [ ] **AppImage**: built in the release workflow. Accept: runs on a fresh Ubuntu LTS and Fedora
   live session.
-- [ ] **Accessibility audit**: AccessKit names and roles for every control, focus order and
-  contrast checks. Accept: Orca can navigate the history list and commit composer.
 - [ ] **Custom themes**: import theme files mapping to the tokens in `ui/theme.rs`, and optionally
   follow Omarchy's active theme. Accept: switching the Omarchy theme recolours Canopy within a
   second.
-- [ ] **Pull and merge request links**: "Create pull request" (GitHub) / "Create merge request"
-  (GitLab) for a pushed branch, built offline from the remote URL (see `HANDOFF.md`, item 1). No
-  provider API. Accept: the browser opens the provider's new-PR/MR page with source and target set.
 - [ ] **Patches**: save commits as patches (`format-patch`) and apply patch files. Accept: a
   round trip reproduces identical commits.
 - [ ] **Bisect**: start, mark good or bad from the graph, reset. Accept: bisecting the `linear`
   fixture finds the planted commit.
-- [ ] **git-flow**: start and finish feature, release and hotfix branches. Accept: branch names and
-  merges match `git flow` with default prefixes.
-- [ ] **LFS indicator**: mark LFS-tracked files and pointer-only checkouts; run `git lfs pull`.
-  Accept: a fixture with LFS pointers shows the indicator.
 - [ ] **Graph minimap**: a scrollbar-sized overview of lanes and refs that scrolls the history.
   Accept: clicking the minimap jumps to the matching rows.
-- [ ] **Partial clone support**: clone with `--filter=blob:none` from the clone dialog and fetch
-  missing blobs lazily. Accept: browsing history of a partial clone does not block the UI.
 - [ ] **gitoxide for history walks**: evaluate `gix` for revwalks and status on very large
   repositories. Accept: a written comparison with numbers, and adoption only if it is faster.
 - [ ] **Localisation**: extract strings and load translations. Accept: a German translation covers
   every visible string.
+
+## Implemented, awaiting in-app verification
+
+In the code and tested, not yet ticked by a check in the running app.
+
+- [ ] Credential prompts for git and SSH passphrases through Canopy's askpass.
+- [ ] Line-level stage, unstage and discard.
+- [ ] Structured per-run JSON logs; opt-in, scrubbed crash reports with consent.
+- [ ] Diff settings (context lines, ignore whitespace), syntax highlighting, side-by-side diffs.
+- [ ] Three-way conflict resolver.
+- [ ] GitHub and GitLab pull and merge requests through the REST API with a user token.
+- [ ] Seven themes meeting WCAG contrast on every surface; Midnight the default.
+- [ ] One-line installers (Linux tested end to end in CI).
 
 ## Done (v0.1)
 
