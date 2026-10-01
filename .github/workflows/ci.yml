@@ -73,16 +73,10 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
+      # Linux only for now (owner's call). Set the repository variable CI_MACOS_WINDOWS to '1' to
+      # test on macOS and Windows again; nothing else needs to change.
       matrix:
-        include:
-          - os: Linux
-            hosted: ubuntu-latest
-            self-hosted: '["self-hosted", "linux", "wsl"]'
-          - os: macOS
-            hosted: macos-latest
-          - os: Windows
-            hosted: windows-latest
-            self-hosted: '["self-hosted", "windows", "x64"]'
+        include: ${{ fromJSON(vars.CI_MACOS_WINDOWS == '1' && '[{"os":"Linux","hosted":"ubuntu-latest","self-hosted":"[\"self-hosted\", \"linux\", \"wsl\"]"},{"os":"macOS","hosted":"macos-latest"},{"os":"Windows","hosted":"windows-latest","self-hosted":"[\"self-hosted\", \"windows\", \"x64\"]"}]' || '[{"os":"Linux","hosted":"ubuntu-latest","self-hosted":"[\"self-hosted\", \"linux\", \"wsl\"]"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

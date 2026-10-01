@@ -59,7 +59,8 @@ token anywhere new, contacting a new host or adding a dependency.
 - Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
 - `tools/check.sh`: `fmt --check`, clippy, workspace tests, `tools/release.py selftest` and
   `tools/notices.py --check`, on this platform. CI (`ci.yml`) adds `cargo deny check` (run it when
-  `Cargo.toml`, `Cargo.lock` or `deny.toml` change) and tests on Linux, macOS and Windows.
+  `Cargo.toml`, `Cargo.lock` or `deny.toml` change) and tests on Linux (macOS and Windows jobs are off until the repository variable
+  `CI_MACOS_WINDOWS` is set to `1`).
 - Demo repository: `tools/mkfixture.sh <dir> [kind]` (`fixture-repo` skill)
 - Screenshot: `tools/screenshot.sh <repo> <out.png> [--light|--theme NAME|--view V|--overlay NAME]`
   (`-h` lists the options)
