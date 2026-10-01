@@ -45,6 +45,8 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `worker.rs` | One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced; debounced file watcher. |
 | `settings.rs` | Settings persisted through eframe storage: theme, recent repositories, UI scale. |
 | `ui/theme.rs` | Design tokens: palette, lane colours, spacing, radii. The only place colours are defined. |
+| `ui/motion.rs` | Motion tokens (100/150/200 ms), the reduce-motion preference and whether motion is currently reduced. |
+| `platform.rs` | Handing things to the operating system (web pages, folders, files in an editor, a terminal) and reading its settings, such as reduced motion, off the UI thread. |
 | `ui/fonts.rs` | Registers the bundled Inter and JetBrains Mono fonts. |
 | `ui/widgets.rs` | Ref pills, avatars, icon buttons, badges. |
 | `ui/toast.rs` | Toast queue and animation. |
@@ -127,16 +129,18 @@ octopus merges, multiple roots and lane reuse.
 
 ## Why libgit2 and the git CLI
 
-- **libgit2 for reads and local writes.** Status, revwalks, diffs, refs and index updates are fast,
-  structured and need no output parsing. `git2` is built with `default-features = false`, so no
+- **libgit2 for reads.** Status, revwalks, diffs and refs are fast, structured and need no output
+  parsing. Every mutation runs the `git` executable (ADR 0001); the one plain file write is
+  saving a hand-edited conflict resolution (`conflict::write_resolution`), and staging it still
+  goes through git. `git2` is built with `default-features = false`, so no
   OpenSSL or libssh2 is linked on any platform.
-- **The `git` CLI for network and history rewriting.** Running the user's own `git` honours
+- **The `git` CLI for every mutation and all network traffic.** Running the user's own `git` honours
   credential helpers, the SSH agent and `~/.ssh/config`, `includeIf`, hooks, proxies and
   `url.<base>.insteadOf` exactly as the terminal does. libgit2 reimplements these partially and
   differently. Fork and Sourcetree make the same choice. Merge and rebase also use the CLI so
   that behaviour, hooks and conflict state match what users see in the terminal.
-- `GIT_TERMINAL_PROMPT=0` makes git fail instead of waiting for terminal input. A built-in
-  credential prompt (`GIT_ASKPASS`) is on the backlog.
+- `GIT_TERMINAL_PROMPT=0` makes git fail instead of waiting for terminal input. Credential,
+  passphrase and host-key questions come to Canopy's own prompt instead (`askpass.rs`, ADR 0005).
 - Hunk staging builds a single-hunk patch in `diff.rs` and applies it with
   `git apply --cached`, which handles context and whitespace the same way `git add -p` does.
 

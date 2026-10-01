@@ -86,8 +86,8 @@ Rules every change follows:
   they match), so users are asked again. A change to what a crash report carries also bumps
   `crash_reports::DATA_VERSION`.
 - **All HTTP lives in `crates/canopy-hosting`** (`ureq` with rustls and the platform verifier, so
-  a corporate CA in the OS trust store works, 10 s connect and 30 s total timeouts), the update
-  manifest included, except Sentry's own transport, which is configured in
+  a corporate CA in the OS trust store works; API calls time out after 10 s to connect and 30 s
+  in total, the update manifest after 10 s and 20 s), the update manifest included, except Sentry's own transport, which is configured in
   `crates/canopy-app/src/crash_reports.rs`. HTTP calls run on a background thread, never the UI
   thread.
 - **No credential in a URL Canopy builds or logs;** URLs and git arguments are redacted before

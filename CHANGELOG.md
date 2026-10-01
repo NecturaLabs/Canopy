@@ -19,7 +19,13 @@ All notable changes to Canopy are documented here. The format follows
 ### Fixed
 
 - Secondary and faint text, links, status colours and graph lanes are readable on every surface
-  in all seven themes (WCAG AA; body text AAA).
+  they are drawn on, selected rows and diff lines included, in all seven themes (WCAG AA; body
+  text AAA). Selected values in Settings use the same calmer selection fill as lists.
+
+### Changed
+
+- Interface transitions are shorter (150 ms instead of 180 ms), in line with the new motion
+  tokens.
 - After accepting the Privacy Policy and Terms on first run, start-up notices and the update
   check now start without a restart.
 - `~` in clone and init destinations and opened paths expands to the home folder.

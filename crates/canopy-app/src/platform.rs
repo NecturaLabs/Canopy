@@ -11,9 +11,15 @@
 //!   macOS `open` runs `.command`, desktop launchers run `.desktop` entries).
 //!
 //! Started programs are reaped on a background thread, so none is left as a zombie.
+//!
+//! It also asks the operating system for settings Canopy follows, such as reduced motion
+//! ([`prefers_reduced_motion`]).
 
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
 /// Spawns `cmd` and waits for it on a background thread. The askpass port and token never reach
 /// these programs, even when Canopy itself inherited them.
@@ -219,6 +225,159 @@ pub fn open_terminal(dir: &Path, configured: &str) -> Result<(), String> {
     }
 }
 
+/// How long a settings query may take before Canopy gives up on it. PowerShell loading .NET on
+/// a cold start is the slowest case.
+#[cfg_attr(not(test), expect(dead_code, reason = "adopted by the motion pass"))]
+const QUERY_TIMEOUT: Duration = Duration::from_secs(6);
+
+/// Asks the operating system whether the user wants reduced motion. Blocks while a helper
+/// program answers (up to a few seconds), so call it off the UI thread. `None` when the system
+/// does not say.
+#[expect(dead_code, reason = "adopted by the motion pass")]
+pub fn prefers_reduced_motion() -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        // The desktop portal works across GNOME, KDE and others; older GNOME only has gsettings.
+        let mut portal = Command::new("gdbus");
+        portal.args([
+            "call",
+            "--session",
+            "--timeout",
+            "2",
+            "--dest",
+            "org.freedesktop.portal.Desktop",
+            "--object-path",
+            "/org/freedesktop/portal/desktop",
+            "--method",
+            "org.freedesktop.portal.Settings.ReadOne",
+            "org.freedesktop.appearance",
+            "reduced-motion",
+        ]);
+        output_within(portal, QUERY_TIMEOUT)
+            .and_then(|out| parse_portal(&out))
+            .or_else(|| {
+                let mut gsettings = Command::new("gsettings");
+                gsettings.args(["get", "org.gnome.desktop.interface", "enable-animations"]);
+                output_within(gsettings, QUERY_TIMEOUT).and_then(|out| parse_gsettings(&out))
+            })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = Command::new("defaults");
+        cmd.args(["read", "com.apple.universalaccess", "reduceMotion"]);
+        output_within(cmd, QUERY_TIMEOUT).and_then(|out| parse_defaults(&out))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // "Show animations in Windows" (SPI_GETCLIENTAREAANIMATION), read through .NET so Canopy
+        // needs no unsafe system call.
+        let mut cmd = Command::new("powershell");
+        cmd.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Add-Type -AssemblyName PresentationFramework; \
+             [System.Windows.SystemParameters]::ClientAreaAnimation",
+        ]);
+        output_within(cmd, QUERY_TIMEOUT).and_then(|out| parse_windows(&out))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        None
+    }
+}
+
+/// Runs `cmd` and returns its standard output when it exits successfully within `timeout`.
+/// Output is read on its own thread, so a chatty program cannot fill the pipe and stall, and a
+/// program that outlives the timeout is killed and reaped.
+#[cfg_attr(not(test), expect(dead_code, reason = "adopted by the motion pass"))]
+fn output_within(mut cmd: Command, timeout: Duration) -> Option<String> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd.spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
+    // Ends when the pipe closes: when the program and anything it started have exited, or
+    // after the kill below.
+    let reader = std::thread::Builder::new()
+        .name("query-output".into())
+        .spawn(move || {
+            let mut out = String::new();
+            let ok = stdout.read_to_string(&mut out).is_ok();
+            let _ = tx.send(ok.then_some(out));
+        });
+    if reader.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    }
+    match rx.recv_timeout(timeout) {
+        Ok(out) => {
+            let status = child.wait().ok()?;
+            out.filter(|_| status.success())
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            tracing::debug!("system settings query timed out");
+            None
+        }
+    }
+}
+
+/// `(<uint32 1>,)` from the portal: 1 asks for reduced motion.
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+fn parse_portal(out: &str) -> Option<bool> {
+    let value = out
+        .trim()
+        .trim_start_matches("(<")
+        .trim_end_matches(">,)")
+        .trim_start_matches("uint32")
+        .trim();
+    match value {
+        "0" => Some(false),
+        "1" => Some(true),
+        _ => None,
+    }
+}
+
+/// `true` or `false` for `enable-animations`; disabled animations mean reduced motion.
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+fn parse_gsettings(out: &str) -> Option<bool> {
+    match out.trim() {
+        "true" => Some(false),
+        "false" => Some(true),
+        _ => None,
+    }
+}
+
+/// `1` or `0` from `defaults read`.
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn parse_defaults(out: &str) -> Option<bool> {
+    match out.trim() {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// `True` or `False` for client-area animation; animations off mean reduced motion.
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+fn parse_windows(out: &str) -> Option<bool> {
+    match out.trim().to_ascii_lowercase().as_str() {
+        "true" => Some(false),
+        "false" => Some(true),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +395,52 @@ mod tests {
         assert!(!web_address("vscode://open?x"));
         assert!(!web_address("--help"));
         assert!(!web_address("https://a\nb"));
+    }
+
+    #[test]
+    fn system_answers_are_read() {
+        assert_eq!(parse_portal("(<uint32 1>,)\n"), Some(true));
+        assert_eq!(parse_portal("(<uint32 0>,)"), Some(false));
+        assert_eq!(parse_portal("Error: no such key"), None);
+        assert_eq!(parse_gsettings("false\n"), Some(true));
+        assert_eq!(parse_gsettings("true"), Some(false));
+        assert_eq!(parse_defaults("1\n"), Some(true));
+        assert_eq!(
+            parse_defaults("The domain/default pair does not exist"),
+            None
+        );
+        assert_eq!(parse_windows("False\r\n"), Some(true));
+        assert_eq!(parse_windows("True"), Some(false));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn slow_or_failing_queries_give_up() {
+        let mut ok = Command::new("sh");
+        ok.args(["-c", "echo hello"]);
+        assert_eq!(
+            output_within(ok, Duration::from_secs(5)).as_deref(),
+            Some("hello\n")
+        );
+
+        let mut fails = Command::new("sh");
+        fails.args(["-c", "echo partial; exit 3"]);
+        assert_eq!(output_within(fails, Duration::from_secs(5)), None);
+
+        let started = std::time::Instant::now();
+        let mut slow = Command::new("sh");
+        slow.args(["-c", "sleep 30"]);
+        assert_eq!(output_within(slow, Duration::from_millis(200)), None);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the slow query was not killed"
+        );
+
+        // Lots of output must not stall the program on a full pipe.
+        let mut chatty = Command::new("sh");
+        chatty.args(["-c", "yes canopy | head -c 1000000"]);
+        let out = output_within(chatty, Duration::from_secs(10));
+        assert_eq!(out.map(|o| o.len()), Some(1_000_000));
     }
 
     #[test]

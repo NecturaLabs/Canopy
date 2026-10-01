@@ -4,7 +4,8 @@
 //! into plain data ([`RepoSnapshot`], [`CommitDetails`], [`FileDiff`]) and performs operations on
 //! it. Reads use libgit2 through the `git2` crate; every mutation and all network traffic run the
 //! `git` executable (see [`cli`]) so that credential helpers, SSH configuration, hooks and the
-//! index behave exactly as they do in a terminal.
+//! index behave exactly as they do in a terminal. The one plain file write is saving a
+//! hand-edited conflict resolution ([`conflict`]), which git then stages.
 //!
 //! Every function here may block on disk or network I/O. Callers with a user interface must run
 //! them off the UI thread.

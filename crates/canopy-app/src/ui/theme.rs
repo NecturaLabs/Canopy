@@ -85,14 +85,14 @@ const DARK_LANES: [Color32; 10] = [
 
 const LIGHT_LANES: [Color32; 10] = [
     hex(0x7C3AED),
-    hex(0x0891B2),
+    hex(0x088EAE),
     hex(0xDB2777),
-    hex(0x059669),
+    hex(0x059568),
     hex(0xB45309),
     hex(0x2563EB),
     hex(0xDC2626),
     hex(0x4D7C0F),
-    hex(0xEA580C),
+    hex(0xE1540C),
     hex(0x9333EA),
 ];
 
@@ -106,8 +106,8 @@ pub const MIDNIGHT: Palette = Palette {
     border: hex(0x262D3B),
     control_border: hex(0x696F7A),
     text: hex(0xE6E9EF),
-    text_dim: hex(0x9AA3B5),
-    text_faint: hex(0x8991A2),
+    text_dim: hex(0xA5ADBD),
+    text_faint: hex(0x979EAD),
     accent: hex(0x9C71F8),
     accent2: hex(0x22D3EE),
     success: hex(0x34D399),
@@ -142,12 +142,12 @@ pub const DAYLIGHT: Palette = Palette {
     control_border: hex(0x858A92),
     text: hex(0x161A22),
     text_dim: hex(0x4B5466),
-    text_faint: hex(0x5D6577),
+    text_faint: hex(0x586071),
     accent: hex(0x7C3AED),
-    accent2: hex(0x0E7490),
-    success: hex(0x047857),
-    warning: hex(0xB05109),
-    danger: hex(0xD12424),
+    accent2: hex(0x0D6F8A),
+    success: hex(0x047555),
+    warning: hex(0xA04A08),
+    danger: hex(0xC72222),
     added_bg: hex(0xE3F7EC),
     removed_bg: hex(0xFDE7E7),
     button: hex(0x7C3AED),
@@ -176,13 +176,13 @@ pub const AURORA: Palette = Palette {
     border: hex(0x3B4252),
     control_border: hex(0x7E8490),
     text: hex(0xECEFF4),
-    text_dim: hex(0xC0C6D2),
-    text_faint: hex(0xAAB1BF),
+    text_dim: hex(0xC2C8D3),
+    text_faint: hex(0xB1B8C4),
     accent: hex(0x88C0D0),
-    accent2: hex(0xBD9CB7),
-    success: hex(0xA3BE8C),
+    accent2: hex(0xCAAFC5),
+    success: hex(0xA5C08F),
     warning: hex(0xEBCB8B),
-    danger: hex(0xE48D95),
+    danger: hex(0xEAA5AB),
     added_bg: hex(0x253229),
     removed_bg: hex(0x3A262C),
     button: hex(0x88C0D0),
@@ -197,7 +197,7 @@ pub const AURORA: Palette = Palette {
         hex(0xD08770),
         hex(0x8FBCBB),
         hex(0xE07A84),
-        hex(0x6486AF),
+        hex(0x698AB2),
         hex(0xC8A2C8),
     ],
     syntax: Syntax {
@@ -222,8 +222,8 @@ pub const EMBER: Palette = Palette {
     border: hex(0x3A2E27),
     control_border: hex(0x796E67),
     text: hex(0xF3E9E2),
-    text_dim: hex(0xB9A79B),
-    text_faint: hex(0xA5958A),
+    text_dim: hex(0xBCAB9F),
+    text_faint: hex(0xAC9D93),
     accent: hex(0xF97316),
     accent2: hex(0xFACC15),
     success: hex(0x4ADE80),
@@ -258,7 +258,7 @@ pub const NEON: Palette = Palette {
     control_border: hex(0x6F6386),
     text: hex(0xF5EEFF),
     text_dim: hex(0xB3A3D1),
-    text_faint: hex(0x9485BD),
+    text_faint: hex(0x9B8EC2),
     accent: hex(0xFF2E97),
     accent2: hex(0x00E5FF),
     success: hex(0x3DF5A0),
@@ -303,13 +303,13 @@ pub const FOREST: Palette = Palette {
     border: hex(0x2A3830),
     control_border: hex(0x67746D),
     text: hex(0xE4EEE8),
-    text_dim: hex(0xAABDB2),
-    text_faint: hex(0x93A39A),
+    text_dim: hex(0xB3C5BB),
+    text_faint: hex(0xA7B4AD),
     accent: hex(0x34D399),
     accent2: hex(0xA3E635),
     success: hex(0x4ADE80),
     warning: hex(0xFBBF24),
-    danger: hex(0xF87171),
+    danger: hex(0xF98282),
     added_bg: hex(0x12301F),
     removed_bg: hex(0x2E1618),
     button: hex(0x047857),
@@ -338,12 +338,12 @@ pub const PAPER: Palette = Palette {
     border: hex(0xDCD3C4),
     control_border: hex(0x8B8379),
     text: hex(0x2B2620),
-    text_dim: hex(0x5A5246),
-    text_faint: hex(0x695F53),
+    text_dim: hex(0x585044),
+    text_faint: hex(0x655B50),
     accent: hex(0xA14A08),
-    accent2: hex(0x0F726B),
+    accent2: hex(0x0E6E67),
     success: hex(0x166534),
-    warning: hex(0x8A5A00),
+    warning: hex(0x825500),
     danger: hex(0xB91C1C),
     added_bg: hex(0xE3F0DC),
     removed_bg: hex(0xF8E1DC),
@@ -448,14 +448,19 @@ impl Palette {
         Color32::from_black_alpha(if self.dark { 140 } else { 60 })
     }
 
-    /// Fill of the selected row in lists, the graph and the sidebar. Every text colour stays
-    /// readable on it (see the contrast test).
+    /// Fill of the selected row in lists, the graph, the sidebar, the palette and diffs, and of
+    /// egui's selected values. Every text colour stays readable on it (see the contrast test).
+    pub fn selected(&self) -> Color32 {
+        Palette::tint(self.accent, if self.dark { 46 } else { 30 })
+    }
+
+    /// Fill behind warning text: conflict markers in diffs, in-progress banners.
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "views adopt it in the controls pass")
     )]
-    pub fn selected(&self) -> Color32 {
-        Palette::tint(self.accent, if self.dark { 46 } else { 30 })
+    pub fn warning_tint(&self) -> Color32 {
+        Palette::tint(self.warning, 40)
     }
 
     /// A translucent version of `c` for fills behind text.
@@ -513,7 +518,8 @@ fn visuals(p: &Palette) -> Visuals {
         spread: 0,
         color: Color32::from_black_alpha(if p.dark { 120 } else { 30 }),
     };
-    v.selection.bg_fill = Palette::tint(p.accent, if p.dark { 90 } else { 60 });
+    // Selected list rows and egui's selected values and text share one fill.
+    v.selection.bg_fill = p.selected();
     // Also the keyboard focus ring: keep it fully opaque so focus is always visible.
     v.selection.stroke = Stroke::new(1.5, p.accent);
     v.text_cursor.stroke = Stroke::new(2.0, p.accent);
@@ -625,23 +631,35 @@ mod tests {
         )
     }
 
-    /// WCAG 2.2 on every surface text sits on: body text 7:1 (AAA); secondary and faint text
-    /// (line numbers, dates), links, accents and status colours 4.5:1 (AA); control outlines,
-    /// the focus ring and graph lanes 3:1 (non-text contrast).
+    /// WCAG 2.2 for every pairing the views draw. Text (`text` 7:1, AAA; `text_dim` and
+    /// `text_faint` 4.5:1) on every surface, including a selected row over each background and
+    /// the diff backgrounds; links and SHAs (`accent2`) and status colours 4.5:1 on plain
+    /// surfaces and selected rows, `success` on added lines, `danger` on removed lines and
+    /// `warning` on its tint; `accent` 4.5:1 on plain surfaces; control outlines 3:1 and graph
+    /// lanes 3:1 (non-text contrast), lanes also on a selected history row.
     #[test]
     fn every_theme_meets_contrast_targets() {
         let mut failures = Vec::new();
         for id in ThemeId::ALL {
             let p = id.palette();
-            let surfaces = [
+            let sel = |bg| over(p.selected(), bg);
+            let plain = [
                 ("bg", p.bg),
                 ("panel", p.panel),
                 ("elevated", p.elevated),
                 ("hover", p.hover),
-                ("selected row on panel", over(p.selected(), p.panel)),
-                ("selected row on bg", over(p.selected(), p.bg)),
+            ];
+            let selected = [
+                ("selected row on bg", sel(p.bg)),
+                ("selected row on panel", sel(p.panel)),
+                ("selected row on elevated", sel(p.elevated)),
+            ];
+            let diff = [
                 ("added_bg", p.added_bg),
                 ("removed_bg", p.removed_bg),
+                ("selected added line", sel(p.added_bg)),
+                ("selected removed line", sel(p.removed_bg)),
+                ("warning tint", over(p.warning_tint(), p.bg)),
             ];
             let mut check = |what: &str, fg: Color32, on: &str, bg: Color32, min: f64| {
                 let c = contrast(fg, bg);
@@ -652,20 +670,28 @@ mod tests {
                     ));
                 }
             };
-            for (on, bg) in surfaces {
-                check("text", p.text, on, bg, 7.0);
-                check("text_dim", p.text_dim, on, bg, 4.5);
-                check("text_faint", p.text_faint, on, bg, 4.5);
+            for (on, bg) in plain.iter().chain(&selected).chain(&diff) {
+                check("text", p.text, on, *bg, 7.0);
+                check("text_dim", p.text_dim, on, *bg, 4.5);
+                check("text_faint", p.text_faint, on, *bg, 4.5);
             }
-            for (on, bg) in &surfaces[..4] {
+            for (on, bg) in &plain {
                 check("accent", p.accent, on, *bg, 4.5);
+                check("control_border", p.control_border, on, *bg, 3.0);
+            }
+            for (on, bg) in plain.iter().chain(&selected) {
                 check("accent2", p.accent2, on, *bg, 4.5);
                 check("success", p.success, on, *bg, 4.5);
                 check("warning", p.warning, on, *bg, 4.5);
                 check("danger", p.danger, on, *bg, 4.5);
-                check("control_border", p.control_border, on, *bg, 3.0);
-                for (i, lane) in p.lanes.iter().enumerate() {
-                    check(&format!("lane {i}"), *lane, on, *bg, 3.0);
+            }
+            check("success", p.success, "added_bg", p.added_bg, 4.5);
+            check("danger", p.danger, "removed_bg", p.removed_bg, 4.5);
+            check("warning", p.warning, "warning tint", diff[4].1, 4.5);
+            let lane_surfaces = [plain[0], plain[1], plain[3], selected[0]];
+            for (i, lane) in p.lanes.iter().enumerate() {
+                for (on, bg) in lane_surfaces {
+                    check(&format!("lane {i}"), *lane, on, bg, 3.0);
                 }
             }
             check("on_button", p.on_button, "button", p.button, 4.5);

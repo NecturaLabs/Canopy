@@ -57,8 +57,10 @@ Chosen: sources **1 and 2 together**, with environment tokens restricted per **2
    the self-hosted GitLab hosts the user listed in Settings
    (`canopy_hosting::token_from_env_for`). A host recognised as GitLab only by its name never gets
    an environment token; the older host-blind `token_from_env` is deprecated.
-3. **git's credential helpers**: `git credential fill` for the host, with no prompt, no askpass and
-   a 10 s kill timer (`canopy_hosting::token_from_git_credentials`).
+3. **git's credential helpers**: `git credential fill` for the host's authority, with no prompt,
+   no askpass and a 10 s kill timer (`canopy_hosting::token_from_git_credentials`). The hosting
+   thread always tries this step; `resolve_token`'s `use_git_credentials` flag exists so tests
+   can leave the user's helpers alone.
 
 Whatever the source, the token travels only in an `Authorization: Bearer` header to the API of the
 repository's own host (`canopy_hosting::Client`); the HTTP agent forwards authorization headers

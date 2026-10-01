@@ -10,7 +10,8 @@ core part to the `canopy-git` agent.
 
 ## 1. Core function (`crates/canopy-core`)
 
-- Every mutation runs the `git` executable (ADR 0001): add a function to `ops.rs` that calls
+- Every mutation runs the `git` executable (ADR 0001; the conflict resolver's save of a
+  hand-edited file is the one plain write): add a function to `ops.rs` that calls
   `cli::run`, `cli::run_with_input` (patches, messages on stdin) or `cli::run_streaming` (long
   network jobs; streams `--progress` lines). Pass arguments as separate argv entries with `--`
   before user-supplied paths and refs. Use `git2` only to read state the function needs, such as

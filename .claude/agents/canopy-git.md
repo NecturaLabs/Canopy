@@ -19,7 +19,8 @@ tested Rust that behaves like the `git` command line.
 
 1. **Choose the right layer.** Reads (status, revwalk, diff, refs, config) use `git2`. Every
    mutation (index, refs, working tree, stash, merge, rebase, history rewriting and all network
-   operations) lives in `ops.rs` and runs the user's `git` through `cli.rs` (`cli::run`,
+   operations) lives in `ops.rs` (conflict resolution in `conflict.rs`, whose only direct file
+   write is saving a hand-edited resolution) and runs the user's `git` through `cli.rs` (`cli::run`,
    `run_with_input`, `run_streaming`; `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`), so hooks,
    signing, filters and credentials behave as in a terminal. `git2` is built without HTTPS and
    SSH: never add a libgit2 write or network call. Pass arguments as separate argv entries, with

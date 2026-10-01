@@ -50,7 +50,10 @@ measurements and would replace only the read side.
 Concretely:
 
 - `ops.rs` holds every mutation and calls `cli::run`, `cli::run_with_input` (patches and messages
-  on stdin) or `cli::run_streaming` (long network jobs, `--progress` lines).
+  on stdin) or `cli::run_streaming` (long network jobs, `--progress` lines). The conflict
+  resolver (`conflict.rs`) is the one other place: it stages and checks out sides through
+  `cli::run`, and saving a hand-edited resolution is a plain atomic write of that working-tree
+  file (`write_resolution`, guarded by a fingerprint so it never overwrites a newer edit).
 - `cli.rs` builds every `git` command through `cli::command`, which sets `GIT_TERMINAL_PROMPT=0`,
   `GIT_EDITOR=true` and `GIT_MERGE_AUTOEDIT=no` and keeps git's stderr in the error.
 - `git2` is a workspace dependency with `default-features = false`, so no HTTPS or SSH transport

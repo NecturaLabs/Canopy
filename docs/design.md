@@ -62,24 +62,30 @@ defined. When a token or component changes, update this document in the same cha
 | `added-bg` | `#E3F7EC` | Added line background in diffs |
 | `removed-bg` | `#FDE7E7` | Removed line background in diffs |
 
-Every theme passes the contrast test in `theme.rs` on every surface text sits on (`bg`, `panel`,
-`elevated`, `hover`, a selected row, `added-bg`, `removed-bg`): `text` 7:1; `text-dim`,
-`text-faint`, accents, links and status colours 4.5:1; `control-border`, the focus ring and lane
-colours 3:1. The five other themes (Aurora, Ember, Neon, Forest, Paper) define the same tokens;
+Every theme passes the contrast test in `theme.rs` for every pairing the views draw: `text` 7:1
+and `text-dim` and `text-faint` 4.5:1 on every surface (`bg`, `panel`, `elevated`, `hover`, a
+selected row over each, `added-bg`, `removed-bg` and the warning tint); links and SHAs
+(`accent-2`) and status colours 4.5:1 on plain surfaces and selected rows, `success` on added
+lines, `danger` on removed lines and `warning` on its tint; `accent` 4.5:1 on plain surfaces;
+`control-border`, the focus ring and lane colours 3:1. The five other themes (Aurora, Ember, Neon, Forest, Paper) define the same tokens;
 `theme.rs` is the reference for their values.
 
 The accent gradient runs from `accent` to `accent-2` (violet to cyan in Midnight). It is used
 sparingly: the primary button, the active tab indicator, the welcome screen mark and progress
 bars.
 
-Selected rows use `Palette::selected()`: `accent` at low opacity over the row background (18% in
-dark themes, 12% in light ones) with a 2px `accent` bar on the left edge.
+Selected rows will all use `Palette::selected()`: `accent` at low opacity over the row background
+(18% in dark themes, 12% in light ones), with an `accent` bar on the left edge (3px in the history
+list, 4px on diff lines). egui's selected values use the same fill. Views still carrying their
+own tint move to it in the controls pass.
 
 ### Lane colours
 
-Ten colours, assigned to lines of history in order and reused cyclically. The same values are used
-in both themes; in Daylight, edges are drawn at full opacity on the light background and the node
-fill uses the panel colour.
+Ten colours, assigned to lines of history in order and reused cyclically. Each theme has its own
+set, each at least 3:1 against the background, a hovered row and a selected row; the dark themes
+Midnight, Ember and Forest share the set below, Daylight uses deeper variants, and Aurora, Neon
+and Paper define their own in `theme.rs`. In light themes, edges are drawn at full opacity and
+the node fill uses the panel colour.
 
 | Index | Hex | | Index | Hex |
 |---|---|---|---|---|
@@ -133,16 +139,24 @@ Three levels, by background token plus shadow:
 
 ## Motion
 
-| Interaction | Duration | Curve |
+Motion is feedback, never decoration. The tokens live in `ui/motion.rs`.
+
+| Token | Duration | Use |
 |---|---|---|
-| Hover fade (background, icon colour) | 120ms | ease-out |
-| Selection highlight move | 180ms | ease-out |
-| Toast enter (slide up 8px and fade in) and exit | 250ms | ease-out / ease-in |
-| Dialog and palette open | 180ms fade and 0.98 to 1.0 scale | ease-out |
+| instant | 0 | Anything driven by the keyboard or repeated often: row hover, selection, the focus ring, tab switches, palette filtering, scrolling to the selection, lists updated by a background refresh |
+| `FAST` | 100ms | Pointer hover and press feedback on controls, switch thumbs, checkboxes |
+| `BASE` | 150ms | Popovers, menus and tooltips appearing; expand and collapse; toasts leaving |
+| `SLOW` | 200ms | Dialogs arriving (fade and 0.98 to 1.0 scale); toasts arriving (8px slide and fade) |
+
+Enter and hover transitions ease out (cubic). Exits take about three quarters of the enter time
+and only fade; closing a menu, tooltip or the palette is instant. Spinners turn once per second,
+linearly.
 
 Running jobs show a spinner in the status bar and on the triggering toolbar button. No animation
-loops while idle, so an idle Canopy does not repaint. Respect reduced motion where the platform
-reports it: switch transitions to instant.
+loops while idle, so an idle Canopy does not repaint. Reduce motion (Settings → Appearance:
+match the system, reduced or full) makes every duration zero; the system setting is read from
+the desktop portal or GNOME settings on Linux, `com.apple.universalaccess` on macOS and the
+client-area animation setting on Windows, off the UI thread.
 
 ## Iconography
 
