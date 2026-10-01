@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -267,20 +268,22 @@ pub struct DiffKey {
     pub highlight: bool,
 }
 
-/// What the repository thread reports back.
+/// What the repository thread reports back. Large results are shared (`Arc`), so the UI can
+/// hold them across a frame without copying.
 #[derive(Debug)]
 pub enum Event {
-    Snapshot(Box<RepoSnapshot>),
+    Snapshot(Arc<RepoSnapshot>),
     Status(WorkingStatus),
-    Details(Box<CommitDetails>),
-    Diff(DiffKey, Result<FileDiff, String>),
-    /// Syntax highlighting for the diff sent just before with the same key.
-    Highlight(DiffKey, Arc<crate::highlight::Highlights>),
+    Details(Arc<CommitDetails>),
+    Diff(DiffKey, Result<Arc<FileDiff>, String>),
+    /// Syntax highlighting for the diff (sent before with the same key). It comes from the
+    /// highlighter threads, so it may arrive after a newer diff; it applies only to this one.
+    Highlight(DiffKey, Arc<FileDiff>, Arc<crate::highlight::Highlights>),
     HeadMessage(String),
     Conflict {
         path: String,
         kind: Option<canopy_core::ConflictKind>,
-        file: Result<canopy_core::ConflictFile, String>,
+        file: Result<Arc<canopy_core::ConflictFile>, String>,
     },
     OpStarted(String),
     Progress(String),
@@ -358,7 +361,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         ctx.request_repaint();
     };
     let mut limit = 2000;
-    let mut highlights = crate::highlight::Cache::default();
+    // Bumped for every diff request; a highlight request made for an older one is stale.
+    let diff_generation = Arc::new(AtomicU64::new(0));
     while let Ok(first) = jobs.recv() {
         // Coalesce queued refreshes: only the latest matters.
         let mut batch = vec![first];
@@ -389,7 +393,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             let started = std::time::Instant::now();
             match job {
                 Job::Details(oid) => match repo.commit_details(oid) {
-                    Ok(d) => emit(Event::Details(Box::new(d))),
+                    Ok(d) => emit(Event::Details(Arc::new(d))),
                     Err(e) => emit(Event::Failed(e.to_string())),
                 },
                 Job::Diff(key) => {
@@ -404,14 +408,28 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             key.whitespace,
                         )
                     };
+                    let result = result.map(Arc::new).map_err(|e| e.to_string());
+                    let generation = diff_generation.fetch_add(1, Ordering::Relaxed) + 1;
                     let highlighted = match &result {
-                        Ok(d) if key.highlight && !key.conflicted => Some(d.clone()),
+                        Ok(d) if key.highlight && !key.conflicted => Some(Arc::clone(d)),
                         _ => None,
                     };
-                    emit(Event::Diff(key.clone(), result.map_err(|e| e.to_string())));
-                    // After the diff, so it shows at once; cached per file revision.
-                    if let Some(h) = highlighted.and_then(|d| highlights.get(&d)) {
-                        emit(Event::Highlight(key, h));
+                    emit(Event::Diff(key.clone(), result));
+                    // After the diff, so it shows at once as plain text; the highlighter threads
+                    // colour it later (cached per file revision).
+                    if let Some(diff) = highlighted {
+                        let latest = Arc::clone(&diff_generation);
+                        let events = events.clone();
+                        let ctx = ctx.clone();
+                        let shown = Arc::clone(&diff);
+                        crate::highlight::request(crate::highlight::Request {
+                            diff,
+                            stale: Box::new(move || latest.load(Ordering::Relaxed) != generation),
+                            deliver: Box::new(move |h| {
+                                let _ = events.send(Event::Highlight(key, shown, h));
+                                ctx.request_repaint();
+                            }),
+                        });
                     }
                 }
                 Job::HeadMessage => {
@@ -432,7 +450,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 }
                 Job::Conflict(path) => {
                     let kind = repo.conflict_kind(&path).ok().flatten();
-                    let file = repo.conflict_file(&path).map_err(|e| e.to_string());
+                    let file = repo
+                        .conflict_file(&path)
+                        .map(Arc::new)
+                        .map_err(|e| e.to_string());
                     emit(Event::Conflict { path, kind, file });
                 }
                 Job::Op(op) => {
@@ -477,7 +498,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         ms = started.elapsed().as_millis() as u64,
                         "snapshot"
                     );
-                    emit(Event::Snapshot(Box::new(s)));
+                    emit(Event::Snapshot(Arc::new(s)));
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "snapshot failed");

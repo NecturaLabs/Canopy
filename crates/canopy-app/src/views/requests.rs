@@ -15,6 +15,7 @@ use crate::hosting::{HostJob, TokenSource};
 use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
 use crate::ui::{art, widgets};
+use crate::views::commit_detail;
 use crate::views::dialogs::Dialog;
 
 /// Draws the view.
@@ -221,19 +222,24 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Actio
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    for r in items.iter() {
+                    commit_detail::virtual_rows(ui, items.len(), REQUEST_ROW_H, |ui, i| {
+                        let r = &items[i];
                         if row(ui, r, tab.requests.selected == Some(r.number), now).clicked() {
                             tab.select_request(r.number);
                         }
-                    }
+                    });
                 });
         }
     }
 }
 
+const REQUEST_ROW_H: f32 = 58.0;
+
 fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Response {
     let p = palette(ui.ctx());
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::click());
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), REQUEST_ROW_H), Sense::hover());
+    let resp = ui.interact(rect, ui.id().with(("request", r.number)), Sense::click());
     if selected {
         ui.painter().rect_filled(
             rect,

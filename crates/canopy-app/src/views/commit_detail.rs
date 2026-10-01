@@ -1,5 +1,7 @@
 //! The details pane under the graph: commit metadata, changed files and the selected file's diff.
 
+use std::ops::Range;
+
 use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Ui, vec2};
 use egui_phosphor::regular as icon;
 
@@ -137,17 +139,18 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         ui.label(RichText::new(format!("−{dels}")).color(p.danger).size(12.0));
                     });
                     ui.add_space(4.0);
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for f in &d.files {
+                    virtual_rows(ui, d.files.len(), FILE_ROW_H, |ui, i| {
+                        let f = &d.files[i];
                         let selected = tab.file.as_ref().is_some_and(|s| s.entry.path == f.path);
-                        if file_row(ui, f, selected).clicked() {
+                        let id = ui.id().with(("commit-file", &f.path));
+                        if file_row(ui, f, selected, id).clicked() {
                             tab.select_file(FileSelection {
                                 source: DiffSource::Commit(d.oid),
                                 entry: f.clone(),
                                 conflicted: false,
                             });
                         }
-                    }
+                    });
                 });
         });
     egui::CentralPanel::default()
@@ -163,10 +166,50 @@ fn meta_row(ui: &mut Ui, glyph: &str, text: &str) {
     });
 }
 
-/// A changed-file row with its badge, name, folder and line counts.
-pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool) -> egui::Response {
+/// Height of [`file_row`].
+pub const FILE_ROW_H: f32 = 28.0;
+
+/// The rows of a fixed-height list (`row_h` apart, no spacing) whose top is at `top`, that
+/// intersect `min_y..max_y`.
+pub fn visible_rows(n: usize, row_h: f32, top: f32, min_y: f32, max_y: f32) -> Range<usize> {
+    if n == 0 || row_h <= 0.0 || max_y <= min_y {
+        return 0..0;
+    }
+    let first = ((min_y - top) / row_h).floor().max(0.0);
+    let end = ((max_y - top) / row_h).ceil().max(0.0);
+    // Float to usize saturates; clamp to the list.
+    let first = (first as usize).min(n);
+    first..(end as usize).clamp(first, n)
+}
+
+/// Draws a list of `n` rows of height `row_h` at the cursor, calling `row` only for the rows in
+/// view and reserving the space of the others, so a list of thousands costs only its visible
+/// rows. Rows must allocate exactly `row_h` and give themselves ids that do not depend on their
+/// position (they come and go while scrolling).
+pub fn virtual_rows(ui: &mut Ui, n: usize, row_h: f32, mut row: impl FnMut(&mut Ui, usize)) {
+    let spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let clip = ui.clip_rect();
+    let range = visible_rows(n, row_h, ui.cursor().min.y, clip.min.y, clip.max.y);
+    let width = ui.available_width();
+    if range.start > 0 {
+        ui.allocate_space(vec2(width, range.start as f32 * row_h));
+    }
+    for i in range.clone() {
+        row(ui, i);
+    }
+    if range.end < n {
+        ui.allocate_space(vec2(width, (n - range.end) as f32 * row_h));
+    }
+    ui.spacing_mut().item_spacing.y = spacing;
+}
+
+/// A changed-file row with its badge, name, folder and line counts. `id` identifies the row
+/// across frames (for hover and its context menu).
+pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egui::Response {
     let p = palette(ui.ctx());
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), FILE_ROW_H), Sense::hover());
+    let resp = ui.interact(rect, id, Sense::click());
     let hover = ui
         .ctx()
         .animate_bool_with_time(resp.id, resp.hovered(), 0.1);
@@ -241,4 +284,31 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool) -> egui::Response {
     };
     let _ = Stroke::NONE;
     resp.on_hover_text(tip)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::visible_rows;
+
+    #[test]
+    fn visible_rows_cover_the_viewport_only() {
+        // Ten rows of 10 starting at y 100.
+        assert_eq!(
+            visible_rows(10, 10.0, 100.0, 0.0, 50.0),
+            0..0,
+            "above the list"
+        );
+        assert_eq!(visible_rows(10, 10.0, 100.0, 0.0, 115.0), 0..2);
+        assert_eq!(visible_rows(10, 10.0, 100.0, 125.0, 145.0), 2..5);
+        assert_eq!(visible_rows(10, 10.0, 100.0, 190.0, 400.0), 9..10);
+        assert_eq!(
+            visible_rows(10, 10.0, 100.0, 300.0, 400.0),
+            10..10,
+            "below the list"
+        );
+        assert_eq!(visible_rows(0, 10.0, 0.0, 0.0, 100.0), 0..0);
+        // A huge list costs only the rows in view.
+        let r = visible_rows(1_000_000, 26.0, 0.0, 5_000_000.0, 5_000_900.0);
+        assert!(r.len() <= 36, "{r:?}");
+    }
 }

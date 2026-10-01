@@ -30,6 +30,8 @@ All notable changes to Canopy are documented here. The format follows
   text AAA). Selected values in Settings use the same calmer selection fill as lists. Branch and
   tag pills, avatar initials and change and count badges keep their colour but are always at
   least 4.5:1 on their own fill, which they were not in the light themes.
+- Syntax highlighting restarts at every hunk, so a hunk that begins inside a block comment or
+  string no longer colours the hunks after it.
 
 ### Changed
 
@@ -40,6 +42,11 @@ All notable changes to Canopy are documented here. The format follows
 - `~` in clone and init destinations and opened paths expands to the home folder.
 - A repository, clone or update thread that fails to start reports an error instead of loading
   forever.
+- Smooth with huge repositories and many tabs: frames no longer copy the snapshot, diff or
+  conflict file; long sidebar, file and request lists draw only the rows in view; the diff keeps
+  its layout and scrolls a 50,000-line diff as cheaply as a short one; the conflict resolver
+  skips cards out of view; syntax highlighting runs on its own threads; the command palette
+  builds its entries once per opening.
 
 ## [0.1.0] - 2026-10-01
 

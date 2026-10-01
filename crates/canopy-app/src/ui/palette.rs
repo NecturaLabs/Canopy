@@ -20,15 +20,31 @@ pub struct Entry {
 
 /// Scores how well `query` matches `text` as a subsequence. Consecutive and word-start matches
 /// score higher. `None` when not all query characters occur in order.
+#[cfg(test)]
 pub fn fuzzy_score(query: &str, text: &str) -> Option<i32> {
     if query.is_empty() {
         return Some(0);
     }
     let text_lower: Vec<char> = text.to_lowercase().chars().collect();
+    score_lower(&query_chars(query), &text_lower)
+}
+
+/// The query's characters as matched: lowercase, without whitespace.
+fn query_chars(query: &str) -> Vec<char> {
+    query
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+/// [`fuzzy_score`] for a non-empty query, over text that is already lowercased (the palette
+/// lowercases its entries once, not on every keystroke).
+fn score_lower(query: &[char], text_lower: &[char]) -> Option<i32> {
     let mut score = 0;
     let mut ti = 0;
     let mut last_match: Option<usize> = None;
-    for qc in query.to_lowercase().chars().filter(|c| !c.is_whitespace()) {
+    for &qc in query {
         let mut found = false;
         while ti < text_lower.len() {
             if text_lower[ti] == qc {
@@ -53,43 +69,109 @@ pub fn fuzzy_score(query: &str, text: &str) -> Option<i32> {
     Some(score - i32::try_from(text_lower.len()).unwrap_or(i32::MAX) / 4)
 }
 
-/// Palette state.
-#[derive(Debug, Default)]
-pub struct CommandPalette {
+/// Entries shown at most.
+const MAX_SHOWN: usize = 60;
+
+/// Palette state. `T` is what an entry runs.
+///
+/// The entries are built by the caller only when the palette opens or what they are made from
+/// changes ([`Self::needs_entries`]), and they are ranked only when the query changes, so an open
+/// palette costs a frame almost nothing, however many branches the repository has.
+#[derive(Debug)]
+pub struct CommandPalette<T> {
     /// Shown this frame.
     pub open: bool,
     query: String,
     selected: usize,
     just_opened: bool,
+    /// The entries and what each runs.
+    items: Vec<(Entry, T)>,
+    /// Lowercased label, and lowercased "detail label", of each entry.
+    haystacks: Vec<(Vec<char>, Vec<char>)>,
+    /// Identifies what `items` was built from; `None` until built for this opening.
+    built_for: Option<u64>,
+    /// Best matches (score, entry index) for `ranked_for`.
+    ranked: Vec<(i32, usize)>,
+    ranked_for: Option<String>,
 }
 
-impl CommandPalette {
-    /// Opens with an empty query.
+impl<T> Default for CommandPalette<T> {
+    fn default() -> Self {
+        Self {
+            open: false,
+            query: String::new(),
+            selected: 0,
+            just_opened: false,
+            items: Vec::new(),
+            haystacks: Vec::new(),
+            built_for: None,
+            ranked: Vec::new(),
+            ranked_for: None,
+        }
+    }
+}
+
+/// The best `MAX_SHOWN` matches of `query` among `haystacks`, best first (ties in entry order).
+fn rank(query: &str, haystacks: &[(Vec<char>, Vec<char>)]) -> Vec<(i32, usize)> {
+    let q = query_chars(query);
+    let mut ranked: Vec<(i32, usize)> = haystacks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (label, both))| {
+            if query.is_empty() {
+                return Some((0, i));
+            }
+            let a = score_lower(&q, label);
+            let b = score_lower(&q, both).map(|s| s - 5);
+            a.max(b).map(|s| (s, i))
+        })
+        .collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    ranked.truncate(MAX_SHOWN);
+    ranked
+}
+
+impl<T: Clone> CommandPalette<T> {
+    /// Opens with an empty query. The entries are built again for this opening.
     pub fn open(&mut self) {
         self.open = true;
         self.query.clear();
         self.selected = 0;
         self.just_opened = true;
+        self.built_for = None;
     }
 
-    /// Draws the palette over `entries`; returns the index of the entry the user ran.
-    pub fn show(&mut self, ctx: &egui::Context, entries: &[Entry]) -> Option<usize> {
+    /// Whether the entries must be (re)built: the palette just opened, or `inputs` (a digest of
+    /// what the entries are made from) changed.
+    pub fn needs_entries(&self, inputs: u64) -> bool {
+        self.built_for != Some(inputs)
+    }
+
+    /// Replaces the entries, built from `inputs`.
+    pub fn set_entries(&mut self, inputs: u64, items: Vec<(Entry, T)>) {
+        self.haystacks = items
+            .iter()
+            .map(|(e, _)| {
+                let lower = |s: &str| s.to_lowercase().chars().collect::<Vec<char>>();
+                (lower(&e.label), lower(&format!("{} {}", e.detail, e.label)))
+            })
+            .collect();
+        self.items = items;
+        self.built_for = Some(inputs);
+        self.ranked_for = None;
+    }
+
+    /// Draws the palette; returns what the entry the user ran runs.
+    pub fn show(&mut self, ctx: &egui::Context) -> Option<T> {
         if !self.open {
             return None;
         }
         let p = palette(ctx);
-        let mut ranked: Vec<(i32, usize)> = entries
-            .iter()
-            .enumerate()
-            .filter_map(|(i, e)| {
-                let a = fuzzy_score(&self.query, &e.label);
-                let b =
-                    fuzzy_score(&self.query, &format!("{} {}", e.detail, e.label)).map(|s| s - 5);
-                a.max(b).map(|s| (s, i))
-            })
-            .collect();
-        ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        ranked.truncate(60);
+        if self.ranked_for.as_deref() != Some(self.query.as_str()) {
+            self.ranked = rank(&self.query, &self.haystacks);
+            self.ranked_for = Some(self.query.clone());
+        }
+        let ranked = self.ranked.clone();
 
         let (up, down, enter, esc) = ctx.input_mut(|i| {
             (
@@ -185,7 +267,9 @@ impl CommandPalette {
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
                                 for (row, (_, i)) in ranked.iter().enumerate() {
-                                    let e = &entries[*i];
+                                    let Some((e, _)) = self.items.get(*i) else {
+                                        continue;
+                                    };
                                     let selected = row == self.selected;
                                     let (rect, resp) = ui.allocate_exact_size(
                                         vec2(ui.available_width(), 34.0),
@@ -256,13 +340,96 @@ impl CommandPalette {
         if chosen.is_some() {
             self.open = false;
         }
-        chosen
+        chosen.and_then(|i| self.items.get(i).map(|(_, t)| t.clone()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::fuzzy_score;
+    use super::*;
+
+    fn entry(label: &str, detail: &str) -> Entry {
+        Entry {
+            icon: "",
+            label: label.into(),
+            detail: detail.into(),
+            shortcut: String::new(),
+        }
+    }
+
+    fn items() -> Vec<(Entry, u32)> {
+        vec![
+            (entry("Push", "Remote"), 1),
+            (entry("Pull", "Remote"), 2),
+            (entry("New branch…", "Branch"), 3),
+            (entry("Check out feature/login", "Branch"), 4),
+            (entry("Unbind", "Help"), 5),
+        ]
+    }
+
+    /// The ranking the palette used to compute every frame.
+    fn reference(query: &str, entries: &[Entry]) -> Vec<(i32, usize)> {
+        let mut ranked: Vec<(i32, usize)> = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| {
+                let a = fuzzy_score(query, &e.label);
+                let b = fuzzy_score(query, &format!("{} {}", e.detail, e.label)).map(|s| s - 5);
+                a.max(b).map(|s| (s, i))
+            })
+            .collect();
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        ranked
+    }
+
+    #[test]
+    fn cached_ranking_matches_the_direct_one() {
+        let mut p = CommandPalette::default();
+        p.set_entries(1, items());
+        let entries: Vec<Entry> = items().into_iter().map(|(e, _)| e).collect();
+        for q in ["", "  ", "p", "pu", "nb", "branch", "FEATURE", "zzz"] {
+            assert_eq!(rank(q, &p.haystacks), reference(q, &entries), "query {q:?}");
+        }
+    }
+
+    #[test]
+    fn entries_are_rebuilt_on_opening_or_when_inputs_change() {
+        let mut p: CommandPalette<u32> = CommandPalette::default();
+        p.open();
+        assert!(p.needs_entries(7));
+        p.set_entries(7, items());
+        assert!(!p.needs_entries(7), "kept while the inputs stay the same");
+        assert!(p.needs_entries(8), "rebuilt when they change");
+        p.open();
+        assert!(p.needs_entries(7), "rebuilt on every opening");
+    }
+
+    #[test]
+    fn enter_runs_the_best_match() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut p = CommandPalette::default();
+        p.open();
+        p.set_entries(1, items());
+        let enter = egui::Event::Key {
+            key: Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut ran = None;
+        ctx.run_ui(
+            egui::RawInput {
+                events: vec![enter],
+                ..Default::default()
+            },
+            |ui| ran = p.show(ui.ctx()),
+        )
+        .drop_without_applying_deltas();
+        assert_eq!(ran, Some(1), "the first entry for an empty query");
+        assert!(!p.open);
+    }
 
     #[test]
     fn fuzzy_prefers_word_starts_and_runs() {

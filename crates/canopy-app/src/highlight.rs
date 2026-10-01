@@ -1,15 +1,19 @@
-//! Syntax highlighting for diffs, computed on the repository thread with `syntect` (grammars
-//! from syntect and bat, through `two-face`).
+//! Syntax highlighting for diffs with `syntect` (grammars from syntect and bat, through
+//! `two-face`), computed on a small pool of highlighter threads shared by every tab, so neither
+//! the UI nor a repository thread waits for it. The diff shows as plain text until the result
+//! arrives; a request that a newer diff of the same tab superseded is abandoned.
 //!
 //! A diff is two partial files: the old side (context and removed lines) and the new side
 //! (context and added lines). Each side is parsed in order with its own parser state, so
 //! multi-line constructs such as block comments and strings carry across lines within a hunk.
+//! Every hunk starts from a fresh parser state: a hunk can begin inside a construct the diff
+//! does not show (the middle of a block comment), and that must not colour the hunks after it.
 //! Grammar scopes map to a handful of [`Token`] kinds; the colours come from the active theme
 //! (`Palette::syntax`), never from a syntect theme.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
@@ -176,7 +180,16 @@ impl Side {
 }
 
 /// Highlights a diff, or `None` when its language is unknown or it is too large.
+#[cfg(test)]
 pub fn highlight(diff: &FileDiff) -> Option<Highlights> {
+    highlight_until(diff, &|| false)
+}
+
+/// Lines parsed between checks for cancellation.
+const CHECK_EVERY: usize = 256;
+
+/// Highlights a diff, giving up (`None`) as soon as `cancelled` returns true.
+fn highlight_until(diff: &FileDiff, cancelled: &dyn Fn() -> bool) -> Option<Highlights> {
     let total: usize = diff.hunks.iter().map(|h| h.lines.len()).sum();
     if total == 0 || total > MAX_LINES || diff.binary {
         return None;
@@ -189,12 +202,16 @@ pub fn highlight(diff: &FileDiff) -> Option<Highlights> {
         .map(|l| l.text.as_str())
         .unwrap_or("");
     let syntax = syntax_for(set, &diff.path, first)?;
-    let mut old = Side::new(syntax);
-    let mut new = Side::new(syntax);
     let mut lines = Vec::with_capacity(diff.hunks.len());
     for hunk in &diff.hunks {
+        // A fresh state per hunk: the text between hunks is unknown.
+        let mut old = Side::new(syntax);
+        let mut new = Side::new(syntax);
         let mut spans = Vec::with_capacity(hunk.lines.len());
-        for line in &hunk.lines {
+        for (i, line) in hunk.lines.iter().enumerate() {
+            if i % CHECK_EVERY == 0 && cancelled() {
+                return None;
+            }
             spans.push(match line.kind {
                 LineKind::Removed => old.line(set, &line.text),
                 LineKind::Added => new.line(set, &line.text),
@@ -238,21 +255,104 @@ fn fingerprint(diff: &FileDiff) -> u64 {
 }
 
 impl Cache {
-    /// Highlights for `diff`, computing them on a miss.
-    pub fn get(&mut self, diff: &FileDiff) -> Option<Arc<Highlights>> {
-        let key = fingerprint(diff);
-        if let Some(h) = self.entries.get(&key) {
-            return Some(Arc::clone(h));
+    fn lookup(&self, key: u64) -> Option<Arc<Highlights>> {
+        self.entries.get(&key).cloned()
+    }
+
+    fn insert(&mut self, key: u64, h: Arc<Highlights>) {
+        if self.entries.contains_key(&key) {
+            return;
         }
-        let h = Arc::new(highlight(diff)?);
         if self.order.len() >= CACHE_SIZE {
             let old = self.order.remove(0);
             self.entries.remove(&old);
         }
         self.order.push(key);
-        self.entries.insert(key, Arc::clone(&h));
-        Some(h)
+        self.entries.insert(key, h);
     }
+}
+
+/// A diff to highlight, and what to do with the result.
+pub struct Request {
+    pub diff: Arc<FileDiff>,
+    /// True once the request no longer matters (a newer diff was asked for). Checked while
+    /// parsing, so a superseded huge diff stops early.
+    pub stale: Box<dyn Fn() -> bool + Send>,
+    /// Receives the highlights. Not called when the language is unknown, the diff is too large
+    /// or the request went stale.
+    pub deliver: Box<dyn FnOnce(Arc<Highlights>) + Send>,
+}
+
+/// Highlighter threads shared by every tab: two, so one huge file does not hold up the others.
+const THREADS: usize = 2;
+
+fn pool() -> Option<&'static crossbeam_channel::Sender<Request>> {
+    static POOL: OnceLock<Option<crossbeam_channel::Sender<Request>>> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let (jobs, rx) = crossbeam_channel::unbounded::<Request>();
+        let cache = Arc::new(Mutex::new(Cache::default()));
+        let mut started = 0;
+        for i in 0..THREADS {
+            let rx = rx.clone();
+            let cache = Arc::clone(&cache);
+            let spawned = std::thread::Builder::new()
+                .name(format!("highlight-{i}"))
+                .spawn(move || {
+                    while let Ok(req) = rx.recv() {
+                        run(req, &cache);
+                    }
+                });
+            match spawned {
+                Ok(_) => started += 1,
+                Err(e) => tracing::warn!(error = %e, "cannot start a highlighter thread"),
+            }
+        }
+        (started > 0).then_some(jobs)
+    })
+    .as_ref()
+}
+
+fn run(req: Request, cache: &Mutex<Cache>) {
+    if (req.stale)() {
+        return;
+    }
+    let key = fingerprint(&req.diff);
+    let cached = cache.lock().ok().and_then(|c| c.lookup(key));
+    let h = match cached {
+        Some(h) => h,
+        None => {
+            let started = std::time::Instant::now();
+            let Some(h) = highlight_until(&req.diff, &*req.stale) else {
+                return;
+            };
+            tracing::debug!(
+                lines = req.diff.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
+                ms = started.elapsed().as_millis() as u64,
+                "highlighted"
+            );
+            let h = Arc::new(h);
+            if let Ok(mut c) = cache.lock() {
+                c.insert(key, Arc::clone(&h));
+            }
+            h
+        }
+    };
+    if !(req.stale)() {
+        (req.deliver)(h);
+    }
+}
+
+/// Queues a diff for highlighting on the shared highlighter threads, or highlights it on the
+/// calling thread when they could not be started.
+pub fn request(req: Request) {
+    let req = match pool() {
+        Some(jobs) => match jobs.send(req) {
+            Ok(()) => return,
+            Err(e) => e.0,
+        },
+        None => req,
+    };
+    run(req, &Mutex::new(Cache::default()));
 }
 
 #[cfg(test)]
@@ -348,8 +448,82 @@ mod tests {
     fn cache_reuses_results() {
         let d = diff("a.rs", &[(LineKind::Added, "fn x() {}")]);
         let mut cache = Cache::default();
-        let a = cache.get(&d).expect("first");
-        let b = cache.get(&d).expect("second");
-        assert!(Arc::ptr_eq(&a, &b));
+        let key = fingerprint(&d);
+        assert!(cache.lookup(key).is_none());
+        let h = Arc::new(highlight(&d).expect("rust"));
+        cache.insert(key, Arc::clone(&h));
+        assert!(Arc::ptr_eq(&cache.lookup(key).expect("cached"), &h));
+        let other = diff("a.rs", &[(LineKind::Added, "fn y() {}")]);
+        assert_ne!(fingerprint(&other), key);
+    }
+
+    #[test]
+    fn every_hunk_starts_with_a_fresh_parser() {
+        // The first hunk opens a block comment whose end lies outside the diff; the second hunk
+        // is ordinary code and must not be coloured as a comment.
+        let mut d = diff("x.rs", &[(LineKind::Added, "/* starts here")]);
+        let mut second = d.hunks[0].clone();
+        second.lines[0].text = "let a = 1;".into();
+        d.hunks.push(second);
+        let h = highlight(&d).expect("rust");
+        let t: Vec<(String, Token)> = h.lines[1][0]
+            .iter()
+            .map(|s| {
+                (
+                    "let a = 1;"[s.start as usize..s.end as usize].to_owned(),
+                    s.token,
+                )
+            })
+            .collect();
+        assert!(t.contains(&("let".into(), Token::Keyword)), "{t:?}");
+        assert!(t.iter().all(|(_, k)| *k != Token::Comment), "{t:?}");
+        // Within one hunk the comment still carries over to the next line.
+        let d = diff(
+            "x.rs",
+            &[
+                (LineKind::Added, "/* open"),
+                (LineKind::Added, "let b = 2;"),
+            ],
+        );
+        let h = highlight(&d).expect("rust");
+        assert!(!h.lines[0][1].is_empty());
+        assert!(h.lines[0][1].iter().all(|s| s.token == Token::Comment));
+    }
+
+    #[test]
+    fn requests_deliver_off_thread_and_skip_stale_ones() {
+        let d = Arc::new(diff("a.rs", &[(LineKind::Added, "fn x() {}")]));
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let deliver = |tx: crossbeam_channel::Sender<(std::thread::ThreadId, String)>| {
+            Box::new(move |h: Arc<Highlights>| {
+                let _ = tx.send((std::thread::current().id(), h.language.clone()));
+            })
+        };
+        request(Request {
+            diff: Arc::clone(&d),
+            stale: Box::new(|| true),
+            deliver: deliver(tx.clone()),
+        });
+        request(Request {
+            diff: d,
+            stale: Box::new(|| false),
+            deliver: deliver(tx),
+        });
+        let (thread, language) = rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("delivered");
+        assert_eq!(language, "Rust");
+        assert_ne!(thread, std::thread::current().id());
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "the stale request delivers nothing"
+        );
+    }
+
+    #[test]
+    fn cancelled_highlighting_stops() {
+        let d = diff("a.rs", &[(LineKind::Added, "fn x() {}")]);
+        assert!(highlight_until(&d, &|| true).is_none());
     }
 }

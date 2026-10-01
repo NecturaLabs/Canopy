@@ -160,7 +160,7 @@ pub struct CanopyApp {
     /// dialogs that arrived while a credential prompt was open).
     dialogs: DialogStack,
     settings_screen: Option<SettingsScreen>,
-    palette: CommandPalette,
+    palette: CommandPalette<Action>,
     cheatsheet: Cheatsheet,
     toasts: Toasts,
     screenshot: Option<Screenshot>,
@@ -635,6 +635,19 @@ impl CanopyApp {
                 }
             }
         }
+    }
+
+    /// A digest of what [`Self::palette_entries`] depends on that can change while the palette
+    /// is open (it is rebuilt on every opening anyway).
+    fn palette_inputs(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (self.active, self.tabs.len()).hash(&mut h);
+        for t in &self.tabs {
+            (&t.name, t.generation).hash(&mut h);
+        }
+        self.settings.recent.hash(&mut h);
+        h.finish()
     }
 
     fn palette_entries(&self) -> Vec<(Entry, Action)> {
@@ -1938,11 +1951,13 @@ impl eframe::App for CanopyApp {
             }
         }
         if self.palette.open {
-            let entries = self.palette_entries();
-            let list: Vec<Entry> = entries.iter().map(|(e, _)| e.clone()).collect();
-            if let Some(i) = self.palette.show(&ctx, &list)
-                && let Some((_, a)) = entries.into_iter().nth(i)
-            {
+            // Built when the palette opens or its inputs change, not every frame.
+            let inputs = self.palette_inputs();
+            if self.palette.needs_entries(inputs) {
+                let entries = self.palette_entries();
+                self.palette.set_entries(inputs, entries);
+            }
+            if let Some(a) = self.palette.show(&ctx) {
                 actions.push(a);
             }
         }

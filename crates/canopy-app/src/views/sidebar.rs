@@ -6,6 +6,7 @@ use egui_phosphor::regular as icon;
 use crate::app::{Action, forge_icon};
 use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
+use crate::views::commit_detail::virtual_rows;
 use crate::views::dialogs::Dialog;
 use crate::worker::Op;
 use canopy_core::MergeMode;
@@ -72,6 +73,8 @@ fn section(
 }
 
 struct Row<'a> {
+    /// Identifies the row across frames (hover, context menu); rows come and go while scrolling.
+    id: egui::Id,
     glyph: &'a str,
     label: &'a str,
     indent: f32,
@@ -84,7 +87,8 @@ struct Row<'a> {
 
 fn row(ui: &mut Ui, r: Row<'_>) -> egui::Response {
     let p = palette(ui.ctx());
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
+    let resp = ui.interact(rect, r.id, Sense::click());
     let hover = ui
         .ctx()
         .animate_bool_with_time(resp.id, resp.hovered(), 0.1);
@@ -169,11 +173,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
 
         // Branches.
         if section(ui, tab, "branches", "Branches", icon::GIT_BRANCH, snap.branches.len()) {
-            for b in &snap.branches {
+            virtual_rows(ui, snap.branches.len(), ROW_H, |ui, i| {
+                let b = &snap.branches[i];
                 let color = if b.is_head { p.accent } else { p.text_dim };
                 let glyph = if b.is_head { icon::CHECK_CIRCLE } else { icon::GIT_BRANCH };
                 let hint = b.upstream.as_ref().map(|u| format!("Tracks {u}")).unwrap_or_else(|| "No upstream".to_owned());
-                let resp = row(ui, Row { glyph, label: &b.name, indent: 6.0, strong: b.is_head, color, ahead: b.ahead, behind: b.behind, hint: Some(&hint) });
+                let resp = row(ui, Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, indent: 6.0, strong: b.is_head, color, ahead: b.ahead, behind: b.behind, hint: Some(&hint) });
                 if resp.clicked()
                     && let Some(t) = b.target {
                         actions.push(Action::Reveal(t));
@@ -230,14 +235,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         }
                     }
                 });
-            }
+            });
             ui.add_space(8.0);
         }
 
         // Remotes.
         if section(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len()) {
             if snap.remotes.is_empty() {
-                let resp = row(ui, Row { glyph: icon::HARD_DRIVES, label: "Local only — no remote", indent: 6.0, strong: false, color: p.text_faint, ahead: 0, behind: 0, hint: Some("Everything stays on this computer. Publish to GitHub or GitLab to share it.") });
+                let resp = row(ui, Row { id: ui.id().with("local-only"), glyph: icon::HARD_DRIVES, label: "Local only — no remote", indent: 6.0, strong: false, color: p.text_faint, ahead: 0, behind: 0, hint: Some("Everything stays on this computer. Publish to GitHub or GitLab to share it.") });
                 if resp.clicked() {
                     actions.push(Action::Publish);
                 }
@@ -245,7 +250,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     actions.push(Action::Publish);
                 }
             }
-            for r in &snap.remotes {
+            for (ri, r) in snap.remotes.iter().enumerate() {
                 let key = format!("remote:{}", r.name);
                 let open = !tab.collapsed.contains(&key);
                 let forge = tab.forge_of(&r.name).cloned();
@@ -253,7 +258,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     Some(f) => format!("{}  {}", r.name, forge_icon(f.kind)),
                     None => r.name.clone(),
                 };
-                let resp = row(ui, Row { glyph: if open { icon::CARET_DOWN } else { icon::CARET_RIGHT }, label: &label, indent: 6.0, strong: false, color: p.accent2, ahead: 0, behind: 0, hint: r.url.as_deref() });
+                let resp = row(ui, Row { id: ui.id().with(("remote", &r.name)), glyph: if open { icon::CARET_DOWN } else { icon::CARET_RIGHT }, label: &label, indent: 6.0, strong: false, color: p.accent2, ahead: 0, behind: 0, hint: r.url.as_deref() });
                 if resp.clicked() {
                     if open {
                         tab.collapsed.insert(key.clone());
@@ -282,8 +287,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 if !open {
                     continue;
                 }
-                for b in snap.remote_branches.iter().filter(|b| b.remote == r.name) {
-                    let resp = row(ui, Row { glyph: icon::GIT_BRANCH, label: &b.branch, indent: 22.0, strong: false, color: p.text_faint, ahead: 0, behind: 0, hint: Some("Double-click to check out") });
+                let branches: &[usize] = tab.snap_index.remote_branches.get(ri).map_or(&[], Vec::as_slice);
+                virtual_rows(ui, branches.len(), ROW_H, |ui, i| {
+                    let b = &snap.remote_branches[branches[i]];
+                    let resp = row(ui, Row { id: ui.id().with(("remote-branch", &b.remote, &b.branch)), glyph: icon::GIT_BRANCH, label: &b.branch, indent: 22.0, strong: false, color: p.text_faint, ahead: 0, behind: 0, hint: Some("Double-click to check out") });
                     if resp.clicked()
                         && let Some(t) = b.target {
                             actions.push(Action::Reveal(t));
@@ -312,7 +319,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                             actions.push(Action::Confirm { title: "Delete remote branch".into(), body: format!("Delete {branch} on {remote}? Everyone loses access to it."), confirm: "Delete".into(), danger: true, op: Op::DeleteRemoteBranch { remote: remote.clone(), branch: branch.clone() } });
                         }
                     });
-                }
+                });
             }
             if ui.add(egui::Button::new(RichText::new(format!("{}  Add remote", icon::PLUS)).size(12.0).color(p.text_dim)).frame(false)).clicked() {
                 actions.push(Action::AddRemoteDialog);
@@ -322,16 +329,17 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
 
         // Tags.
         if section(ui, tab, "tags", "Tags", icon::TAG, snap.tags.len()) {
-            for t in &snap.tags {
-                let resp = row(ui, Row { glyph: icon::TAG, label: &t.name, indent: 6.0, strong: false, color: p.warning, ahead: 0, behind: 0, hint: t.message.as_deref() });
+            let remote = snap.remotes.first().map(|r| r.name.clone());
+            let tag_forge = tab.forge().map(|(_, f)| f.clone());
+            virtual_rows(ui, snap.tags.len(), ROW_H, |ui, i| {
+                let t = &snap.tags[i];
+                let resp = row(ui, Row { id: ui.id().with(("tag", &t.name)), glyph: icon::TAG, label: &t.name, indent: 6.0, strong: false, color: p.warning, ahead: 0, behind: 0, hint: t.message.as_deref() });
                 if resp.clicked()
                     && let Some(target) = t.target {
                         actions.push(Action::Reveal(target));
                     }
                 let name = t.name.clone();
                 let target = t.target;
-                let remote = snap.remotes.first().map(|r| r.name.clone());
-                let tag_forge = tab.forge().map(|(_, f)| f.clone());
                 resp.context_menu(|ui| {
                     if let Some(f) = &tag_forge {
                         let what = if f.kind == canopy_core::forge::ForgeKind::GitHub { "release" } else { "tag" };
@@ -355,15 +363,16 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         actions.push(Action::Confirm { title: "Delete tag".into(), body: format!("Delete the local tag {name}?"), confirm: "Delete".into(), danger: true, op: Op::DeleteTag(name.clone()) });
                     }
                 });
-            }
+            });
             ui.add_space(8.0);
         }
 
         // Stashes.
         if section(ui, tab, "stashes", "Stashes", icon::ARCHIVE, snap.stashes.len()) {
-            for s in &snap.stashes {
+            virtual_rows(ui, snap.stashes.len(), ROW_H, |ui, i| {
+                let s = &snap.stashes[i];
                 let label = s.message.trim_start_matches("On ").to_owned();
-                let resp = row(ui, Row { glyph: icon::ARCHIVE, label: &label, indent: 6.0, strong: false, color: p.text_dim, ahead: 0, behind: 0, hint: Some(&s.message) });
+                let resp = row(ui, Row { id: ui.id().with(("stash", s.oid)), glyph: icon::ARCHIVE, label: &label, indent: 6.0, strong: false, color: p.text_dim, ahead: 0, behind: 0, hint: Some(&s.message) });
                 let index = s.index;
                 if resp.clicked() {
                     actions.push(Action::Reveal(s.oid));
@@ -380,7 +389,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         actions.push(Action::Confirm { title: "Drop stash".into(), body: format!("Drop stash@{{{index}}}? Its changes are lost."), confirm: "Drop".into(), danger: true, op: Op::StashDrop(index) });
                     }
                 });
-            }
+            });
         }
         ui.add_space(16.0);
     });

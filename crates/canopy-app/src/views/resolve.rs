@@ -4,7 +4,10 @@
 //! and Save / Save and mark resolved. Files Canopy cannot show line by line (binary, deleted on
 //! one side) get a whole-file choice instead.
 
-use egui::{FontId, RichText, Stroke, Ui};
+use std::collections::HashMap;
+
+use egui::text::LayoutJob;
+use egui::{FontId, RichText, Sense, Stroke, Ui, vec2};
 use egui_phosphor::regular as icon;
 
 use canopy_core::{Choice, ConflictKind, ConflictRegion, Segment, Side};
@@ -13,6 +16,7 @@ use crate::app::Action;
 use crate::tab::{RepoTab, Resolver};
 use crate::ui::theme::{self, Palette, palette};
 use crate::ui::widgets;
+use crate::views::commit_detail;
 use crate::worker::Op;
 
 /// Unchanged stretches longer than this are folded.
@@ -262,22 +266,30 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
         });
 }
 
+fn code_font() -> FontId {
+    FontId::monospace(12.5)
+}
+
+/// Height of one laid-out code line: what a label of it takes (the galley's height, rounded the
+/// way egui rounds rows), so the lines sit exactly where one label per line would put them.
+fn code_row_height(ui: &Ui) -> f32 {
+    ui.painter()
+        .layout_no_wrap("M".to_owned(), code_font(), egui::Color32::PLACEHOLDER)
+        .size()
+        .y
+}
+
+/// Height of `n` code lines stacked `spacing` apart (`row_h` each), as [`code_lines`] lays them
+/// out; an empty list shows one "(nothing)" line.
+fn code_height(n: usize, row_h: f32, spacing: f32) -> f32 {
+    let n = n.max(1) as f32;
+    n * row_h + (n - 1.0) * spacing
+}
+
+/// Code lines, one per row, truncated to the width. The block reserves its full height but only
+/// the lines inside the visible area are laid out and painted, so a side with thousands of lines
+/// costs no more than a short one.
 fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
-    for l in lines {
-        let text = if l.is_empty() {
-            " ".to_owned()
-        } else {
-            l.replace('\t', "    ")
-        };
-        ui.add(
-            egui::Label::new(
-                RichText::new(text)
-                    .font(FontId::monospace(12.5))
-                    .color(color),
-            )
-            .truncate(),
-        );
-    }
     if lines.is_empty() {
         ui.label(
             RichText::new("(nothing)")
@@ -285,11 +297,135 @@ fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
                 .italics()
                 .color(palette(ui.ctx()).text_faint),
         );
+        return;
+    }
+    let font = code_font();
+    let row_h = code_row_height(ui);
+    let pitch = row_h + ui.spacing().item_spacing.y;
+    let width = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(
+        vec2(
+            width,
+            code_height(lines.len(), row_h, ui.spacing().item_spacing.y),
+        ),
+        Sense::hover(),
+    );
+    let clip = ui.clip_rect();
+    let hover = resp.hover_pos();
+    for i in commit_detail::visible_rows(lines.len(), pitch, rect.min.y, clip.min.y, clip.max.y) {
+        let text = lines[i].replace('\t', "    ");
+        let mut job =
+            LayoutJob::single_section(text, egui::TextFormat::simple(font.clone(), color));
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+        let galley = ui.painter().layout_job(job);
+        let top = rect.min.y + i as f32 * pitch;
+        // Like a truncated label: the whole line on hover when it does not fit.
+        if galley.elided
+            && hover.is_some_and(|h| (top..top + row_h).contains(&h.y))
+            && let Some(line) = lines.get(i)
+        {
+            resp.clone().on_hover_text(line.as_str());
+        }
+        ui.painter()
+            .galley(egui::pos2(rect.min.x, top), galley, color);
     }
 }
 
+/// Measured heights of the resolver's conflict cards, so cards out of view are skipped instead
+/// of laid out every frame. Common text between cards is always drawn: it only paints its
+/// visible lines.
+#[derive(Debug, Clone, Default)]
+pub struct Layout {
+    /// Width the heights were measured at.
+    width: f32,
+    /// Per segment index: the card's state signature and its measured height.
+    heights: HashMap<usize, (u64, f32)>,
+    /// Card height minus its code lines, learned per shape (has a result, shows the ancestor).
+    overhead: HashMap<(bool, bool), f32>,
+}
+
+impl Layout {
+    /// A layout with one measured card.
+    #[cfg(test)]
+    pub fn with_height(segment: usize, signature: u64, height: f32) -> Self {
+        let mut l = Self::default();
+        l.heights.insert(segment, (signature, height));
+        l
+    }
+
+    /// Nothing measured.
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.heights.is_empty() && self.overhead.is_empty()
+    }
+
+    /// The height a card is known to have, if it was measured in the same state.
+    fn known(&self, segment: usize, signature: u64) -> Option<f32> {
+        self.heights
+            .get(&segment)
+            .filter(|(s, _)| *s == signature)
+            .map(|(_, h)| *h)
+    }
+}
+
+/// Space around each card in the body.
+const CARD_GAP: f32 = 8.0;
+/// Cards this close to the visible area are drawn anyway.
+const OVERSCAN: f32 = 200.0;
+
+/// Lines in the result of `choice`, without building it.
+fn result_len(region: &ConflictRegion, choice: &Choice) -> usize {
+    let base = region.base.as_ref().map_or(0, Vec::len);
+    match choice {
+        Choice::Ours => region.ours.len(),
+        Choice::Theirs => region.theirs.len(),
+        Choice::OursThenTheirs | Choice::TheirsThenOurs => region.ours.len() + region.theirs.len(),
+        Choice::Base => base,
+        Choice::Custom(t) => t.lines().count(),
+    }
+}
+
+/// Everything about a card that changes its height.
+fn card_signature(r: &Resolver, k: usize, region: &ConflictRegion) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (r.focus == k).hash(&mut h);
+    r.choices
+        .get(k)
+        .and_then(Option::as_ref)
+        .map(|c| (choice_label(c), result_len(region, c)))
+        .hash(&mut h);
+    (r.show_base && region.base.is_some()).hash(&mut h);
+    r.editing
+        .as_ref()
+        .filter(|(i, _)| *i == k)
+        .map(|(_, t)| t.lines().count())
+        .hash(&mut h);
+    h.finish()
+}
+
+/// The code lines of a card: (lines inside the card, card shape).
+fn card_lines(r: &Resolver, k: usize, region: &ConflictRegion) -> (Vec<usize>, (bool, bool)) {
+    let choice = r.choices.get(k).cloned().flatten();
+    let base_shown = r.show_base && region.base.is_some();
+    let mut blocks = vec![region.ours.len().max(region.theirs.len())];
+    if base_shown {
+        blocks.push(region.base.as_ref().map_or(0, Vec::len));
+    }
+    if let Some(c) = &choice {
+        blocks.push(result_len(region, c));
+    }
+    (blocks, (choice.is_some(), base_shown))
+}
+
+/// A card's height from its code lines and the learned overhead of its shape.
+fn estimate_card(layout: &Layout, blocks: &[usize], shape: (bool, bool), row_h: f32) -> f32 {
+    let lines: f32 = blocks.iter().map(|n| code_height(*n, row_h, 4.0)).sum();
+    let default = 110.0 + if shape.0 { 26.0 } else { 0.0 } + if shape.1 { 26.0 } else { 0.0 };
+    lines + layout.overhead.get(&shape).copied().unwrap_or(default) + 2.0 * CARD_GAP
+}
+
 fn body(ui: &mut Ui, r: &mut Resolver) {
-    let p = palette(ui.ctx());
     let Some(Ok(file)) = r.file.clone() else {
         return;
     };
@@ -302,52 +438,98 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 0.0;
+                    let width = ui.available_width();
+                    if r.layout.width != width {
+                        r.layout.width = width;
+                        r.layout.heights.clear();
+                    }
+                    let row_h = code_row_height(ui);
+                    let near = ui.clip_rect().expand2(vec2(0.0, OVERSCAN));
                     let mut k = 0;
                     for (i, seg) in file.segments.iter().enumerate() {
                         match seg {
                             Segment::Common(lines) => {
-                                if lines.len() > FOLD && !r.expanded.contains(&i) {
-                                    let first = if i == 0 { &[][..] } else { &lines[..KEEP] };
-                                    let last = if i + 1 == file.segments.len() {
-                                        &[][..]
-                                    } else {
-                                        &lines[lines.len() - KEEP..]
-                                    };
-                                    code_lines(ui, first, p.text_faint);
-                                    let hidden = lines.len() - first.len() - last.len();
-                                    ui.add_space(2.0);
-                                    if ui
-                                        .add(
-                                            egui::Button::new(
-                                                RichText::new(format!(
-                                                    "{}  {hidden} unchanged lines",
-                                                    icon::DOTS_THREE
-                                                ))
-                                                .size(11.5)
-                                                .color(p.text_faint),
-                                            )
-                                            .frame(false),
-                                        )
-                                        .clicked()
-                                    {
-                                        r.expanded.insert(i);
-                                    }
-                                    ui.add_space(2.0);
-                                    code_lines(ui, last, p.text_faint);
-                                } else {
-                                    code_lines(ui, lines, p.text_faint);
-                                }
+                                // Its own id scope: ids inside must not depend on which cards
+                                // above were drawn this frame.
+                                ui.push_id(("common", i), |ui| {
+                                    common(ui, r, i, lines, i + 1 == file.segments.len());
+                                });
                             }
                             Segment::Conflict(region) => {
-                                ui.add_space(8.0);
-                                conflict_card(ui, r, k, region);
-                                ui.add_space(8.0);
+                                let signature = card_signature(r, k, region);
+                                let (blocks, shape) = card_lines(r, k, region);
+                                let known = r.layout.known(i, signature);
+                                let height = known.unwrap_or_else(|| {
+                                    estimate_card(&r.layout, &blocks, shape, row_h)
+                                });
+                                let top = ui.cursor().min.y;
+                                let reveal = r.reveal && r.focus == k;
+                                if !reveal && (top + height < near.min.y || top > near.max.y) {
+                                    ui.allocate_space(vec2(width, height));
+                                } else {
+                                    ui.push_id(("conflict", i), |ui| {
+                                        ui.add_space(CARD_GAP);
+                                        conflict_card(ui, r, k, region);
+                                        ui.add_space(CARD_GAP);
+                                    });
+                                    let measured = ui.cursor().min.y - top;
+                                    let signature = card_signature(r, k, region);
+                                    r.layout.heights.insert(i, (signature, measured));
+                                    let editing = r.editing.as_ref().is_some_and(|(e, _)| *e == k);
+                                    let (blocks, shape) = card_lines(r, k, region);
+                                    if !editing {
+                                        let lines: f32 = blocks
+                                            .iter()
+                                            .map(|n| code_height(*n, row_h, 4.0))
+                                            .sum();
+                                        r.layout
+                                            .overhead
+                                            .insert(shape, measured - lines - 2.0 * CARD_GAP);
+                                    }
+                                }
                                 k += 1;
                             }
                         }
                     }
                 });
         });
+}
+
+/// Unchanged lines between conflicts, long stretches folded.
+fn common(ui: &mut Ui, r: &mut Resolver, i: usize, lines: &[String], last_segment: bool) {
+    let p = palette(ui.ctx());
+    if lines.len() > FOLD && !r.expanded.contains(&i) {
+        let first = if i == 0 { &[][..] } else { &lines[..KEEP] };
+        let last = if last_segment {
+            &[][..]
+        } else {
+            &lines[lines.len() - KEEP..]
+        };
+        if !first.is_empty() {
+            code_lines(ui, first, p.text_faint);
+        }
+        let hidden = lines.len() - first.len() - last.len();
+        ui.add_space(2.0);
+        if ui
+            .add(
+                egui::Button::new(
+                    RichText::new(format!("{}  {hidden} unchanged lines", icon::DOTS_THREE))
+                        .size(11.5)
+                        .color(p.text_faint),
+                )
+                .frame(false),
+            )
+            .clicked()
+        {
+            r.expanded.insert(i);
+        }
+        ui.add_space(2.0);
+        if !last.is_empty() {
+            code_lines(ui, last, p.text_faint);
+        }
+    } else if !lines.is_empty() {
+        code_lines(ui, lines, p.text_faint);
+    }
 }
 
 fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegion) {
@@ -525,5 +707,121 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
     if focused && r.reveal {
         resp.response.scroll_to_me(Some(egui::Align::Center));
         r.reveal = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use canopy_core::ConflictFile;
+
+    /// `n` conflicts of `lines` lines a side, each after a few common lines.
+    fn text(n: usize, lines: usize) -> String {
+        let mut s = String::new();
+        for c in 0..n {
+            s.push_str(&format!("common {c}\n"));
+            s.push_str("<<<<<<< HEAD\n");
+            for l in 0..lines {
+                s.push_str(&format!("ours {c}.{l}\n"));
+            }
+            s.push_str("=======\n");
+            for l in 0..lines {
+                s.push_str(&format!("theirs {c}.{l}\n"));
+            }
+            s.push_str(">>>>>>> topic\n");
+        }
+        s
+    }
+
+    fn context() -> egui::Context {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        ctx
+    }
+
+    fn frame(ctx: &egui::Context, r: &mut Resolver) {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                vec2(1000.0, 800.0),
+            )),
+            ..Default::default()
+        };
+        ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| body(ui, r));
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn only_cards_near_the_view_are_laid_out() {
+        let ctx = context();
+        let mut r = Resolver::new("f".into());
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(&text(300, 5)))));
+        frame(&ctx, &mut r);
+        frame(&ctx, &mut r);
+        let measured = r.layout.heights.len();
+        assert!(measured > 0 && measured < 20, "{measured} cards laid out");
+        // A card far below is laid out when keyboard focus reveals it, so it can scroll there.
+        r.focus = 250;
+        r.reveal = true;
+        frame(&ctx, &mut r);
+        assert!(r.layout.heights.contains_key(&(2 * 250 + 1)));
+        assert!(!r.reveal);
+    }
+
+    #[test]
+    fn huge_sides_cost_only_their_visible_lines() {
+        let ctx = context();
+        let mut r = Resolver::new("f".into());
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(&text(1, 50_000)))));
+        let started = std::time::Instant::now();
+        frame(&ctx, &mut r);
+        frame(&ctx, &mut r);
+        // The card reserves the height of all its lines.
+        let height = r.layout.known(1, card_signature(&r, 0, first_region(&r)));
+        assert!(height.is_some_and(|h| h > 50_000.0 * 10.0), "{height:?}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "laid out every line"
+        );
+    }
+
+    fn first_region(r: &Resolver) -> &ConflictRegion {
+        match &r.file {
+            Some(Ok(f)) => f.regions().next().expect("a conflict"),
+            _ => panic!("no file"),
+        }
+    }
+
+    #[test]
+    fn card_estimates_follow_the_lines_shown() {
+        assert_eq!(code_height(0, 15.0, 4.0), 15.0, "\"(nothing)\"");
+        assert_eq!(code_height(3, 15.0, 4.0), 53.0);
+        let f = ConflictFile::parse(&text(1, 3));
+        let region = f.regions().next().expect("conflict");
+        assert_eq!(result_len(region, &Choice::Ours), 3);
+        assert_eq!(result_len(region, &Choice::OursThenTheirs), 6);
+        assert_eq!(result_len(region, &Choice::Custom("a\nb".into())), 2);
+        let mut r = Resolver::new("f".into());
+        r.reload(None, Ok(Arc::new(f.clone())));
+        let before = card_signature(&r, 0, region);
+        let (blocks, shape) = card_lines(&r, 0, region);
+        assert_eq!((blocks, shape), (vec![3], (false, false)));
+        r.choices[0] = Some(Choice::OursThenTheirs);
+        assert_ne!(
+            card_signature(&r, 0, region),
+            before,
+            "a choice changes the height"
+        );
+        let (blocks, shape) = card_lines(&r, 0, region);
+        assert_eq!((blocks, shape), (vec![3, 6], (true, false)));
+        let layout = Layout::default();
+        assert!(
+            estimate_card(&layout, &[3, 6], shape, 15.0)
+                > estimate_card(&layout, &[3], (false, false), 15.0)
+        );
     }
 }

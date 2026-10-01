@@ -117,22 +117,19 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             });
         });
 
-    let filtered: Option<Vec<usize>> = tab.filtered_rows().map(<[usize]>::to_vec);
+    // Refresh the filter cache, then borrow it (and everything else) without copying: a frame
+    // must not do work proportional to the number of commits.
+    tab.filtered_rows();
     let forge = tab.forge().map(|(_, f)| f.clone());
-    let Some(snap) = tab.snap.as_ref() else {
+    let Some(snap) = tab.snap.clone() else {
         return;
     };
-    let rows: Vec<usize> = filtered
-        .clone()
-        .unwrap_or_else(|| (0..snap.commits.len()).collect());
+    let filtered = tab.filtered.as_deref();
     let show_graph = filtered.is_none();
-    let lanes = snap
-        .graph
-        .iter()
-        .map(|g| g.width)
-        .max()
-        .unwrap_or(1)
-        .clamp(1, MAX_LANES);
+    let row_count = filtered.map_or(snap.commits.len(), <[usize]>::len);
+    // Display row -> commit index.
+    let commit_at = |ri: usize| filtered.map_or(Some(ri), |f| f.get(ri).copied());
+    let lanes = tab.snap_index.graph_lanes.clamp(1, MAX_LANES);
     let graph_w = if show_graph {
         f32::from(lanes) * LANE_W + 16.0
     } else {
@@ -187,11 +184,15 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         .hline(full.x_range(), hdr.max.y, Stroke::new(1.0, p.border));
 
     // Keyboard navigation (keymap: j/k, g/G) moves the selection and asks to reveal it.
-    let selected_pos = tab
-        .selected_commit
-        .and_then(|s| rows.iter().position(|&i| snap.commits[i].oid == s));
+    // Only searched for when asked, not every frame.
     let scroll_target = if tab.scroll_to_selected || tab.reveal_selected {
-        selected_pos
+        tab.selected_commit.and_then(|s| {
+            (0..row_count).find(|&ri| {
+                commit_at(ri)
+                    .and_then(|ci| snap.commits.get(ci))
+                    .is_some_and(|c| c.oid == s)
+            })
+        })
     } else {
         None
     };
@@ -218,11 +219,11 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     tab.scroll_to_selected = false;
     tab.reveal_selected = false;
 
-    let total_rows = rows.len() + usize::from(snap.truncated && filtered.is_none());
+    let total_rows = row_count + usize::from(snap.truncated && filtered.is_none());
     area.show_rows(ui, ROW_H, total_rows, |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for ri in range {
-            if ri >= rows.len() {
+            let Some(ci) = commit_at(ri).filter(|_| ri < row_count) else {
                 let (rect, _) = ui.allocate_exact_size(vec2(full.width(), ROW_H), Sense::hover());
                 let b = ui.put(
                     Rect::from_center_size(rect.center(), vec2(220.0, 24.0)),
@@ -235,9 +236,11 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                     actions.push(Action::LoadMore);
                 }
                 continue;
-            }
-            let ci = rows[ri];
-            let c = &snap.commits[ci];
+            };
+            let Some(c) = snap.commits.get(ci) else {
+                ui.allocate_space(vec2(full.width(), ROW_H));
+                continue;
+            };
             let (rect, resp) = ui.allocate_exact_size(vec2(full.width(), ROW_H), Sense::click());
             let selected = tab.selected_commit == Some(c.oid);
             let hover = ui

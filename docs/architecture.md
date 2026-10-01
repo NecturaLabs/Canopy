@@ -43,6 +43,7 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `main.rs` | Argument parsing, logging (`tracing-subscriber`, filter from `CANOPY_LOG` or `RUST_LOG`), eframe launch. |
 | `app.rs` | `CanopyApp`: repository tabs, global shortcuts, dialogs, toasts, command palette. |
 | `worker.rs` | One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced; debounced file watcher. |
+| `highlight.rs` | Diff syntax highlighting (`syntect`) on two shared highlighter threads, cached per file revision; stale requests are abandoned. |
 | `settings.rs` | Settings persisted through eframe storage: theme, recent repositories, UI scale. |
 | `ui/theme.rs` | Design tokens: palette, lane colours, spacing, radii. The only place colours are defined. |
 | `ui/motion.rs` | Motion tokens (100/150/200 ms), the reduce-motion preference and whether motion is currently reduced. |
@@ -50,14 +51,15 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `ui/fonts.rs` | Registers the bundled Inter and JetBrains Mono fonts. |
 | `ui/widgets.rs` | Ref pills, avatars, icon buttons, badges. |
 | `ui/toast.rs` | Toast queue and animation. |
-| `ui/palette.rs` | Command palette with fuzzy matching. |
+| `ui/palette.rs` | Command palette with fuzzy matching; entries built on opening, ranked on query change. |
 | `views/welcome.rs` | Welcome screen and recent repositories. |
 | `views/toolbar.rs` | Top toolbar: fetch, pull, push, branch, stash, view switch. |
 | `views/sidebar.rs` | Branches, remotes, tags and stashes. |
 | `views/history.rs` | Virtualised commit-graph table. |
 | `views/commit_detail.rs` | Selected commit: metadata, parents, changed files, diff. |
 | `views/changes.rs` | Staging area and commit composer. |
-| `views/diff.rs` | Diff viewer with line numbers and hunk actions. |
+| `views/diff.rs` | Diff viewer with line numbers and hunk actions; row layout cached per diff. |
+| `views/resolve.rs` | Conflict resolver; off-screen cards skipped by measured height. |
 | `views/dialogs.rs` | Modal dialogs (clone, new branch, confirmations, ...). |
 | `views/statusbar.rs` | Branch, ahead/behind, repository state, running job. |
 
@@ -186,11 +188,28 @@ cached on disk; it is always read from the repository.
 
 - The snapshot loads the first 2000 commits by default; "Load more" extends the walk. Graph layout
   for those rows is computed once per snapshot, on the worker.
-- The history table is virtualised: only visible rows are laid out and painted, so a frame costs
-  the same for 2000 or 200,000 loaded commits.
+- Large results cross from the worker as `Arc`s (snapshot, commit details, diff, conflict file)
+  and the tab keeps them that way: a frame clones pointers, never the data. Facts a frame would
+  otherwise recompute from the snapshot (remote branches per remote, graph width) are derived
+  once when it arrives (`tab::SnapIndex`).
+- Every list that grows with the repository is virtualised: the history table, the sidebar's
+  branches, remote branches, tags and stashes, changed files (Changes and commit details) and the
+  request list lay out and paint only the rows in view (`commit_detail::virtual_rows`), so a
+  frame costs the same for 2000 or 200,000 commits or tags.
 - Diffs are computed on the worker when a file is selected and kept in the tab until the
   selection or the repository changes; replies for a superseded selection are dropped. The diff
-  viewer paints only the visible lines, so scrolling a large diff does no Git work and stays cheap.
+  viewer builds its row layout (rows, positions, widest line, gutter width) once per diff and
+  layout (`diff::DiffLayout`) and finds the visible rows by binary search, so scrolling a
+  50,000-line diff costs the same as a short one. Galleys are left to egui's galley cache.
+- The conflict resolver paints only the visible lines of each block and skips cards out of view,
+  using their measured heights (estimates until first drawn).
+- Syntax highlighting runs on two highlighter threads shared by all tabs (`highlight.rs`), never
+  on the UI or a repository thread; the diff shows as plain text until the colours arrive, and a
+  request superseded by a newer diff stops early. Results are cached per file revision.
+- The command palette builds its entries when it opens (or when a snapshot or request list
+  arrives while it is open) and ranks them only when the query changes.
 - No per-frame allocation of large collections and no repository access per frame.
+  `cargo test --release -p canopy-app frame_cost -- --ignored --nocapture` renders the real views
+  over a synthetic huge repository and prints the CPU time per frame.
 - `tools/mkfixture.sh <dir> big` creates a 5000-commit repository with regular merges for
   checking layout and scrolling.

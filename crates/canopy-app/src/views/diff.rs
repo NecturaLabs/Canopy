@@ -2,6 +2,8 @@
 //! highlighting, unified or side-by-side layout, and stage / unstage / discard per hunk or per
 //! selected lines. Rows are virtualised so huge diffs stay fast.
 
+use std::sync::Arc;
+
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align2, Color32, CornerRadius, FontId, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use egui_phosphor::regular as icon;
@@ -82,6 +84,80 @@ fn rows(d: &FileDiff, split: bool) -> Vec<Row> {
         }
     }
     v
+}
+
+/// A diff's rows and their positions, built once per diff and layout (unified or side by side)
+/// instead of every frame. A frame then finds the visible rows by binary search and lays out only
+/// those, so its cost does not depend on the diff's size. Galleys are not kept here: egui's own
+/// galley cache reuses them while they stay on screen and survives font-atlas rebuilds.
+#[derive(Debug)]
+pub struct DiffLayout {
+    /// The diff this layout is for (compared by pointer).
+    diff: Arc<FileDiff>,
+    split: bool,
+    rows: Vec<Row>,
+    /// Top of each row, plus the total height as the last entry.
+    tops: Vec<f32>,
+    /// The widest line in monospace columns, tabs counted as four.
+    columns: usize,
+    /// Digits of the largest line number (at least three).
+    digits: usize,
+}
+
+impl DiffLayout {
+    pub fn new(diff: Arc<FileDiff>, split: bool) -> Self {
+        let rows = rows(&diff, split);
+        let mut tops = Vec::with_capacity(rows.len() + 1);
+        let mut y = 0.0;
+        for r in &rows {
+            tops.push(y);
+            y += if matches!(r, Row::Hunk(_)) {
+                HUNK_H
+            } else {
+                LINE_H
+            };
+        }
+        tops.push(y);
+        let columns = diff
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .map(|l| l.text.chars().count() + l.text.matches('\t').count() * 3)
+            .max()
+            .unwrap_or(0);
+        let max_no = diff
+            .hunks
+            .iter()
+            .map(|h| (h.old_start + h.old_lines).max(h.new_start + h.new_lines))
+            .max()
+            .unwrap_or(1);
+        Self {
+            digits: max_no.to_string().len().max(3),
+            diff,
+            split,
+            rows,
+            tops,
+            columns,
+        }
+    }
+
+    /// Still valid for this diff and layout.
+    fn is_for(&self, diff: &Arc<FileDiff>, split: bool) -> bool {
+        Arc::ptr_eq(&self.diff, diff) && self.split == split
+    }
+
+    fn total_height(&self) -> f32 {
+        self.tops.last().copied().unwrap_or(0.0)
+    }
+
+    /// Indices of the rows that intersect `min_y..max_y` (content coordinates).
+    fn visible(&self, min_y: f32, max_y: f32) -> std::ops::Range<usize> {
+        let n = self.rows.len();
+        // Row i spans tops[i]..tops[i + 1].
+        let start = self.tops[1..].partition_point(|&bottom| bottom <= min_y);
+        let end = self.tops[..n].partition_point(|&top| top < max_y);
+        start.min(n)..end.max(start).min(n)
+    }
 }
 
 fn token_color(s: &Syntax, t: Token) -> Color32 {
@@ -209,6 +285,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         return;
     }
     let Some(d) = tab.diff.clone() else {
+        tab.diff_layout = None;
         ui.add_space(20.0);
         ui.vertical_centered(|ui| ui.spinner());
         return;
@@ -233,34 +310,20 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     }
 
     let split = tab.split_diff && !sel.conflicted;
-    let rows = rows(&d, split);
-    let heights: Vec<f32> = rows
-        .iter()
-        .map(|r| {
-            if matches!(r, Row::Hunk(_)) {
-                HUNK_H
-            } else {
-                LINE_H
-            }
-        })
-        .collect();
-    let max_no = d
-        .hunks
-        .iter()
-        .map(|h| (h.old_start + h.old_lines).max(h.new_start + h.new_lines))
-        .max()
-        .unwrap_or(1);
-    let digits = max_no.to_string().len().max(3) as f32;
-    let num_w = digits * 7.6 + 12.0;
+    if !tab
+        .diff_layout
+        .as_ref()
+        .is_some_and(|l| l.is_for(&d, split))
+    {
+        tab.diff_layout = Some(DiffLayout::new(Arc::clone(&d), split));
+    }
+    let Some(layout) = tab.diff_layout.as_ref() else {
+        return;
+    };
+    let num_w = layout.digits as f32 * 7.6 + 12.0;
     let mono = FontId::monospace(12.5);
     let char_w = ui.fonts_mut(|f| f.glyph_width(&mono, 'm'));
-    let longest = d
-        .hunks
-        .iter()
-        .flat_map(|h| h.lines.iter())
-        .map(|l| l.text.chars().count() + l.text.matches('\t').count() * 3)
-        .max()
-        .unwrap_or(0) as f32;
+    let longest = layout.columns as f32;
     let content_w = if split {
         ui.available_width()
     } else {
@@ -295,21 +358,13 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .auto_shrink([false, false])
         .id_salt(("diff", &sel.entry.path, split))
         .show_viewport(ui, |ui, viewport| {
-            let total: f32 = heights.iter().sum();
-            ui.set_min_size(vec2(content_w, total + 16.0));
+            ui.set_min_size(vec2(content_w, layout.total_height() + 16.0));
             let origin = ui.min_rect().min;
-            let mut y = 0.0;
-            for (i, row) in rows.iter().enumerate() {
-                let rh = heights[i];
-                if y + rh < viewport.min.y {
-                    y += rh;
-                    continue;
-                }
-                if y > viewport.max.y {
-                    break;
-                }
+            for i in layout.visible(viewport.min.y, viewport.max.y) {
+                let y = layout.tops[i];
+                let rh = layout.tops[i + 1] - y;
                 let rect = Rect::from_min_size(origin + vec2(0.0, y), vec2(content_w, rh));
-                match *row {
+                match layout.rows[i] {
                     Row::Hunk(h) => {
                         hunk_header(ui, &cx, &d, h, rect, origin, viewport, line_sel, actions)
                     }
@@ -382,7 +437,6 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         );
                     }
                 }
-                y += rh;
             }
             if !split {
                 // Gutter separator.
@@ -894,6 +948,54 @@ mod tests {
             vec![(None, Some(0)), (Some(1), None)]
         );
         assert_eq!(pair_lines(&hunk("---")).len(), 3);
+    }
+
+    #[test]
+    fn layout_positions_rows_and_finds_the_visible_ones() {
+        let mut a = hunk(" --+++ ");
+        a.lines[0].text = "\tx".into();
+        let d = Arc::new(FileDiff {
+            hunks: vec![a, hunk("+")],
+            ..FileDiff::default()
+        });
+        let l = DiffLayout::new(Arc::clone(&d), false);
+        // Hunk, 7 lines, hunk, 1 line.
+        assert_eq!(l.rows.len(), 10);
+        assert_eq!(l.tops[1], HUNK_H);
+        assert_eq!(l.tops[8], HUNK_H + 7.0 * LINE_H);
+        assert_eq!(l.total_height(), 2.0 * HUNK_H + 8.0 * LINE_H);
+        assert_eq!(l.columns, 5, "a tab counts as four columns");
+        assert_eq!(l.visible(0.0, 1.0), 0..1);
+        // The bottom edge of a row is not inside it.
+        assert_eq!(l.visible(HUNK_H, HUNK_H + LINE_H), 1..2);
+        assert_eq!(
+            l.visible(HUNK_H + 0.5 * LINE_H, HUNK_H + 2.5 * LINE_H),
+            1..4
+        );
+        assert_eq!(l.visible(0.0, 10_000.0), 0..10);
+        assert_eq!(l.visible(10_000.0, 20_000.0), 10..10);
+        // Side by side pairs the change block.
+        let s = DiffLayout::new(Arc::clone(&d), true);
+        assert_eq!(s.rows.len(), 1 + 5 + 1 + 1);
+        // Reused only for the same diff and layout.
+        assert!(l.is_for(&d, false));
+        assert!(!l.is_for(&d, true));
+        assert!(!l.is_for(&Arc::new((*d).clone()), false));
+    }
+
+    #[test]
+    fn huge_diffs_lay_out_once_and_scroll_by_lookup() {
+        let lines = hunk(&" +-".repeat(20_000));
+        let d = Arc::new(FileDiff {
+            hunks: vec![lines.clone(), lines],
+            ..FileDiff::default()
+        });
+        let l = DiffLayout::new(d, false);
+        assert_eq!(l.rows.len(), 120_002);
+        let mid = l.total_height() / 2.0;
+        let r = l.visible(mid, mid + 800.0);
+        assert!(r.len() <= 42, "{r:?}");
+        assert!(l.tops[r.start] <= mid && l.tops[r.end] >= mid + 800.0);
     }
 
     #[test]

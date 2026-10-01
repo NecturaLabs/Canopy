@@ -49,7 +49,7 @@ pub struct Resolver {
     pub path: String,
     pub kind: Option<canopy_core::ConflictKind>,
     /// The parsed working-tree file, or why it cannot be resolved line by line.
-    pub file: Option<Result<canopy_core::ConflictFile, String>>,
+    pub file: Option<Result<Arc<canopy_core::ConflictFile>, String>>,
     /// The choice for each conflict, in order.
     pub choices: Vec<Option<canopy_core::Choice>>,
     /// The conflict keyboard actions apply to.
@@ -62,10 +62,12 @@ pub struct Resolver {
     pub expanded: HashSet<usize>,
     /// Show the common ancestor of each conflict (diff3 files).
     pub show_base: bool,
+    /// Measured heights of the resolver's blocks, so off-screen ones are skipped.
+    pub layout: crate::views::resolve::Layout,
 }
 
 impl Resolver {
-    fn new(path: String) -> Self {
+    pub(crate) fn new(path: String) -> Self {
         Self {
             path,
             kind: None,
@@ -76,6 +78,7 @@ impl Resolver {
             editing: None,
             expanded: HashSet::new(),
             show_base: false,
+            layout: Default::default(),
         }
     }
 
@@ -120,7 +123,7 @@ impl Resolver {
     pub fn reload(
         &mut self,
         kind: Option<canopy_core::ConflictKind>,
-        file: Result<canopy_core::ConflictFile, String>,
+        file: Result<Arc<canopy_core::ConflictFile>, String>,
     ) {
         let old: Vec<canopy_core::ConflictRegion> = match &self.file {
             Some(Ok(f)) => f.regions().cloned().collect(),
@@ -148,6 +151,7 @@ impl Resolver {
         self.choices = choices;
         self.kind = kind;
         self.file = Some(file);
+        self.layout = Default::default();
     }
 
     /// Clears the focused conflict's choice (and any hand edit of it).
@@ -235,19 +239,59 @@ impl Default for Requests {
     }
 }
 
+/// Facts derived from a snapshot once, when it arrives, so frames do not recompute them.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SnapIndex {
+    /// Indices into `remote_branches` for each remote, in `remotes` order.
+    pub remote_branches: Vec<Vec<usize>>,
+    /// The widest graph row, in lanes.
+    pub graph_lanes: u16,
+}
+
+impl SnapIndex {
+    pub fn new(s: &RepoSnapshot) -> Self {
+        let mut remote_branches = vec![Vec::new(); s.remotes.len()];
+        let position: std::collections::HashMap<&str, usize> = s
+            .remotes
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (r.name.as_str(), i))
+            .collect();
+        for (i, b) in s.remote_branches.iter().enumerate() {
+            if let Some(&r) = position.get(b.remote.as_str()) {
+                remote_branches[r].push(i);
+            }
+        }
+        Self {
+            remote_branches,
+            graph_lanes: s.graph.iter().map(|g| g.width).max().unwrap_or(1),
+        }
+    }
+}
+
 /// One repository tab.
+///
+/// Large data from the worker (snapshot, commit details, diff, conflict file) is held in `Arc`s:
+/// a frame clones the pointer, never the data, so its cost does not grow with the repository.
 #[derive(Debug)]
 pub struct RepoTab {
     pub path: PathBuf,
     pub name: String,
     pub worker: Worker,
-    pub snap: Option<RepoSnapshot>,
+    pub snap: Option<Arc<RepoSnapshot>>,
+    /// Derived from `snap` when it arrives.
+    pub snap_index: SnapIndex,
+    /// Bumped whenever the snapshot or the request list is replaced (the command palette
+    /// rebuilds its entries when it changes).
+    pub generation: u64,
     pub load_error: Option<String>,
     pub view: View,
     pub selected_commit: Option<Oid>,
-    pub details: Option<CommitDetails>,
+    pub details: Option<Arc<CommitDetails>>,
     pub file: Option<FileSelection>,
-    pub diff: Option<FileDiff>,
+    pub diff: Option<Arc<FileDiff>>,
+    /// Row layout of `diff` for the diff view, rebuilt only when the diff or layout changes.
+    pub diff_layout: Option<crate::views::diff::DiffLayout>,
     pub diff_error: Option<String>,
     pub pending_diff: Option<DiffKey>,
     /// Diff context and whitespace for this repository.
@@ -307,12 +351,15 @@ impl RepoTab {
             name,
             worker,
             snap: None,
+            snap_index: SnapIndex::default(),
+            generation: 0,
             load_error: None,
             view: View::History,
             selected_commit: None,
             details: None,
             file: None,
             diff: None,
+            diff_layout: None,
             diff_error: None,
             pending_diff: None,
             diff_prefs,
@@ -676,7 +723,9 @@ impl RepoTab {
                     self.name = s.name.clone();
                     let head = s.head.oid;
                     let had = self.snap.is_some();
-                    self.snap = Some(*s);
+                    self.snap_index = SnapIndex::new(&s);
+                    self.snap = Some(s);
+                    self.generation += 1;
                     self.update_forges(gitlab_hosts);
                     self.load_error = None;
                     self.filter_for = String::from("\u{0}");
@@ -702,7 +751,9 @@ impl RepoTab {
                 }
                 Event::Status(st) => {
                     if let Some(s) = &mut self.snap {
-                        s.status = st;
+                        // Copies the snapshot only if a frame still shares it (it does not
+                        // between frames).
+                        Arc::make_mut(s).status = st;
                     }
                     self.reconcile_file_selection();
                 }
@@ -710,7 +761,7 @@ impl RepoTab {
                     if Some(d.oid) == self.selected_commit {
                         let first = d.files.first().cloned();
                         let oid = d.oid;
-                        self.details = Some(*d);
+                        self.details = Some(d);
                         if self.view == View::History
                             && self.file.is_none()
                             && let Some(entry) = first
@@ -743,8 +794,12 @@ impl RepoTab {
                         }
                     }
                 }
-                Event::Highlight(key, h) => {
-                    if self.pending_diff.as_ref() == Some(&key) {
+                Event::Highlight(key, diff, h) => {
+                    // Only for the diff on screen: a highlight of an older version of the same
+                    // file can arrive after the newer diff.
+                    if self.pending_diff.as_ref() == Some(&key)
+                        && self.diff.as_ref().is_some_and(|d| Arc::ptr_eq(d, &diff))
+                    {
                         self.highlights = Some(h);
                     }
                 }
@@ -839,6 +894,7 @@ impl RepoTab {
                             .ok()
                             .and_then(|l| l.first())
                             .map(|r| r.number);
+                        self.generation += 1;
                         let keep = self.requests.selected.is_some_and(|n| {
                             result
                                 .as_ref()
@@ -959,23 +1015,25 @@ mod tests {
     #[test]
     fn reloading_keeps_choices_only_for_unchanged_conflicts() {
         let mut r = Resolver::new("f".into());
-        r.reload(None, Ok(ConflictFile::parse(TWO)));
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(TWO))));
         assert_eq!(r.choices, vec![None, None]);
         r.choose(Choice::Ours);
         r.choose(Choice::Theirs);
         assert_eq!(r.resolved(), 2);
         // Same text: both choices stay.
-        r.reload(None, Ok(ConflictFile::parse(TWO)));
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(TWO))));
         assert_eq!(r.resolved(), 2);
         // The second conflict edited in an editor: only the first choice stays.
         r.reload(
             None,
-            Ok(ConflictFile::parse(&TWO.replace("\n2\n", "\n3\n"))),
+            Ok(Arc::new(ConflictFile::parse(
+                &TWO.replace("\n2\n", "\n3\n"),
+            ))),
         );
         assert_eq!(r.choices, vec![Some(Choice::Ours), None]);
         // One conflict resolved by hand: the remaining one is a different region now.
         let one = "a\nx\nb\n<<<<<<< ours\n1\n=======\n3\n>>>>>>> theirs\n";
-        r.reload(None, Ok(ConflictFile::parse(one)));
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(one))));
         assert_eq!(r.choices, vec![None]);
         assert_eq!(r.focus, 0);
     }
@@ -983,7 +1041,7 @@ mod tests {
     #[test]
     fn focus_moves_to_unresolved_conflicts_and_wraps() {
         let mut r = Resolver::new("f".into());
-        r.reload(None, Ok(ConflictFile::parse(TWO)));
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(TWO))));
         r.choose(Choice::Ours);
         assert_eq!(r.focus, 1);
         r.move_focus(1);
@@ -994,5 +1052,358 @@ mod tests {
         assert_eq!(r.resolved(), 0);
         r.move_focus(-1);
         assert_eq!(r.focus, 1, "wraps backwards");
+    }
+
+    #[test]
+    fn snapshot_index_groups_remote_branches_and_measures_the_graph() {
+        let remote = |name: &str| canopy_core::RemoteInfo {
+            name: name.into(),
+            url: None,
+            default_branch: None,
+        };
+        let branch = |remote: &str, branch: &str| canopy_core::RemoteBranchInfo {
+            remote: remote.into(),
+            branch: branch.into(),
+            target: None,
+        };
+        let s = RepoSnapshot {
+            remotes: vec![remote("origin"), remote("fork"), remote("empty")],
+            remote_branches: vec![
+                branch("fork", "a"),
+                branch("origin", "main"),
+                branch("gone", "x"),
+                branch("origin", "dev"),
+            ],
+            graph: vec![
+                canopy_core::GraphRow {
+                    width: 2,
+                    ..Default::default()
+                },
+                canopy_core::GraphRow {
+                    width: 5,
+                    ..Default::default()
+                },
+            ],
+            ..RepoSnapshot::default()
+        };
+        let i = SnapIndex::new(&s);
+        assert_eq!(i.remote_branches, vec![vec![1, 3], vec![0], vec![]]);
+        assert_eq!(i.graph_lanes, 5);
+        assert_eq!(SnapIndex::new(&RepoSnapshot::default()).graph_lanes, 1);
+    }
+
+    #[test]
+    fn reloading_the_conflict_file_forgets_measured_heights() {
+        let mut r = Resolver::new("f".into());
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(TWO))));
+        r.layout = crate::views::resolve::Layout::with_height(1, 0, 99.0);
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(TWO))));
+        assert!(r.layout.is_empty());
+    }
+}
+
+/// Frame-cost check for huge repositories: renders the real views headlessly over synthetic
+/// data (50k commits, 20k tags, a 50k-line diff, a resolver with 400 conflicts) while scrolling,
+/// and prints the mean CPU time per frame. Not a pass/fail test; run it in release:
+/// `cargo test --release -p canopy-app frame_cost -- --ignored --nocapture`.
+#[cfg(test)]
+mod perf {
+    use super::*;
+    use canopy_core::diff::{DiffLine, Hunk};
+    use canopy_core::{
+        BranchInfo, ChangeKind, CommitDetails, ConflictFile, GraphRow, LineEnd, LineKind,
+        RemoteBranchInfo, RemoteInfo, Signature, TagInfo, WorkingStatus,
+    };
+
+    fn oid(i: usize) -> Oid {
+        let mut b = [0u8; 20];
+        b[..8].copy_from_slice(&(i as u64 + 1).to_be_bytes());
+        Oid::from_bytes(&b).expect("oid")
+    }
+
+    fn sig(i: usize) -> Signature {
+        Signature {
+            name: format!("Author {}", i % 37),
+            email: format!("a{}@example.com", i % 37),
+            time: 1_700_000_000 - i as i64 * 600,
+            offset_minutes: 0,
+        }
+    }
+
+    fn entry(path: String) -> FileEntry {
+        FileEntry {
+            path,
+            old_path: None,
+            kind: ChangeKind::Modified,
+            additions: 3,
+            deletions: 1,
+        }
+    }
+
+    fn snapshot() -> RepoSnapshot {
+        let n = 50_000;
+        let seg = |from, to| canopy_core::graph::Segment {
+            from_lane: 0,
+            from,
+            to_lane: 0,
+            to,
+            color: 0,
+        };
+        RepoSnapshot {
+            name: "huge".into(),
+            head: canopy_core::HeadInfo {
+                branch: Some("main".into()),
+                oid: Some(oid(0)),
+                detached: false,
+            },
+            branches: (0..2_000)
+                .map(|i| BranchInfo {
+                    name: if i == 0 {
+                        "main".into()
+                    } else {
+                        format!("feature/topic-{i}")
+                    },
+                    target: Some(oid(i)),
+                    is_head: i == 0,
+                    upstream: Some(format!("origin/b{i}")),
+                    ahead: i % 3,
+                    behind: i % 2,
+                })
+                .collect(),
+            remote_branches: (0..5_000)
+                .map(|i| RemoteBranchInfo {
+                    remote: "origin".into(),
+                    branch: format!("b{i}"),
+                    target: Some(oid(i)),
+                })
+                .collect(),
+            remotes: vec![RemoteInfo {
+                name: "origin".into(),
+                url: Some("https://github.com/example/huge.git".into()),
+                default_branch: Some("main".into()),
+            }],
+            tags: (0..20_000)
+                .map(|i| TagInfo {
+                    name: format!("v{}.{}.{}", i / 100, i / 10 % 10, i % 10),
+                    target: Some(oid(i)),
+                    message: None,
+                })
+                .collect(),
+            status: WorkingStatus {
+                unstaged: std::iter::once(entry("src/big.rs".into()))
+                    .chain((0..5_000).map(|i| entry(format!("gen/file_{i}.rs"))))
+                    .collect(),
+                ..WorkingStatus::default()
+            },
+            commits: (0..n)
+                .map(|i| canopy_core::CommitSummary {
+                    oid: oid(i),
+                    summary: format!("Commit number {i}: adjust the frobnicator"),
+                    author: sig(i),
+                    parents: vec![oid(i + 1)],
+                })
+                .collect(),
+            graph: (0..n)
+                .map(|_| GraphRow {
+                    lane: 0,
+                    color: 0,
+                    segments: vec![
+                        seg(LineEnd::Top, LineEnd::Mid),
+                        seg(LineEnd::Mid, LineEnd::Bottom),
+                    ],
+                    width: 1,
+                    is_merge: false,
+                })
+                .collect(),
+            ..RepoSnapshot::default()
+        }
+    }
+
+    fn big_diff() -> FileDiff {
+        let mut hunks = Vec::new();
+        let mut no = 1u32;
+        for h in 0..500 {
+            let lines = (0..100)
+                .map(|l| {
+                    let kind = match l % 5 {
+                        1 => LineKind::Removed,
+                        2 | 3 => LineKind::Added,
+                        _ => LineKind::Context,
+                    };
+                    no += 1;
+                    DiffLine {
+                        kind,
+                        old_no: (kind != LineKind::Added).then_some(no),
+                        new_no: (kind != LineKind::Removed).then_some(no),
+                        text: format!("    let value_{h}_{l} = compute(\"{l}\", {h}); // step {l}"),
+                    }
+                })
+                .collect();
+            hunks.push(Hunk {
+                header: format!("@@ -{no},100 +{no},100 @@ fn hunk_{h}()"),
+                old_start: no,
+                old_lines: 100,
+                new_start: no,
+                new_lines: 100,
+                lines,
+            });
+        }
+        FileDiff {
+            path: "src/big.rs".into(),
+            hunks,
+            additions: 20_000,
+            deletions: 10_000,
+            ..FileDiff::default()
+        }
+    }
+
+    fn conflict_text() -> String {
+        let mut s = String::new();
+        for c in 0..400 {
+            for l in 0..20 {
+                s.push_str(&format!("common line {c}.{l}\n"));
+            }
+            s.push_str("<<<<<<< HEAD\n");
+            for l in 0..8 {
+                s.push_str(&format!("ours {c}.{l}\n"));
+            }
+            s.push_str("=======\n");
+            for l in 0..8 {
+                s.push_str(&format!("theirs {c}.{l}\n"));
+            }
+            s.push_str(">>>>>>> feature\n");
+        }
+        s
+    }
+
+    /// Mean milliseconds per frame over `frames` frames, scrolling at `pointer`.
+    fn measure(
+        ctx: &egui::Context,
+        frames: usize,
+        pointer: egui::Pos2,
+        mut frame: impl FnMut(&mut egui::Ui),
+    ) -> f64 {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1440.0, 900.0));
+        let mut t = 0.0;
+        let mut run = |events: Vec<egui::Event>| {
+            t += 1.0 / 60.0;
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                time: Some(t),
+                predicted_dt: 1.0 / 60.0,
+                events,
+                ..Default::default()
+            };
+            ctx.run_ui(input, &mut frame).drop_without_applying_deltas();
+        };
+        for _ in 0..5 {
+            run(vec![egui::Event::PointerMoved(pointer)]);
+        }
+        let started = Instant::now();
+        for _ in 0..frames {
+            run(vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -120.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        started.elapsed().as_secs_f64() * 1000.0 / frames as f64
+    }
+
+    fn layout(ui: &mut egui::Ui, tab: &mut RepoTab, settings: &crate::settings::Settings) {
+        let mut actions = Vec::new();
+        egui::Panel::left("sidebar")
+            .default_size(250.0)
+            .show(ui, |ui| crate::views::sidebar::show(ui, tab, &mut actions));
+        egui::CentralPanel::default().show(ui, |ui| match tab.view {
+            View::History => crate::views::history::show(ui, tab, settings, &mut actions),
+            _ => crate::views::changes::show(ui, tab, &mut actions),
+        });
+    }
+
+    #[test]
+    #[ignore = "timing harness; run in release with --ignored --nocapture"]
+    fn frame_cost() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::theme::apply(&ctx, crate::ui::theme::ThemeId::Midnight, true);
+        let settings = crate::settings::Settings::default();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 2000, DiffPrefs::default());
+        let snap = snapshot();
+        let file = snap.status.unstaged[0].clone();
+        tab.snap = Some(snap.into());
+        let diff = big_diff();
+        let frames = 120;
+
+        // History: the graph table, sidebar and a commit with 3000 files and the big diff.
+        tab.view = View::History;
+        tab.selected_commit = Some(oid(0));
+        tab.details = Some(
+            CommitDetails {
+                oid: oid(0),
+                message: "Big commit".into(),
+                author: sig(0),
+                committer: sig(0),
+                parents: vec![oid(1)],
+                files: std::iter::once(file.clone())
+                    .chain((0..3_000).map(|i| entry(format!("dir/f{i}.c"))))
+                    .collect(),
+            }
+            .into(),
+        );
+        tab.file = Some(FileSelection {
+            source: DiffSource::Commit(oid(0)),
+            entry: file.clone(),
+            conflicted: false,
+        });
+        tab.diff = Some(diff.clone().into());
+        let history = measure(&ctx, frames, egui::pos2(900.0, 200.0), |ui| {
+            layout(ui, &mut tab, &settings)
+        });
+        let history_diff = measure(&ctx, frames, egui::pos2(1100.0, 700.0), |ui| {
+            layout(ui, &mut tab, &settings)
+        });
+
+        // Changes: 5000 unstaged files and the 50k-line diff, unified then side by side.
+        tab.view = View::Changes;
+        tab.file = Some(FileSelection {
+            source: DiffSource::Unstaged,
+            entry: file.clone(),
+            conflicted: false,
+        });
+        let unified = measure(&ctx, frames, egui::pos2(1100.0, 500.0), |ui| {
+            layout(ui, &mut tab, &settings)
+        });
+        tab.split_diff = true;
+        let split = measure(&ctx, frames, egui::pos2(1100.0, 500.0), |ui| {
+            layout(ui, &mut tab, &settings)
+        });
+        tab.split_diff = false;
+
+        // The resolver on a file with 400 conflicts (11k lines), every common stretch expanded.
+        let parsed = ConflictFile::parse(&conflict_text());
+        let mut r = Resolver::new(file.path.clone());
+        r.reload(None, Ok(parsed.into()));
+        r.expanded = (0..2_000).collect();
+        tab.resolver = Some(r);
+        tab.file = Some(FileSelection {
+            source: DiffSource::Unstaged,
+            entry: file,
+            conflicted: true,
+        });
+        let resolver = measure(&ctx, frames, egui::pos2(1100.0, 500.0), |ui| {
+            layout(ui, &mut tab, &settings)
+        });
+
+        println!(
+            "frame cost (ms/frame, mean of {frames}): history {history:.2} | history+diff \
+             {history_diff:.2} | changes unified {unified:.2} | changes split {split:.2} | \
+             resolver {resolver:.2}"
+        );
     }
 }

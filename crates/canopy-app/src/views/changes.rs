@@ -149,7 +149,8 @@ fn list(
         });
         return;
     }
-    for f in files {
+    commit_detail::virtual_rows(ui, files.len(), commit_detail::FILE_ROW_H, |ui, i| {
+        let f = &files[i];
         let source = if which == List::Staged {
             DiffSource::Staged
         } else {
@@ -159,7 +160,8 @@ fn list(
         let selected = tab.file.as_ref().is_some_and(|s| {
             s.entry.path == f.path && s.source == source && s.conflicted == conflicted
         });
-        let resp = commit_detail::file_row(ui, f, selected);
+        let id = ui.id().with(("change", which as u8, &f.path));
+        let resp = commit_detail::file_row(ui, f, selected, id);
         // Hover action button on the right.
         let btn = egui::Rect::from_center_size(
             resp.rect.right_center() - vec2(18.0, 0.0),
@@ -248,7 +250,7 @@ fn list(
                 actions.push(Action::Copy(entry.path.clone()));
             }
         });
-    }
+    });
 }
 
 fn composer(
