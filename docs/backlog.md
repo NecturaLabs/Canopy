@@ -12,24 +12,26 @@ and CI is green on the branch. Parallel sessions follow `docs/specs/parallel-ses
 
 ## In flight
 
-Who works on what, on which branch. Remove a row when its branch is merged.
+Who works on what, on which branch. Remove a row when its branch is merged. Merged so far:
+the working branch, `perf/views` (frame cost 119–209 ms → 0.3–0.9 ms on huge data) and
+`canopy-3/core-workflows` (git-flow, merged detection, LFS status, submodules in core).
 
 | Entry | Branch | Who | State |
 | --- | --- | --- | --- |
 | Installer security-review fixes (1 blocking, 9 should-fix, nits) | `fix/installer-review` | canopy-1 agent | In progress |
-| Performance: shared snapshots and diffs, diff layout cache, virtualised diff and resolver rows, highlighting thread, palette cache | `perf/views` | canopy-1 | Merged into main (6efeba8) |
-| Partial clones in core (missing objects fetched through git) | `feat/partial-clones` | canopy-1 | Core done (85bf861, 15 new tests); in review, then merge |
+| Partial clones in core (missing objects fetched through git) | `feat/partial-clones` | canopy-1 agent | Fixing review findings (snapshot recovery after a soft reset, coalesced fetch jobs, retry in the details pane, docs, privacy policy); then merge |
 | Core safety: `branch -d` by default, publish any branch, mode and type changes, collapsed untracked folders, nested repositories in Stage all, safe paths, ignore rules | `canopy-2/core-safety` | canopy-2 | In progress (core only; canopy-1 wires the UI) |
 
 ## Now
 
 In order. The UI entries come before accessibility, and accessibility before the docs sweep.
 
-- [ ] **Architecture split**: `app/` and `views/dialogs/` modules, `OpKind` instead of label
-  prefixes, views stop importing from `app`, shared widgets, repository IO off the UI thread
-  (open, canonicalise, init, the watcher, async file dialogs), tests for tab state, the dialog stack
-  and the palette model, and a clippy lint against colours outside `theme.rs`. Accept: no file over
-  1,500 lines in `app/` or `views/`, check.sh passes, and no behaviour change in screenshots.
+- [ ] **Architecture split, rest** (done in `main`: `app/` and `views/dialogs/` modules,
+  `action.rs`, typed `OpKind`/`HostAction`, repositories opened and watched off the UI thread):
+  shared widgets (inset frame, file header, empty state), native file dialogs off the UI thread,
+  tests for tab state and the palette model, a clippy lint against colours outside `theme.rs`,
+  the merge dialog's per-frame branch list. Accept: check.sh passes and screenshots are
+  unchanged.
 - [ ] **Persistent, secured storage**: Canopy-specific per-OS folders for config, data, state and
   cache (Linux `~/.config/canopy` etc., macOS `io.necturalabs.Canopy`, Windows
   `NecturaLabs\Canopy`), each with a `.canopy-data` marker the installer's `--purge` relies on;
@@ -59,8 +61,9 @@ In order. The UI entries come before accessibility, and accessibility before the
   changes; never follow links when reading, watching or opening (targets outside the repository,
   loops); Windows `core.symlinks=false`. Accept: a fixture with each case shows the right rows and
   nothing outside the repository is read.
-- [ ] **Research bugs**: the watcher follows symlinks, a worktree's or submodule's `.git` file is
-  not watched, nested repositories in Stage all, 100,000 untracked rows. Accept: each has a test.
+- [ ] **Research bugs** (fixed in `main`: the watcher no longer follows symlinks and watches a
+  worktree's or submodule's git folder): nested repositories in Stage all and 100,000 untracked
+  rows (core from canopy-2, then the UI). Accept: each has a test.
 - [ ] **Missing tools**: detect git (minimum version), git-lfs, ssh and signing tools when a
   repository needs them, with the macOS Finder PATH and Windows Git locations; prompt with
   OS-specific install steps. Accept: removing git-lfs from PATH on an LFS repository shows the
