@@ -1,3 +1,6 @@
+# Dependabot's pull requests run CI on GitHub-hosted runners only (see ci.yml): a new crate's
+# build script is unreviewed code and must not run on the self-hosted machine that builds
+# releases.
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -13,6 +16,8 @@ updates:
     commit-message:
       prefix: "build(deps)"
 
+  # Actions are pinned to full commit SHAs with the version in a trailing comment
+  # (`uses: owner/repo@<sha> # v1.2.3`); Dependabot updates both.
   - package-ecosystem: github-actions
     directories: ["/", "/.github/actions/setup-rust"]
     schedule:

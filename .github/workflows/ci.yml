@@ -1,12 +1,16 @@
 name: CI
 
+# Every push to one of this repository's branches runs CI, whether or not it has a pull request,
+# so the owner's working branches are tested on their own. A pull request from a branch of this
+# repository would only repeat that run, so its jobs are skipped; pull requests from forks and
+# from Dependabot run. Dependabot's own branches are left out of `push`: their pull request runs
+# them once.
 on:
   push:
-    branches: ["**"]
+    branches: ["**", "!dependabot/**"]
   pull_request:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,16 +23,23 @@ env:
 # organisation variable USE_SELF_HOSTED set to '0' moves them to GitHub-hosted
 # ones. There is no self-hosted macOS runner.
 #
-# Pull requests from forks always run on GitHub-hosted runners: the self-hosted
-# machine also builds releases, so it only runs code from this repository's own
-# branches.
+# The self-hosted machine also builds releases, so it only runs code that people
+# with write access pushed to this repository's branches. Everything else runs on
+# GitHub-hosted runners: every pull_request run (a fork, or Dependabot, since
+# pull requests from this repository's other branches are skipped), and anything
+# Dependabot started or that sits on a dependabot/ branch, whose new crates' build
+# scripts are unreviewed code. Keep the same condition in every job's runs-on and
+# `if`.
 
 jobs:
   fmt:
     name: Format
-    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
+    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/')
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
@@ -39,11 +50,14 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
+    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/')
+    permissions:
+      contents: read
     env:
       RUSTFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
@@ -53,7 +67,10 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }})
-    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event.pull_request.head.repo.fork || !matrix.self-hosted) && matrix.hosted || fromJSON(matrix.self-hosted) }}
+    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/') || !matrix.self-hosted) && matrix.hosted || fromJSON(matrix.self-hosted) }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/')
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -67,7 +84,7 @@ jobs:
             hosted: windows-latest
             self-hosted: '["self-hosted", "windows", "x64"]'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
@@ -85,9 +102,12 @@ jobs:
 
   deny:
     name: cargo-deny
-    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
+    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/')
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
@@ -95,16 +115,19 @@ jobs:
           cache: "false"
       # A prebuilt binary: the cargo-deny action is a container action, which on
       # the self-hosted runners would leave root-owned files in their work folders.
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-deny
       - run: cargo deny check
 
   tooling:
     name: Release tooling and licence notices
-    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
+    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/')
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust

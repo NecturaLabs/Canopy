@@ -36,8 +36,7 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: read
+permissions: {}
 
 # One release at a time.
 concurrency:
@@ -61,7 +60,8 @@ jobs:
         run: |
           echo "::error::Run Create release on main (it was started on $GITHUB_REF)."
           exit 1
-      - uses: actions/checkout@v7
+      # The only checkout that keeps its credentials: this job pushes the release commit and tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
@@ -128,4 +128,6 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.prepare.outputs.tag }}
-    secrets: inherit
+    # Only the feed token: RELEASE_TOKEN, which can push to main, stays in this workflow.
+    secrets:
+      APP_UPDATES_TOKEN: ${{ secrets.APP_UPDATES_TOKEN }}

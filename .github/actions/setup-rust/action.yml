@@ -1,11 +1,14 @@
 name: Setup Rust
 description: >-
-  Installs the Rust toolchain and, when asked, restores the build cache. On the
-  organisation's self-hosted runners, which share one home directory, each runner
-  keeps its own rustup and cargo homes in its tool cache, so jobs on different
-  runners never install or update a toolchain under each other. On Windows it
-  also puts Git Bash ahead of the System32 WSL launcher, so `shell: bash` steps
-  get the same bash as on GitHub-hosted runners.
+  Installs the Rust toolchain named in rust-toolchain.toml and, when asked,
+  restores the build cache. On the organisation's self-hosted runners, which
+  share one home directory, each runner keeps its own rustup and cargo homes in
+  its tool cache, so jobs on different runners never install or update a
+  toolchain under each other. With `isolated`, the job instead gets fresh rustup
+  and cargo homes of its own under RUNNER_TEMP and no cache, so nothing an
+  earlier job left on the machine reaches the build. On Windows it also puts Git
+  Bash ahead of the System32 WSL launcher, so `shell: bash` steps get the same
+  bash as on GitHub-hosted runners.
 
 inputs:
   components:
@@ -17,13 +20,21 @@ inputs:
     required: false
     default: ""
   cache:
-    description: Restore and save the build cache with Swatinem/rust-cache
+    description: Restore and save the build cache with Swatinem/rust-cache (ignored when isolated)
     required: false
     default: "true"
   cache-key:
     description: Extra key for the build cache
     required: false
     default: ""
+  isolated:
+    description: >-
+      Install rustup, the toolchain and the crate registry from scratch into
+      job-local homes ($RUNNER_TEMP/canopy-rust) and restore no cache. For
+      release builds; the caller removes that directory when a container job
+      ran as root.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -31,15 +42,24 @@ runs:
     # rustup is installed here with --no-modify-path rather than left to
     # dtolnay/rust-toolchain, whose installer would add a line for every runner
     # to the shared ~/.profile and ~/.bashrc. Container jobs run as root in a
-    # fresh home; a root-owned toolchain in the host's tool cache would lock the
-    # runner's own user out of it.
-    - name: Use this runner's Rust homes
-      if: runner.environment == 'self-hosted' && runner.os == 'Linux'
+    # fresh home, and the runner mounts its tool cache into the container; a
+    # root-owned toolchain there would lock the runner's own user out of it, so
+    # a container job uses the per-job home unless it is isolated.
+    - name: Use this runner's Rust homes, or job-local ones
+      if: runner.os != 'Windows' && (inputs.isolated == 'true' || runner.environment == 'self-hosted')
       shell: bash
+      env:
+        ISOLATED: ${{ inputs.isolated }}
+        RUSTUP_INIT_SKIP_PATH_CHECK: "yes"
       run: |
         set -euo pipefail
-        [[ -f /.dockerenv ]] && exit 0
-        root="$RUNNER_TOOL_CACHE/rust"
+        if [[ $ISOLATED == true ]]; then
+          root="$RUNNER_TEMP/canopy-rust"
+          rm -rf "$root"
+        else
+          [[ -f /.dockerenv ]] && exit 0
+          root="$RUNNER_TOOL_CACHE/rust"
+        fi
         export CARGO_HOME="$root/cargo" RUSTUP_HOME="$root/rustup"
         if [[ ! -x "$CARGO_HOME/bin/rustup" ]]; then
           curl --proto '=https' --tlsv1.2 --retry 10 --location --silent --show-error --fail https://sh.rustup.rs \
@@ -52,12 +72,21 @@ runs:
     # The machine-wide rustup in the service account's profile is already on
     # PATH, so this runner's own one is installed here too: dtolnay/rust-toolchain
     # would find the shared one and skip it.
-    - name: Use this runner's Rust homes and Git Bash
-      if: runner.environment == 'self-hosted' && runner.os == 'Windows'
+    - name: Use this runner's Rust homes, or job-local ones, and Git Bash
+      if: runner.os == 'Windows' && (inputs.isolated == 'true' || runner.environment == 'self-hosted')
       shell: pwsh
+      env:
+        ISOLATED: ${{ inputs.isolated }}
+        SELF_HOSTED: ${{ runner.environment == 'self-hosted' }}
+        RUSTUP_INIT_SKIP_PATH_CHECK: "yes"
       run: |
         $ErrorActionPreference = 'Stop'
-        $root = Join-Path $env:RUNNER_TOOL_CACHE 'rust'
+        if ($env:ISOLATED -eq 'true') {
+          $root = Join-Path $env:RUNNER_TEMP 'canopy-rust'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+        } else {
+          $root = Join-Path $env:RUNNER_TOOL_CACHE 'rust'
+        }
         $env:CARGO_HOME = Join-Path $root 'cargo'
         $env:RUSTUP_HOME = Join-Path $root 'rustup'
         $bin = Join-Path $env:CARGO_HOME 'bin'
@@ -69,18 +98,37 @@ runs:
         }
         "CARGO_HOME=$env:CARGO_HOME" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "RUSTUP_HOME=$env:RUSTUP_HOME" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-        $git = 'C:\Program Files\Git\bin'
-        if (-not (Test-Path (Join-Path $git 'bash.exe'))) { throw "Git Bash not found in $git" }
-        # Each line is prepended, so the last one comes first.
-        $git | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        if ($env:SELF_HOSTED -eq 'true') {
+          $git = 'C:\Program Files\Git\bin'
+          if (-not (Test-Path (Join-Path $git 'bash.exe'))) { throw "Git Bash not found in $git" }
+          # Each line is prepended, so the last one comes first.
+          $git | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        }
         $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
-    - uses: dtolnay/rust-toolchain@stable
+    # The toolchain comes from rust-toolchain.toml, so CI and releases build with
+    # the toolchain the repository names rather than whatever this action defaults to.
+    - name: Read rust-toolchain.toml
+      id: toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        file="$GITHUB_WORKSPACE/rust-toolchain.toml"
+        channel=$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$file" | head -n1)
+        if [[ -z $channel ]]; then
+          echo "::error file=rust-toolchain.toml::No channel in $file"
+          exit 1
+        fi
+        echo "Toolchain: $channel"
+        echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+    - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
       with:
+        toolchain: ${{ steps.toolchain.outputs.channel }}
         components: ${{ inputs.components }}
         targets: ${{ inputs.targets }}
 
-    - uses: Swatinem/rust-cache@v2
-      if: inputs.cache == 'true'
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      if: inputs.cache == 'true' && inputs.isolated != 'true'
       with:
         key: ${{ inputs.cache-key }}
