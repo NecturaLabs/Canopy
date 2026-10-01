@@ -49,3 +49,27 @@ way at 1440x900.
 - `git` 2.32 or newer for `mkfixture.sh` (it relies on `GIT_CONFIG_GLOBAL`).
 - `xvfb-run` and Mesa (llvmpipe) for `screenshot.sh`. Software rendering is slow and says nothing
   about real frame times; use it for layout and visuals only.
+
+## Stress test tools
+
+The performance stress test (100 public repositories open at once, one per tab, with concurrent
+fetches, external changes, a soak and conflicts) is described in `docs/stress-test.md`. It is
+run by hand on a desktop session, not in CI.
+
+| Script | Purpose |
+|---|---|
+| `stress.sh clone [--shallow\|--blobless] [--subset N] [--class A,B] [--shallow-for R,R] [--jobs N] [--dir DIR]` | Clones the repositories listed in `stress-repos.txt` into a cache folder (`$CANOPY_STRESS_DIR`, default `${XDG_CACHE_HOME:-~/.cache}/canopy-stress`). Parallel with a bound, resumable, skips finished clones. |
+| `stress.sh open [--bin FILE] [--duration SEC] [--label TEXT]` | Launches Canopy with every cached clone as a tab and the Detailed log level, in its own data folder, and samples RSS, threads, descriptors, inotify watches, child processes and CPU every second into `samples.csv` in a run folder under `${XDG_STATE_HOME:-~/.local/state}/canopy-stress`. Linux only. |
+| `stress.sh churn [--repos N] [--duration SEC] [--modify-many N] [--conflict-setup] [--restore]` | Mutates N cached clones concurrently (files, commits, branch switches, tags) so the file watchers fire; prepares merge conflicts; restores the clones. Refuses any path that is not a clone made by `clone` inside the cache folder. |
+| `stress.sh report [--run DIR]` | Summarises a run with `stress_report.py`. |
+| `stress_report.py --run DIR` | Reads Canopy's JSON-lines log, the sampler CSV and the churn log; prints error and warning counts, job, operation and git durations (p50, p95, p99, max), slowest repositories, load times, peak memory, threads and descriptors, idle CPU, refresh lag, and a verdict against the pass criteria. Standard library only. |
+| `stress-repos.txt` | The 100 repositories, one `owner/repo size-class` per line. |
+
+```sh
+tools/stress.sh clone --subset 10 --shallow --dir /tmp/stress-try   # rehearsal
+tools/stress.sh open --dir /tmp/stress-try --subset 10 --duration 120
+tools/stress.sh report
+```
+
+The stress tools need `git` (2.32 or newer), GNU coreutils and bash 4.3 or newer; `stress.sh
+open` needs `/proc` and a display, and the report needs `python3`.
