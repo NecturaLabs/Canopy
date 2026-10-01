@@ -111,8 +111,12 @@ fn normalise_path(kind: ForgeKind, raw: &str) -> Option<String> {
 }
 
 /// Normalises a user-entered host: drops surrounding whitespace, a scheme, credentials, a path
-/// and a port, and lower-cases the rest. Returns `None` when nothing valid remains.
-fn normalise_host(raw: &str) -> Option<String> {
+/// and a port, and lower-cases the rest. Returns `None` when nothing valid remains (including
+/// IPv6 literals and names with characters outside `a-z 0-9 . -`).
+///
+/// `"HTTPS://user@GitLab.Corp:8443/x"` becomes `gitlab.corp`, the same host [`Forge::parse`]
+/// stores, so the result can be compared with [`Forge::host`].
+pub fn normalise_host(raw: &str) -> Option<String> {
     let mut s = raw.trim();
     if let Some((_, rest)) = s.split_once("://") {
         s = rest;
@@ -835,6 +839,24 @@ mod tests {
                 *want,
                 "{kind:?} {host:?} {project:?} ssh={ssh}"
             );
+        }
+    }
+
+    #[test]
+    fn normalises_hosts() {
+        let cases: &[(&str, Option<&str>)] = &[
+            ("gitlab.com", Some("gitlab.com")),
+            ("  GitLab.Corp  ", Some("gitlab.corp")),
+            ("https://gitlab.corp", Some("gitlab.corp")),
+            ("HTTPS://user:pw@GitLab.Corp:8443/x/y", Some("gitlab.corp")),
+            ("gitlab.corp:8443", Some("gitlab.corp")),
+            ("", None),
+            ("https://", None),
+            ("bad host", None),
+            ("[::1]", None),
+        ];
+        for (raw, want) in cases {
+            assert_eq!(normalise_host(raw).as_deref(), *want, "{raw:?}");
         }
     }
 

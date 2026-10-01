@@ -10,9 +10,10 @@
 //!   exception is Canopy's own update manifest ([`updates`]), fetched anonymously from the public
 //!   `NecturaLabs/app-updates` repository.
 //! - It authenticates only with a token the user supplied: an environment variable
-//!   ([`token_from_env`]), git's own credential helpers ([`token_from_git_credentials`]) or a
-//!   token entered in Canopy. The token travels only in an `Authorization: Bearer` header,
-//!   never in a URL, a log line or any `Debug` output.
+//!   ([`token_from_env_for`], which offers `GH_TOKEN` only to github.com and `GITLAB_TOKEN` only
+//!   to gitlab.com, `GITLAB_HOST` or a host the user listed), git's own credential helpers
+//!   ([`token_from_git_credentials`]) or a token entered in Canopy. The token travels only in an
+//!   `Authorization: Bearer` header, never in a URL, a log line or any `Debug` output.
 //! - Every call is blocking (no async runtime), with a 10 s connect and 30 s total timeout, and
 //!   is meant to run on a background worker thread. TLS is rustls with the operating system's
 //!   certificate verifier, so a self-hosted GitLab behind a corporate CA works; the standard
@@ -35,4 +36,6 @@ pub use model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
     RequestSummary, Review, StateFilter, checkout_ref,
 };
-pub use token::{token_from_env, token_from_git_credentials};
+#[allow(deprecated)]
+pub use token::token_from_env;
+pub use token::{token_from_env_for, token_from_git_credentials};

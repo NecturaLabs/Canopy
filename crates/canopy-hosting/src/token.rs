@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use canopy_core::forge::ForgeKind;
+use canopy_core::forge::{ForgeKind, normalise_host};
 
 /// How long `git credential fill` may run before it is killed.
 const CREDENTIAL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -27,8 +27,70 @@ fn token_from(kind: ForgeKind, lookup: impl Fn(&str) -> Option<String>) -> Optio
 
 /// A token from the environment: `GH_TOKEN` then `GITHUB_TOKEN` for GitHub, `GITLAB_TOKEN` then
 /// `GL_TOKEN` for GitLab. Trimmed; empty values are skipped.
+///
+/// This ignores the host, so a GitLab token meant for gitlab.com would also be offered to any
+/// host recognised as GitLab, including one recognised only because its name contains
+/// "gitlab" (`gitlab.attacker.example`). Use [`token_from_env_for`].
+#[deprecated(
+    note = "ignores the host and can leak a token to an untrusted server; use token_from_env_for"
+)]
 pub fn token_from_env(kind: ForgeKind) -> Option<String> {
     token_from(kind, |name| std::env::var(name).ok())
+}
+
+/// A token from the environment for the project on `host`, or `None` when the environment's
+/// tokens are not meant for that host.
+///
+/// - GitHub: `GH_TOKEN` then `GITHUB_TOKEN`, only for `github.com`.
+/// - GitLab: `GITLAB_TOKEN` then `GL_TOKEN`, only for `gitlab.com`, for the host named by the
+///   `GITLAB_HOST` variable (which the `glab` CLI reads alongside the token), or for a host in
+///   `trusted_gitlab_hosts`, the self-hosted instances the user listed in Canopy's settings.
+///   A host recognised as GitLab only because its name contains "gitlab" never gets an
+///   environment token.
+///
+/// Hosts are compared by name only: case, a scheme, credentials, a port and a path are ignored
+/// on every side (see [`canopy_core::forge::normalise_host`]). Values are trimmed; empty values
+/// are skipped.
+pub fn token_from_env_for(
+    kind: ForgeKind,
+    host: &str,
+    trusted_gitlab_hosts: &[String],
+) -> Option<String> {
+    let lookup = |name: &str| std::env::var(name).ok();
+    env_token_for(kind, host, trusted_gitlab_hosts, lookup)
+}
+
+/// [`token_from_env_for`] with an injectable environment.
+fn env_token_for(
+    kind: ForgeKind,
+    host: &str,
+    trusted_gitlab_hosts: &[String],
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let host = normalise_host(host)?;
+    let allowed = match kind {
+        ForgeKind::GitHub => host == "github.com",
+        ForgeKind::GitLab => {
+            host == "gitlab.com"
+                || lookup("GITLAB_HOST")
+                    .as_deref()
+                    .and_then(normalise_host)
+                    .is_some_and(|h| h == host)
+                || trusted_gitlab_hosts
+                    .iter()
+                    .filter_map(|h| normalise_host(h))
+                    .any(|h| h == host)
+        }
+    };
+    if allowed {
+        token_from(kind, lookup)
+    } else {
+        tracing::debug!(
+            host = %host,
+            "not offering an environment token to a host it was not set for"
+        );
+        None
+    }
 }
 
 /// The password git's credential helpers hold for `https://<host>`, which for GitHub and GitLab
@@ -156,6 +218,96 @@ mod tests {
             Some("a")
         );
         assert_eq!(token_from(ForgeKind::GitLab, vars(&[])), None);
+    }
+
+    fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| (*v).to_owned())
+        }
+    }
+
+    const ALL: &[(&str, &str)] = &[
+        ("GH_TOKEN", "gh"),
+        ("GITHUB_TOKEN", "gh2"),
+        ("GITLAB_TOKEN", "gl"),
+        ("GL_TOKEN", "gl2"),
+    ];
+
+    #[test]
+    fn env_tokens_go_only_to_their_own_hosts() {
+        let none: &[String] = &[];
+        let trusted = vec!["https://Code.Corp:8443/".to_owned(), "git.corp".to_owned()];
+        // (kind, host, trusted list, expected)
+        let cases: &[(ForgeKind, &str, &[String], Option<&str>)] = &[
+            (ForgeKind::GitHub, "github.com", none, Some("gh")),
+            (ForgeKind::GitHub, "GitHub.COM", none, Some("gh")),
+            (ForgeKind::GitHub, "https://github.com/", none, Some("gh")),
+            (ForgeKind::GitHub, "github.com.evil.example", none, None),
+            (ForgeKind::GitHub, "evil.example", none, None),
+            (ForgeKind::GitLab, "gitlab.com", none, Some("gl")),
+            (ForgeKind::GitLab, "GITLAB.com", none, Some("gl")),
+            // Auto-detected because the first label contains "gitlab": never trusted.
+            (ForgeKind::GitLab, "gitlab.evil.example", none, None),
+            (ForgeKind::GitLab, "gitlab.attacker.io", none, None),
+            (ForgeKind::GitLab, "my-gitlab.corp", none, None),
+            (ForgeKind::GitLab, "gitlab.com.evil.example", none, None),
+            // Hosts the user listed in settings, compared by name only.
+            (ForgeKind::GitLab, "code.corp", &trusted, Some("gl")),
+            (ForgeKind::GitLab, "git.corp", &trusted, Some("gl")),
+            (ForgeKind::GitLab, "gitlab.evil.example", &trusted, None),
+            // A GitLab host in the settings list is still not a GitHub host.
+            (ForgeKind::GitHub, "code.corp", &trusted, None),
+            (ForgeKind::GitLab, "", none, None),
+        ];
+        for (kind, host, list, want) in cases {
+            assert_eq!(
+                env_token_for(*kind, host, list, env(ALL)).as_deref(),
+                *want,
+                "{kind:?} {host:?} {list:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn gitlab_host_variable_trusts_one_more_host() {
+        const WITH_HOST: &[(&str, &str)] = &[
+            ("GITLAB_TOKEN", "gl"),
+            ("GITLAB_HOST", "https://GitLab.Example.org:8443/"),
+        ];
+        let none: &[String] = &[];
+        for (host, want) in [
+            ("gitlab.example.org", Some("gl")),
+            ("GITLAB.EXAMPLE.ORG", Some("gl")),
+            ("gitlab.com", Some("gl")),
+            ("gitlab.evil.example", None),
+            ("example.org", None),
+        ] {
+            assert_eq!(
+                env_token_for(ForgeKind::GitLab, host, none, env(WITH_HOST)).as_deref(),
+                want,
+                "{host}"
+            );
+        }
+        const BARE_HOST: &[(&str, &str)] = &[("GL_TOKEN", "gl2"), ("GITLAB_HOST", "git.corp")];
+        assert_eq!(
+            env_token_for(ForgeKind::GitLab, "git.corp", none, env(BARE_HOST)).as_deref(),
+            Some("gl2")
+        );
+        // GITLAB_HOST does not make a GitHub token flow anywhere.
+        const GH_HOST: &[(&str, &str)] = &[("GH_TOKEN", "gh"), ("GITLAB_HOST", "git.corp")];
+        assert_eq!(
+            env_token_for(ForgeKind::GitHub, "git.corp", none, env(GH_HOST)),
+            None
+        );
+        // An unparsable GITLAB_HOST trusts nothing.
+        const BAD_HOST: &[(&str, &str)] = &[("GITLAB_TOKEN", "gl"), ("GITLAB_HOST", "  ")];
+        assert_eq!(
+            env_token_for(ForgeKind::GitLab, "gitlab.example.org", none, env(BAD_HOST)),
+            None
+        );
     }
 
     #[test]
