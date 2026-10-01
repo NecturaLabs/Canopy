@@ -27,23 +27,7 @@ impl CanopyApp {
                 Action::OpenDialog(d) => self.dialogs.open(d),
                 Action::OpenRepo(p) => self.open_repo(ctx, p),
                 Action::Clone { url, dest } => self.start_clone(ctx, url, dest),
-                Action::Init(p) => match Repo::init(&p) {
-                    Ok(_) => {
-                        self.toasts.push(
-                            ctx,
-                            ToastKind::Success,
-                            "Repository created",
-                            p.display().to_string(),
-                        );
-                        self.open_repo(ctx, p);
-                    }
-                    Err(e) => self.toasts.push(
-                        ctx,
-                        ToastKind::Error,
-                        "Could not create repository",
-                        e.to_string(),
-                    ),
-                },
+                Action::Init(p) => self.init_repo(ctx, p),
                 Action::ForgetRecent(p) => self.settings.recent.retain(|r| r != &p),
                 Action::CloseTab(i) => {
                     if i < self.tabs.len() {

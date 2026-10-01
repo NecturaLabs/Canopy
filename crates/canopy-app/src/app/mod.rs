@@ -29,6 +29,7 @@ mod background;
 mod clone;
 mod dispatch;
 mod input;
+mod open;
 mod palette;
 mod request_flow;
 mod screenshot;
@@ -84,6 +85,13 @@ pub struct CanopyApp {
     screenshot: Option<Screenshot>,
     initial_view: Option<View>,
     clone: Option<(String, Receiver<CloneMsg>, String)>,
+    /// The thread that opens and creates repositories (`None` when it could not start).
+    opener: Option<(
+        crossbeam_channel::Sender<open::OpenRequest>,
+        Receiver<open::Opened>,
+    )>,
+    /// Repositories asked for and not opened yet (a screenshot waits for them).
+    pending_opens: usize,
     git_version: String,
     tokens: TokenStore,
     updater: Updater,
@@ -157,6 +165,8 @@ impl CanopyApp {
             }),
             initial_view: launch.view,
             clone: None,
+            opener: open::start(&cc.egui_ctx),
+            pending_opens: 0,
             git_version,
             tokens: if shooting {
                 TokenStore::default()
@@ -177,11 +187,13 @@ impl CanopyApp {
         } else {
             launch.paths
         };
-        for p in restore {
-            app.open_repo(&cc.egui_ctx, p);
-        }
-        if !app.tabs.is_empty() {
-            app.active = 0;
+        for (i, path) in restore.into_iter().enumerate() {
+            let request = open::OpenRequest {
+                path,
+                create: false,
+                focus: i == 0,
+            };
+            app.request_open(&cc.egui_ctx, request);
         }
         match launch.overlay.as_deref() {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
@@ -282,39 +294,6 @@ impl CanopyApp {
 
     fn tab(&mut self) -> Option<&mut RepoTab> {
         self.tabs.get_mut(self.active)
-    }
-
-    fn open_repo(&mut self, ctx: &egui::Context, path: PathBuf) {
-        let path = match path.to_str() {
-            Some(typed) if typed.trim_start().starts_with('~') => settings::expand_home(typed),
-            _ => path,
-        };
-        match Repo::open(&path) {
-            Ok(repo) => {
-                let root = repo.workdir().to_path_buf();
-                let root = root.canonicalize().unwrap_or(root);
-                if let Some(i) = self.tabs.iter().position(|t| t.path == root) {
-                    self.active = i;
-                } else {
-                    let prefs = self.settings.diff_for(&root);
-                    let mut tab = RepoTab::new(root.clone(), ctx, self.settings.commit_page, prefs);
-                    tab.split_diff = self.settings.split_diff;
-                    tab.highlight_diff = self.settings.syntax_highlight;
-                    if let Some(v) = self.initial_view {
-                        tab.view = v;
-                    }
-                    self.tabs.push(tab);
-                    self.active = self.tabs.len() - 1;
-                }
-                self.settings.touch_recent(root);
-            }
-            Err(e) => self.toasts.push(
-                ctx,
-                ToastKind::Error,
-                "Could not open repository",
-                e.to_string(),
-            ),
-        }
     }
 
     fn set_theme(&mut self, ctx: &egui::Context, id: ThemeId) {

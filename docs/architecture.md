@@ -47,6 +47,7 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `app/palette.rs` | The command palette's entries. |
 | `app/dispatch.rs` | Applies the actions a frame collected. |
 | `app/background.rs` | Polled every frame: worker and hosting events, credential prompts, the update check, auto-fetch. |
+| `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. |
 | `app/clone.rs`, `app/request_flow.rs` | Cloning on a background thread; creating and checking out pull and merge requests. |
 | `app/screenshot.rs` | Headless screenshots for `--screenshot`. |
 | `worker.rs` | One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced; debounced file watcher. |

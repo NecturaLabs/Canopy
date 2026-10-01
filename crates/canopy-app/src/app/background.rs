@@ -32,6 +32,7 @@ impl CanopyApp {
     }
 
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
+        self.poll_opened(ctx);
         for tab in &mut self.tabs {
             for n in tab.poll(&self.gitlab_hosts) {
                 self.toasts.push(

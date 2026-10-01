@@ -19,17 +19,18 @@ impl CanopyApp {
         if shot.started == 0.0 {
             shot.started = now;
         }
-        let ready = self.tabs.iter().all(|t| {
-            let requests_ready = t.view != View::Requests
-                || t.host.is_none()
-                || (!t.requests.loading
-                    && !t.requests.details_loading
-                    && t.requests.list.is_some());
-            t.snap.is_some()
-                && t.running.is_none()
-                && (t.diff.is_some() || t.file.is_none())
-                && requests_ready
-        });
+        let ready = self.pending_opens == 0
+            && self.tabs.iter().all(|t| {
+                let requests_ready = t.view != View::Requests
+                    || t.host.is_none()
+                    || (!t.requests.loading
+                        && !t.requests.details_loading
+                        && t.requests.list.is_some());
+                t.snap.is_some()
+                    && t.running.is_none()
+                    && (t.diff.is_some() || t.file.is_none())
+                    && requests_ready
+            });
         if ready {
             shot.ready_frames += 1;
         }

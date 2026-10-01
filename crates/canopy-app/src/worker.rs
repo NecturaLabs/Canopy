@@ -324,7 +324,8 @@ pub struct Worker {
     jobs: Sender<Job>,
     /// Events from the thread.
     pub events: Receiver<Event>,
-    _watcher: Option<notify::RecommendedWatcher>,
+    /// Dropping this stops the file watcher's thread.
+    _stop_watcher: Sender<()>,
 }
 
 impl Worker {
@@ -346,11 +347,12 @@ impl Worker {
             )));
             ctx.request_repaint();
         }
-        let watcher = watch(&path, jobs.clone());
+        let (stop_watcher, stop) = crossbeam_channel::bounded(0);
+        watch(path, jobs.clone(), stop);
         Self {
             jobs,
             events,
-            _watcher: watcher,
+            _stop_watcher: stop_watcher,
         }
     }
 
@@ -631,24 +633,62 @@ fn relevant_git_path(rel: &Path) -> bool {
         || s.contains("fsmonitor"))
 }
 
-/// Watches the working tree. Changes inside `.git` trigger a full refresh, other changes a
-/// status refresh, both debounced; ignored files are skipped.
-fn watch(path: &Path, jobs: Sender<Job>) -> Option<notify::RecommendedWatcher> {
-    use notify::{RecursiveMode, Watcher};
-    let root = Repo::open(path).ok()?.workdir().to_path_buf();
-    let git_dir = root.join(".git");
-    let (tx, rx) = unbounded::<notify::Result<notify::Event>>();
-    let mut watcher = notify::recommended_watcher(move |e| {
-        let _ = tx.send(e);
-    })
-    .ok()?;
-    watcher.watch(&root, RecursiveMode::Recursive).ok()?;
-
-    let _ = std::thread::Builder::new()
+/// Watches the working tree and the repository's own folders on a thread of its own, so a large
+/// tree never stalls the UI while the watches are registered. Changes in a git folder trigger a
+/// full refresh, other changes a status refresh, both debounced; ignored files are skipped.
+/// Symbolic links are not followed. A linked worktree's or submodule's git folder (and the
+/// common folder it shares) lives outside the working tree, so it gets watches of its own. The
+/// thread ends when `stop`'s sender (held by [`Worker`]) is dropped.
+fn watch(path: PathBuf, jobs: Sender<Job>, stop: Receiver<()>) {
+    let spawned = std::thread::Builder::new()
         .name("watcher".into())
         .spawn(move || {
-            let ignore_repo = git2::Repository::open(&root).ok();
-            while let Ok(first) = rx.recv() {
+            use notify::{Config, RecursiveMode, Watcher};
+            let repo = match git2::Repository::open(&path) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(error = %e.message(), "no file watcher: cannot open the repository");
+                    return;
+                }
+            };
+            let Some(root) = repo.workdir().map(Path::to_path_buf) else {
+                return;
+            };
+            let mut git_dirs = vec![repo.path().to_path_buf()];
+            if !git_dirs.iter().any(|d| d == repo.commondir()) {
+                git_dirs.push(repo.commondir().to_path_buf());
+            }
+            let (tx, rx) = unbounded::<notify::Result<notify::Event>>();
+            let config = Config::default().with_follow_symlinks(false);
+            let mut watcher = match notify::RecommendedWatcher::new(
+                move |e| {
+                    let _ = tx.send(e);
+                },
+                config,
+            ) {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::warn!(error = %e, "no file watcher");
+                    return;
+                }
+            };
+            if let Err(e) = watcher.watch(&root, RecursiveMode::Recursive) {
+                tracing::warn!(error = %e, "no file watcher for the working tree");
+                return;
+            }
+            for dir in git_dirs.iter().filter(|d| !d.starts_with(&root)) {
+                if let Err(e) = watcher.watch(dir, RecursiveMode::Recursive) {
+                    tracing::warn!(error = %e, "no file watcher for the git folder");
+                }
+            }
+            loop {
+                let first = crossbeam_channel::select! {
+                    recv(rx) -> e => match e {
+                        Ok(e) => e,
+                        Err(_) => break,
+                    },
+                    recv(stop) -> _ => break,
+                };
                 let mut full = false;
                 let mut status = false;
                 let mut classify = |e: notify::Result<notify::Event>| {
@@ -657,13 +697,10 @@ fn watch(path: &Path, jobs: Sender<Job>) -> Option<notify::RecommendedWatcher> {
                         return;
                     }
                     for p in e.paths {
-                        if let Ok(rel) = p.strip_prefix(&git_dir) {
+                        if let Some(rel) = git_dirs.iter().find_map(|d| p.strip_prefix(d).ok()) {
                             full |= relevant_git_path(rel);
                         } else if let Ok(rel) = p.strip_prefix(&root) {
-                            let ignored = ignore_repo
-                                .as_ref()
-                                .is_some_and(|r| r.is_path_ignored(rel).unwrap_or(false));
-                            status |= !ignored;
+                            status |= !repo.is_path_ignored(rel).unwrap_or(false);
                         }
                     }
                 };
@@ -680,13 +717,79 @@ fn watch(path: &Path, jobs: Sender<Job>) -> Option<notify::RecommendedWatcher> {
                     break;
                 }
             }
+            drop(watcher);
         });
-    Some(watcher)
+    if let Err(e) = spawned {
+        tracing::warn!("no file watcher: cannot start its thread: {e}");
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Op, OpKind};
+    use super::{Job, Op, OpKind, watch};
+    use std::path::Path;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok, "git {args:?}");
+    }
+
+    /// Waits up to `limit` for a job matching `want`.
+    fn wait_for(
+        jobs: &crossbeam_channel::Receiver<Job>,
+        want: fn(&Job) -> bool,
+        limit: Duration,
+    ) -> bool {
+        let end = Instant::now() + limit;
+        while let Some(left) = end.checked_duration_since(Instant::now()) {
+            match jobs.recv_timeout(left) {
+                Ok(j) if want(&j) => return true,
+                Ok(_) => {}
+                Err(_) => return false,
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn a_linked_worktrees_git_folder_is_watched() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let main = dir.path().join("main");
+        std::fs::create_dir(&main)?;
+        git(&main, &["init", "-q", "-b", "main"]);
+        git(&main, &["config", "user.name", "Ada"]);
+        git(&main, &["config", "user.email", "ada@example.com"]);
+        git(&main, &["config", "core.autocrlf", "false"]);
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        let linked = dir.path().join("linked");
+        let linked_arg = linked.to_string_lossy().into_owned();
+        git(
+            &main,
+            &["worktree", "add", "-q", "-b", "topic", &linked_arg],
+        );
+
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let (_stop, stop) = crossbeam_channel::bounded::<()>(0);
+        watch(linked.clone(), tx, stop);
+        // Registering the watches happens on the watcher's thread; give it a moment.
+        std::thread::sleep(Duration::from_millis(500));
+        // A commit in the linked worktree changes its HEAD's branch, whose ref lives in the
+        // common folder, and the worktree's own index under .git/worktrees/linked.
+        git(&linked, &["commit", "-q", "--allow-empty", "-m", "second"]);
+        assert!(wait_for(
+            &rx,
+            |j| matches!(j, Job::Refresh(_)),
+            Duration::from_secs(10)
+        ));
+        Ok(())
+    }
 
     #[test]
     fn finished_operations_are_typed_not_matched_by_label() {

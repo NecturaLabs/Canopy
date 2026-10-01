@@ -25,6 +25,12 @@ All notable changes to Canopy are documented here. The format follows
 
 ### Fixed
 
+- Opening a large repository no longer freezes the window: the repository is opened and its file
+  watcher set up off the UI thread.
+- Commits, checkouts and fetches in a linked worktree or submodule now refresh Canopy: their git
+  folder (and the shared common folder) is watched too. The watcher no longer follows symbolic
+  links.
+
 - Secondary and faint text, links, status colours and graph lanes are readable on every surface
   they are drawn on, selected rows and diff lines included, in all seven themes (WCAG AA; body
   text AAA). Selected values in Settings use the same calmer selection fill as lists. Branch and
