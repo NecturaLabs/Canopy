@@ -791,7 +791,9 @@ fn checkout_request_fetches_and_fast_forwards_the_request_branch() {
     repo.checkout_request("origin", "refs/pull/1/head", "pr/1", |_| {})
         .expect("checkout request");
     assert_eq!(head(&repo), (Some("pr/1".into()), Some(first.clone())));
-    assert_eq!(rev(&dest, "refs/remotes/origin/pr/1"), first);
+    assert_eq!(rev(&dest, "refs/canopy/requests/origin/pull/1/head"), first);
+    let has = |name: &str| repo.git().find_reference(name).is_ok();
+    assert!(!has("refs/remotes/origin/pr/1"), "no remote-tracking ref");
     let pr = repo
         .branches()
         .expect("branches")
@@ -818,11 +820,18 @@ fn checkout_request_fetches_and_fast_forwards_the_request_branch() {
         "two\n"
     );
 
-    // Local commits on the request branch are never thrown away: a rewritten request head
-    // cannot be fast-forwarded and git's error comes back.
+    // Local commits on top of the request head: checking it out again just switches to the
+    // branch, like `git merge --ff-only` finding it already up to date.
     fs::write(dest.join("mine.txt"), "mine\n").expect("write");
     repo.stage_all().expect("stage");
     let mine = repo.commit("feat: mine", false, false).expect("commit");
+    repo.checkout_branch("main").expect("switch to main");
+    repo.checkout_request("origin", "refs/pull/1/head", "pr/1", |_| {})
+        .expect("branch ahead of the request");
+    assert_eq!(head(&repo), (Some("pr/1".into()), Some(mine.to_string())));
+
+    // Local commits are never thrown away: once the request head is rewritten the two have
+    // diverged, and nothing is switched or moved.
     fs::write(work.join("pr.txt"), "rewritten\n").expect("write");
     git(
         work,
@@ -832,17 +841,104 @@ fn checkout_request_fetches_and_fast_forwards_the_request_branch() {
         work,
         &["push", "-q", "-f", &server_url, "contrib:refs/pull/1/head"],
     );
+    repo.checkout_branch("main").expect("switch to main");
+    let main = rev(&dest, "main");
     match repo.checkout_request("origin", "refs/pull/1/head", "pr/1", |_| {}) {
-        Err(canopy_core::Error::Cli { command, stderr }) => {
-            assert_eq!(command, "merge");
-            assert!(!stderr.is_empty());
-        }
+        Err(canopy_core::Error::Invalid(msg)) => assert!(msg.contains("diverged"), "{msg}"),
         other => panic!("unexpected {other:?}"),
     }
-    assert_eq!(head(&repo), (Some("pr/1".into()), Some(mine.to_string())));
+    assert_eq!(head(&repo), (Some("main".into()), Some(main)));
+    assert_eq!(rev(&dest, "pr/1"), mine.to_string());
     assert!(repo.snapshot(10).expect("snapshot").status.is_clean());
-    // The tracking ref still moved to the rewritten head (it is forced, like a fetch).
-    assert_eq!(rev(&dest, "refs/remotes/origin/pr/1"), rev(work, "HEAD"));
+    // The private ref still moved to the rewritten head (it is forced, like a fetch).
+    assert_eq!(
+        rev(&dest, "refs/canopy/requests/origin/pull/1/head"),
+        rev(work, "HEAD")
+    );
+}
+
+#[test]
+fn checkout_request_leaves_a_real_remote_branch_of_the_same_name_alone() {
+    // The server has a real branch `pr/1` and, separately, the request head refs/pull/1/head.
+    let (work_dir, _work) = fixture();
+    let work = work_dir.path();
+    let server = tempfile::tempdir().expect("tempdir");
+    git(server.path(), &["init", "-q", "--bare", "-b", "main"]);
+    let server_url = server.path().to_string_lossy().into_owned();
+    git(work, &["push", "-q", &server_url, "main"]);
+    git(work, &["switch", "-q", "-c", "real"]);
+    fs::write(work.join("real.txt"), "real\n").expect("write");
+    git(work, &["add", "."]);
+    git(work, &["commit", "-q", "-m", "feat: real branch"]);
+    git(work, &["push", "-q", &server_url, "real:refs/heads/pr/1"]);
+    let real = git(work, &["rev-parse", "HEAD"]).trim().to_owned();
+    git(work, &["switch", "-q", "main"]);
+    git(work, &["switch", "-q", "-c", "contrib"]);
+    fs::write(work.join("pr.txt"), "request\n").expect("write");
+    git(work, &["add", "."]);
+    git(work, &["commit", "-q", "-m", "feat: request"]);
+    git(
+        work,
+        &["push", "-q", &server_url, "contrib:refs/pull/1/head"],
+    );
+    let request = git(work, &["rev-parse", "HEAD"]).trim().to_owned();
+
+    let clone_dir = tempfile::tempdir().expect("tempdir");
+    let dest = clone_dir.path().join("clone");
+    canopy_core::ops::clone(&server_url, &dest, |_| {}).expect("clone");
+    configure(&dest);
+    let repo = Repo::open(&dest).expect("open");
+    let rev = |r: &str| git(&dest, &["rev-parse", r]).trim().to_owned();
+    assert_eq!(rev("refs/remotes/origin/pr/1"), real);
+
+    repo.checkout_request("origin", "refs/pull/1/head", "pr/1", |_| {})
+        .expect("checkout request");
+    assert_eq!(
+        rev("refs/remotes/origin/pr/1"),
+        real,
+        "tracking ref untouched"
+    );
+    assert_eq!(rev("refs/canopy/requests/origin/pull/1/head"), request);
+    assert_eq!(rev("HEAD"), request);
+    let pr = repo
+        .branches()
+        .expect("branches")
+        .into_iter()
+        .find(|b| b.name == "pr/1")
+        .expect("pr/1");
+    assert_eq!(pr.upstream, None, "--no-track");
+
+    // A prune keeps both the real branch's tracking ref and the private request ref.
+    repo.fetch(Some("origin"), true, |_| {})
+        .expect("fetch --prune");
+    assert_eq!(rev("refs/remotes/origin/pr/1"), real);
+    assert_eq!(rev("refs/canopy/requests/origin/pull/1/head"), request);
+
+    // A local `pr/1` that is the real branch (tracking origin/pr/1) is unrelated to the request:
+    // refused, and neither the branch nor HEAD moves.
+    let (_d2, other) = {
+        let d = tempfile::tempdir().expect("tempdir");
+        let dest2 = d.path().join("clone");
+        canopy_core::ops::clone(&server_url, &dest2, |_| {}).expect("clone");
+        configure(&dest2);
+        let r = Repo::open(&dest2).expect("open");
+        (d, r)
+    };
+    let p2 = other.workdir().to_path_buf();
+    git(&p2, &["branch", "--track", "pr/1", "origin/pr/1"]);
+    match other.checkout_request("origin", "refs/pull/1/head", "pr/1", |_| {}) {
+        Err(canopy_core::Error::Invalid(msg)) => assert!(msg.contains("pr/1"), "{msg}"),
+        res => panic!("unexpected {res:?}"),
+    }
+    assert_eq!(git(&p2, &["rev-parse", "pr/1"]).trim(), real);
+    assert_eq!(
+        git(&p2, &["symbolic-ref", "--short", "HEAD"]).trim(),
+        "main"
+    );
+    assert_eq!(
+        git(&p2, &["rev-parse", "refs/remotes/origin/pr/1"]).trim(),
+        real
+    );
 }
 
 #[test]

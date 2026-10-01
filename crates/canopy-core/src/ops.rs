@@ -167,6 +167,13 @@ pub fn clone(url: &str, dest: &Path, progress: impl FnMut(&str)) -> Result<()> {
     Ok(())
 }
 
+/// Where [`Repo::checkout_request`] keeps the head of `remote_ref` (a full ref such as
+/// `refs/pull/12/head`) fetched from `remote`: `refs/canopy/requests/<remote>/pull/12/head`.
+fn request_ref(remote: &str, remote_ref: &str) -> String {
+    let rest = remote_ref.strip_prefix("refs/").unwrap_or(remote_ref);
+    format!("refs/canopy/requests/{remote}/{rest}")
+}
+
 fn with_paths<'a>(args: &[&'a str], paths: &'a [String]) -> Vec<&'a str> {
     let mut v: Vec<&str> = args.to_vec();
     v.push("--");
@@ -518,10 +525,23 @@ impl Repo {
 
     /// Checks out a pull or merge request head such as `refs/pull/12/head` (GitHub) or
     /// `refs/merge-requests/12/head` (GitLab) from `remote` as the local branch `branch` (e.g.
-    /// `pr/12`). The head is fetched to `refs/remotes/<remote>/<branch>`. An existing local
-    /// `branch` is switched to and fast-forwarded; if it has commits of its own, git's
-    /// fast-forward error is returned and nothing is lost. A new branch is created without an
-    /// upstream, since the request ref is not a branch on the remote. Returns fetch's summary.
+    /// `pr/12`). Returns fetch's summary.
+    ///
+    /// The head is force-fetched into Canopy's private namespace,
+    /// `refs/canopy/requests/<remote>/<remote_ref without "refs/">` (for example
+    /// `refs/canopy/requests/origin/pull/12/head`), never into `refs/remotes/`: a real branch
+    /// called `pr/12` on the remote keeps its remote-tracking ref, and `git fetch --prune` does
+    /// not delete the request head.
+    ///
+    /// A new `branch` is created at the head without an upstream (`--no-track`), since the
+    /// request ref is not a branch on the remote. An existing local `branch` is switched to and
+    /// fast-forwarded (`merge --ff-only`) when the head contains it, or just switched to when it
+    /// already contains the head. When the two have diverged (the branch has commits of its own,
+    /// the request was rewritten, or the branch is an unrelated branch of the same name) nothing
+    /// is switched or changed and [`Error::Invalid`] says so.
+    ///
+    /// The private ref stays after the call (it lets a later call fast-forward); deleting the
+    /// remote does not remove it (`git update-ref -d` does).
     pub fn checkout_request(
         &self,
         remote: &str,
@@ -551,29 +571,49 @@ impl Repo {
                 "'{branch}' is not a valid branch name."
             )));
         }
-        let tracking = format!("refs/remotes/{remote}/{branch}");
-        if self.git_cmd(&["check-ref-format", &tracking]).is_err() {
+        let private = request_ref(remote, remote_ref);
+        if self.git_cmd(&["check-ref-format", &private]).is_err() {
             return Err(Error::invalid(format!(
-                "'{tracking}' is not a valid ref name."
+                "'{private}' is not a valid ref name."
             )));
         }
 
-        let refspec = format!("+{remote_ref}:{tracking}");
+        // Forced: request heads are rewritten by force-pushes. The destination is outside
+        // `refs/remotes/`, so no remote-tracking branch moves and no prune removes it.
+        let refspec = format!("+{remote_ref}:{private}");
         let summary = cli::run_streaming(
             Some(self.workdir()),
             &["fetch", "--progress", "--", remote, &refspec],
             progress,
         )?;
+        let head = self.git().find_reference(&private)?.peel_to_commit()?.id();
 
-        let exists = self
+        let local = self
             .git()
             .find_branch(branch, git2::BranchType::Local)
-            .is_ok();
-        if exists {
-            self.checkout_branch(branch)?;
-            self.git_cmd(&["merge", "--ff-only", "-q", &tracking])?;
-        } else {
-            self.git_cmd(&["switch", "-q", "--no-track", "-c", branch, &tracking])?;
+            .ok()
+            .and_then(|b| b.get().target());
+        match local {
+            None => {
+                self.git_cmd(&["switch", "-q", "--no-track", "-c", branch, &private])?;
+            }
+            Some(tip) => {
+                let git = self.git();
+                let behind = tip == head || git.graph_descendant_of(head, tip)?;
+                let ahead = git.graph_descendant_of(tip, head)?;
+                if !behind && !ahead {
+                    return Err(Error::invalid(format!(
+                        "The local branch '{branch}' and the {remote} request head have \
+                         diverged (the branch has commits of its own, the request was \
+                         rewritten, or '{branch}' is another branch). Nothing was changed; \
+                         rename or delete '{branch}' to check the request out again."
+                    )));
+                }
+                self.checkout_branch(branch)?;
+                if !ahead {
+                    self.git_cmd(&["merge", "--ff-only", "-q", &private])?;
+                }
+            }
         }
         Ok(summary)
     }
