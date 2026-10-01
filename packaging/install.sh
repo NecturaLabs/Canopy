@@ -689,13 +689,19 @@ stage_linux() {
     install_self "$new/uninstall.sh"
 }
 
+# Downloads $1 to $2 and keeps it only if it is this installer.
+fetch_self() {
+    fetch "$1" "$2" 2>/dev/null && sed -n 2p "$2" | grep -q '^# canopy-installer' &&
+        sh -n "$2" 2>/dev/null
+}
+
 # Copies this script (the uninstaller is the installer run as uninstall.sh) to $1.
 install_self() {
     if [ -f "$0" ] && sed -n 2p "$0" 2>/dev/null | grep -q '^# canopy-installer'; then
         cp "$0" "$1"
-    elif fetch "$FEED_URL/install.sh" "$1" 2>/dev/null &&
-        sed -n 2p "$1" | grep -q '^# canopy-installer' && sh -n "$1" 2>/dev/null; then
-        : # Piped into sh: the published copy of this script, fetched again.
+    elif fetch_self "$FEED_URL/install.sh" "$1" || fetch_self "${ASSET_URL%/*}/install.sh" "$1"; then
+        : # Piped into sh: the published copy of this script, or (before a stable release has
+        # published one) the copy attached to the release just installed, fetched again.
     else
         warn "could not save uninstall.sh; uninstall with the one-line installer and --uninstall"
         rm -f -- "$1"
