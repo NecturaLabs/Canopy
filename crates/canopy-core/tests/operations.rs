@@ -4,8 +4,11 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use canopy_core::ops::{HunkAction, ResetMode};
-use canopy_core::{ChangeKind, DiffSource, LineKind, RefKind, Repo, RepoState};
+use canopy_core::ops::{HunkAction, MergeMode, ResetMode};
+use canopy_core::{
+    ChangeKind, Choice, ConflictKind, ConflictRegion, DiffSource, LineKind, RefKind, Repo,
+    RepoState, Side,
+};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -245,7 +248,7 @@ fn merge_conflict_is_reported_and_abortable() {
     fs::write(p.join("a.txt"), "ours\n").expect("write");
     git(p, &["commit", "-q", "-am", "ours"]);
 
-    assert!(repo.merge("other", false).is_err());
+    assert!(repo.merge("other", MergeMode::Default).is_err());
     let snap = repo.snapshot(10).expect("snapshot");
     assert_eq!(snap.state, RepoState::Merge);
     assert_eq!(snap.status.conflicted.len(), 1);
@@ -321,4 +324,402 @@ fn push_and_fetch_against_a_local_remote() {
     canopy_core::ops::clone(&url, &dest, |_| {}).expect("clone");
     let copy = Repo::open(&dest).expect("open clone");
     assert_eq!(copy.snapshot(10).expect("snapshot").commits.len(), 2);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Conflict resolution and merge modes. Expected states were recorded with git 2.43 by running the
+// same commands by hand (`git checkout --ours/--theirs`, `git add`, `git rm`, `git merge --squash`
+// / `--ff-only` / `--no-ff`) in a scratch repository.
+
+/// Index entries of `path` as `(mode, blob, stage)`, from `git ls-files -s`.
+fn stages(dir: &Path, path: &str) -> Vec<(String, String, u8)> {
+    git(dir, &["--literal-pathspecs", "ls-files", "-s", "--", path])
+        .lines()
+        .map(|l| {
+            let (meta, _) = l.split_once('\t').expect("tab");
+            let f: Vec<&str> = meta.split(' ').collect();
+            (
+                f[0].to_owned(),
+                f[1].to_owned(),
+                f[2].parse().expect("stage"),
+            )
+        })
+        .collect()
+}
+
+fn rev(dir: &Path, rev: &str) -> String {
+    git(dir, &["rev-parse", rev]).trim().to_owned()
+}
+
+fn parents(dir: &Path, rev: &str) -> Vec<String> {
+    let out = git(dir, &["rev-list", "--parents", "-n", "1", rev]);
+    out.split_whitespace().skip(1).map(str::to_owned).collect()
+}
+
+/// `main` and `other` both change lines 2 and 7 of `a.txt`.
+fn both_modified(dir: &Path) {
+    git(dir, &["switch", "-q", "-c", "other"]);
+    fs::write(
+        dir.join("a.txt"),
+        "one\nTHEIRS 2\nthree\nfour\nfive\nsix\nTHEIRS 7\neight\nnine\nten\n",
+    )
+    .expect("write");
+    git(dir, &["commit", "-q", "-am", "theirs"]);
+    git(dir, &["switch", "-q", "main"]);
+    fs::write(
+        dir.join("a.txt"),
+        "one\nOURS 2\nthree\nfour\nfive\nsix\nOURS 7\neight\nnine\nten\n",
+    )
+    .expect("write");
+    git(dir, &["commit", "-q", "-am", "ours"]);
+}
+
+#[test]
+fn diff3_conflict_resolved_in_the_editor_completes_the_merge() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["config", "merge.conflictStyle", "diff3"]);
+    both_modified(p);
+    assert!(repo.merge("other", MergeMode::Default).is_err());
+
+    assert_eq!(
+        repo.conflict_kind("a.txt").expect("kind"),
+        Some(ConflictKind::BothModified)
+    );
+    let file = repo.conflict_file("a.txt").expect("conflict file");
+    let regions: Vec<&ConflictRegion> = file.regions().collect();
+    assert_eq!(regions.len(), 2);
+    assert_eq!(regions[0].ours, ["OURS 2"]);
+    assert_eq!(regions[0].base.as_deref(), Some(&["two".to_owned()][..]));
+    assert_eq!(regions[0].theirs, ["THEIRS 2"]);
+    assert_eq!(regions[0].ours_label, "HEAD");
+    assert_eq!(regions[0].theirs_label, "other");
+    assert_eq!(regions[1].base.as_deref(), Some(&["seven".to_owned()][..]));
+
+    // Refused while markers remain: nothing is written or staged.
+    let before = fs::read_to_string(p.join("a.txt")).expect("read");
+    let partial = file.render(&[Some(Choice::Theirs), None]);
+    assert!(repo.write_resolution("a.txt", &partial, true).is_err());
+    assert_eq!(fs::read_to_string(p.join("a.txt")).expect("read"), before);
+    assert!(repo.mark_resolved("a.txt").is_err());
+    assert_eq!(stages(p, "a.txt").len(), 3);
+
+    // Saving a partial resolution keeps the conflict open.
+    repo.write_resolution("a.txt", &partial, false)
+        .expect("save partial");
+    assert_eq!(fs::read_to_string(p.join("a.txt")).expect("read"), partial);
+    assert_eq!(stages(p, "a.txt").len(), 3);
+
+    let done = file.render(&[Some(Choice::Theirs), Some(Choice::Base)]);
+    let expected = "one\nTHEIRS 2\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
+    assert_eq!(done, expected);
+    repo.write_resolution("a.txt", &done, true)
+        .expect("resolve");
+    let st = stages(p, "a.txt");
+    assert_eq!(st.len(), 1);
+    assert_eq!(st[0].2, 0);
+    assert_eq!(repo.conflict_kind("a.txt").expect("kind"), None);
+
+    repo.continue_or_abort(RepoState::Merge, false)
+        .expect("merge --continue");
+    let snap = repo.snapshot(10).expect("snapshot");
+    assert_eq!(snap.state, RepoState::Clean);
+    assert!(snap.status.is_clean());
+    assert_eq!(snap.commits[0].parents.len(), 2);
+    assert_eq!(git(p, &["show", "HEAD:a.txt"]), expected);
+}
+
+#[test]
+fn mark_resolved_stages_a_hand_edited_file() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    both_modified(p);
+    assert!(repo.merge("other", MergeMode::Default).is_err());
+    fs::write(p.join("a.txt"), "by hand\n").expect("write");
+    repo.mark_resolved("a.txt").expect("mark resolved");
+    let st = stages(p, "a.txt");
+    assert_eq!(st.len(), 1);
+    assert_eq!(st[0].2, 0);
+    assert_eq!(git(p, &["show", ":a.txt"]), "by hand\n");
+}
+
+#[test]
+fn resolve_with_side_matches_git_checkout_ours_and_theirs() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    // A path with spaces and glob characters, next to a file the glob would match.
+    let odd = "dir x/notes [v1].txt";
+    fs::create_dir_all(p.join("dir x")).expect("mkdir");
+    fs::write(p.join(odd), "base\n").expect("write");
+    fs::write(p.join("dir x/notes v.txt"), "bystander\n").expect("write");
+    git(p, &["add", "."]);
+    git(p, &["commit", "-q", "-m", "odd"]);
+    both_modified(p);
+    git(p, &["switch", "-q", "other"]);
+    fs::write(p.join(odd), "theirs\n").expect("write");
+    // Their version is also executable; taking their side must take the mode too.
+    // (`commit -a` would re-stage the non-executable working copy, so stage, chmod, commit, then
+    // check out to give the working copy the bit as well.)
+    git(p, &["--literal-pathspecs", "add", "--", odd]);
+    git(p, &["update-index", "--chmod=+x", "--", odd]);
+    git(p, &["commit", "-q", "-m", "theirs odd"]);
+    git(p, &["--literal-pathspecs", "checkout", "--", odd]);
+    let tree = git(p, &["--literal-pathspecs", "ls-tree", "HEAD", "--", odd]);
+    assert!(tree.starts_with("100755"), "{tree}");
+    git(p, &["switch", "-q", "main"]);
+    fs::write(p.join(odd), "ours\n").expect("write");
+    git(p, &["commit", "-q", "-am", "ours odd"]);
+    assert!(repo.merge("other", MergeMode::Default).is_err());
+    fs::write(p.join("dir x/notes v.txt"), "edited\n").expect("write");
+
+    for (path, side, stage) in [("a.txt", Side::Ours, 2), (odd, Side::Theirs, 3)] {
+        let (mode, blob, _) = stages(p, path)
+            .into_iter()
+            .find(|s| s.2 == stage)
+            .expect("stage present");
+        let content = git(p, &["cat-file", "-p", &blob]);
+        repo.resolve_with_side(path, side).expect("resolve");
+        assert_eq!(stages(p, path), [(mode, blob, 0)], "{path}");
+        assert_eq!(
+            fs::read_to_string(p.join(path)).expect("read"),
+            content,
+            "{path}"
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(p.join(odd))
+            .expect("meta")
+            .permissions()
+            .mode();
+        assert_ne!(mode & 0o111, 0, "executable bit from their side");
+    }
+    // The bystander matching the glob was neither checked out nor staged.
+    assert_eq!(
+        fs::read_to_string(p.join("dir x/notes v.txt")).expect("read"),
+        "edited\n"
+    );
+    assert_eq!(
+        git(
+            p,
+            &["diff", "--cached", "--name-only", "--", "dir x/notes v.txt"]
+        ),
+        ""
+    );
+    assert!(
+        repo.snapshot(10)
+            .expect("snapshot")
+            .status
+            .conflicted
+            .is_empty()
+    );
+    assert!(repo.resolve_with_side("a.txt", Side::Ours).is_err());
+    assert_eq!(repo.conflict_kind("a.txt").expect("kind"), None);
+}
+
+#[test]
+fn modify_delete_conflicts_resolve_by_keeping_or_removing() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    for f in ["d1.txt", "d2.txt", "e1.txt", "e2.txt"] {
+        fs::write(p.join(f), format!("{f}\n")).expect("write");
+    }
+    git(p, &["add", "."]);
+    git(p, &["commit", "-q", "-m", "files"]);
+    git(p, &["switch", "-q", "-c", "other"]);
+    git(p, &["rm", "-q", "d1.txt", "d2.txt"]);
+    fs::write(p.join("e1.txt"), "theirs e1\n").expect("write");
+    fs::write(p.join("e2.txt"), "theirs e2\n").expect("write");
+    git(p, &["commit", "-q", "-am", "theirs"]);
+    git(p, &["switch", "-q", "main"]);
+    git(p, &["rm", "-q", "e1.txt", "e2.txt"]);
+    fs::write(p.join("d1.txt"), "ours d1\n").expect("write");
+    fs::write(p.join("d2.txt"), "ours d2\n").expect("write");
+    git(p, &["commit", "-q", "-am", "ours"]);
+    assert!(repo.merge("other", MergeMode::Default).is_err());
+
+    for (path, kind) in [
+        ("d1.txt", ConflictKind::DeletedByThem),
+        ("d2.txt", ConflictKind::DeletedByThem),
+        ("e1.txt", ConflictKind::DeletedByUs),
+        ("e2.txt", ConflictKind::DeletedByUs),
+    ] {
+        assert_eq!(
+            repo.conflict_kind(path).expect("kind"),
+            Some(kind),
+            "{path}"
+        );
+    }
+
+    // Taking the deleting side removes the file; taking the other side keeps its version.
+    repo.resolve_with_side("d1.txt", Side::Theirs)
+        .expect("d1 theirs");
+    repo.resolve_with_side("d2.txt", Side::Ours)
+        .expect("d2 ours");
+    repo.resolve_with_side("e1.txt", Side::Ours)
+        .expect("e1 ours");
+    repo.resolve_with_side("e2.txt", Side::Theirs)
+        .expect("e2 theirs");
+
+    assert!(stages(p, "d1.txt").is_empty() && !p.join("d1.txt").exists());
+    assert!(stages(p, "e1.txt").is_empty() && !p.join("e1.txt").exists());
+    assert_eq!(
+        fs::read_to_string(p.join("d2.txt")).expect("read"),
+        "ours d2\n"
+    );
+    assert_eq!(
+        fs::read_to_string(p.join("e2.txt")).expect("read"),
+        "theirs e2\n"
+    );
+    assert_eq!(stages(p, "d2.txt")[0].2, 0);
+    assert_eq!(stages(p, "e2.txt")[0].2, 0);
+
+    repo.continue_or_abort(RepoState::Merge, false)
+        .expect("merge --continue");
+    let files = git(p, &["ls-tree", "--name-only", "HEAD"]);
+    let files: Vec<&str> = files.lines().collect();
+    assert_eq!(files, ["a.txt", "d2.txt", "e2.txt"]);
+}
+
+#[test]
+fn conflict_file_refuses_binary_content() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["switch", "-q", "-c", "other"]);
+    fs::write(p.join("a.txt"), b"theirs\0binary\n").expect("write");
+    git(p, &["commit", "-q", "-am", "theirs"]);
+    git(p, &["switch", "-q", "main"]);
+    fs::write(p.join("a.txt"), b"ours\0binary\n").expect("write");
+    git(p, &["commit", "-q", "-am", "ours"]);
+    assert!(repo.merge("other", MergeMode::Default).is_err());
+    assert_eq!(
+        repo.conflict_kind("a.txt").expect("kind"),
+        Some(ConflictKind::BothModified)
+    );
+    assert!(matches!(
+        repo.conflict_file("a.txt"),
+        Err(canopy_core::Error::Invalid(_))
+    ));
+    repo.resolve_with_side("a.txt", Side::Theirs)
+        .expect("theirs");
+    assert_eq!(
+        fs::read(p.join("a.txt")).expect("read"),
+        b"theirs\0binary\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn write_resolution_keeps_the_executable_bit() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    let file = p.join("a.txt");
+    let mut perms = fs::metadata(&file).expect("meta").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&file, perms).expect("chmod");
+    repo.write_resolution("a.txt", "new\n", false)
+        .expect("write");
+    assert_eq!(fs::read_to_string(&file).expect("read"), "new\n");
+    let mode = fs::metadata(&file).expect("meta").permissions().mode();
+    assert_eq!(mode & 0o777, 0o755);
+    let leftovers = fs::read_dir(p)
+        .expect("ls")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .count();
+    assert_eq!(leftovers, 0);
+}
+
+/// Adds `feature`, one commit ahead of `main`; `diverge` also adds a commit on `main`. Returns
+/// `feature`'s commit id.
+fn feature_branch(dir: &Path, diverge: bool) -> String {
+    git(dir, &["switch", "-q", "-c", "feature"]);
+    fs::write(dir.join("f.txt"), "feature\n").expect("write");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-q", "-m", "feat: f"]);
+    git(dir, &["switch", "-q", "main"]);
+    if diverge {
+        fs::write(dir.join("m.txt"), "main\n").expect("write");
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "feat: m"]);
+    }
+    rev(dir, "feature")
+}
+
+#[test]
+fn merge_mode_default_fast_forwards_or_merges() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    // `merge.ff=false` would make a plain `git merge` create a commit; the mode wins.
+    git(p, &["config", "merge.ff", "false"]);
+    let feature = feature_branch(p, false);
+    repo.merge("feature", MergeMode::Default).expect("merge");
+    assert_eq!(rev(p, "HEAD"), feature);
+
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    let feature = feature_branch(p, true);
+    let main = rev(p, "HEAD");
+    repo.merge("feature", MergeMode::Default).expect("merge");
+    assert_eq!(parents(p, "HEAD"), [main, feature]);
+}
+
+#[test]
+fn merge_mode_no_ff_creates_a_merge_commit_even_when_ff_is_possible() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    let main = rev(p, "HEAD");
+    let feature = feature_branch(p, false);
+    repo.merge("feature", MergeMode::NoFastForward)
+        .expect("merge");
+    assert_eq!(parents(p, "HEAD"), [main, feature]);
+    assert!(repo.snapshot(10).expect("snapshot").status.is_clean());
+}
+
+#[test]
+fn merge_mode_ff_only_fails_on_diverged_history_without_changes() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    feature_branch(p, true);
+    let main = rev(p, "HEAD");
+    let err = repo
+        .merge("feature", MergeMode::FastForwardOnly)
+        .expect_err("diverged");
+    assert!(matches!(err, canopy_core::Error::Cli { .. }), "{err:?}");
+    assert_eq!(rev(p, "HEAD"), main);
+    let snap = repo.snapshot(10).expect("snapshot");
+    assert_eq!(snap.state, RepoState::Clean);
+    assert!(snap.status.is_clean());
+
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    let feature = feature_branch(p, false);
+    repo.merge("feature", MergeMode::FastForwardOnly)
+        .expect("ff");
+    assert_eq!(rev(p, "HEAD"), feature);
+}
+
+#[test]
+fn merge_mode_squash_stages_changes_without_committing_or_merge_head() {
+    for diverge in [false, true] {
+        let (dir, repo) = fixture();
+        let p = dir.path();
+        feature_branch(p, diverge);
+        let main = rev(p, "HEAD");
+        repo.merge("feature", MergeMode::Squash).expect("squash");
+        assert_eq!(rev(p, "HEAD"), main, "diverge={diverge}");
+        let git_dir = repo.git().path().to_path_buf();
+        assert!(!git_dir.join("MERGE_HEAD").exists(), "diverge={diverge}");
+        assert!(git_dir.join("SQUASH_MSG").exists(), "diverge={diverge}");
+        let snap = repo.snapshot(10).expect("snapshot");
+        assert_eq!(snap.state, RepoState::Clean);
+        assert_eq!(snap.status.staged.len(), 1);
+        assert_eq!(snap.status.staged[0].path, "f.txt");
+        assert_eq!(snap.status.staged[0].kind, ChangeKind::Added);
+
+        repo.commit("feat: squashed f", false).expect("commit");
+        assert_eq!(parents(p, "HEAD"), [main], "diverge={diverge}");
+    }
 }
