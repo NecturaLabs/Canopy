@@ -3,9 +3,10 @@
 use egui::{Align2, CornerRadius, FontId, RichText, Sense, Ui, vec2};
 use egui_phosphor::regular as icon;
 
-use crate::app::{Action, forge_icon};
+use crate::action::Action;
 use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
+use crate::ui::widgets::forge_icon;
 use crate::views::commit_detail::virtual_rows;
 use crate::views::dialogs::Dialog;
 use crate::worker::Op;

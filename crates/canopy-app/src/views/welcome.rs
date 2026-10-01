@@ -3,7 +3,7 @@
 use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Ui, vec2};
 use egui_phosphor::regular as icon;
 
-use crate::app::Action;
+use crate::action::Action;
 use crate::keymap::{Command, hint};
 use crate::settings::Settings;
 use crate::ui::theme::{self, Palette, palette};

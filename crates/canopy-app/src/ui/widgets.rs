@@ -403,6 +403,14 @@ pub fn full_date(seconds: i64, offset_minutes: i32) -> String {
         .unwrap_or_default()
 }
 
+/// The Phosphor icon of a forge.
+pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
+    match kind {
+        canopy_core::forge::ForgeKind::GitHub => icon::GITHUB_LOGO,
+        canopy_core::forge::ForgeKind::GitLab => icon::GITLAB_LOGO_SIMPLE,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

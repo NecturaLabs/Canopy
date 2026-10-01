@@ -1,6 +1,6 @@
 ---
 name: add-keybinding
-description: Recipe for adding, changing or removing a keyboard shortcut in Canopy through the single table in crates/canopy-app/src/keymap.rs. Covers choosing a chord by the Omarchy, lazygit, vim and Fork conventions, the Command, Binding and Section types, the rules (never Super, bare keys never fire while typing, one owner per chord), handling the command in app.rs, the tests that guard the table, the cheatsheet and docs/keybindings.md. Use whenever a request adds or rebinds a key, or when a command should be reachable from the keyboard.
+description: Recipe for adding, changing or removing a keyboard shortcut in Canopy through the single table in crates/canopy-app/src/keymap.rs. Covers choosing a chord by the Omarchy, lazygit, vim and Fork conventions, the Command, Binding and Section types, the rules (never Super, bare keys never fire while typing, one owner per chord), handling the command in app/input.rs, the tests that guard the table, the cheatsheet and docs/keybindings.md. Use whenever a request adds or rebinds a key, or when a command should be reachable from the keyboard.
 license: Proprietary (NecturaLabs); see LICENSE
 ---
 
@@ -14,7 +14,7 @@ defect: it bypasses the rules below and drifts.
 
 ## The rules
 
-These come from the owner (AGENTS.md) and are enforced by tests and by `keyboard()` in `app.rs`:
+These come from the owner (AGENTS.md) and are enforced by tests and by `keyboard()` in `app/input.rs`:
 
 1. **Never bind Super.** It belongs to the window manager (Omarchy's modifier). `dispatch` also
    fires nothing while Super is held, so a window-manager chord cannot reach a bare key.
@@ -68,7 +68,7 @@ In `keymap.rs`:
   `Repository`. A new section is rarely right: it must be added to `Section::ALL`, `title` and
   `is_bare`, and the cheatsheet and Settings iterate `Section::ALL`.
 
-## 3. Handle the command (`crates/canopy-app/src/app.rs`)
+## 3. Handle the command (`crates/canopy-app/src/app/input.rs`)
 
 - Add the arm in `CanopyApp::command`; the `match` is exhaustive, so the compiler points at it.
   Guard it by what it needs (`has_tab`, `view == Some(View::Changes)`) and turn it into an

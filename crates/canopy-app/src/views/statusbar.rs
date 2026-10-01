@@ -3,7 +3,7 @@
 use egui::{RichText, Ui};
 use egui_phosphor::regular as icon;
 
-use crate::app::Action;
+use crate::action::Action;
 use crate::tab::RepoTab;
 use crate::ui::theme::{Palette, palette};
 use crate::updater::UpdateState;

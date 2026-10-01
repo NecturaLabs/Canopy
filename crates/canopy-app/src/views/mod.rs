@@ -1,4 +1,4 @@
-//! Screens and panels. Views read tab state and push [`crate::app::Action`]s; they never call git.
+//! Screens and panels. Views read tab state and push [`crate::action::Action`]s; they never call git.
 
 pub mod changes;
 pub mod commit_detail;

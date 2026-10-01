@@ -12,7 +12,7 @@ use egui_phosphor::regular as icon;
 
 use canopy_core::{Choice, ConflictKind, ConflictRegion, Segment, Side};
 
-use crate::app::Action;
+use crate::action::Action;
 use crate::tab::{RepoTab, Resolver};
 use crate::ui::theme::{self, Palette, palette};
 use crate::ui::widgets;

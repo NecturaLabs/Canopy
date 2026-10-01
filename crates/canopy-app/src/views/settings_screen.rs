@@ -9,12 +9,13 @@ use egui_phosphor::regular as icon;
 
 use canopy_core::forge::{Forge, ForgeKind};
 
-use crate::app::{Action, forge_icon};
+use crate::action::Action;
 use crate::hosting::{self, TokenStore};
 use crate::keymap::{BINDINGS, Section as KeySection};
 use crate::settings::{CloneProtocol, PullMode, Settings, WhitespaceMode};
 use crate::ui::theme::{self, Palette, ThemeId, palette};
 use crate::ui::widgets;
+use crate::ui::widgets::forge_icon;
 use crate::updater::{self, UpdateState, Updater};
 
 /// The sections, in order.

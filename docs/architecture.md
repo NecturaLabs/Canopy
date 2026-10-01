@@ -6,7 +6,7 @@ background worker per repository.
 
 ```text
 ┌──────────────────────────── canopy-app ─────────────────────────────┐
-│  main.rs ─▶ CanopyApp (app.rs) ─▶ views/* ─▶ ui/* (theme, widgets)  │
+│  main.rs ─▶ CanopyApp (app/)   ─▶ views/* ─▶ ui/* (theme, widgets)  │
 │                     │  ▲                                            │
 │               Job   │  │  Event        (crossbeam channels)     │
 │                     ▼  │                                            │
@@ -41,7 +41,14 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | Module | Responsibility |
 |---|---|
 | `main.rs` | Argument parsing, logging (`tracing-subscriber`, filter from `CANOPY_LOG` or `RUST_LOG`), eframe launch. |
-| `app.rs` | `CanopyApp`: repository tabs, global shortcuts, dialogs, toasts, command palette. |
+| `action.rs` | `Action`: what the user asked for during a frame. Views emit actions and never import `app`. |
+| `app/mod.rs` | `CanopyApp`: state, start-up, the frame (`eframe::App::ui`), opening repositories, theme. |
+| `app/input.rs` | Keyboard: bare keys, chords and the commands they run. |
+| `app/palette.rs` | The command palette's entries. |
+| `app/dispatch.rs` | Applies the actions a frame collected. |
+| `app/background.rs` | Polled every frame: worker and hosting events, credential prompts, the update check, auto-fetch. |
+| `app/clone.rs`, `app/request_flow.rs` | Cloning on a background thread; creating and checking out pull and merge requests. |
+| `app/screenshot.rs` | Headless screenshots for `--screenshot`. |
 | `worker.rs` | One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced; debounced file watcher. |
 | `highlight.rs` | Diff syntax highlighting (`syntect`) on two shared highlighter threads, cached per file revision; stale requests are abandoned. |
 | `settings.rs` | Settings persisted through eframe storage: theme, recent repositories, UI scale. |
@@ -60,7 +67,9 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `views/changes.rs` | Staging area and commit composer. |
 | `views/diff.rs` | Diff viewer with line numbers and hunk actions; row layout cached per diff. |
 | `views/resolve.rs` | Conflict resolver; off-screen cards skipped by measured height. |
-| `views/dialogs.rs` | Modal dialogs (clone, new branch, confirmations, ...). |
+| `views/dialogs/mod.rs` | `Dialog` and `show`: the modal dialogs (clone, new branch, confirmations, ...). |
+| `views/dialogs/stack.rs` | `DialogStack`: credentials in front, the consent never replaced, a closed prompt always answered. |
+| `views/dialogs/{url,start,credential,common}.rs` | The remote URL builder, where a new branch starts, credential prompts, shared fields and buttons. |
 | `views/statusbar.rs` | Branch, ahead/behind, repository state, running job. |
 
 ## Threading model

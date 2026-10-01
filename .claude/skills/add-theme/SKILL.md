@@ -35,7 +35,7 @@ Add `pub const NAME: Palette = Palette { ... };` next to the others, with every 
 | Mode | `name`, `dark` |
 
 Write colours with `hex(0xRRGGBB)`. Hex literals are allowed here and nowhere else (not in
-`views/`, `ui/widgets.rs`, `app.rs`). Selection, hover and focus colours are derived from these in
+`views/`, `ui/widgets.rs`, `app/`). Selection, hover and focus colours are derived from these in
 `visuals()` and `Palette::selected()`; do not add per-theme special cases there.
 
 ## 3. Register it

@@ -5,7 +5,7 @@ use egui_phosphor::regular as icon;
 
 use canopy_core::{DiffSource, FileEntry};
 
-use crate::app::Action;
+use crate::action::Action;
 use crate::tab::{FileSelection, RepoTab};
 use crate::ui::theme::{self, Palette, palette};
 use crate::ui::{art, widgets};

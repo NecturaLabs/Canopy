@@ -11,7 +11,7 @@ use egui_phosphor::regular as icon;
 use canopy_core::ops::HunkAction;
 use canopy_core::{DiffLine, DiffSource, FileDiff, Hunk, LineKind};
 
-use crate::app::Action;
+use crate::action::Action;
 use crate::highlight::{Highlights, Span, Token};
 use crate::settings::WhitespaceMode;
 use crate::tab::{LineSelection, RepoTab};

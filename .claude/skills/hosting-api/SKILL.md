@@ -68,12 +68,12 @@ token only as `Authorization: Bearer` to the API base of the repository's own ho
 - A link in an API response is data. Open it only through `platform::open_url`, which accepts web
   addresses only.
 
-## 5. The app side (`crates/canopy-app/src/hosting.rs`, `tab.rs`, `app.rs`, `views/requests.rs`)
+## 5. The app side (`crates/canopy-app/src/hosting.rs`, `tab.rs`, `app/`, `views/requests.rs`)
 
 - Add a `HostJob` variant (and, for a result the UI shows, a `HostEvent` variant), handle it in
   `hosting::run` on the per-forge hosting thread, and apply the event in `tab.rs`. Views and
-  `app.rs` only send jobs and render tab state; they never call `Client`.
-- The consent and settings gates are structural: `app.rs` starts the hosting thread
+  `app/` only send jobs and render tab state; they never call `Client`.
+- The consent and settings gates are structural: `app/mod.rs` starts the hosting thread
   (`RepoTab::ensure_host` in `tab.rs`) only after `ui::legal::pending(&settings)` is `None`
   (Terms and Privacy Policy accepted, crash-report question answered) and only while
   `settings.hosting_api` is on. A call outside the `HostWorker` thread would bypass both: do not

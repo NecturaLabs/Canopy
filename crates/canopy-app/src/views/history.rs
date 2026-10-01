@@ -10,10 +10,11 @@ use canopy_core::{GraphRow, LineEnd, Oid, short_id};
 
 use canopy_core::forge::Forge;
 
-use crate::app::{Action, forge_icon};
+use crate::action::Action;
 use crate::settings::Settings;
 use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
+use crate::ui::widgets::forge_icon;
 use crate::ui::{art, widgets};
 use crate::views::{commit_detail, dialogs::Dialog};
 use crate::worker::Op;

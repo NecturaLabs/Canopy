@@ -40,7 +40,7 @@ index or any branch, and never build into `target/` of a build someone else is r
    recover from.
 3. **UI thread never blocks.** No call that runs git or libgit2 (`canopy_core::ops`, `repo`,
    `cli`, `git2`), no `canopy_hosting` call, HTTP, `std::process::Command` or repository file
-   I/O in `views/`, `ui/` or `app.rs` update paths (plain data types and pure helpers such as
+   I/O in `views/`, `ui/` or `app/` update paths (plain data types and pure helpers such as
    `forge` URL building are fine). New work goes through a `Job` and `Event` in `worker.rs`
    (hosting: a `HostJob` in `hosting.rs`). No blocking `recv()` on the UI thread.
 4. **Errors surface.** Failures become toasts with git's own stderr, the libgit2 message or the

@@ -36,12 +36,12 @@ for the edge cases that apply (unborn branch, detached HEAD, conflicts, nothing 
 - The result comes back as an `Event` (`OpStarted`, `Progress`, `OpFinished`) that carries success
   text for the toast or the error. Long CLI jobs send progress lines as they arrive.
 
-Done when: the UI thread only sends the job; nothing in `views/` or `app.rs` calls git.
+Done when: the UI thread only sends the job; nothing in `views/` or `app/` calls git.
 
 ## 3. UI entry points
 
 - Where users expect it: commit or branch context menu, sidebar item menu, toolbar button for
-  frequent operations, and always a command palette entry (`palette_entries` in `app.rs`; the
+  frequent operations, and always a command palette entry (`palette_entries` in `app/palette.rs`; the
   palette widget is `ui/palette.rs`).
 - A shortcut only if the operation is frequent: add it to the table in
   `crates/canopy-app/src/keymap.rs` (`add-keybinding` skill); the cheatsheet and palette hints
@@ -53,7 +53,7 @@ Done when: the UI thread only sends the job; nothing in `views/` or `app.rs` cal
 ## 4. Confirmation
 
 Destructive operations (anything that can lose commits, uncommitted work, refs or stashes, or
-rewrites a remote) open a confirmation dialog in `views/dialogs.rs` before the job is sent. The
+rewrites a remote) open a confirmation dialog in `views/dialogs/mod.rs` before the job is sent. The
 confirm button uses the danger style and names the action ("Delete branch feature/x"). Force push
 always uses `--force-with-lease`.
 

@@ -10,10 +10,11 @@ use canopy_hosting::{
     CheckState, MergeMethod, RequestDetails, RequestState, RequestSummary, StateFilter,
 };
 
-use crate::app::{Action, forge_icon};
+use crate::action::Action;
 use crate::hosting::{HostJob, TokenSource};
 use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
+use crate::ui::widgets::forge_icon;
 use crate::ui::{art, widgets};
 use crate::views::commit_detail;
 use crate::views::dialogs::Dialog;
