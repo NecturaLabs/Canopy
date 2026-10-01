@@ -45,13 +45,27 @@ In order. The UI entries come before accessibility, and accessibility before the
   `HOME`/`XDG_CONFIG_HOME` (they read the developer's global config today). Accept: with
   `pull.rebase=true` in `~/.gitconfig`, `cargo test -p canopy-core` passes, and a regression test
   covers a value only git sees.
-- [ ] **`packaging/test-install.sh` aborts on a dangling link in `/usr/bin`**: `path_without`
-  (line 173) links every entry of `/usr/local/bin`, `/usr/bin` and `/bin` into a folder and skips
-  names already there with `[ -e ]`, which is false for a link whose target is missing. Where
-  `/bin` is `/usr/bin` every entry is visited twice, so the second `ln -s` fails with "File
-  exists" and `set -e` ends the test at "no curl and no wget" (seen on Arch with a dangling
-  `/usr/bin/QtWebEngineProcess6`), and `tools/check.sh` fails with it. Test with `[ -e ] || [ -L ]`.
-  Accept: `sh packaging/test-install.sh` passes on a host with a dangling link in `/usr/bin`.
+- [ ] **Installer test: the two "interrupted install exits 130" checks fail on Arch**: with
+  `/bin/sh` being bash and the test started from a non-interactive shell, the installer started
+  with `&` ignores the SIGINT the test sends, so `packaging/test-install.sh` reports 207 of 209
+  checks (the Linux and macOS interrupt cases) and `tools/check.sh` ends there. Not caused by a
+  recent change (the dangling-link abort that hid it is fixed). Accept: the test passes under
+  dash and bash, started from a script or a terminal, without weakening what it asserts.
+- [ ] **Partial clones: follow-ups from the security pass** (nothing blocking; the independent
+  review is `crates/canopy-core` + `worker.rs` as of `a759615`):
+  - Decision for the owner: `snapshot_completing` (`worker.rs`) runs `git fetch` on open and on
+    every watcher refresh of a treeless clone. Git runs programs named in the repository's own
+    config on a fetch (`remote.<name>.uploadpack`, `core.sshCommand`), so opening a hostile `.git`
+    folder can run one without a click. Plain `git status` does the same; the trigger is what
+    changed. Options: download only on the existing Retry button, or a per-repository trust
+    prompt before the first download. Update the privacy text to match (it says only the
+    commit or file you opened).
+  - Remember a failed download per repository and object until Retry, instead of trying again on
+    every refresh and selected commit; add a timeout (`http.lowSpeedLimit`) so a stalled server
+    cannot hold a tab's worker thread.
+  - `cli::run_with_input` returns "Broken pipe" instead of git's stderr when git exits before
+    reading stdin (handle it as `run_answer` does).
+  Accept: each has a test against a temporary repository; the privacy text matches behaviour.
 - [ ] **Architecture split, rest** (done in `main`: `app/` and `views/dialogs/` modules,
   `action.rs`, typed `OpKind`/`HostAction`, repositories opened and watched off the UI thread):
   shared widgets (inset frame, file header, empty state), native file dialogs off the UI thread,
