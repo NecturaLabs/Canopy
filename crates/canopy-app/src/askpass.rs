@@ -28,6 +28,9 @@ use serde::{Deserialize, Serialize};
 pub const PORT_ENV: &str = "CANOPY_ASKPASS_PORT";
 /// The secret a prompt must present.
 pub const TOKEN_ENV: &str = "CANOPY_ASKPASS_TOKEN";
+/// The variables that turn a Canopy process into a prompt client. Programs Canopy launches for
+/// the user (terminals, editors, the browser) never get them.
+pub const CLIENT_ENV: [&str; 2] = [PORT_ENV, TOKEN_ENV];
 /// Set by OpenSSH: `confirm` for a yes/no approval, `none` for a message without an answer.
 const SSH_MODE_ENV: &str = "SSH_ASKPASS_PROMPT";
 /// Longest request accepted, far above any real prompt.

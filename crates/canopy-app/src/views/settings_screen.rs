@@ -671,19 +671,29 @@ fn accounts(
         );
     }
     ui.add_space(12.0);
-    // Hosts: the two public ones, configured GitLab hosts and those of open repositories.
-    let mut hosts: Vec<(ForgeKind, String)> = vec![
-        (ForgeKind::GitHub, "github.com".into()),
-        (ForgeKind::GitLab, "gitlab.com".into()),
+    // Hosts: the two public ones, configured GitLab hosts and those of open repositories. Tokens
+    // are kept per authority, so a host on a non-default port gets its own entry.
+    let account = |kind, host: &str| Forge {
+        kind,
+        host: host.to_lowercase(),
+        port: None,
+        path: String::new(),
+    };
+    let mut hosts: Vec<Forge> = vec![
+        account(ForgeKind::GitHub, "github.com"),
+        account(ForgeKind::GitLab, "gitlab.com"),
     ];
     for h in settings.gitlab_host_list() {
-        hosts.push((ForgeKind::GitLab, h.to_lowercase()));
+        hosts.push(account(ForgeKind::GitLab, &h));
     }
     for f in forges {
-        hosts.push((f.kind, f.host.clone()));
+        hosts.push(Forge {
+            path: String::new(),
+            ..f.clone()
+        });
     }
     let mut seen = std::collections::HashSet::new();
-    hosts.retain(|(_, h)| seen.insert(h.clone()));
+    hosts.retain(|f| seen.insert(f.authority()));
 
     // Collect finished token tests.
     for test in screen.tests.values_mut() {
@@ -694,7 +704,9 @@ fn accounts(
         }
     }
 
-    for (kind, host) in hosts {
+    for forge in hosts {
+        let kind = forge.kind;
+        let host = forge.authority();
         egui::Frame::new()
             .fill(p.panel)
             .stroke(Stroke::new(1.0, p.border))
@@ -705,8 +717,8 @@ fn accounts(
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(forge_icon(kind)).size(18.0).color(p.text));
                     ui.label(RichText::new(&host).font(FontId::new(14.0, theme::semibold())));
-                    let saved = tokens.get(&host).is_some();
-                    let env = canopy_hosting::token_from_env_for(kind, &host, &settings.gitlab_host_list()).is_some();
+                    let saved = tokens.get_for(&forge).is_some();
+                    let env = canopy_hosting::token_from_env_for(kind, &forge.host, &settings.gitlab_host_list()).is_some();
                     let (status, color) = if saved {
                         (format!("{}  Token saved", icon::CHECK_CIRCLE), p.success)
                     } else if env {
@@ -731,20 +743,18 @@ fn accounts(
                             Ok(()) => {
                                 changed = true;
                                 screen.token_error = None;
-                                let forge = Forge { kind, host: host.clone(), port: None, path: String::new() };
-                                let rx = hosting::test_token(forge, input.trim().to_owned(), ui.ctx().clone());
+                                let rx = hosting::test_token(forge.clone(), input.trim().to_owned(), ui.ctx().clone());
                                 screen.tests.insert(host.clone(), TokenTest::Running(rx));
                                 input.clear();
                             }
                             Err(e) => screen.token_error = Some(format!("Could not save the token: {e}")),
                         }
                     }
-                    if tokens.get(&host).is_some() {
+                    if tokens.get_for(&forge).is_some() {
                         if ui.button(format!("{}  Test", icon::PLUGS)).clicked()
-                            && let Some(t) = tokens.get(&host)
+                            && let Some(t) = tokens.get_for(&forge)
                         {
-                            let forge = Forge { kind, host: host.clone(), port: None, path: String::new() };
-                            let rx = hosting::test_token(forge, t.to_owned(), ui.ctx().clone());
+                            let rx = hosting::test_token(forge.clone(), t.to_owned(), ui.ctx().clone());
                             screen.tests.insert(host.clone(), TokenTest::Running(rx));
                         }
                         if widgets::danger_button(ui, &format!("{}  Remove", icon::TRASH), vec2(0.0, 0.0)).clicked() {

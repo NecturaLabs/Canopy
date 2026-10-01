@@ -15,8 +15,12 @@
 use std::path::Path;
 use std::process::Command;
 
-/// Spawns `cmd` and waits for it on a background thread.
+/// Spawns `cmd` and waits for it on a background thread. The askpass port and token never reach
+/// these programs, even when Canopy itself inherited them.
 fn spawn(mut cmd: Command) -> std::io::Result<()> {
+    for var in crate::askpass::CLIENT_ENV {
+        cmd.env_remove(var);
+    }
     let mut child = cmd.spawn()?;
     let _ = std::thread::Builder::new()
         .name("reap".into())

@@ -6,6 +6,26 @@ All notable changes to Canopy are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- A credential or host-key prompt can no longer be replaced or dropped by another dialog; dialogs
+  queue behind it, and Escape on a host-key question answers "no".
+- Crash reports also scrub credentials in every URL, GitHub and GitLab token patterns, `Bearer`
+  values, and home folders only at whole-path boundaries.
+- Saved hosting tokens are kept per host and port, so a GitLab instance on another port no longer
+  shares a token with the default one.
+- Programs Canopy opens (terminal, editor, browser) never inherit the credential prompt's secret.
+
+### Fixed
+
+- Secondary and faint text, links, status colours and graph lanes are readable on every surface
+  in all seven themes (WCAG AA; body text AAA).
+- After accepting the Privacy Policy and Terms on first run, start-up notices and the update
+  check now start without a restart.
+- `~` in clone and init destinations and opened paths expands to the home folder.
+- A repository, clone or update thread that fails to start reports an error instead of loading
+  forever.
+
 ## [0.1.0] - 2026-10-01
 
 ### Added
