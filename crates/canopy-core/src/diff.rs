@@ -79,6 +79,8 @@ pub struct FileDiff {
     pub additions: usize,
     /// Lines removed.
     pub deletions: usize,
+    /// The path is a submodule on either side: the commits it moved between.
+    pub submodule: Option<crate::submodule::SubmoduleChange>,
 }
 
 impl FileDiff {

@@ -2,8 +2,8 @@
 
 use git2::{Repository, Status, StatusOptions};
 
-use crate::Result;
 use crate::model::{ChangeKind, FileEntry, WorkingStatus};
+use crate::{Result, lfs};
 
 fn entry(path: String, old_path: Option<String>, kind: ChangeKind) -> FileEntry {
     FileEntry {
@@ -12,6 +12,7 @@ fn entry(path: String, old_path: Option<String>, kind: ChangeKind) -> FileEntry 
         kind,
         additions: 0,
         deletions: 0,
+        lfs: false,
     }
 }
 
@@ -89,5 +90,6 @@ pub fn collect(repo: &Repository) -> Result<WorkingStatus> {
     for list in [&mut out.staged, &mut out.unstaged, &mut out.conflicted] {
         list.sort_by(|a, b| a.path.cmp(&b.path));
     }
+    lfs::mark(repo, &mut out);
     Ok(out)
 }

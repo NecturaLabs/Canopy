@@ -382,6 +382,7 @@ impl Repo {
                 None => (0, 0),
             };
             files.push(FileEntry {
+                lfs: crate::lfs::is_lfs(&self.git, Path::new(&path)),
                 path,
                 old_path,
                 kind,
@@ -445,7 +446,9 @@ impl Repo {
         whitespace: Whitespace,
     ) -> Result<FileDiff> {
         let d = self.raw_diff(source, path, old_path, context, whitespace)?;
-        diff::to_file_diff(&d, path)
+        let mut out = diff::to_file_diff(&d, path)?;
+        out.submodule = crate::submodule::change_in(self, &d);
+        Ok(out)
     }
 
     /// The working copy of a conflicted file, every line as context, so conflict markers show.

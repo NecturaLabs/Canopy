@@ -14,13 +14,17 @@ pub mod cli;
 pub mod conflict;
 pub mod diff;
 mod error;
+pub mod flow;
 pub mod forge;
 pub mod graph;
+pub mod lfs;
 mod lines;
+mod merged;
 pub mod model;
 pub mod ops;
 pub mod repo;
 pub mod status;
+pub mod submodule;
 pub mod update;
 
 pub use conflict::{
@@ -28,10 +32,14 @@ pub use conflict::{
 };
 pub use diff::{DiffLine, DiffSource, FileDiff, Hunk, HunkKey, LineKind, Whitespace};
 pub use error::{Error, Result};
+pub use flow::{FlowConfig, FlowFinish, FlowKind};
 pub use forge::{Forge, ForgeKind};
 pub use git2::Oid;
 // `Segment` at the crate root is the conflict-file segment; the graph's is `GraphSegment`.
 pub use graph::{GraphRow, LineEnd, Segment as GraphSegment};
+pub use lfs::{LfsFile, LfsPointer};
+pub use merged::{MergedBranch, MergedReason};
 pub use model::*;
 pub use ops::{HunkAction, MergeMode, PullStrategy, ResetMode};
 pub use repo::Repo;
+pub use submodule::{SubmoduleChange, SubmoduleInfo, SubmoduleState};
