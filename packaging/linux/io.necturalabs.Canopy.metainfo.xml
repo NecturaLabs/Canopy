@@ -48,6 +48,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.2.1-beta.1" date="2026-10-01" type="development">
+      <description>
+        <p>GitHub and GitLab (self-hosted GitLab included): forge icons on remotes, "Open on" links for Local-only repositories show a "local only" badge, and Publish adds a remote and pushes. The Seven themes (Midnight, Daylight, Aurora, Ember, Neon, Forest and Paper), interface zoom, reduced A keyboard map in one table: palette, a searchable cheatsheet (? or Ctrl+/), vim motions and</p>
+      </description>
+    </release>
     <release version="0.2.0-beta.1" date="2026-10-01" type="development">
       <description>
         <p>GitHub and GitLab (self-hosted GitLab included): forge icons on remotes, "Open on" links for Local-only repositories show a "local only" badge, and Publish adds a remote and pushes. The Seven themes (Midnight, Daylight, Aurora, Ember, Neon, Forest and Paper), interface zoom, reduced A keyboard map in one table: palette, a searchable cheatsheet (? or Ctrl+/), vim motions and</p>
