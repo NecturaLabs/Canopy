@@ -38,7 +38,7 @@ jobs:
   # A push or pull request that changes only documentation (docs/ other than docs/legal/, and
   # Markdown other than CHANGELOG.md, both of which the app embeds) skips the Rust jobs. The
   # run still exists and passes, which is what a release checks for. When the changed files
-  # cannot be listed (a new branch, an unknown base), everything runs.
+  # cannot be listed (no passing run on the branch yet), everything runs.
   changes:
     name: What changed
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
@@ -51,10 +51,17 @@ jobs:
       - id: diff
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
           HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           code=true
+          # A push is compared with the last commit CI passed on this branch, not only with the
+          # previous push, whose run may have been cancelled before it tested anything.
+          if [[ -z $BASE ]]; then
+            BASE=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=$BRANCH&event=push&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha // ""' || true)
+          fi
           if [[ -n $BASE && ! $BASE =~ ^0+$ ]] \
             && files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD" --jq '.files[].filename'); then
             count=$(grep -c . <<<"$files" || true)
