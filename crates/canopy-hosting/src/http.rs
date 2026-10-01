@@ -47,13 +47,32 @@ pub(crate) struct Http {
     token: Option<String>,
 }
 
+/// Never prints the token, nor credentials embedded in the API root (see [`redact_userinfo`]).
 impl fmt::Debug for Http {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Http")
             .field("kind", &self.kind)
-            .field("base", &self.base)
+            .field("base", &redact_userinfo(&self.base))
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
             .finish_non_exhaustive()
+    }
+}
+
+/// `url` with any credentials in its authority replaced: `https://user:secret@host/x` becomes
+/// `https://<redacted>@host/x`. For `Debug` output and logs of a user-supplied API root.
+pub(crate) fn redact_userinfo(url: &str) -> String {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((scheme, rest)) => (Some(scheme), rest),
+        None => (None, url),
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let Some((_, host)) = authority.rsplit_once('@') else {
+        return url.to_owned();
+    };
+    match scheme {
+        Some(scheme) => format!("{scheme}://<redacted>@{host}{tail}"),
+        None => format!("<redacted>@{host}{tail}"),
     }
 }
 
@@ -361,6 +380,24 @@ mod tests {
         assert_eq!(encode("group/sub/project"), "group%2Fsub%2Fproject");
         assert_eq!(encode("a.b_c-d~e"), "a.b_c-d~e");
         assert_eq!(encode("x y+z"), "x%20y%2Bz");
+    }
+
+    #[test]
+    fn redacts_credentials_in_urls() {
+        let cases = [
+            ("https://gitlab.corp/api/v4", "https://gitlab.corp/api/v4"),
+            (
+                "https://oauth2:glpat-x@gitlab.corp:8443/api/v4",
+                "https://<redacted>@gitlab.corp:8443/api/v4",
+            ),
+            ("https://tok@host", "https://<redacted>@host"),
+            ("https://a@b:c@host/p@q", "https://<redacted>@host/p@q"),
+            ("http://host/path@x", "http://host/path@x"),
+            ("user:pw@host/x", "<redacted>@host/x"),
+        ];
+        for (url, want) in cases {
+            assert_eq!(redact_userinfo(url), want, "{url}");
+        }
     }
 
     #[test]

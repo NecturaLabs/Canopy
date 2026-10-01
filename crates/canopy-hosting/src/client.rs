@@ -5,7 +5,7 @@ use std::fmt;
 use canopy_core::forge::{Forge, ForgeKind};
 
 use crate::error::Result;
-use crate::http::Http;
+use crate::http::{Http, redact_userinfo};
 use crate::model::{MergeMethod, NewRequest, RequestDetails, RequestSummary, StateFilter};
 use crate::{github, gitlab};
 
@@ -42,7 +42,8 @@ pub(crate) fn optional<T>(what: &str, result: Result<T>) -> Option<T> {
 ///
 /// Every call is a synchronous HTTPS round trip (10 s to connect, 30 s in total), meant for a
 /// background thread. The token is sent only as an `Authorization: Bearer` header to the API of
-/// the project's own host, never in a URL, a log line or this type's `Debug` output.
+/// the project's own host, never in a URL, a log line or this type's `Debug` output (which also
+/// hides credentials embedded in a configured API root).
 pub struct Client {
     http: Http,
     kind: ForgeKind,
@@ -54,7 +55,7 @@ impl fmt::Debug for Client {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Client")
             .field("kind", &self.kind)
-            .field("api_base", &self.http.base())
+            .field("api_base", &redact_userinfo(self.http.base()))
             .field("project", &self.project)
             .field("has_token", &self.http.has_token())
             .finish()
@@ -252,6 +253,20 @@ mod tests {
         assert!(!dbg.contains("glpat-secret123"), "{dbg}");
         assert!(dbg.contains("has_token: true"), "{dbg}");
         assert!(dbg.contains("g%2Fr"), "{dbg}");
+
+        // Neither the client nor its HTTP layer prints a token, even one embedded in an API
+        // root the user configured, or one with surrounding whitespace.
+        let c = Client::with_api_base(
+            &forge(ForgeKind::GitLab, "gitlab.corp", "g/r"),
+            Some("  glpat-secret456\n".into()),
+            "https://oauth2:glpat-inurl789@gitlab.corp:8443/api/v4",
+        );
+        for dbg in [format!("{c:?}"), format!("{c:#?}"), format!("{:?}", c.http)] {
+            for secret in ["glpat-secret456", "glpat-inurl789", "oauth2"] {
+                assert!(!dbg.contains(secret), "{secret} in {dbg}");
+            }
+            assert!(dbg.contains("gitlab.corp:8443/api/v4"), "{dbg}");
+        }
     }
 
     #[test]
