@@ -67,8 +67,8 @@ token anywhere new, contacting a new host or adding a dependency.
 
 ## Workflow
 
-- `docs/backlog.md` is the task board: take entries from the top of "Now" down, and tick one only
-  when verified in the running app, not when the code compiles.
+- `docs/backlog.md` is the task board, one short line per open task: take them from the top of
+  "Now" down, and delete one only when verified in the running app, not when the code compiles.
 - Any change to what the UI shows needs a screenshot check (`screenshot` skill), dark and light
   where colours are involved; unit tests cannot see layout or colour.
 - Recipes to follow end to end: `add-git-operation`, `hosting-api`, `add-theme`, `add-keybinding`.
