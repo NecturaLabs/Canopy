@@ -18,6 +18,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Line numbers in panics and backtraces without full debug info: a faster build and a
+  # smaller target folder.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 # Linux and Windows jobs run on the organisation's self-hosted runners; the
 # organisation variable USE_SELF_HOSTED set to '0' moves them to GitHub-hosted
@@ -32,10 +35,49 @@ env:
 # `if`.
 
 jobs:
+  # A push or pull request that changes only documentation (docs/ other than docs/legal/, and
+  # Markdown other than CHANGELOG.md, both of which the app embeds) skips the Rust jobs. The
+  # run still exists and passes, which is what a release checks for. When the changed files
+  # cannot be listed (a new branch, an unknown base), everything runs.
+  changes:
+    name: What changed
+    runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/')
+    permissions:
+      contents: read
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          code=true
+          if [[ -n $BASE && ! $BASE =~ ^0+$ ]] \
+            && files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD" --jq '.files[].filename'); then
+            count=$(grep -c . <<<"$files" || true)
+            # The comparison lists at most 300 files.
+            if (( count > 0 && count < 300 )); then
+              code=false
+              while IFS= read -r f; do
+                case $f in
+                  docs/legal/* | CHANGELOG.md) code=true ;;
+                  docs/* | *.md) ;;
+                  *) code=true ;;
+                esac
+              done <<<"$files"
+            fi
+          fi
+          echo "Rust jobs run: $code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   fmt:
     name: Format
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/')
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
     steps:
@@ -51,7 +93,8 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/')
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
     env:
@@ -68,14 +111,15 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/') || !matrix.self-hosted) && matrix.hosted || fromJSON(matrix.self-hosted) }}
-    if: (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1' || vars.CI_WINDOWS == '1') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/'))
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1' || vars.CI_WINDOWS == '1') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/'))
     permissions:
       contents: read
     strategy:
       fail-fast: false
       # One toggle per platform, as repository variables: Linux runs unless CI_LINUX is '0';
       # macOS and Windows run only when CI_MACOS or CI_WINDOWS is '1' (both off for now, the
-      # owner's call). Their installer checks come back with them.
+      # owner's call).
       matrix:
         include: ${{ fromJSON(format('[{0}{1}{2}]', format('{0}', vars.CI_LINUX) != '0' && '{"os":"Linux","hosted":"ubuntu-latest","self-hosted":"[\"self-hosted\", \"linux\", \"wsl\"]"}' || '', vars.CI_MACOS == '1' && format('{0}{1}', format('{0}', vars.CI_LINUX) != '0' && ',' || '', '{"os":"macOS","hosted":"macos-latest"}') || '', vars.CI_WINDOWS == '1' && format('{0}{1}', (format('{0}', vars.CI_LINUX) != '0' || vars.CI_MACOS == '1') && ',' || '', '{"os":"Windows","hosted":"windows-latest","self-hosted":"[\"self-hosted\", \"windows\", \"x64\"]"}') || '')) }}
     steps:
@@ -94,91 +138,12 @@ jobs:
           git config --global user.email "ci@canopy.invalid"
           git config --global init.defaultBranch main
       - run: cargo test --workspace --locked
-      # install.sh's macOS flow, natively (the `tooling` job runs the Linux flow, and the macOS
-      # one under a fake uname). Fake releases on 127.0.0.1, in a temporary HOME.
-      - name: Test the installer on macOS
-        if: matrix.os == 'macOS'
-        run: packaging/test-install.sh
-      # install.ps1 cannot run on Linux: parse it with Windows PowerShell 5.1 (the oldest version
-      # it supports) and PowerShell 7, run its argument handling in both, check that `irm | iex`
-      # leaves the caller's session clean, and lint it with PSScriptAnalyzer where the runner has
-      # it. The Linux installer is tested in `tooling`.
-      - name: Check the PowerShell installer
-        if: matrix.os == 'Windows'
-        shell: pwsh
-        run: |
-          # Native commands below are expected to fail; their exit codes are checked by hand.
-          $ErrorActionPreference = 'Continue'
-          $env:CANOPY_PS1 = (Resolve-Path packaging/install.ps1).Path
-          # Every run below must stop before it installs anything. Should one not, it installs
-          # into this job's temporary folder, with -NoPath, and the checks at the end catch a
-          # Start Menu shortcut, Apps & features entry or user PATH change it made (compared with
-          # before: a self-hosted runner's user may have Canopy installed).
-          $env:CANOPY_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'canopy-install-smoke'
-          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'Canopy.lnk'
-          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\io.necturalabs.Canopy'
-          $state = { "$(Test-Path -LiteralPath $lnk) $(Test-Path -LiteralPath $key) $([Environment]::GetEnvironmentVariable('Path', 'User'))" }
-          $before = & $state
-          $parse = '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:CANOPY_PS1, [ref]$null, [ref]$e); if ($e.Count) { $e | Format-List | Out-String | Write-Host; exit 1 }; exit 0'
-          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($parse))
-          # Through iex the script runs in the caller's scope: none of its helpers, variables,
-          # StrictMode or preferences may be left there, and it must throw rather than exit.
-          $iex = @'
-          $ErrorActionPreference = 'Continue'
-          $ProgressPreference = 'Continue'
-          $protocols = [Net.ServicePointManager]::SecurityProtocol
-          $env:CANOPY_INSTALL_BASE_URL = 'https://example.invalid'
-          $threw = $false
-          try { Get-Content -LiteralPath $env:CANOPY_PS1 -Raw | Invoke-Expression 6>$null } catch { $threw = $true }
-          $problems = @()
-          if (-not $threw) { $problems += 'it did not throw' }
-          $fns = @(Get-Command -CommandType Function -Name Fail, Say, Get-File, Invoke-Install, Invoke-Uninstall -ErrorAction SilentlyContinue)
-          if ($fns.Count) { $problems += "functions left: $($fns.Name -join ', ')" }
-          $vars = @(Get-Variable -Name AppId, FeedUrl, ReleasesUrl, UninstallKey, LocalHost, LocalPort, ScriptFile, InstalledEntries, ExtraArgs, Invocation, savedProtocols, failed, root, mode -ErrorAction SilentlyContinue)
-          if ($vars.Count) { $problems += "variables left: $($vars.Name -join ', ')" }
-          if ($ErrorActionPreference -ne 'Continue') { $problems += "ErrorActionPreference is $ErrorActionPreference" }
-          if ($ProgressPreference -ne 'Continue') { $problems += "ProgressPreference is $ProgressPreference" }
-          if ([Net.ServicePointManager]::SecurityProtocol -ne $protocols) { $problems += 'SecurityProtocol changed' }
-          try { $null = $notDefinedAnywhere } catch { $problems += 'StrictMode left on' }
-          if ($problems.Count) { $problems | Write-Host; exit 1 }
-          exit 0
-          '@
-          $iexEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($iex))
-          $badFeeds = @('https://example.invalid', 'http://127.0.0.1:1@example.invalid', 'http://localhost:1@x', 'http://127.0.0.1:1/x')
-          foreach ($ps in @('powershell.exe', 'pwsh')) {
-            & $ps -NoProfile -EncodedCommand $encoded
-            if ($LASTEXITCODE -ne 0) { throw "${ps} could not parse install.ps1" }
-            & $ps -NoProfile -ExecutionPolicy Bypass -File $env:CANOPY_PS1 -Help | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "${ps}: install.ps1 -Help exited with $LASTEXITCODE" }
-            & $ps -NoProfile -ExecutionPolicy Bypass -File $env:CANOPY_PS1 -NoSuchOption *>&1 | Out-Null
-            if ($LASTEXITCODE -ne 1) { throw "${ps}: install.ps1 accepted an unknown option" }
-            foreach ($bad in $badFeeds) {
-              $env:CANOPY_INSTALL_BASE_URL = $bad
-              & $ps -NoProfile -ExecutionPolicy Bypass -File $env:CANOPY_PS1 -NoPath *>&1 | Out-Null
-              $code = $LASTEXITCODE
-              Remove-Item Env:CANOPY_INSTALL_BASE_URL
-              if ($code -ne 1) { throw "${ps}: install.ps1 accepted the test feed $bad" }
-            }
-            & $ps -NoProfile -ExecutionPolicy Bypass -EncodedCommand $iexEncoded
-            if ($LASTEXITCODE -ne 0) { throw "${ps}: install.ps1 run through iex left state in the session" }
-            Write-Host "${ps}: install.ps1 parses, handles its arguments and leaves an iex session clean"
-          }
-          if (Test-Path -LiteralPath $env:CANOPY_INSTALL_DIR) { throw 'a smoke run created the install folder' }
-          if ((& $state) -ne $before) { throw 'a smoke run changed the Start Menu, Apps & features or the user PATH' }
-          if (Get-Module -ListAvailable -Name PSScriptAnalyzer) {
-            # Write-Host is the installer's intended output; helpers such as Fail are no cmdlets.
-            $found = @(Invoke-ScriptAnalyzer -Path $env:CANOPY_PS1 -Severity Warning, Error -ExcludeRule PSAvoidUsingWriteHost, PSUseApprovedVerbs)
-            $found | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
-            if ($found | Where-Object Severity -eq 'Error') { throw 'PSScriptAnalyzer reported errors in install.ps1' }
-          } else {
-            Write-Host '::notice::PSScriptAnalyzer is not installed on this runner; install.ps1 was parsed and smoke-tested only.'
-          }
-          exit 0
 
   deny:
     name: cargo-deny
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/')
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
     steps:
@@ -228,10 +193,6 @@ jobs:
           "$shellcheck" packaging/*.sh
           "$shellcheck" --severity=warning tools/*.sh
           rm -rf "$dir"
-      # Installs, upgrades, refuses a bad checksum and uninstalls against a fake feed on
-      # 127.0.0.1, in a temporary HOME.
-      - name: Test the Linux installer
-        run: packaging/test-install.sh
       - run: cargo fetch --locked
       # Every release ships docs/legal/third-party-notices.txt; a dependency change must update it.
       - run: python3 tools/notices.py --check

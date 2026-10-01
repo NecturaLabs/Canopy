@@ -20,7 +20,9 @@ inputs:
     required: false
     default: ""
   cache:
-    description: Restore and save the build cache with Swatinem/rust-cache (ignored when isolated)
+    description: >-
+      Keep a build cache (ignored when isolated): a per-job target folder on
+      self-hosted runners, Swatinem/rust-cache on GitHub-hosted ones
     required: false
     default: "true"
   cache-key:
@@ -50,6 +52,8 @@ runs:
       shell: bash
       env:
         ISOLATED: ${{ inputs.isolated }}
+        CACHE: ${{ inputs.cache }}
+        TARGET_NAME: ${{ github.job }}${{ inputs.cache-key != '' && format('-{0}', inputs.cache-key) || '' }}
         RUSTUP_INIT_SKIP_PATH_CHECK: "yes"
       run: |
         set -euo pipefail
@@ -68,6 +72,18 @@ runs:
         echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
         echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
         echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+        # A self-hosted runner keeps its disk between jobs, so the build cache is a target
+        # folder of its own per job in its tool cache, outside the workspace that checkout
+        # cleans, instead of an archive sent to GitHub's cache and back after every job. One
+        # runner runs one job at a time; a folder past 15 GB is started afresh.
+        if [[ $ISOLATED != true && $CACHE == true ]]; then
+          target="$RUNNER_TOOL_CACHE/canopy-target/$TARGET_NAME"
+          if [[ -d $target ]] && (( $(du -sm "$target" | cut -f1) > 15360 )); then
+            rm -rf "$target"
+          fi
+          mkdir -p "$target"
+          echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
+        fi
 
     # The machine-wide rustup in the service account's profile is already on
     # PATH, so this runner's own one is installed here too: dtolnay/rust-toolchain
@@ -78,6 +94,8 @@ runs:
       env:
         ISOLATED: ${{ inputs.isolated }}
         SELF_HOSTED: ${{ runner.environment == 'self-hosted' }}
+        CACHE: ${{ inputs.cache }}
+        TARGET_NAME: ${{ github.job }}${{ inputs.cache-key != '' && format('-{0}', inputs.cache-key) || '' }}
         RUSTUP_INIT_SKIP_PATH_CHECK: "yes"
       run: |
         $ErrorActionPreference = 'Stop'
@@ -105,6 +123,16 @@ runs:
           $git | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
         }
         $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        # The same per-job target folder as on Linux (see there).
+        if ($env:ISOLATED -ne 'true' -and $env:CACHE -eq 'true' -and $env:SELF_HOSTED -eq 'true') {
+          $target = Join-Path (Join-Path $env:RUNNER_TOOL_CACHE 'canopy-target') $env:TARGET_NAME
+          if (Test-Path $target) {
+            $bytes = (Get-ChildItem -Recurse -File -Force $target | Measure-Object -Sum Length).Sum
+            if ($bytes -gt 15GB) { Remove-Item -Recurse -Force $target }
+          }
+          New-Item -ItemType Directory -Force $target | Out-Null
+          "CARGO_TARGET_DIR=$target" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        }
 
     # The toolchain comes from rust-toolchain.toml, so CI and releases build with
     # the toolchain the repository names rather than whatever this action defaults to.
@@ -129,6 +157,7 @@ runs:
         targets: ${{ inputs.targets }}
 
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      if: inputs.cache == 'true' && inputs.isolated != 'true'
+      # GitHub-hosted runners only; self-hosted ones keep a target folder (above).
+      if: inputs.cache == 'true' && inputs.isolated != 'true' && runner.environment != 'self-hosted'
       with:
         key: ${{ inputs.cache-key }}

@@ -7,7 +7,7 @@ besides the binary lives here and in `assets/`.
 |---|---|
 | `install.sh` | One-line installer for Linux and macOS (POSIX `sh`). Published as `canopy/install.sh` in NecturaLabs/app-updates. |
 | `install.ps1` | One-line installer for Windows (Windows PowerShell 5.1 and PowerShell 7). Published as `canopy/install.ps1`. |
-| `test-install.sh` | End-to-end test of `install.sh` against a fake feed on 127.0.0.1 in a temporary `HOME`, on Linux and macOS (CI: the `tooling` job and the macOS test job). |
+| `test-install.sh` | End-to-end test of `install.sh` against a fake feed on 127.0.0.1 in a temporary `HOME`, on Linux and macOS (run by `tools/check.sh`; not in CI). |
 | `linux/io.necturalabs.Canopy.desktop` | freedesktop.org desktop entry. The app ID, the icon name and `StartupWMClass` are all `io.necturalabs.Canopy`, which must match the Wayland app ID / X11 `WM_CLASS` the binary sets. The installer rewrites `Exec=` to the absolute path of the installed binary. |
 | `linux/io.necturalabs.Canopy.metainfo.xml` | AppStream metadata for software centres. Add a `<release>` entry for every version. |
 | `macos/Info.plist` | `Info.plist` of `Canopy.app` (bundle id `io.necturalabs.Canopy`); the release fills in `@VERSION@` and `@BUNDLE_VERSION@`. |
@@ -141,8 +141,8 @@ A new folder, or a new name, needs the same change in both scripts and in this t
 test-only `CANOPY_INSTALL_BASE_URL`. The scripts accept that only as `http://127.0.0.1:<port>`
 or `http://localhost:<port>` with at most a trailing `/` (so not `http://127.0.0.1:1@elsewhere`),
 and then allow plain HTTP to exactly that base. On Linux it runs the Linux flow and then the
-macOS flow under a fake `uname`; on macOS it runs the macOS flow natively (CI does both; `tools/check.sh`
-runs it on either). It covers install, reinstall, upgrade, checksum and tampering refusal, a
+macOS flow under a fake `uname`; on macOS it runs the macOS flow natively (`tools/check.sh`
+runs it on either; CI does not). It covers install, reinstall, upgrade, checksum and tampering refusal, a
 manifest URL outside Canopy's releases, `--version` (and a version spanning two lines), `--beta`
 and the refusal to downgrade from it, a missing platform, `--no-path`, a foreign
 `~/.local/bin/canopy`, a foreign or symlinked desktop entry and icons, malformed test feeds, no
