@@ -7,13 +7,46 @@
 //! choice.
 //!
 //! Commands never wait for a terminal: `GIT_TERMINAL_PROMPT=0` makes a missing credential an error
-//! instead of a hang, and `GIT_EDITOR=true` accepts default messages for `--continue`.
+//! instead of a hang, and `GIT_EDITOR=true` accepts default messages for `--continue`. When the
+//! application registers an [`Askpass`] program with [`set_askpass`], git and OpenSSH ask it for
+//! credentials instead; git consults `GIT_ASKPASS` before it checks `GIT_TERMINAL_PROMPT`.
 
+use std::ffi::OsStr;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{OnceLock, PoisonError, RwLock};
 
 use crate::{Error, Result};
+
+/// A credential prompt program that git and OpenSSH run instead of asking on a terminal.
+///
+/// Git runs it as `program <prompt>` and reads the answer from its standard output
+/// (`GIT_ASKPASS`); OpenSSH does the same for passphrases and host-key questions
+/// (`SSH_ASKPASS` with `SSH_ASKPASS_REQUIRE=force`, OpenSSH 8.4 or later).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Askpass {
+    /// The executable to run.
+    pub program: PathBuf,
+    /// Extra environment for it (for example how to reach the application), set on every git
+    /// command.
+    pub env: Vec<(String, String)>,
+}
+
+fn askpass_slot() -> &'static RwLock<Option<Askpass>> {
+    static SLOT: OnceLock<RwLock<Option<Askpass>>> = OnceLock::new();
+    SLOT.get_or_init(|| RwLock::new(None))
+}
+
+/// Registers the credential prompt used by every later [`command`], process-wide; `None` turns
+/// it off. A `GIT_ASKPASS`, `SSH_ASKPASS` or `SSH_ASKPASS_REQUIRE` the user already set in the
+/// environment wins over it; the extra `env` pairs are always set.
+pub fn set_askpass(askpass: Option<Askpass>) {
+    let mut slot = askpass_slot()
+        .write()
+        .unwrap_or_else(PoisonError::into_inner);
+    *slot = askpass;
+}
 
 /// Builds a `git` command for `workdir` with a non-interactive environment.
 pub fn command(workdir: Option<&Path>) -> Command {
@@ -21,10 +54,8 @@ pub fn command(workdir: Option<&Path>) -> Command {
     if let Some(dir) = workdir {
         cmd.current_dir(dir);
     }
-    cmd.env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_EDITOR", "true")
-        .env("GIT_MERGE_AUTOEDIT", "no")
-        .stdin(Stdio::null());
+    apply_env(&mut cmd);
+    cmd.stdin(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -32,6 +63,47 @@ pub fn command(workdir: Option<&Path>) -> Command {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     cmd
+}
+
+/// Sets the non-interactive environment, and the registered [`Askpass`] if any, on `cmd`.
+pub(crate) fn apply_env(cmd: &mut Command) {
+    cmd.env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_EDITOR", "true")
+        .env("GIT_MERGE_AUTOEDIT", "no");
+    let slot = askpass_slot()
+        .read()
+        .unwrap_or_else(PoisonError::into_inner);
+    let Some(askpass) = slot.as_ref() else {
+        return;
+    };
+    if !is_set(cmd, "GIT_ASKPASS") {
+        cmd.env("GIT_ASKPASS", &askpass.program);
+    }
+    if !is_set(cmd, "SSH_ASKPASS") {
+        cmd.env("SSH_ASKPASS", &askpass.program);
+        if !is_set(cmd, "SSH_ASKPASS_REQUIRE") {
+            cmd.env("SSH_ASKPASS_REQUIRE", "force");
+        }
+    }
+    for (key, value) in &askpass.env {
+        cmd.env(key, value);
+    }
+}
+
+/// Whether `key` reaches the child: set on `cmd` itself, or inherited and not removed from it.
+fn is_set(cmd: &Command, key: &str) -> bool {
+    // Windows environment names are case-insensitive.
+    let same = |k: &OsStr| {
+        if cfg!(windows) {
+            k.eq_ignore_ascii_case(key)
+        } else {
+            k == OsStr::new(key)
+        }
+    };
+    match cmd.get_envs().find(|(k, _)| same(k)) {
+        Some((_, value)) => value.is_some(),
+        None => std::env::var_os(key).is_some(),
+    }
 }
 
 fn subcommand(args: &[&str]) -> String {
@@ -194,5 +266,172 @@ mod tests {
         })
         .expect("init");
         assert!(dir.path().join("streamed/.git").is_dir());
+    }
+
+    /// Serialises the tests that change the process-wide hook and turns it off afterwards, even
+    /// when the test panics.
+    struct HookGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl HookGuard {
+        fn set(askpass: Option<Askpass>) -> Self {
+            static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let lock = LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+            set_askpass(askpass);
+            Self { _lock: lock }
+        }
+    }
+
+    impl Drop for HookGuard {
+        fn drop(&mut self) {
+            set_askpass(None);
+        }
+    }
+
+    fn askpass(program: &str) -> Askpass {
+        Askpass {
+            program: PathBuf::from(program),
+            env: vec![("CANOPY_ASKPASS_TOKEN".into(), "42".into())],
+        }
+    }
+
+    /// A command as the user's environment might hand it to us: `inherited` pairs set, the
+    /// askpass variables otherwise absent whatever the test runner's environment holds.
+    fn user_command(inherited: &[(&str, &str)]) -> Command {
+        let mut cmd = Command::new("git");
+        for key in ["GIT_ASKPASS", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"] {
+            cmd.env_remove(key);
+        }
+        for (k, v) in inherited {
+            cmd.env(k, v);
+        }
+        apply_env(&mut cmd);
+        cmd
+    }
+
+    fn env_of(cmd: &Command, key: &str) -> Option<String> {
+        cmd.get_envs()
+            .find(|(k, _)| *k == OsStr::new(key))
+            .and_then(|(_, v)| v)
+            .map(|v| v.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn askpass_sets_git_and_ssh_variables() {
+        let _hook = HookGuard::set(Some(askpass("/opt/canopy")));
+        let cmd = user_command(&[]);
+        assert_eq!(env_of(&cmd, "GIT_ASKPASS").as_deref(), Some("/opt/canopy"));
+        assert_eq!(env_of(&cmd, "SSH_ASKPASS").as_deref(), Some("/opt/canopy"));
+        assert_eq!(
+            env_of(&cmd, "SSH_ASKPASS_REQUIRE").as_deref(),
+            Some("force")
+        );
+        assert_eq!(env_of(&cmd, "CANOPY_ASKPASS_TOKEN").as_deref(), Some("42"));
+        assert_eq!(env_of(&cmd, "GIT_TERMINAL_PROMPT").as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn askpass_respects_the_users_own_programs() {
+        let _hook = HookGuard::set(Some(askpass("/opt/canopy")));
+        let cmd = user_command(&[("GIT_ASKPASS", "/usr/bin/mine")]);
+        assert_eq!(
+            env_of(&cmd, "GIT_ASKPASS").as_deref(),
+            Some("/usr/bin/mine")
+        );
+        assert_eq!(env_of(&cmd, "SSH_ASKPASS").as_deref(), Some("/opt/canopy"));
+
+        let cmd = user_command(&[
+            ("SSH_ASKPASS", "/usr/bin/ksshaskpass"),
+            ("SSH_ASKPASS_REQUIRE", "prefer"),
+        ]);
+        assert_eq!(env_of(&cmd, "GIT_ASKPASS").as_deref(), Some("/opt/canopy"));
+        assert_eq!(
+            env_of(&cmd, "SSH_ASKPASS").as_deref(),
+            Some("/usr/bin/ksshaskpass")
+        );
+        assert_eq!(
+            env_of(&cmd, "SSH_ASKPASS_REQUIRE").as_deref(),
+            Some("prefer")
+        );
+        assert_eq!(env_of(&cmd, "CANOPY_ASKPASS_TOKEN").as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn no_askpass_leaves_the_environment_alone() {
+        let _hook = HookGuard::set(None);
+        let cmd = user_command(&[]);
+        for key in ["GIT_ASKPASS", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"] {
+            assert_eq!(env_of(&cmd, key), None, "{key}");
+        }
+        assert_eq!(env_of(&cmd, "CANOPY_ASKPASS_TOKEN"), None);
+    }
+
+    #[test]
+    fn askpass_survives_a_poisoned_lock() {
+        let _hook = HookGuard::set(None);
+        let _ = std::thread::spawn(|| {
+            let _held = askpass_slot().write();
+            panic!("poison the askpass lock");
+        })
+        .join();
+        assert!(askpass_slot().is_poisoned());
+        set_askpass(Some(askpass("/opt/canopy")));
+        let cmd = user_command(&[]);
+        assert_eq!(env_of(&cmd, "GIT_ASKPASS").as_deref(), Some("/opt/canopy"));
+        askpass_slot().clear_poison();
+    }
+
+    /// Git asks the registered program for a username and password although terminal prompts are
+    /// off, and the program sees the extra environment.
+    #[cfg(unix)]
+    #[test]
+    fn git_reads_credentials_from_the_askpass_program() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("askpass.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\ncase \"$1\" in\n  Username*) echo ada ;;\n  *) echo \"secret-$CANOPY_ASKPASS_TOKEN\" ;;\nesac\n",
+        )
+        .expect("write script");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let _hook = HookGuard::set(Some(Askpass {
+            program: script,
+            env: vec![("CANOPY_ASKPASS_TOKEN".into(), "42".into())],
+        }));
+
+        let mut cmd = user_command(&[]);
+        let mut child = cmd
+            .current_dir(dir.path())
+            .args(["credential", "fill"])
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", dir.path().join("no-global"))
+            .env("HOME", dir.path())
+            .env("GIT_CEILING_DIRECTORIES", dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn git");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(b"protocol=https\nhost=example.com\n\n")
+            .expect("write");
+        let out = child.wait_with_output().expect("git credential fill");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.lines().any(|l| l == "username=ada"), "{stdout}");
+        assert!(
+            stdout.lines().any(|l| l == "password=secret-42"),
+            "{stdout}"
+        );
     }
 }
