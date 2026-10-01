@@ -142,7 +142,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     virtual_rows(ui, d.files.len(), FILE_ROW_H, |ui, i| {
                         let f = &d.files[i];
                         let selected = tab.file.as_ref().is_some_and(|s| s.entry.path == f.path);
-                        let id = ui.id().with(("commit-file", &f.path));
+                        let id = ui.id().with(("commit-file", &f.path, &f.old_path, f.kind));
                         if file_row(ui, f, selected, id).clicked() {
                             tab.select_file(FileSelection {
                                 source: DiffSource::Commit(d.oid),

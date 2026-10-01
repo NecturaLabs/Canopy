@@ -778,7 +778,8 @@ impl RepoTab {
                     if self.pending_diff.as_ref() == Some(&key) {
                         match result {
                             Ok(d) => {
-                                if self.diff.as_ref() != Some(&d) {
+                                // The worker resends the same `Arc` when nothing changed.
+                                if !self.diff.as_ref().is_some_and(|old| Arc::ptr_eq(old, &d)) {
                                     self.line_sel = None;
                                     self.highlights = None;
                                 }
@@ -1092,6 +1093,50 @@ mod tests {
         assert_eq!(i.remote_branches, vec![vec![1, 3], vec![0], vec![]]);
         assert_eq!(i.graph_lanes, 5);
         assert_eq!(SnapIndex::new(&RepoSnapshot::default()).graph_lanes, 1);
+    }
+
+    #[test]
+    fn a_highlight_for_an_older_diff_is_dropped() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let key = DiffKey {
+            source: canopy_core::DiffSource::Unstaged,
+            path: "a.rs".into(),
+            old_path: None,
+            conflicted: false,
+            context: 3,
+            whitespace: canopy_core::Whitespace::default(),
+            highlight: true,
+        };
+        tab.pending_diff = Some(key.clone());
+        let diff = |additions| {
+            Arc::new(canopy_core::FileDiff {
+                path: "a.rs".into(),
+                additions,
+                ..Default::default()
+            })
+        };
+        let (old, new) = (diff(1), diff(2));
+        let highlights = Arc::new(crate::highlight::Highlights {
+            lines: Vec::new(),
+            language: "Rust".into(),
+        });
+        events.send(Event::Diff(key.clone(), Ok(Arc::clone(&old))))?;
+        events.send(Event::Diff(key.clone(), Ok(Arc::clone(&new))))?;
+        events.send(Event::Highlight(key.clone(), old, Arc::clone(&highlights)))?;
+        tab.poll(&[]);
+        assert!(tab.highlights.is_none(), "a highlight of the older diff");
+        events.send(Event::Highlight(key.clone(), Arc::clone(&new), highlights))?;
+        tab.poll(&[]);
+        assert!(tab.highlights.is_some());
+        // The worker resends the same `Arc` when nothing changed: the highlight stays.
+        events.send(Event::Diff(key, Ok(new)))?;
+        tab.poll(&[]);
+        assert!(tab.highlights.is_some());
+        Ok(())
     }
 
     #[test]

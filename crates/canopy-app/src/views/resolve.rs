@@ -308,8 +308,15 @@ fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
             width,
             code_height(lines.len(), row_h, ui.spacing().item_spacing.y),
         ),
-        Sense::hover(),
+        Sense::click(),
     );
+    // The lines are painted, not labels, so copying goes through the context menu.
+    resp.context_menu(|ui| {
+        if ui.button("Copy lines").clicked() {
+            ui.ctx().copy_text(lines.join("\n"));
+            ui.close();
+        }
+    });
     let clip = ui.clip_rect();
     let hover = resp.hover_pos();
     for i in commit_detail::visible_rows(lines.len(), pitch, rect.min.y, clip.min.y, clip.max.y) {
@@ -464,7 +471,13 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
                                 });
                                 let top = ui.cursor().min.y;
                                 let reveal = r.reveal && r.focus == k;
-                                if !reveal && (top + height < near.min.y || top > near.max.y) {
+                                // A card being edited by hand is always drawn: egui drops the
+                                // focus of a text field that is not drawn in a frame.
+                                let editing = r.editing.as_ref().is_some_and(|(e, _)| *e == k);
+                                if !reveal
+                                    && !editing
+                                    && (top + height < near.min.y || top > near.max.y)
+                                {
                                     ui.allocate_space(vec2(width, height));
                                 } else {
                                     ui.push_id(("conflict", i), |ui| {
@@ -473,10 +486,15 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
                                         ui.add_space(CARD_GAP);
                                     });
                                     let measured = ui.cursor().min.y - top;
-                                    let signature = card_signature(r, k, region);
+                                    // A click inside the card can change its state while it is
+                                    // drawn; the height then belongs to neither state, so it is
+                                    // measured again next frame.
+                                    if card_signature(r, k, region) != signature {
+                                        k += 1;
+                                        continue;
+                                    }
                                     r.layout.heights.insert(i, (signature, measured));
                                     let editing = r.editing.as_ref().is_some_and(|(e, _)| *e == k);
-                                    let (blocks, shape) = card_lines(r, k, region);
                                     if !editing {
                                         let lines: f32 = blocks
                                             .iter()

@@ -286,6 +286,9 @@ pub struct Request {
 /// Highlighter threads shared by every tab: two, so one huge file does not hold up the others.
 const THREADS: usize = 2;
 
+/// The queue is unbounded and never closed: the threads live as long as the process. A queued
+/// request holds its diff until a thread takes it, then a stale one is dropped at once, so the
+/// queue only grows while both threads are busy with long files.
 fn pool() -> Option<&'static crossbeam_channel::Sender<Request>> {
     static POOL: OnceLock<Option<crossbeam_channel::Sender<Request>>> = OnceLock::new();
     POOL.get_or_init(|| {

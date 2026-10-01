@@ -356,6 +356,20 @@ impl Worker {
         }
     }
 
+    /// A worker with no threads: tests feed its events and read its jobs.
+    #[cfg(test)]
+    pub fn detached() -> (Self, Sender<Event>, Receiver<Job>) {
+        let (jobs, job_rx) = unbounded();
+        let (ev_tx, events) = unbounded();
+        let (stop_watcher, _) = crossbeam_channel::bounded(0);
+        let worker = Self {
+            jobs,
+            events,
+            _stop_watcher: stop_watcher,
+        };
+        (worker, ev_tx, job_rx)
+    }
+
     /// Queues a job.
     pub fn send(&self, job: Job) {
         let _ = self.jobs.send(job);
@@ -388,6 +402,9 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     let mut limit = 2000;
     // Bumped for every diff request; a highlight request made for an older one is stale.
     let diff_generation = Arc::new(AtomicU64::new(0));
+    // The last diff sent. A refresh that finds the same content sends the same `Arc` again, so
+    // the view keeps its layout and highlighting instead of rebuilding them on the UI thread.
+    let mut last_diff: Option<(DiffKey, Arc<canopy_core::FileDiff>)> = None;
     while let Ok(first) = jobs.recv() {
         // Coalesce queued refreshes: only the latest matters.
         let mut batch = vec![first];
@@ -433,7 +450,18 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             key.whitespace,
                         )
                     };
+                    let unchanged = match (&result, &last_diff) {
+                        (Ok(d), Some((k, last))) if *k == key && **last == *d => {
+                            Some(Arc::clone(last))
+                        }
+                        _ => None,
+                    };
+                    if let Some(same) = unchanged {
+                        emit(Event::Diff(key, Ok(same)));
+                        continue;
+                    }
                     let result = result.map(Arc::new).map_err(|e| e.to_string());
+                    last_diff = result.as_ref().ok().map(|d| (key.clone(), Arc::clone(d)));
                     let generation = diff_generation.fetch_add(1, Ordering::Relaxed) + 1;
                     let highlighted = match &result {
                         Ok(d) if key.highlight && !key.conflicted => Some(Arc::clone(d)),

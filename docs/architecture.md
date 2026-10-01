@@ -214,7 +214,7 @@ cached on disk; it is always read from the repository.
 - The conflict resolver paints only the visible lines of each block and skips cards out of view,
   using their measured heights (estimates until first drawn).
 - Syntax highlighting runs on two highlighter threads shared by all tabs (`highlight.rs`), never
-  on the UI or a repository thread; the diff shows as plain text until the colours arrive, and a
+  on the UI thread (only if neither thread could start does it run on the repository thread); the diff shows as plain text until the colours arrive, and a
   request superseded by a newer diff stops early. Results are cached per file revision.
 - The command palette builds its entries when it opens (or when a snapshot or request list
   arrives while it is open) and ranks them only when the query changes.
