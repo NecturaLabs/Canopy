@@ -64,8 +64,6 @@ pub struct Requests {
     pub busy: Option<String>,
     pub comment: String,
     pub merge_method: MergeMethod,
-    /// An action waiting for a second click ("merge", "close"), with when it was armed.
-    pub arming: Option<(String, f64)>,
     /// Where the token came from; `None` while unknown, `Some(None)` without a token.
     pub token: Option<Option<TokenSource>>,
     /// When the list was last loaded.
@@ -84,7 +82,6 @@ impl Default for Requests {
             busy: None,
             comment: String::new(),
             merge_method: MergeMethod::Merge,
-            arming: None,
             token: None,
             loaded_at: None,
         }
@@ -135,6 +132,8 @@ pub struct RepoTab {
     pub forges: Vec<(String, Forge)>,
     /// The API thread for the main forge remote.
     pub host: Option<HostWorker>,
+    /// Self-hosted GitLab hosts the user listed in settings: environment tokens may go there.
+    pub trusted_gitlab_hosts: Vec<String>,
     pub requests: Requests,
     /// The last fetch, for auto-fetch.
     pub last_fetch: Instant,
@@ -187,6 +186,7 @@ impl RepoTab {
             collapsed: HashSet::new(),
             forges: Vec::new(),
             host: None,
+            trusted_gitlab_hosts: Vec::new(),
             requests: Requests::default(),
             last_fetch: Instant::now(),
         }
@@ -209,6 +209,7 @@ impl RepoTab {
 
     /// Recomputes which remotes are GitHub or GitLab.
     pub fn update_forges(&mut self, gitlab_hosts: &[String]) {
+        self.trusted_gitlab_hosts = gitlab_hosts.to_vec();
         self.forges = self
             .snap
             .as_ref()
@@ -270,7 +271,8 @@ impl RepoTab {
             return;
         }
         self.requests = Requests::default();
-        self.host = want.map(|f| HostWorker::spawn(f, saved_token, ctx.clone()));
+        let trusted = self.trusted_gitlab_hosts.clone();
+        self.host = want.map(|f| HostWorker::spawn(f, saved_token, trusted, ctx.clone()));
         self.load_requests();
     }
 

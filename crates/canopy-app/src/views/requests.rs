@@ -15,9 +15,7 @@ use crate::hosting::{HostJob, TokenSource};
 use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
 use crate::ui::{art, widgets};
-
-/// Seconds an armed action waits for its confirming click.
-const ARM_SECONDS: f64 = 4.0;
+use crate::views::dialogs::Dialog;
 
 /// Draws the view.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec<Action>) {
@@ -314,12 +312,6 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
         ui.centered_and_justified(|ui| ui.spinner());
         return;
     };
-    let now_f = ui.input(|i| i.time);
-    if let Some((_, at)) = &tab.requests.arming
-        && now_f - at > ARM_SECONDS
-    {
-        tab.requests.arming = None;
-    }
     let now = chrono::Utc::now().timestamp();
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -383,7 +375,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                         });
                     }
                     ui.add_space(12.0);
-                    action_bar(ui, tab, kind, &summary, details.as_ref(), now_f, actions);
+                    action_bar(ui, tab, kind, &summary, details.as_ref(), actions);
                     ui.add_space(16.0);
 
                     let error = match &tab.requests.details {
@@ -424,21 +416,25 @@ fn branch_pill(ui: &mut Ui, name: &str) {
         });
 }
 
-/// The action buttons. Merge and close take a second click to confirm.
+/// `#` for GitHub pull requests, `!` for GitLab merge requests.
+fn kind_sigil(kind: ForgeKind) -> &'static str {
+    match kind {
+        ForgeKind::GitHub => "#",
+        ForgeKind::GitLab => "!",
+    }
+}
+
+/// The action buttons. Merge and close ask for confirmation in a dialog.
 fn action_bar(
     ui: &mut Ui,
     tab: &mut RepoTab,
     kind: ForgeKind,
     r: &RequestSummary,
     d: Option<&RequestDetails>,
-    now: f64,
     actions: &mut Vec<Action>,
 ) {
     let p = palette(ui.ctx());
     let busy = tab.requests.busy.is_some() || tab.running.is_some();
-    let armed = |what: &str| tab.requests.arming.as_ref().is_some_and(|(a, _)| a == what);
-    let mut arm: Option<String> = None;
-    let mut disarm = false;
     ui.horizontal_wrapped(|ui| {
         if ui
             .add_enabled(
@@ -482,20 +478,17 @@ fn action_bar(
                         ui.selectable_value(&mut tab.requests.merge_method, m, m.label());
                     }
                 });
-            let merge_label = if armed("merge") {
-                format!("{}  Confirm merge", icon::WARNING)
-            } else {
-                format!("{}  Merge", icon::GIT_MERGE)
-            };
-            let resp = if armed("merge") {
-                widgets::danger_button(ui, &merge_label, vec2(0.0, 0.0))
-            } else {
-                ui.add_enabled(!busy && mergeable, egui::Button::new(merge_label))
-            };
+            let head = d.and_then(|d| d.head_sha.clone()).filter(|h| !h.is_empty());
+            let resp = ui.add_enabled(
+                !busy && mergeable && head.is_some(),
+                egui::Button::new(format!("{}  Merge…", icon::GIT_MERGE)),
+            );
             let resp = if r.draft {
                 resp.on_disabled_hover_text("Drafts cannot be merged")
             } else if !mergeable {
                 resp.on_disabled_hover_text("This request has conflicts or is blocked")
+            } else if head.is_none() {
+                resp.on_disabled_hover_text("Loading the request…")
             } else {
                 resp.on_hover_text(format!(
                     "{} into {}",
@@ -503,34 +496,41 @@ fn action_bar(
                     r.target_branch
                 ))
             };
-            if resp.clicked() {
-                if armed("merge") {
-                    disarm = true;
-                    actions.push(Action::Host(HostJob::Merge(
-                        r.number,
-                        tab.requests.merge_method,
-                    )));
-                } else {
-                    arm = Some("merge".into());
-                }
+            if resp.clicked()
+                && let Some(head) = head
+            {
+                let method = tab.requests.merge_method;
+                let short: String = head.chars().take(7).collect();
+                actions.push(Action::OpenDialog(Dialog::ConfirmHost {
+                    title: format!("Merge {} {}{}?", kind.request_abbrev(), kind_sigil(kind), r.number),
+                    body: format!(
+                        "{} \"{}\" ({}) into {} on {}, as reviewed at commit {short}. If anyone pushes to it before the merge runs, {} refuses the merge. This cannot be undone from Canopy.",
+                        method.label(),
+                        r.title,
+                        r.source_branch,
+                        r.target_branch,
+                        kind.name(),
+                        kind.name(),
+                    ),
+                    confirm: "Merge".into(),
+                    danger: false,
+                    job: HostJob::Merge(r.number, method, Some(head)),
+                }));
             }
-            let close_label = if armed("close") {
-                format!("{}  Confirm close", icon::WARNING)
-            } else {
-                format!("{}  Close", icon::X_CIRCLE)
-            };
-            let close = if armed("close") {
-                widgets::danger_button(ui, &close_label, vec2(0.0, 0.0))
-            } else {
-                ui.add_enabled(!busy, egui::Button::new(close_label))
-            };
-            if close.clicked() {
-                if armed("close") {
-                    disarm = true;
-                    actions.push(Action::Host(HostJob::SetOpen(r.number, false)));
-                } else {
-                    arm = Some("close".into());
-                }
+            if ui
+                .add_enabled(!busy, egui::Button::new(format!("{}  Close…", icon::X_CIRCLE)))
+                .clicked()
+            {
+                actions.push(Action::OpenDialog(Dialog::ConfirmHost {
+                    title: format!("Close {} {}{}?", kind.request_abbrev(), kind_sigil(kind), r.number),
+                    body: format!(
+                        "\"{}\" will be closed without merging. You can reopen it later.",
+                        r.title
+                    ),
+                    confirm: "Close".into(),
+                    danger: true,
+                    job: HostJob::SetOpen(r.number, false),
+                }));
             }
         } else if r.state == RequestState::Closed
             && ui
@@ -547,21 +547,6 @@ fn action_bar(
             ui.label(RichText::new(b).size(12.0).color(p.accent));
         }
     });
-    if let Some(a) = arm {
-        tab.requests.arming = Some((a, now));
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_secs_f64(ARM_SECONDS));
-    }
-    if disarm {
-        tab.requests.arming = None;
-    }
-    if tab.requests.arming.is_some() {
-        ui.label(
-            RichText::new("Click again to confirm.")
-                .size(11.5)
-                .color(p.text_faint),
-        );
-    }
     if let Some(Some(source)) = tab.requests.token
         && source != TokenSource::Saved
     {

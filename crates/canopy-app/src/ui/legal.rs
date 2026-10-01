@@ -1,0 +1,96 @@
+//! The Terms of Service and Privacy Policy as shipped, and the versions the user accepts.
+//!
+//! The texts live in `docs/legal/`. When either changes in a way users must see, update its
+//! "Last updated" date; the version below must match it (a test checks), and Canopy then asks
+//! again on the next start.
+
+use crate::settings::Settings;
+
+pub const TERMS: &str = include_str!("../../../../docs/legal/terms-of-service.md");
+pub const PRIVACY: &str = include_str!("../../../../docs/legal/privacy-policy.md");
+
+/// "Last updated" of the Terms of Service, as `YYYY-MM-DD`.
+pub const TERMS_VERSION: &str = "2026-10-01";
+/// "Last updated" of the Privacy Policy, as `YYYY-MM-DD`.
+pub const PRIVACY_VERSION: &str = "2026-10-01";
+
+/// Which document to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Document {
+    Terms,
+    Privacy,
+}
+
+impl Document {
+    pub fn title(self) -> &'static str {
+        match self {
+            Document::Terms => "Terms of Service",
+            Document::Privacy => "Privacy Policy",
+        }
+    }
+
+    /// The text without its first-level title (the dialog shows that).
+    pub fn body(self) -> &'static str {
+        let text = match self {
+            Document::Terms => TERMS,
+            Document::Privacy => PRIVACY,
+        };
+        text.split_once('\n').map_or(text, |(_, rest)| rest).trim()
+    }
+}
+
+/// What the start-up consent dialog still has to ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pending {
+    /// The current terms and policy were not accepted yet.
+    Terms,
+    /// Only the crash-report question is open.
+    CrashReports,
+}
+
+/// What Canopy must ask before it does anything else, if anything.
+pub fn pending(s: &Settings) -> Option<Pending> {
+    if s.accepted_terms != TERMS_VERSION || s.accepted_privacy != PRIVACY_VERSION {
+        Some(Pending::Terms)
+    } else if crate::crash_reports::available() && s.crash_reports.is_none() {
+        Some(Pending::CrashReports)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn last_updated(text: &str) -> String {
+        let line = text
+            .lines()
+            .find_map(|l| l.strip_prefix("Last updated: "))
+            .expect("Last updated line");
+        chrono::NaiveDate::parse_from_str(line.trim(), "%-d %B %Y")
+            .expect("date")
+            .format("%Y-%m-%d")
+            .to_string()
+    }
+
+    #[test]
+    fn versions_match_the_documents() {
+        assert_eq!(last_updated(TERMS), TERMS_VERSION);
+        assert_eq!(last_updated(PRIVACY), PRIVACY_VERSION);
+        assert!(Document::Terms.body().starts_with("Last updated"));
+    }
+
+    #[test]
+    fn asks_until_everything_is_answered() {
+        let mut s = Settings::default();
+        assert_eq!(pending(&s), Some(Pending::Terms));
+        s.accepted_terms = TERMS_VERSION.into();
+        s.accepted_privacy = PRIVACY_VERSION.into();
+        assert_eq!(pending(&s), Some(Pending::CrashReports));
+        s.crash_reports = Some(false);
+        assert_eq!(pending(&s), None);
+        s.accepted_terms = "2020-01-01".into();
+        assert_eq!(pending(&s), Some(Pending::Terms));
+    }
+}

@@ -43,17 +43,19 @@ case "${1:-}" in
     rm -rf "$name"
     ;;
   notes)
+    notes=$(mktemp)
+    trap 'rm -f "$notes"' EXIT
     awk -v v="${tag#v}" '
       $0 ~ "^## \\[" v "\\]" { found = 1; next }
       found && /^## \[/ { exit }
       found && /^\[.*\]: / { exit }
       found { print }
-    ' CHANGELOG.md > "${TMPDIR:-/tmp}/canopy-notes.md"
-    if [[ ! -s "${TMPDIR:-/tmp}/canopy-notes.md" ]]; then
+    ' CHANGELOG.md > "$notes"
+    if [[ ! -s $notes ]]; then
       echo "No CHANGELOG.md section for ${tag#v}" >&2
       exit 1
     fi
-    cat "${TMPDIR:-/tmp}/canopy-notes.md"
+    cat "$notes"
     ;;
   *)
     sed -n '2,6p' "$0" >&2

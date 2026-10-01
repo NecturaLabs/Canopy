@@ -26,16 +26,18 @@ pub enum Section {
     Integrations,
     Accounts,
     Updates,
+    Privacy,
     Keyboard,
 }
 
 impl Section {
-    const ALL: [Section; 6] = [
+    const ALL: [Section; 7] = [
         Section::Appearance,
         Section::Git,
         Section::Integrations,
         Section::Accounts,
         Section::Updates,
+        Section::Privacy,
         Section::Keyboard,
     ];
 
@@ -46,6 +48,7 @@ impl Section {
             Section::Integrations => (icon::PLUGS_CONNECTED, "Integrations"),
             Section::Accounts => (icon::KEY, "Accounts"),
             Section::Updates => (icon::ARROW_CIRCLE_UP, "Updates"),
+            Section::Privacy => (icon::SHIELD_CHECK, "Privacy"),
             Section::Keyboard => (icon::KEYBOARD, "Keyboard"),
         }
     }
@@ -64,6 +67,16 @@ pub struct SettingsScreen {
     token_input: HashMap<String, String>,
     tests: HashMap<String, TokenTest>,
     token_error: Option<String>,
+}
+
+impl SettingsScreen {
+    /// The screen opened at `section`.
+    pub fn at(section: Section) -> Self {
+        Self {
+            section,
+            ..Self::default()
+        }
+    }
 }
 
 /// What the app must do after this frame.
@@ -170,6 +183,7 @@ pub fn show(
                                             accounts(ui, screen, settings, tokens, forges, actions)
                                     }
                                     Section::Updates => updates(ui, settings, update, actions),
+                                    Section::Privacy => privacy(ui, settings, actions),
                                     Section::Keyboard => keyboard(ui),
                                 });
                         });
@@ -652,7 +666,7 @@ fn accounts(
                     ui.label(RichText::new(forge_icon(kind)).size(18.0).color(p.text));
                     ui.label(RichText::new(&host).font(FontId::new(14.0, theme::semibold())));
                     let saved = tokens.get(&host).is_some();
-                    let env = canopy_hosting::token_from_env(kind).is_some();
+                    let env = canopy_hosting::token_from_env_for(kind, &host, &settings.gitlab_host_list()).is_some();
                     let (status, color) = if saved {
                         (format!("{}  Token saved", icon::CHECK_CIRCLE), p.success)
                     } else if env {
@@ -677,7 +691,7 @@ fn accounts(
                             Ok(()) => {
                                 changed = true;
                                 screen.token_error = None;
-                                let forge = Forge { kind, host: host.clone(), path: String::new() };
+                                let forge = Forge { kind, host: host.clone(), port: None, path: String::new() };
                                 let rx = hosting::test_token(forge, input.trim().to_owned(), ui.ctx().clone());
                                 screen.tests.insert(host.clone(), TokenTest::Running(rx));
                                 input.clear();
@@ -689,7 +703,7 @@ fn accounts(
                         if ui.button(format!("{}  Test", icon::PLUGS)).clicked()
                             && let Some(t) = tokens.get(&host)
                         {
-                            let forge = Forge { kind, host: host.clone(), path: String::new() };
+                            let forge = Forge { kind, host: host.clone(), port: None, path: String::new() };
                             let rx = hosting::test_token(forge, t.to_owned(), ui.ctx().clone());
                             screen.tests.insert(host.clone(), TokenTest::Running(rx));
                         }
@@ -739,6 +753,75 @@ fn accounts(
     changed
 }
 
+fn privacy(ui: &mut Ui, s: &mut Settings, actions: &mut Vec<Action>) {
+    use crate::ui::legal::Document;
+    let p = palette(ui.ctx());
+    heading(ui, "Crash reports");
+    if crate::crash_reports::available() {
+        let before = s.crash_reports;
+        let mut on = s.crash_reports == Some(true);
+        row(
+            ui,
+            "Send crash reports",
+            "When Canopy crashes, send the error, where in Canopy's code it happened, the Canopy version and your operating system to NecturaLabs (Sentry, stored in the EU, deleted after 90 days). Never your code, files, names or tokens. Takes effect immediately.",
+            |ui| {
+                toggle(ui, &mut on);
+            },
+        );
+        if before != Some(on) && (before.is_some() || on) {
+            actions.push(Action::SetCrashReports(on));
+        }
+    } else {
+        ui.label(
+            RichText::new("This build of Canopy cannot send crash reports.").color(p.text_dim),
+        );
+    }
+    row(
+        ui,
+        "Local logs and crash reports",
+        "Canopy keeps its log and a copy of every crash report on this computer. They are never uploaded automatically.",
+        |ui| {
+            if ui
+                .button(format!("{}  Open folder", icon::FOLDER_OPEN))
+                .clicked()
+            {
+                actions.push(Action::OpenLogs);
+            }
+        },
+    );
+    heading(ui, "Documents");
+    row(
+        ui,
+        "Privacy Policy",
+        &format!(
+            "What Canopy collects and your rights. Last updated {}.",
+            crate::ui::legal::PRIVACY_VERSION
+        ),
+        |ui| {
+            if ui.button(format!("{}  Read", icon::SHIELD_CHECK)).clicked() {
+                actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Legal(
+                    Document::Privacy,
+                )));
+            }
+        },
+    );
+    row(
+        ui,
+        "Terms of Service",
+        &format!(
+            "The agreement for using Canopy. Last updated {}.",
+            crate::ui::legal::TERMS_VERSION
+        ),
+        |ui| {
+            if ui.button(format!("{}  Read", icon::SCROLL)).clicked() {
+                actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Legal(
+                    Document::Terms,
+                )));
+            }
+        },
+    );
+}
+
 fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     if !Updater::enabled() {
@@ -751,7 +834,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
     row(
         ui,
         "Check for updates",
-        "Once a day, Canopy reads a small public file listing the latest version. It sends nothing about you, and downloads or installs nothing by itself.",
+        "Once a day, Canopy reads a small public file on GitHub naming the latest version. Like any web request, GitHub sees your IP address; nothing else about you is sent, and nothing is downloaded or installed by itself.",
         |ui| {
             toggle(ui, &mut s.check_updates);
         },

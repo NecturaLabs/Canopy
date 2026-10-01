@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod crash_reports;
 mod highlight;
 mod hosting;
 mod keymap;
@@ -33,7 +34,8 @@ OPTIONS:
                               forest or paper
         --view <VIEW>         Initial view: history, changes or requests
         --split               Show diffs side by side
-        --overlay <NAME>      Open settings, cheatsheet or palette (for screenshots)
+        --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
+                              palette, consent, crash-consent, legal or merge
         --size <WxH>          Initial window size [default: 1440x900]
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
     -h, --help                Print help
@@ -167,10 +169,13 @@ fn main() -> anyhow::Result<()> {
         persist_window: launch.screenshot.is_none(),
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         "canopy",
         options,
         Box::new(move |cc| Ok(Box::new(CanopyApp::new(cc, launch)))),
     )
-    .map_err(|e| anyhow::anyhow!("could not start the window: {e}"))
+    .map_err(|e| anyhow::anyhow!("could not start the window: {e}"));
+    // Ends the crash-report session (if reporting is on) and sends anything queued.
+    crash_reports::shutdown();
+    result
 }

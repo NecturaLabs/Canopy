@@ -11,6 +11,7 @@ use crate::app::Action;
 use crate::hosting::HostJob;
 use crate::settings::{CloneProtocol, Settings};
 use crate::tab::RepoTab;
+use crate::ui::legal::{Document, Pending};
 use crate::ui::theme::{self, palette};
 use crate::ui::{art, widgets};
 use crate::worker::Op;
@@ -186,6 +187,25 @@ pub enum Dialog {
     },
     /// Canopy crashed last time; offer the local report.
     Crash(crate::logging::CrashReport),
+    /// First start (or changed terms): accept the terms, then answer about crash reports. Cannot
+    /// be dismissed.
+    Consent {
+        step: Pending,
+        /// The terms changed since the user last accepted them.
+        updated: bool,
+        /// A document expanded inline.
+        reading: Option<Document>,
+    },
+    /// The Terms of Service or the Privacy Policy.
+    Legal(Document),
+    /// Confirm a pull/merge request action (merge, close).
+    ConfirmHost {
+        title: String,
+        body: String,
+        confirm: String,
+        danger: bool,
+        job: HostJob,
+    },
 }
 
 /// What a dialog wants after this frame.
@@ -538,6 +558,28 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         });
                     });
                 }
+                Dialog::ConfirmHost { title: t, body, confirm, danger, job } => {
+                    let glyph = if *danger { icon::WARNING } else { icon::GIT_MERGE };
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(glyph).size(20.0).color(if *danger { p.danger } else { p.accent }));
+                        ui.label(RichText::new(t.as_str()).font(FontId::new(17.0, theme::semibold())));
+                    });
+                    ui.add_space(10.0);
+                    ui.label(RichText::new(body.as_str()).color(p.text_dim));
+                    ui.add_space(16.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let size = egui::vec2(120.0, 34.0);
+                            let b = if *danger { widgets::danger_button(ui, confirm, size) } else { widgets::accent_button(ui, confirm, size) };
+                            if b.clicked() {
+                                outcome = Outcome::Run(vec![Action::Host(job.clone())]);
+                            }
+                            if ui.add_sized([90.0, 34.0], egui::Button::new("Cancel")).clicked() {
+                                outcome = Outcome::Close;
+                            }
+                        });
+                    });
+                }
                 Dialog::Update(a) => {
                     title(ui, icon::ARROW_CIRCLE_UP, &format!("Canopy {} is available", a.version));
                     ui.label(RichText::new(format!("You have {}.{}", env!("CARGO_PKG_VERSION"), a.manifest.pub_date.as_deref().and_then(|d| d.get(..10)).map(|d| format!(" Released {d}.")).unwrap_or_default())).size(12.5).color(p.text_dim));
@@ -618,6 +660,125 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         });
                     });
                 }
+                Dialog::Consent { step, updated, reading } => {
+                    let read_buttons = |ui: &mut Ui, reading: &mut Option<Document>| {
+                        ui.horizontal(|ui| {
+                            for doc in [Document::Terms, Document::Privacy] {
+                                let open = *reading == Some(doc);
+                                let label = format!("{}  {}", if open { icon::CARET_DOWN } else { icon::CARET_RIGHT }, doc.title());
+                                if ui.selectable_label(open, label).clicked() {
+                                    *reading = if open { None } else { Some(doc) };
+                                }
+                            }
+                        });
+                        if let Some(doc) = *reading {
+                            ui.add_space(6.0);
+                            egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                egui::ScrollArea::vertical().id_salt(("legal", doc.title())).max_height(260.0).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
+                            });
+                        }
+                    };
+                    let equal = |ui: &mut Ui, text: &str| ui.add_sized([170.0, 34.0], egui::Button::new(RichText::new(text).font(FontId::new(13.5, theme::medium()))));
+                    match step {
+                        Pending::Terms => {
+                            ui.horizontal(|ui| {
+                                art::show(ui, art::logo(), egui::vec2(28.0, 28.0));
+                                ui.label(RichText::new(if *updated { "We've updated our terms" } else { "Welcome to Canopy" }).font(FontId::new(18.0, theme::semibold())));
+                            });
+                            ui.add_space(10.0);
+                            ui.label(RichText::new(if *updated {
+                                "Please read and accept the new Terms of Service and Privacy Policy to keep using Canopy."
+                            } else {
+                                "Before you start, please read and accept the Terms of Service and the Privacy Policy. In short:"
+                            }).color(p.text_dim));
+                            ui.add_space(6.0);
+                            for (glyph, text) in [
+                                (icon::LOCK_SIMPLE, "Your code, repositories and tokens stay on your computer. They are never sent to NecturaLabs."),
+                                (icon::ARROW_CIRCLE_UP, "Once a day Canopy asks GitHub whether a new version exists. You can turn this off."),
+                                (icon::FIRST_AID_KIT, "Crash reports are sent only if you agree. You choose next, and can change it any time."),
+                            ] {
+                                ui.horizontal_top(|ui| {
+                                    ui.label(RichText::new(glyph).color(p.accent));
+                                    ui.label(RichText::new(text).size(12.5).color(p.text));
+                                });
+                            }
+                            ui.add_space(8.0);
+                            read_buttons(ui, reading);
+                            ui.add_space(12.0);
+                            ui.horizontal(|ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if widgets::primary_button(ui, "I agree", true, 130.0).clicked() {
+                                        outcome = Outcome::Run(vec![Action::AcceptTerms]);
+                                    }
+                                    if ui.add_sized([90.0, 34.0], egui::Button::new("Quit")).clicked() {
+                                        outcome = Outcome::Run(vec![Action::Quit]);
+                                    }
+                                });
+                            });
+                        }
+                        Pending::CrashReports => {
+                            title(ui, icon::FIRST_AID_KIT, "Send crash reports?");
+                            ui.label(RichText::new("If Canopy crashes, it can send a report to NecturaLabs so we can find and fix the problem.").color(p.text_dim));
+                            ui.add_space(6.0);
+                            for (glyph, text, color) in [
+                                (icon::CHECK, "A report holds the error, where in Canopy's code it happened, your Canopy version and your operating system.", p.success),
+                                (icon::X, "It never holds your code, repositories, file contents, commit messages, names or tokens.", p.danger),
+                                (icon::GLOBE_HEMISPHERE_WEST, "Reports are stored in the EU (Germany) by Sentry and deleted after 90 days.", p.accent2),
+                            ] {
+                                ui.horizontal_top(|ui| {
+                                    ui.label(RichText::new(glyph).color(color));
+                                    ui.label(RichText::new(text).size(12.5).color(p.text));
+                                });
+                            }
+                            ui.add_space(6.0);
+                            ui.label(RichText::new("Canopy works the same either way. You can change this at any time in Settings → Privacy.").size(12.0).color(p.text_faint));
+                            ui.add_space(8.0);
+                            let mut privacy_only = reading.filter(|d| *d == Document::Privacy);
+                            ui.horizontal(|ui| {
+                                let open = privacy_only.is_some();
+                                if ui.selectable_label(open, format!("{}  Privacy Policy", if open { icon::CARET_DOWN } else { icon::CARET_RIGHT })).clicked() {
+                                    privacy_only = if open { None } else { Some(Document::Privacy) };
+                                }
+                            });
+                            *reading = privacy_only;
+                            if reading.is_some() {
+                                ui.add_space(6.0);
+                                egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    egui::ScrollArea::vertical().id_salt("legal-privacy").max_height(240.0).show(ui, |ui| crate::ui::notes::markdown(ui, Document::Privacy.body()));
+                                });
+                            }
+                            ui.add_space(12.0);
+                            // Both answers equally prominent: consent must be a free choice.
+                            ui.horizontal(|ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if equal(ui, "Send crash reports").clicked() {
+                                        outcome = Outcome::Run(vec![Action::SetCrashReports(true)]);
+                                    }
+                                    if equal(ui, "Don't send").clicked() {
+                                        outcome = Outcome::Run(vec![Action::SetCrashReports(false)]);
+                                    }
+                                });
+                            });
+                        }
+                    }
+                }
+                Dialog::Legal(doc) => {
+                    title(ui, if *doc == Document::Privacy { icon::SHIELD_CHECK } else { icon::SCROLL }, doc.title());
+                    egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
+                    });
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if widgets::primary_button(ui, "Close", true, 110.0).clicked() || enter {
+                                outcome = Outcome::Close;
+                            }
+                        });
+                    });
+                }
                 Dialog::About => {
                     ui.vertical_centered(|ui| {
                         art::show(ui, art::logo(), egui::vec2(64.0, 64.0));
@@ -639,6 +800,15 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                             if ui.button(format!("{}  Releases", icon::ARROW_SQUARE_OUT)).clicked() {
                                 outcome = Outcome::Run(vec![Action::OpenExternal(crate::updater::RELEASES_PAGE.to_owned())]);
                             }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.add_space((ui.available_width() - 300.0).max(0.0) / 2.0);
+                            if ui.button(format!("{}  Privacy Policy", icon::SHIELD_CHECK)).clicked() {
+                                outcome = Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Privacy))]);
+                            }
+                            if ui.button(format!("{}  Terms of Service", icon::SCROLL)).clicked() {
+                                outcome = Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Terms))]);
+                            }
                             if ui.button("Close").clicked() {
                                 outcome = Outcome::Close;
                             }
@@ -647,7 +817,10 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                 }
             }
         });
-    if modal.should_close() && matches!(outcome, Outcome::Keep) {
+    if modal.should_close()
+        && matches!(outcome, Outcome::Keep)
+        && !matches!(dialog, Dialog::Consent { .. })
+    {
         outcome = Outcome::Close;
     }
     outcome

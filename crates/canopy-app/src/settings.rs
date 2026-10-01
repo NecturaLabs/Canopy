@@ -150,6 +150,15 @@ pub struct Settings {
     /// The version that last ran, to show "What's new" once after an upgrade.
     pub last_seen_version: String,
 
+    // Privacy.
+    /// Version (date) of the Terms of Service the user accepted.
+    pub accepted_terms: String,
+    /// Version (date) of the Privacy Policy the user accepted.
+    pub accepted_privacy: String,
+    /// Send crash reports to NecturaLabs (Sentry). `None` until the user answers; nothing is
+    /// sent before that.
+    pub crash_reports: Option<bool>,
+
     // Session.
     /// Recently opened repositories, most recent first.
     pub recent: Vec<PathBuf>,
@@ -192,6 +201,9 @@ impl Default for Settings {
             last_update_check: 0,
             skipped_version: None,
             last_seen_version: String::new(),
+            accepted_terms: String::new(),
+            accepted_privacy: String::new(),
+            crash_reports: None,
             recent: Vec::new(),
             open_tabs: Vec::new(),
             seen_intro: false,

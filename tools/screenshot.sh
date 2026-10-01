@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
-#                            [--overlay settings|cheatsheet|palette] [--size WxH]
+#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|merge]
+#                            [--size WxH]
 #
 # <repo> may be "-" to render the welcome screen with no repository open.
 #
@@ -24,7 +25,7 @@ while [[ $# -gt 0 ]]; do
     --split) extra+=(--split); shift ;;
     --theme) extra+=(--theme "${2:?--theme needs a name}"); shift 2 ;;
     --view) extra+=(--view "${2:?--view needs history, changes or requests}"); shift 2 ;;
-    --overlay) extra+=(--overlay "${2:?--overlay needs settings, cheatsheet or palette}"); shift 2 ;;
+    --overlay) extra+=(--overlay "${2:?--overlay needs a name, see --help}"); shift 2 ;;
     --size) size=${2:?--size needs WxH}; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage; exit 2 ;;

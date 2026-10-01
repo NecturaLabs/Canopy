@@ -95,19 +95,25 @@ impl TokenStore {
     }
 }
 
-/// Finds a token for `forge` (blocking: may run the git credential helper).
+/// Finds a token for `forge` (blocking: may run the git credential helper). Environment tokens
+/// are used only for github.com, gitlab.com, `GITLAB_HOST` and the self-hosted GitLab hosts the
+/// user listed (`trusted_gitlab_hosts`), never for a host recognised as GitLab by its name alone.
 pub fn resolve_token(
     forge: &Forge,
     saved: Option<String>,
+    trusted_gitlab_hosts: &[String],
     use_git_credentials: bool,
 ) -> Option<(String, TokenSource)> {
     if let Some(t) = saved.filter(|t| !t.trim().is_empty()) {
         return Some((t, TokenSource::Saved));
     }
-    if let Some(t) = canopy_hosting::token_from_env(forge.kind) {
+    if let Some(t) =
+        canopy_hosting::token_from_env_for(forge.kind, &forge.host, trusted_gitlab_hosts)
+    {
         return Some((t, TokenSource::Environment));
     }
-    if use_git_credentials && let Some(t) = canopy_hosting::token_from_git_credentials(&forge.host)
+    if use_git_credentials
+        && let Some(t) = canopy_hosting::token_from_git_credentials(&forge.authority())
     {
         return Some((t, TokenSource::GitCredentials));
     }
@@ -132,7 +138,8 @@ pub enum HostJob {
     List(StateFilter),
     Details(u64),
     Create(NewRequest),
-    Merge(u64, MergeMethod),
+    /// Merge with this method, only if the head is still this commit.
+    Merge(u64, MergeMethod, Option<String>),
     SetOpen(u64, bool),
     Comment(u64, String),
     Approve(u64),
@@ -145,7 +152,7 @@ impl HostJob {
             HostJob::List(_) => format!("Loading {}s", kind.request_noun()),
             HostJob::Details(i) => format!("Loading {n} #{i}"),
             HostJob::Create(_) => format!("Creating {}", kind.request_noun()),
-            HostJob::Merge(i, _) => format!("Merging {n} #{i}"),
+            HostJob::Merge(i, _, _) => format!("Merging {n} #{i}"),
             HostJob::SetOpen(i, true) => format!("Reopening {n} #{i}"),
             HostJob::SetOpen(i, false) => format!("Closing {n} #{i}"),
             HostJob::Comment(i, _) => format!("Commenting on {n} #{i}"),
@@ -179,13 +186,21 @@ pub struct HostWorker {
 
 impl HostWorker {
     /// Starts a thread for `forge`. `saved` is the token saved in settings for its host.
-    pub fn spawn(forge: Forge, saved: Option<String>, ctx: egui::Context) -> Self {
+    pub fn spawn(
+        forge: Forge,
+        saved: Option<String>,
+        trusted_gitlab_hosts: Vec<String>,
+        ctx: egui::Context,
+    ) -> Self {
         let (jobs, job_rx) = unbounded::<HostJob>();
         let (tx, events) = unbounded::<HostEvent>();
         let thread_forge = forge.clone();
-        let _ = std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name(format!("hosting:{}", forge.host))
-            .spawn(move || run(thread_forge, saved, job_rx, tx, ctx));
+            .spawn(move || run(thread_forge, saved, &trusted_gitlab_hosts, job_rx, tx, ctx));
+        if let Err(e) = &spawned {
+            tracing::error!("could not start the hosting thread: {e}");
+        }
         Self {
             forge,
             jobs,
@@ -201,6 +216,7 @@ impl HostWorker {
 fn run(
     forge: Forge,
     saved: Option<String>,
+    trusted_gitlab_hosts: &[String],
     jobs: Receiver<HostJob>,
     events: Sender<HostEvent>,
     ctx: egui::Context,
@@ -210,18 +226,21 @@ fn run(
         ctx.request_repaint();
     };
     // The credential helper can be slow; resolve once, lazily, on this thread.
-    let token = resolve_token(&forge, saved, true);
+    let token = resolve_token(&forge, saved, trusted_gitlab_hosts, true);
     emit(HostEvent::Token(token.as_ref().map(|t| t.1)));
     let token = token.map(|t| t.0);
-    // Development and screenshots: talk to a local stand-in (tools/mock-hosting.py). Loopback
-    // only, so the variable can never send a token anywhere else.
+    // Development and screenshots: talk to a local stand-in (tools/mock-hosting.py). Only a
+    // plain loopback address is accepted (no user info, no look-alike host names), so the
+    // variable cannot send a token anywhere else.
     let client = match std::env::var("CANOPY_HOSTING_API_BASE") {
-        Ok(base)
-            if base.starts_with("http://127.0.0.1:") || base.starts_with("http://localhost:") =>
-        {
+        Ok(base) if canopy_hosting::is_loopback_base(base.trim()) => {
             Client::with_api_base(&forge, token, base.trim())
         }
-        _ => Client::new(&forge, token),
+        Ok(base) => {
+            tracing::warn!("ignoring CANOPY_HOSTING_API_BASE={base}: not a loopback http URL");
+            Client::new(&forge, token)
+        }
+        Err(_) => Client::new(&forge, token),
     };
     while let Ok(job) = jobs.recv() {
         let label = job.label(forge.kind);
@@ -236,10 +255,10 @@ fn run(
                 Box::new(client.details(n).map_err(s)),
             )),
             HostJob::Create(req) => emit(HostEvent::Created(client.create(&req).map_err(s))),
-            HostJob::Merge(n, method) => emit(HostEvent::Done {
+            HostJob::Merge(n, method, head) => emit(HostEvent::Done {
                 label,
                 number: Some(n),
-                result: client.merge(n, method).map_err(s),
+                result: client.merge(n, method, head.as_deref()).map_err(s),
             }),
             HostJob::SetOpen(n, open) => emit(HostEvent::Done {
                 label,

@@ -90,6 +90,12 @@ pub enum Action {
     OpenLogs,
     /// Unified or side-by-side diffs.
     SetSplitDiff(bool),
+    /// The user accepted the current Terms of Service and Privacy Policy.
+    AcceptTerms,
+    /// The user's answer about crash reports.
+    SetCrashReports(bool),
+    /// Close Canopy.
+    Quit,
 }
 
 /// Options from the command line.
@@ -136,6 +142,10 @@ pub struct CanopyApp {
     tokens: TokenStore,
     updater: Updater,
     gitlab_hosts: Vec<String>,
+    /// Dialogs waiting for the current one to close (start-up notices after the consent).
+    queued: Vec<Dialog>,
+    /// The start-up update check waits until the user has accepted the terms.
+    update_check_due: bool,
 }
 
 impl std::fmt::Debug for CanopyApp {
@@ -203,6 +213,8 @@ impl CanopyApp {
             },
             updater: Updater::default(),
             gitlab_hosts,
+            queued: Vec::new(),
+            update_check_due: false,
         };
         let restore = if launch.paths.is_empty() && !shooting {
             app.settings.open_tabs.clone()
@@ -219,11 +231,37 @@ impl CanopyApp {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
             Some("cheatsheet") => app.cheatsheet.open = true,
             Some("palette") => app.palette.open(),
+            Some("privacy") => {
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Privacy))
+            }
+            Some("consent") => {
+                app.dialog = Some(Dialog::Consent {
+                    step: crate::ui::legal::Pending::Terms,
+                    updated: false,
+                    reading: None,
+                })
+            }
+            Some("crash-consent") => {
+                app.dialog = Some(Dialog::Consent {
+                    step: crate::ui::legal::Pending::CrashReports,
+                    updated: false,
+                    reading: None,
+                })
+            }
+            Some("legal") => app.dialog = Some(Dialog::Legal(crate::ui::legal::Document::Privacy)),
+            Some("merge") => {
+                app.dialog = Some(Dialog::Merge {
+                    target: "feature/search".into(),
+                    rebase: false,
+                    mode: canopy_core::MergeMode::Squash,
+                })
+            }
             _ => {}
         }
         if git_version_missing(&app.git_version) {
             app.toasts.push(&cc.egui_ctx, ToastKind::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
         }
+        let mut notices = Vec::new();
         // A crash report from last time, offered once.
         if !shooting
             && let Some(report) = crate::logging::unseen_crash(&app.settings.last_crash_seen)
@@ -233,25 +271,50 @@ impl CanopyApp {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            app.dialog = Some(Dialog::Crash(report));
+            notices.push(Dialog::Crash(report));
         }
         // Release notes once after an upgrade (not on a fresh install).
         let version = env!("CARGO_PKG_VERSION");
         if !shooting && app.settings.last_seen_version != version {
-            if !app.settings.last_seen_version.is_empty() && app.dialog.is_none() {
-                app.dialog = whats_new();
+            if !app.settings.last_seen_version.is_empty()
+                && let Some(d) = whats_new()
+            {
+                notices.push(d);
             }
             app.settings.last_seen_version = version.to_owned();
         }
         let now = chrono::Utc::now().timestamp();
-        if app.settings.check_updates
-            && now - app.settings.last_update_check >= updater::CHECK_INTERVAL_SECS
-        {
-            app.settings.last_update_check = now;
-            app.updater
-                .start(&cc.egui_ctx, app.settings.include_prereleases, false);
+        app.update_check_due = app.settings.check_updates
+            && now - app.settings.last_update_check >= updater::CHECK_INTERVAL_SECS;
+        // Nothing leaves the computer until the user has accepted the terms and answered about
+        // crash reports.
+        match (shooting, crate::ui::legal::pending(&app.settings)) {
+            (false, Some(step)) => {
+                app.dialog = Some(Dialog::Consent {
+                    step,
+                    updated: !app.settings.accepted_terms.is_empty(),
+                    reading: None,
+                });
+                app.queued = notices;
+            }
+            (true, _) => {}
+            (false, None) => {
+                crate::crash_reports::set_enabled(app.settings.crash_reports == Some(true));
+                app.dialog = notices.pop();
+                app.queued = notices;
+                app.start_due_update_check(&cc.egui_ctx);
+            }
         }
         app
+    }
+
+    /// Runs the start-up update check if one is due.
+    fn start_due_update_check(&mut self, ctx: &egui::Context) {
+        if std::mem::take(&mut self.update_check_due) {
+            self.settings.last_update_check = chrono::Utc::now().timestamp();
+            self.updater
+                .start(ctx, self.settings.include_prereleases, false);
+        }
     }
 
     fn tab(&mut self) -> Option<&mut RepoTab> {
@@ -330,10 +393,12 @@ impl CanopyApp {
                     self.cheatsheet.open = false;
                 } else if self.palette.open {
                     self.palette.open = false;
-                } else if self.settings_screen.is_some() {
-                    self.settings_screen = None;
+                } else if matches!(self.dialog, Some(Dialog::Consent { .. })) {
+                    // Must be answered.
+                } else if self.dialog.is_some() {
+                    self.dialog = self.queued.pop();
                 } else {
-                    self.dialog = None;
+                    self.settings_screen = None;
                 }
             }
             C::Open => actions.push(Action::OpenDialog(Dialog::open())),
@@ -1102,6 +1167,28 @@ impl CanopyApp {
                     }
                 }
                 Action::DismissIntro => self.settings.seen_intro = true,
+                Action::AcceptTerms => {
+                    self.settings.accepted_terms = crate::ui::legal::TERMS_VERSION.to_owned();
+                    self.settings.accepted_privacy = crate::ui::legal::PRIVACY_VERSION.to_owned();
+                    match crate::ui::legal::pending(&self.settings) {
+                        Some(step) => {
+                            self.dialog = Some(Dialog::Consent {
+                                step,
+                                updated: false,
+                                reading: None,
+                            });
+                        }
+                        None => self.consent_done(ctx),
+                    }
+                }
+                Action::SetCrashReports(on) => {
+                    self.settings.crash_reports = Some(on);
+                    crate::crash_reports::set_enabled(on);
+                    if matches!(self.dialog, Some(Dialog::Consent { .. })) {
+                        self.consent_done(ctx);
+                    }
+                }
+                Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 Action::SetSplitDiff(split) => {
                     self.settings.split_diff = split;
                     for t in &mut self.tabs {
@@ -1110,6 +1197,13 @@ impl CanopyApp {
                 }
             }
         }
+    }
+
+    /// The consent dialog is answered: start what waited for it.
+    fn consent_done(&mut self, ctx: &egui::Context) {
+        crate::crash_reports::set_enabled(self.settings.crash_reports == Some(true));
+        self.dialog = self.queued.pop();
+        self.start_due_update_check(ctx);
     }
 
     /// Opens the new pull/merge request dialog, or the provider's page when the API is off or
@@ -1688,12 +1782,16 @@ impl eframe::App for CanopyApp {
                 self.settings_screen = None;
             }
             self.settings_changed(&ctx, &before);
-        } else if let Some(d) = &mut self.dialog {
+        }
+        // Dialogs draw above the settings screen (the Privacy Policy opens from there).
+        if let Some(d) = &mut self.dialog {
+            let consent = matches!(d, Dialog::Consent { .. });
             match dialogs::show(&ctx, d, self.tabs.get(self.active)) {
                 Outcome::Keep => {}
-                Outcome::Close => self.dialog = None,
+                Outcome::Close => self.dialog = self.queued.pop(),
                 Outcome::Run(a) => {
-                    self.dialog = None;
+                    // The consent dialog's actions decide what comes next themselves.
+                    self.dialog = if consent { None } else { self.queued.pop() };
                     actions.extend(a);
                 }
             }
