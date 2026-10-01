@@ -75,6 +75,55 @@ impl PullStrategy {
     }
 }
 
+/// How `git merge` combines the target into the current branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MergeMode {
+    /// `git merge --ff`: fast-forward when the current branch is an ancestor of the target,
+    /// otherwise create a merge commit. Passed explicitly so a `merge.ff` setting cannot make the
+    /// label wrong.
+    #[default]
+    Default,
+    /// `git merge --no-ff`: always create a merge commit, even when a fast-forward is possible.
+    NoFastForward,
+    /// `git merge --ff-only`: fast-forward, or fail without changing anything.
+    FastForwardOnly,
+    /// `git merge --squash`: apply the target's combined changes to the index and working tree
+    /// without committing and without recording a merge (no `MERGE_HEAD`); the next commit is an
+    /// ordinary single-parent commit, and git prepares its message in `.git/SQUASH_MSG`.
+    /// Conflicts leave conflicted files but no merge in progress, so there is nothing to
+    /// `--abort`: resolve and commit, or reset.
+    Squash,
+}
+
+impl MergeMode {
+    /// Every mode, in the order a picker shows them.
+    pub const ALL: [MergeMode; 4] = [
+        Self::Default,
+        Self::NoFastForward,
+        Self::FastForwardOnly,
+        Self::Squash,
+    ];
+
+    fn flag(self) -> &'static str {
+        match self {
+            Self::Default => "--ff",
+            Self::NoFastForward => "--no-ff",
+            Self::FastForwardOnly => "--ff-only",
+            Self::Squash => "--squash",
+        }
+    }
+
+    /// Display name.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "Default (fast-forward if possible)",
+            Self::NoFastForward => "Always create a merge commit",
+            Self::FastForwardOnly => "Fast-forward only",
+            Self::Squash => "Squash into one change",
+        }
+    }
+}
+
 /// What a hunk action does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HunkAction {
@@ -105,7 +154,7 @@ fn with_paths<'a>(args: &[&'a str], paths: &'a [String]) -> Vec<&'a str> {
 }
 
 impl Repo {
-    fn git_cmd(&self, args: &[&str]) -> Result<String> {
+    pub(crate) fn git_cmd(&self, args: &[&str]) -> Result<String> {
         cli::run(self.workdir(), args)
     }
 
@@ -268,14 +317,10 @@ impl Repo {
             .map(drop)
     }
 
-    /// Merges `target` into the current branch.
-    pub fn merge(&self, target: &str, no_ff: bool) -> Result<String> {
-        let mut args = vec!["merge", "--no-edit"];
-        if no_ff {
-            args.push("--no-ff");
-        }
-        args.push(target);
-        self.git_cmd(&args)
+    /// Merges `target` into the current branch as `mode` says and returns git's standard output.
+    /// [`MergeMode::Squash`] stages the changes and stops before committing; the caller commits.
+    pub fn merge(&self, target: &str, mode: MergeMode) -> Result<String> {
+        self.git_cmd(&["merge", "--no-edit", mode.flag(), target])
     }
 
     /// Rebases the current branch onto `onto`.

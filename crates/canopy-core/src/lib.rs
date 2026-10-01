@@ -10,6 +10,7 @@
 //! them off the UI thread.
 
 pub mod cli;
+pub mod conflict;
 pub mod diff;
 mod error;
 pub mod forge;
@@ -20,11 +21,15 @@ pub mod repo;
 pub mod status;
 pub mod update;
 
+pub use conflict::{
+    Choice, ConflictFile, ConflictKind, ConflictRegion, Segment, Side, has_conflict_markers,
+};
 pub use diff::{DiffLine, DiffSource, FileDiff, Hunk, HunkKey, LineKind, Whitespace};
 pub use error::{Error, Result};
 pub use forge::{Forge, ForgeKind};
 pub use git2::Oid;
-pub use graph::{GraphRow, LineEnd, Segment};
+// `Segment` at the crate root is the conflict-file segment; the graph's is `GraphSegment`.
+pub use graph::{GraphRow, LineEnd, Segment as GraphSegment};
 pub use model::*;
-pub use ops::PullStrategy;
+pub use ops::{HunkAction, MergeMode, PullStrategy, ResetMode};
 pub use repo::Repo;
