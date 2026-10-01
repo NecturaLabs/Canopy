@@ -232,7 +232,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     if !is_head {
                         ui.separator();
                         if ui.button(RichText::new(format!("{}  Delete…", icon::TRASH)).color(p.danger)).clicked() {
-                            actions.push(Action::Confirm { title: "Delete branch".into(), body: format!("Delete the local branch {name}? Unmerged commits stay reachable only through the reflog."), confirm: "Delete".into(), danger: true, op: Op::DeleteBranch { name: name.clone(), force: true } });
+                            actions.push(Action::Confirm { title: "Delete branch".into(), body: format!("Delete the local branch {name}? If it has commits that are not merged, Git refuses and Canopy asks before forcing it."), confirm: "Delete".into(), danger: true, op: Op::DeleteBranch { name: name.clone(), force: false } });
                         }
                     }
                 });

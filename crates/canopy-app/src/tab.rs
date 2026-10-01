@@ -314,6 +314,8 @@ pub struct RepoTab {
     /// Move keyboard focus to the commit summary next frame.
     pub focus_summary: bool,
     pub running: Option<String>,
+    /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
+    pub force_delete_offer: Option<String>,
     pub progress: Option<String>,
     pub commit_limit: usize,
     /// Centre the selected commit next frame.
@@ -376,6 +378,7 @@ impl RepoTab {
             amend: false,
             focus_summary: false,
             running: None,
+            force_delete_offer: None,
             progress: None,
             commit_limit,
             scroll_to_selected: false,
@@ -857,11 +860,17 @@ impl RepoTab {
                                 });
                             }
                         }
-                        Err(e) => notices.push(Notice {
-                            ok: false,
-                            title: format!("{label} failed"),
-                            body: e,
-                        }),
+                        Err(e) => match &kind {
+                            // Git's own safety check, not a failure: ask before forcing.
+                            OpKind::SafeDelete(name) if e.contains("not fully merged") => {
+                                self.force_delete_offer = Some(name.clone());
+                            }
+                            _ => notices.push(Notice {
+                                ok: false,
+                                title: format!("{label} failed"),
+                                body: e,
+                            }),
+                        },
                     }
                 }
                 Event::Failed(e) => {
@@ -1136,6 +1145,37 @@ mod tests {
         events.send(Event::Diff(key, Ok(new)))?;
         tab.poll(&[]);
         assert!(tab.highlights.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn an_unmerged_branch_is_offered_for_a_forced_delete() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let finished = |result| Event::OpFinished {
+            label: "Deleting topic".into(),
+            kind: OpKind::SafeDelete("topic".into()),
+            announce: true,
+            result,
+        };
+        events.send(finished(Err(
+            "error: the branch 'topic' is not fully merged".into(),
+        )))?;
+        let notices = tab.poll(&[]);
+        assert!(
+            notices.is_empty(),
+            "git's refusal is a question, not an error"
+        );
+        assert_eq!(tab.force_delete_offer.as_deref(), Some("topic"));
+        tab.force_delete_offer = None;
+        events.send(finished(Err("fatal: branch 'topic' not found".into())))?;
+        let notices = tab.poll(&[]);
+        assert!(notices.iter().any(|n| !n.ok));
+        assert!(tab.force_delete_offer.is_none());
         Ok(())
     }
 

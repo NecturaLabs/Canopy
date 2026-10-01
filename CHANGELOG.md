@@ -33,6 +33,9 @@ All notable changes to Canopy are documented here. The format follows
 
 ### Fixed
 
+- Deleting a branch from the sidebar runs `git branch -d`: a branch with unmerged commits is no
+  longer deleted silently, and Canopy asks before forcing it.
+
 - Opening a large repository no longer freezes the window: the repository is opened and its file
   watcher set up off the UI thread.
 - Commits, checkouts and fetches in a linked worktree or submodule now refresh Canopy: their git

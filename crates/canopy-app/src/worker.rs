@@ -144,6 +144,7 @@ impl Op {
             Op::Commit { .. } => OpKind::Commit,
             Op::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
             Op::Fetch { .. } => OpKind::Fetch,
+            Op::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
             _ => OpKind::Other,
         }
     }
@@ -315,6 +316,8 @@ pub enum OpKind {
     Squash(String),
     /// A fetch: restart the auto-fetch clock.
     Fetch,
+    /// `git branch -d`: when Git refuses an unmerged branch, offer to force the delete.
+    SafeDelete(String),
     Other,
 }
 
@@ -841,5 +844,11 @@ mod tests {
             quiet: false,
         };
         assert_eq!(fetch.kind(), OpKind::Fetch);
+        let delete = |force| Op::DeleteBranch {
+            name: "topic".into(),
+            force,
+        };
+        assert_eq!(delete(false).kind(), OpKind::SafeDelete("topic".into()));
+        assert_eq!(delete(true).kind(), OpKind::Other);
     }
 }

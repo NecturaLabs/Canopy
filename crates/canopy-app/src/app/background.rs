@@ -46,6 +46,18 @@ impl CanopyApp {
                     n.body,
                 );
             }
+            // Taken after the poll that set it, so the dialog shows in this frame.
+            if let Some(name) = tab.force_delete_offer.take() {
+                self.dialogs.open(Dialog::Confirm {
+                    title: "Force delete branch".into(),
+                    body: format!(
+                        "{name} has commits that are not merged into its upstream or the current branch. Delete it anyway? Those commits stay reachable only through the reflog."
+                    ),
+                    confirm: "Force delete".into(),
+                    danger: true,
+                    op: Op::DeleteBranch { name, force: true },
+                });
+            }
         }
         // Start the pull/merge request thread for the active tab once its remotes are known, and
         // not before the start-up questions are answered: until then Canopy contacts no service
