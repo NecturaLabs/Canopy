@@ -805,7 +805,7 @@ dependencies = [
  "egui",
  "egui-phosphor",
  "egui_extras",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "git2",
  "notify",
  "png 0.18.1",
