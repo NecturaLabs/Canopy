@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use git2::{BranchType, Oid, Repository, Sort};
 
-use crate::diff::{self, DiffSource, FileDiff};
+use crate::diff::{self, DiffSource, FileDiff, Whitespace};
 use crate::graph;
 use crate::model::*;
 use crate::{Error, Result, status};
@@ -186,9 +186,24 @@ impl Repo {
             out.push(RemoteInfo {
                 name: name.to_owned(),
                 url,
+                default_branch: self.remote_default_branch(name),
             });
         }
         Ok(out)
+    }
+
+    /// The branch `refs/remotes/<remote>/HEAD` points at (set by `git clone` and
+    /// `git remote set-head`), without the `<remote>/` prefix.
+    fn remote_default_branch(&self, remote: &str) -> Option<String> {
+        let head = self
+            .git
+            .find_reference(&format!("refs/remotes/{remote}/HEAD"))
+            .ok()?;
+        let target = String::from_utf8_lossy(head.symbolic_target_bytes()?).into_owned();
+        target
+            .strip_prefix(&format!("refs/remotes/{remote}/"))
+            .filter(|b| !b.is_empty())
+            .map(str::to_owned)
     }
 
     fn tags(&self) -> Result<Vec<TagInfo>> {
@@ -392,8 +407,9 @@ impl Repo {
         path: &str,
         old_path: Option<&str>,
         context: u32,
+        whitespace: Whitespace,
     ) -> Result<git2::Diff<'_>> {
-        let mut opts = diff::options(path, old_path, context);
+        let mut opts = diff::options(path, old_path, context, whitespace);
         let d = match source {
             DiffSource::Unstaged => self.git.diff_index_to_workdir(None, Some(&mut opts))?,
             DiffSource::Staged => {
@@ -417,15 +433,18 @@ impl Repo {
         Ok(d)
     }
 
-    /// The diff of one file. Conflicted files show the working copy with its conflict markers.
+    /// The diff of one file with `context` lines around each hunk. `whitespace` hides
+    /// whitespace-only changes; such a diff is for reading only, since its hunks cannot be applied
+    /// as patches.
     pub fn file_diff(
         &self,
         source: &DiffSource,
         path: &str,
         old_path: Option<&str>,
         context: u32,
+        whitespace: Whitespace,
     ) -> Result<FileDiff> {
-        let d = self.raw_diff(source, path, old_path, context)?;
+        let d = self.raw_diff(source, path, old_path, context, whitespace)?;
         diff::to_file_diff(&d, path)
     }
 

@@ -42,7 +42,9 @@ fn subcommand(args: &[&str]) -> String {
         .to_owned()
 }
 
-fn failure(args: &[&str], stdout: &[u8], stderr: &[u8]) -> Error {
+/// The error for a failed `git args…`: git's standard error, or standard output when standard
+/// error is empty.
+pub(crate) fn failure(args: &[&str], stdout: &[u8], stderr: &[u8]) -> Error {
     let mut msg = String::from_utf8_lossy(stderr).trim().to_owned();
     if msg.is_empty() {
         msg = String::from_utf8_lossy(stdout).trim().to_owned();

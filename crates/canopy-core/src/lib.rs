@@ -12,15 +12,19 @@
 pub mod cli;
 pub mod diff;
 mod error;
+pub mod forge;
 pub mod graph;
 pub mod model;
 pub mod ops;
 pub mod repo;
 pub mod status;
+pub mod update;
 
-pub use diff::{DiffLine, DiffSource, FileDiff, Hunk, HunkKey, LineKind};
+pub use diff::{DiffLine, DiffSource, FileDiff, Hunk, HunkKey, LineKind, Whitespace};
 pub use error::{Error, Result};
+pub use forge::{Forge, ForgeKind};
 pub use git2::Oid;
 pub use graph::{GraphRow, LineEnd, Segment};
 pub use model::*;
+pub use ops::PullStrategy;
 pub use repo::Repo;

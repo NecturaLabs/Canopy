@@ -6,7 +6,7 @@ use std::path::Path;
 use git2::Oid;
 
 use crate::cli;
-use crate::diff::DiffSource;
+use crate::diff::{DiffSource, Whitespace};
 use crate::model::{ChangeKind, FileEntry, RepoState};
 use crate::{Error, Repo, Result};
 
@@ -36,6 +36,41 @@ impl ResetMode {
             Self::Soft => "Soft",
             Self::Mixed => "Mixed",
             Self::Hard => "Hard",
+        }
+    }
+}
+
+/// How `git pull` integrates the upstream branch when the repository does not configure
+/// `pull.rebase` itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PullStrategy {
+    /// Merge the upstream branch (`--no-rebase`), fast-forwarding when possible.
+    #[default]
+    Merge,
+    /// Rebase local commits onto the upstream branch (`--rebase`).
+    Rebase,
+    /// Only fast-forward; fail when the branches have diverged (`--ff-only`).
+    FastForwardOnly,
+}
+
+impl PullStrategy {
+    /// Every strategy, in menu order.
+    pub const ALL: [PullStrategy; 3] = [Self::Merge, Self::Rebase, Self::FastForwardOnly];
+
+    /// Display name.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Merge => "Merge",
+            Self::Rebase => "Rebase",
+            Self::FastForwardOnly => "Fast-forward only",
+        }
+    }
+
+    fn flag(self) -> &'static str {
+        match self {
+            Self::Merge => "--no-rebase",
+            Self::Rebase => "--rebase",
+            Self::FastForwardOnly => "--ff-only",
         }
     }
 }
@@ -145,7 +180,7 @@ impl Repo {
             HunkAction::Stage | HunkAction::Discard => DiffSource::Unstaged,
             HunkAction::Unstage => DiffSource::Staged,
         };
-        let diff = self.raw_diff(&source, path, None, context)?;
+        let diff = self.raw_diff(&source, path, None, context, Whitespace::Show)?;
         let Some((patch, key)) = crate::diff::hunk_patch(&diff, index)? else {
             return Err(Error::invalid(
                 "That change no longer exists. Refresh and try again.",
@@ -164,15 +199,19 @@ impl Repo {
         cli::run_with_input(self.workdir(), args, &patch).map(drop)
     }
 
-    /// Commits the index with `message`, running hooks and signing as configured. Returns the new
-    /// `HEAD`.
-    pub fn commit(&self, message: &str, amend: bool) -> Result<Oid> {
+    /// Commits the index with `message`, running hooks and signing as configured. `amend`
+    /// replaces `HEAD`; `signoff` adds a `Signed-off-by:` trailer for the committer
+    /// (`git commit --signoff`). Returns the new `HEAD`.
+    pub fn commit(&self, message: &str, amend: bool, signoff: bool) -> Result<Oid> {
         if message.trim().is_empty() {
             return Err(Error::invalid("Write a commit message first."));
         }
         let mut args = vec!["commit", "-q", "--cleanup=strip", "-F", "-"];
         if amend {
             args.push("--amend");
+        }
+        if signoff {
+            args.push("--signoff");
         }
         cli::run_with_input(self.workdir(), &args, message.as_bytes())?;
         Ok(self.git().head()?.peel_to_commit()?.id())
@@ -337,9 +376,19 @@ impl Repo {
         self.git_cmd(&["remote", "remove", name]).map(drop)
     }
 
-    /// Fetches `remote`, or every remote when `None`, pruning deleted branches.
-    pub fn fetch(&self, remote: Option<&str>, progress: impl FnMut(&str)) -> Result<String> {
-        let mut args = vec!["fetch", "--progress", "--prune", "--tags"];
+    /// Fetches `remote`, or every remote when `None`, with tags. `prune` also deletes
+    /// remote-tracking branches whose branch no longer exists on the remote (`--prune`); without
+    /// it, `fetch.prune` / `remote.<name>.prune` from the configuration still apply.
+    pub fn fetch(
+        &self,
+        remote: Option<&str>,
+        prune: bool,
+        progress: impl FnMut(&str),
+    ) -> Result<String> {
+        let mut args = vec!["fetch", "--progress", "--tags"];
+        if prune {
+            args.push("--prune");
+        }
         match remote {
             Some(r) => args.push(r),
             None => args.push("--all"),
@@ -347,12 +396,13 @@ impl Repo {
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }
 
-    /// Pulls into the current branch. Uses `pull.rebase` from the configuration when set,
-    /// otherwise `rebase` decides between rebasing and merging.
-    pub fn pull(&self, rebase: bool, progress: impl FnMut(&str)) -> Result<String> {
+    /// Pulls into the current branch. When the configuration sets `pull.rebase`, git follows it
+    /// and `strategy` is ignored; otherwise `strategy` picks `--no-rebase`, `--rebase` or
+    /// `--ff-only`.
+    pub fn pull(&self, strategy: PullStrategy, progress: impl FnMut(&str)) -> Result<String> {
         let mut args = vec!["pull", "--progress"];
         if self.config_string("pull.rebase").is_none() {
-            args.push(if rebase { "--rebase" } else { "--no-rebase" });
+            args.push(strategy.flag());
         }
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }
@@ -403,6 +453,68 @@ impl Repo {
             &["push", "--progress", remote, &refspec],
             progress,
         )
+    }
+
+    /// Checks out a pull or merge request head such as `refs/pull/12/head` (GitHub) or
+    /// `refs/merge-requests/12/head` (GitLab) from `remote` as the local branch `branch` (e.g.
+    /// `pr/12`). The head is fetched to `refs/remotes/<remote>/<branch>`. An existing local
+    /// `branch` is switched to and fast-forwarded; if it has commits of its own, git's
+    /// fast-forward error is returned and nothing is lost. A new branch is created without an
+    /// upstream, since the request ref is not a branch on the remote. Returns fetch's summary.
+    pub fn checkout_request(
+        &self,
+        remote: &str,
+        remote_ref: &str,
+        branch: &str,
+        progress: impl FnMut(&str),
+    ) -> Result<String> {
+        if remote.is_empty() || remote.starts_with('-') {
+            return Err(Error::invalid(format!("'{remote}' is not a valid remote.")));
+        }
+        // Refs handed to check-ref-format start with `refs/`, so they cannot be read as options
+        // (it takes no `--`).
+        if !remote_ref.starts_with("refs/")
+            || self.git_cmd(&["check-ref-format", remote_ref]).is_err()
+        {
+            return Err(Error::invalid(format!(
+                "'{remote_ref}' is not a valid ref to fetch."
+            )));
+        }
+        // `--branch` also expands `@{-1}` and friends, so insist the name comes back unchanged.
+        let valid_branch = !branch.starts_with('-')
+            && self
+                .git_cmd(&["check-ref-format", "--branch", branch])
+                .is_ok_and(|out| out.trim_end_matches('\n') == branch);
+        if !valid_branch {
+            return Err(Error::invalid(format!(
+                "'{branch}' is not a valid branch name."
+            )));
+        }
+        let tracking = format!("refs/remotes/{remote}/{branch}");
+        if self.git_cmd(&["check-ref-format", &tracking]).is_err() {
+            return Err(Error::invalid(format!(
+                "'{tracking}' is not a valid ref name."
+            )));
+        }
+
+        let refspec = format!("+{remote_ref}:{tracking}");
+        let summary = cli::run_streaming(
+            Some(self.workdir()),
+            &["fetch", "--progress", "--", remote, &refspec],
+            progress,
+        )?;
+
+        let exists = self
+            .git()
+            .find_branch(branch, git2::BranchType::Local)
+            .is_ok();
+        if exists {
+            self.checkout_branch(branch)?;
+            self.git_cmd(&["merge", "--ff-only", "-q", &tracking])?;
+        } else {
+            self.git_cmd(&["switch", "-q", "--no-track", "-c", branch, &tracking])?;
+        }
+        Ok(summary)
     }
 
     /// Deletes a branch on a remote.

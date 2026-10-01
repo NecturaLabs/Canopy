@@ -119,6 +119,9 @@ pub struct RemoteInfo {
     pub name: String,
     /// Fetch URL, if set.
     pub url: Option<String>,
+    /// The branch `refs/remotes/<name>/HEAD` points at (e.g. `main`), the remote's default
+    /// branch as last recorded by `git clone` or `git remote set-head`; `None` when unset.
+    pub default_branch: Option<String>,
 }
 
 /// A tag.

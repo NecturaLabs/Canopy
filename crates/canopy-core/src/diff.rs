@@ -99,7 +99,38 @@ pub enum DiffSource {
     Commit(git2::Oid),
 }
 
-pub(crate) fn options(path: &str, old_path: Option<&str>, context: u32) -> DiffOptions {
+/// How whitespace changes show in a diff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Whitespace {
+    /// Every change, like `git diff`.
+    #[default]
+    Show,
+    /// Ignore whitespace changes at line ends, like `git diff --ignore-space-at-eol`.
+    IgnoreEol,
+    /// Ignore all whitespace when comparing lines, like `git diff -w`.
+    IgnoreAll,
+}
+
+impl Whitespace {
+    /// Every mode, in menu order.
+    pub const ALL: [Whitespace; 3] = [Self::Show, Self::IgnoreEol, Self::IgnoreAll];
+
+    /// Display name.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Show => "Show whitespace",
+            Self::IgnoreEol => "Ignore at end of line",
+            Self::IgnoreAll => "Ignore all",
+        }
+    }
+}
+
+pub(crate) fn options(
+    path: &str,
+    old_path: Option<&str>,
+    context: u32,
+    whitespace: Whitespace,
+) -> DiffOptions {
     let mut opts = DiffOptions::new();
     opts.pathspec(path)
         .disable_pathspec_match(true)
@@ -108,6 +139,15 @@ pub(crate) fn options(path: &str, old_path: Option<&str>, context: u32) -> DiffO
         .show_untracked_content(true)
         .context_lines(context)
         .interhunk_lines(0);
+    match whitespace {
+        Whitespace::Show => {}
+        Whitespace::IgnoreEol => {
+            opts.ignore_whitespace_eol(true);
+        }
+        Whitespace::IgnoreAll => {
+            opts.ignore_whitespace(true);
+        }
+    }
     if let Some(old) = old_path {
         opts.pathspec(old);
     }
