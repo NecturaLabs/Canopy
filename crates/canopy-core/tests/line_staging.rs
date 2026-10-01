@@ -48,6 +48,8 @@ fn fixture(content: &str) -> (tempfile::TempDir, Repo) {
     git(p, &["config", "user.name", "Ada Lovelace"]);
     git(p, &["config", "user.email", "ada@example.com"]);
     git(p, &["config", "commit.gpgsign", "false"]);
+    // Git for Windows sets core.autocrlf=true system-wide, which would rewrite the LF fixtures.
+    git(p, &["config", "core.autocrlf", "false"]);
     fs::write(p.join("a.txt"), content).expect("write");
     git(p, &["add", "."]);
     git(p, &["commit", "-q", "-m", "feat: first"]);
@@ -408,9 +410,11 @@ fn partly_staging_a_deletion_keeps_the_rest() {
 fn handles_paths_with_spaces_and_non_ascii() {
     let (dir, repo) = fixture("one\n");
     let p = dir.path();
-    let mut names = vec!["my notes.txt", "caf\u{e9} \"q\".txt"];
-    // A tab ends a name on `---`/`+++` lines unless the name is quoted (Windows forbids it).
+    let mut names = vec!["my notes.txt", "caf\u{e9} \u{2014} n\u{f6}tes.txt"];
+    // Windows forbids quotes and tabs in names. Quotes force git to quote the name; a tab ends a
+    // name on `---`/`+++` lines unless the name is quoted.
     if cfg!(unix) {
+        names.push("caf\u{e9} \"q\".txt");
         names.push("tab\there.txt");
     }
     for name in names {
