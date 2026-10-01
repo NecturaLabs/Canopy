@@ -214,7 +214,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                     ui.separator();
                     if ui.button(format!("{}  New branch from here…", icon::GIT_BRANCH)).clicked() {
-                        actions.push(Action::OpenDialog(Dialog::new_branch(Some(name.clone()))));
+                        actions.push(Action::OpenDialog(Dialog::new_branch_at(crate::views::dialogs::Start::Branch(name.clone()))));
                     }
                     if ui.button(format!("{}  Rename…", icon::PENCIL_SIMPLE)).clicked() {
                         actions.push(Action::OpenDialog(Dialog::Rename { old: name.clone(), new: name.clone() }));

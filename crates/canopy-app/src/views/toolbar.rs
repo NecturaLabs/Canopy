@@ -387,7 +387,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
         .clicked()
         {
             actions.push(Action::OpenDialog(
-                crate::views::dialogs::Dialog::new_branch(None),
+                crate::views::dialogs::Dialog::new_branch_at(crate::views::dialogs::Start::Head),
             ));
         }
         if widgets::tool_button(

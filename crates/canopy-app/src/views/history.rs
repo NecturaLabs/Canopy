@@ -455,9 +455,9 @@ pub fn commit_menu(
         .button(format!("{}  New branch here…", icon::GIT_BRANCH))
         .clicked()
     {
-        actions.push(Action::OpenDialog(Dialog::new_branch(Some(
-            oid.to_string(),
-        ))));
+        actions.push(Action::OpenDialog(Dialog::new_branch_at(
+            crate::views::dialogs::Start::Commit(oid),
+        )));
     }
     if ui.button(format!("{}  New tag here…", icon::TAG)).clicked() {
         actions.push(Action::OpenDialog(Dialog::NewTag {

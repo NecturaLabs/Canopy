@@ -135,15 +135,6 @@ pub enum Start {
 }
 
 impl Start {
-    /// Classifies a revision given as text: a full object id is a commit, anything else a name.
-    pub fn parse(rev: &str) -> Self {
-        let full_id = matches!(rev.len(), 40 | 64) && rev.bytes().all(|b| b.is_ascii_hexdigit());
-        match Oid::from_str(rev) {
-            Ok(oid) if full_id => Start::Commit(oid),
-            _ => Start::Branch(rev.to_owned()),
-        }
-    }
-
     /// The revision to hand to git; `None` for `HEAD`.
     pub fn rev(&self) -> Option<String> {
         match self {
@@ -406,12 +397,6 @@ impl Dialog {
             *publish = true;
         }
         self
-    }
-
-    /// New branch starting at `start` given as text (HEAD when `None`); a full object id is
-    /// taken as a commit. Prefer [`Dialog::new_branch_at`] when the caller knows which it is.
-    pub fn new_branch(start: Option<String>) -> Self {
-        Self::new_branch_at(start.as_deref().map_or(Start::Head, Start::parse))
     }
 
     /// New branch starting at `start`.
@@ -1349,9 +1334,8 @@ mod tests {
     fn branch_starts_are_typed_and_shortened_safely() -> Result<(), git2::Error> {
         let sha = "0123456789abcdef0123456789abcdef01234567";
         let oid = Oid::from_str(sha)?;
-        assert_eq!(Start::parse(sha), Start::Commit(oid));
-        assert_eq!(Start::parse(sha).label(String::new), "commit 0123456");
-        assert_eq!(Start::parse(sha).rev().as_deref(), Some(sha));
+        assert_eq!(Start::Commit(oid).label(String::new), "commit 0123456");
+        assert_eq!(Start::Commit(oid).rev().as_deref(), Some(sha));
         // Names, however long or short and whatever their characters, are shown whole.
         for name in [
             "main",
@@ -1360,24 +1344,21 @@ mod tests {
             "release/2026-10-01-hotfix-for-the-thing",
             "0123456789abcdef",
         ] {
-            assert_eq!(Start::parse(name), Start::Branch(name.to_owned()));
-            assert_eq!(Start::parse(name).label(String::new), name);
-            assert_eq!(Start::parse(name).rev().as_deref(), Some(name));
+            let start = Start::Branch(name.to_owned());
+            assert_eq!(start.label(String::new), name);
+            assert_eq!(start.rev().as_deref(), Some(name));
         }
-        // 40 characters that are not all hexadecimal are a name, not a commit.
-        let forty = "z".repeat(40);
-        assert_eq!(Start::parse(&forty), Start::Branch(forty.clone()));
         assert_eq!(Start::Head.label(|| "main".into()), "main");
         assert_eq!(Start::Head.rev(), None);
         assert!(matches!(
-            Dialog::new_branch(None),
+            Dialog::new_branch_at(Start::Head),
             Dialog::NewBranch {
                 start: Start::Head,
                 ..
             }
         ));
         assert!(matches!(
-            Dialog::new_branch(Some(sha.into())),
+            Dialog::new_branch_at(Start::Commit(oid)),
             Dialog::NewBranch { start: Start::Commit(o), .. } if o == oid
         ));
         Ok(())

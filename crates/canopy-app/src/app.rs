@@ -20,7 +20,7 @@ use crate::ui::palette::{CommandPalette, Entry};
 use crate::ui::theme::{self, ThemeId, palette};
 use crate::ui::toast::{ToastKind, Toasts};
 use crate::updater::{self, UpdateState, Updater};
-use crate::views::dialogs::{self, Dialog, DialogStack, Outcome};
+use crate::views::dialogs::{self, Dialog, DialogStack, Outcome, Start};
 use crate::views::settings_screen::{self, SettingsScreen};
 use crate::views::{changes, history, requests, sidebar, statusbar, toolbar, welcome};
 use crate::worker::{Job, Op};
@@ -490,7 +490,7 @@ impl CanopyApp {
             C::Fetch => actions.push(Action::Fetch),
             C::Pull => actions.push(Action::Pull),
             C::Push => actions.push(Action::Push),
-            C::NewBranch => actions.push(Action::OpenDialog(Dialog::new_branch(None))),
+            C::NewBranch => actions.push(Action::OpenDialog(Dialog::new_branch_at(Start::Head))),
             C::Stash => actions.push(Action::OpenDialog(Dialog::Stash {
                 message: String::new(),
                 untracked: true,
@@ -782,7 +782,7 @@ impl CanopyApp {
                         "Branch",
                         Some(C::NewBranch),
                     ),
-                    Action::OpenDialog(Dialog::new_branch(None)),
+                    Action::OpenDialog(Dialog::new_branch_at(Start::Head)),
                 ),
                 (
                     e(icon::GIT_MERGE, "Merge…", "Branch", Some(C::MergeDialog)),
