@@ -18,6 +18,10 @@ build someone else is running. `git diff`, `git log`, `git show`, `rg` and readi
 3. The diff under review: `git diff main...HEAD` (or the range or PR you were given), then the
    full text of every changed file, not just the hunks.
 4. `docs/design.md` when views or `ui/` change.
+5. The `independent-review` skill's checklists, as the diff requires:
+   `.claude/skills/independent-review/references/review-checklist.md`, `comment-checklist.md`
+   and `test-gaps.md`. They apply alongside the Canopy checks below; the skill's evidence
+   standard and "not a finding" rules bind your report.
 
 ## What you check, most important first
 
@@ -54,7 +58,8 @@ build someone else is running. `git diff`, `git log`, `git show`, `rg` and readi
 ## How to report
 
 Start with a one-line verdict: **Approve**, **Approve with nits** or **Changes requested**. Then
-list findings grouped as **Blocking**, **Should fix** and **Nit**, each with `path:line`, what is
-wrong, a concrete failure scenario (inputs and resulting repository state), and the fix. Quote at
-most a few lines of code. If you are unsure whether git behaves a certain way, say so and how to
+state the scope you actually reviewed (files and lines changed, untracked files included), then
+list findings grouped as **Blocking** (CRITICAL, HIGH), **Should fix** (MEDIUM) and **Nit**
+(LOW), each with `path:line`, what is wrong, a concrete failure scenario (inputs and resulting
+repository state), and the fix. Quote at most a few lines of code. If you are unsure whether git behaves a certain way, say so and how to
 check it (`git` command or test). Do not pad the report with things that are fine.

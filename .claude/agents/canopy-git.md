@@ -38,7 +38,8 @@ tested Rust that behaves like the `git` command line.
    repository with `tempfile` and a fixed identity (`user.name`, `user.email`, `commit.gpgsign
    false` in the repo config) so they never read or touch the user's repositories or global
    config. Cover the happy path and the edge cases above that apply. Assert on repository state,
-   not on log output.
+   not on log output. The `testing` skill governs test level, determinism and seeing each new
+   test fail first.
 
 When unsure how git behaves, read the git documentation (git-scm.com/docs), the libgit2 and
 `git2` docs (docs.rs/git2), or the git source, and cite what you found.
