@@ -463,13 +463,13 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                                     Ok(_) => {}
                                     // The list stays; only the counts are missing.
                                     Err(e) => {
-                                        tracing::warn!(error = %e, "line counts not downloaded")
+                                        tracing::warn!(error = %redacted(&e), "line counts not downloaded")
                                     }
                                 }
                             }
                         }
                         Err(e) => {
-                            tracing::warn!(error = %e, "commit details failed");
+                            tracing::warn!(error = %redacted(&e), "commit details failed");
                             emit(Event::DetailsFailed {
                                 oid,
                                 message: e.to_string(),
@@ -646,6 +646,11 @@ fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
         .collect()
 }
 
+/// `e` as it may appear in a log: git's own words, with credentials in URLs removed.
+fn redacted(e: &canopy_core::Error) -> String {
+    canopy_core::cli::redact_url(&e.to_string())
+}
+
 /// Runs `f` with the status bar saying where it is downloading from, then clears the line.
 fn with_progress<T>(emit: &impl Fn(Event), remote: Option<String>, f: impl FnOnce() -> T) -> T {
     let from = remote.map_or_else(String::new, |r| format!(" from {r}"));
@@ -689,7 +694,7 @@ fn snapshot_completing(
             repo.complete_status(&mut snap, MissingObjects::Download);
         });
         if let Some(u) = &snap.status_unavailable {
-            tracing::warn!(reason = %u.message, "status not downloaded");
+            tracing::warn!(reason = %canopy_core::cli::redact_url(&u.message), "status not downloaded");
         }
     }
     Ok(snap)
