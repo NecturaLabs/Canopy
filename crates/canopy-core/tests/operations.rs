@@ -35,6 +35,9 @@ fn fixture() -> (tempfile::TempDir, Repo) {
     git(p, &["config", "user.email", "ada@example.com"]);
     git(p, &["config", "commit.gpgsign", "false"]);
     git(p, &["config", "tag.gpgsign", "false"]);
+    // Git for Windows sets core.autocrlf=true system-wide, which would rewrite
+    // the fixtures' LF files as CRLF whenever git writes them.
+    git(p, &["config", "core.autocrlf", "false"]);
     fs::write(
         p.join("a.txt"),
         "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
