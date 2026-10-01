@@ -71,7 +71,7 @@ impl Http {
             // GitHub redirects renamed repositories; keep the token on the same host only.
             .redirect_auth_headers(RedirectAuthHeaders::SameHost)
             .tls_config(tls);
-        if is_loopback(&base) {
+        if is_loopback_base(&base) {
             // A local server (tests, a developer's stub) never goes through a proxy.
             config = config.proxy(None);
         }
@@ -168,14 +168,42 @@ impl Http {
     }
 }
 
-fn is_loopback(base: &str) -> bool {
-    let rest = base.split_once("://").map_or(base, |(_, r)| r);
-    let host = rest.split('/').next().unwrap_or_default();
-    let host = match host.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or_default(),
-        None => host.split(':').next().unwrap_or_default(),
+/// Whether `url` is a plain-HTTP API root on this machine, such as `http://127.0.0.1:8080` or
+/// `http://[::1]:8787/api` (a test server or a developer's stub).
+///
+/// Deliberately strict, so a URL that only looks local cannot pass: the scheme must be exactly
+/// `http`; the URL must contain no `@` at all, so there are no credentials in the authority
+/// (which defeats `http://localhost:@evil.example/`, whose real host is `evil.example`); the
+/// authority (everything up to the first `/`, `?`, `#` or `\`) must be exactly `127.0.0.1`,
+/// `localhost` or `[::1]`, optionally followed by `:` and a port number; whatever follows must
+/// be empty or a path starting with `/`. Upper case, trailing dots,
+/// `https` and anything else answer `false`, which is the safe side.
+pub fn is_loopback_base(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
     };
-    matches!(host, "localhost" | "127.0.0.1" | "::1")
+    let end = rest.find(['/', '?', '#', '\\']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    if !(tail.is_empty() || tail.starts_with('/')) || url.contains('@') {
+        return false;
+    }
+    let (host, port) = if let Some(after) = authority.strip_prefix("[::1]") {
+        ("[::1]", after)
+    } else {
+        match authority.find(':') {
+            Some(i) => authority.split_at(i),
+            None => (authority, ""),
+        }
+    };
+    let port_ok = match port.strip_prefix(':') {
+        None => port.is_empty(),
+        Some(digits) => {
+            !digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit())
+                && digits.parse::<u16>().is_ok()
+        }
+    };
+    port_ok && matches!(host, "127.0.0.1" | "localhost" | "[::1]")
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(bytes: &[u8], what: &str) -> Result<T> {
@@ -337,10 +365,61 @@ mod tests {
 
     #[test]
     fn loopback_detection() {
-        assert!(is_loopback("http://127.0.0.1:4000"));
-        assert!(is_loopback("http://localhost/api/v4"));
-        assert!(is_loopback("http://[::1]:80"));
-        assert!(!is_loopback("https://api.github.com"));
+        for url in [
+            "http://127.0.0.1",
+            "http://127.0.0.1/",
+            "http://127.0.0.1:4000",
+            "http://localhost/api/v4",
+            "http://localhost:8080/api/v4/",
+            "http://[::1]",
+            "http://[::1]:80",
+            "http://[::1]:8787/api",
+            "http://127.0.0.1:65535/x",
+        ] {
+            assert!(is_loopback_base(url), "{url} should be loopback");
+        }
+        for url in [
+            // Credentials: the real host is after the `@`.
+            "http://localhost:@evil.example/",
+            "http://localhost:@evil",
+            "http://localhost@evil.example",
+            "http://user:pw@localhost/",
+            "http://127.0.0.1:80@evil.example/api",
+            "http://localhost/@evil.example",
+            "http://[::1]@evil.example/",
+            // Look-alike hosts.
+            "http://127.0.0.1.evil.com",
+            "http://127.0.0.1.evil.com/api",
+            "http://localhost.evil.com:80",
+            "http://localhost.",
+            "http://LOCALHOST/",
+            "http://evil.example/localhost",
+            "http://127.0.0.2/",
+            "http://0.0.0.0/",
+            "http://[::1].evil.com/",
+            "http://[::2]/",
+            "http://[0:0:0:0:0:0:0:1]/",
+            // Not plain http, or malformed.
+            "https://127.0.0.1",
+            "https://localhost:8080/api",
+            "HTTP://localhost/",
+            "ftp://localhost/",
+            "localhost:8080",
+            " http://localhost/",
+            "http://",
+            "http://:8080/",
+            "http://localhost:/",
+            "http://localhost:99999/",
+            "http://localhost:80:80/",
+            "http://localhost:8o/",
+            "http://localhost?x=1",
+            "http://localhost#frag",
+            "http://localhost\\@evil.example/",
+            "http://localhost%40evil.example/",
+            "https://api.github.com",
+        ] {
+            assert!(!is_loopback_base(url), "{url} must not be loopback");
+        }
     }
 
     #[test]
