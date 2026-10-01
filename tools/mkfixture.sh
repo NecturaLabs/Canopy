@@ -559,7 +559,7 @@ make_linear() {
 make_big() {
   init_repo
   local total=${BIG_COMMITS:-5000}
-  local mark=0 main_tip=0 i j topic_tip msg content ts
+  local mark=0 main_tip=0 i j topic_tip content ts
   emit_commit() { # emit_commit <ref> <parent-mark> <merge-mark|0> <author-index> <message> <path>
     local ref=$1 parent=$2 other=$3 who=$4 message=$5 path=$6 name email tz
     IFS='|' read -r name email tz <<<"${AUTHORS[$who]}"
