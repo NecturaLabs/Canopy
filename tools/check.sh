@@ -17,7 +17,14 @@ step "cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets --locked -- -D warnings
 
 step "cargo test --workspace"
-cargo test --workspace --locked
+# The tests run git. Give them the identity CI uses and nothing else, so the user's own git
+# configuration (signing, hooks paths, aliases, default branch, autocrlf) cannot change results.
+test_gitconfig="$(mktemp "${TMPDIR:-/tmp}/canopy-check-gitconfig.XXXXXX")"
+trap 'rm -f "$test_gitconfig"' EXIT
+git config --file "$test_gitconfig" user.name "Canopy CI"
+git config --file "$test_gitconfig" user.email "ci@canopy.invalid"
+git config --file "$test_gitconfig" init.defaultBranch main
+GIT_CONFIG_GLOBAL="$test_gitconfig" GIT_CONFIG_NOSYSTEM=1 cargo test --workspace --locked
 
 step "tools/release.py selftest"
 python3 tools/release.py selftest
