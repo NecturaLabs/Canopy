@@ -8,15 +8,25 @@ use egui_phosphor::regular as icon;
 use canopy_core::{DiffSource, FileEntry, short_id};
 
 use crate::app::Action;
-use crate::tab::{FileSelection, RepoTab};
+use crate::tab::{DetailsError, FileSelection, RepoTab};
 use crate::ui::theme::{self, Palette, palette};
-use crate::ui::widgets;
+use crate::ui::{art, widgets};
 use crate::views::diff;
 
 /// Draws the details pane.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let Some(d) = tab.details.clone() else {
+        // A failed load stays on screen with its reason, so selecting the same commit again is
+        // not the only way out.
+        if let Some(error) = tab
+            .details_error
+            .clone()
+            .filter(|e| tab.selected_commit == Some(e.oid))
+        {
+            failed(ui, tab, &error);
+            return;
+        }
         ui.centered_and_justified(|ui| {
             if tab.selected_commit.is_some() {
                 ui.spinner();
@@ -131,12 +141,26 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                             .font(FontId::new(12.5, theme::semibold()))
                             .color(p.text_dim),
                         );
-                        ui.label(
-                            RichText::new(format!("+{adds}"))
-                                .color(p.success)
-                                .size(12.0),
-                        );
-                        ui.label(RichText::new(format!("−{dels}")).color(p.danger).size(12.0));
+                        if d.stats_known {
+                            ui.label(
+                                RichText::new(format!("+{adds}"))
+                                    .color(p.success)
+                                    .size(12.0),
+                            );
+                            ui.label(RichText::new(format!("−{dels}")).color(p.danger).size(12.0));
+                        } else {
+                            // A partial clone that has not downloaded the file contents.
+                            ui.label(
+                                RichText::new("line counts not downloaded")
+                                    .color(p.text_faint)
+                                    .size(11.5),
+                            )
+                            .on_hover_text(
+                                "This is a partial clone: the line counts and renamed files \
+                                 need file contents that were not downloaded. Open a file \
+                                 to download it.",
+                            );
+                        }
                     });
                     ui.add_space(4.0);
                     virtual_rows(ui, d.files.len(), FILE_ROW_H, |ui, i| {
@@ -156,6 +180,37 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(p.bg))
         .show(ui, |ui| diff::show(ui, tab, actions));
+}
+
+/// The details could not be loaded: git's reason and, when downloading can fix it (a partial
+/// clone that has not fetched the commit), a Retry button.
+fn failed(ui: &mut Ui, tab: &mut RepoTab, error: &DetailsError) {
+    let p = palette(ui.ctx());
+    // Git's message can be long and the pane short: scroll rather than clip the button.
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.add_space(24.0);
+            ui.vertical_centered(|ui| {
+                ui.set_max_width(ui.available_width() - 32.0);
+                art::show(ui, art::empty_error(), vec2(120.0, 90.0));
+                ui.label(
+                    RichText::new(format!("Could not load commit {}", short_id(error.oid)))
+                        .font(FontId::new(14.0, theme::semibold())),
+                );
+                ui.label(RichText::new(&error.message).size(12.0).color(p.text_dim));
+                if error.can_download {
+                    ui.add_space(8.0);
+                    if ui
+                        .button(format!("{}  Retry", icon::ARROWS_CLOCKWISE))
+                        .clicked()
+                    {
+                        tab.retry_details();
+                    }
+                }
+                ui.add_space(12.0);
+            });
+        });
 }
 
 fn meta_row(ui: &mut Ui, glyph: &str, text: &str) {

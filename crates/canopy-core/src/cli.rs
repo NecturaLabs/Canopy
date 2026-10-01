@@ -107,12 +107,18 @@ fn is_set(cmd: &Command, key: &str) -> bool {
     }
 }
 
+/// The git sub-command in `args`: the first argument that is neither an option nor the value of
+/// one of git's own `-c <name=value>` and `-C <path>` options (so `-c a=b fetch` is `fetch`).
 fn subcommand(args: &[&str]) -> String {
-    args.iter()
-        .find(|a| !a.starts_with('-'))
-        .copied()
-        .unwrap_or("git")
-        .to_owned()
+    let mut args = args.iter().copied();
+    while let Some(a) = args.next() {
+        if matches!(a, "-c" | "-C") {
+            args.next();
+        } else if !a.starts_with('-') {
+            return a.to_owned();
+        }
+    }
+    "git".to_owned()
 }
 
 /// The error for a failed `git args…`: git's standard error, or standard output when standard
@@ -344,6 +350,22 @@ mod tests {
         assert_eq!(redact_url("ssh://git@host/x"), "ssh://<redacted>@host/x");
         assert_eq!(redact_url("https://host/a@b"), "https://host/a@b");
         assert_eq!(redact_url("no url"), "no url");
+    }
+
+    #[test]
+    fn subcommand_skips_option_values() {
+        assert_eq!(subcommand(&["fetch", "origin"]), "fetch");
+        assert_eq!(subcommand(&["--no-pager", "log"]), "log");
+        assert_eq!(
+            subcommand(&["-c", "fetch.negotiationAlgorithm=noop", "fetch", "origin"]),
+            "fetch"
+        );
+        assert_eq!(
+            subcommand(&["-C", "/some/dir", "-c", "a=b", "status"]),
+            "status"
+        );
+        assert_eq!(subcommand(&["-c", "a=b"]), "git");
+        assert_eq!(subcommand(&[]), "git");
     }
 
     #[test]

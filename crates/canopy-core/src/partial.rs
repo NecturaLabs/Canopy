@@ -48,18 +48,14 @@ pub(crate) fn is_missing_object(e: &git2::Error) -> bool {
     e.code() == ErrorCode::NotFound && e.class() == ErrorClass::Odb
 }
 
-/// The promisor remotes, in the order git tries them: `extensions.partialClone` first, then
-/// every `remote.<name>.promisor = true`.
+/// The promisor remotes, in the order git tries them: every `remote.<name>.promisor = true` in
+/// configuration order, then the one `extensions.partialClone` names (git moves it to the end,
+/// `promisor_remote_init` in `promisor-remote.c`).
 pub fn promisor_remotes(repo: &Repository) -> Vec<String> {
     let Ok(config) = repo.config().and_then(|mut c| c.snapshot()) else {
         return Vec::new();
     };
-    let mut out = Vec::new();
-    if let Ok(name) = config.get_string("extensions.partialclone")
-        && !name.is_empty()
-    {
-        out.push(name);
-    }
+    let mut out: Vec<String> = Vec::new();
     if let Ok(mut entries) = config.entries(Some(r"remote\..*\.promisor")) {
         while let Some(Ok(entry)) = entries.next() {
             let Ok(key) = entry.name() else { continue };
@@ -75,7 +71,39 @@ pub fn promisor_remotes(repo: &Repository) -> Vec<String> {
             }
         }
     }
+    if let Ok(name) = config.get_string("extensions.partialclone")
+        && !name.is_empty()
+    {
+        out.retain(|n| *n != name);
+        out.push(name);
+    }
     out
+}
+
+/// A remote name that would be read as an option if passed to `git fetch` (for example
+/// `--upload-pack=<command>`, which runs the command). Such a remote is never fetched from.
+fn is_refused(name: &str) -> bool {
+    name.starts_with('-')
+}
+
+/// The remotes of `remotes` that may be fetched from.
+fn usable(remotes: &[String]) -> impl Iterator<Item = &String> {
+    remotes.iter().filter(|n| !is_refused(n))
+}
+
+/// The first promisor remote that may be fetched from.
+pub(crate) fn usable_promisor_remote(repo: &Repository) -> Option<String> {
+    usable(&promisor_remotes(repo)).next().cloned()
+}
+
+/// Why the promisor remotes `remotes` (all of them refused) cannot be used.
+fn refused_reason(remotes: &[String]) -> String {
+    let names: Vec<String> = remotes.iter().map(|n| format!("{n:?}")).collect();
+    format!(
+        "The promisor remote name {} was refused because it starts with \"-\" and git would \
+         read it as an option. Rename the remote.",
+        names.join(", ")
+    )
 }
 
 /// Whether `repo` is a partial clone: it has a promisor remote, or objects that came from one
@@ -94,10 +122,15 @@ fn has_promisor_packs(repo: &Repository) -> bool {
 }
 
 /// The value of `extensions.partialClone` when the repository at `path` uses that setting, which
-/// Git before 2.24 wrote and libgit2 refuses to open.
+/// Git before 2.24 wrote and libgit2 refuses to open. Read from the common directory, which holds
+/// the configuration of a linked worktree too.
 pub(crate) fn legacy_extension(path: &Path) -> Option<String> {
     let gitdir = Repository::discover_path(path, std::iter::empty::<&Path>()).ok()?;
-    let config = git2::Config::open(&gitdir.join("config")).ok()?;
+    let common = std::fs::read_to_string(gitdir.join("commondir"))
+        .ok()
+        .map(|rel| gitdir.join(rel.trim()))
+        .unwrap_or(gitdir);
+    let config = git2::Config::open(&common.join("config")).ok()?;
     config
         .get_string("extensions.partialclone")
         .ok()
@@ -152,20 +185,26 @@ pub(crate) fn missing_blobs(
 }
 
 /// The object ID libgit2 names in a "not found" message, as a last resort when the needed
-/// objects could not be worked out in advance.
+/// objects could not be worked out in advance. Only a full ID counts: `Oid::from_str` also
+/// accepts shorter hex strings, which are not objects to fetch.
 fn oid_in_message(e: &git2::Error) -> Option<Oid> {
     let msg = e.message();
     let start = msg.rfind('(')? + 1;
     let end = start + msg[start..].find(')')?;
-    Oid::from_str(&msg[start..end]).ok()
+    let id = &msg[start..end];
+    let full = matches!(id.len(), 40 | 64) && id.bytes().all(|b| b.is_ascii_hexdigit());
+    if full { Oid::from_str(id).ok() } else { None }
 }
 
-/// The error for a read that needs objects this partial clone does not have.
+/// The error for a read that needs objects this partial clone does not have. `remote` is the
+/// first remote that may be fetched from; when every promisor remote was refused it is `None` and
+/// the reason says so.
 pub(crate) fn not_downloaded(repo: &Repository, reason: Option<String>) -> Error {
-    Error::NotDownloaded {
-        remote: promisor_remotes(repo).into_iter().next(),
-        reason,
-    }
+    let all = promisor_remotes(repo);
+    let remote = usable(&all).next().cloned();
+    let reason =
+        reason.or_else(|| (remote.is_none() && !all.is_empty()).then(|| refused_reason(&all)));
+    Error::NotDownloaded { remote, reason }
 }
 
 /// Fetches `oids` from the promisor remotes, trying each in turn until every object is present.
@@ -177,12 +216,12 @@ pub(crate) fn download(repo: &Repository, workdir: &Path, oids: &[Oid]) -> Resul
             reason: Some("No promisor remote is configured to download it from.".into()),
         });
     }
+    if usable(&remotes).next().is_none() {
+        return Err(not_downloaded(repo, None));
+    }
     let mut wanted: Vec<Oid> = oids.to_vec();
     let mut last_error = None;
-    for remote in &remotes {
-        if remote.starts_with('-') {
-            continue;
-        }
+    for remote in usable(&remotes) {
         let input: String = wanted.iter().map(|o| format!("{o}\n")).collect();
         let args = [
             "-c",
@@ -196,7 +235,7 @@ pub(crate) fn download(repo: &Repository, workdir: &Path, oids: &[Oid]) -> Resul
             "--stdin",
         ];
         tracing::debug!(
-            remote,
+            remote = %cli::redact_url(remote),
             objects = wanted.len(),
             "downloading missing objects"
         );
@@ -215,14 +254,14 @@ pub(crate) fn download(repo: &Repository, workdir: &Path, oids: &[Oid]) -> Resul
             return Ok(());
         }
     }
-    Err(Error::NotDownloaded {
-        remote: remotes.into_iter().next(),
-        reason: Some(
+    Err(not_downloaded(
+        repo,
+        Some(
             last_error.unwrap_or_else(|| {
                 "The remote did not send every object that is needed.".to_owned()
             }),
         ),
-    })
+    ))
 }
 
 /// Runs `read`; if it fails on an object a partial clone left on the server, downloads what
@@ -294,4 +333,64 @@ pub(crate) fn missing_commit_trees(repo: &Repository, commit: &git2::Commit<'_>)
 pub(crate) fn missing_head_tree(repo: &Repository) -> Option<Oid> {
     let tree = repo.head().ok()?.peel_to_commit().ok()?.tree_id();
     (!has_object_fresh(repo, tree)).then_some(tree)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
+    use super::*;
+
+    fn not_found(msg: &str) -> git2::Error {
+        git2::Error::new(ErrorCode::NotFound, ErrorClass::Odb, msg)
+    }
+
+    #[test]
+    fn only_a_full_object_id_in_a_message_is_taken() {
+        let full = "0123456789abcdef0123456789abcdef01234567";
+        let named = |id: &str| {
+            oid_in_message(&not_found(&format!(
+                "object not found - no match for id ({id})"
+            )))
+        };
+        assert_eq!(named(full), Some(Oid::from_str(full).unwrap()));
+        // `Oid::from_str` accepts prefixes, which are not objects to fetch.
+        assert_eq!(named("0123abcd"), None);
+        assert_eq!(named(&full[..39]), None);
+        assert_eq!(named("0123456789abcdef0123456789abcdef0123456z"), None);
+        assert_eq!(named(""), None);
+        assert_eq!(oid_in_message(&not_found("no parentheses")), None);
+    }
+
+    #[test]
+    fn promisor_remotes_follow_gits_order_with_the_extension_last() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = Repository::init(dir.path()).expect("init");
+        let mut config = repo.config().expect("config");
+        config.set_bool("remote.first.promisor", true).unwrap();
+        config.set_bool("remote.off.promisor", false).unwrap();
+        config.set_bool("remote.second.promisor", true).unwrap();
+        assert_eq!(promisor_remotes(&repo), ["first", "second"]);
+
+        // `extensions.partialClone` is tried last, whether or not it also has the flag.
+        config.set_str("extensions.partialclone", "first").unwrap();
+        assert_eq!(promisor_remotes(&repo), ["second", "first"]);
+        config.set_str("extensions.partialclone", "legacy").unwrap();
+        assert_eq!(promisor_remotes(&repo), ["first", "second", "legacy"]);
+    }
+
+    #[test]
+    fn option_like_remote_names_are_not_usable() {
+        let names = [
+            "--upload-pack=x".to_owned(),
+            "origin".to_owned(),
+            "-x".to_owned(),
+        ];
+        assert_eq!(usable(&names).collect::<Vec<_>>(), ["origin"]);
+        let reason = refused_reason(&[names[0].clone()]);
+        assert!(
+            reason.contains("refused") && reason.contains("--upload-pack=x"),
+            "{reason}"
+        );
+    }
 }

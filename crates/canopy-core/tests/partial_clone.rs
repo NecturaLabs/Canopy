@@ -11,22 +11,50 @@ use std::process::Command;
 
 use canopy_core::ops::HunkAction;
 use canopy_core::{
-    ChangeKind, DiffSource, Error, FileDiff, LineKind, MissingObjects, Oid, Repo, Whitespace,
+    ChangeKind, DiffSource, Error, FileDiff, FileEntry, LineKind, MissingObjects, Oid, Repo,
+    Whitespace,
 };
 
 use MissingObjects::{Download, Fail};
 
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(args)
+/// The directory inside a test's temporary root that serves as `HOME`, found from any path under
+/// that root. [`Fixture::new`] creates it, with an empty `gitconfig` in it.
+fn isolated_home(dir: &Path) -> PathBuf {
+    dir.ancestors()
+        .map(|a| a.join("home"))
+        .find(|h| h.join("gitconfig").is_file())
+        .expect("the path is inside a Fixture's temporary directory")
+}
+
+/// A `git` command for `dir` that reads none of the developer's own configuration: a fixed
+/// identity, no system configuration, and an empty global configuration file and home directory
+/// inside the test's temporary root (so `~/.gitconfig` aliases, `url.insteadOf`, signing or
+/// filters never leak in).
+///
+/// This covers the `git` commands the tests run themselves. The ones Canopy runs through
+/// `canopy_core::cli` (the downloads) inherit this process's environment, because `cli` has no
+/// per-call environment override and setting variables on the process would race with the tests
+/// running in parallel. They only need the repository's own configuration here (the clones use
+/// `file://` URLs and carry `core.autocrlf=false`); a global setting that changes how
+/// `git fetch` behaves can still reach them.
+fn git_command(dir: &Path) -> Command {
+    let home = isolated_home(dir);
+    let mut cmd = Command::new("git");
+    cmd.current_dir(dir)
         .env("GIT_AUTHOR_NAME", "Ada Lovelace")
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Lovelace")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .output()
-        .expect("git runs");
+        .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"))
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("XDG_CONFIG_HOME", &home);
+    cmd
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = git_command(dir).args(args).output().expect("git runs");
     assert!(
         out.status.success(),
         "git {args:?}: {}",
@@ -49,6 +77,8 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let root = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(root.path().join("home")).expect("mkdir home");
+        fs::write(root.path().join("home").join("gitconfig"), "").expect("empty global config");
         let src = root.path().join("src");
         fs::create_dir_all(src.join("d")).expect("mkdir");
         let p = src.as_path();
@@ -252,8 +282,7 @@ fn missing_object_in_full_repository_stays_a_libgit2_error() {
             fs::rename(&path, dir.join("old.pack")).expect("move pack");
             fs::remove_file(path.with_extension("idx")).expect("remove idx");
             let _ = fs::remove_file(path.with_extension("rev"));
-            let mut child = Command::new("git")
-                .current_dir(&dir)
+            let mut child = git_command(&dir)
                 .args(["unpack-objects", "-q"])
                 .stdin(std::process::Stdio::piped())
                 .spawn()
@@ -289,10 +318,22 @@ fn blobless_clone_fail_mode_stays_offline() {
     assert_eq!(snap.commits.len(), 4);
     assert_eq!(snap.tags.len(), 1);
 
-    let err = repo
+    // The file list needs only trees, which a blobless clone has: it is returned offline, with
+    // the line counts marked unknown.
+    let details = repo
         .commit_details(fx.commits[1], Fail)
-        .expect_err("old blobs are missing");
-    assert_not_downloaded(err, Some("origin"), false);
+        .expect("the file list needs no blobs");
+    assert!(!details.stats_known);
+    assert_eq!(
+        details.files,
+        [FileEntry {
+            path: "a.txt".into(),
+            old_path: None,
+            kind: ChangeKind::Modified,
+            additions: 0,
+            deletions: 0,
+        }]
+    );
     let err = repo
         .file_diff(
             &DiffSource::Commit(fx.commits[1]),
@@ -305,6 +346,127 @@ fn blobless_clone_fail_mode_stays_offline() {
         .expect_err("old blobs are missing");
     assert_not_downloaded(err, Some("origin"), false);
     assert_eq!(missing(&dir), before, "Fail must not download anything");
+}
+
+#[test]
+fn details_list_files_offline_then_complete_with_a_download() {
+    let fx = Fixture::new();
+    let dir = fx.clone("blobless", &["--filter=blob:none"]);
+    let before = missing(&dir);
+    let repo = Repo::open(&dir).expect("open");
+
+    // Commit three renames d/x.txt (edited) and adds b.txt: offline, names only, and the
+    // inexact rename shows as a deletion and an addition.
+    let offline = repo.commit_details(fx.commits[2], Fail).expect("offline");
+    assert!(!offline.stats_known);
+    let mut listed: Vec<(&str, ChangeKind)> = offline
+        .files
+        .iter()
+        .map(|f| (f.path.as_str(), f.kind))
+        .collect();
+    listed.sort_by_key(|(path, _)| *path);
+    assert_eq!(
+        listed,
+        [
+            ("b.txt", ChangeKind::Added),
+            ("d/x.txt", ChangeKind::Deleted),
+            ("d/y.txt", ChangeKind::Added),
+        ]
+    );
+    assert!(offline.files.iter().all(|f| f.additions + f.deletions == 0));
+    assert_eq!(missing(&dir), before, "the offline list downloads nothing");
+
+    // Downloading completes the same commit with rename detection and counts, as in the CLI.
+    let full = repo
+        .commit_details(fx.commits[2], Download)
+        .expect("download");
+    assert!(full.stats_known);
+    let mut ours: Vec<(String, usize, usize)> = full
+        .files
+        .iter()
+        .map(|f| (f.path.clone(), f.additions, f.deletions))
+        .collect();
+    ours.sort();
+    assert_eq!(ours, cli_numstat(&fx.src, fx.commits[2]));
+    assert!(full.files.iter().any(|f| f.kind == ChangeKind::Renamed));
+    // Once the blobs are local the offline read is complete too.
+    assert!(
+        repo.commit_details(fx.commits[2], Fail)
+            .expect("local")
+            .stats_known
+    );
+}
+
+#[test]
+fn exact_renames_show_in_the_offline_file_list() {
+    let mut fx = Fixture::new();
+    git(&fx.src, &["mv", "b.txt", "moved.txt"]);
+    git(&fx.src, &["commit", "-q", "-m", "move b"]);
+    let moved = fx.commits.len();
+    git(&fx.src, &["rm", "-q", "moved.txt"]);
+    git(&fx.src, &["commit", "-q", "-m", "remove it"]);
+    fx.commits = git(&fx.src, &["rev-list", "--reverse", "HEAD"])
+        .lines()
+        .map(|l| Oid::from_str(l).expect("oid"))
+        .collect();
+    let dir = fx.clone("blobless", &["--filter=blob:none"]);
+    let repo = Repo::open(&dir).expect("open");
+
+    let offline = repo
+        .commit_details(fx.commits[moved], Fail)
+        .expect("offline");
+    assert!(!offline.stats_known);
+    assert_eq!(offline.files.len(), 1, "{:?}", offline.files);
+    assert_eq!(offline.files[0].kind, ChangeKind::Renamed);
+    assert_eq!(offline.files[0].path, "moved.txt");
+    assert_eq!(offline.files[0].old_path.as_deref(), Some("b.txt"));
+}
+
+#[test]
+fn huge_commits_skip_the_blob_download_and_leave_counts_unknown() {
+    let mut fx = Fixture::new();
+    let bulk = fx.src.join("bulk");
+    fs::create_dir_all(&bulk).expect("mkdir");
+    let files = canopy_core::repo::MAX_STAT_FILES + 1;
+    for i in 0..files {
+        fs::write(bulk.join(format!("f{i:03}.txt")), format!("file {i}\n")).expect("write");
+    }
+    git(&fx.src, &["add", "-A"]);
+    git(&fx.src, &["commit", "-q", "-m", "bulk"]);
+    let bulk_commit = Oid::from_str(git(&fx.src, &["rev-parse", "HEAD"]).trim()).expect("oid");
+    // Remove them again so the clone's checkout does not download their blobs.
+    git(&fx.src, &["rm", "-r", "-q", "bulk"]);
+    git(&fx.src, &["commit", "-q", "-m", "unbulk"]);
+    fx.commits.push(bulk_commit);
+    let dir = fx.clone("blobless", &["--filter=blob:none"]);
+    let before = missing(&dir);
+    assert!(
+        before.len() >= files,
+        "precondition: the bulk blobs are missing"
+    );
+    let repo = Repo::open(&dir).expect("open");
+
+    let details = repo.commit_details(bulk_commit, Download).expect("details");
+    assert!(!details.stats_known);
+    assert_eq!(details.files.len(), files);
+    assert!(details.files.iter().all(|f| f.kind == ChangeKind::Added));
+    assert_eq!(
+        missing(&dir),
+        before,
+        "no blob was downloaded for the counts"
+    );
+    // A single file's diff still downloads just its own blob.
+    let d = repo
+        .file_diff(
+            &DiffSource::Commit(bulk_commit),
+            "bulk/f007.txt",
+            None,
+            3,
+            Whitespace::Show,
+            Download,
+        )
+        .expect("diff");
+    assert_eq!(our_lines(&d), ["+file 7"]);
 }
 
 #[test]
@@ -542,8 +704,7 @@ fn merge_conflicts_read_offline_in_a_blobless_clone() {
     }
     fs::write(dir.join("a.txt"), "1\nmine\n3\n").expect("write");
     git(&dir, &["commit", "-q", "-am", "mine"]);
-    let merge = Command::new("git")
-        .current_dir(&dir)
+    let merge = git_command(&dir)
         .args(["merge", "-q", "--no-edit", "origin/side"])
         .output()
         .expect("git merge runs");
@@ -614,8 +775,21 @@ fn removed_promisor_remote_cannot_download() {
     assert!(repo.is_partial_clone());
     repo.snapshot(100).expect("snapshot");
 
+    assert!(
+        !repo
+            .commit_details(fx.commits[1], Fail)
+            .expect("the file list needs no blobs")
+            .stats_known
+    );
     let err = repo
-        .commit_details(fx.commits[1], Fail)
+        .file_diff(
+            &DiffSource::Commit(fx.commits[1]),
+            "a.txt",
+            None,
+            3,
+            Whitespace::Show,
+            Fail,
+        )
         .expect_err("no remote");
     assert_not_downloaded(err, None, false);
     let err = repo
@@ -642,6 +816,150 @@ fn legacy_partial_clone_extension_is_reported_and_conversion_works() {
     let repo = Repo::open(&dir).expect("opens after conversion");
     assert!(repo.is_partial_clone());
     assert_history_matches_cli(&fx, &repo, Download);
+}
+
+#[test]
+fn snapshot_after_a_soft_reset_in_a_treeless_clone_recovers_its_status() {
+    let fx = Fixture::new();
+    let dir = fx.clone("treeless", &["--filter=tree:0"]);
+    let one = fx.commits[0].to_string();
+    let four = fx.commits[3].to_string();
+    git(&dir, &["reset", "-q", "--soft", &one]);
+    let before = missing(&dir);
+    let repo = Repo::open(&dir).expect("open");
+    let mut expected: Vec<String> = git(
+        &fx.src,
+        &["diff", "--name-status", "--no-renames", &one, &four],
+    )
+    .lines()
+    .map(str::to_owned)
+    .collect();
+    expected.sort();
+
+    let mut snap = repo.snapshot(100).expect("history needs no trees");
+    assert_eq!(snap.commits.len(), 4);
+    assert!(snap.status_unavailable.is_some());
+
+    // Staying offline changes nothing.
+    repo.complete_status(&mut snap, Fail);
+    assert!(snap.status_unavailable.is_some());
+    assert_eq!(missing(&dir), before);
+
+    // The remote is unreachable: the snapshot keeps its history and says why the changes are
+    // missing, in git's words.
+    let moved = fx.root.path().join("src-moved");
+    fs::rename(&fx.src, &moved).expect("hide the remote");
+    repo.complete_status(&mut snap, Download);
+    let unavailable = snap.status_unavailable.as_ref().expect("still unavailable");
+    assert!(unavailable.can_download, "{unavailable:?}");
+    assert!(unavailable.message.contains("origin"), "{unavailable:?}");
+    assert_eq!(snap.commits.len(), 4);
+    assert!(snap.status.is_clean());
+
+    // Back online, the tree is downloaded and the status filled in.
+    fs::rename(&moved, &fx.src).expect("restore the remote");
+    repo.complete_status(&mut snap, Download);
+    assert!(
+        snap.status_unavailable.is_none(),
+        "{:?}",
+        snap.status_unavailable
+    );
+    assert_eq!(name_status(&snap.status.staged), expected);
+    assert_eq!(snap.commits.len(), 4);
+}
+
+#[test]
+fn legacy_partial_clone_extension_is_found_from_a_linked_worktree() {
+    let fx = Fixture::new();
+    let dir = fx.clone("legacy", &["--filter=blob:none"]);
+    git(&dir, &["config", "--unset", "remote.origin.promisor"]);
+    git(&dir, &["config", "extensions.partialClone", "origin"]);
+    // Linked worktrees keep their git directory under `.git/worktrees`, and the configuration in
+    // the common directory.
+    let wt = fx.root.path().join("wt");
+    git(
+        &dir,
+        &["worktree", "add", "-q", &wt.to_string_lossy(), "HEAD"],
+    );
+    match Repo::open(&wt) {
+        Err(Error::LegacyPartialClone { remote }) => assert_eq!(remote, "origin"),
+        other => panic!("expected LegacyPartialClone, got {other:?}"),
+    }
+}
+
+#[test]
+fn remote_named_like_an_option_is_refused_and_never_run() {
+    let fx = Fixture::new();
+    let dir = fx.clone("blobless", &["--filter=blob:none"]);
+    let before = missing(&dir);
+    // The only promisor remote is one whose name git would read as `--upload-pack=<command>`.
+    let name = "--upload-pack=touch pwned";
+    git(&dir, &["config", "--unset", "remote.origin.promisor"]);
+    git(&dir, &["config", &format!("remote.{name}.url"), &fx.url]);
+    git(
+        &dir,
+        &["config", &format!("remote.{name}.promisor"), "true"],
+    );
+    let repo = Repo::open(&dir).expect("open");
+    assert!(repo.is_partial_clone());
+
+    for missing_objects in [Fail, Download] {
+        let err = repo
+            .file_diff(
+                &DiffSource::Commit(fx.commits[1]),
+                "a.txt",
+                None,
+                3,
+                Whitespace::Show,
+                missing_objects,
+            )
+            .expect_err("nothing may be fetched");
+        let Error::NotDownloaded {
+            remote: None,
+            reason: Some(reason),
+        } = &err
+        else {
+            panic!("expected NotDownloaded without a remote, got {err:?}");
+        };
+        assert!(reason.contains("refused"), "{reason}");
+        assert!(reason.contains("--upload-pack=touch pwned"), "{reason}");
+        assert!(!err.can_download(), "{err}");
+    }
+    let err = repo
+        .commit_details(fx.commits[1], Download)
+        .expect_err("the counts need blobs");
+    assert!(err.to_string().contains("refused"), "{err}");
+    assert!(
+        !dir.join("pwned").exists(),
+        "the command in the remote name ran"
+    );
+    assert_eq!(missing(&dir), before, "nothing was fetched");
+
+    // A real promisor remote next to it is still used, and the refused one is skipped.
+    git(&dir, &["config", "remote.origin.promisor", "true"]);
+    let d = repo
+        .file_diff(
+            &DiffSource::Commit(fx.commits[1]),
+            "a.txt",
+            None,
+            3,
+            Whitespace::Show,
+            Download,
+        )
+        .expect("origin still works");
+    let patch = git(
+        &fx.src,
+        &[
+            "show",
+            "--format=",
+            "-U3",
+            &fx.commits[1].to_string(),
+            "--",
+            "a.txt",
+        ],
+    );
+    assert_eq!(our_lines(&d), cli_lines(&patch));
+    assert!(!dir.join("pwned").exists());
 }
 
 /// `A\tpath`-style lines for a status list, sorted, to compare with `git diff --name-status`.
@@ -675,7 +993,22 @@ fn treeless_soft_reset_never_reports_head_as_unborn() {
     let before = missing(&dir);
     let repo = Repo::open(&dir).expect("open");
 
-    let err = repo.snapshot(100).expect_err("HEAD tree is missing");
+    // History does not depend on status: the commits are there, the changes say why they are not.
+    let snap = repo.snapshot(100).expect("history needs no trees");
+    assert_eq!(snap.commits.len(), 4);
+    assert!(snap.status.is_clean(), "no file may be reported as added");
+    let unavailable = snap
+        .status_unavailable
+        .as_ref()
+        .expect("status unavailable");
+    assert!(unavailable.can_download, "{unavailable:?}");
+    assert!(
+        unavailable.message.contains("partial clone"),
+        "{unavailable:?}"
+    );
+    let err = repo
+        .status(Fail)
+        .expect_err("status alone reports the missing tree");
     assert_not_downloaded(err, Some("origin"), false);
     let err = repo
         .file_diff(
@@ -700,8 +1033,9 @@ fn treeless_soft_reset_never_reports_head_as_unborn() {
     .collect();
     expected.sort();
     assert_eq!(name_status(&status.staged), expected);
-    repo.snapshot(100)
-        .expect("snapshot works once the tree is local");
+    let snap = repo.snapshot(100).expect("snapshot");
+    assert!(snap.status_unavailable.is_none(), "the tree is local now");
+    assert_eq!(name_status(&snap.status.staged), expected);
 
     let d = repo
         .file_diff(

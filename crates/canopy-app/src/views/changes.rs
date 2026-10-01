@@ -69,6 +69,24 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     let st = &snap.status;
+                    if let Some(u) = &snap.status_unavailable {
+                        // A partial clone that lacks the tree of HEAD: the list is empty because
+                        // it could not be read, not because nothing changed.
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(40.0);
+                            art::show(ui, art::empty_error(), vec2(160.0, 120.0));
+                            ui.add_space(6.0);
+                            ui.label(RichText::new("Changes not available").font(FontId::new(15.0, theme::semibold())));
+                            ui.label(RichText::new(&u.message).color(p.text_dim).size(12.5));
+                            if u.can_download {
+                                ui.add_space(8.0);
+                                if ui.button(format!("{}  Retry", icon::ARROWS_CLOCKWISE)).clicked() {
+                                    actions.push(Action::Refresh);
+                                }
+                            }
+                        });
+                        return;
+                    }
                     if st.is_clean() {
                         ui.vertical_centered(|ui| {
                             ui.add_space(40.0);
