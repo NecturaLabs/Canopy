@@ -96,7 +96,7 @@ Tokens you save in Canopy are stored in the file tokens.json in Canopy's data fo
 
 Clone, fetch, pull and push run the Git program installed on your computer. Git connects directly to the remotes you configured, with your own Git settings and credentials. NecturaLabs receives none of this traffic.
 
-In a partial clone (a repository cloned with a filter such as --filter=blob:none), viewing a commit or a diff can make Git contact the remote the repository was cloned from, to download file contents that were left out of the clone. This also happens without you pressing Fetch, and only for the commit or file you opened. Git asks for your credentials through Canopy, as for any other Git operation, and the server receives your IP address and the identifiers of the objects it is asked for. NecturaLabs receives none of this traffic.
+In a partial clone (a repository cloned with a filter such as --filter=blob:none), opening the repository, refreshing it, viewing a commit or viewing a diff can make Git contact the remote the repository was cloned from, to download the file contents and folder listings that were left out of the clone. This also happens without you pressing Fetch, and only for what the repository, commit or file you opened needs. Git asks for your credentials through Canopy, as for any other Git operation, and the server receives your IP address and the identifiers of the objects it is asked for. NecturaLabs receives none of this traffic.
 
 ## Data that stays on your computer
 

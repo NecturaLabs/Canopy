@@ -53,13 +53,20 @@ In order. The UI entries come before accessibility, and accessibility before the
   dash and bash, started from a script or a terminal, without weakening what it asserts.
 - [ ] **Partial clones: follow-ups from the security pass** (nothing blocking; the independent
   review is `crates/canopy-core` + `worker.rs` as of `a759615`):
-  - Decision for the owner: `snapshot_completing` (`worker.rs`) runs `git fetch` on open and on
-    every watcher refresh of a treeless clone. Git runs programs named in the repository's own
-    config on a fetch (`remote.<name>.uploadpack`, `core.sshCommand`), so opening a hostile `.git`
-    folder can run one without a click. Plain `git status` does the same; the trigger is what
-    changed. Options: download only on the existing Retry button, or a per-repository trust
-    prompt before the first download. Update the privacy text to match (it says only the
-    commit or file you opened).
+  - **Trusted locations** (owner's decision: keep downloading automatically for now, build this
+    next): `snapshot_completing` (`worker.rs`) runs `git fetch` on open and on every watcher
+    refresh of a treeless clone, and a selected commit or file downloads what it needs. Git runs
+    programs named in the repository's own config on a fetch (`remote.<name>.uploadpack`,
+    `core.sshCommand`), so opening a hostile `.git` folder can run one without a click (plain
+    `git status` does the same; the trigger is what changed). Build: a persisted list of trusted
+    folders in Settings (Privacy), where every repository under a trusted folder is trusted;
+    downloads in a partial clone outside them are not made and the tab says so with a "Trust…"
+    button that asks whether to trust this repository's folder or its parent. Decide trust in the
+    worker thread by canonicalizing the repository's working directory and each trusted folder
+    and comparing components (never the raw tab path: `/trusted/../x` and symbolic links must not
+    pass); reject nothing else. Update the privacy text. Accept: a test with
+    `remote.origin.uploadpack` pointing at a script that creates a marker shows no marker outside a
+    trusted folder and a marker inside one, and the settings list adds and removes folders.
   - Remember a failed download per repository and object until Retry, instead of trying again on
     every refresh and selected commit; add a timeout (`http.lowSpeedLimit`) so a stalled server
     cannot hold a tab's worker thread.
