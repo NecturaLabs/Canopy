@@ -1280,6 +1280,13 @@ impl CanopyApp {
 
     /// Shows git's and ssh's credential questions, one at a time, above any other dialog.
     fn poll_prompts(&mut self, ctx: &egui::Context) {
+        // A prompt git or ssh gave up on (killed, timed out) closes by itself.
+        let gone =
+            |d: &Dialog| matches!(d, Dialog::Credential { prompt, .. } if !prompt.is_waiting());
+        self.queued.retain(|d| !gone(d));
+        if self.dialog.as_ref().is_some_and(gone) {
+            self.dialog = self.queued.pop();
+        }
         let Some(server) = &self.askpass else { return };
         while let Ok(prompt) = server.prompts.try_recv() {
             if prompt.kind == crate::askpass::PromptKind::Notice {

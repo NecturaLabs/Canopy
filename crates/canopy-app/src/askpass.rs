@@ -7,12 +7,19 @@
 //! connects to the running app over loopback, the app shows the question in a dialog, and the
 //! answer goes back to git on standard output.
 //!
-//! The listener accepts only connections from 127.0.0.1 that present the random token, which only
-//! the git and ssh processes Canopy starts receive. Answers are never logged.
+//! The listener accepts only connections from 127.0.0.1 that present the random token. The token
+//! is in the environment of every git command Canopy runs, so the processes git itself starts
+//! (hooks, credential helpers, `core.sshCommand`, Git LFS) can read it too and could show a
+//! question in Canopy; that is the same trust a terminal gives them. Other local users cannot.
+//! At most [`MAX_CONNECTIONS`] prompts are served at once, a request must arrive within
+//! [`REQUEST_DEADLINE`], and a prompt whose git process went away closes its dialog. Answers are
+//! never logged.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use serde::{Deserialize, Serialize};
@@ -24,7 +31,11 @@ pub const TOKEN_ENV: &str = "CANOPY_ASKPASS_TOKEN";
 /// Set by OpenSSH: `confirm` for a yes/no approval, `none` for a message without an answer.
 const SSH_MODE_ENV: &str = "SSH_ASKPASS_PROMPT";
 /// Longest request accepted, far above any real prompt.
-const MAX_REQUEST: u64 = 64 * 1024;
+const MAX_REQUEST: usize = 64 * 1024;
+/// Prompts served at the same time; more connections are closed at once.
+pub const MAX_CONNECTIONS: usize = 8;
+/// How long a client has to send its whole request.
+pub const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
 
 /// What kind of answer a prompt needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,46 +53,39 @@ pub enum PromptKind {
 }
 
 impl PromptKind {
-    /// Classifies `prompt`; `ssh_mode` is OpenSSH's `SSH_ASKPASS_PROMPT`.
+    /// Classifies `prompt`; `ssh_mode` is OpenSSH's `SSH_ASKPASS_PROMPT`. Anything not known
+    /// to be harmless is treated as a secret and typed hidden: only git's and ssh's user-name
+    /// questions are plain text.
     pub fn of(prompt: &str, ssh_mode: &str) -> Self {
         match ssh_mode {
             "confirm" => return PromptKind::Approve,
             "none" => return PromptKind::Notice,
             _ => {}
         }
-        let lower = prompt.to_lowercase();
-        // Words outside quotes: the quoted URL or key path must not decide.
-        let words: Vec<&str> = lower
-            .split('\'')
-            .step_by(2)
-            .flat_map(|part| part.split(|c: char| !c.is_alphanumeric()))
-            .collect();
-        const SECRET: [&str; 7] = [
-            "password",
-            "passphrase",
-            "pin",
-            "token",
-            "secret",
-            "otp",
-            "code",
-        ];
+        let lower = prompt.trim_start().to_lowercase();
         if lower.contains("(yes/no") {
             PromptKind::YesNo
-        } else if words.iter().any(|w| SECRET.contains(w)) {
-            PromptKind::Secret
-        } else {
+        } else if lower.starts_with("username for ")
+            || lower.starts_with("username:")
+            || lower.starts_with("user name")
+            || lower.starts_with("login:")
+        {
             PromptKind::Text
+        } else {
+            PromptKind::Secret
         }
     }
 }
 
-/// A question from git or ssh, waiting for the user. Dropping it without [`Prompt::answer`]
-/// cancels it.
+/// A question from git or ssh, waiting for the user. Dropping every copy without
+/// [`Prompt::answer`] cancels it.
 #[derive(Debug, Clone)]
 pub struct Prompt {
     pub text: String,
     pub kind: PromptKind,
     reply: Sender<Option<String>>,
+    /// Cleared when the asking process went away; the dialog then closes.
+    waiting: Arc<AtomicBool>,
 }
 
 impl Prompt {
@@ -92,7 +96,13 @@ impl Prompt {
             text: text.to_owned(),
             kind: PromptKind::of(text, ""),
             reply,
+            waiting: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    /// Whether git or ssh still waits for this answer.
+    pub fn is_waiting(&self) -> bool {
+        self.waiting.load(Ordering::Relaxed)
     }
 
     /// Sends the answer, or `None` to cancel (git then fails with its own message).
@@ -130,21 +140,30 @@ impl Server {
         let token = random_token()?;
         let (tx, rx) = unbounded();
         let expected = token.clone();
-        let wake = std::sync::Arc::new(wake);
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
+        let open = Arc::new(AtomicUsize::new(0));
         std::thread::Builder::new()
             .name("askpass".into())
             .spawn(move || {
                 for stream in listener.incoming().flatten() {
-                    let tx = tx.clone();
-                    let expected = expected.clone();
-                    let wake = wake.clone();
-                    let _ = std::thread::Builder::new()
+                    if open.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
+                        tracing::warn!("credential prompt refused: too many open prompts");
+                        continue;
+                    }
+                    open.fetch_add(1, Ordering::SeqCst);
+                    let (tx, expected, wake, slots) =
+                        (tx.clone(), expected.clone(), wake.clone(), open.clone());
+                    let spawned = std::thread::Builder::new()
                         .name("askpass-prompt".into())
                         .spawn(move || {
                             if let Err(e) = serve(stream, &expected, &tx, &*wake) {
                                 tracing::debug!("credential prompt connection: {e}");
                             }
+                            slots.fetch_sub(1, Ordering::SeqCst);
                         });
+                    if spawned.is_err() {
+                        open.fetch_sub(1, Ordering::SeqCst);
+                    }
                 }
             })?;
         Ok(Self {
@@ -178,8 +197,47 @@ fn same(a: &str, b: &str) -> bool {
             == 0
 }
 
+/// Reads one line from `stream`, giving up at `deadline` or after [`MAX_REQUEST`] bytes.
+fn read_request(stream: &TcpStream, deadline: Instant) -> std::io::Result<String> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 1024];
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request not received in time",
+            ));
+        }
+        stream.set_read_timeout(Some(left))?;
+        let n = (&*stream).read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if buf.len() > MAX_REQUEST {
+            return Err(std::io::Error::other("request too long"));
+        }
+        if let Some(end) = buf.iter().position(|b| *b == b'\n') {
+            buf.truncate(end);
+            break;
+        }
+    }
+    String::from_utf8(buf).map_err(std::io::Error::other)
+}
+
+/// Whether the other end closed the connection (git or ssh gave up or was killed).
+fn hung_up(stream: &TcpStream) -> bool {
+    if stream.set_nonblocking(true).is_err() {
+        return false;
+    }
+    let closed = matches!(stream.peek(&mut [0u8; 1]), Ok(0));
+    let _ = stream.set_nonblocking(false);
+    closed
+}
+
 /// Handles one connection: checks the token, hands the prompt to the UI and waits for the
-/// answer.
+/// answer, or until the asking process goes away.
 fn serve(
     stream: TcpStream,
     token: &str,
@@ -189,9 +247,7 @@ fn serve(
     if !stream.peer_addr()?.ip().is_loopback() {
         return Ok(());
     }
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    let mut line = String::new();
-    BufReader::new((&stream).take(MAX_REQUEST)).read_line(&mut line)?;
+    let line = read_request(&stream, Instant::now() + REQUEST_DEADLINE)?;
     let request: Request = serde_json::from_str(&line).map_err(std::io::Error::other)?;
     if !same(&request.token, token) {
         tracing::warn!("credential prompt with a wrong token refused");
@@ -199,18 +255,35 @@ fn serve(
     }
     let (reply, answer) = bounded(1);
     let kind = PromptKind::of(&request.prompt, &request.mode);
+    let waiting = Arc::new(AtomicBool::new(true));
     let prompt = Prompt {
         text: request.prompt.trim().to_owned(),
         kind,
         reply,
+        waiting: waiting.clone(),
     };
     tracing::info!(kind = ?kind, "credential prompt");
     if prompts.send(prompt).is_err() {
         return Ok(());
     }
     wake();
-    // Waits as long as the user needs; a dropped prompt (dialog closed, app exiting) cancels.
-    let answer = answer.recv().unwrap_or(None);
+    // Waits as long as the user needs. Every copy of the prompt dropped (dialog closed, app
+    // exiting) cancels; the client hanging up withdraws the question.
+    let answer = loop {
+        match answer.recv_timeout(Duration::from_millis(400)) {
+            Ok(a) => break a,
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break None,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                if hung_up(&stream) {
+                    waiting.store(false, Ordering::Relaxed);
+                    wake();
+                    tracing::info!(kind = ?kind, "credential prompt withdrawn by git");
+                    return Ok(());
+                }
+            }
+        }
+    };
+    waiting.store(false, Ordering::Relaxed);
     // Whether it was answered, never the answer.
     tracing::info!(kind = ?kind, answered = answer.is_some(), "credential prompt closed");
     let mut out = serde_json::to_string(&Response { answer }).map_err(std::io::Error::other)?;
@@ -230,7 +303,9 @@ fn ask(port: u16, token: &str, prompt: &str, mode: &str) -> std::io::Result<Opti
     request.push('\n');
     (&stream).write_all(request.as_bytes())?;
     let mut line = String::new();
-    BufReader::new((&stream).take(MAX_REQUEST)).read_line(&mut line)?;
+    (&stream)
+        .take(MAX_REQUEST as u64)
+        .read_to_string(&mut line)?;
     let response: Response = serde_json::from_str(&line).map_err(std::io::Error::other)?;
     Ok(response.answer)
 }
@@ -337,6 +412,42 @@ mod tests {
         let server = Server::start(|| {})?;
         assert!(ask(server.port, "not-the-token", "Password: ", "").is_err());
         assert!(server.prompts.try_recv().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn a_prompt_is_withdrawn_when_the_client_hangs_up() -> std::io::Result<()> {
+        let server = Server::start(|| {})?;
+        let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port))?;
+        let request = format!(
+            "{{\"token\":\"{}\",\"prompt\":\"Password: \"}}\n",
+            server.token
+        );
+        (&stream).write_all(request.as_bytes())?;
+        let prompt = server
+            .prompts
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(std::io::Error::other)?;
+        assert!(prompt.is_waiting());
+        drop(stream);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while prompt.is_waiting() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!prompt.is_waiting());
+        Ok(())
+    }
+
+    #[test]
+    fn a_silent_client_is_dropped() -> std::io::Result<()> {
+        let (a, b) = {
+            let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+            let a = TcpStream::connect(l.local_addr()?)?;
+            (a, l.accept()?.0)
+        };
+        let err = read_request(&b, Instant::now() + Duration::from_millis(200));
+        assert!(err.is_err());
+        drop(a);
         Ok(())
     }
 }
