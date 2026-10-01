@@ -112,8 +112,8 @@ out_has() { grep -qF -- "$1" "$tmp/out"; }
 # Shows the installer output of the step above, indented, so the log reads like a session.
 show() { sed 's/^/  | /' "$tmp/out"; }
 
-# Serve the fake feed.
-python3 -m http.server --bind 127.0.0.1 0 --directory "$srv" >"$tmp/server.log" 2>&1 &
+# Serve the fake feed. `-u`: the port line must reach the log unbuffered.
+python3 -u -m http.server --bind 127.0.0.1 0 --directory "$srv" >"$tmp/server.log" 2>&1 &
 server_pid=$!
 port=
 i=0
