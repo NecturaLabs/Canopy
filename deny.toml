@@ -34,6 +34,16 @@ allow = [
 crate = "epaint_default_fonts"
 allow = ["Ubuntu-font-1.0"]
 
+# Mozilla's CA bundle, packaged as data under CDLA-Permissive-2.0: rustls's fallback roots for
+# canopy-hosting's HTTPS client (ureq, rustls-platform-verifier).
+[[licenses.exceptions]]
+crate = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
+
+[[licenses.exceptions]]
+crate = "webpki-root-certs"
+allow = ["CDLA-Permissive-2.0"]
+
 # Workspace crates are unpublished (`publish = false`) and proprietary.
 [licenses.private]
 ignore = true

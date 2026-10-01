@@ -1,0 +1,234 @@
+//! [`Client`]: the provider-neutral entry point.
+
+use std::fmt;
+
+use canopy_core::forge::{Forge, ForgeKind};
+
+use crate::error::Result;
+use crate::http::Http;
+use crate::model::{MergeMethod, NewRequest, RequestDetails, RequestSummary, StateFilter};
+use crate::{github, gitlab};
+
+/// Largest page both providers serve.
+pub(crate) const PER_PAGE: usize = 100;
+
+/// RFC 3339 → unix seconds; 0 when missing or malformed.
+pub(crate) fn unix(ts: Option<&str>) -> i64 {
+    let Some(ts) = ts.filter(|t| !t.is_empty()) else {
+        return 0;
+    };
+    match chrono::DateTime::parse_from_rfc3339(ts) {
+        Ok(t) => t.timestamp(),
+        Err(e) => {
+            tracing::debug!(timestamp = ts, error = %e, "unparsable timestamp");
+            0
+        }
+    }
+}
+
+/// The result of a secondary request in [`Client::details`]: logged and dropped on failure so
+/// one forbidden or missing endpoint does not hide the rest of the request.
+pub(crate) fn optional<T>(what: &str, result: Result<T>) -> Option<T> {
+    match result {
+        Ok(v) => Some(v),
+        Err(e) => {
+            tracing::warn!(part = what, error = %e, "skipping part of the request details");
+            None
+        }
+    }
+}
+
+/// A blocking client for one project's pull requests (GitHub) or merge requests (GitLab).
+///
+/// Every call is a synchronous HTTPS round trip (10 s to connect, 30 s in total), meant for a
+/// background thread. The token is sent only as an `Authorization: Bearer` header to the API of
+/// the project's own host, never in a URL, a log line or this type's `Debug` output.
+pub struct Client {
+    http: Http,
+    kind: ForgeKind,
+    /// `/repos/owner/repo` or `/projects/group%2Fproject`.
+    project: String,
+}
+
+impl fmt::Debug for Client {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Client")
+            .field("kind", &self.kind)
+            .field("api_base", &self.http.base())
+            .field("project", &self.project)
+            .field("has_token", &self.http.has_token())
+            .finish()
+    }
+}
+
+/// The REST API root for `forge`: `https://api.github.com` for github.com (`/api/v3` on any
+/// other GitHub host), `https://<host>/api/v4` for GitLab.
+fn default_api_base(forge: &Forge) -> String {
+    match forge.kind {
+        ForgeKind::GitHub if forge.host == "github.com" => "https://api.github.com".to_owned(),
+        ForgeKind::GitHub => format!("https://{}/api/v3", forge.host),
+        ForgeKind::GitLab => format!("https://{}/api/v4", forge.host),
+    }
+}
+
+impl Client {
+    /// A client for `forge`'s project on its own host. `token` is the user's personal access
+    /// token; without one only public projects can be read and nothing can be changed.
+    pub fn new(forge: &Forge, token: Option<String>) -> Client {
+        Self::with_api_base(forge, token, &default_api_base(forge))
+    }
+
+    /// Like [`Client::new`] with an explicit API root such as `http://127.0.0.1:8080` (tests)
+    /// or `https://gitlab.example.com/api/v4`.
+    pub fn with_api_base(forge: &Forge, token: Option<String>, api_base: &str) -> Client {
+        let project = match forge.kind {
+            ForgeKind::GitHub => github::repo_path(&forge.path),
+            ForgeKind::GitLab => gitlab::project_path(&forge.path),
+        };
+        Client {
+            http: Http::new(forge.kind, api_base, token),
+            kind: forge.kind,
+            project,
+        }
+    }
+
+    /// Which provider this client talks to.
+    pub fn kind(&self) -> ForgeKind {
+        self.kind
+    }
+
+    /// Whether a (non-empty) token is set.
+    pub fn has_token(&self) -> bool {
+        self.http.has_token()
+    }
+
+    /// The login (GitHub) or username (GitLab) the token belongs to. Fails with
+    /// [`crate::Error::Unauthorized`] without a valid token.
+    pub fn viewer(&self) -> Result<String> {
+        match self.kind {
+            ForgeKind::GitHub => github::viewer(&self.http),
+            ForgeKind::GitLab => gitlab::viewer(&self.http),
+        }
+    }
+
+    /// Up to `limit` requests matching `filter`, most recently updated first.
+    pub fn list(&self, filter: StateFilter, limit: usize) -> Result<Vec<RequestSummary>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        match self.kind {
+            ForgeKind::GitHub => github::list(&self.http, &self.project, filter, limit),
+            ForgeKind::GitLab => gitlab::list(&self.http, &self.project, filter, limit),
+        }
+    }
+
+    /// One request with its description, reviews, checks and conversation (first 100 of each).
+    /// Only the request itself failing is an error; reviews, comments or checks that cannot be
+    /// read (for example a token without the checks scope) are logged and left empty.
+    pub fn details(&self, number: u64) -> Result<RequestDetails> {
+        match self.kind {
+            ForgeKind::GitHub => github::details(&self.http, &self.project, number),
+            ForgeKind::GitLab => gitlab::details(&self.http, &self.project, number),
+        }
+    }
+
+    /// Opens a request from `req.source` into `req.target` (both branches of this project).
+    pub fn create(&self, req: &NewRequest) -> Result<RequestSummary> {
+        match self.kind {
+            ForgeKind::GitHub => github::create(&self.http, &self.project, req),
+            ForgeKind::GitLab => gitlab::create(&self.http, &self.project, req),
+        }
+    }
+
+    /// Merges a request. On GitLab, `Merge` and `Rebase` follow the project's merge method
+    /// setting, and `Rebase` rebases the source branch first (waiting up to 30 s for GitLab to
+    /// finish), then merges the rebased head.
+    pub fn merge(&self, number: u64, method: MergeMethod) -> Result<()> {
+        match self.kind {
+            ForgeKind::GitHub => github::merge(&self.http, &self.project, number, method),
+            ForgeKind::GitLab => gitlab::merge(&self.http, &self.project, number, method),
+        }
+    }
+
+    /// Closes (`open == false`) or reopens a request.
+    pub fn set_open(&self, number: u64, open: bool) -> Result<()> {
+        match self.kind {
+            ForgeKind::GitHub => github::set_open(&self.http, &self.project, number, open),
+            ForgeKind::GitLab => gitlab::set_open(&self.http, &self.project, number, open),
+        }
+    }
+
+    /// Adds a conversation comment.
+    pub fn comment(&self, number: u64, body: &str) -> Result<()> {
+        match self.kind {
+            ForgeKind::GitHub => github::comment(&self.http, &self.project, number, body),
+            ForgeKind::GitLab => gitlab::comment(&self.http, &self.project, number, body),
+        }
+    }
+
+    /// Approves a request as the token's owner.
+    pub fn approve(&self, number: u64) -> Result<()> {
+        match self.kind {
+            ForgeKind::GitHub => github::approve(&self.http, &self.project, number),
+            ForgeKind::GitLab => gitlab::approve(&self.http, &self.project, number),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn forge(kind: ForgeKind, host: &str, path: &str) -> Forge {
+        Forge {
+            kind,
+            host: host.into(),
+            path: path.into(),
+        }
+    }
+
+    #[test]
+    fn api_bases() {
+        assert_eq!(
+            default_api_base(&forge(ForgeKind::GitHub, "github.com", "o/r")),
+            "https://api.github.com"
+        );
+        assert_eq!(
+            default_api_base(&forge(ForgeKind::GitLab, "gitlab.com", "g/r")),
+            "https://gitlab.com/api/v4"
+        );
+        assert_eq!(
+            default_api_base(&forge(ForgeKind::GitLab, "git.example.org", "g/s/r")),
+            "https://git.example.org/api/v4"
+        );
+    }
+
+    #[test]
+    fn timestamps() {
+        assert_eq!(unix(Some("2024-01-02T03:04:05Z")), 1_704_164_645);
+        assert_eq!(unix(Some("2024-01-02T05:04:05.123+02:00")), 1_704_164_645);
+        assert_eq!(unix(Some("yesterday")), 0);
+        assert_eq!(unix(None), 0);
+    }
+
+    #[test]
+    fn debug_hides_token() {
+        let c = Client::new(
+            &forge(ForgeKind::GitLab, "gitlab.com", "g/r"),
+            Some("glpat-secret123".into()),
+        );
+        let dbg = format!("{c:?}");
+        assert!(!dbg.contains("glpat-secret123"), "{dbg}");
+        assert!(dbg.contains("has_token: true"), "{dbg}");
+        assert!(dbg.contains("g%2Fr"), "{dbg}");
+    }
+
+    #[test]
+    fn blank_token_is_no_token() {
+        let c = Client::new(
+            &forge(ForgeKind::GitHub, "github.com", "o/r"),
+            Some("  ".into()),
+        );
+        assert!(!c.has_token());
+    }
+}

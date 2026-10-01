@@ -1,0 +1,86 @@
+//! Errors from the hosting API, carrying the server's own message where it sent one.
+
+use chrono::{DateTime, Utc};
+
+/// A hosting API failure.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Error {
+    /// The server could not be reached: DNS, connection, TLS, timeout or a broken response
+    /// stream.
+    #[error("Could not reach the server: {0}")]
+    Network(String),
+    /// HTTP 401, or a 403 that is not a rate limit: the token is missing, invalid, expired or
+    /// lacks the scope for this request.
+    #[error("The server refused the request (check the access token and its scopes): {0}")]
+    Unauthorized(String),
+    /// HTTP 429, or GitHub's 403 with an exhausted quota. `reset` is when the quota refills, in
+    /// unix seconds, when the server said.
+    #[error("{}", rate_limited(*reset))]
+    RateLimited {
+        /// When the limit resets, in unix seconds.
+        reset: Option<i64>,
+    },
+    /// HTTP 404. GitHub and GitLab answer 404 rather than 403 for private projects the token
+    /// cannot see.
+    #[error("Not found, or the token cannot see this repository ({0})")]
+    NotFound(String),
+    /// Any other unsuccessful status, with the message from the response's `message`, `error`
+    /// or `errors` fields when present.
+    #[error("The server rejected the request (HTTP {status}): {message}")]
+    Api {
+        /// The HTTP status code.
+        status: u16,
+        /// The server's explanation.
+        message: String,
+    },
+    /// The response was not the JSON Canopy expected.
+    #[error("Unexpected response from the server: {0}")]
+    Parse(String),
+}
+
+/// Result alias for hosting API calls.
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+fn rate_limited(reset: Option<i64>) -> String {
+    match reset.and_then(|t| DateTime::<Utc>::from_timestamp(t, 0)) {
+        Some(at) => format!(
+            "API rate limit reached; it resets at {} UTC",
+            at.format("%Y-%m-%d %H:%M")
+        ),
+        None => "API rate limit reached; try again later".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_includes_server_message() {
+        let e = Error::Api {
+            status: 422,
+            message: "Validation Failed: A pull request already exists".into(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "The server rejected the request (HTTP 422): Validation Failed: A pull request already exists"
+        );
+        assert!(
+            Error::NotFound("Not Found".into())
+                .to_string()
+                .contains("token cannot see this repository")
+        );
+        assert_eq!(
+            Error::RateLimited {
+                reset: Some(1_790_000_000)
+            }
+            .to_string(),
+            "API rate limit reached; it resets at 2026-09-21 14:13 UTC"
+        );
+        assert!(
+            Error::RateLimited { reset: None }
+                .to_string()
+                .contains("try again later")
+        );
+    }
+}
