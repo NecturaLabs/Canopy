@@ -42,7 +42,7 @@ command -v xvfb-run >/dev/null || { echo "xvfb-run not found (apt install xvfb)"
 root=$(cd "$(dirname "$0")/.." && pwd)
 if [[ -z ${CANOPY_BIN:-} ]]; then
   cargo build --release -p canopy-app --quiet --manifest-path "$root/Cargo.toml"
-  CANOPY_BIN="$root/target/release/canopy"
+  CANOPY_BIN="${CARGO_TARGET_DIR:-$root/target}/release/canopy"
 fi
 
 mkdir -p "$(dirname "$out")"
