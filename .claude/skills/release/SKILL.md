@@ -68,26 +68,41 @@ is part of `tools/check.sh` and CI.
 3. The workflow then runs `tools/release.py apply`, commits and tags, and calls Release, which:
    - builds `canopy-app` with `--locked` for `x86_64-unknown-linux-gnu` (in an Ubuntu 22.04
      container on the self-hosted runner, with a check that it needs no newer than glibc 2.35),
-     `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`; the Linux and Windows builds use the
-     self-hosted runners from an empty workspace and job-local toolchain, macOS runs hosted;
-   - packages `canopy-<version>-<target>.tar.gz` (Linux, macOS) or `.zip` (Windows): the binary,
+     `aarch64-unknown-linux-gnu` (cross-compiled in the same container with Ubuntu's aarch64 GCC,
+     same glibc check), `aarch64-apple-darwin`, `x86_64-apple-darwin` (cross-compiled on the
+     Apple silicon runner) and `x86_64-pc-windows-msvc`; the Linux and Windows builds use the
+     self-hosted runners from an empty workspace and job-local toolchain, macOS runs hosted. The
+     two cross-compiled targets are `experimental`: their failure shows as a failed job but does
+     not stop the release, and the installer reports that platform as having no build;
+   - packages `canopy-<version>-<target>.tar.gz` (Linux, macOS) or `.zip` (Windows):
      `README.md`, `LICENSE`, `legal/` (the Privacy Policy, Terms of Service and third-party
-     notices) and, on Linux, the desktop entry, AppStream metainfo and icons;
-   - publishes the GitHub release `vX.Y.Z` with those archives, a `SHA256SUMS` file and the
-     changelog section as notes (`prerelease` for a `-beta.N` tag);
-   - copies the archives to a release `canopy-vX.Y.Z` in `NecturaLabs/app-updates` and commits
+     notices) and the program: on Linux the binary, desktop entry, AppStream metainfo and icons;
+     on macOS an ad-hoc signed `Canopy.app` (from `packaging/macos/Info.plist`, `.icns` made from
+     `assets/icon-512.png`); on Windows `canopy.exe`;
+   - publishes the GitHub release `vX.Y.Z` with those archives, `install.sh`, `install.ps1`, a
+     `SHA256SUMS` file and the changelog section as notes (`prerelease` for a `-beta.N` tag);
+   - copies them to a release `canopy-vX.Y.Z` in `NecturaLabs/app-updates` and commits
      `canopy/latest.json` (`canopy/beta.json` for a pre-release) through
-     `tools/update-manifest.sh`. A channel is never moved backwards.
+     `tools/update-manifest.sh`; a stable release also commits `packaging/install.sh` and
+     `packaging/install.ps1` as `canopy/install.sh` and `canopy/install.ps1`, the files the
+     one-line install commands fetch. A channel is never moved backwards, and a pre-release never
+     replaces the installers.
 
 ## Verify
 
 - `gh run list --workflow create-release.yml` and `--workflow release.yml` succeeded, including
   `Publish to the update feed` (it must not have warned that the token is missing).
-- `gh release view vX.Y.Z` lists three archives and `SHA256SUMS`; the notes match the changelog.
+- `gh release view vX.Y.Z` lists five archives (three if an experimental build failed: check
+  why), `install.sh`, `install.ps1` and `SHA256SUMS`; the notes match the changelog.
 - Download the Linux archive: `sha256sum -c` against `SHA256SUMS`, `./canopy --version` prints
   X.Y.Z, and the archive holds the desktop entry, metainfo, icons and `legal/`.
 - The manifest on the channel names X.Y.Z and the platform URLs resolve (`raw.githubusercontent.com`
   `/NecturaLabs/app-updates/main/canopy/latest.json`).
+- For a stable release, `canopy/install.sh` and `canopy/install.ps1` on app-updates' `main` match
+  `packaging/` at the tag, and the one-liner installs X.Y.Z in a throwaway account or VM:
+  `curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.sh | sh`
+  then `~/.local/opt/canopy/bin/canopy --version`. Never point it at a real user's home on a
+  shared machine. `packaging/README.md` describes what the installers do.
 
 ## If something fails
 

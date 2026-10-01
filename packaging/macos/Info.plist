@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Info.plist of Canopy.app. The release workflow replaces @VERSION@ with the version
+     (0.3.0-beta.1) and @BUNDLE_VERSION@ with its numeric part (0.3.0). -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>io.necturalabs.Canopy</string>
+  <key>CFBundleName</key>
+  <string>Canopy</string>
+  <key>CFBundleDisplayName</key>
+  <string>Canopy</string>
+  <key>CFBundleExecutable</key>
+  <string>canopy</string>
+  <key>CFBundleIconFile</key>
+  <string>Canopy</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>@VERSION@</string>
+  <key>CFBundleVersion</key>
+  <string>@BUNDLE_VERSION@</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.developer-tools</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSSupportsAutomaticGraphicsSwitching</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright © NecturaLabs. All rights reserved.</string>
+</dict>
+</plist>

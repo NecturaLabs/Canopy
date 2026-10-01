@@ -6,7 +6,8 @@
 #
 # `publish-update` copies the builds to NecturaLabs/app-updates and commits the update manifest
 # (`canopy/latest.json`, or `beta.json` for a pre-release), so running copies of Canopy offer the
-# update.
+# update. A stable release also commits the installers (`canopy/install.sh`, `canopy/install.ps1`,
+# from packaging/), which the one-line install commands download from app-updates' main branch.
 #
 # Secrets (Settings → Secrets and variables → Actions):
 # - APP_UPDATES_TOKEN (required for the update feed): fine-grained token, Contents read/write on
@@ -50,6 +51,7 @@ jobs:
     name: Build (${{ matrix.target }})
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || !matrix.self-hosted) && matrix.os || fromJSON(matrix.self-hosted) }}
     timeout-minutes: 60
+    continue-on-error: ${{ matrix.experimental == true }}
     permissions:
       contents: read
     # On the self-hosted runners (Ubuntu 24.04) the Linux build runs in an
@@ -66,9 +68,24 @@ jobs:
             container: ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
+          # The same Linux runner and container, cross-compiling with Ubuntu's aarch64 GCC
+          # (glibc 2.35 as well). Experimental until a release has shipped it: a failure here
+          # does not hold back the other platforms.
+          - os: ubuntu-22.04
+            self-hosted: '["self-hosted", "linux", "wsl"]'
+            container: ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
+            target: aarch64-unknown-linux-gnu
+            archive: tar.gz
+            experimental: true
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
+          # Intel Macs: cross-compiled on the Apple silicon runner (Xcode's SDK covers both).
+          # Experimental until a release has shipped it.
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+            experimental: true
           - os: windows-latest
             self-hosted: '["self-hosted", "windows", "x64"]'
             target: x86_64-pc-windows-msvc
@@ -84,9 +101,18 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           [[ -f /.dockerenv ]] || exit 0
+          cross=()
+          [[ $TARGET == aarch64-unknown-linux-gnu ]] && cross=(gcc-aarch64-linux-gnu libc6-dev-arm64-cross)
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential ca-certificates curl git pkg-config
+            build-essential ca-certificates curl git pkg-config "${cross[@]}"
+      - name: Install the aarch64 cross toolchain on a hosted runner
+        if: runner.os == 'Linux' && matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          [[ -f /.dockerenv ]] && exit 0
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross
       # actions/checkout would otherwise fetch into the .git an earlier job left behind.
       - name: Start from an empty workspace
         if: runner.environment == 'self-hosted' && runner.os != 'Windows'
@@ -117,6 +143,23 @@ jobs:
             exit 1
           fi
 
+      - name: Cross-compilation settings
+        run: |
+          case $TARGET in
+            aarch64-unknown-linux-gnu)
+              # The C parts (libgit2, zlib, ring) and the link use the cross GCC. pkg-config stays
+              # off for the foreign target, so the vendored C sources are built.
+              {
+                echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
+                echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"
+                echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"
+                echo "OBJDUMP=aarch64-linux-gnu-objdump"
+              } >> "$GITHUB_ENV" ;;
+            *-apple-darwin)
+              # Both Mac builds target macOS 11, matching LSMinimumSystemVersion in Info.plist.
+              echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV" ;;
+          esac
+
       - name: Build
         run: cargo build --release --locked -p canopy-app --target "$TARGET"
         env:
@@ -125,7 +168,7 @@ jobs:
       - name: Check the glibc requirement
         if: runner.os == 'Linux'
         run: |
-          need=$(objdump -T "target/$TARGET/release/canopy" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n1)
+          need=$("${OBJDUMP:-objdump}" -T "target/$TARGET/release/canopy" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n1)
           echo "Requires $need"
           [[ "$(printf '%s\n' "$need" GLIBC_2.35 | sort -V | tail -n1)" == GLIBC_2.35 ]] \
             || { echo "The Linux build requires $need, newer than GLIBC_2.35" >&2; exit 1; }
@@ -136,8 +179,37 @@ jobs:
           mkdir -p "dist/$name/legal"
           bin="target/$TARGET/release/canopy"
           [[ -f "$bin.exe" ]] && bin="$bin.exe"
-          cp "$bin" README.md LICENSE "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
           cp docs/legal/*.md docs/legal/third-party-notices.txt "dist/$name/legal/"
+          if [[ "$TARGET" == *apple-darwin ]]; then
+            # A minimal, ad-hoc signed Canopy.app (bundle id io.necturalabs.Canopy) with the
+            # icon converted from assets/icon-512.png. packaging/install.sh installs it into
+            # ~/Applications. Not notarised.
+            version="${TAG#v}"
+            app="dist/$name/Canopy.app"
+            mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/legal"
+            cp "$bin" "$app/Contents/MacOS/canopy"
+            sed -e "s/@VERSION@/$version/g" -e "s/@BUNDLE_VERSION@/${version%%-*}/g" \
+              packaging/macos/Info.plist > "$app/Contents/Info.plist"
+            plutil -lint "$app/Contents/Info.plist"
+            printf 'APPL????' > "$app/Contents/PkgInfo"
+            iconset="$RUNNER_TEMP/Canopy.iconset"
+            rm -rf "$iconset" && mkdir -p "$iconset"
+            for size in 16 32 128 256 512; do
+              sips -z "$size" "$size" assets/icon-512.png --out "$iconset/icon_${size}x${size}.png" > /dev/null
+              double=$((size * 2))
+              if (( double <= 512 )); then
+                sips -z "$double" "$double" assets/icon-512.png --out "$iconset/icon_${size}x${size}@2x.png" > /dev/null
+              fi
+            done
+            iconutil -c icns "$iconset" -o "$app/Contents/Resources/Canopy.icns"
+            cp LICENSE "$app/Contents/Resources/"
+            cp docs/legal/*.md docs/legal/third-party-notices.txt "$app/Contents/Resources/legal/"
+            codesign --force --sign - "$app"
+            codesign --verify --strict "$app"
+          else
+            cp "$bin" "dist/$name/"
+          fi
           if [[ "$TARGET" == *linux* ]]; then
             cp packaging/linux/io.necturalabs.Canopy.desktop \
                packaging/linux/io.necturalabs.Canopy.metainfo.xml "dist/$name/"
@@ -190,6 +262,8 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Add the installers
+        run: cp packaging/install.sh packaging/install.ps1 dist/
       - name: Checksums
         run: cd dist && sha256sum -- * > SHA256SUMS
       - name: Release notes from CHANGELOG.md
@@ -237,6 +311,7 @@ jobs:
         id: feed
         run: |
           VERSION="${TAG#v}"
+          cp packaging/install.sh packaging/install.ps1 dist/
           (cd dist && sha256sum -- * > SHA256SUMS)
           python3 tools/release.py notes "$VERSION" > notes.md
           prerelease=false
@@ -294,6 +369,12 @@ jobs:
           git -C "$work" config user.name "github-actions[bot]"
           git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$work" add "canopy/$channel.json"
+          # The one-line installers live next to the manifests. Only a stable release replaces
+          # them, so a pre-release never changes what new users run.
+          if [[ $channel == latest ]]; then
+            cp packaging/install.sh packaging/install.ps1 "$work/canopy/"
+            git -C "$work" add canopy/install.sh canopy/install.ps1
+          fi
           if git -C "$work" diff --cached --quiet; then
             echo "The $channel manifest already describes $VERSION."
             exit 0
