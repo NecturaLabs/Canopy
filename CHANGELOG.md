@@ -6,6 +6,13 @@ All notable changes to Canopy are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- One-line installers for Linux and macOS (`curl -fsSL …/canopy/install.sh | sh`) and Windows
+  (`irm …/canopy/install.ps1 | iex`): per-user, no sudo, a folder of Canopy's own, SHA-256
+  checked downloads, in-place upgrades and a clean uninstall. macOS builds are now a
+  `Canopy.app` bundle.
+
 ### Security
 
 - A credential or host-key prompt can no longer be replaced or dropped by another dialog; dialogs

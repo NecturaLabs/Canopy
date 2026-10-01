@@ -7,6 +7,12 @@ the release it ships in. Add new entries where their priority puts them, not at 
 
 ## Now
 
+- [ ] **Verify the one-line installers on real machines** after the first stable release that
+  publishes them (`packaging/install.sh`, `packaging/install.ps1`; only the Linux script is tested
+  end to end, in CI). Accept: on Ubuntu 22.04, Fedora, macOS (Apple silicon) and Windows 11
+  (Windows PowerShell 5.1 and PowerShell 7) the one-liner installs, Canopy starts from the
+  launcher, Start Menu or Spotlight with its icon, a re-run upgrades, and uninstall leaves nothing
+  but the user data.
 - [ ] **Credential prompt (`canopy askpass`)**: add an `askpass` subcommand and set `GIT_ASKPASS`
   and `SSH_ASKPASS` for CLI jobs so git asks Canopy for usernames, passwords and tokens through a
   dialog. Accept: fetch from an HTTPS remote with no credential helper prompts in-app and succeeds.
@@ -69,6 +75,12 @@ the release it ships in. Add new entries where their priority puts them, not at 
 
 ## Later
 
+- [ ] **Linux arm64 and Intel macOS builds out of experimental**: the release builds them
+  (cross-compiled) but lets them fail without holding back a release. Accept: one release ships
+  both, each starts on real hardware, and `experimental` is removed from their matrix entries.
+- [ ] **Signed and notarised macOS app, signed Windows binary**: Developer ID signing and
+  notarisation for `Canopy.app`, Authenticode for `canopy.exe`. Accept: a browser-downloaded
+  archive opens without a Gatekeeper or SmartScreen warning.
 - [ ] **Flatpak**: Flathub-ready manifest with host `git` access. Accept: the Flatpak opens,
   fetches and pushes a repository in the home directory.
 - [ ] **AUR packages**: `canopy-bin` and a source package. Accept: both build in a clean chroot

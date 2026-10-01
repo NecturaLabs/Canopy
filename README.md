@@ -59,6 +59,54 @@ Destructive operations (discard, hard reset, deleting a branch or tag, dropping 
 push) always ask for confirmation. The full matrix, including what is planned, is in
 [docs/features.md](docs/features.md).
 
+## Install
+
+One command installs Canopy for the current user, with no `sudo` or administrator rights, and
+running it again upgrades in place.
+
+Linux and macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1 | iex
+```
+
+The installer reads Canopy's update manifest, downloads the build for your system over HTTPS,
+checks its SHA-256 against the manifest and refuses anything that does not match. It never asks
+for elevated rights and never installs git; it tells you whether `git` and `git-lfs` are present
+and how to install them. Options: `--beta` (pre-releases), `--version X`, `--no-path`,
+`--uninstall` (`--purge` also deletes settings and logs), `--help`; on Windows `-Beta`,
+`-Version X`, `-NoPath`, `-Uninstall`, `-Purge`, `-Help`.
+
+Canopy gets a folder of its own:
+
+| | Installed to | Also created |
+|---|---|---|
+| Linux | `~/.local/opt/canopy/` (`bin/canopy`, icons, desktop entry, metainfo, licence and notices, `uninstall.sh`) | `~/.local/bin/canopy` (a symlink), the launcher entry and icons under `~/.local/share/applications` and `~/.local/share/icons` |
+| macOS | `~/Applications/Canopy.app` | `~/.local/bin/canopy` (a symlink) |
+| Windows | `%LOCALAPPDATA%\Programs\Canopy\` (`canopy.exe`, notices, `uninstall.ps1`) | a Start Menu shortcut, an entry in Apps & features, the folder on your user `PATH` |
+
+To uninstall, run `~/.local/opt/canopy/uninstall.sh` on Linux, use Apps & features on Windows,
+or run the installer with the option:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.sh | sh -s -- --uninstall
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1))) -Uninstall
+```
+
+Uninstalling removes exactly what the installer created; your settings and logs stay
+unless you add `--purge`. Builds exist for Linux x86_64 (glibc 2.35 or newer, e.g. Ubuntu 22.04),
+macOS on Apple silicon and Windows x64; Linux arm64 and Intel Macs are being added. Details:
+[packaging/README.md](packaging/README.md).
+
 ## Install from source
 
 Requirements:
