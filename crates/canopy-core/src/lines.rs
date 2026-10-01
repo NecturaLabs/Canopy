@@ -141,12 +141,7 @@ impl Repo {
         }
         let edited = edit(&hunk, lines, reverse)?;
         let patch = render(&file, &hunk.section, &edited);
-        let args: &[&str] = match action {
-            HunkAction::Stage => &["apply", "--cached", "--whitespace=nowarn", "-"],
-            HunkAction::Unstage => &["apply", "--cached", "--reverse", "--whitespace=nowarn", "-"],
-            HunkAction::Discard => &["apply", "--reverse", "--whitespace=nowarn", "-"],
-        };
-        cli::run_with_input(self.workdir(), args, &patch).map(drop)
+        cli::run_with_input(self.workdir(), &action.apply_args(context), &patch).map(drop)
     }
 }
 

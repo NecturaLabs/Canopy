@@ -198,6 +198,82 @@ fn hunk_staging_stages_only_the_chosen_hunk() {
     assert!(err.is_err());
 }
 
+/// The index blob of `path` (`git show :path`).
+fn index_blob(dir: &Path, path: &str) -> String {
+    git(dir, &["show", &format!(":{path}")])
+}
+
+#[test]
+fn hunk_staging_works_without_context_lines() {
+    // With context 0 every hunk sits in the middle of the file with nothing around it to anchor
+    // it; git apply needs --unidiff-zero for that (recorded with git 2.43: `git diff -U0 >p;
+    // git apply --cached p` fails with "patch failed", `--unidiff-zero` applies it).
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    let original = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
+    fs::write(
+        p.join("a.txt"),
+        "ONE\ntwo\nthree\nfour\nFIVE\nsix\nseven\neight\nnine\nTEN\n",
+    )
+    .expect("write");
+    let d = repo
+        .file_diff(&DiffSource::Unstaged, "a.txt", None, 0, Whitespace::Show)
+        .expect("diff");
+    assert_eq!(d.hunks.len(), 3, "{d:#?}");
+
+    repo.apply_hunk(HunkAction::Stage, "a.txt", 1, d.hunks[1].key(), 0)
+        .expect("stage the middle hunk");
+    assert_eq!(
+        index_blob(p, "a.txt"),
+        "one\ntwo\nthree\nfour\nFIVE\nsix\nseven\neight\nnine\nten\n"
+    );
+
+    let staged = repo
+        .file_diff(&DiffSource::Staged, "a.txt", None, 0, Whitespace::Show)
+        .expect("staged");
+    assert_eq!(staged.hunks.len(), 1);
+    repo.apply_hunk(HunkAction::Unstage, "a.txt", 0, staged.hunks[0].key(), 0)
+        .expect("unstage the middle hunk");
+    assert_eq!(index_blob(p, "a.txt"), original);
+
+    let d = repo
+        .file_diff(&DiffSource::Unstaged, "a.txt", None, 0, Whitespace::Show)
+        .expect("diff");
+    repo.apply_hunk(HunkAction::Discard, "a.txt", 1, d.hunks[1].key(), 0)
+        .expect("discard the middle hunk");
+    assert_eq!(
+        fs::read_to_string(p.join("a.txt")).expect("read"),
+        "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nTEN\n"
+    );
+    assert_eq!(index_blob(p, "a.txt"), original);
+
+    // A pure insertion in the middle (`@@ -5,0 +6 @@`) and a pure deletion work too.
+    fs::write(
+        p.join("a.txt"),
+        "one\ntwo\nthree\nfour\nfive\nNEW\nsix\nseven\nnine\nten\n",
+    )
+    .expect("write");
+    let d = repo
+        .file_diff(&DiffSource::Unstaged, "a.txt", None, 0, Whitespace::Show)
+        .expect("diff");
+    assert_eq!(d.hunks.len(), 2, "{d:#?}");
+    repo.apply_hunk(HunkAction::Stage, "a.txt", 0, d.hunks[0].key(), 0)
+        .expect("stage the insertion");
+    assert_eq!(
+        index_blob(p, "a.txt"),
+        "one\ntwo\nthree\nfour\nfive\nNEW\nsix\nseven\neight\nnine\nten\n"
+    );
+    let d = repo
+        .file_diff(&DiffSource::Unstaged, "a.txt", None, 0, Whitespace::Show)
+        .expect("diff");
+    repo.apply_hunk(HunkAction::Stage, "a.txt", 0, d.hunks[0].key(), 0)
+        .expect("stage the deletion");
+    assert_eq!(
+        index_blob(p, "a.txt"),
+        "one\ntwo\nthree\nfour\nfive\nNEW\nsix\nseven\nnine\nten\n"
+    );
+}
+
 #[test]
 fn branches_tags_stash_reset() {
     let (dir, repo) = fixture();

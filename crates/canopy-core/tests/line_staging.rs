@@ -428,6 +428,65 @@ fn handles_paths_with_spaces_and_non_ascii() {
 }
 
 #[test]
+fn stages_unstages_and_discards_lines_without_context() {
+    // Context 0: the hunk sits in the middle of the file with nothing around it. Expected states
+    // from `git diff -U0` edited by hand as `git add -p` would, applied with
+    // `git apply --cached --unidiff-zero` (git 2.43).
+    let original = "1\n2\n3\n4\n5\n6\n7\n8\n9\n";
+    let (dir, repo) = fixture(original);
+    let p = dir.path();
+    fs::write(p.join("a.txt"), "1\n2\n3\n4\nA\nB\nC\n6\n7\n8\n9\n").expect("write");
+    let hunk0 = |repo: &Repo, source: &DiffSource| {
+        let d = repo
+            .file_diff(source, "a.txt", None, 0, Whitespace::Show)
+            .expect("diff");
+        assert_eq!(d.hunks.len(), 1, "{d:#?}");
+        d.hunks.into_iter().next().expect("one hunk")
+    };
+
+    let h = hunk0(&repo, &DiffSource::Unstaged);
+    assert_eq!(h.key(), (5, 1, 5, 3));
+    repo.apply_lines(
+        HunkAction::Stage,
+        "a.txt",
+        0,
+        h.key(),
+        &[at(&h, LineKind::Added, "B")],
+        0,
+    )
+    .expect("stage B");
+    assert_eq!(index_of(p, "a.txt"), b"1\n2\n3\n4\n5\nB\n6\n7\n8\n9\n");
+
+    let h = hunk0(&repo, &DiffSource::Staged);
+    repo.apply_lines(
+        HunkAction::Unstage,
+        "a.txt",
+        0,
+        h.key(),
+        &[at(&h, LineKind::Added, "B")],
+        0,
+    )
+    .expect("unstage B");
+    assert_eq!(index_of(p, "a.txt"), original.as_bytes());
+
+    let h = hunk0(&repo, &DiffSource::Unstaged);
+    repo.apply_lines(
+        HunkAction::Discard,
+        "a.txt",
+        0,
+        h.key(),
+        &[at(&h, LineKind::Removed, "5"), at(&h, LineKind::Added, "A")],
+        0,
+    )
+    .expect("discard -5 +A");
+    assert_eq!(
+        worktree_of(p, "a.txt"),
+        b"1\n2\n3\n4\n5\nB\nC\n6\n7\n8\n9\n"
+    );
+    assert_eq!(index_of(p, "a.txt"), original.as_bytes());
+}
+
+#[test]
 fn crlf_with_autocrlf_matches_git() {
     let (dir, _) = fixture("one\ntwo\n");
     let p = dir.path();

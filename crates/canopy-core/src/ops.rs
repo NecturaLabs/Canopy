@@ -135,6 +135,27 @@ pub enum HunkAction {
     Discard,
 }
 
+impl HunkAction {
+    /// The `git apply` arguments that apply a single-hunk patch read from standard input for this
+    /// action. `context` is the number of context lines the patch was made with: with none, git
+    /// apply's checks that a hunk is anchored by context (or by the start or end of the file)
+    /// must be turned off with `--unidiff-zero`, as git-apply(1) describes for `diff -U0`
+    /// output; otherwise a hunk in the middle of a file fails with "patch failed".
+    pub(crate) fn apply_args(self, context: u32) -> Vec<&'static str> {
+        let mut args = vec!["apply"];
+        match self {
+            Self::Stage => args.push("--cached"),
+            Self::Unstage => args.extend(["--cached", "--reverse"]),
+            Self::Discard => args.push("--reverse"),
+        }
+        if context == 0 {
+            args.push("--unidiff-zero");
+        }
+        args.extend(["--whitespace=nowarn", "-"]);
+        args
+    }
+}
+
 /// Clones `url` into `dest`, reporting progress lines.
 pub fn clone(url: &str, dest: &Path, progress: impl FnMut(&str)) -> Result<()> {
     let dest_str = dest.to_string_lossy();
@@ -240,12 +261,7 @@ impl Repo {
                 "The file changed since it was shown. Refresh and try again.",
             ));
         }
-        let args: &[&str] = match action {
-            HunkAction::Stage => &["apply", "--cached", "--whitespace=nowarn", "-"],
-            HunkAction::Unstage => &["apply", "--cached", "--reverse", "--whitespace=nowarn", "-"],
-            HunkAction::Discard => &["apply", "--reverse", "--whitespace=nowarn", "-"],
-        };
-        cli::run_with_input(self.workdir(), args, &patch).map(drop)
+        cli::run_with_input(self.workdir(), &action.apply_args(context), &patch).map(drop)
     }
 
     /// Commits the index with `message`, running hooks and signing as configured. `amend`
