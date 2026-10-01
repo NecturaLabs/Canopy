@@ -63,7 +63,8 @@ pub enum Command {
     ClearChoice,
 }
 
-/// A key with modifiers. `ctrl` is Ctrl on Linux and Windows and Cmd on macOS.
+/// A key with modifiers. `ctrl` is Ctrl on Linux and Windows and Cmd on macOS (where the
+/// Control key is accepted for it too).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Chord {
     pub key: Key,
@@ -588,12 +589,19 @@ impl Chord {
         if key != self.key {
             return false;
         }
+        // Ctrl on Linux and Windows; Cmd, or the Control key, on macOS.
         let ctrl = m.command || m.ctrl;
         if self.symbol {
-            // AltGr arrives as Alt, or as Ctrl+Alt on Windows; either way it only types the
-            // character.
-            let altgr = m.alt && (!ctrl || cfg!(windows));
-            return if altgr { !self.ctrl } else { ctrl == self.ctrl };
+            // egui cannot tell AltGr from Alt: AltGr arrives as Alt, and on Windows as Ctrl+Alt.
+            // So Alt alone, and on Windows Ctrl+Alt too, may just be how the layout types the
+            // character (`[` on German and Nordic layouts). Such a press matches the plain
+            // symbol chord and never a Ctrl chord; Ctrl+Alt elsewhere counts as Ctrl.
+            let typed_with_altgr = m.alt && (!ctrl || cfg!(windows));
+            return if typed_with_altgr {
+                !self.ctrl
+            } else {
+                ctrl == self.ctrl
+            };
         }
         !m.alt && ctrl == self.ctrl && m.shift == self.shift
     }
@@ -828,6 +836,24 @@ mod tests {
         // `[` typed with AltGr (German, Nordic layouts) is still `[`.
         assert!(symbol(Key::OpenBracket).matches(Key::OpenBracket, &Modifiers::ALT));
         assert!(!symbol(Key::OpenBracket).matches(Key::OpenBracket, &Modifiers::COMMAND));
+    }
+
+    #[test]
+    fn altgr_presses_match_plain_symbols_never_ctrl_chords() {
+        let alt = Modifiers::ALT;
+        let ctrl_alt = Modifiers::ALT | Modifiers::COMMAND;
+        // Alt alone types the character on every platform.
+        assert!(symbol(Key::Plus).matches(Key::Plus, &alt));
+        assert!(!ctrl_symbol(Key::Plus).matches(Key::Plus, &alt));
+        // Ctrl+Alt is AltGr on Windows only; elsewhere it is a Ctrl press.
+        assert_eq!(
+            symbol(Key::Plus).matches(Key::Plus, &ctrl_alt),
+            cfg!(windows)
+        );
+        assert_eq!(
+            ctrl_symbol(Key::Plus).matches(Key::Plus, &ctrl_alt),
+            !cfg!(windows)
+        );
     }
 
     #[test]

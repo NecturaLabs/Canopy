@@ -539,8 +539,8 @@ impl RepoTab {
         filtered.unwrap_or_else(|| (0..self.snap.as_ref().map_or(0, |s| s.commits.len())).collect())
     }
 
-    /// Moves the commit selection by `delta` rows (clamped); `None` jumps to the first row and
-    /// `Some(isize::MAX)` to the last.
+    /// Moves the commit selection by `delta` rows (clamped); `isize::MIN` jumps to the first row
+    /// and `isize::MAX` to the last. With nothing selected, any other move selects the first row.
     pub fn move_commit(&mut self, delta: isize) {
         let rows = self.visible_rows();
         let Some(snap) = &self.snap else { return };
