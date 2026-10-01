@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use canopy_core::{Error, Repo};
+use canopy_core::{Error, MissingObjects, Repo};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = run_git(dir, args);
@@ -252,7 +252,14 @@ fn mode_only_change_shows_in_status_and_diff() {
     assert_eq!(e.mode_change(), Some((0o100644, 0o100755)));
 
     let d = repo
-        .file_diff(&DiffSource::Unstaged, "a.txt", None, 3, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Unstaged,
+            "a.txt",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .unwrap();
     assert!(d.hunks.is_empty());
     assert_eq!(d.mode_change(), Some((0o100644, 0o100755)));
@@ -263,17 +270,31 @@ fn mode_only_change_shows_in_status_and_diff() {
     assert!(st.unstaged.is_empty());
     assert_eq!(st.staged[0].mode_change(), Some((0o100644, 0o100755)));
     let d = repo
-        .file_diff(&DiffSource::Staged, "a.txt", None, 3, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Staged,
+            "a.txt",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .unwrap();
     assert_eq!(d.mode_change(), Some((0o100644, 0o100755)));
     let oid = repo
         .commit("chore: make a.txt executable", false, false)
         .unwrap();
-    let details = repo.commit_details(oid).unwrap();
+    let details = repo.commit_details(oid, MissingObjects::Fail).unwrap();
     assert_eq!(details.files.len(), 1);
     assert_eq!(details.files[0].mode_change(), Some((0o100644, 0o100755)));
     let d = repo
-        .file_diff(&DiffSource::Commit(oid), "a.txt", None, 3, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Commit(oid),
+            "a.txt",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .unwrap();
     assert_eq!(d.mode_change(), Some((0o100644, 0o100755)));
 }
@@ -306,7 +327,14 @@ fn file_to_symlink_is_one_typechange_entry_with_both_modes() {
     assert_eq!(st.unstaged[0].mode_change(), Some((0o100644, 0o120000)));
 
     let d = repo
-        .file_diff(&DiffSource::Unstaged, "a.txt", None, 3, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Unstaged,
+            "a.txt",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .unwrap();
     assert_eq!(d.kind, Some(ChangeKind::Typechange));
     assert_eq!(d.mode_change(), Some((0o100644, 0o120000)));
@@ -325,12 +353,19 @@ fn file_to_symlink_is_one_typechange_entry_with_both_modes() {
 
     repo.stage(&["a.txt".to_owned()]).unwrap();
     let oid = repo.commit("refactor: link a.txt", false, false).unwrap();
-    let details = repo.commit_details(oid).unwrap();
+    let details = repo.commit_details(oid, MissingObjects::Fail).unwrap();
     assert_eq!(details.files.len(), 1, "{:?}", details.files);
     assert_eq!(details.files[0].kind, ChangeKind::Typechange);
     assert_eq!(details.files[0].mode_change(), Some((0o100644, 0o120000)));
     let d = repo
-        .file_diff(&DiffSource::Commit(oid), "a.txt", None, 3, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Commit(oid),
+            "a.txt",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .unwrap();
     assert_eq!(d.kind, Some(ChangeKind::Typechange));
     assert_eq!(d.mode_change(), Some((0o100644, 0o120000)));

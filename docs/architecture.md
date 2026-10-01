@@ -32,7 +32,8 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `repo.rs` | `Repo`: open, discover (walking upward), init. `snapshot()` gathers HEAD, repository state, branches with ahead/behind, remotes, tags, stashes, status and the first N commits in topological order. |
 | `graph.rs` | Lane layout for the commit graph (below). Unit tested. |
 | `diff.rs` | `FileDiff`, `Hunk`, `DiffLine`; builds single-hunk patches for hunk staging. |
-| `status.rs` | Working-tree status split into staged, unstaged and conflicted. |
+| `status.rs` | Working-tree status split into staged, unstaged and conflicted. In a partial clone it never downloads; a missing `HEAD` tree is `Error::NotDownloaded`, and `snapshot()` then carries `status_unavailable` instead of failing. |
+| `partial.rs` | Partial clones: recognising them (`promisor` remotes, `*.promisor` packs) and downloading the objects a read needs through `git fetch --filter=blob:none --stdin` via `cli.rs`, the command git itself uses for a lazy fetch. Reads (`commit_details`, `file_diff`, `status`) run libgit2 first and take a `MissingObjects` argument: `Fail` stays offline and returns `Error::NotDownloaded`, `Download` fetches exactly the missing trees and blobs and retries. Remote names that start with `-` are refused. |
 | `ops.rs` | Every mutation, run through the `git` executable via `cli.rs`: stage, unstage, discard; hunk stage/unstage/discard (`git apply`); commit and amend; branch create, checkout, rename, delete; merge, rebase, continue/abort; tag create, delete, push; stash save, apply, pop, drop; reset soft, mixed, hard; detached checkout; cherry-pick; revert; remotes; clone, fetch, pull, push. |
 | `cli.rs` | Runs the `git` executable non-interactively (`GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`, no console window on Windows), returns git's stderr on failure and streams `--progress` output line by line for long operations. |
 
@@ -50,7 +51,7 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. |
 | `app/clone.rs`, `app/request_flow.rs` | Cloning on a background thread; creating and checking out pull and merge requests. |
 | `app/screenshot.rs` | Headless screenshots for `--screenshot`. |
-| `worker.rs` | One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced; debounced file watcher. |
+| `worker.rs` | One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; debounced file watcher. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it. |
 | `highlight.rs` | Diff syntax highlighting (`syntect`) on two shared highlighter threads, cached per file revision; stale requests are abandoned. |
 | `settings.rs` | Settings persisted through eframe storage: theme, recent repositories, UI scale. |
 | `ui/theme.rs` | Design tokens: palette, lane colours, spacing, radii. The only place colours are defined. |
@@ -99,6 +100,15 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 - Long-running CLI jobs (clone, fetch, push, ...) stream progress lines back as intermediate
   results; the status bar shows the running job with a spinner.
 - Closing a tab drops the job sender; the worker finishes its current job and exits.
+- In a partial clone, reads that need objects the clone left on the server (`Details`, `Diff`,
+  and a snapshot or status after a soft reset) fetch them on the worker through `git`, so the
+  thread can wait for the network while later jobs queue behind it. The worker runs each read
+  offline first and downloads only when that fails with `Error::NotDownloaded` (`can_download()`),
+  skips a queued `Details` or `Diff` that a later one supersedes, and shows
+  "Downloading from <remote>…" in the status bar meanwhile. A commit's file list is sent before
+  its line counts, which are fetched in a follow-up unless the user already moved on. A failed
+  `Details` is kept in the tab (`details_error`) and shown in the details pane, with a Retry
+  button when downloading can fix it.
 
 ## Data flow
 

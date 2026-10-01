@@ -25,6 +25,17 @@ pub enum View {
     Requests,
 }
 
+/// Why the details of a commit could not be loaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetailsError {
+    pub oid: Oid,
+    /// The message to show: git's own explanation.
+    pub message: String,
+    /// A partial clone that has not downloaded the commit and can fetch it, so trying again can
+    /// work (the details pane offers a Retry button only then).
+    pub can_download: bool,
+}
+
 /// A file whose diff is shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileSelection {
@@ -288,6 +299,8 @@ pub struct RepoTab {
     pub view: View,
     pub selected_commit: Option<Oid>,
     pub details: Option<Arc<CommitDetails>>,
+    /// Set when loading the details of `selected_commit` failed.
+    pub details_error: Option<DetailsError>,
     pub file: Option<FileSelection>,
     pub diff: Option<Arc<FileDiff>>,
     /// Row layout of `diff` for the diff view, rebuilt only when the diff or layout changes.
@@ -359,6 +372,7 @@ impl RepoTab {
             view: View::History,
             selected_commit: None,
             details: None,
+            details_error: None,
             file: None,
             diff: None,
             diff_layout: None,
@@ -523,9 +537,17 @@ impl RepoTab {
         }
         self.selected_commit = Some(oid);
         self.details = None;
+        self.details_error = None;
         self.file = None;
         self.diff = None;
         self.worker.send(Job::Details(oid));
+    }
+
+    /// Asks again for the details that failed to load (the Retry button of the details pane).
+    pub fn retry_details(&mut self) {
+        if let Some(error) = self.details_error.take() {
+            self.worker.send(Job::Details(error.oid));
+        }
     }
 
     fn diff_key(&self, sel: &FileSelection) -> DiffKey {
@@ -749,6 +771,7 @@ impl RepoTab {
                     {
                         self.selected_commit = None;
                         self.details = None;
+                        self.details_error = None;
                     }
                     self.reconcile_file_selection();
                 }
@@ -756,14 +779,32 @@ impl RepoTab {
                     if let Some(s) = &mut self.snap {
                         // Copies the snapshot only if a frame still shares it (it does not
                         // between frames).
-                        Arc::make_mut(s).status = st;
+                        let s = Arc::make_mut(s);
+                        s.status = st;
+                        s.status_unavailable = None;
                     }
                     self.reconcile_file_selection();
+                }
+                Event::DetailsFailed {
+                    oid,
+                    message,
+                    can_download,
+                } => {
+                    if Some(oid) == self.selected_commit {
+                        self.details_error = Some(DetailsError {
+                            oid,
+                            message,
+                            can_download,
+                        });
+                    }
                 }
                 Event::Details(d) => {
                     if Some(d.oid) == self.selected_commit {
                         let first = d.files.first().cloned();
                         let oid = d.oid;
+                        self.details_error = None;
+                        // A second reply for the same commit (the line counts arriving after the
+                        // file list) replaces the first and leaves the open diff alone.
                         self.details = Some(d);
                         if self.view == View::History
                             && self.file.is_none()
@@ -821,7 +862,9 @@ impl RepoTab {
                     self.running = Some(label);
                     self.progress = None;
                 }
-                Event::Progress(line) => self.progress = Some(line),
+                // An empty line ends the progress of a download the worker ran outside an
+                // operation.
+                Event::Progress(line) => self.progress = Some(line).filter(|l| !l.is_empty()),
                 Event::OpFinished {
                     label,
                     kind,
@@ -1443,6 +1486,7 @@ mod perf {
                 files: std::iter::once(file.clone())
                     .chain((0..3_000).map(|i| entry(format!("dir/f{i}.c"))))
                     .collect(),
+                stats_known: true,
             }
             .into(),
         );

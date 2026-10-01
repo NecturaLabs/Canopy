@@ -11,7 +11,7 @@ use std::path::Path;
 use std::process::Command;
 
 use canopy_core::ops::HunkAction;
-use canopy_core::{DiffSource, Error, Hunk, HunkKey, LineKind, Repo, Whitespace};
+use canopy_core::{DiffSource, Error, Hunk, HunkKey, LineKind, MissingObjects, Repo, Whitespace};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -78,7 +78,14 @@ fn diff_body(p: &Path, args: &[&str]) -> Vec<String> {
 
 fn only_hunk(repo: &Repo, source: &DiffSource, path: &str) -> Hunk {
     let d = repo
-        .file_diff(source, path, None, 3, Whitespace::Show)
+        .file_diff(
+            source,
+            path,
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("diff");
     assert_eq!(d.hunks.len(), 1, "{d:#?}");
     d.hunks.into_iter().next().expect("one hunk")
@@ -444,7 +451,14 @@ fn stages_unstages_and_discards_lines_without_context() {
     fs::write(p.join("a.txt"), "1\n2\n3\n4\nA\nB\nC\n6\n7\n8\n9\n").expect("write");
     let hunk0 = |repo: &Repo, source: &DiffSource| {
         let d = repo
-            .file_diff(source, "a.txt", None, 0, Whitespace::Show)
+            .file_diff(
+                source,
+                "a.txt",
+                None,
+                0,
+                Whitespace::Show,
+                MissingObjects::Fail,
+            )
             .expect("diff");
         assert_eq!(d.hunks.len(), 1, "{d:#?}");
         d.hunks.into_iter().next().expect("one hunk")

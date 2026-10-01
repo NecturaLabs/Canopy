@@ -16,13 +16,12 @@ Who works on what, on which branch. Remove a row when its branch is merged. Merg
 the working branch, `fix/installer-review` (every security-review finding; independent review and
 a Windows PowerShell 5.1 run still owed), `perf/views` (frame cost 119–209 ms → 0.3–0.9 ms on huge data) 
 `canopy-3/core-workflows` (git-flow, merged detection, LFS status, submodules in core) and
-`canopy-2/core-safety` (safe branch delete, publish, mode and type changes, collapsed untracked
+`feat/partial-clones` (partial-clone reads, downloads and Retry), `canopy-2/core-safety` (safe branch delete, publish, mode and type changes, collapsed untracked
 folders, nested repositories, safe paths, ignore rules in core; the app still calls compatibility
 wrappers: see `docs/specs/HANDOFF-canopy-2-core-safety.md`).
 
 | Entry | Branch | Who | State |
 | --- | --- | --- | --- |
-| Partial clones in core (missing objects fetched through git) | `feat/partial-clones` | canopy-1 agent | Fixing review findings (snapshot recovery after a soft reset, coalesced fetch jobs, retry in the details pane, docs, privacy policy); then merge |
 
 ## Now
 
@@ -44,7 +43,13 @@ In order. The UI entries come before accessibility, and accessibility before the
   keychain; the old folder migrates once.
 - [ ] **Partial clones in the views**: a "not downloaded yet" state for blobs missing from a
   partial clone, fetched on demand off the UI thread. Accept: a `--filter=blob:none` clone browses
-  history without blocking and shows file contents after fetching.
+  history without blocking and shows file contents after fetching. The core reads are done
+  (`feat/partial-clones`: `MissingObjects`, `partial.rs`, offline file lists, `status_unavailable`),
+  and so are the worker (offline first, download with a progress line, superseded reads dropped)
+  and the details pane's error with Retry. Left: verify against a real `--filter=blob:none` and
+  `--filter=tree:0` clone in the running app, screenshots of the error pane and the "Changes not
+  available" state, a Retry for a failed diff (only commit details have one), and a per-file
+  "not downloaded" marker before the diff is opened.
 - [ ] **Git LFS** (core status, pointer and not-downloaded detection merged from canopy-3; see
   `docs/specs/HANDOFF-canopy-3-core-workflows.md`): correct status for LFS files, an LFS indicator and pointer-only state, LFS
   diffs, `git lfs pull`/fetch, track and untrack, locks, and a prompt when `git-lfs` is missing.

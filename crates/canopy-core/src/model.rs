@@ -328,6 +328,11 @@ pub struct CommitDetails {
     pub parents: Vec<Oid>,
     /// Files changed relative to the first parent (or the empty tree for a root commit).
     pub files: Vec<FileEntry>,
+    /// Whether `files` carry line counts and rename detection. True unless the commit lives in
+    /// a partial clone that has not downloaded the file contents: then the list names the
+    /// changed files (exact renames only) and every count is 0. See
+    /// [`crate::Repo::commit_details`].
+    pub stats_known: bool,
 }
 
 /// What kind of reference a label on a commit row stands for.
@@ -387,6 +392,28 @@ pub struct RepoSnapshot {
     pub refs: HashMap<Oid, Vec<RefLabel>>,
     /// More commits exist beyond `commits`.
     pub truncated: bool,
+    /// Set when `status` is empty only because it could not be read: a partial clone that has
+    /// not downloaded the tree of `HEAD`. History never depends on it.
+    pub status_unavailable: Option<StatusUnavailable>,
+}
+
+/// Why a [`RepoSnapshot`] has no working tree status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusUnavailable {
+    /// What to tell the user (git's own explanation when a download failed).
+    pub message: String,
+    /// Downloading the missing tree from the promisor remote is possible, so trying again
+    /// ([`crate::Repo::complete_status`]) may help.
+    pub can_download: bool,
+}
+
+impl StatusUnavailable {
+    pub(crate) fn from_error(e: &crate::Error) -> Self {
+        Self {
+            message: e.to_string(),
+            can_download: e.can_download(),
+        }
+    }
 }
 
 impl RepoSnapshot {

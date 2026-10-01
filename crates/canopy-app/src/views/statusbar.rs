@@ -75,6 +75,10 @@ pub fn show(
                     t.push_str(pr);
                 }
                 ui.label(small(t, p.accent));
+            } else if let Some(line) = &tab.progress {
+                // A download for a read in a partial clone, outside any operation.
+                ui.add(egui::Spinner::new().size(12.0).color(p.accent));
+                ui.label(small(line.clone(), p.accent));
             }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

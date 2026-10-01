@@ -213,10 +213,11 @@ clone: record the real number in the results. Modes that need less:
 - `--shallow` (`--depth 1`): working tree plus one commit. Far smaller, but there is no history to
   scroll, so use it only to test tree size, checkouts and the Changes view.
 - `--blobless` (`--filter=blob:none`): full commit history, file contents fetched on demand. Good
-  for history scrolling; **diffs of old commits can fail** because libgit2 does not fetch missing
-  objects from a promisor remote (to our knowledge), whereas `git` does. Treat "object not found"
-  errors on a blobless clone as that known limitation, not as a stress failure, and run the diff
-  scenarios on full clones.
+  for history scrolling. Commit details and diffs of old commits download the objects they need
+  through `git` (the status bar says "Downloading from origin…"), so the first diff of each old
+  commit waits for the network; that wait is expected, and a failed download shows git's own
+  message in the details pane with a Retry button. "Object not found" on a blobless or treeless
+  clone is a bug now: record it.
 - `--shallow-for chromium/chromium`: shallow for named repositories only. **The recommended
   first run is the full set with Chromium shallow.** Add other names with a comma.
 - `--subset N`: N evenly spaced entries of the list, so every size class is represented

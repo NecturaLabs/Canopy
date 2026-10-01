@@ -8,7 +8,7 @@ use git2::Oid;
 use crate::cli;
 use crate::diff::{DiffSource, Whitespace};
 use crate::model::{ChangeKind, FileEntry, RepoState};
-use crate::{Error, Repo, Result};
+use crate::{Error, MissingObjects, Repo, Result};
 
 /// How far `git reset` goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,8 +302,13 @@ impl Repo {
             HunkAction::Stage | HunkAction::Discard => DiffSource::Unstaged,
             HunkAction::Unstage => DiffSource::Staged,
         };
-        let diff = self.raw_diff(&source, path, None, context, Whitespace::Show)?;
-        let Some((patch, key)) = crate::diff::hunk_patch(&diff, index)? else {
+        // Offline: the hunk was shown from this same diff, so a partial clone already has its
+        // objects; if not, the caller gets Error::NotDownloaded rather than a hidden fetch.
+        let found = self.read_diff(&source, path, None, MissingObjects::Fail, || {
+            let diff = self.raw_diff(&source, path, None, context, Whitespace::Show)?;
+            crate::diff::hunk_patch(&diff, index)
+        })?;
+        let Some((patch, key)) = found else {
             return Err(Error::invalid(
                 "That change no longer exists. Refresh and try again.",
             ));

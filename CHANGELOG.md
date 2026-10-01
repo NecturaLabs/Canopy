@@ -35,7 +35,6 @@ All notable changes to Canopy are documented here. The format follows
 
 - Deleting a branch from the sidebar runs `git branch -d`: a branch with unmerged commits is no
   longer deleted silently, and Canopy asks before forcing it.
-
 - Opening a large repository no longer freezes the window: the repository is opened and its file
   watcher set up off the UI thread.
 - Commits, checkouts and fetches in a linked worktree or submodule now refresh Canopy: their git
@@ -49,6 +48,15 @@ All notable changes to Canopy are documented here. The format follows
   during downloads, including a missing `curl` and `wget`, are always shown; a script cut short
   in download runs nothing; and through `irm | iex` the Windows installer leaves the PowerShell
   session as it found it.
+- Partial clones (`git clone --filter=blob:none` or `--filter=tree:0`) no longer fail with
+  "object not found" when you open an old commit or its diff: Canopy downloads the missing
+  objects through your `git` (the status bar says from where) and shows git's own message, with a
+  Retry button, when that fails. The commit's file list appears at once, and its line counts
+  follow once downloaded (commits over 200 files keep the list without counts). Selecting several
+  commits quickly downloads only for the last one. After a soft reset in a treeless clone the
+  history still loads, and the Changes view says why it cannot list changes yet instead of
+  showing every file as added. A remote whose name looks like a git option is refused, never
+  run. Partial clones made by Git before 2.24 get a message with the commands that convert them.
 - Secondary and faint text, links, status colours and graph lanes are readable on every surface
   they are drawn on, selected rows and diff lines included, in all seven themes (WCAG AA; body
   text AAA). Selected values in Settings use the same calmer selection fill as lists. Branch and

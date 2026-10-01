@@ -9,8 +9,8 @@ use std::path::Path;
 use std::process::Command;
 
 use canopy_core::{
-    ChangeKind, DiffSource, FlowConfig, FlowFinish, FlowKind, MergedReason, Repo, SubmoduleState,
-    Whitespace,
+    ChangeKind, DiffSource, FlowConfig, FlowFinish, FlowKind, MergedReason, MissingObjects, Repo,
+    SubmoduleState, Whitespace,
 };
 
 fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
@@ -522,7 +522,9 @@ fn status_marks_lfs_entries() {
         [("a.txt", false), ("big.bin", true), ("new.bin", true)]
     );
     let head = repo.head().expect("head").oid.expect("commit");
-    let details = repo.commit_details(head).expect("details");
+    let details = repo
+        .commit_details(head, MissingObjects::Fail)
+        .expect("details");
     assert!(details.files.iter().any(|f| f.path == "big.bin" && f.lfs));
     assert!(
         details
@@ -761,7 +763,14 @@ fn submodule_diff_gives_both_commits_and_whether_they_exist_locally() {
     let new = git(&sub, &["rev-parse", "HEAD"]);
 
     let diff = repo
-        .file_diff(&DiffSource::Unstaged, "deps/lib", None, 3, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Unstaged,
+            "deps/lib",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("diff");
     let change = diff.submodule.expect("submodule change");
     assert_eq!(change.old.map(|o| o.to_string()), Some(old.trim().into()));
@@ -779,7 +788,14 @@ fn submodule_diff_gives_both_commits_and_whether_they_exist_locally() {
         ],
     );
     let staged = repo
-        .file_diff(&DiffSource::Staged, "deps/lib", None, 3, Whitespace::Show)
+        .file_diff(
+            &DiffSource::Staged,
+            "deps/lib",
+            None,
+            3,
+            Whitespace::Show,
+            MissingObjects::Fail,
+        )
         .expect("diff");
     let change = staged.submodule.expect("submodule change");
     assert_eq!(change.new.map(|o| o.to_string()).as_deref(), Some(missing));
@@ -793,6 +809,7 @@ fn submodule_diff_gives_both_commits_and_whether_they_exist_locally() {
             None,
             3,
             Whitespace::Show,
+            MissingObjects::Fail,
         )
         .expect("diff");
     assert!(plain.submodule.is_none());

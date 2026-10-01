@@ -31,7 +31,17 @@ Update this table in the same change that adds or alters a feature.
 | Submodules | Planned | Yes | Yes | Yes |
 | Worktrees | Planned | ? | Yes | ? |
 | Git LFS indicator and commands | Planned | Yes | Yes | Yes |
-| Partial clone and very large repositories | Planned | ? | ? | ? |
+| Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Done | Yes | ? | ? |
+| Very large repositories | Planned | ? | ? | ? |
+
+Partial clones differ from a full clone in what the views can show without the network. Commit
+details list the changed files at once and fetch the line counts afterwards (a commit with more
+than 200 files keeps its list without counts). While file contents are not downloaded, a rename
+that is not an exact copy shows as a deletion plus an addition, in commit details and in the
+staged list of the Changes view, where `git status` would download the blobs to pair them. A
+treeless clone after `git reset --soft` downloads the tree of `HEAD` before the Changes view can
+list anything, and says why when it cannot. Repositories made by Git before 2.24
+(`extensions.partialClone`) are refused with the commands that convert them.
 
 ## History
 

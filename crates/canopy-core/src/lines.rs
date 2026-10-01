@@ -128,8 +128,13 @@ impl Repo {
             HunkAction::Unstage => (DiffSource::Staged, true),
             HunkAction::Discard => (DiffSource::Unstaged, true),
         };
-        let diff = self.raw_diff(&source, path, None, context, crate::Whitespace::Show)?;
-        let Some((file, hunk)) = read_hunk(&diff, index)? else {
+        // Offline, like `apply_hunk`: a partial clone already has the objects of a diff it showed;
+        // if not, the caller gets Error::NotDownloaded rather than a hidden fetch.
+        let found = self.read_diff(&source, path, None, crate::MissingObjects::Fail, || {
+            let diff = self.raw_diff(&source, path, None, context, crate::Whitespace::Show)?;
+            read_hunk(&diff, index)
+        })?;
+        let Some((file, hunk)) = found else {
             return Err(Error::invalid(
                 "That change no longer exists. Refresh and try again.",
             ));

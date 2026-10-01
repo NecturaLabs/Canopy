@@ -10,8 +10,8 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 
 use canopy_core::ops::{HunkAction, PullStrategy, ResetMode};
 use canopy_core::{
-    CommitDetails, DiffSource, FileDiff, FileEntry, Oid, Repo, RepoSnapshot, RepoState, Whitespace,
-    WorkingStatus,
+    CommitDetails, DiffSource, FileDiff, FileEntry, MissingObjects, Oid, Repo, RepoSnapshot,
+    RepoState, Whitespace, WorkingStatus,
 };
 
 /// A request to change the repository. Each one is followed by a refresh.
@@ -286,6 +286,13 @@ pub enum Event {
     Snapshot(Arc<RepoSnapshot>),
     Status(WorkingStatus),
     Details(Arc<CommitDetails>),
+    /// The details of this commit could not be read. `can_download` says that it is a partial
+    /// clone that has not downloaded them, which trying again can fix.
+    DetailsFailed {
+        oid: Oid,
+        message: String,
+        can_download: bool,
+    },
     Diff(DiffKey, Result<Arc<FileDiff>, String>),
     /// Syntax highlighting for the diff (sent before with the same key). It comes from the
     /// highlighter threads, so it may arrive after a newer diff; it applies only to this one.
@@ -432,26 +439,60 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             }
         };
 
+        let rest = coalesce_reads(rest);
         let mut mutated = false;
         for job in rest {
             let kind = job.kind();
             let started = std::time::Instant::now();
             match job {
-                Job::Details(oid) => match repo.commit_details(oid) {
-                    Ok(d) => emit(Event::Details(Arc::new(d))),
-                    Err(e) => emit(Event::Failed(e.to_string())),
-                },
+                Job::Details(oid) => {
+                    // The file list needs no file contents, so it is shown first, offline. A
+                    // treeless clone downloads trees for it (network, with a progress line).
+                    match read_downloading(&emit, |m| repo.commit_details(oid, m)) {
+                        Ok(d) => {
+                            let wants_counts = !d.stats_known
+                                && d.files.len() <= canopy_core::repo::MAX_STAT_FILES;
+                            emit(Event::Details(Arc::new(d)));
+                            // Line counts need blobs: fetch them after the list is on screen,
+                            // unless the user already moved on (a newer job is waiting).
+                            if wants_counts && jobs.is_empty() {
+                                match with_progress(&emit, repo.promisor_remote(), || {
+                                    repo.commit_details(oid, MissingObjects::Download)
+                                }) {
+                                    Ok(d) if d.stats_known => emit(Event::Details(Arc::new(d))),
+                                    Ok(_) => {}
+                                    // The list stays; only the counts are missing.
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, "line counts not downloaded")
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "commit details failed");
+                            emit(Event::DetailsFailed {
+                                oid,
+                                message: e.to_string(),
+                                can_download: e.can_download(),
+                            });
+                        }
+                    }
+                }
                 Job::Diff(key) => {
                     let result = if key.conflicted {
                         repo.conflict_view(&key.path)
                     } else {
-                        repo.file_diff(
-                            &key.source,
-                            &key.path,
-                            key.old_path.as_deref(),
-                            key.context,
-                            key.whitespace,
-                        )
+                        // Partial clones: download missing objects like `git show` does.
+                        read_downloading(&emit, |missing| {
+                            repo.file_diff(
+                                &key.source,
+                                &key.path,
+                                key.old_path.as_deref(),
+                                key.context,
+                                key.whitespace,
+                                missing,
+                            )
+                        })
                     };
                     let unchanged = match (&result, &last_diff) {
                         (Ok(d), Some((k, last))) if *k == key && **last == *d => {
@@ -549,7 +590,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         }
         if want_full.is_some() || mutated {
             let started = std::time::Instant::now();
-            match repo.snapshot(limit) {
+            match snapshot_completing(&repo, limit, &emit) {
                 Ok(s) => {
                     tracing::debug!(
                         commits = s.commits.len(),
@@ -564,12 +605,94 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 }
             }
         } else if want_status {
-            match canopy_core::status::collect(repo.git()) {
+            match read_downloading(&emit, |m| repo.status(m)) {
                 Ok(s) => emit(Event::Status(s)),
                 Err(e) => emit(Event::Failed(e.to_string())),
             }
         }
     }
+}
+
+/// Drops the reads a later job of the same batch makes pointless, so a burst of selections does
+/// not queue one download per click on the repository's single thread: only the last
+/// [`Job::Details`] runs, and only the last [`Job::Diff`] of each kind of source (a commit diff
+/// supersedes earlier commit diffs of any commit; the tab ignores the replies of all but the
+/// newest request anyway). Every other job keeps its place and order.
+fn coalesce_reads(jobs: Vec<Job>) -> Vec<Job> {
+    let mut keep = vec![true; jobs.len()];
+    let mut details_seen = false;
+    let mut diff_sources = Vec::new();
+    for (i, job) in jobs.iter().enumerate().rev() {
+        match job {
+            Job::Details(_) => keep[i] = !std::mem::replace(&mut details_seen, true),
+            Job::Diff(key) => {
+                let source = std::mem::discriminant(&key.source);
+                if diff_sources.contains(&source) {
+                    keep[i] = false;
+                } else {
+                    diff_sources.push(source);
+                }
+            }
+            _ => {}
+        }
+    }
+    let dropped = keep.iter().filter(|k| !**k).count();
+    if dropped > 0 {
+        tracing::debug!(dropped, "superseded reads skipped");
+    }
+    jobs.into_iter()
+        .zip(keep)
+        .filter_map(|(job, keep)| keep.then_some(job))
+        .collect()
+}
+
+/// Runs `f` with the status bar saying where it is downloading from, then clears the line.
+fn with_progress<T>(emit: &impl Fn(Event), remote: Option<String>, f: impl FnOnce() -> T) -> T {
+    let from = remote.map_or_else(String::new, |r| format!(" from {r}"));
+    emit(Event::Progress(format!("Downloading{from}…")));
+    let result = f();
+    emit(Event::Progress(String::new()));
+    result
+}
+
+/// A read in a repository that may be a partial clone: offline first, and only when it fails
+/// because objects were not downloaded and a remote can supply them, again with downloading
+/// allowed (network), with a progress line while it runs. Full clones run `read` once.
+fn read_downloading<T>(
+    emit: &impl Fn(Event),
+    read: impl Fn(MissingObjects) -> canopy_core::Result<T>,
+) -> canopy_core::Result<T> {
+    match read(MissingObjects::Fail) {
+        Err(canopy_core::Error::NotDownloaded {
+            remote: Some(remote),
+            ..
+        }) => with_progress(emit, Some(remote), || read(MissingObjects::Download)),
+        other => other,
+    }
+}
+
+/// A snapshot whose status is filled in even in a partial clone that lacks the tree of `HEAD`:
+/// the history comes first and never fails because of it; if downloading the tree fails the
+/// snapshot carries the reason ([`RepoSnapshot::status_unavailable`]).
+fn snapshot_completing(
+    repo: &Repo,
+    limit: usize,
+    emit: &impl Fn(Event),
+) -> canopy_core::Result<RepoSnapshot> {
+    let mut snap = repo.snapshot(limit)?;
+    if snap
+        .status_unavailable
+        .as_ref()
+        .is_some_and(|u| u.can_download)
+    {
+        with_progress(emit, repo.promisor_remote(), || {
+            repo.complete_status(&mut snap, MissingObjects::Download);
+        });
+        if let Some(u) = &snap.status_unavailable {
+            tracing::warn!(reason = %u.message, "status not downloaded");
+        }
+    }
+    Ok(snap)
 }
 
 fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Result<String> {
@@ -850,5 +973,305 @@ mod tests {
         };
         assert_eq!(delete(false).kind(), OpKind::SafeDelete("topic".into()));
         assert_eq!(delete(true).kind(), OpKind::Other);
+    }
+}
+
+/// Reads in partial clones: coalescing, offline first, downloads.
+#[cfg(test)]
+mod read_tests {
+    use std::cell::{Cell, RefCell};
+
+    use canopy_core::Error;
+
+    use super::*;
+
+    fn oid(n: u8) -> Oid {
+        Oid::from_bytes(&[n; 20]).expect("oid")
+    }
+
+    fn diff(source: DiffSource, path: &str) -> Job {
+        Job::Diff(DiffKey {
+            source,
+            path: path.into(),
+            old_path: None,
+            conflicted: false,
+            context: 3,
+            whitespace: Whitespace::Show,
+            highlight: false,
+        })
+    }
+
+    /// A short description of each job, to compare queues.
+    fn describe(jobs: &[Job]) -> Vec<String> {
+        jobs.iter()
+            .map(|j| match j {
+                Job::Details(o) => format!("details {}", canopy_core::short_id(*o)),
+                Job::Diff(k) => format!("diff {:?} {}", k.source, k.path),
+                Job::Op(op) => format!("op {}", op.label()),
+                other => other.kind().to_owned(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_burst_of_selections_keeps_only_the_last_details_and_diff() {
+        let jobs = vec![
+            Job::Details(oid(1)),
+            diff(DiffSource::Commit(oid(1)), "a"),
+            Job::Op(Op::Stage(vec!["x".into()])),
+            Job::Details(oid(2)),
+            diff(DiffSource::Commit(oid(2)), "b"),
+            diff(DiffSource::Staged, "s"),
+            Job::HeadMessage,
+            diff(DiffSource::Commit(oid(3)), "c"),
+            Job::Op(Op::UnstageAll),
+            Job::Details(oid(3)),
+            diff(DiffSource::Unstaged, "u1"),
+            diff(DiffSource::Unstaged, "u2"),
+        ];
+        let kept = describe(&coalesce_reads(jobs));
+        assert_eq!(
+            kept,
+            [
+                "op Staging".to_owned(),
+                format!("diff {:?} s", DiffSource::Staged),
+                "head-message".to_owned(),
+                format!("diff {:?} c", DiffSource::Commit(oid(3))),
+                "op Unstaging".to_owned(),
+                format!("details {}", canopy_core::short_id(oid(3))),
+                format!("diff {:?} u2", DiffSource::Unstaged),
+            ]
+        );
+    }
+
+    #[test]
+    fn jobs_without_reads_to_supersede_pass_through_unchanged() {
+        let jobs = vec![
+            Job::Op(Op::StageAll),
+            Job::HeadMessage,
+            Job::Conflict("f".into()),
+            Job::Op(Op::UnstageAll),
+        ];
+        let before = describe(&jobs);
+        assert_eq!(describe(&coalesce_reads(jobs)), before);
+        assert!(coalesce_reads(Vec::new()).is_empty());
+    }
+
+    /// Runs `git` in `dir` with a fixed identity and none of the developer's configuration. (The
+    /// downloads the worker runs through `canopy_core::cli` inherit this process's environment,
+    /// which cannot be changed per test without racing the others.)
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let root = dir
+            .ancestors()
+            .find(|a| a.join("home").join("gitconfig").is_file())
+            .expect("inside the test directory");
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "Ada Lovelace")
+            .env("GIT_AUTHOR_EMAIL", "ada@example.com")
+            .env("GIT_COMMITTER_NAME", "Ada Lovelace")
+            .env("GIT_COMMITTER_EMAIL", "ada@example.com")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", root.join("home").join("gitconfig"))
+            .env("HOME", root.join("home"))
+            .output()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// A source repository with three commits, and a partial clone of it made with `filter`.
+    /// Returns the root, the source, the clone and the oldest and middle commits.
+    fn partial_clone(filter: &str) -> (tempfile::TempDir, PathBuf, PathBuf, Oid, Oid) {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let src = root.path().join("src");
+        std::fs::create_dir_all(&src).expect("src");
+        git(&src, &["init", "-q", "-b", "main"]);
+        for (k, v) in [
+            ("commit.gpgsign", "false"),
+            ("core.autocrlf", "false"),
+            ("uploadpack.allowFilter", "true"),
+            ("uploadpack.allowAnySHA1InWant", "true"),
+        ] {
+            git(&src, &["config", k, v]);
+        }
+        for (i, text) in ["one\n", "two\n", "three\n"].into_iter().enumerate() {
+            std::fs::write(src.join("a.txt"), text).expect("write");
+            git(&src, &["add", "a.txt"]);
+            git(&src, &["commit", "-q", "-m", &format!("commit {i}")]);
+        }
+        let id = |rev: &str| Oid::from_str(&git(&src, &["rev-parse", rev])).expect("oid");
+        let (oldest, middle) = (id("HEAD~2"), id("HEAD~1"));
+        let url = format!("file://{}", src.to_string_lossy().replace('\\', "/"));
+        let url = url.replacen("file://C:", "file:///C:", 1);
+        let copy = root.path().join("copy");
+        git(
+            root.path(),
+            &[
+                "clone",
+                "-q",
+                "-c",
+                "core.autocrlf=false",
+                filter,
+                &url,
+                "copy",
+            ],
+        );
+        (root, src, copy, oldest, middle)
+    }
+
+    /// Events of `worker` until `done` accepts one, without the snapshots the file watcher may
+    /// trigger; fails after a timeout.
+    fn events_until(worker: &Worker, done: impl Fn(&Event) -> bool) -> Vec<Event> {
+        let mut seen = Vec::new();
+        loop {
+            let e = worker
+                .events
+                .recv_timeout(Duration::from_secs(60))
+                .expect("the worker answers");
+            if matches!(e, Event::Snapshot(_) | Event::Status(_)) {
+                continue;
+            }
+            let last = done(&e);
+            seen.push(e);
+            if last {
+                return seen;
+            }
+        }
+    }
+
+    fn progress(events: &[Event]) -> Vec<&str> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Progress(line) => Some(line.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn details_in_a_blobless_clone_show_the_file_list_first_and_the_counts_after_downloading() {
+        let (_root, _src, copy, _oldest, middle) = partial_clone("--filter=blob:none");
+        let worker = Worker::spawn(copy, egui::Context::default());
+
+        // The blobs of this commit are not local: the list comes first, offline, and the line
+        // counts follow once downloaded, with a progress line around the download.
+        worker.send(Job::Details(middle));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::Progress(l) if l.is_empty())
+                || matches!(e, Event::DetailsFailed { .. })
+        });
+        let details: Vec<(bool, usize)> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Details(d) => Some((d.stats_known, d.files.len())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(details, [(false, 1)], "{events:?}");
+        assert_eq!(progress(&events), ["Downloading from origin…", ""]);
+        let events = events_until(&worker, |e| matches!(e, Event::Details(d) if d.stats_known));
+        let Some(Event::Details(full)) = events.last() else {
+            panic!("expected details with counts, got {events:?}");
+        };
+        assert_eq!((full.files[0].additions, full.files[0].deletions), (1, 1));
+
+        // Everything is local now: no further download for the same commit.
+        worker.send(Job::Details(middle));
+        let events = events_until(&worker, |e| matches!(e, Event::Details(_)));
+        assert!(progress(&events).is_empty(), "{events:?}");
+    }
+
+    #[test]
+    fn a_failed_download_of_details_is_reported_with_its_oid_and_can_be_retried() {
+        let (root, src, copy, oldest, _) = partial_clone("--filter=tree:0");
+        let worker = Worker::spawn(copy, egui::Context::default());
+        let moved = root.path().join("src-moved");
+        std::fs::rename(&src, &moved).expect("hide the remote");
+
+        worker.send(Job::Details(oldest));
+        let events = events_until(&worker, |e| matches!(e, Event::DetailsFailed { .. }));
+        let Some(Event::DetailsFailed {
+            oid,
+            message,
+            can_download,
+        }) = events.last()
+        else {
+            panic!("expected a failure, got {events:?}");
+        };
+        assert_eq!(*oid, oldest);
+        assert!(*can_download, "{message}");
+        assert!(message.contains("partial clone"), "{message}");
+        assert!(message.contains("origin"), "{message}");
+        // The status bar line is cleared again after the failed download.
+        assert_eq!(progress(&events), ["Downloading from origin…", ""]);
+
+        std::fs::rename(&moved, &src).expect("restore the remote");
+        worker.send(Job::Details(oldest));
+        let events = events_until(&worker, |e| matches!(e, Event::Details(_)));
+        assert!(matches!(events.last(), Some(Event::Details(d)) if d.oid == oldest));
+    }
+
+    #[test]
+    fn a_read_retries_with_downloading_only_when_a_remote_can_supply_it() {
+        let lines = RefCell::new(Vec::new());
+        let emit = |e: Event| {
+            if let Event::Progress(line) = e {
+                lines.borrow_mut().push(line);
+            }
+        };
+        let not_downloaded = |remote: Option<&str>| Error::NotDownloaded {
+            remote: remote.map(str::to_owned),
+            reason: None,
+        };
+
+        // Succeeds offline: one call, no progress.
+        let calls = Cell::new(0);
+        let r = read_downloading(&emit, |m| {
+            calls.set(calls.get() + 1);
+            assert_eq!(m, MissingObjects::Fail);
+            Ok(1)
+        });
+        assert_eq!(r.expect("ok"), 1);
+        assert_eq!(calls.get(), 1);
+        assert!(lines.borrow().is_empty());
+
+        // Missing objects and a remote: downloads, bracketed by progress lines.
+        let modes = RefCell::new(Vec::new());
+        let r = read_downloading(&emit, |m| {
+            modes.borrow_mut().push(m);
+            match m {
+                MissingObjects::Fail => Err(not_downloaded(Some("origin"))),
+                MissingObjects::Download => Ok(2),
+            }
+        });
+        assert_eq!(r.expect("downloaded"), 2);
+        assert_eq!(
+            *modes.borrow(),
+            [MissingObjects::Fail, MissingObjects::Download]
+        );
+        assert_eq!(
+            *lines.borrow(),
+            ["Downloading from origin…".to_owned(), String::new()]
+        );
+
+        // No remote to download from: the error is returned as it is, with no network attempt.
+        lines.borrow_mut().clear();
+        let calls = Cell::new(0);
+        let r: canopy_core::Result<u8> = read_downloading(&emit, |_| {
+            calls.set(calls.get() + 1);
+            Err(not_downloaded(None))
+        });
+        assert!(matches!(r, Err(Error::NotDownloaded { remote: None, .. })));
+        assert_eq!(calls.get(), 1);
+        assert!(lines.borrow().is_empty());
     }
 }
