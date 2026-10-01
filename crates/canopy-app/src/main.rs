@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod askpass;
 mod crash_reports;
 mod highlight;
 mod hosting;
@@ -35,7 +36,8 @@ OPTIONS:
         --view <VIEW>         Initial view: history, changes or requests
         --split               Show diffs side by side
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
-                              palette, consent, crash-consent, legal or merge
+                              palette, consent, crash-consent, legal, licences,
+                              credential, host-key or merge
         --size <WxH>          Initial window size [default: 1440x900]
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
     -h, --help                Print help
@@ -143,6 +145,11 @@ fn icon() -> Option<egui::IconData> {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Started by git or ssh to ask for a credential: answer through the running app and exit,
+    // before touching logs or windows.
+    if askpass::is_client() {
+        std::process::exit(askpass::run_client());
+    }
     let filter = std::env::var("CANOPY_LOG")
         .or_else(|_| std::env::var("RUST_LOG"))
         .unwrap_or_else(|_| "warn,canopy_app=info,canopy_core=info".into());

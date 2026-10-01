@@ -146,6 +146,8 @@ pub struct CanopyApp {
     queued: Vec<Dialog>,
     /// The start-up update check waits until the user has accepted the terms.
     update_check_due: bool,
+    /// Receives git's and ssh's credential prompts (`None` when it could not start).
+    askpass: Option<crate::askpass::Server>,
 }
 
 impl std::fmt::Debug for CanopyApp {
@@ -220,6 +222,11 @@ impl CanopyApp {
             gitlab_hosts,
             queued: Vec::new(),
             update_check_due: false,
+            askpass: if shooting {
+                None
+            } else {
+                start_askpass(&cc.egui_ctx)
+            },
         };
         let restore = if launch.paths.is_empty() && !shooting {
             app.settings.open_tabs.clone()
@@ -254,6 +261,16 @@ impl CanopyApp {
                 })
             }
             Some("legal") => app.dialog = Some(Dialog::Legal(crate::ui::legal::Document::Privacy)),
+            Some("credential") => {
+                app.dialog = Some(Dialog::credential(crate::askpass::Prompt::preview(
+                    "Enter passphrase for key '/home/ada/.ssh/id_ed25519': ",
+                )))
+            }
+            Some("host-key") => {
+                app.dialog = Some(Dialog::credential(crate::askpass::Prompt::preview(
+                    "The authenticity of host 'github.com (140.82.121.4)' can't be established.\nED25519 key fingerprint is SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU.\nThis key is not known by any other names.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ",
+                )))
+            }
             Some("licences") => {
                 app.dialog = Some(Dialog::Legal(crate::ui::legal::Document::Notices))
             }
@@ -1224,6 +1241,33 @@ impl CanopyApp {
         }
     }
 
+    /// Shows git's and ssh's credential questions, one at a time, above any other dialog.
+    fn poll_prompts(&mut self, ctx: &egui::Context) {
+        let Some(server) = &self.askpass else { return };
+        while let Ok(prompt) = server.prompts.try_recv() {
+            if prompt.kind == crate::askpass::PromptKind::Notice {
+                // ssh shows it while it waits (e.g. for a security key touch); nothing to answer.
+                self.toasts
+                    .push(ctx, ToastKind::Info, "SSH", prompt.text.clone());
+                prompt.answer(Some(String::new()));
+                continue;
+            }
+            let credential = Dialog::credential(prompt);
+            match self.dialog.take() {
+                Some(current) if !matches!(current, Dialog::Credential { .. }) => {
+                    self.queued.push(current);
+                    self.dialog = Some(credential);
+                }
+                Some(current) => {
+                    // Another prompt is open: this one waits right behind it.
+                    self.queued.push(credential);
+                    self.dialog = Some(current);
+                }
+                None => self.dialog = Some(credential),
+            }
+        }
+    }
+
     /// The consent dialog is answered: start what waited for it.
     fn consent_done(&mut self, ctx: &egui::Context) {
         crate::crash_reports::set_enabled(self.settings.crash_reports == Some(true));
@@ -1406,6 +1450,7 @@ impl CanopyApp {
                 Err(e) => self.toasts.push(ctx, ToastKind::Error, "Clone failed", e),
             }
         }
+        self.poll_prompts(ctx);
         if self.updater.poll() {
             let manual = self.updater.manual;
             match &self.updater.state {
@@ -1588,6 +1633,31 @@ fn save_png(path: &std::path::Path, image: &egui::ColorImage) -> anyhow::Result<
         .collect();
     writer.write_image_data(&bytes)?;
     Ok(())
+}
+
+/// Starts the credential prompt listener and registers Canopy as git's and ssh's askpass program.
+fn start_askpass(ctx: &egui::Context) -> Option<crate::askpass::Server> {
+    let program = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("no credential prompts: cannot locate the Canopy executable: {e}");
+            return None;
+        }
+    };
+    let ctx = ctx.clone();
+    match crate::askpass::Server::start(move || ctx.request_repaint()) {
+        Ok(server) => {
+            canopy_core::cli::set_askpass(Some(canopy_core::cli::Askpass {
+                program,
+                env: server.env(),
+            }));
+            Some(server)
+        }
+        Err(e) => {
+            tracing::warn!("no credential prompts: {e}");
+            None
+        }
+    }
 }
 
 /// Whether `target` may be handed to the platform opener: a web address (`https://`, or `http://`
