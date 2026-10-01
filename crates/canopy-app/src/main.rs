@@ -83,12 +83,16 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 );
             }
             "--overlay" => {
-                launch.overlay = Some(
-                    args.next()
-                        .ok_or("--overlay needs settings, cheatsheet or palette")?
-                        .to_string_lossy()
-                        .into_owned(),
-                );
+                let names = app::OVERLAYS.join(", ");
+                let name = args
+                    .next()
+                    .ok_or_else(|| format!("--overlay needs one of {names}"))?
+                    .to_string_lossy()
+                    .into_owned();
+                if !app::OVERLAYS.contains(&name.as_str()) {
+                    return Err(format!("unknown overlay {name}; use one of {names}"));
+                }
+                launch.overlay = Some(name);
             }
             "--screenshot" => {
                 launch.screenshot = Some(args.next().ok_or("--screenshot needs a file")?.into())
@@ -185,4 +189,25 @@ fn main() -> anyhow::Result<()> {
     // Ends the crash-report session (if reporting is on) and sends anything queued.
     crash_reports::shutdown();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_lists_every_overlay() {
+        let options = HELP
+            .split("--overlay <NAME>")
+            .nth(1)
+            .and_then(|rest| rest.split("--size").next())
+            .unwrap_or_default();
+        let listed: Vec<&str> = options
+            .split([',', ' ', '\n'])
+            .map(str::trim)
+            .filter(|w| !w.is_empty() && *w != "or")
+            .skip_while(|w| *w != "settings")
+            .collect();
+        assert_eq!(listed, app::OVERLAYS);
+    }
 }

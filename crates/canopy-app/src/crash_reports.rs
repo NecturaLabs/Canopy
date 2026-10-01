@@ -5,7 +5,8 @@
 //! Only panics are reported. There is no logging integration, so Canopy's logs never leave the
 //! computer, and [`scrub`] runs on every event before it is sent: it drops the host name, the
 //! user and any request data, keeps only the operating system, Rust and processor-architecture
-//! contexts, and hides the user's home folder (and other users' folders) in every string.
+//! contexts, and in every string hides the user's home folder (and other users' folders),
+//! credentials in URLs and access tokens (see [`scrub_text`]).
 //! Release health counts sessions under a random id that is never stored.
 
 use std::borrow::Cow;
@@ -119,13 +120,158 @@ fn panic_event(info: &std::panic::PanicHookInfo<'_>) -> Option<Event<'static>> {
     })
 }
 
-/// Replaces `home` with `~`, and the user-name part of other home-folder paths with `<user>`.
+/// Hides what a report or the diagnostics text must not carry:
+///
+/// - credentials in URLs (`https://user:secret@host` becomes `https://<redacted>@host`);
+/// - GitHub and GitLab access tokens (`ghp_…`, `github_pat_…`, `glpat-…` and the like),
+///   `Bearer` and `PRIVATE-TOKEN` values, and Canopy's credential-prompt token, as `<token>`;
+/// - the user's home folder `home` as `~`, only where it is a whole path component (with
+///   `home` = `/home/ada`, `/home/adam` is another user's folder, not `~m`);
+/// - the user-name part of other users' home folders as `<user>`, and root's `/root` as `~root`.
 pub fn scrub_text(text: &str, home: &str) -> String {
-    let mut out = if home.len() > 1 {
-        text.replace(home, "~")
-    } else {
-        text.to_owned()
-    };
+    let out = redact_url_credentials(text);
+    let out = redact_tokens(&out);
+    let out = replace_home(&out, home);
+    hide_user_folders(&out)
+}
+
+/// A character that can continue a file or user name, so a match ending before it is only the
+/// start of a longer name.
+fn name_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '@' | '+')
+}
+
+/// Whether `text[at..at + len]` is a whole path: not inside a longer path before it, and
+/// followed by a separator or a character that cannot be part of a name.
+fn whole_path(text: &str, at: usize, len: usize) -> bool {
+    let before = text[..at].chars().next_back();
+    let after = text[at + len..].chars().next();
+    let starts = before.is_none_or(|c| !(name_char(c) || matches!(c, '/' | '\\' | '~')));
+    let ends = after.is_none_or(|c| matches!(c, '/' | '\\') || !name_char(c));
+    starts && ends
+}
+
+/// Replaces each whole-path occurrence of `path` in `text` with `with`.
+fn replace_path(text: &str, path: &str, with: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for (at, _) in text.match_indices(path) {
+        if at < last || !whole_path(text, at, path.len()) {
+            continue;
+        }
+        out.push_str(&text[last..at]);
+        out.push_str(with);
+        last = at + path.len();
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
+/// Replaces the user's home folder with `~`.
+fn replace_home(text: &str, home: &str) -> String {
+    let home = home.trim_end_matches(['/', '\\']);
+    if home.len() <= 1 {
+        return text.to_owned();
+    }
+    replace_path(text, home, "~")
+}
+
+/// Replaces `scheme://user:password@` with `scheme://<redacted>@` in every URL in `text`.
+fn redact_url_credentials(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("://") {
+        let (head, tail) = rest.split_at(i + 3);
+        out.push_str(head);
+        let authority_end = tail
+            .find(|c: char| {
+                matches!(c, '/' | '?' | '#' | '\'' | '"' | '<' | '>' | '`') || c.is_whitespace()
+            })
+            .unwrap_or(tail.len());
+        match tail[..authority_end].rfind('@') {
+            Some(at) => {
+                out.push_str("<redacted>");
+                rest = &tail[at..];
+            }
+            None => rest = tail,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Prefixes of GitHub and GitLab access tokens.
+const TOKEN_PREFIXES: [&str; 11] = [
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "glpat-",
+    "gldt-",
+    "glptt-",
+    "glrt-",
+    "gloas-",
+];
+
+/// Labels whose value is a secret: the value after them is hidden, the label kept.
+const SECRET_LABELS: [&str; 4] = [
+    "Bearer ",
+    "PRIVATE-TOKEN: ",
+    "PRIVATE-TOKEN=",
+    // The credential prompt's token (see `askpass`), should an environment dump reach a report.
+    "CANOPY_ASKPASS_TOKEN=",
+];
+
+/// Characters a token is made of.
+fn token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '-')
+}
+
+/// Replaces access tokens and secret values in `text` with `<token>`.
+fn redact_tokens(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    'scan: while i < text.len() {
+        let rest = &text[i..];
+        let at_word_start = text[..i].chars().next_back().is_none_or(|c| !token_char(c));
+        if at_word_start {
+            for prefix in TOKEN_PREFIXES {
+                if let Some(value) = rest.strip_prefix(prefix) {
+                    let len = value.find(|c| !token_char(c)).unwrap_or(value.len());
+                    // Real tokens are long; a bare prefix in prose is left alone.
+                    if len >= 8 {
+                        out.push_str("<token>");
+                        i += prefix.len() + len;
+                        continue 'scan;
+                    }
+                }
+            }
+        }
+        for label in SECRET_LABELS {
+            if let Some(value) = rest.strip_prefix(label) {
+                let len = value
+                    .find(|c: char| !(token_char(c) || matches!(c, '.' | '~' | '+' | '/' | '=')))
+                    .unwrap_or(value.len());
+                if len > 0 {
+                    out.push_str(label);
+                    out.push_str("<token>");
+                    i += label.len() + len;
+                    continue 'scan;
+                }
+            }
+        }
+        let Some(c) = rest.chars().next() else { break };
+        out.push(c);
+        i += c.len_utf8();
+    }
+    out
+}
+
+/// Hides the user-name part of home folders other than the user's own.
+fn hide_user_folders(text: &str) -> String {
+    let mut out = replace_path(text, "/root", "~root");
     for prefix in ["/home/", "/Users/", "\\Users\\", "/var/home/"] {
         let mut result = String::with_capacity(out.len());
         let mut rest = out.as_str();
@@ -222,6 +368,117 @@ mod tests {
         );
         assert_eq!(scrub_text("/home/", ""), "/home/");
         assert_eq!(scrub_text("no paths", "/home/ada"), "no paths");
+    }
+
+    #[test]
+    fn home_is_replaced_only_as_a_whole_path() {
+        let home = "/home/ada";
+        assert_eq!(scrub_text("/home/adam/x", home), "/home/<user>/x");
+        assert_eq!(scrub_text("/home/ada.old/x", home), "/home/<user>/x");
+        assert_eq!(scrub_text("in /home/ada", home), "in ~");
+        assert_eq!(scrub_text("'/home/ada/a' '/home/ada'", home), "'~/a' '~'");
+        assert_eq!(
+            scrub_text("cd /home/ada/ && ls", "/home/ada/"),
+            "cd ~/ && ls"
+        );
+        // Inside another path it is not the home folder.
+        assert_eq!(scrub_text("/mnt/home/ada/x", home), "/mnt/home/<user>/x");
+        assert_eq!(
+            scrub_text("C:\\Users\\Ada\\repo C:\\Users\\Adam\\x", "C:\\Users\\Ada"),
+            "~\\repo C:\\Users\\<user>\\x"
+        );
+    }
+
+    #[test]
+    fn roots_home_is_covered() {
+        assert_eq!(
+            scrub_text("open /root/src/x failed", "/root"),
+            "open ~/src/x failed"
+        );
+        assert_eq!(
+            scrub_text("open /root/src/x failed", "/home/ada"),
+            "open ~root/src/x failed"
+        );
+        assert_eq!(
+            scrub_text("/rootfs/x and /srv/root/y", ""),
+            "/rootfs/x and /srv/root/y"
+        );
+        // With no home folder known.
+        assert_eq!(scrub_text("/root", ""), "~root");
+    }
+
+    #[test]
+    fn url_credentials_are_redacted() {
+        assert_eq!(
+            scrub_text(
+                "fatal: unable to access 'https://ada:s3cret@github.com/o/r.git/': 403",
+                ""
+            ),
+            "fatal: unable to access 'https://<redacted>@github.com/o/r.git/': 403"
+        );
+        assert_eq!(
+            scrub_text(
+                "a=https://x:y@h/1,b=http://oauth2:tok@gitlab.corp:8443/g",
+                ""
+            ),
+            "a=https://<redacted>@h/1,b=http://<redacted>@gitlab.corp:8443/g"
+        );
+        assert_eq!(
+            scrub_text("https://host/a@b and ssh://git@host/x", ""),
+            "https://host/a@b and ssh://<redacted>@host/x"
+        );
+        assert_eq!(scrub_text("no url: a@b", ""), "no url: a@b");
+    }
+
+    #[test]
+    fn access_tokens_are_redacted() {
+        let cases = [
+            (
+                "token ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+                "token <token>",
+            ),
+            ("gho_ABCDEFGH12345678.", "<token>."),
+            ("(ghu_ABCDEFGH12345678)", "(<token>)"),
+            (
+                "ghs_ABCDEFGH12345678 ghr_ABCDEFGH12345678",
+                "<token> <token>",
+            ),
+            ("github_pat_11ABCDEFG0_abcdefghijklmnop", "<token>"),
+            (
+                "GITLAB_TOKEN=glpat-AbCdEf123456-xyz",
+                "GITLAB_TOKEN=<token>",
+            ),
+            (
+                "Authorization: Bearer abc.def-ghi",
+                "Authorization: Bearer <token>",
+            ),
+            (
+                "PRIVATE-TOKEN: glpat-xxxxxxxxxxxxxxxx",
+                "PRIVATE-TOKEN: <token>",
+            ),
+            (
+                "CANOPY_ASKPASS_TOKEN=0a1b2c3d4e5f",
+                "CANOPY_ASKPASS_TOKEN=<token>",
+            ),
+        ];
+        for (text, scrubbed) in cases {
+            assert_eq!(scrub_text(text, ""), scrubbed, "{text}");
+        }
+        // Prefixes in ordinary words, or too short to be a token, stay.
+        for text in ["a ghp_ prefix", "laughs_x", "myghp_abcdefghijk", "glpat-"] {
+            assert_eq!(scrub_text(text, ""), text);
+        }
+    }
+
+    #[test]
+    fn everything_is_scrubbed_together() {
+        assert_eq!(
+            scrub_text(
+                "push https://ada:ghp_abcdefgh12345678@github.com/o/r from /home/ada/r",
+                "/home/ada"
+            ),
+            "push https://<redacted>@github.com/o/r from ~/r"
+        );
     }
 
     #[test]

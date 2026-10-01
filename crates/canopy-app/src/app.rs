@@ -20,7 +20,7 @@ use crate::ui::palette::{CommandPalette, Entry};
 use crate::ui::theme::{self, ThemeId, palette};
 use crate::ui::toast::{ToastKind, Toasts};
 use crate::updater::{self, UpdateState, Updater};
-use crate::views::dialogs::{self, Dialog, Outcome};
+use crate::views::dialogs::{self, Dialog, DialogStack, Outcome};
 use crate::views::settings_screen::{self, SettingsScreen};
 use crate::views::{changes, history, requests, sidebar, statusbar, toolbar, welcome};
 use crate::worker::{Job, Op};
@@ -105,6 +105,21 @@ pub enum Action {
     Quit,
 }
 
+/// Every `--overlay` name [`CanopyApp::new`] opens for screenshots.
+pub const OVERLAYS: &[&str] = &[
+    "settings",
+    "privacy",
+    "cheatsheet",
+    "palette",
+    "consent",
+    "crash-consent",
+    "legal",
+    "licences",
+    "credential",
+    "host-key",
+    "merge",
+];
+
 /// Options from the command line.
 #[derive(Debug, Default, Clone)]
 pub struct Launch {
@@ -112,7 +127,8 @@ pub struct Launch {
     pub theme: Option<ThemeId>,
     pub screenshot: Option<PathBuf>,
     pub view: Option<View>,
-    /// Open this overlay for a screenshot: settings, cheatsheet or palette.
+    /// Open this overlay for a screenshot: settings, privacy, cheatsheet, palette, consent,
+    /// crash-consent, legal, licences, credential, host-key or merge (see [`OVERLAYS`]).
     pub overlay: Option<String>,
     /// Side-by-side diffs.
     pub split: bool,
@@ -140,7 +156,9 @@ pub struct CanopyApp {
     settings: Settings,
     tabs: Vec<RepoTab>,
     active: usize,
-    dialog: Option<Dialog>,
+    /// The dialog on screen and those waiting behind it (start-up notices after the consent,
+    /// dialogs that arrived while a credential prompt was open).
+    dialogs: DialogStack,
     settings_screen: Option<SettingsScreen>,
     palette: CommandPalette,
     cheatsheet: Cheatsheet,
@@ -152,8 +170,6 @@ pub struct CanopyApp {
     tokens: TokenStore,
     updater: Updater,
     gitlab_hosts: Vec<String>,
-    /// Dialogs waiting for the current one to close (start-up notices after the consent).
-    queued: Vec<Dialog>,
     /// The start-up update check waits until the user has accepted the terms.
     update_check_due: bool,
     /// Receives git's and ssh's credential prompts (`None` when it could not start).
@@ -210,7 +226,7 @@ impl CanopyApp {
             settings,
             tabs: Vec::new(),
             active: 0,
-            dialog: None,
+            dialogs: DialogStack::default(),
             settings_screen: None,
             palette: CommandPalette::default(),
             cheatsheet: Cheatsheet::default(),
@@ -231,7 +247,6 @@ impl CanopyApp {
             },
             updater: Updater::default(),
             gitlab_hosts,
-            queued: Vec::new(),
             update_check_due: false,
             askpass: if shooting {
                 None
@@ -258,35 +273,35 @@ impl CanopyApp {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Privacy))
             }
             Some("consent") => {
-                app.dialog = Some(Dialog::Consent {
+                app.dialogs.open(Dialog::Consent {
                     step: crate::ui::legal::Pending::Terms,
                     updated: false,
                     reading: None,
                 })
             }
             Some("crash-consent") => {
-                app.dialog = Some(Dialog::Consent {
+                app.dialogs.open(Dialog::Consent {
                     step: crate::ui::legal::Pending::CrashReports,
                     updated: false,
                     reading: None,
                 })
             }
-            Some("legal") => app.dialog = Some(Dialog::Legal(crate::ui::legal::Document::Privacy)),
+            Some("legal") => app.dialogs.open(Dialog::Legal(crate::ui::legal::Document::Privacy)),
             Some("credential") => {
-                app.dialog = Some(Dialog::credential(crate::askpass::Prompt::preview(
+                app.dialogs.open(Dialog::credential(crate::askpass::Prompt::preview(
                     "Enter passphrase for key '/home/ada/.ssh/id_ed25519': ",
                 )))
             }
             Some("host-key") => {
-                app.dialog = Some(Dialog::credential(crate::askpass::Prompt::preview(
+                app.dialogs.open(Dialog::credential(crate::askpass::Prompt::preview(
                     "The authenticity of host 'github.com (140.82.121.4)' can't be established.\nED25519 key fingerprint is SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU.\nThis key is not known by any other names.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ",
                 )))
             }
             Some("licences") => {
-                app.dialog = Some(Dialog::Legal(crate::ui::legal::Document::Notices))
+                app.dialogs.open(Dialog::Legal(crate::ui::legal::Document::Notices))
             }
             Some("merge") => {
-                app.dialog = Some(Dialog::Merge {
+                app.dialogs.open(Dialog::Merge {
                     target: "feature/search".into(),
                     rebase: false,
                     mode: canopy_core::MergeMode::Squash,
@@ -326,18 +341,21 @@ impl CanopyApp {
         // crash reports.
         match (shooting, crate::ui::legal::pending(&app.settings)) {
             (false, Some(step)) => {
-                app.dialog = Some(Dialog::Consent {
+                for n in notices {
+                    app.dialogs.open(n);
+                }
+                app.dialogs.open(Dialog::Consent {
                     step,
                     updated: !app.settings.accepted_terms.is_empty(),
                     reading: None,
                 });
-                app.queued = notices;
             }
             (true, _) => {}
             (false, None) => {
                 crate::crash_reports::set_enabled(app.settings.crash_reports == Some(true));
-                app.dialog = notices.pop();
-                app.queued = notices;
+                for n in notices {
+                    app.dialogs.open(n);
+                }
                 app.start_due_update_check(&cc.egui_ctx);
             }
         }
@@ -358,10 +376,9 @@ impl CanopyApp {
     }
 
     fn open_repo(&mut self, ctx: &egui::Context, path: PathBuf) {
-        let path = if let Some(rest) = path.to_str().and_then(|s| s.strip_prefix("~/")) {
-            settings::home_dir().join(rest)
-        } else {
-            path
+        let path = match path.to_str() {
+            Some(typed) if typed.trim_start().starts_with('~') => settings::expand_home(typed),
+            _ => path,
         };
         match Repo::open(&path) {
             Ok(repo) => {
@@ -393,7 +410,8 @@ impl CanopyApp {
 
     /// Runs the keyboard table for this frame.
     fn keyboard(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
-        let modal = self.dialog.is_some() || self.settings_screen.is_some() || self.palette.open;
+        let modal =
+            self.dialogs.current().is_some() || self.settings_screen.is_some() || self.palette.open;
         let overlay = modal || self.cheatsheet.open;
         let typing = ctx.egui_wants_keyboard_input();
         // A button or checkbox reached with Tab keeps Space, Enter and the arrows for itself.
@@ -438,10 +456,9 @@ impl CanopyApp {
                     self.cheatsheet.open = false;
                 } else if self.palette.open {
                     self.palette.open = false;
-                } else if matches!(self.dialog, Some(Dialog::Consent { .. })) {
-                    // Must be answered.
-                } else if self.dialog.is_some() {
-                    self.dialog = self.queued.pop();
+                } else if self.dialogs.current().is_some() {
+                    // The consent stays (it must be answered); a credential prompt is declined.
+                    self.dialogs.dismiss();
                 } else {
                     self.settings_screen = None;
                 }
@@ -1011,16 +1028,14 @@ impl CanopyApp {
                     confirm,
                     danger,
                     op,
-                } => {
-                    self.dialog = Some(Dialog::Confirm {
-                        title,
-                        body,
-                        confirm,
-                        danger,
-                        op,
-                    })
-                }
-                Action::OpenDialog(d) => self.dialog = Some(d),
+                } => self.dialogs.open(Dialog::Confirm {
+                    title,
+                    body,
+                    confirm,
+                    danger,
+                    op,
+                }),
+                Action::OpenDialog(d) => self.dialogs.open(d),
                 Action::OpenRepo(p) => self.open_repo(ctx, p),
                 Action::Clone { url, dest } => self.start_clone(ctx, url, dest),
                 Action::Init(p) => match Repo::init(&p) {
@@ -1117,12 +1132,17 @@ impl CanopyApp {
                         .get(self.active)
                         .is_some_and(RepoTab::is_local_only)
                     {
-                        self.dialog = Some(Dialog::add_remote(&self.settings).publishing());
+                        self.dialogs
+                            .open(Dialog::add_remote(&self.settings).publishing());
                     } else if let Some(t) = self.tab() {
                         t.op(Op::Push { force: false });
                     }
                 }
-                Action::WhatsNew => self.dialog = whats_new(),
+                Action::WhatsNew => {
+                    if let Some(d) = whats_new() {
+                        self.dialogs.open(d);
+                    }
+                }
                 Action::CopyDiagnostics => {
                     ctx.copy_text(self.diagnostics());
                     self.toasts.push(
@@ -1148,14 +1168,15 @@ impl CanopyApp {
                 },
                 Action::ShowUpdate => {
                     if let UpdateState::Available(a) = &self.updater.state {
-                        self.dialog = Some(Dialog::Update(a.clone()));
+                        self.dialogs.open(Dialog::Update(a.clone()));
                     }
                 }
                 Action::AddRemoteDialog => {
-                    self.dialog = Some(Dialog::add_remote(&self.settings));
+                    self.dialogs.open(Dialog::add_remote(&self.settings));
                 }
                 Action::Publish => {
-                    self.dialog = Some(Dialog::add_remote(&self.settings).publishing());
+                    self.dialogs
+                        .open(Dialog::add_remote(&self.settings).publishing());
                 }
                 Action::Commit => {
                     let signoff = self.settings.signoff;
@@ -1261,14 +1282,15 @@ impl CanopyApp {
                 Action::AcceptTerms => {
                     self.settings.accepted_terms = crate::ui::legal::TERMS_VERSION.to_owned();
                     self.settings.accepted_privacy = crate::ui::legal::PRIVACY_VERSION.to_owned();
+                    // The consent dialog stays open until its actions are applied; this replaces
+                    // it with the next question, or ends it.
+                    self.dialogs.close_where(is_consent);
                     match crate::ui::legal::pending(&self.settings) {
-                        Some(step) => {
-                            self.dialog = Some(Dialog::Consent {
-                                step,
-                                updated: false,
-                                reading: None,
-                            });
-                        }
+                        Some(step) => self.dialogs.open(Dialog::Consent {
+                            step,
+                            updated: false,
+                            reading: None,
+                        }),
                         None => self.consent_done(ctx),
                     }
                 }
@@ -1276,7 +1298,8 @@ impl CanopyApp {
                     self.settings.crash_reports = Some(on);
                     self.settings.crash_reports_version = crate::crash_reports::DATA_VERSION;
                     crate::crash_reports::set_enabled(on);
-                    if matches!(self.dialog, Some(Dialog::Consent { .. })) {
+                    if self.dialogs.any(is_consent) {
+                        self.dialogs.close_where(is_consent);
                         self.consent_done(ctx);
                     }
                 }
@@ -1294,12 +1317,7 @@ impl CanopyApp {
     /// Shows git's and ssh's credential questions, one at a time, above any other dialog.
     fn poll_prompts(&mut self, ctx: &egui::Context) {
         // A prompt git or ssh gave up on (killed, timed out) closes by itself.
-        let gone =
-            |d: &Dialog| matches!(d, Dialog::Credential { prompt, .. } if !prompt.is_waiting());
-        self.queued.retain(|d| !gone(d));
-        if self.dialog.as_ref().is_some_and(gone) {
-            self.dialog = self.queued.pop();
-        }
+        self.dialogs.drop_withdrawn();
         let Some(server) = &self.askpass else { return };
         while let Ok(prompt) = server.prompts.try_recv() {
             if prompt.kind == crate::askpass::PromptKind::Notice {
@@ -1309,19 +1327,8 @@ impl CanopyApp {
                 prompt.answer(Some(String::new()));
                 continue;
             }
-            let credential = Dialog::credential(prompt);
-            match self.dialog.take() {
-                Some(current) if !matches!(current, Dialog::Credential { .. }) => {
-                    self.queued.push(current);
-                    self.dialog = Some(credential);
-                }
-                Some(current) => {
-                    // Another prompt is open: this one waits right behind it.
-                    self.queued.push(credential);
-                    self.dialog = Some(current);
-                }
-                None => self.dialog = Some(credential),
-            }
+            // In front of any other dialog; behind a prompt already open.
+            self.dialogs.open(Dialog::credential(prompt));
         }
     }
 
@@ -1366,10 +1373,10 @@ impl CanopyApp {
         crate::crash_reports::scrub_text(&t, &home)
     }
 
-    /// The consent dialog is answered: start what waited for it.
+    /// The consent dialog is answered: start what waited for it (the start-up notices queued
+    /// behind it now show).
     fn consent_done(&mut self, ctx: &egui::Context) {
         crate::crash_reports::set_enabled(self.settings.crash_reports == Some(true));
-        self.dialog = self.queued.pop();
         self.start_due_update_check(ctx);
     }
 
@@ -1424,7 +1431,7 @@ impl CanopyApp {
                     .collect()
             })
             .unwrap_or_default();
-        self.dialog = Some(Dialog::NewRequest {
+        self.dialogs.open(Dialog::NewRequest {
             kind: forge.kind,
             request: NewRequest {
                 title,
@@ -1481,7 +1488,7 @@ impl CanopyApp {
         let (tx, rx) = unbounded();
         let thread_ctx = ctx.clone();
         let thread_url = url.clone();
-        let _ = std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("clone".into())
             .spawn(move || {
                 let send = |m: CloneMsg| {
@@ -1495,7 +1502,19 @@ impl CanopyApp {
                     result.map(|()| dest).map_err(|e| e.to_string()),
                 ));
             });
-        self.clone = Some((url, rx, "Starting…".into()));
+        match spawned {
+            Ok(_) => self.clone = Some((url, rx, "Starting…".into())),
+            // The status bar never shows a clone that is not running.
+            Err(e) => {
+                tracing::error!("could not start the clone thread: {e}");
+                self.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    "Clone failed",
+                    format!("Could not start the clone: {e}"),
+                );
+            }
+        }
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
@@ -1520,16 +1539,22 @@ impl CanopyApp {
         if let Some(t) = self.tabs.get_mut(self.active).filter(|_| answered) {
             let saved = t
                 .forge()
-                .and_then(|(_, f)| self.tokens.get(&f.host))
+                .and_then(|(_, f)| self.tokens.get_for(f))
                 .map(str::to_owned);
             t.ensure_host(ctx, saved, self.settings.hosting_api);
         }
         let mut finished = None;
         if let Some((_, rx, status)) = &mut self.clone {
-            while let Ok(m) = rx.try_recv() {
-                match m {
-                    CloneMsg::Progress(l) => *status = l,
-                    CloneMsg::Done(r) => finished = Some(r),
+            loop {
+                match rx.try_recv() {
+                    Ok(CloneMsg::Progress(l)) => *status = l,
+                    Ok(CloneMsg::Done(r)) => finished = Some(r),
+                    Err(crossbeam_channel::TryRecvError::Empty) => break,
+                    // The thread ended without reporting (it panicked).
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                        finished.get_or_insert(Err("The clone stopped unexpectedly.".into()));
+                        break;
+                    }
                 }
             }
         }
@@ -1556,7 +1581,7 @@ impl CanopyApp {
                     let v = &a.version;
                     let skipped = self.settings.skipped_version.as_deref() == Some(&v.to_string());
                     if manual {
-                        self.dialog = Some(Dialog::Update(a.clone()));
+                        self.dialogs.open(Dialog::Update(a.clone()));
                     } else if !skipped {
                         self.toasts.push(
                             ctx,
@@ -1641,7 +1666,7 @@ impl CanopyApp {
             for t in &mut self.tabs {
                 let saved = t
                     .forge()
-                    .and_then(|(_, f)| self.tokens.get(&f.host))
+                    .and_then(|(_, f)| self.tokens.get_for(f))
                     .map(str::to_owned);
                 t.restart_host(ctx, saved, enabled);
             }
@@ -1700,6 +1725,10 @@ fn whats_new() -> Option<Dialog> {
         .map(|notes| (version.to_owned(), notes))
         .or_else(|| changelog_section(CHANGELOG, "Unreleased").map(|n| (format!("{version}+"), n)))
         .map(|(version, notes)| Dialog::WhatsNew { version, notes })
+}
+
+fn is_consent(d: &Dialog) -> bool {
+    matches!(d, Dialog::Consent { .. })
 }
 
 /// The Phosphor icon of a forge.
@@ -1883,7 +1912,7 @@ impl eframe::App for CanopyApp {
                 for t in &mut self.tabs {
                     let saved = t
                         .forge()
-                        .and_then(|(_, f)| self.tokens.get(&f.host))
+                        .and_then(|(_, f)| self.tokens.get_for(f))
                         .map(str::to_owned);
                     t.restart_host(&ctx, saved, enabled);
                 }
@@ -1894,14 +1923,16 @@ impl eframe::App for CanopyApp {
             self.settings_changed(&ctx, &before);
         }
         // Dialogs draw above the settings screen (the Privacy Policy opens from there).
-        if let Some(d) = &mut self.dialog {
-            let consent = matches!(d, Dialog::Consent { .. });
+        if let Some(d) = self.dialogs.current_mut() {
+            let consent = is_consent(d);
             match dialogs::show(&ctx, d, self.tabs.get(self.active)) {
                 Outcome::Keep => {}
-                Outcome::Close => self.dialog = self.queued.pop(),
+                Outcome::Close => self.dialogs.close(),
                 Outcome::Run(a) => {
                     // The consent dialog's actions decide what comes next themselves.
-                    self.dialog = if consent { None } else { self.queued.pop() };
+                    if !consent {
+                        self.dialogs.close();
+                    }
                     actions.extend(a);
                 }
             }

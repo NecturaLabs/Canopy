@@ -266,43 +266,57 @@ def apply(version: str, date: str) -> None:
             METAINFO.write_text(xml)
 
 
+class SelftestFailure(Exception):
+    """A selftest check failed. Raised explicitly: `assert` is stripped under `python -O`."""
+
+
+def expect(condition: bool, what: str, detail: object = "") -> None:
+    if not condition:
+        raise SelftestFailure(f"expected {what}" + (f"\n{detail}" if detail != "" else ""))
+
+
+def expect_eq(actual: object, expected: object) -> None:
+    if actual != expected:
+        raise SelftestFailure(f"expected {expected!r}, got {actual!r}")
+
+
 def selftest() -> None:
-    assert classify("feat(app): x", "") == "minor"
-    assert classify("fix: x", "") == "patch"
-    assert classify("build(deps): bump egui", "") == "patch"
-    assert classify("build: tweak", "") is None
-    assert classify("docs: x", "") is None
-    assert classify("feat!: drop y", "") == "major"
-    assert classify("refactor: z", "BREAKING CHANGE: gone") == "major"
-    assert classify("Merge branch 'x'", "") is None
-    assert classify("chore(release): v1.2.3", "") is None
-    assert bump("0.1.0", "major") == "0.2.0"
-    assert bump("1.4.2", "major") == "2.0.0"
-    assert bump("1.4.2", "minor") == "1.5.0"
-    assert bump("1.4.2", "patch") == "1.4.3"
-    assert bump("1.5.0-rc.1", "patch") == "1.5.1"
-    assert level_of([("docs: a", ""), ("fix: b", ""), ("feat: c", "")]) == "minor"
-    assert next_prerelease("0.3.0", "beta", []) == "0.3.0-beta.1"
-    assert next_prerelease("0.3.0", "beta", ["v0.3.0-beta.2", "v0.3.0-beta.10", "v0.2.0-beta.7"]) == "0.3.0-beta.11"
-    assert level_of([("ci: a", ""), ("chore: b", "")]) is None
+    expect_eq(classify("feat(app): x", ""), "minor")
+    expect_eq(classify("fix: x", ""), "patch")
+    expect_eq(classify("build(deps): bump egui", ""), "patch")
+    expect_eq(classify("build: tweak", ""), None)
+    expect_eq(classify("docs: x", ""), None)
+    expect_eq(classify("feat!: drop y", ""), "major")
+    expect_eq(classify("refactor: z", "BREAKING CHANGE: gone"), "major")
+    expect_eq(classify("Merge branch 'x'", ""), None)
+    expect_eq(classify("chore(release): v1.2.3", ""), None)
+    expect_eq(bump("0.1.0", "major"), "0.2.0")
+    expect_eq(bump("1.4.2", "major"), "2.0.0")
+    expect_eq(bump("1.4.2", "minor"), "1.5.0")
+    expect_eq(bump("1.4.2", "patch"), "1.4.3")
+    expect_eq(bump("1.5.0-rc.1", "patch"), "1.5.1")
+    expect_eq(level_of([("docs: a", ""), ("fix: b", ""), ("feat: c", "")]), "minor")
+    expect_eq(next_prerelease("0.3.0", "beta", []), "0.3.0-beta.1")
+    expect_eq(next_prerelease("0.3.0", "beta", ["v0.3.0-beta.2", "v0.3.0-beta.10", "v0.2.0-beta.7"]), "0.3.0-beta.11")
+    expect_eq(level_of([("ci: a", ""), ("chore: b", "")]), None)
     notes = generated_notes([("feat(app): side by side diffs", ""), ("fix: crash on empty repo.", ""), ("docs: x", "")])
-    assert notes == "### Added\n\n- Side by side diffs.\n\n### Fixed\n\n- Crash on empty repo.", notes
+    expect_eq(notes, "### Added\n\n- Side by side diffs.\n\n### Fixed\n\n- Crash on empty repo.")
     log = (
         "# Changelog\n\nIntro.\n\n## [Unreleased]\n\n### Added\n\n- New thing.\n\n"
         "## [0.1.0] - 2026-09-01\n\n- First.\n\n"
         "[Unreleased]: https://x/compare/v0.1.0...HEAD\n[0.1.0]: https://x/releases/tag/v0.1.0\n"
     )
     out = update_changelog(log, "0.2.0", "2026-10-01", "### Fixed\n\n- Ignored.", "0.1.0")
-    assert "## [Unreleased]\n\n## [0.2.0] - 2026-10-01\n\n### Added\n\n- New thing.\n\n## [0.1.0]" in out, out
-    assert "Ignored" not in out
-    assert f"[Unreleased]: {REPO_URL}/compare/v0.2.0...HEAD\n[0.2.0]: {REPO_URL}/compare/v0.1.0...v0.2.0" in out, out
-    assert section(out, "0.2.0") == "### Added\n\n- New thing."
+    expect("## [Unreleased]\n\n## [0.2.0] - 2026-10-01\n\n### Added\n\n- New thing.\n\n## [0.1.0]" in out, "the release section under Unreleased", out)
+    expect("Ignored" not in out, "generated notes ignored when Unreleased has entries", out)
+    expect(f"[Unreleased]: {REPO_URL}/compare/v0.2.0...HEAD\n[0.2.0]: {REPO_URL}/compare/v0.1.0...v0.2.0" in out, "updated compare links", out)
+    expect_eq(section(out, "0.2.0"), "### Added\n\n- New thing.")
     empty = update_changelog(log.replace("### Added\n\n- New thing.\n\n", ""), "0.2.0", "2026-10-01", "### Fixed\n\n- Generated.", "0.1.0")
-    assert section(empty, "0.2.0") == "### Fixed\n\n- Generated."
+    expect_eq(section(empty, "0.2.0"), "### Fixed\n\n- Generated.")
     beta = update_changelog(log, "0.2.0-beta.1", "2026-10-01", "", "0.1.0")
-    assert section(beta, "Unreleased") == "### Added\n\n- New thing.", beta
-    assert section(beta, "0.2.0-beta.1") == "### Added\n\n- New thing."
-    assert plain_summary("### Added\n\n- A `b`.\n- C & D.") == "A b. C &amp; D."
+    expect_eq(section(beta, "Unreleased"), "### Added\n\n- New thing.")
+    expect_eq(section(beta, "0.2.0-beta.1"), "### Added\n\n- New thing.")
+    expect_eq(plain_summary("### Added\n\n- A `b`.\n- C & D."), "A b. C &amp; D.")
     print("release.py: all tests passed")
 
 

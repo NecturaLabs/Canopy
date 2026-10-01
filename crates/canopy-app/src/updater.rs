@@ -123,6 +123,7 @@ impl Updater {
             return;
         }
         let (tx, rx) = unbounded();
+        let failed = tx.clone();
         let ctx = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name("update-check".into())
@@ -130,18 +131,26 @@ impl Updater {
                 let _ = tx.send(check(include_prerelease));
                 ctx.request_repaint();
             });
-        if spawned.is_ok() {
-            self.rx = Some(rx);
-            self.state = UpdateState::Checking;
-            self.manual = manual;
+        if let Err(e) = spawned {
+            // Reported through the next poll like any other failure.
+            tracing::warn!("could not start the update check: {e}");
+            let _ = failed.send(Err(format!("Could not start the update check: {e}")));
         }
+        self.rx = Some(rx);
+        self.state = UpdateState::Checking;
+        self.manual = manual;
     }
 
     /// Collects a finished check. Returns true when the state changed.
     pub fn poll(&mut self) -> bool {
         let Some(rx) = &self.rx else { return false };
-        let Ok(result) = rx.try_recv() else {
-            return false;
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(crossbeam_channel::TryRecvError::Empty) => return false,
+            // The thread ended without an answer (it panicked): stop showing "Checking".
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                Err("The update check stopped unexpectedly.".to_owned())
+            }
         };
         self.rx = None;
         self.state = match result {
@@ -175,5 +184,34 @@ mod tests {
         };
         assert_eq!(a.page(), RELEASES_PAGE);
         assert_eq!(a.download(), RELEASES_PAGE);
+    }
+
+    #[test]
+    fn a_check_whose_thread_died_fails_instead_of_spinning() {
+        let (tx, rx) = unbounded();
+        let mut u = Updater {
+            state: UpdateState::Checking,
+            rx: Some(rx),
+            manual: true,
+        };
+        assert!(!u.poll(), "still running");
+        assert_eq!(u.state, UpdateState::Checking);
+        drop(tx);
+        assert!(u.poll());
+        assert!(matches!(u.state, UpdateState::Failed(_)), "{:?}", u.state);
+        assert!(!u.poll(), "reported once");
+    }
+
+    #[test]
+    fn a_finished_check_is_collected() {
+        let (tx, rx) = unbounded();
+        let mut u = Updater {
+            state: UpdateState::Checking,
+            rx: Some(rx),
+            manual: false,
+        };
+        let _ = tx.send(Ok(None));
+        assert!(u.poll());
+        assert_eq!(u.state, UpdateState::UpToDate);
     }
 }

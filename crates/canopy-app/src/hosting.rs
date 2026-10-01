@@ -1,10 +1,11 @@
 //! Pull and merge requests: a background thread per repository tab that talks to the GitHub or
 //! GitLab API through `canopy-hosting`, plus token lookup and storage.
 //!
-//! Tokens come from, in order: the token saved in Canopy's settings for that host, the
-//! provider's environment variable (`GH_TOKEN`, `GITLAB_TOKEN`, …), and the user's git
-//! credential helper. Saved tokens live in `tokens.json` next to Canopy's other data, readable
-//! only by the user on Unix. They are sent only to the host they belong to.
+//! Tokens come from, in order: the token saved in Canopy's settings for that host (and port, see
+//! [`TokenStore`]), the provider's environment variable (`GH_TOKEN`, `GITLAB_TOKEN`, …), and the
+//! user's git credential helper. Saved tokens live in `tokens.json` next to Canopy's other data,
+//! created readable only by the user (mode 0600) on Unix; they are not in the operating system's
+//! keychain. They are sent only to the host they belong to.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -35,11 +36,24 @@ impl TokenSource {
     }
 }
 
-/// Tokens the user saved in Canopy, by host.
+/// Tokens the user saved in Canopy, by URL authority: the host, plus the port when it is not the
+/// default (`gitlab.example.com:8443`), so two services on one host never share a token.
+///
+/// Files written before version 2 keyed tokens by host alone, and such a token was used for
+/// every port of its host. Those entries still load and keep that meaning (`legacy_hosts`) until
+/// the token for that host is saved or removed again.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct TokenStore {
     tokens: HashMap<String, String>,
+    #[serde(default)]
+    version: u32,
+    /// Hosts whose token was saved before version 2 and still applies to their other ports.
+    #[serde(default)]
+    legacy_hosts: Vec<String>,
 }
+
+/// The current `tokens.json` format.
+const TOKENS_VERSION: u32 = 2;
 
 impl std::fmt::Debug for TokenStore {
     // Hosts only: a token must never reach a log line.
@@ -61,12 +75,41 @@ impl TokenStore {
             return Self::default();
         };
         match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+            Ok(bytes) => Self::parse(&bytes).unwrap_or_else(|e| {
                 tracing::warn!("ignoring unreadable {}: {e}", path.display());
                 Self::default()
             }),
             Err(_) => Self::default(),
         }
+    }
+
+    /// Reads `tokens.json`, upgrading an older format.
+    fn parse(bytes: &[u8]) -> serde_json::Result<Self> {
+        let mut store: Self = serde_json::from_slice(bytes)?;
+        if store.version < TOKENS_VERSION {
+            store.legacy_hosts = store
+                .tokens
+                .keys()
+                .filter(|k| !k.contains(':'))
+                .cloned()
+                .collect();
+            store.version = TOKENS_VERSION;
+        }
+        Ok(store)
+    }
+
+    /// The saved token for `forge`: the one saved for its authority, else, for a forge on a
+    /// non-default port, a token its host had before tokens were kept per port.
+    pub fn get_for(&self, forge: &Forge) -> Option<&str> {
+        let exact = self.get(&forge.authority());
+        if exact.is_some() || forge.port.is_none() {
+            return exact;
+        }
+        let host = forge.host.to_lowercase();
+        if self.legacy_hosts.contains(&host) {
+            return self.get(&host);
+        }
+        None
     }
 
     fn save(&self) -> std::io::Result<()> {
@@ -85,20 +128,30 @@ impl TokenStore {
         written
     }
 
-    /// The saved token for `host`.
-    pub fn get(&self, host: &str) -> Option<&str> {
-        self.tokens.get(&host.to_lowercase()).map(String::as_str)
+    /// The token saved for exactly `authority` (`host` or `host:port`).
+    pub fn get(&self, authority: &str) -> Option<&str> {
+        self.tokens
+            .get(&authority.to_lowercase())
+            .map(String::as_str)
     }
 
-    /// Saves (or with an empty `token`, removes) the token for `host`.
-    pub fn set(&mut self, host: &str, token: &str) -> std::io::Result<()> {
-        let token = token.trim();
-        if token.is_empty() {
-            self.tokens.remove(&host.to_lowercase());
-        } else {
-            self.tokens.insert(host.to_lowercase(), token.to_owned());
-        }
+    /// Saves (or with an empty `token`, removes) the token for `authority` (`host` or
+    /// `host:port`). From then on a host's token applies to that host's default port only.
+    pub fn set(&mut self, authority: &str, token: &str) -> std::io::Result<()> {
+        self.put(authority, token);
         self.save()
+    }
+
+    fn put(&mut self, authority: &str, token: &str) {
+        let key = authority.to_lowercase();
+        let token = token.trim();
+        self.legacy_hosts.retain(|h| *h != key);
+        self.version = TOKENS_VERSION;
+        if token.is_empty() {
+            self.tokens.remove(&key);
+        } else {
+            self.tokens.insert(key, token.to_owned());
+        }
     }
 }
 
@@ -337,6 +390,63 @@ mod tests {
         let shown = format!("{store:?}");
         assert!(shown.contains("github.com"));
         assert!(!shown.contains("ghp_secretvalue"));
+    }
+
+    fn gitlab(host: &str, port: Option<u16>) -> Forge {
+        Forge {
+            kind: ForgeKind::GitLab,
+            host: host.into(),
+            port,
+            path: "group/app".into(),
+        }
+    }
+
+    #[test]
+    fn tokens_are_kept_per_port() {
+        let mut store = TokenStore::default();
+        store.put("gitlab.example.com", "glpat-default");
+        store.put("gitlab.example.com:8443", "glpat-other");
+        let default_port = gitlab("gitlab.example.com", None);
+        let other_port = gitlab("gitlab.example.com", Some(8443));
+        assert_eq!(store.get_for(&default_port), Some("glpat-default"));
+        assert_eq!(store.get_for(&other_port), Some("glpat-other"));
+        // A token for the default port never goes to another port.
+        store.put("gitlab.example.com:8443", "");
+        assert_eq!(store.get_for(&other_port), None);
+        assert_eq!(store.get_for(&default_port), Some("glpat-default"));
+        assert_eq!(
+            store.get_for(&gitlab("GitLab.Example.com", None)),
+            Some("glpat-default")
+        );
+    }
+
+    #[test]
+    fn host_only_tokens_from_older_versions_still_load() -> serde_json::Result<()> {
+        let old = br#"{"tokens":{"github.com":"ghp_a","gitlab.example.com":"glpat-b"}}"#;
+        let mut store = TokenStore::parse(old)?;
+        let github = Forge {
+            kind: ForgeKind::GitHub,
+            host: "github.com".into(),
+            port: None,
+            path: "o/r".into(),
+        };
+        assert_eq!(store.get_for(&github), Some("ghp_a"));
+        let other_port = gitlab("gitlab.example.com", Some(8443));
+        // Saved when tokens were kept per host: it served every port, and still does…
+        assert_eq!(store.get_for(&other_port), Some("glpat-b"));
+        // …until the host's token is saved again, which makes it the default port's only.
+        store.put("gitlab.example.com", "glpat-new");
+        assert_eq!(store.get_for(&other_port), None);
+        assert_eq!(
+            store.get_for(&gitlab("gitlab.example.com", None)),
+            Some("glpat-new")
+        );
+        // The upgraded format round-trips without turning new keys into legacy ones.
+        let saved = serde_json::to_vec(&store)?;
+        let reloaded = TokenStore::parse(&saved)?;
+        assert_eq!(reloaded.get_for(&other_port), None);
+        assert_eq!(reloaded.get_for(&github), Some("ghp_a"));
+        Ok(())
     }
 
     #[test]
