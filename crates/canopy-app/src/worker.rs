@@ -308,9 +308,18 @@ impl Worker {
         let (ev_tx, events) = unbounded::<Event>();
         let thread_ctx = ctx.clone();
         let thread_path = path.clone();
-        let _ = std::thread::Builder::new()
+        let failed = ev_tx.clone();
+        let spawned = std::thread::Builder::new()
             .name(format!("repo:{}", path.display()))
             .spawn(move || run(thread_path, job_rx, ev_tx, thread_ctx));
+        if let Err(e) = spawned {
+            // Without a thread the tab would wait for its first snapshot forever: show why.
+            tracing::error!("could not start the repository thread: {e}");
+            let _ = failed.send(Event::Failed(format!(
+                "Could not start the repository thread: {e}"
+            )));
+            ctx.request_repaint();
+        }
         let watcher = watch(&path, jobs.clone());
         Self {
             jobs,

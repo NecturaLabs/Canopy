@@ -123,6 +123,46 @@ impl UrlBuilder {
     }
 }
 
+/// Where a new branch starts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Start {
+    /// The current `HEAD`.
+    Head,
+    /// A commit, e.g. from the history's context menu.
+    Commit(Oid),
+    /// A branch (or another revision) by name.
+    Branch(String),
+}
+
+impl Start {
+    /// Classifies a revision given as text: a full object id is a commit, anything else a name.
+    pub fn parse(rev: &str) -> Self {
+        let full_id = matches!(rev.len(), 40 | 64) && rev.bytes().all(|b| b.is_ascii_hexdigit());
+        match Oid::from_str(rev) {
+            Ok(oid) if full_id => Start::Commit(oid),
+            _ => Start::Branch(rev.to_owned()),
+        }
+    }
+
+    /// The revision to hand to git; `None` for `HEAD`.
+    pub fn rev(&self) -> Option<String> {
+        match self {
+            Start::Head => None,
+            Start::Commit(oid) => Some(oid.to_string()),
+            Start::Branch(name) => Some(name.clone()),
+        }
+    }
+
+    /// How the dialog names it: `commit 1a2b3c4`, the branch name, or `head()` for `HEAD`.
+    fn label(&self, head: impl FnOnce() -> String) -> String {
+        match self {
+            Start::Head => head(),
+            Start::Commit(oid) => format!("commit {}", short_id(*oid)),
+            Start::Branch(name) => name.clone(),
+        }
+    }
+}
+
 /// Every dialog Canopy shows.
 #[derive(Debug, Clone)]
 pub enum Dialog {
@@ -138,7 +178,7 @@ pub enum Dialog {
     },
     NewBranch {
         name: String,
-        start: Option<String>,
+        start: Start,
         checkout: bool,
     },
     Rename {
@@ -223,6 +263,107 @@ pub enum Outcome {
     Run(Vec<Action>),
 }
 
+impl Dialog {
+    /// How strongly the dialog holds the screen. A dialog never hides one that ranks higher: it
+    /// waits behind it instead.
+    ///
+    /// - 2: git's and ssh's credential questions. Git is blocked until they are answered, so
+    ///   they go in front of everything, one at a time in the order they arrived.
+    /// - 1: the start-up consent, which must be answered, and the legal documents.
+    /// - 0: everything else; the newest shows first.
+    fn rank(&self) -> u8 {
+        match self {
+            Dialog::Credential { .. } => 2,
+            Dialog::Consent { .. } | Dialog::Legal(_) => 1,
+            _ => 0,
+        }
+    }
+}
+
+/// The dialog on screen and those waiting behind it. Opening never throws a dialog away, and a
+/// credential prompt that leaves the stack, however it leaves, always gets an answer.
+#[derive(Debug, Default)]
+pub struct DialogStack {
+    /// Bottom first; the last one is on screen.
+    dialogs: Vec<Dialog>,
+}
+
+impl DialogStack {
+    /// Shows `dialog`, or queues it behind the dialogs that outrank it (see [`Dialog::rank`]).
+    pub fn open(&mut self, dialog: Dialog) {
+        let rank = dialog.rank();
+        // Credential prompts queue in arrival order behind the one on screen; other dialogs go
+        // on top of their equals.
+        let waits_behind = |d: &Dialog| d.rank() > rank || (rank == 2 && d.rank() == 2);
+        let mut at = self.dialogs.len();
+        while at > 0 && waits_behind(&self.dialogs[at - 1]) {
+            at -= 1;
+        }
+        self.dialogs.insert(at, dialog);
+    }
+
+    /// The dialog on screen.
+    pub fn current(&self) -> Option<&Dialog> {
+        self.dialogs.last()
+    }
+
+    pub fn current_mut(&mut self) -> Option<&mut Dialog> {
+        self.dialogs.last_mut()
+    }
+
+    /// Whether any open or waiting dialog matches.
+    pub fn any(&self, f: impl Fn(&Dialog) -> bool) -> bool {
+        self.dialogs.iter().any(f)
+    }
+
+    /// Closes the dialog on screen; the next one shows. A credential prompt not answered yet is
+    /// cancelled.
+    pub fn close(&mut self) {
+        if let Some(d) = self.dialogs.pop() {
+            cancel(&d);
+        }
+    }
+
+    /// Escape: closes the dialog on screen, except the consent, which must be answered. A
+    /// credential prompt is declined (`no` to an unknown host key).
+    pub fn dismiss(&mut self) {
+        match self.dialogs.last() {
+            Some(Dialog::Consent { .. }) | None => {}
+            Some(Dialog::Credential { prompt, .. }) => {
+                prompt.decline();
+                self.close();
+            }
+            Some(_) => self.close(),
+        }
+    }
+
+    /// Closes every dialog that matches, wherever it is (credential prompts are cancelled).
+    pub fn close_where(&mut self, f: impl Fn(&Dialog) -> bool) {
+        self.dialogs.retain(|d| {
+            let close = f(d);
+            if close {
+                cancel(d);
+            }
+            !close
+        });
+    }
+
+    /// Closes the credential prompts git or ssh stopped waiting for.
+    pub fn drop_withdrawn(&mut self) {
+        self.close_where(
+            |d| matches!(d, Dialog::Credential { prompt, .. } if !prompt.is_waiting()),
+        );
+    }
+}
+
+/// Cancels `dialog`'s credential prompt if it has one; a prompt already answered keeps its
+/// answer.
+fn cancel(dialog: &Dialog) {
+    if let Dialog::Credential { prompt, .. } = dialog {
+        prompt.answer(None);
+    }
+}
+
 fn home() -> String {
     crate::settings::home_dir().display().to_string()
 }
@@ -267,8 +408,14 @@ impl Dialog {
         self
     }
 
-    /// New branch starting at `start` (HEAD when `None`).
+    /// New branch starting at `start` given as text (HEAD when `None`); a full object id is
+    /// taken as a commit. Prefer [`Dialog::new_branch_at`] when the caller knows which it is.
     pub fn new_branch(start: Option<String>) -> Self {
+        Self::new_branch_at(start.as_deref().map_or(Start::Head, Start::parse))
+    }
+
+    /// New branch starting at `start`.
+    pub fn new_branch_at(start: Start) -> Self {
         Dialog::NewBranch {
             name: String::new(),
             start,
@@ -466,11 +613,8 @@ fn credential(
                         outcome = reply(Some(yes_answer.to_owned()));
                     }
                     if ui.add_sized([110.0, 34.0], egui::Button::new(no)).clicked() || escape {
-                        outcome = if prompt.kind == PromptKind::YesNo {
-                            reply(Some("no".into()))
-                        } else {
-                            reply(None)
-                        };
+                        prompt.decline();
+                        outcome = Outcome::Close;
                     }
                 });
             });
@@ -582,7 +726,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                             }
                     });
                     let name = url.trim().trim_end_matches('/').trim_end_matches(".git").rsplit(['/', ':']).next().unwrap_or("").to_owned();
-                    let dest = std::path::Path::new(parent.trim()).join(&name);
+                    let dest = crate::settings::expand_home(parent).join(&name);
                     ui.add_space(4.0);
                     ui.label(RichText::new(format!("→ {}", dest.display())).size(12.0).color(p.text_faint));
                     ui.add_space(8.0);
@@ -609,19 +753,14 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                     });
                     ui.add_space(8.0);
                     if primary(ui, "Create", !path.trim().is_empty()) {
-                        let expanded = if let Some(rest) = path.trim().strip_prefix("~/") { std::path::Path::new(&home()).join(rest) } else { path.trim().into() };
-                        outcome = Outcome::Run(vec![Action::Init(expanded)]);
+                        outcome = Outcome::Run(vec![Action::Init(crate::settings::expand_home(path))]);
                     }
                 }
                 Dialog::NewBranch { name, start, checkout } => {
                     title(ui, icon::GIT_BRANCH, "New branch");
                     let r = field(ui, "Name", name, "feature/something", true);
                     let _ = r;
-                    let from = match start.as_deref() {
-                        Some(s) if s.len() == 40 => format!("commit {}", &s[..7]),
-                        Some(s) => s.to_owned(),
-                        None => tab.and_then(|t| t.snap.as_ref()).map(|s| s.head.label()).unwrap_or_else(|| "HEAD".into()),
-                    };
+                    let from = start.label(|| tab.and_then(|t| t.snap.as_ref()).map(|s| s.head.label()).unwrap_or_else(|| "HEAD".into()));
                     ui.label(RichText::new(format!("{}  Starts at {from}", icon::GIT_COMMIT)).size(12.0).color(p.text_faint));
                     ui.add_space(6.0);
                     ui.checkbox(checkout, "Check out after creating");
@@ -631,7 +770,7 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
                         ui.label(RichText::new("Not a valid branch name").size(12.0).color(p.danger));
                     }
                     if primary(ui, "Create branch", ok) {
-                        outcome = Outcome::Run(vec![Action::Op(Op::CreateBranch { name: name.trim().to_owned(), start: start.clone(), checkout: *checkout })]);
+                        outcome = Outcome::Run(vec![Action::Op(Op::CreateBranch { name: name.trim().to_owned(), start: start.rev(), checkout: *checkout })]);
                     }
                 }
                 Dialog::Rename { old, new } => {
@@ -1058,7 +1197,191 @@ pub fn show(ctx: &egui::Context, dialog: &mut Dialog, tab: Option<&RepoTab>) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::valid_ref_name;
+    use super::{Dialog, DialogStack, Oid, Start, valid_ref_name};
+    use crate::askpass::Prompt;
+    use crate::ui::legal::{Document, Pending};
+    use crossbeam_channel::Receiver;
+
+    fn consent() -> Dialog {
+        Dialog::Consent {
+            step: Pending::Terms,
+            updated: false,
+            reading: None,
+        }
+    }
+
+    fn credential(text: &str) -> (Dialog, Receiver<Option<String>>) {
+        let (prompt, answers) = Prompt::with_reply(text);
+        (Dialog::credential(prompt), answers)
+    }
+
+    /// A short name for the dialog on screen.
+    fn shown(stack: &DialogStack) -> String {
+        match stack.current() {
+            None => "none".into(),
+            Some(Dialog::About) => "about".into(),
+            Some(Dialog::Consent { .. }) => "consent".into(),
+            Some(Dialog::Legal(_)) => "legal".into(),
+            Some(Dialog::Credential { prompt, .. }) => prompt.text.clone(),
+            Some(Dialog::Stash { message, .. }) => message.clone(),
+            Some(other) => format!("{other:?}"),
+        }
+    }
+
+    fn stash(name: &str) -> Dialog {
+        Dialog::Stash {
+            message: name.into(),
+            untracked: false,
+        }
+    }
+
+    #[test]
+    fn ordinary_dialogs_stack_newest_first_and_none_is_lost() {
+        let mut s = DialogStack::default();
+        assert_eq!(shown(&s), "none");
+        s.open(stash("a"));
+        s.open(stash("b"));
+        assert_eq!(shown(&s), "b");
+        s.close();
+        assert_eq!(shown(&s), "a");
+        s.dismiss();
+        assert_eq!(shown(&s), "none");
+        s.close();
+        s.dismiss();
+        assert_eq!(shown(&s), "none");
+    }
+
+    #[test]
+    fn consent_cannot_be_replaced_or_dismissed() {
+        let mut s = DialogStack::default();
+        s.open(stash("notice"));
+        s.open(consent());
+        s.open(Dialog::About);
+        assert_eq!(shown(&s), "consent");
+        s.dismiss();
+        assert_eq!(shown(&s), "consent");
+        s.close_where(|d| matches!(d, Dialog::Consent { .. }));
+        assert_eq!(shown(&s), "about");
+        s.close();
+        assert_eq!(shown(&s), "notice");
+    }
+
+    #[test]
+    fn legal_documents_are_not_replaced() {
+        let mut s = DialogStack::default();
+        s.open(Dialog::Legal(Document::Privacy));
+        s.open(Dialog::About);
+        assert_eq!(shown(&s), "legal");
+        s.close();
+        assert_eq!(shown(&s), "about");
+    }
+
+    #[test]
+    fn credentials_go_in_front_one_at_a_time_in_arrival_order() {
+        let mut s = DialogStack::default();
+        s.open(consent());
+        let (first, first_answers) = credential("first");
+        let (second, _second_answers) = credential("second");
+        s.open(first);
+        assert_eq!(shown(&s), "first", "a prompt goes in front of the consent");
+        s.open(second);
+        assert_eq!(shown(&s), "first", "a second prompt waits behind the first");
+        s.open(Dialog::About);
+        s.open(consent());
+        assert_eq!(shown(&s), "first", "nothing hides a prompt");
+        s.close();
+        assert_eq!(first_answers.try_recv().ok(), Some(None), "closing cancels");
+        assert_eq!(shown(&s), "second");
+        s.close();
+        assert_eq!(shown(&s), "consent");
+    }
+
+    #[test]
+    fn a_closed_prompt_is_always_answered() {
+        let mut s = DialogStack::default();
+        // Answered in the dialog, then closed: the answer stands.
+        let (d, answers) = credential("Password: ");
+        if let Dialog::Credential { prompt, .. } = &d {
+            prompt.answer(Some("hunter2".into()));
+        }
+        s.open(d);
+        s.close();
+        assert_eq!(answers.try_recv().ok(), Some(Some("hunter2".into())));
+        // Escape on a host key says no; on a password it cancels.
+        let (host, host_answers) = credential("Continue connecting (yes/no/[fingerprint])? ");
+        s.open(host);
+        s.dismiss();
+        assert_eq!(host_answers.try_recv().ok(), Some(Some("no".into())));
+        let (pw, pw_answers) = credential("Password: ");
+        s.open(pw);
+        s.dismiss();
+        assert_eq!(pw_answers.try_recv().ok(), Some(None));
+        // Closed from behind another dialog.
+        let (queued, queued_answers) = credential("Username: ");
+        let (front, _front_answers) = credential("Password: ");
+        s.open(front);
+        s.open(queued);
+        s.close_where(
+            |d| matches!(d, Dialog::Credential { prompt, .. } if prompt.text == "Username: "),
+        );
+        assert_eq!(queued_answers.try_recv().ok(), Some(None));
+        assert_eq!(shown(&s), "Password: ");
+    }
+
+    #[test]
+    fn withdrawn_prompts_leave_the_stack() {
+        let mut s = DialogStack::default();
+        s.open(stash("under"));
+        let (d, _answers) = credential("Password: ");
+        let prompt = match &d {
+            Dialog::Credential { prompt, .. } => prompt.clone(),
+            _ => unreachable!(),
+        };
+        s.open(d);
+        s.drop_withdrawn();
+        assert_eq!(shown(&s), "Password: ");
+        prompt.withdraw();
+        s.drop_withdrawn();
+        assert_eq!(shown(&s), "under");
+    }
+
+    #[test]
+    fn branch_starts_are_typed_and_shortened_safely() -> Result<(), git2::Error> {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let oid = Oid::from_str(sha)?;
+        assert_eq!(Start::parse(sha), Start::Commit(oid));
+        assert_eq!(Start::parse(sha).label(String::new), "commit 0123456");
+        assert_eq!(Start::parse(sha).rev().as_deref(), Some(sha));
+        // Names, however long or short and whatever their characters, are shown whole.
+        for name in [
+            "main",
+            "v1",
+            "feature/ünïcödé-forty-bytes-long-name",
+            "release/2026-10-01-hotfix-for-the-thing",
+            "0123456789abcdef",
+        ] {
+            assert_eq!(Start::parse(name), Start::Branch(name.to_owned()));
+            assert_eq!(Start::parse(name).label(String::new), name);
+            assert_eq!(Start::parse(name).rev().as_deref(), Some(name));
+        }
+        // 40 characters that are not all hexadecimal are a name, not a commit.
+        let forty = "z".repeat(40);
+        assert_eq!(Start::parse(&forty), Start::Branch(forty.clone()));
+        assert_eq!(Start::Head.label(|| "main".into()), "main");
+        assert_eq!(Start::Head.rev(), None);
+        assert!(matches!(
+            Dialog::new_branch(None),
+            Dialog::NewBranch {
+                start: Start::Head,
+                ..
+            }
+        ));
+        assert!(matches!(
+            Dialog::new_branch(Some(sha.into())),
+            Dialog::NewBranch { start: Start::Commit(o), .. } if o == oid
+        ));
+        Ok(())
+    }
 
     #[test]
     fn ref_names() {

@@ -105,9 +105,38 @@ impl Prompt {
         self.waiting.load(Ordering::Relaxed)
     }
 
-    /// Sends the answer, or `None` to cancel (git then fails with its own message).
+    /// Sends the answer, or `None` to cancel (git then fails with its own message). Only the
+    /// first answer counts; later ones are ignored.
     pub fn answer(&self, answer: Option<String>) {
         let _ = self.reply.try_send(answer);
+    }
+
+    /// Refuses: `no` to ssh's unknown-host question (so ssh records a clear refusal rather than
+    /// a failed prompt), a cancel for everything else.
+    pub fn decline(&self) {
+        self.answer(match self.kind {
+            PromptKind::YesNo => Some("no".to_owned()),
+            _ => None,
+        });
+    }
+
+    /// A prompt and the receiving end of its answer, for tests.
+    #[cfg(test)]
+    pub fn with_reply(text: &str) -> (Self, Receiver<Option<String>>) {
+        let (reply, answers) = bounded(1);
+        let prompt = Self {
+            text: text.to_owned(),
+            kind: PromptKind::of(text, ""),
+            reply,
+            waiting: Arc::new(AtomicBool::new(true)),
+        };
+        (prompt, answers)
+    }
+
+    /// Marks the prompt as withdrawn by git, for tests.
+    #[cfg(test)]
+    pub fn withdraw(&self) {
+        self.waiting.store(false, Ordering::Relaxed);
     }
 }
 
@@ -310,9 +339,30 @@ fn ask(port: u16, token: &str, prompt: &str, mode: &str) -> std::io::Result<Opti
     Ok(response.answer)
 }
 
-/// Whether this process was started by git or ssh as a credential prompt.
+/// Whether this process was started by git or ssh as a credential prompt: both variables Canopy
+/// sets on git commands are present and valid, and the only argument is not an option or an
+/// existing path. `canopy <repo>` run from a shell that inherited the variables (a git hook, a
+/// terminal started by something git ran) therefore still opens the repository.
 pub fn is_client() -> bool {
-    std::env::var_os(PORT_ENV).is_some() && std::env::args_os().len() == 2
+    let mut args = std::env::args_os().skip(1);
+    let (Some(arg), None) = (args.next(), args.next()) else {
+        return false;
+    };
+    looks_like_client(
+        std::env::var(PORT_ENV).ok().as_deref(),
+        std::env::var(TOKEN_ENV).ok().as_deref(),
+        &arg,
+    )
+}
+
+fn looks_like_client(port: Option<&str>, token: Option<&str>, arg: &std::ffi::OsStr) -> bool {
+    let port_ok = port.is_some_and(|p| p.parse::<u16>().is_ok_and(|p| p != 0));
+    // Tokens are 48 lower-case hexadecimal characters (see `random_token`).
+    let token_ok = token.is_some_and(|t| t.len() == 48 && t.bytes().all(|b| b.is_ascii_hexdigit()));
+    // A prompt is text such as "Password for 'https://…': "; never an option, never a folder.
+    let prompt_like =
+        !arg.to_string_lossy().starts_with('-') && !std::path::Path::new(arg).exists();
+    port_ok && token_ok && prompt_like
 }
 
 /// Runs as the credential prompt: asks the app, prints the answer and returns the exit code
@@ -372,6 +422,49 @@ mod tests {
             PromptKind::of("Confirm user presence", "none"),
             PromptKind::Notice
         );
+    }
+
+    #[test]
+    fn only_a_real_prompt_runs_as_the_client() -> std::io::Result<()> {
+        use std::ffi::OsStr;
+        let token = "ab".repeat(24);
+        let prompt = OsStr::new("Password for 'https://github.com': ");
+        assert!(looks_like_client(Some("40123"), Some(&token), prompt));
+        // The port alone (a terminal that inherited it) is not enough.
+        assert!(!looks_like_client(Some("40123"), None, prompt));
+        assert!(!looks_like_client(Some("40123"), Some(""), prompt));
+        assert!(!looks_like_client(None, Some(&token), prompt));
+        assert!(!looks_like_client(Some("x"), Some(&token), prompt));
+        assert!(!looks_like_client(Some("0"), Some(&token), prompt));
+        // `canopy <repo>` and `canopy --help` with the variables set still start the app.
+        let dir = tempfile::tempdir()?;
+        assert!(!looks_like_client(
+            Some("40123"),
+            Some(&token),
+            dir.path().as_os_str()
+        ));
+        assert!(!looks_like_client(
+            Some("40123"),
+            Some(&token),
+            OsStr::new("--help")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn declining_says_no_to_host_keys_and_cancels_the_rest() {
+        let (host, answers) =
+            Prompt::with_reply("Are you sure you want to continue connecting (yes/no)? ");
+        host.decline();
+        assert_eq!(answers.try_recv().ok(), Some(Some("no".to_owned())));
+        let (password, answers) = Prompt::with_reply("Password: ");
+        password.decline();
+        assert_eq!(answers.try_recv().ok(), Some(None));
+        // The first answer wins.
+        let (p, answers) = Prompt::with_reply("Password: ");
+        p.answer(Some("hunter2".into()));
+        p.decline();
+        assert_eq!(answers.try_recv().ok(), Some(Some("hunter2".to_owned())));
     }
 
     #[test]

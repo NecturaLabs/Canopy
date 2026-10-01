@@ -279,6 +279,38 @@ pub fn home_dir() -> PathBuf {
         .unwrap_or_default()
 }
 
+/// A path typed by the user, with a leading `~` (alone, or followed by `/`, or `\` on Windows)
+/// standing for the home folder. `~user` is left alone: Canopy does not look up other users'
+/// folders. Surrounding whitespace is trimmed.
+pub fn expand_home(typed: &str) -> PathBuf {
+    expand_home_in(typed, &home_dir())
+}
+
+fn expand_home_in(typed: &str, home: &Path) -> PathBuf {
+    let typed = typed.trim();
+    let Some(rest) = typed.strip_prefix('~') else {
+        return PathBuf::from(typed);
+    };
+    if home.as_os_str().is_empty() {
+        return PathBuf::from(typed);
+    }
+    let separator = |c: char| c == '/' || (cfg!(windows) && c == '\\');
+    if rest.is_empty() {
+        return home.to_path_buf();
+    }
+    match rest.strip_prefix(separator) {
+        Some(below) => {
+            let below = below.trim_start_matches(separator);
+            if below.is_empty() {
+                home.to_path_buf()
+            } else {
+                home.join(below)
+            }
+        }
+        None => PathBuf::from(typed),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +334,27 @@ mod tests {
         assert_eq!(
             s.gitlab_host_list(),
             vec!["git.example.com", "code.corp.io", "lab.x"]
+        );
+    }
+
+    #[test]
+    fn tilde_expands_to_the_home_folder_only() {
+        let home = Path::new("/home/ada");
+        let e = |typed: &str| expand_home_in(typed, home);
+        assert_eq!(e("~"), PathBuf::from("/home/ada"));
+        assert_eq!(e("~/"), PathBuf::from("/home/ada"));
+        assert_eq!(e("~/src/canopy"), PathBuf::from("/home/ada/src/canopy"));
+        assert_eq!(e("  ~/src  "), PathBuf::from("/home/ada/src"));
+        assert_eq!(e("~//src"), PathBuf::from("/home/ada/src"));
+        // Another user's folder and names that merely start with a tilde stay as typed.
+        assert_eq!(e("~bob/src"), PathBuf::from("~bob/src"));
+        assert_eq!(e("~backup"), PathBuf::from("~backup"));
+        assert_eq!(e("/srv/~/x"), PathBuf::from("/srv/~/x"));
+        assert_eq!(e("relative/dir"), PathBuf::from("relative/dir"));
+        // Without a known home folder nothing is expanded.
+        assert_eq!(
+            expand_home_in("~/src", Path::new("")),
+            PathBuf::from("~/src")
         );
     }
 }
