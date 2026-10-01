@@ -120,7 +120,7 @@ fn panic_event(info: &std::panic::PanicHookInfo<'_>) -> Option<Event<'static>> {
 }
 
 /// Replaces `home` with `~`, and the user-name part of other home-folder paths with `<user>`.
-fn scrub_text(text: &str, home: &str) -> String {
+pub fn scrub_text(text: &str, home: &str) -> String {
     let mut out = if home.len() > 1 {
         text.replace(home, "~")
     } else {

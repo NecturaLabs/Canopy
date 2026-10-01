@@ -204,12 +204,15 @@ fn serve(
         kind,
         reply,
     };
+    tracing::info!(kind = ?kind, "credential prompt");
     if prompts.send(prompt).is_err() {
         return Ok(());
     }
     wake();
     // Waits as long as the user needs; a dropped prompt (dialog closed, app exiting) cancels.
     let answer = answer.recv().unwrap_or(None);
+    // Whether it was answered, never the answer.
+    tracing::info!(kind = ?kind, answered = answer.is_some(), "credential prompt closed");
     let mut out = serde_json::to_string(&Response { answer }).map_err(std::io::Error::other)?;
     out.push('\n');
     (&stream).write_all(out.as_bytes())

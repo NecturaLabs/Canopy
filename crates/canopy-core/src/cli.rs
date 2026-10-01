@@ -16,6 +16,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{OnceLock, PoisonError, RwLock};
+use std::time::Instant;
 
 use crate::{Error, Result};
 
@@ -127,13 +128,79 @@ pub(crate) fn failure(args: &[&str], stdout: &[u8], stderr: &[u8]) -> Error {
     }
 }
 
+/// `args` as they may appear in a log: credentials in URLs, commit and tag messages, and the
+/// values of `-c key=value` overrides are replaced, since any of them can hold a secret or
+/// personal text.
+pub fn loggable(args: &[&str]) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut hide_next = false;
+    for arg in args {
+        if hide_next {
+            out.push("<redacted>".to_owned());
+            hide_next = false;
+            continue;
+        }
+        let a = *arg;
+        if matches!(a, "-m" | "--message" | "-c" | "-F" | "--file") {
+            hide_next = true;
+            out.push(a.to_owned());
+        } else if let Some((flag, _)) = a
+            .split_once('=')
+            .filter(|(f, _)| matches!(*f, "--message" | "-m" | "--file"))
+        {
+            out.push(format!("{flag}=<redacted>"));
+        } else if a.starts_with("-m") && a.len() > 2 && !a.starts_with("--") {
+            out.push("-m<redacted>".to_owned());
+        } else {
+            out.push(redact_url(a));
+        }
+    }
+    out
+}
+
+/// Removes the `user:password@` part of a URL inside `text`.
+pub fn redact_url(text: &str) -> String {
+    let Some(scheme_end) = text.find("://") else {
+        return text.to_owned();
+    };
+    let rest = &text[scheme_end + 3..];
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    match rest[..authority_end].rfind('@') {
+        Some(at) => format!("{}://<redacted>@{}", &text[..scheme_end], &rest[at + 1..]),
+        None => text.to_owned(),
+    }
+}
+
+/// Logs a finished git command: at debug level always, at warn level when it failed.
+fn record(args: &[&str], started: Instant, status: Option<i32>, stderr: &[u8]) {
+    let ms = started.elapsed().as_millis() as u64;
+    let command = subcommand(args);
+    let shown = loggable(args);
+    if status == Some(0) {
+        tracing::debug!(%command, args = ?shown, ms, "git finished");
+    } else {
+        let text = String::from_utf8_lossy(stderr);
+        let tail: String = text
+            .trim()
+            .chars()
+            .rev()
+            .take(2000)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        tracing::warn!(%command, args = ?shown, exit = ?status, ms, stderr = %redact_url(&tail), "git failed");
+    }
+}
+
 /// Runs `git args…` in `workdir` and returns its standard output.
 pub fn run(workdir: &Path, args: &[&str]) -> Result<String> {
-    tracing::debug!(?args, "git");
+    let started = Instant::now();
     let out = command(Some(workdir))
         .args(args)
         .output()
         .map_err(Error::GitMissing)?;
+    record(args, started, out.status.code(), &out.stderr);
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
@@ -143,7 +210,7 @@ pub fn run(workdir: &Path, args: &[&str]) -> Result<String> {
 
 /// Like [`run`], feeding `input` to standard input.
 pub fn run_with_input(workdir: &Path, args: &[&str], input: &[u8]) -> Result<String> {
-    tracing::debug!(?args, "git (stdin)");
+    let started = Instant::now();
     let mut child = command(Some(workdir))
         .args(args)
         .stdin(Stdio::piped())
@@ -155,6 +222,7 @@ pub fn run_with_input(workdir: &Path, args: &[&str], input: &[u8]) -> Result<Str
         stdin.write_all(input)?;
     }
     let out = child.wait_with_output()?;
+    record(args, started, out.status.code(), &out.stderr);
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
@@ -170,7 +238,8 @@ pub fn run_streaming(
     args: &[&str],
     mut progress: impl FnMut(&str),
 ) -> Result<String> {
-    tracing::debug!(?args, "git (streaming)");
+    let started = Instant::now();
+    tracing::info!(command = %subcommand(args), args = ?loggable(args), "git started");
     let mut child = command(workdir)
         .args(args)
         .stdout(Stdio::piped())
@@ -219,6 +288,10 @@ pub fn run_streaming(
     }
 
     let status = child.wait()?;
+    record(args, started, status.code(), &stderr_all);
+    if status.success() {
+        tracing::info!(command = %subcommand(args), ms = started.elapsed().as_millis() as u64, "git succeeded");
+    }
     let stdout = stdout_reader.join().unwrap_or_default();
     if status.success() {
         let text = String::from_utf8_lossy(&stderr_all);
@@ -242,6 +315,36 @@ pub fn version() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn logged_arguments_hide_secrets_and_messages() {
+        assert_eq!(
+            loggable(&[
+                "clone",
+                "--progress",
+                "https://ada:ghp_x@github.com/o/r.git",
+                "dest"
+            ]),
+            [
+                "clone",
+                "--progress",
+                "https://<redacted>@github.com/o/r.git",
+                "dest"
+            ]
+        );
+        assert_eq!(
+            loggable(&["commit", "-m", "secret plans", "--message=more"]),
+            ["commit", "-m", "<redacted>", "--message=<redacted>"]
+        );
+        assert_eq!(
+            loggable(&["-c", "http.extraheader=AUTHORIZATION: x", "fetch"]),
+            ["-c", "<redacted>", "fetch"]
+        );
+        assert_eq!(loggable(&["tag", "-mhello"]), ["tag", "-m<redacted>"]);
+        assert_eq!(redact_url("ssh://git@host/x"), "ssh://<redacted>@host/x");
+        assert_eq!(redact_url("https://host/a@b"), "https://host/a@b");
+        assert_eq!(redact_url("no url"), "no url");
+    }
 
     #[test]
     fn reports_stderr_on_failure() {

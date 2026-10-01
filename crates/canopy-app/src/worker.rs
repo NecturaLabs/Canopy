@@ -322,7 +322,25 @@ impl Worker {
     }
 }
 
+impl Job {
+    /// A short name for logs.
+    fn kind(&self) -> &'static str {
+        match self {
+            Job::Refresh(_) => "refresh",
+            Job::RefreshStatus => "status",
+            Job::Details(_) => "details",
+            Job::Diff(_) => "diff",
+            Job::HeadMessage => "head-message",
+            Job::SquashMessage(_) => "squash-message",
+            Job::Conflict(_) => "conflict",
+            Job::Op(_) => "operation",
+        }
+    }
+}
+
 fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Context) {
+    // Every event this thread logs carries the repository.
+    let _repo = tracing::info_span!("repo", path = %path.display()).entered();
     let emit = |e: Event| {
         let _ = events.send(e);
         ctx.request_repaint();
@@ -347,6 +365,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         let repo = match Repo::open(&path) {
             Ok(r) => r,
             Err(e) => {
+                tracing::warn!(error = %e, "cannot open the repository");
                 emit(Event::Failed(e.to_string()));
                 continue;
             }
@@ -354,6 +373,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
 
         let mut mutated = false;
         for job in rest {
+            let kind = job.kind();
+            let started = std::time::Instant::now();
             match job {
                 Job::Details(oid) => match repo.commit_details(oid) {
                     Ok(d) => emit(Event::Details(Box::new(d))),
@@ -405,9 +426,17 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 Job::Op(op) => {
                     let label = op.label();
                     let announce = op.announce();
+                    tracing::info!(operation = %label, "operation started");
                     emit(Event::OpStarted(label.clone()));
                     let progress = |line: &str| emit(Event::Progress(line.to_owned()));
                     let result = perform(&repo, op, progress).map_err(|e| e.to_string());
+                    let ms = started.elapsed().as_millis() as u64;
+                    match &result {
+                        Ok(_) => tracing::info!(operation = %label, ms, "operation succeeded"),
+                        Err(e) => {
+                            tracing::warn!(operation = %label, ms, error = %canopy_core::cli::redact_url(e), "operation failed")
+                        }
+                    }
                     emit(Event::OpFinished {
                         label,
                         announce,
@@ -417,15 +446,31 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 }
                 Job::Refresh(_) | Job::RefreshStatus => {}
             }
+            tracing::debug!(
+                job = kind,
+                ms = started.elapsed().as_millis() as u64,
+                "job done"
+            );
         }
 
         if let Some(n) = want_full.filter(|n| *n > 0) {
             limit = n;
         }
         if want_full.is_some() || mutated {
+            let started = std::time::Instant::now();
             match repo.snapshot(limit) {
-                Ok(s) => emit(Event::Snapshot(Box::new(s))),
-                Err(e) => emit(Event::Failed(e.to_string())),
+                Ok(s) => {
+                    tracing::debug!(
+                        commits = s.commits.len(),
+                        ms = started.elapsed().as_millis() as u64,
+                        "snapshot"
+                    );
+                    emit(Event::Snapshot(Box::new(s)));
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "snapshot failed");
+                    emit(Event::Failed(e.to_string()));
+                }
             }
         } else if want_status {
             match canopy_core::status::collect(repo.git()) {

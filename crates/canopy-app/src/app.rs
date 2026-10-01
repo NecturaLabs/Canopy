@@ -88,6 +88,8 @@ pub enum Action {
     DismissIntro,
     /// Open the folder with Canopy's logs and crash reports.
     OpenLogs,
+    /// Versions, this run's log file and recent warnings, to the clipboard.
+    CopyDiagnostics,
     /// Unified or side-by-side diffs.
     SetSplitDiff(bool),
     /// The user accepted the current Terms of Service and Privacy Policy.
@@ -190,6 +192,7 @@ impl CanopyApp {
         if launch.split {
             settings.split_diff = true;
         }
+        crate::logging::set_level(settings.log_level);
         crate::ui::fonts::install(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
@@ -1115,6 +1118,15 @@ impl CanopyApp {
                     }
                 }
                 Action::WhatsNew => self.dialog = whats_new(),
+                Action::CopyDiagnostics => {
+                    ctx.copy_text(self.diagnostics());
+                    self.toasts.push(
+                        ctx,
+                        ToastKind::Info,
+                        "Diagnostics copied",
+                        "Check the text before you share it: it can name files and branches.",
+                    );
+                }
                 Action::OpenLogs => match crate::logging::log_dir() {
                     Some(dir) => {
                         let _ = std::fs::create_dir_all(&dir);
@@ -1291,6 +1303,47 @@ impl CanopyApp {
                 None => self.dialog = Some(credential),
             }
         }
+    }
+
+    /// The text "Copy diagnostics" puts on the clipboard, with the home folder shown as `~`.
+    fn diagnostics(&self) -> String {
+        use std::fmt::Write as _;
+        let mut t = String::new();
+        let run = crate::logging::run();
+        let _ = writeln!(t, "Canopy {}", env!("CARGO_PKG_VERSION"));
+        let _ = writeln!(
+            t,
+            "Platform: {} {}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        let _ = writeln!(t, "Git: {}", self.git_version);
+        let _ = writeln!(t, "Run: {}", run.map_or("-", |r| r.id.as_str()));
+        let _ = writeln!(
+            t,
+            "Log: {}",
+            run.and_then(|r| r.file.as_ref())
+                .map_or("(not written)".to_owned(), |f| f.display().to_string())
+        );
+        let _ = writeln!(t, "Log detail: {}", self.settings.log_level.label());
+        let _ = writeln!(t, "Theme: {}", self.settings.theme.name());
+        let _ = writeln!(t, "Open repositories: {}", self.tabs.len());
+        let _ = writeln!(
+            t,
+            "Crash reports: {}",
+            match self.settings.crash_reports {
+                Some(true) => "on",
+                Some(false) => "off",
+                None => "not answered",
+            }
+        );
+        let problems = crate::logging::recent_problems();
+        let _ = writeln!(t, "\nRecent warnings and errors ({}):", problems.len());
+        for line in problems {
+            let _ = writeln!(t, "{line}");
+        }
+        let home = crate::settings::home_dir().display().to_string();
+        crate::crash_reports::scrub_text(&t, &home)
     }
 
     /// The consent dialog is answered: start what waited for it.

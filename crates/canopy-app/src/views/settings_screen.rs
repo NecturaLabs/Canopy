@@ -240,17 +240,33 @@ fn nav_item(ui: &mut Ui, current: &mut Section, s: Section) {
 }
 
 /// A labelled row: the title and help on the left, the control on the right.
+///
+/// The text takes whatever width the control leaves. The control's width is measured each frame
+/// and remembered, so a row with two buttons never runs its help text underneath them.
 fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
     let p = palette(ui.ctx());
+    let id = ui.id().with(("settings-row-control", title));
+    let control_w = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(240.0);
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
-            ui.set_width((ui.available_width() - 260.0).max(200.0));
+            ui.set_width((ui.available_width() - control_w - 16.0).max(180.0));
             ui.label(RichText::new(title).font(FontId::new(13.5, theme::medium())));
             if !help.is_empty() {
                 ui.label(RichText::new(help).size(12.0).color(p.text_dim));
             }
         });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control);
+        let used = ui
+            .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                control(ui);
+                ui.min_rect().width()
+            })
+            .inner;
+        if (used - control_w).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(id, used));
+            // Lay the row out again this frame with the measured width.
+            ui.ctx()
+                .request_discard("settings row measured its control");
+        }
     });
     ui.add_space(6.0);
     let r = ui.available_rect_before_wrap();
@@ -788,16 +804,41 @@ fn privacy(ui: &mut Ui, s: &mut Settings, actions: &mut Vec<Action>) {
             RichText::new("This build of Canopy cannot send crash reports.").color(p.text_dim),
         );
     }
+    heading(ui, "Diagnostics");
     row(
         ui,
-        "Local logs and crash reports",
-        "Canopy keeps its log and a copy of every crash report on this computer. They are never uploaded automatically.",
+        "Log detail",
+        "Normal records operations, warnings and errors. Detailed adds every git command and API call with its timing: turn it on while you reproduce a problem. The CANOPY_LOG environment variable overrides this.",
+        |ui| {
+            let before = s.log_level;
+            egui::ComboBox::from_id_salt("log-level")
+                .selected_text(s.log_level.label())
+                .show_ui(ui, |ui| {
+                    for level in crate::logging::LogLevel::ALL {
+                        ui.selectable_value(&mut s.log_level, level, level.label());
+                    }
+                });
+            if s.log_level != before {
+                crate::logging::set_level(s.log_level);
+            }
+        },
+    );
+    row(
+        ui,
+        "Logs and crash reports",
+        "Kept on this computer, one log per run, and never uploaded. Copy diagnostics puts your versions, this run's log file and its latest warnings on the clipboard, for a bug report.",
         |ui| {
             if ui
                 .button(format!("{}  Open folder", icon::FOLDER_OPEN))
                 .clicked()
             {
                 actions.push(Action::OpenLogs);
+            }
+            if ui
+                .button(format!("{}  Copy diagnostics", icon::CLIPBOARD_TEXT))
+                .clicked()
+            {
+                actions.push(Action::CopyDiagnostics);
             }
         },
     );

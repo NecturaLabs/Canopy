@@ -102,10 +102,10 @@ Canopy keeps its data in one folder: ~/.local/share/canopy on Linux (or canopy i
 
 - app.ron: your settings and window layout, the repositories you opened recently or left open, the GitLab servers you listed, the versions of these documents you accepted and your answer about crash reports
 - tokens.json: the access tokens you saved in Canopy
-- logs: Canopy's log, which can contain file paths, branch names, server names and Git's error messages. A new file starts when the log passes 2 MB, and the three previous files are kept.
+- logs: one log file for each time Canopy runs. A log records what Canopy did and when, and can contain file paths, branch names, server names, the Git commands Canopy ran (without passwords, tokens or commit messages) and Git's error messages. The ten newest are kept, and each stops growing at 20 MB. Log detail in the Privacy section of Settings controls how much is recorded.
 - crashes: a text file for each crash, written whether or not you send crash reports. The ten newest are kept.
 
-These files never leave your computer unless you send them yourself. Before you send us a log or crash file, read it: it can contain file paths and branch names. To open the logs folder, choose Open log folder in the command palette or Open folder in the Privacy section of Settings. You can delete the data folder at any time. Canopy then starts as if newly installed and asks the start-up questions again.
+These files never leave your computer unless you send them yourself. Before you send us a log or crash file, read it: it can contain file paths and branch names. To open the logs folder, choose Open log folder in the command palette or Open folder in the Privacy section of Settings. Copy diagnostics in the same section copies your Canopy, Git and operating system versions, the name of the current log file and its latest warnings, so you can paste them into a bug report. You can delete the data folder at any time. Canopy then starts as if newly installed and asks the start-up questions again.
 
 ## Your rights
 

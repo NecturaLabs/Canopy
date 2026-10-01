@@ -160,6 +160,8 @@ pub struct Settings {
     pub crash_reports: Option<bool>,
     /// The `crash_reports::DATA_VERSION` the answer was given for.
     pub crash_reports_version: u32,
+    /// How much the local log records.
+    pub log_level: crate::logging::LogLevel,
 
     // Session.
     /// Recently opened repositories, most recent first.
@@ -207,6 +209,7 @@ impl Default for Settings {
             accepted_privacy: String::new(),
             crash_reports: None,
             crash_reports_version: 0,
+            log_level: crate::logging::LogLevel::Normal,
             recent: Vec::new(),
             open_tabs: Vec::new(),
             seen_intro: false,

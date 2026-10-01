@@ -44,11 +44,12 @@ OPTIONS:
     -V, --version             Print version
 
 ENVIRONMENT:
-    CANOPY_LOG    Log filter, e.g. debug or canopy_core=trace (falls back to RUST_LOG)
+    CANOPY_LOG    Log filter, e.g. debug or canopy_core=trace (falls back to RUST_LOG);
+                  overrides Settings → Privacy → Log detail
 
 FILES:
-    Logs and crash reports are kept in Canopy's data folder (~/.local/share/canopy on Linux)
-    and never leave your computer.";
+    Logs (one JSON-lines file per run) and crash reports are kept in Canopy's data folder
+    (~/.local/share/canopy on Linux) and never leave your computer.";
 
 fn parse_args() -> Result<(Launch, [f32; 2]), String> {
     let mut launch = Launch::default();
@@ -150,10 +151,8 @@ fn main() -> anyhow::Result<()> {
     if askpass::is_client() {
         std::process::exit(askpass::run_client());
     }
-    let filter = std::env::var("CANOPY_LOG")
-        .or_else(|_| std::env::var("RUST_LOG"))
-        .unwrap_or_else(|_| "warn,canopy_app=info,canopy_core=info".into());
-    logging::init(&filter);
+    // Normal detail until the settings load; the app then applies the user's choice.
+    logging::init(logging::LogLevel::Normal);
 
     let (launch, size) = match parse_args() {
         Ok(v) => v,

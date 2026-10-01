@@ -136,6 +136,7 @@ impl Http {
             Some(v) => Some(serde_json::to_vec(v).map_err(|e| Error::Parse(e.to_string()))?),
             None => None,
         };
+        let started = std::time::Instant::now();
         let result = match method {
             Method::Get => self.headers(self.agent.get(&url)).call(),
             Method::Post => self.send_with_body(self.agent.post(&url), payload.as_deref()),
@@ -143,11 +144,19 @@ impl Http {
             Method::Patch => self.send_with_body(self.agent.patch(&url), payload.as_deref()),
         };
         let mut response = result.map_err(|e| {
-            tracing::warn!(method = method.as_str(), path, error = %e, "hosting request failed");
+            let ms = started.elapsed().as_millis() as u64;
+            tracing::warn!(method = method.as_str(), path, ms, error = %e, "hosting request failed");
             Error::Network(e.to_string())
         })?;
         let status = response.status().as_u16();
-        tracing::debug!(method = method.as_str(), path, status, "hosting request");
+        let ms = started.elapsed().as_millis() as u64;
+        let remaining = response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .or_else(|| response.headers().get("ratelimit-remaining"))
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        tracing::debug!(method = method.as_str(), path, status, ms, rate_limit_remaining = ?remaining, "hosting request");
         let bytes = response
             .body_mut()
             .read_to_vec()
@@ -156,7 +165,7 @@ impl Http {
             Ok(bytes)
         } else {
             let err = map_status(status, response.headers(), &bytes, self.kind);
-            tracing::warn!(method = method.as_str(), path, status, error = %err, "hosting request rejected");
+            tracing::warn!(method = method.as_str(), path, status, ms, error = %err, "hosting request rejected");
             Err(err)
         }
     }

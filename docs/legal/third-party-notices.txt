@@ -427,6 +427,7 @@ tower-service 0.3.3 (MIT): Copyright (c) 2019 Tower Contributors
 tracing 0.1.44 (MIT): Copyright (c) 2019 Tokio Contributors
 tracing-core 0.1.36 (MIT): Copyright (c) 2019 Tokio Contributors
 tracing-log 0.2.0 (MIT): Copyright (c) 2019 Tokio Contributors
+tracing-serde 0.2.0 (MIT): Copyright (c) 2019 Tokio Contributors
 tracing-subscriber 0.3.23 (MIT): Copyright (c) 2019 Tokio Contributors
 try-lock 0.2.5 (MIT): Copyright (c) 2018-2023 Sean McArthur; Copyright (c) 2016 Alex Crichton
 two-face 0.5.2+bat-0.26.1 (MIT OR Apache-2.0), used under MIT: Copyright (c) 2023-2025 The `two-face` developers (https://codeberg.org/CosmicHarper/two-face).

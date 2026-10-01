@@ -1,28 +1,76 @@
-//! Local diagnostics: a rotating log file and crash reports, both in Canopy's data directory
+//! Local diagnostics: structured logs and crash reports, both in Canopy's data directory
 //! (`~/.local/share/canopy/` on Linux). Nothing here is uploaded anywhere; the user decides
-//! whether to share a report.
+//! whether to share a file.
 //!
-//! - `logs/canopy.log` receives everything the stderr logger does, without colours. It is rotated
-//!   at start-up once it passes [`MAX_LOG_BYTES`], keeping [`KEEP_LOGS`] older files.
+//! - Each run writes `logs/canopy-<UTC start>-<pid>.jsonl`: one JSON object per line with
+//!   `timestamp`, `level`, `target`, `threadName`, the current `span` (repository job, git
+//!   command, API call…) and the event's fields. The first line records the run: version,
+//!   platform and a random run id. The newest [`KEEP_RUNS`] files are kept and a file stops
+//!   growing at [`MAX_RUN_BYTES`]. Standard error gets the same events as readable text.
+//! - The level comes from `CANOPY_LOG` (or `RUST_LOG`) if set, otherwise from Settings →
+//!   Privacy → Log detail, and changes without a restart ([`set_level`]).
+//! - The last warnings and errors are kept in memory for Settings → Copy diagnostics.
 //! - A panic writes `crashes/crash-<UTC timestamp>.txt` with the message, location, version,
 //!   platform and a backtrace, then lets the default hook run. The next launch offers to open the
 //!   newest report it has not shown before.
+//!
+//! Secrets never reach a log: tokens and passwords are not logged at all, git arguments go
+//! through `canopy_core::cli::loggable` (URL credentials, commit messages and config values
+//! removed), and answers to credential prompts are not logged.
 
+use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
+use serde::{Deserialize, Serialize};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, Registry, reload};
 
-/// Size at which `canopy.log` is rotated.
-pub const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
-/// Rotated logs kept (`canopy.log.1` … `canopy.log.N`).
-pub const KEEP_LOGS: usize = 3;
+/// Run logs kept; older ones are deleted at start-up.
+pub const KEEP_RUNS: usize = 10;
+/// A run's log stops growing at this size (one line says so).
+pub const MAX_RUN_BYTES: u64 = 20 * 1024 * 1024;
 /// Crash reports kept; older ones are deleted at start-up.
 pub const KEEP_CRASHES: usize = 10;
+/// Warnings and errors remembered for diagnostics.
+const RECENT: usize = 50;
+
+/// How much the log records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LogLevel {
+    /// Start-up, operations and their outcome, warnings and errors.
+    #[default]
+    Normal,
+    /// Also every git command, API call and repository job, with timings.
+    Detailed,
+    /// Everything, including libraries' own diagnostics. For chasing a specific problem.
+    Trace,
+}
+
+impl LogLevel {
+    pub const ALL: [LogLevel; 3] = [LogLevel::Normal, LogLevel::Detailed, LogLevel::Trace];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LogLevel::Normal => "Normal",
+            LogLevel::Detailed => "Detailed",
+            LogLevel::Trace => "Everything",
+        }
+    }
+
+    /// The `tracing` filter. Canopy's own crates are `canopy` (the app), `canopy_core` and
+    /// `canopy_hosting`.
+    pub fn filter(self) -> &'static str {
+        match self {
+            LogLevel::Normal => "warn,canopy=info,canopy_core=info,canopy_hosting=info",
+            LogLevel::Detailed => "info,canopy=debug,canopy_core=debug,canopy_hosting=debug",
+            LogLevel::Trace => "debug,canopy=trace,canopy_core=trace,canopy_hosting=trace",
+        }
+    }
+}
 
 /// Canopy's data directory, if the platform has one.
 pub fn data_dir() -> Option<PathBuf> {
@@ -39,49 +87,224 @@ pub fn crash_dir() -> Option<PathBuf> {
     data_dir().map(|d| d.join("crashes"))
 }
 
-/// Shifts `canopy.log` → `.1` → `.2` … when it is larger than `max`, dropping the oldest.
-fn rotate(dir: &Path, max: u64, keep: usize) {
-    let current = dir.join("canopy.log");
-    let big = fs::metadata(&current).is_ok_and(|m| m.len() > max);
-    if !big {
+/// What identifies this run in its log and in diagnostics.
+#[derive(Debug, Clone)]
+pub struct Run {
+    pub id: String,
+    pub file: Option<PathBuf>,
+}
+
+static RUN: OnceLock<Run> = OnceLock::new();
+static FILTER: OnceLock<reload::Handle<EnvFilter, Registry>> = OnceLock::new();
+static RECENT_EVENTS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+
+/// This run's id and log file.
+pub fn run() -> Option<&'static Run> {
+    RUN.get()
+}
+
+/// The newest warnings and errors, oldest first, as `time level target: message` lines.
+pub fn recent_problems() -> Vec<String> {
+    RECENT_EVENTS
+        .lock()
+        .map(|r| r.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// The filter from the environment, if the user set one (it wins over the setting).
+fn env_filter() -> Option<String> {
+    std::env::var("CANOPY_LOG")
+        .or_else(|_| std::env::var("RUST_LOG"))
+        .ok()
+        .filter(|f| !f.trim().is_empty())
+}
+
+/// Applies `level` now, unless `CANOPY_LOG`/`RUST_LOG` chose the filter.
+pub fn set_level(level: LogLevel) {
+    if env_filter().is_some() {
         return;
     }
-    let _ = fs::remove_file(dir.join(format!("canopy.log.{keep}")));
-    for n in (1..keep).rev() {
-        let _ = fs::rename(
-            dir.join(format!("canopy.log.{n}")),
-            dir.join(format!("canopy.log.{}", n + 1)),
-        );
+    if let Some(handle) = FILTER.get() {
+        let _ = handle.reload(EnvFilter::new(level.filter()));
+        tracing::info!(level = level.label(), "log detail changed");
     }
-    let _ = fs::rename(&current, dir.join("canopy.log.1"));
 }
 
-fn open_log(dir: &Path) -> Option<File> {
+/// Deletes all but the newest `keep - 1` run logs (making room for this run's) and the files of
+/// the old single-file format.
+fn prune(dir: &Path, keep: usize) {
+    let mut runs: Vec<PathBuf> = fs::read_dir(dir)
+        .map(|it| it.filter_map(|e| e.ok().map(|e| e.path())).collect())
+        .unwrap_or_default();
+    runs.retain(|p| {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if name == "canopy.log" || name.starts_with("canopy.log.") {
+            let _ = fs::remove_file(p);
+            return false;
+        }
+        name.starts_with("canopy-") && name.ends_with(".jsonl")
+    });
+    runs.sort();
+    let excess = runs.len().saturating_sub(keep.saturating_sub(1));
+    for old in &runs[..excess] {
+        let _ = fs::remove_file(old);
+    }
+}
+
+/// A log file that stops at a size limit instead of filling the disk.
+struct Capped {
+    file: File,
+    written: u64,
+    limit: u64,
+    full: bool,
+}
+
+impl Write for Capped {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.full {
+            return Ok(buf.len());
+        }
+        if self.written + buf.len() as u64 > self.limit {
+            self.full = true;
+            let note = format!(
+                "{{\"timestamp\":\"{}\",\"level\":\"WARN\",\"target\":\"canopy::logging\",\"message\":\"log size limit reached; later events are not written\"}}\n",
+                chrono::Utc::now().to_rfc3339()
+            );
+            self.file.write_all(note.as_bytes())?;
+            return Ok(buf.len());
+        }
+        self.written += buf.len() as u64;
+        self.file.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
+fn open_run_log(dir: &Path) -> Option<(PathBuf, Capped)> {
     fs::create_dir_all(dir).ok()?;
-    rotate(dir, MAX_LOG_BYTES, KEEP_LOGS);
-    OpenOptions::new()
+    prune(dir, KEEP_RUNS);
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let path = dir.join(format!("canopy-{stamp}-{}.jsonl", std::process::id()));
+    let file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join("canopy.log"))
-        .ok()
+        .open(&path)
+        .ok()?;
+    Some((
+        path,
+        Capped {
+            file,
+            written: 0,
+            limit: MAX_RUN_BYTES,
+            full: false,
+        },
+    ))
 }
 
-/// Installs the stderr logger, the log file (when the data directory is writable) and the
-/// crash-report hook. `filter` is a `tracing` filter such as `info,canopy_core=debug`.
-pub fn init(filter: &str) {
+/// Remembers warnings and errors for diagnostics.
+struct RecentProblems;
+
+impl<S: tracing::Subscriber> Layer<S> for RecentProblems {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        let meta = event.metadata();
+        if *meta.level() > tracing::Level::WARN {
+            return;
+        }
+        let mut text = String::new();
+        event.record(&mut MessageVisitor(&mut text));
+        let line = format!(
+            "{} {} {}: {}",
+            chrono::Utc::now().format("%H:%M:%S"),
+            meta.level(),
+            meta.target(),
+            text
+        );
+        if let Ok(mut recent) = RECENT_EVENTS.lock() {
+            if recent.len() == RECENT {
+                recent.pop_front();
+            }
+            recent.push_back(line);
+        }
+    }
+}
+
+/// Writes an event's fields as `message key=value …`.
+struct MessageVisitor<'a>(&'a mut String);
+
+impl tracing::field::Visit for MessageVisitor<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        use std::fmt::Write as _;
+        if field.name() == "message" {
+            let _ = write!(self.0, "{value:?}");
+            if self.0.starts_with('"') {
+                *self.0 = self.0.trim_matches('"').to_owned();
+            }
+        } else {
+            let _ = write!(self.0, " {}={value:?}", field.name());
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        use std::fmt::Write as _;
+        if field.name() == "message" {
+            self.0.insert_str(0, value);
+        } else {
+            let _ = write!(self.0, " {}={value}", field.name());
+        }
+    }
+}
+
+fn run_id() -> String {
+    let mut bytes = [0u8; 4];
+    let _ = getrandom::fill(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Installs the loggers and the crash-report hook. `level` applies unless `CANOPY_LOG` or
+/// `RUST_LOG` is set.
+pub fn init(level: LogLevel) {
+    let filter = env_filter().unwrap_or_else(|| level.filter().to_owned());
+    let (filter_layer, handle) = reload::Layer::new(EnvFilter::new(&filter));
     let stderr = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stderr)
-        .with_filter(EnvFilter::new(filter));
-    let file = log_dir().and_then(|d| open_log(&d)).map(|f| {
+        .compact()
+        .with_writer(std::io::stderr);
+    let opened = log_dir().and_then(|d| open_run_log(&d));
+    let path = opened.as_ref().map(|(p, _)| p.clone());
+    let file = opened.map(|(_, w)| {
         tracing_subscriber::fmt::layer()
-            .with_ansi(false)
-            .with_writer(Mutex::new(f))
-            .with_filter(EnvFilter::new(filter))
+            .json()
+            .flatten_event(true)
+            .with_current_span(true)
+            .with_span_list(false)
+            .with_thread_names(true)
+            .with_writer(Mutex::new(w))
     });
-    let _ = tracing_subscriber::registry()
+    let installed = tracing_subscriber::registry()
+        .with(filter_layer)
         .with(stderr)
         .with(file)
-        .try_init();
+        .with(RecentProblems)
+        .try_init()
+        .is_ok();
+    if installed {
+        let _ = FILTER.set(handle);
+    }
+    let run = Run {
+        id: run_id(),
+        file: path,
+    };
+    tracing::info!(
+        run = %run.id,
+        version = env!("CARGO_PKG_VERSION"),
+        os = std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+        pid = std::process::id(),
+        filter = %filter,
+        "canopy started"
+    );
+    let _ = RUN.set(run);
     install_panic_hook();
 }
 
@@ -211,20 +434,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rotation_keeps_a_bounded_number_of_files() {
+    fn old_run_logs_are_pruned() {
         let dir = tempfile::tempdir().expect("tempdir");
-        for round in 0..5 {
-            fs::write(dir.path().join("canopy.log"), vec![b'x'; 20]).expect("write");
-            rotate(dir.path(), 10, 3);
-            assert!(!dir.path().join("canopy.log").exists(), "round {round}");
+        fs::write(dir.path().join("canopy.log"), b"old format").expect("write");
+        fs::write(dir.path().join("canopy.log.2"), b"old format").expect("write");
+        for i in 0..KEEP_RUNS + 4 {
+            fs::write(
+                dir.path()
+                    .join(format!("canopy-2026010{i:02}T000000Z-1.jsonl")),
+                b"{}",
+            )
+            .expect("write");
         }
-        assert!(dir.path().join("canopy.log.1").exists());
-        assert!(dir.path().join("canopy.log.3").exists());
-        assert!(!dir.path().join("canopy.log.4").exists());
-        // Small logs stay.
-        fs::write(dir.path().join("canopy.log"), b"ok").expect("write");
-        rotate(dir.path(), 10, 3);
-        assert!(dir.path().join("canopy.log").exists());
+        fs::write(dir.path().join("notes.txt"), b"not ours").expect("write");
+        prune(dir.path(), KEEP_RUNS);
+        let left: Vec<String> = fs::read_dir(dir.path())
+            .expect("dir")
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .collect();
+        assert_eq!(
+            left.iter().filter(|n| n.ends_with(".jsonl")).count(),
+            KEEP_RUNS - 1
+        );
+        assert!(left.contains(&"notes.txt".to_owned()));
+        assert!(!left.iter().any(|n| n.starts_with("canopy.log")));
+        // The newest survive.
+        assert!(
+            left.iter()
+                .any(|n| n.contains(&format!("{:02}T", KEEP_RUNS + 3)))
+        );
+    }
+
+    #[test]
+    fn a_capped_log_stops_at_its_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("run.jsonl");
+        let mut w = Capped {
+            file: File::create(&path).expect("create"),
+            written: 0,
+            limit: 100,
+            full: false,
+        };
+        for _ in 0..10 {
+            w.write_all(&[b'x'; 30]).expect("write");
+        }
+        let text = fs::read_to_string(&path).expect("read");
+        assert!(text.len() < 300, "{}", text.len());
+        assert_eq!(text.matches("size limit").count(), 1);
     }
 
     #[test]

@@ -260,14 +260,17 @@ fn run(
             Client::with_api_base(&forge, token, base.trim())
         }
         Ok(base) => {
-            tracing::warn!("ignoring CANOPY_HOSTING_API_BASE={base}: not a loopback http URL");
+            tracing::warn!(
+                base = %canopy_core::cli::redact_url(&base),
+                "ignoring CANOPY_HOSTING_API_BASE: not a loopback http URL"
+            );
             Client::new(&forge, token)
         }
         Err(_) => Client::new(&forge, token),
     };
     while let Ok(job) = jobs.recv() {
         let label = job.label(forge.kind);
-        tracing::debug!(host = %forge.host, "{label}");
+        tracing::debug!(host = %forge.host, job = %label, "hosting job");
         let s = |e: canopy_hosting::Error| e.to_string();
         match job {
             HostJob::List(filter) => {
