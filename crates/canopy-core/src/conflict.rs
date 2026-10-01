@@ -174,16 +174,35 @@ pub struct ConflictFile {
     pub eol: String,
     /// Whether the file ends with a line terminator.
     pub trailing_newline: bool,
+    /// [`fingerprint`] of the exact text this was parsed from.
+    fingerprint: u64,
 }
 
 impl Default for ConflictFile {
+    /// The same as parsing an empty file.
     fn default() -> Self {
         Self {
             segments: Vec::new(),
             eol: "\n".to_owned(),
             trailing_newline: false,
+            fingerprint: fingerprint(b""),
         }
     }
+}
+
+/// A 64-bit FNV-1a hash of `bytes` followed by their length, used to notice that a file changed
+/// between reading and writing it. It is deterministic across runs, builds and platforms. It is
+/// not cryptographic: it catches an editor's save, not a collision crafted on purpose. Content,
+/// not the modification time, because mtimes are coarse or unreliable on network mounts and WSL
+/// and editors that save by renaming change them even when the text is identical.
+fn fingerprint(bytes: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    bytes
+        .iter()
+        .chain(&len.to_le_bytes())
+        .fold(OFFSET, |h, &b| (h ^ u64::from(b)).wrapping_mul(PRIME))
 }
 
 /// Whether `text` contains at least one complete conflict region (`<<<<<<<` … `=======` …
@@ -392,7 +411,15 @@ impl ConflictFile {
             segments,
             eol: if use_crlf { "\r\n" } else { "\n" }.to_owned(),
             trailing_newline,
+            fingerprint: fingerprint(text.as_bytes()),
         }
+    }
+
+    /// A hash of the exact text this was parsed from; equal texts give equal fingerprints. Pass
+    /// it to [`Repo::write_resolution`] so a file edited on disk since is not overwritten. It
+    /// describes the original text, so changing [`Self::segments`] does not change it.
+    pub fn fingerprint(&self) -> u64 {
+        self.fingerprint
     }
 
     /// Number of conflicted regions.
@@ -571,6 +598,14 @@ impl Repo {
     /// `git checkout --ours -- path && git add -- path`. When the chosen side deleted the file
     /// (for example [`Side::Theirs`] on [`ConflictKind::DeletedByThem`]) the path is removed with
     /// `git rm`. Any edits in the working copy are replaced.
+    ///
+    /// Unlike [`Self::write_resolution`] this takes no [`ConflictFile::fingerprint`], on purpose.
+    /// What it writes comes from the index, not from an earlier parse of the file, so a stale
+    /// parse cannot change the result: "use ours" means the same whatever the working copy holds
+    /// now, and the explicit choice wins over a hand edit, as it does with
+    /// `git checkout --ours`. It also has to work for binary files, symbolic links and deleted
+    /// files, which have no parse to fingerprint. Callers should confirm first, since edits in
+    /// the working copy cannot be recovered.
     pub fn resolve_with_side(&self, path: &str, side: Side) -> Result<()> {
         relative_path(path)?;
         let Some(kind) = self.conflict_kind(path)? else {
@@ -590,9 +625,19 @@ impl Repo {
     }
 
     /// Replaces the working copy of `path` with `content` (written atomically, keeping the file's
-    /// mode) and, when `mark_resolved` is set, stages it with `git add`. Refuses to mark a file
-    /// resolved while `content` still contains a conflict region; nothing is written then.
-    pub fn write_resolution(&self, path: &str, content: &str, mark_resolved: bool) -> Result<()> {
+    /// mode) and, when `mark_resolved` is set, stages it with `git add`.
+    ///
+    /// `expected` is the [`ConflictFile::fingerprint`] of the parse `content` was rendered from.
+    /// When the file on disk no longer matches it (edited in another program, or removed) this
+    /// fails with [`Error::ChangedOnDisk`]. Refuses to mark a file resolved while `content` still
+    /// contains a conflict region. When it refuses, nothing is written or staged.
+    pub fn write_resolution(
+        &self,
+        path: &str,
+        content: &str,
+        mark_resolved: bool,
+        expected: u64,
+    ) -> Result<()> {
         let rel = relative_path(path)?;
         if mark_resolved && has_conflict_markers(content) {
             return Err(unresolved_markers(path));
@@ -602,6 +647,17 @@ impl Repo {
             return Err(Error::invalid(format!(
                 "{path} is a symbolic link. Choose our or their version."
             )));
+        }
+        // The check and the write are not atomic: a save landing between them is still lost.
+        // That window is the microseconds between this read and the rename in `write_atomic`,
+        // instead of the file watcher's debounce, and editors honour no lock that could close it.
+        let on_disk = match std::fs::read(&full) {
+            Ok(bytes) => Some(fingerprint(&bytes)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.into()),
+        };
+        if on_disk != Some(expected) {
+            return Err(Error::ChangedOnDisk(path.to_owned()));
         }
         write_atomic(&full, content.as_bytes())?;
         if mark_resolved {
@@ -838,6 +894,34 @@ tail
         );
         assert_eq!(r.resolve(&Choice::Custom("\n".into())), v(&[""]));
         assert_eq!(r.resolve(&Choice::Custom("a\n\n".into())), v(&["a", ""]));
+    }
+
+    #[test]
+    fn fingerprint_follows_the_bytes_not_the_parse() {
+        assert_eq!(ConflictFile::default(), ConflictFile::parse(""));
+        // Different bytes give different fingerprints, even when (`same_parse`) both texts parse
+        // to the same segments, eol and trailing newline.
+        let pairs: &[(&str, &str, &str, bool)] = &[
+            ("mixed vs all CRLF", "a\r\nb\n", "a\r\nb\r\n", true),
+            ("same length", "x\nOURS\n", "x\nMINE\n", false),
+            ("newline vs empty", "\n", "", false),
+        ];
+        for &(name, a, b, same_parse) in pairs {
+            let (fa, fb) = (ConflictFile::parse(a), ConflictFile::parse(b));
+            if same_parse {
+                assert_eq!(
+                    (&fa.segments, &fa.eol, fa.trailing_newline),
+                    (&fb.segments, &fb.eol, fb.trailing_newline),
+                    "{name}"
+                );
+            }
+            assert_ne!(fa.fingerprint(), fb.fingerprint(), "{name}");
+        }
+        // Editing the parsed segments does not change what the file on disk looked like.
+        let mut f = ConflictFile::parse(TWO_WAY);
+        let before = f.fingerprint();
+        f.segments.clear();
+        assert_eq!(f.fingerprint(), before);
     }
 
     #[test]

@@ -245,13 +245,13 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                     let mark = widgets::primary_button(ui, "Save and mark resolved", all, 200.0)
                         .on_disabled_hover_text("Choose a resolution for every conflict first");
                     if mark.clicked() {
-                        actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: true }));
+                        actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: true, expected: file.fingerprint() }));
                     }
                     if ui.add_enabled(done > 0, egui::Button::new(format!("{}  Save", icon::FLOPPY_DISK)))
                         .on_hover_text("Write the chosen resolutions to the file; unresolved conflicts keep their markers")
                         .clicked()
                     {
-                        actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: false }));
+                        actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: false, expected: file.fingerprint() }));
                     }
                     if done > 0 && ui.button("Reset").on_hover_text("Clear every choice").clicked() {
                         r.choices.iter_mut().for_each(|c| *c = None);

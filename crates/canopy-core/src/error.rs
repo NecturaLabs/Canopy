@@ -40,6 +40,12 @@ pub enum Error {
     /// A precondition the caller should have checked did not hold.
     #[error("{0}")]
     Invalid(String),
+
+    /// A file changed on disk after the caller read it, so writing would discard those changes.
+    /// Holds the path relative to the working tree. Nothing was written; reload the file and
+    /// retry.
+    #[error("{0} changed on disk since it was loaded. Reload it before saving.")]
+    ChangedOnDisk(String),
 }
 
 impl Error {

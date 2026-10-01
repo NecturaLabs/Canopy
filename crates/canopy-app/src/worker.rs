@@ -115,10 +115,13 @@ pub enum Op {
         branch: String,
     },
     /// Write a conflicted file's resolution; `mark` also stages it (marks it resolved).
+    /// `expected` is the fingerprint of the parse `content` came from; the write is refused if
+    /// the file changed on disk since.
     Resolve {
         path: String,
         content: String,
         mark: bool,
+        expected: u64,
     },
     /// Resolve a conflicted file by taking one side whole (deleting the file if that side did).
     ResolveSide {
@@ -558,7 +561,8 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
             path,
             content,
             mark,
-        } => done(repo.write_resolution(&path, &content, mark)),
+            expected,
+        } => done(repo.write_resolution(&path, &content, mark, expected)),
         Op::ResolveSide { path, side } => done(repo.resolve_with_side(&path, side)),
     }
 }

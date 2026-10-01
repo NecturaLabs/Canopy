@@ -8,8 +8,8 @@ use std::process::Command;
 
 use canopy_core::ops::{HunkAction, MergeMode, ResetMode};
 use canopy_core::{
-    ChangeKind, Choice, ConflictKind, ConflictRegion, DiffSource, LineKind, PullStrategy, RefKind,
-    Repo, RepoState, Side, Whitespace,
+    ChangeKind, Choice, ConflictFile, ConflictKind, ConflictRegion, DiffSource, LineKind,
+    PullStrategy, RefKind, Repo, RepoState, Side, Whitespace,
 };
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -1044,21 +1044,27 @@ fn diff3_conflict_resolved_in_the_editor_completes_the_merge() {
     // Refused while markers remain: nothing is written or staged.
     let before = fs::read_to_string(p.join("a.txt")).expect("read");
     let partial = file.render(&[Some(Choice::Theirs), None]);
-    assert!(repo.write_resolution("a.txt", &partial, true).is_err());
+    assert!(
+        repo.write_resolution("a.txt", &partial, true, file.fingerprint())
+            .is_err()
+    );
     assert_eq!(fs::read_to_string(p.join("a.txt")).expect("read"), before);
     assert!(repo.mark_resolved("a.txt").is_err());
     assert_eq!(stages(p, "a.txt").len(), 3);
 
     // Saving a partial resolution keeps the conflict open.
-    repo.write_resolution("a.txt", &partial, false)
+    repo.write_resolution("a.txt", &partial, false, file.fingerprint())
         .expect("save partial");
     assert_eq!(fs::read_to_string(p.join("a.txt")).expect("read"), partial);
     assert_eq!(stages(p, "a.txt").len(), 3);
 
-    let done = file.render(&[Some(Choice::Theirs), Some(Choice::Base)]);
+    // The save changed the file, so the rest is resolved from a fresh parse, as the app does.
+    let file = repo.conflict_file("a.txt").expect("reparse");
+    assert_eq!(file.conflicts(), 1);
+    let done = file.render(&[Some(Choice::Base)]);
     let expected = "one\nTHEIRS 2\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
     assert_eq!(done, expected);
-    repo.write_resolution("a.txt", &done, true)
+    repo.write_resolution("a.txt", &done, true, file.fingerprint())
         .expect("resolve");
     let st = stages(p, "a.txt");
     assert_eq!(st.len(), 1);
@@ -1086,6 +1092,105 @@ fn mark_resolved_stages_a_hand_edited_file() {
     assert_eq!(st.len(), 1);
     assert_eq!(st[0].2, 0);
     assert_eq!(git(p, &["show", ":a.txt"]), "by hand\n");
+}
+
+#[test]
+fn write_resolution_with_the_parsed_fingerprint_resolves() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    both_modified(p);
+    assert!(repo.merge("other", MergeMode::Default).is_err());
+    let file = repo.conflict_file("a.txt").expect("parse");
+    let done = file.render(&[Some(Choice::Ours), Some(Choice::Theirs)]);
+    repo.write_resolution("a.txt", &done, true, file.fingerprint())
+        .expect("resolve");
+    assert_eq!(fs::read_to_string(p.join("a.txt")).expect("read"), done);
+    let st = stages(p, "a.txt");
+    assert_eq!(st.len(), 1);
+    assert_eq!(st[0].2, 0);
+    assert_eq!(git(p, &["show", ":a.txt"]), done);
+}
+
+/// Regression: the user hand-fixes the file in an editor and saves, then clicks "Save and mark
+/// resolved" before Canopy re-reads it. The stale rendering must not replace the hand edit.
+#[test]
+fn write_resolution_refuses_a_file_changed_since_it_was_parsed() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    both_modified(p);
+    assert!(repo.merge("other", MergeMode::Default).is_err());
+    let original = fs::read_to_string(p.join("a.txt")).expect("read");
+    let file = repo.conflict_file("a.txt").expect("parse");
+    let stale = file.render(&[Some(Choice::Ours), Some(Choice::Ours)]);
+    let conflicted = stages(p, "a.txt");
+    assert_eq!(conflicted.len(), 3);
+
+    let edits = [
+        ("hand fix", "one\nby hand\nten\n".to_owned()),
+        ("same length", original.replacen("OURS 2", "MINE 2", 1)),
+        ("line endings", original.replace('\n', "\r\n")),
+    ];
+    for (name, edit) in &edits {
+        fs::write(p.join("a.txt"), edit).expect("hand edit");
+        for mark in [true, false] {
+            let err = repo
+                .write_resolution("a.txt", &stale, mark, file.fingerprint())
+                .expect_err(name);
+            assert!(
+                matches!(&err, canopy_core::Error::ChangedOnDisk(path) if path == "a.txt"),
+                "{name} mark={mark}: {err:?}"
+            );
+            assert_eq!(
+                fs::read_to_string(p.join("a.txt")).expect("read"),
+                *edit,
+                "{name} mark={mark}"
+            );
+            assert_eq!(stages(p, "a.txt"), conflicted, "{name} mark={mark}");
+        }
+    }
+
+    // A file removed since it was parsed is not brought back.
+    fs::remove_file(p.join("a.txt")).expect("rm");
+    let err = repo
+        .write_resolution("a.txt", &stale, true, file.fingerprint())
+        .expect_err("removed");
+    assert!(
+        matches!(&err, canopy_core::Error::ChangedOnDisk(_)),
+        "{err:?}"
+    );
+    assert!(!p.join("a.txt").exists());
+    assert_eq!(stages(p, "a.txt"), conflicted);
+
+    // Reloading gives the fingerprint of what is on disk now, and saving works again.
+    fs::write(p.join("a.txt"), &original).expect("restore");
+    let reloaded = repo.conflict_file("a.txt").expect("reparse");
+    repo.write_resolution("a.txt", &stale, true, reloaded.fingerprint())
+        .expect("save after reload");
+    assert_eq!(git(p, &["show", ":a.txt"]), stale);
+}
+
+#[test]
+fn conflict_fingerprint_is_stable_across_parses() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    both_modified(p);
+    assert!(repo.merge("other", MergeMode::Default).is_err());
+    let first = repo.conflict_file("a.txt").expect("parse");
+    let second = repo.conflict_file("a.txt").expect("parse again");
+    assert_eq!(first.fingerprint(), second.fingerprint());
+    let text = fs::read_to_string(p.join("a.txt")).expect("read");
+    assert_eq!(
+        ConflictFile::parse(&text).fingerprint(),
+        first.fingerprint()
+    );
+    // An editor saving identical bytes (a new file and mtime) is not a change.
+    fs::remove_file(p.join("a.txt")).expect("rm");
+    fs::write(p.join("a.txt"), &text).expect("rewrite");
+    let resaved = repo.conflict_file("a.txt").expect("parse resaved");
+    assert_eq!(resaved.fingerprint(), first.fingerprint());
+    let done = first.render(&[Some(Choice::Theirs), Some(Choice::Theirs)]);
+    repo.write_resolution("a.txt", &done, false, first.fingerprint())
+        .expect("same bytes still match");
 }
 
 #[test]
@@ -1264,7 +1369,8 @@ fn write_resolution_keeps_the_executable_bit() {
     let mut perms = fs::metadata(&file).expect("meta").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&file, perms).expect("chmod");
-    repo.write_resolution("a.txt", "new\n", false)
+    let parsed = repo.conflict_file("a.txt").expect("parse");
+    repo.write_resolution("a.txt", "new\n", false, parsed.fingerprint())
         .expect("write");
     assert_eq!(fs::read_to_string(&file).expect("read"), "new\n");
     let mode = fs::metadata(&file).expect("meta").permissions().mode();
