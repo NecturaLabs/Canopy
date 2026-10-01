@@ -14,13 +14,15 @@ and CI is green on the branch. Parallel sessions follow `docs/specs/parallel-ses
 
 Who works on what, on which branch. Remove a row when its branch is merged. Merged so far:
 the working branch, `fix/installer-review` (every security-review finding; independent review and
-a Windows PowerShell 5.1 run still owed), `perf/views` (frame cost 119–209 ms → 0.3–0.9 ms on huge data) and
-`canopy-3/core-workflows` (git-flow, merged detection, LFS status, submodules in core).
+a Windows PowerShell 5.1 run still owed), `perf/views` (frame cost 119–209 ms → 0.3–0.9 ms on huge data) 
+`canopy-3/core-workflows` (git-flow, merged detection, LFS status, submodules in core) and
+`canopy-2/core-safety` (safe branch delete, publish, mode and type changes, collapsed untracked
+folders, nested repositories, safe paths, ignore rules in core; the app still calls compatibility
+wrappers: see `docs/specs/HANDOFF-canopy-2-core-safety.md`).
 
 | Entry | Branch | Who | State |
 | --- | --- | --- | --- |
 | Partial clones in core (missing objects fetched through git) | `feat/partial-clones` | canopy-1 agent | Fixing review findings (snapshot recovery after a soft reset, coalesced fetch jobs, retry in the details pane, docs, privacy policy); then merge |
-| Core safety: `branch -d` by default, publish any branch, mode and type changes, collapsed untracked folders, nested repositories in Stage all, safe paths, ignore rules | `canopy-2/core-safety` | canopy-2 | In progress (core only; canopy-1 wires the UI) |
 
 ## Now
 
@@ -51,7 +53,7 @@ In order. The UI entries come before accessibility, and accessibility before the
   AVH config) without the `git flow` binary, branch folders by prefix in the sidebar, publish with
   upstream, merged and squash-merged indicators, delete merged branches (`-d`, force only after
   confirmation). Accept: refs, tags and merges match the spec's command table.
-- [ ] **.gitignore**: ignore a file, extension, folder or pattern from the changes list, local-only
+- [ ] **.gitignore** (core rules, why-ignored, stop tracking and preview merged from canopy-2): ignore a file, extension, folder or pattern from the changes list, local-only
   exclude, stop tracking and ignore, show ignored files, "why ignored", templates on init.
   Accept: each action's result matches `git check-ignore -v`.
 - [ ] **Submodules** (core status and operations merged from canopy-3): sidebar list with state, open in a tab, init, update, sync, add, remove,
