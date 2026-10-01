@@ -13,6 +13,7 @@ pub mod cli;
 pub mod diff;
 mod error;
 pub mod graph;
+mod lines;
 pub mod model;
 pub mod ops;
 pub mod repo;
