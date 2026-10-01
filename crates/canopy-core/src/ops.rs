@@ -190,12 +190,13 @@ impl Repo {
         self.git().head().is_err()
     }
 
-    /// Stages files (additions, modifications and deletions).
+    /// Stages files (additions, modifications and deletions). Paths are literal, never globs.
     pub fn stage(&self, paths: &[String]) -> Result<()> {
         if paths.is_empty() {
             return Ok(());
         }
-        self.git_cmd(&with_paths(&["add", "-A"], paths)).map(drop)
+        self.git_cmd(&with_paths(&["--literal-pathspecs", "add", "-A"], paths))
+            .map(drop)
     }
 
     /// Stages every change, including untracked files.
@@ -203,17 +204,23 @@ impl Repo {
         self.git_cmd(&["add", "-A"]).map(drop)
     }
 
-    /// Removes files from the index, keeping the working tree.
+    /// Removes files from the index, keeping the working tree. Paths are literal, never globs.
     pub fn unstage(&self, paths: &[String]) -> Result<()> {
         if paths.is_empty() {
             return Ok(());
         }
         if self.is_unborn() {
-            self.git_cmd(&with_paths(&["rm", "--cached", "-r", "-q"], paths))
-                .map(drop)
+            self.git_cmd(&with_paths(
+                &["--literal-pathspecs", "rm", "--cached", "-r", "-q"],
+                paths,
+            ))
+            .map(drop)
         } else {
-            self.git_cmd(&with_paths(&["reset", "-q", "HEAD"], paths))
-                .map(drop)
+            self.git_cmd(&with_paths(
+                &["--literal-pathspecs", "reset", "-q", "HEAD"],
+                paths,
+            ))
+            .map(drop)
         }
     }
 
@@ -227,17 +234,24 @@ impl Repo {
     }
 
     /// Throws away working-tree changes to `files`: tracked files go back to their staged (or
-    /// committed) content, untracked files are deleted.
+    /// committed) content, untracked files are deleted. Paths are literal, never globs, so a file
+    /// named `*` or `[ab].txt` discards only itself.
     pub fn discard(&self, files: &[FileEntry]) -> Result<()> {
         let (untracked, tracked): (Vec<_>, Vec<_>) =
             files.iter().partition(|f| f.kind == ChangeKind::Untracked);
         let tracked: Vec<String> = tracked.into_iter().map(|f| f.path.clone()).collect();
         let untracked: Vec<String> = untracked.into_iter().map(|f| f.path.clone()).collect();
         if !tracked.is_empty() {
-            self.git_cmd(&with_paths(&["checkout", "-q"], &tracked))?;
+            self.git_cmd(&with_paths(
+                &["--literal-pathspecs", "checkout", "-q"],
+                &tracked,
+            ))?;
         }
         if !untracked.is_empty() {
-            self.git_cmd(&with_paths(&["clean", "-f", "-q"], &untracked))?;
+            self.git_cmd(&with_paths(
+                &["--literal-pathspecs", "clean", "-f", "-q"],
+                &untracked,
+            ))?;
         }
         Ok(())
     }
