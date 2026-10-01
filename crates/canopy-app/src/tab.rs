@@ -10,9 +10,9 @@ use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, RepoSnaps
 use canopy_hosting::{MergeMethod, RequestDetails, RequestSummary, StateFilter};
 
 use crate::highlight::Highlights;
-use crate::hosting::{HostEvent, HostJob, HostWorker, TokenSource};
+use crate::hosting::{HostAction, HostEvent, HostJob, HostWorker, TokenSource};
 use crate::settings::DiffPrefs;
-use crate::worker::{DiffKey, Event, Job, Op, Worker};
+use crate::worker::{DiffKey, Event, Job, Op, OpKind, Worker};
 
 /// The main views of a repository.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -820,6 +820,7 @@ impl RepoTab {
                 Event::Progress(line) => self.progress = Some(line),
                 Event::OpFinished {
                     label,
+                    kind,
                     announce,
                     result,
                 } => {
@@ -832,19 +833,19 @@ impl RepoTab {
                     }
                     match result {
                         Ok(out) => {
-                            if label.starts_with("Commit") || label.starts_with("Amend") {
+                            if kind == OpKind::Commit {
                                 self.commit_summary.clear();
                                 self.commit_body.clear();
                                 self.amend = false;
                                 self.selected_commit = None;
                             }
-                            if let Some(target) = label.strip_prefix("Squashing ") {
+                            if let OpKind::Squash(target) = &kind {
                                 // Nothing is committed yet: prefill the message and show the
                                 // staged result for review.
-                                self.worker.send(Job::SquashMessage(target.to_owned()));
+                                self.worker.send(Job::SquashMessage(target.clone()));
                                 self.view = View::Changes;
                             }
-                            if label.starts_with("Fetch") {
+                            if kind == OpKind::Fetch {
                                 self.last_fetch = Instant::now();
                             }
                             if announce {
@@ -938,13 +939,14 @@ impl RepoTab {
                 }
                 HostEvent::Done {
                     label,
+                    action,
                     number,
                     result,
                 } => {
                     self.requests.busy = None;
                     match result {
                         Ok(()) => {
-                            if label.starts_with("Commenting") {
+                            if action == HostAction::Comment {
                                 self.requests.comment.clear();
                             }
                             notices.push(Notice {
@@ -952,7 +954,7 @@ impl RepoTab {
                                 title: format!("{label} — done"),
                                 body: String::new(),
                             });
-                            if label.starts_with("Merging") {
+                            if action == HostAction::Merge {
                                 // The target branch moved on the remote.
                                 self.op(Op::Fetch {
                                     prune: false,

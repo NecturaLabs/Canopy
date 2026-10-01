@@ -138,6 +138,16 @@ pub enum Op {
 }
 
 impl Op {
+    /// What finishing this operation means for the tab, whatever its label says.
+    pub fn kind(&self) -> OpKind {
+        match self {
+            Op::Commit { .. } => OpKind::Commit,
+            Op::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
+            Op::Fetch { .. } => OpKind::Fetch,
+            _ => OpKind::Other,
+        }
+    }
+
     /// Present-tense label shown while the operation runs.
     pub fn label(&self) -> String {
         match self {
@@ -289,10 +299,23 @@ pub enum Event {
     Progress(String),
     OpFinished {
         label: String,
+        kind: OpKind,
         announce: bool,
         result: Result<String, String>,
     },
     Failed(String),
+}
+
+/// What a finished operation means for the tab, independent of its label's wording.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpKind {
+    /// A commit or an amend: clear the composer.
+    Commit,
+    /// A squash merge staged onto this branch: prefill the message and review it.
+    Squash(String),
+    /// A fetch: restart the auto-fetch clock.
+    Fetch,
+    Other,
 }
 
 /// The UI's handle on a repository thread.
@@ -458,6 +481,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 }
                 Job::Op(op) => {
                     let label = op.label();
+                    let kind = op.kind();
                     let announce = op.announce();
                     tracing::info!(operation = %label, "operation started");
                     emit(Event::OpStarted(label.clone()));
@@ -472,6 +496,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     }
                     emit(Event::OpFinished {
                         label,
+                        kind,
                         announce,
                         result,
                     });
@@ -657,4 +682,33 @@ fn watch(path: &Path, jobs: Sender<Job>) -> Option<notify::RecommendedWatcher> {
             }
         });
     Some(watcher)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Op, OpKind};
+
+    #[test]
+    fn finished_operations_are_typed_not_matched_by_label() {
+        let commit = |amend| Op::Commit {
+            message: "feat: x".into(),
+            amend,
+            signoff: false,
+        };
+        assert_eq!(commit(false).kind(), OpKind::Commit);
+        assert_eq!(commit(true).kind(), OpKind::Commit);
+        assert_eq!(
+            Op::Merge("topic".into(), canopy_core::MergeMode::Squash).kind(),
+            OpKind::Squash("topic".into())
+        );
+        assert_eq!(
+            Op::Merge("topic".into(), canopy_core::MergeMode::Default).kind(),
+            OpKind::Other
+        );
+        let fetch = Op::Fetch {
+            prune: true,
+            quiet: false,
+        };
+        assert_eq!(fetch.kind(), OpKind::Fetch);
+    }
 }

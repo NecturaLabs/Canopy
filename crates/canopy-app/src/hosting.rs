@@ -247,9 +247,19 @@ pub enum HostEvent {
     /// An action finished; the list and the request should be reloaded.
     Done {
         label: String,
+        action: HostAction,
         number: Option<u64>,
         result: Result<(), String>,
     },
+}
+
+/// Which pull or merge request action finished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostAction {
+    Merge,
+    SetOpen,
+    Comment,
+    Approve,
 }
 
 /// The UI's handle on a hosting thread for one forge.
@@ -336,21 +346,25 @@ fn run(
             HostJob::Create(req) => emit(HostEvent::Created(client.create(&req).map_err(s))),
             HostJob::Merge(n, method, head) => emit(HostEvent::Done {
                 label,
+                action: HostAction::Merge,
                 number: Some(n),
                 result: client.merge(n, method, head.as_deref()).map_err(s),
             }),
             HostJob::SetOpen(n, open) => emit(HostEvent::Done {
                 label,
+                action: HostAction::SetOpen,
                 number: Some(n),
                 result: client.set_open(n, open).map_err(s),
             }),
             HostJob::Comment(n, body) => emit(HostEvent::Done {
                 label,
+                action: HostAction::Comment,
                 number: Some(n),
                 result: client.comment(n, &body).map_err(s),
             }),
             HostJob::Approve(n) => emit(HostEvent::Done {
                 label,
+                action: HostAction::Approve,
                 number: Some(n),
                 result: client.approve(n).map_err(s),
             }),
