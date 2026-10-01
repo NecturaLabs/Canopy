@@ -43,6 +43,89 @@ pub struct LineSelection {
     pub anchor: usize,
 }
 
+/// The conflict resolver's state for one conflicted file.
+#[derive(Debug, Clone)]
+pub struct Resolver {
+    pub path: String,
+    pub kind: Option<canopy_core::ConflictKind>,
+    /// The parsed working-tree file, or why it cannot be resolved line by line.
+    pub file: Option<Result<canopy_core::ConflictFile, String>>,
+    /// The choice for each conflict, in order.
+    pub choices: Vec<Option<canopy_core::Choice>>,
+    /// The conflict keyboard actions apply to.
+    pub focus: usize,
+    /// Scroll the focused conflict into view next frame.
+    pub reveal: bool,
+    /// The conflict being edited by hand, with its text.
+    pub editing: Option<(usize, String)>,
+    /// Long unchanged stretches the user expanded (segment indices).
+    pub expanded: HashSet<usize>,
+    /// Show the common ancestor of each conflict (diff3 files).
+    pub show_base: bool,
+}
+
+impl Resolver {
+    fn new(path: String) -> Self {
+        Self {
+            path,
+            kind: None,
+            file: None,
+            choices: Vec::new(),
+            focus: 0,
+            reveal: false,
+            editing: None,
+            expanded: HashSet::new(),
+            show_base: false,
+        }
+    }
+
+    /// Conflicts in the file (0 while loading or for whole-file conflicts).
+    pub fn conflicts(&self) -> usize {
+        match &self.file {
+            Some(Ok(f)) => f.conflicts(),
+            _ => 0,
+        }
+    }
+
+    /// Conflicts with a choice.
+    pub fn resolved(&self) -> usize {
+        self.choices.iter().filter(|c| c.is_some()).count()
+    }
+
+    /// Moves the focus to the next (`delta` 1) or previous (-1) conflict, preferring unresolved
+    /// ones.
+    pub fn move_focus(&mut self, delta: isize) {
+        let n = self.conflicts();
+        if n == 0 {
+            return;
+        }
+        let start = self.focus.min(n - 1);
+        let step = |i: usize| (i as isize + delta).rem_euclid(n as isize) as usize;
+        let mut i = step(start);
+        for _ in 0..n {
+            if self.choices.get(i).is_some_and(Option::is_none) {
+                break;
+            }
+            i = step(i);
+        }
+        if self.choices.iter().all(Option::is_some) {
+            i = step(start);
+        }
+        self.focus = i;
+        self.reveal = true;
+    }
+
+    /// Sets the focused conflict's choice and moves on to the next unresolved one.
+    pub fn choose(&mut self, choice: canopy_core::Choice) {
+        if let Some(slot) = self.choices.get_mut(self.focus) {
+            *slot = Some(choice);
+            if self.choices.iter().any(Option::is_none) {
+                self.move_focus(1);
+            }
+        }
+    }
+}
+
 /// Outcome of a finished operation, surfaced as a toast by the app.
 #[derive(Debug)]
 pub struct Notice {
@@ -109,6 +192,8 @@ pub struct RepoTab {
     pub highlights: Option<Arc<Highlights>>,
     /// Lines picked in the diff for line-level staging.
     pub line_sel: Option<LineSelection>,
+    /// The conflict resolver, while a conflicted file is selected.
+    pub resolver: Option<Resolver>,
     /// Side-by-side diff and syntax highlighting (from the settings).
     pub split_diff: bool,
     pub highlight_diff: bool,
@@ -169,6 +254,7 @@ impl RepoTab {
             diff_prefs,
             highlights: None,
             line_sel: None,
+            resolver: None,
             split_diff: false,
             highlight_diff: true,
             filter: String::new(),
@@ -352,6 +438,18 @@ impl RepoTab {
         if self.file.as_ref() != Some(&sel) {
             self.line_sel = None;
         }
+        if sel.conflicted {
+            if self
+                .resolver
+                .as_ref()
+                .is_none_or(|r| r.path != sel.entry.path)
+            {
+                self.resolver = Some(Resolver::new(sel.entry.path.clone()));
+            }
+            self.worker.send(Job::Conflict(sel.entry.path.clone()));
+        } else {
+            self.resolver = None;
+        }
         self.file = Some(sel);
         self.diff_error = None;
         self.pending_diff = Some(key.clone());
@@ -361,6 +459,9 @@ impl RepoTab {
     /// Reloads the open diff, keeping the old one on screen until the new one arrives.
     pub fn reload_diff(&mut self) {
         if let Some(sel) = self.file.clone() {
+            if sel.conflicted {
+                self.worker.send(Job::Conflict(sel.entry.path.clone()));
+            }
             let key = self.diff_key(&sel);
             self.diff_error = None;
             self.pending_diff = Some(key.clone());
@@ -583,6 +684,20 @@ impl RepoTab {
                         self.highlights = Some(h);
                     }
                 }
+                Event::Conflict { path, kind, file } => {
+                    if let Some(r) = self.resolver.as_mut().filter(|r| r.path == path) {
+                        let n = file
+                            .as_ref()
+                            .map_or(0, canopy_core::ConflictFile::conflicts);
+                        if r.choices.len() != n {
+                            r.choices = vec![None; n];
+                            r.focus = 0;
+                            r.editing = None;
+                        }
+                        r.kind = kind;
+                        r.file = Some(file);
+                    }
+                }
                 Event::HeadMessage(m) => {
                     let mut parts = m.splitn(2, '\n');
                     self.commit_summary = parts.next().unwrap_or("").trim().to_owned();
@@ -607,6 +722,12 @@ impl RepoTab {
                                 self.commit_body.clear();
                                 self.amend = false;
                                 self.selected_commit = None;
+                            }
+                            if let Some(target) = label.strip_prefix("Squashing ") {
+                                // Nothing is committed yet: prefill the message and show the
+                                // staged result for review.
+                                self.worker.send(Job::SquashMessage(target.to_owned()));
+                                self.view = View::Changes;
                             }
                             if label.starts_with("Fetch") {
                                 self.last_fetch = Instant::now();

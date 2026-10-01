@@ -532,6 +532,22 @@ impl CanopyApp {
                     actions.push(Action::Op(Op::Stage(vec![path])));
                 }
             }
+            C::NextConflict | C::PrevConflict | C::TakeOurs | C::TakeTheirs | C::TakeBoth => {
+                if let Some(r) = self
+                    .tabs
+                    .get_mut(self.active)
+                    .filter(|t| t.view == View::Changes)
+                    .and_then(|t| t.resolver.as_mut())
+                {
+                    match command {
+                        C::NextConflict => r.move_focus(1),
+                        C::PrevConflict => r.move_focus(-1),
+                        C::TakeOurs => r.choose(canopy_core::Choice::Ours),
+                        C::TakeTheirs => r.choose(canopy_core::Choice::Theirs),
+                        _ => r.choose(canopy_core::Choice::OursThenTheirs),
+                    }
+                }
+            }
             C::StageAll => {
                 if view == Some(View::Changes) {
                     actions.push(Action::Op(Op::StageAll));

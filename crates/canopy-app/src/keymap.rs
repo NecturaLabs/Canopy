@@ -50,6 +50,11 @@ pub enum Command {
     CopySha,
     OpenOnForge,
     NextTheme,
+    NextConflict,
+    PrevConflict,
+    TakeOurs,
+    TakeTheirs,
+    TakeBoth,
 }
 
 /// A key with modifiers. `ctrl` is Ctrl on Linux and Windows and Cmd on macOS.
@@ -125,15 +130,17 @@ pub enum Section {
     Navigate,
     History,
     Changes,
+    Resolve,
     Remote,
 }
 
 impl Section {
-    pub const ALL: [Section; 5] = [
+    pub const ALL: [Section; 6] = [
         Section::Anywhere,
         Section::Navigate,
         Section::History,
         Section::Changes,
+        Section::Resolve,
         Section::Remote,
     ];
 
@@ -143,6 +150,7 @@ impl Section {
             Section::Navigate => "Navigate (no text field focused)",
             Section::History => "History",
             Section::Changes => "Changes",
+            Section::Resolve => "Resolving a conflicted file",
             Section::Remote => "Branches and remotes",
         }
     }
@@ -349,6 +357,32 @@ pub const BINDINGS: &[Binding] = &[
         &[bare(Key::D)],
         "Discard selected file (asks first)",
     ),
+    // Conflict resolver.
+    b(
+        S::Resolve,
+        C::NextConflict,
+        &[bare(Key::CloseBracket)],
+        "Next conflict",
+    ),
+    b(
+        S::Resolve,
+        C::PrevConflict,
+        &[bare(Key::OpenBracket)],
+        "Previous conflict",
+    ),
+    b(S::Resolve, C::TakeOurs, &[bare(Key::H)], "Take ours (left)"),
+    b(
+        S::Resolve,
+        C::TakeTheirs,
+        &[bare(Key::L)],
+        "Take theirs (right)",
+    ),
+    b(
+        S::Resolve,
+        C::TakeBoth,
+        &[shifted(Key::B)],
+        "Take both, ours first",
+    ),
     // Remote and branches.
     b(S::Remote, C::Fetch, &[bare(Key::F)], "Fetch"),
     b(S::Remote, C::Pull, &[bare(Key::P)], "Pull"),
@@ -386,6 +420,8 @@ fn key_name(key: Key) -> &'static str {
         Key::ArrowDown => "↓",
         Key::ArrowUp => "↑",
         Key::Slash => "/",
+        Key::OpenBracket => "[",
+        Key::CloseBracket => "]",
         Key::Questionmark => "?",
         Key::Comma => ",",
         Key::Equals => "=",

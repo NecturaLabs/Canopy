@@ -1,6 +1,8 @@
 # Builds Canopy for every platform from a release tag, publishes the GitHub release and points
-# the update feed at it. It runs when the "Create release" workflow (create-release.yml) has
-# tagged a release, or when someone pushes a `v*` tag by hand; it never decides versions.
+# the update feed at it. The "Create release" workflow (create-release.yml) calls it after
+# tagging a release. Run it by hand (Actions → Release → Run workflow) with an existing tag to
+# rebuild or republish that release. It never decides versions, and a pushed tag alone does not
+# start it, so a release can never run twice.
 #
 # `publish-update` copies the builds to NecturaLabs/app-updates and commits the update manifest
 # (`canopy/latest.json`, or `beta.json` for a pre-release), so running copies of Canopy offer the
@@ -14,8 +16,12 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: An existing release tag, e.g. v0.2.0
+        type: string
+        required: true
   workflow_call:
     inputs:
       tag:
@@ -28,7 +34,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  TAG: ${{ inputs.tag || github.ref_name }}
+  TAG: ${{ inputs.tag }}
 
 jobs:
   build:
@@ -72,7 +78,7 @@ jobs:
             build-essential ca-certificates curl git pkg-config
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.tag }}
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
@@ -152,7 +158,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.tag }}
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
@@ -164,10 +170,10 @@ jobs:
         run: python3 tools/release.py notes "${TAG#v}" > notes.md
       - uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          name: Canopy ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ inputs.tag }}
+          name: Canopy ${{ inputs.tag }}
           body_path: notes.md
-          prerelease: ${{ contains(inputs.tag || github.ref_name, '-') }}
+          prerelease: ${{ contains(inputs.tag, '-') }}
           files: dist/*
           fail_on_unmatched_files: true
 
@@ -191,7 +197,7 @@ jobs:
       - uses: actions/checkout@v7
         if: steps.token.outputs.present == 'true'
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.tag }}
           persist-credentials: false
       - uses: actions/download-artifact@v8
         if: steps.token.outputs.present == 'true'
@@ -219,7 +225,7 @@ jobs:
           token: ${{ secrets.APP_UPDATES_TOKEN }}
           tag_name: ${{ steps.feed.outputs.tag }}
           target_commitish: main
-          name: Canopy ${{ inputs.tag || github.ref_name }}
+          name: Canopy ${{ inputs.tag }}
           body_path: notes.md
           prerelease: ${{ steps.feed.outputs.prerelease == 'true' }}
           files: dist/*
@@ -236,10 +242,12 @@ jobs:
           [[ "$PRERELEASE" == true ]] && channel=beta
           work="$RUNNER_TEMP/app-updates"
           rm -rf "$work"
-          # The token travels in a header for these commands only: never in a URL, the process
-          # list or the clone's configuration.
+          # The token travels in an HTTP header set through the environment: never in a URL, the
+          # process list, the log or the clone's configuration.
           auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$APP_UPDATES_TOKEN" | base64 -w0)"
-          git -c "http.extraheader=$auth" clone --depth 1 https://github.com/NecturaLabs/app-updates.git "$work"
+          echo "::add-mask::${auth#AUTHORIZATION: basic }"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="$auth"
+          git clone --depth 1 https://github.com/NecturaLabs/app-updates.git "$work"
           mkdir -p "$work/canopy"
           manifest="$work/canopy/$channel.json"
           # Never move a channel backwards (a hotfix tagged after a newer release).
@@ -263,7 +271,7 @@ jobs:
             exit 0
           fi
           git -C "$work" commit -m "canopy: publish $VERSION to the $channel channel"
-          git -C "$work" -c "http.extraheader=$auth" push origin main
+          git -C "$work" push origin main
       - name: Clean up
         if: always()
         run: rm -rf "$RUNNER_TEMP/app-updates"

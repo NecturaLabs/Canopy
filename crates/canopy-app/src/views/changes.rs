@@ -9,7 +9,7 @@ use crate::app::Action;
 use crate::tab::{FileSelection, RepoTab};
 use crate::ui::theme::{self, Palette, palette};
 use crate::ui::{art, widgets};
-use crate::views::{commit_detail, diff};
+use crate::views::{commit_detail, diff, resolve};
 use crate::worker::Op;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -91,7 +91,13 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         });
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(p.bg))
-        .show(ui, |ui| diff::show(ui, tab, actions));
+        .show(ui, |ui| {
+            if tab.resolver.is_some() && tab.file.as_ref().is_some_and(|f| f.conflicted) {
+                resolve::show(ui, tab, actions);
+            } else {
+                diff::show(ui, tab, actions);
+            }
+        });
 }
 
 fn list(

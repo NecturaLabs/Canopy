@@ -114,6 +114,17 @@ pub enum Op {
         remote: String,
         branch: String,
     },
+    /// Write a conflicted file's resolution; `mark` also stages it (marks it resolved).
+    Resolve {
+        path: String,
+        content: String,
+        mark: bool,
+    },
+    /// Resolve a conflicted file by taking one side whole (deleting the file if that side did).
+    ResolveSide {
+        path: String,
+        side: canopy_core::Side,
+    },
     /// Fetch a pull/merge request's head into a local branch and check it out.
     CheckoutRequest {
         remote: String,
@@ -187,6 +198,17 @@ impl Op {
             Op::RemoveRemote(r) => format!("Removing remote {r}"),
             Op::DeleteRemoteBranch { remote, branch } => format!("Deleting {remote}/{branch}"),
             Op::CheckoutRequest { branch, .. } => format!("Checking out {branch}"),
+            Op::Resolve {
+                path, mark: true, ..
+            } => format!("Resolving {path}"),
+            Op::Resolve { path, .. } => format!("Saving {path}"),
+            Op::ResolveSide { path, side } => format!(
+                "Taking {} for {path}",
+                match side {
+                    canopy_core::Side::Ours => "ours",
+                    canopy_core::Side::Theirs => "theirs",
+                }
+            ),
         }
     }
 
@@ -200,6 +222,8 @@ impl Op {
                 | Op::UnstageAll
                 | Op::Hunk { .. }
                 | Op::Lines { .. }
+                | Op::Resolve { .. }
+                | Op::ResolveSide { .. }
                 | Op::Fetch { quiet: true, .. }
         )
     }
@@ -218,6 +242,11 @@ pub enum Job {
     Diff(DiffKey),
     /// `HEAD`'s message (to prefill an amend).
     HeadMessage,
+    /// A commit message for the squash merge of this branch, with git's summary of the squashed
+    /// commits (`.git/SQUASH_MSG`) as the body.
+    SquashMessage(String),
+    /// A conflicted file, parsed for the resolver.
+    Conflict(String),
     /// A mutation.
     Op(Op),
 }
@@ -245,6 +274,11 @@ pub enum Event {
     /// Syntax highlighting for the diff sent just before with the same key.
     Highlight(DiffKey, Arc<crate::highlight::Highlights>),
     HeadMessage(String),
+    Conflict {
+        path: String,
+        kind: Option<canopy_core::ConflictKind>,
+        file: Result<canopy_core::ConflictFile, String>,
+    },
     OpStarted(String),
     Progress(String),
     OpFinished {
@@ -351,6 +385,22 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     if let Ok(m) = repo.head_message() {
                         emit(Event::HeadMessage(m));
                     }
+                }
+                Job::SquashMessage(target) => {
+                    let path = repo.git().path().join("SQUASH_MSG");
+                    let body = std::fs::read_to_string(path).unwrap_or_default();
+                    // Drop git's comment lines; keep the list of squashed commits.
+                    let body: Vec<&str> = body.lines().filter(|l| !l.starts_with('#')).collect();
+                    let body = body.join("\n");
+                    emit(Event::HeadMessage(format!(
+                        "Merge {target} (squashed)\n\n{}",
+                        body.trim()
+                    )));
+                }
+                Job::Conflict(path) => {
+                    let kind = repo.conflict_kind(&path).ok().flatten();
+                    let file = repo.conflict_file(&path).map_err(|e| e.to_string());
+                    emit(Event::Conflict { path, kind, file });
                 }
                 Job::Op(op) => {
                     let label = op.label();
@@ -459,6 +509,12 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
             remote_ref,
             branch,
         } => repo.checkout_request(&remote, &remote_ref, &branch, progress),
+        Op::Resolve {
+            path,
+            content,
+            mark,
+        } => done(repo.write_resolution(&path, &content, mark)),
+        Op::ResolveSide { path, side } => done(repo.resolve_with_side(&path, side)),
     }
 }
 
