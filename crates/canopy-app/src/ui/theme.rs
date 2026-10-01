@@ -27,6 +27,7 @@ pub struct Palette {
     pub border: Color32,
     /// Outlines that identify a control (text fields, checkboxes, switch tracks): at least 3:1
     /// against every surface (WCAG 1.4.11).
+    #[cfg_attr(not(test), expect(dead_code, reason = "adopted by the controls pass"))]
     pub control_border: Color32,
     pub text: Color32,
     pub text_dim: Color32,
@@ -449,6 +450,7 @@ impl Palette {
 
     /// Fill of the selected row in lists, the graph and the sidebar. Every text colour stays
     /// readable on it (see the contrast test).
+    #[cfg_attr(not(test), expect(dead_code, reason = "views adopt it in the controls pass"))]
     pub fn selected(&self) -> Color32 {
         Palette::tint(self.accent, if self.dark { 46 } else { 30 })
     }
