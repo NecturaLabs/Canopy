@@ -15,7 +15,7 @@ the release it ships in. Add new entries where their priority puts them, not at 
 - [ ] **Line-level staging**: select one or more lines in a hunk and stage, unstage or discard just
   those. Accept: staging two of five added lines leaves the other three unstaged, matching `git add -p` edit mode.
 - [ ] **Log file and crash report**: write logs to the platform data directory with rotation and
-  record panics with a backtrace. Accept: a forced panic leaves a report and the next launch offers
+  record panics with a backtrace, locally only (nothing is uploaded). Accept: a forced panic leaves a report and the next launch offers
   to open it.
 - [ ] **Diff settings**: context lines (0 to 25) and ignore whitespace (none, at end of line, all)
   per repository. Accept: changing either re-renders the open diff without reselecting the file.
@@ -82,11 +82,9 @@ the release it ships in. Add new entries where their priority puts them, not at 
 - [ ] **Custom themes**: import theme files mapping to the tokens in `ui/theme.rs`, and optionally
   follow Omarchy's active theme. Accept: switching the Omarchy theme recolours Canopy within a
   second.
-- [ ] **GitHub pull requests**: list PRs for the current repository, check out a PR branch,
-  create a PR from the current branch. Accept: works with a fine-grained token stored in the
-  system keyring.
-- [ ] **Avatar images**: optional Gravatar (off by default, with a privacy note), cached on disk.
-  Accept: no network request is made while the setting is off.
+- [ ] **Pull and merge request links**: "Create pull request" (GitHub) / "Create merge request"
+  (GitLab) for a pushed branch, built offline from the remote URL (see `HANDOFF.md`, item 1). No
+  provider API. Accept: the browser opens the provider's new-PR/MR page with source and target set.
 - [ ] **Patches**: save commits as patches (`format-patch`) and apply patch files. Accept: a
   round trip reproduces identical commits.
 - [ ] **Bisect**: start, mark good or bad from the graph, reset. Accept: bisecting the `linear`
@@ -103,8 +101,6 @@ the release it ships in. Add new entries where their priority puts them, not at 
   repositories. Accept: a written comparison with numbers, and adoption only if it is faster.
 - [ ] **Localisation**: extract strings and load translations. Accept: a German translation covers
   every visible string.
-- [ ] **Update check**: optional check against GitHub releases, off by default. Accept: shows a
-  toast with release notes when a newer version exists and makes no request when disabled.
 
 ## Done (v0.1)
 

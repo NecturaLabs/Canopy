@@ -2,10 +2,31 @@
 
 A fast, beautiful, Linux-first Git client for Linux, macOS and Windows, written in Rust (edition
 2024, MSRV 1.91). Two crates: `crates/canopy-core` is the UI-agnostic Git backend (libgit2 through
-`git2` 0.21 built without HTTPS/SSH, plus the `git` CLI for network and history-rewriting
-operations); `crates/canopy-app` is the GUI (`eframe`/`egui` 0.36, glow renderer), binary
+`git2` 0.21 built without HTTPS/SSH, for reads; every mutation runs the `git` CLI); `crates/canopy-app` is the GUI (`eframe`/`egui` 0.36, glow renderer), binary
 `canopy`, app ID `io.necturalabs.Canopy`. Architecture is in `docs/architecture.md`, the visual
 design system in `docs/design.md`, the feature matrix in `docs/features.md`.
+
+**Start here: read `HANDOFF.md`.** It records the state of the work, the owner's requirements and
+the prioritised queue of what to build next.
+
+## Product rules
+
+These come from the owner and override anything else in the repository.
+
+- **Hosting**: GitHub and GitLab only (including self-hosted GitLab), plus local-only repositories
+  with no remote at all. No other providers.
+- **No external services**: no web APIs, backend, telemetry, update checks or avatar downloads.
+  Canopy talks only to the local `git` executable and local files. Provider features are offline:
+  recognise remote URLs locally and open web pages in the user's browser. Never put credentials
+  into a URL Canopy builds or logs.
+- **Toolkit**: egui stays (the owner considered React and chose egui).
+- **Art**: placeholders are SVG files, to be replaced by art generated with Codex/OpenAI using the
+  prompts in `docs/art-prompts.md`. Keep file names and view boxes stable when replacing.
+- **Themes**: ship a handful of well-designed themes, all defined in `ui/theme.rs`, plus a settings
+  screen covering every needed option. Every setting must change behaviour.
+- **Keybindings** follow the spirit of Omarchy: keyboard-first, a launcher-style palette, a
+  keybinding cheatsheet, vim motions and single-key lazygit-style actions. Never bind Super (it
+  belongs to the window manager); bare keys never fire while a text field has focus.
 
 ## Commands
 
