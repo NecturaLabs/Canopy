@@ -1,4 +1,4 @@
-# ADR: [problem-focused title]
+# ADR NNNN: [problem-focused title]
 
 **Status:** proposed
 **Date:** YYYY-MM-DD

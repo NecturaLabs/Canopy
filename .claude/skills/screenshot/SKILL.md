@@ -29,9 +29,11 @@ release build, a virtual X server and software rendering.
    tools/screenshot.sh "$S/showcase" "$S/changes-light.png" --view changes --light
    ```
 
-   Add `--size 1024x640` to check small windows. The first run builds the release binary, which
-   takes a few minutes; later runs only rebuild what changed. Set `CANOPY_BIN` to reuse an
-   existing binary.
+   Add `--size 1024x640` to check small windows, `--theme NAME` for any of the themes in
+   `ThemeId::ALL`, `--view requests` for pull and merge requests (against `tools/mock-hosting.py`,
+   see `tools/README.md`) and `--overlay NAME` for dialogs and screens (`tools/screenshot.sh -h`
+   lists them). The first run builds the release binary, which takes a few minutes; later runs
+   only rebuild what changed. Set `CANOPY_BIN` to reuse an existing binary.
 4. Look at every image with the Read tool. For detail, crop and enlarge first:
    `convert in.png -crop 600x360+240+80 +repage -scale 200% crop.png`.
 5. Compare against `docs/design.md`. For a second opinion or a full pass, use the

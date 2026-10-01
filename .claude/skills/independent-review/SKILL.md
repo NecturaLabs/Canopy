@@ -50,14 +50,19 @@ the review was not independent.
   before dispatching.
 - **Security pass first** (Claude Code's `/security-review` where available) when the diff
   touches: `crates/canopy-hosting` or anything else that makes HTTP requests; how a GitHub or
-  GitLab token is read, stored, sent or logged; the update check; URL building in `forge.rs`
-  (credentials must never appear in a URL Canopy builds or logs); argument or environment
-  construction in `cli.rs`; credential or askpass prompts; deserialization of API responses;
-  `Cargo.toml`, `Cargo.lock` or `deny.toml`.
+  GitLab token is read, stored (`tokens.json`), sent or logged; the update check; crash-report
+  scrubbing (`crash_reports.rs`); URL building in `forge.rs` (credentials must never appear in a
+  URL Canopy builds or logs); URL or file opening in `platform.rs`; argument or environment
+  construction and log redaction in `cli.rs` and `logging.rs`; credential or askpass prompts
+  (`askpass.rs`); deserialization of API responses; `Cargo.toml`, `Cargo.lock`, `deny.toml` or
+  `.github/` workflows.
 - **Product rules are requirements.** A change that contacts a service other than GitHub, GitLab
-  (including self-hosted GitLab) or Canopy's own release check, adds telemetry or avatar
-  downloads, or puts a token into a URL, a log line or a toast is CRITICAL.
-- **Verification command:** `tools/check.sh` (fmt check, clippy with `-D warnings`, tests), plus
+  (including self-hosted GitLab), Canopy's own update feed or the opt-in Sentry crash reports,
+  adds telemetry, analytics or avatar downloads, sends before the user accepted the Terms and
+  answered the crash-report question, changes what leaves the machine without updating
+  `docs/legal/`, or puts a token into a URL, a log line or a toast is CRITICAL.
+- **Verification command:** `tools/check.sh` (fmt check, clippy with `-D warnings`, workspace
+  tests, `tools/release.py selftest`, `tools/notices.py --check`), plus
   `cargo deny check` when dependencies or `deny.toml` change — CI runs it and `check.sh` does
   not. For re-verifying one fix, the narrowest form: `cargo test -p <crate> <test-name>`.
 - **Visible changes need images, not a diff read.** A reviewer cannot judge layout or colour

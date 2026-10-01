@@ -16,12 +16,12 @@ These come from the owner and override anything else in the repository.
 
 - **Hosting**: GitHub and GitLab only (including self-hosted GitLab), plus local-only repositories
   with no remote at all.
-- **Network**: Canopy contacts exactly four things, each switchable off, none before the user
-  accepted the Terms and Privacy Policy and answered the crash question: the local `git`
-  executable (all Git traffic); the REST API of a repository's own GitHub or GitLab host for
-  pull/merge requests, with a user-supplied token (`crates/canopy-hosting`); Canopy's update check
-  (`updater.rs`); opt-in, scrubbed crash reports to Sentry (`crash_reports.rs`). No other
-  telemetry, analytics, avatar or image downloads, backend or service.
+- **Network**: Canopy talks to exactly four things: the local `git` executable (all Git
+  traffic); the REST API of a repository's own GitHub or GitLab host for pull/merge requests,
+  with a user-supplied token (`crates/canopy-hosting`); Canopy's update check (`updater.rs`);
+  opt-in, scrubbed crash reports to Sentry (`crash_reports.rs`). The last three have an off
+  switch and send nothing before the user accepted the Terms and Privacy Policy and answered the
+  crash question. No other telemetry, analytics, avatar or image downloads, backend or service.
 - **Credentials**: never put credentials into a URL Canopy builds or logs. A hosting token goes
   only to its own host. Git and ssh prompts go through Canopy's own askpass
   (`crates/canopy-app/src/askpass.rs`), never a terminal.

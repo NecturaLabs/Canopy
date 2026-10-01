@@ -70,7 +70,7 @@ Canopy-specific rules, on top of the invariants below:
 - **No live network.** `canopy-hosting` tests serve canned GitHub and GitLab responses from a
   server bound to `127.0.0.1` inside the test and point the client's API base URL at it (the
   client takes its base URL as a parameter; self-hosted GitLab needs that anyway); never call
-  github.com, gitlab.com or the release check for real, and never put a real token in a fixture.
+  github.com, gitlab.com, the update feed or Sentry for real, and never put a real token in a fixture.
   Cover the error mapping (401, 403 rate limit, 404, 429, malformed JSON), not only the happy path.
   Remote operations in `canopy-core` push and fetch to a local bare repository.
 - **Hermetic git config.** Tests must pass with an arbitrary global git config (hooks paths,

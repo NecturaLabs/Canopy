@@ -29,8 +29,8 @@ the correction itself.
 
 ## In Canopy
 
-- **The handoff note is `HANDOFF.md`** at the repository root; `AGENTS.md` sends every session to
-  it first, so a stale line there misleads every session. Its parts age differently:
+- **The handoff note is `HANDOFF.md`** at the repository root; `AGENTS.md` points every session at
+  it, so a stale line there misleads every session. Its parts age differently:
   - **State** (CI status, test counts, what was verified): check against `git log`, `gh run list`
     and a run of the command it names; rewrite to what is true now or delete.
   - **What the owner asked for**: owner preferences under invariant 1. A requirement that holds

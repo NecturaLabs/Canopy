@@ -45,7 +45,7 @@ Canopy's layout, and which change keeps each file true (the update rules come fr
 | `docs/features.md` | Reference: feature matrix against Fork, GitKraken, Sourcetree | A feature is added, changed or re-scoped |
 | `docs/backlog.md` | Task board, with acceptance criteria | Owned by the workflow in `AGENTS.md`; not a document this skill restructures |
 | `docs/art-prompts.md` | Reference: prompts for generated art, file names and view boxes | An art asset is added or renamed |
-| `docs/adr/NNNN-<slug>.md` | ADRs (directory created with the first one) | A consequential decision is made; append-only afterwards |
+| `docs/adr/NNNN-<slug>.md` | ADRs, indexed in `docs/adr/README.md` | A consequential decision is made; append-only afterwards; add its row to the index |
 | `CHANGELOG.md` | Keep a Changelog, `[Unreleased]` section | Every user-visible change; the `release` skill turns `[Unreleased]` into a version |
 | `README.md`, `CONTRIBUTING.md`, `tools/README.md` | Entry points and runbooks | Commands, requirements, shortcuts or scripts change |
 | `HANDOFF.md` | Session handoff note | Owned by `memory-hygiene`: updated or retired, never extended into a second architecture doc |
