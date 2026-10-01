@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.necturalabs.Canopy</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+
+  <name>Canopy</name>
+  <summary>A fast, beautiful, Linux-first Git client</summary>
+  <developer id="io.necturalabs">
+    <name>NecturaLabs</name>
+  </developer>
+
+  <description>
+    <p>
+      Canopy is a native desktop Git client. It shows your history as a coloured commit graph,
+      lets you stage files and individual hunks, and covers everyday branch, tag, stash and remote
+      work without leaving the keyboard.
+    </p>
+    <ul>
+      <li>Commit graph with branch lanes, ref labels, avatars and search</li>
+      <li>Staging area with file and hunk staging and a commit composer with amend</li>
+      <li>Branches, tags, stashes, cherry-pick, revert, reset, merge and rebase</li>
+      <li>Fetch, pull and push through your own git configuration and credentials</li>
+      <li>Command palette, keyboard shortcuts, dark and light themes</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.necturalabs.Canopy.desktop</launchable>
+  <provides>
+    <binary>canopy</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/NecturaLabs/Canopy</url>
+
+  <categories>
+    <category>Development</category>
+    <category>RevisionControl</category>
+  </categories>
+
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.0" date="2026-10-01">
+      <description>
+        <p>First release: commit graph, staging and committing, branches, tags, stashes, remotes,
+        command palette, and dark and light themes.</p>
+      </description>
+    </release>
+  </releases>
+</component>

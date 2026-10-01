@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Canopy
+GenericName=Git Client
+Comment=A fast, beautiful, Linux-first Git client
+Exec=canopy %F
+Icon=io.necturalabs.Canopy
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=git;version control;vcs;commit;branch;merge;repository;
+StartupNotify=true
+StartupWMClass=io.necturalabs.Canopy

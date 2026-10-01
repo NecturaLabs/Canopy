@@ -1,0 +1,21 @@
+[package]
+name = "canopy-core"
+description = "Git backend for Canopy: repository snapshots, commit graph layout, diffs and operations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+git2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

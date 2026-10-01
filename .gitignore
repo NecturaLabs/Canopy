@@ -1,0 +1,26 @@
+# Build output
+/target/
+**/*.rs.bk
+*.pdb
+
+# Profiling
+*.profraw
+*.profdata
+flamegraph.svg
+perf.data*
+
+# Local screenshot and fixture output
+/screenshots-out/
+/fixtures-out/
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Claude Code local settings
+.claude/settings.local.json

@@ -1,0 +1,33 @@
+[package]
+name = "canopy-app"
+description = "Canopy: a fast, beautiful, Linux-first Git client."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "canopy"
+path = "src/main.rs"
+
+[dependencies]
+canopy-core.workspace = true
+git2.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+crossbeam-channel.workspace = true
+chrono.workspace = true
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "persistence", "wayland", "x11"] }
+egui = "0.36"
+egui-phosphor = { version = "0.14", features = ["regular", "fill"] }
+rfd = "0.17"
+notify = "8"
+png = "0.18"
+
+[lints]
+workspace = true

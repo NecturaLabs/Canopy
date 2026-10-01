@@ -1,0 +1,270 @@
+//! Diffs as plain data, and single-hunk patches for staging part of a file.
+
+use git2::{Diff, DiffOptions, Patch};
+
+use crate::Result;
+use crate::model::ChangeKind;
+
+/// The numbers of a hunk header (`old_start, old_lines, new_start, new_lines`), which identify a
+/// hunk well enough to tell whether it is still the one the user saw.
+pub type HunkKey = (u32, u32, u32, u32);
+
+/// What a diff line is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineKind {
+    /// Unchanged line shown for context.
+    Context,
+    /// Line only in the new version.
+    Added,
+    /// Line only in the old version.
+    Removed,
+}
+
+/// One line of a hunk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffLine {
+    /// Context, addition or removal.
+    pub kind: LineKind,
+    /// Line number in the old file.
+    pub old_no: Option<u32>,
+    /// Line number in the new file.
+    pub new_no: Option<u32>,
+    /// Text without the trailing newline; tabs kept.
+    pub text: String,
+}
+
+/// A contiguous block of changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hunk {
+    /// The `@@ -a,b +c,d @@ context` header line.
+    pub header: String,
+    /// First line in the old file.
+    pub old_start: u32,
+    /// Number of old lines.
+    pub old_lines: u32,
+    /// First line in the new file.
+    pub new_start: u32,
+    /// Number of new lines.
+    pub new_lines: u32,
+    /// The lines.
+    pub lines: Vec<DiffLine>,
+}
+
+impl Hunk {
+    /// The identifying numbers of the header, used to check a hunk is still current.
+    pub fn key(&self) -> HunkKey {
+        (
+            self.old_start,
+            self.old_lines,
+            self.new_start,
+            self.new_lines,
+        )
+    }
+}
+
+/// The changes to one file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileDiff {
+    /// Path (new side).
+    pub path: String,
+    /// Old path when renamed.
+    pub old_path: Option<String>,
+    /// How the file changed, when known.
+    pub kind: Option<ChangeKind>,
+    /// Git considers the file binary; no hunks.
+    pub binary: bool,
+    /// Hunks, top to bottom.
+    pub hunks: Vec<Hunk>,
+    /// Lines added.
+    pub additions: usize,
+    /// Lines removed.
+    pub deletions: usize,
+}
+
+impl FileDiff {
+    /// There is nothing to show (e.g. a mode-only change).
+    pub fn is_empty(&self) -> bool {
+        self.hunks.is_empty() && !self.binary
+    }
+}
+
+/// Which diff of a file to compute.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DiffSource {
+    /// Working tree against the index (what `git diff` shows).
+    Unstaged,
+    /// Index against `HEAD` (what `git diff --cached` shows).
+    Staged,
+    /// A commit against its first parent.
+    Commit(git2::Oid),
+}
+
+pub(crate) fn options(path: &str, old_path: Option<&str>, context: u32) -> DiffOptions {
+    let mut opts = DiffOptions::new();
+    opts.pathspec(path)
+        .disable_pathspec_match(true)
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .show_untracked_content(true)
+        .context_lines(context)
+        .interhunk_lines(0);
+    if let Some(old) = old_path {
+        opts.pathspec(old);
+    }
+    opts
+}
+
+pub(crate) fn delta_kind(status: git2::Delta) -> Option<ChangeKind> {
+    use git2::Delta;
+    Some(match status {
+        Delta::Added => ChangeKind::Added,
+        Delta::Deleted => ChangeKind::Deleted,
+        Delta::Modified => ChangeKind::Modified,
+        Delta::Renamed | Delta::Copied => ChangeKind::Renamed,
+        Delta::Typechange => ChangeKind::Typechange,
+        Delta::Untracked => ChangeKind::Untracked,
+        Delta::Conflicted => ChangeKind::Conflicted,
+        Delta::Unmodified | Delta::Ignored | Delta::Unreadable => return None,
+    })
+}
+
+pub(crate) fn path_of(file: git2::DiffFile<'_>) -> Option<String> {
+    file.path().map(|p| p.to_string_lossy().replace('\\', "/"))
+}
+
+/// Converts every delta of `diff` into one [`FileDiff`] (deltas are merged; callers pass a
+/// diff restricted to one file).
+pub(crate) fn to_file_diff(diff: &Diff<'_>, path: &str) -> Result<FileDiff> {
+    let mut out = FileDiff {
+        path: path.to_owned(),
+        ..FileDiff::default()
+    };
+    for idx in 0..diff.deltas().len() {
+        let Some(delta) = diff.get_delta(idx) else {
+            continue;
+        };
+        out.kind = delta_kind(delta.status());
+        if let Some(new) = path_of(delta.new_file()) {
+            out.path = new;
+        }
+        let old = path_of(delta.old_file());
+        if delta.status() == git2::Delta::Renamed && old.as_deref() != Some(out.path.as_str()) {
+            out.old_path = old;
+        }
+        if delta.flags().is_binary() {
+            out.binary = true;
+            continue;
+        }
+        let Some(patch) = Patch::from_diff(diff, idx)? else {
+            continue;
+        };
+        if delta.flags().is_binary() {
+            out.binary = true;
+            continue;
+        }
+        for h in 0..patch.num_hunks() {
+            let (hunk, n) = patch.hunk(h)?;
+            let mut lines = Vec::with_capacity(n);
+            for l in 0..n {
+                let line = patch.line_in_hunk(h, l)?;
+                let kind = match line.origin() {
+                    '+' => LineKind::Added,
+                    '-' => LineKind::Removed,
+                    ' ' => LineKind::Context,
+                    _ => continue,
+                };
+                match kind {
+                    LineKind::Added => out.additions += 1,
+                    LineKind::Removed => out.deletions += 1,
+                    LineKind::Context => {}
+                }
+                let mut text = String::from_utf8_lossy(line.content()).into_owned();
+                while text.ends_with('\n') || text.ends_with('\r') {
+                    text.pop();
+                }
+                lines.push(DiffLine {
+                    kind,
+                    old_no: line.old_lineno(),
+                    new_no: line.new_lineno(),
+                    text,
+                });
+            }
+            out.hunks.push(Hunk {
+                header: String::from_utf8_lossy(hunk.header()).trim_end().to_owned(),
+                old_start: hunk.old_start(),
+                old_lines: hunk.old_lines(),
+                new_start: hunk.new_start(),
+                new_lines: hunk.new_lines(),
+                lines,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Builds a patch containing only hunk number `index` of the single-file `diff`, byte-exact, for
+/// `git apply`. Returns the hunk's key alongside so callers can check it is the one the user saw.
+pub(crate) fn hunk_patch(diff: &Diff<'_>, index: usize) -> Result<Option<(Vec<u8>, HunkKey)>> {
+    for idx in 0..diff.deltas().len() {
+        let Some(delta) = diff.get_delta(idx) else {
+            continue;
+        };
+        let Some(patch) = Patch::from_diff(diff, idx)? else {
+            continue;
+        };
+        if index >= patch.num_hunks() {
+            return Ok(None);
+        }
+        let old = path_of(delta.old_file()).unwrap_or_default();
+        let new = path_of(delta.new_file()).unwrap_or_default();
+        let mut out = Vec::new();
+        out.extend_from_slice(format!("diff --git a/{old} b/{new}\n").as_bytes());
+        let mode = |m: git2::FileMode| i32::from(m);
+        match delta.status() {
+            git2::Delta::Added | git2::Delta::Untracked => {
+                out.extend_from_slice(
+                    format!(
+                        "new file mode {:o}\n--- /dev/null\n+++ b/{new}\n",
+                        mode(delta.new_file().mode())
+                    )
+                    .as_bytes(),
+                );
+            }
+            git2::Delta::Deleted => {
+                out.extend_from_slice(
+                    format!(
+                        "deleted file mode {:o}\n--- a/{old}\n+++ /dev/null\n",
+                        mode(delta.old_file().mode())
+                    )
+                    .as_bytes(),
+                );
+            }
+            _ => out.extend_from_slice(format!("--- a/{old}\n+++ b/{new}\n").as_bytes()),
+        }
+        let (hunk, n) = patch.hunk(index)?;
+        out.extend_from_slice(hunk.header());
+        if !hunk.header().ends_with(b"\n") {
+            out.push(b'\n');
+        }
+        for l in 0..n {
+            let line = patch.line_in_hunk(index, l)?;
+            match line.origin() {
+                '+' | '-' | ' ' => {
+                    out.push(line.origin() as u8);
+                    out.extend_from_slice(line.content());
+                }
+                // End-of-file markers: content is "\n\\ No newline at end of file\n".
+                '=' | '>' | '<' => out.extend_from_slice(line.content()),
+                _ => {}
+            }
+        }
+        let key = (
+            hunk.old_start(),
+            hunk.old_lines(),
+            hunk.new_start(),
+            hunk.new_lines(),
+        );
+        return Ok(Some((out, key)));
+    }
+    Ok(None)
+}

@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu runner keeps the glibc requirement low.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Check tag matches workspace version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          if [[ "v$version" != "$GITHUB_REF_NAME" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match workspace version $version" >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: cargo build --release --locked -p canopy-app --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          name="canopy-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          bin=target/${{ matrix.target }}/release/canopy
+          [[ -f "$bin.exe" ]] && bin="$bin.exe"
+          cp "$bin" README.md LICENSE "dist/$name/"
+          if [[ "${{ matrix.target }}" == *linux* ]]; then
+            cp packaging/linux/io.necturalabs.Canopy.desktop \
+               packaging/linux/io.necturalabs.Canopy.metainfo.xml "dist/$name/"
+            cp assets/icon.svg "dist/$name/io.necturalabs.Canopy.svg"
+            cp assets/icon-256.png "dist/$name/io.necturalabs.Canopy.png"
+          fi
+          cd dist
+          if [[ "${{ matrix.archive }}" == zip ]]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+          else
+            tar -czf "$name.tar.gz" "$name"
+          fi
+          rm -rf "$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canopy-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found && /^\[.*\]: / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          [[ -s notes.md ]] || { echo "No CHANGELOG.md section for $version" >&2; exit 1; }
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Canopy ${{ github.ref_name }}
+          body_path: notes.md
+          files: dist/*
+          fail_on_unmatched_files: true
