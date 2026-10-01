@@ -463,10 +463,99 @@ impl Palette {
         Palette::tint(self.warning, 40)
     }
 
+    /// The surfaces a coloured component (pill, badge, avatar) can sit on: plain surfaces and a
+    /// selected row.
+    pub fn component_surfaces(&self) -> [Color32; 6] {
+        let sel = self.selected();
+        [
+            self.bg,
+            self.panel,
+            self.elevated,
+            self.hover,
+            over(sel, self.bg),
+            over(sel, self.panel),
+        ]
+    }
+
+    /// Text or an icon in colour `fg` drawn on the translucent `fill`: `fg` moved towards the
+    /// text colour just enough to read at 4.5:1 on that fill over every component surface, so
+    /// it keeps its hue wherever the component is drawn.
+    pub fn ink(&self, fg: Color32, fill: Color32) -> Color32 {
+        let key = (self.name, fg, fill);
+        if let Some(c) = INKS.with(|m| m.borrow().get(&key).copied()) {
+            return c;
+        }
+        let behind = self.component_surfaces().map(|s| over(fill, s));
+        let readable = |c: Color32| behind.iter().all(|b| contrast(c, *b) >= 4.5);
+        let ink = (0..=20)
+            .map(|step| mix(fg, self.text, step as f32 / 20.0))
+            .find(|c| readable(*c))
+            .unwrap_or(self.text);
+        INKS.with(|m| m.borrow_mut().insert(key, ink));
+        ink
+    }
+
+    /// Fill of a ref pill in colour `c`; the current branch and HEAD are stronger.
+    pub fn pill_fill(c: Color32, strong: bool) -> Color32 {
+        Palette::tint(c, if strong { 60 } else { 30 })
+    }
+
+    /// Fill of an initials avatar in colour `c`.
+    pub fn avatar_fill(&self, c: Color32) -> Color32 {
+        Palette::tint(c, if self.dark { 70 } else { 50 })
+    }
+
+    /// Fill of a small badge (change letter, count) in colour `c`.
+    pub fn badge_fill(c: Color32) -> Color32 {
+        Palette::tint(c, 40)
+    }
+
     /// A translucent version of `c` for fills behind text.
     pub fn tint(c: Color32, alpha: u8) -> Color32 {
         Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha)
     }
+}
+
+/// Relative luminance (WCAG 2.2) of an opaque colour.
+fn luminance(c: Color32) -> f64 {
+    let ch = |v: u8| {
+        let v = f64::from(v) / 255.0;
+        if v <= 0.039_28 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * ch(c.r()) + 0.7152 * ch(c.g()) + 0.0722 * ch(c.b())
+}
+
+/// WCAG contrast ratio between two opaque colours, from 1 to 21.
+pub fn contrast(a: Color32, b: Color32) -> f64 {
+    let (x, y) = (luminance(a), luminance(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+/// Translucent `fg` drawn over opaque `bg`, as the GPU blends it (`Color32` is premultiplied).
+pub fn over(fg: Color32, bg: Color32) -> Color32 {
+    let a = f32::from(fg.a()) / 255.0;
+    let mix = |f: u8, b: u8| (f32::from(f) + f32::from(b) * (1.0 - a)).round() as u8;
+    Color32::from_rgb(
+        mix(fg.r(), bg.r()),
+        mix(fg.g(), bg.g()),
+        mix(fg.b(), bg.b()),
+    )
+}
+
+/// `a` moved towards `b` by `t` (0 to 1).
+fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let m = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
+}
+
+thread_local! {
+    /// Inks already worked out, per theme, colour and fill: views ask for the same few every frame.
+    static INKS: std::cell::RefCell<std::collections::HashMap<(&'static str, Color32, Color32), Color32>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 /// The palette of the active theme.
@@ -603,34 +692,6 @@ pub fn fade(_ctx: &egui::Context, seconds: f32) -> f32 {
 mod tests {
     use super::*;
 
-    fn luminance(c: Color32) -> f64 {
-        let ch = |v: u8| {
-            let v = f64::from(v) / 255.0;
-            if v <= 0.039_28 {
-                v / 12.92
-            } else {
-                ((v + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * ch(c.r()) + 0.7152 * ch(c.g()) + 0.0722 * ch(c.b())
-    }
-
-    fn contrast(a: Color32, b: Color32) -> f64 {
-        let (x, y) = (luminance(a), luminance(b));
-        (x.max(y) + 0.05) / (x.min(y) + 0.05)
-    }
-
-    /// Translucent `fg` drawn over `bg`, as the GPU blends it (`Color32` is premultiplied).
-    fn over(fg: Color32, bg: Color32) -> Color32 {
-        let a = f32::from(fg.a()) / 255.0;
-        let mix = |f: u8, b: u8| (f32::from(f) + f32::from(b) * (1.0 - a)).round() as u8;
-        Color32::from_rgb(
-            mix(fg.r(), bg.r()),
-            mix(fg.g(), bg.g()),
-            mix(fg.b(), bg.b()),
-        )
-    }
-
     /// WCAG 2.2 for every pairing the views draw. Text (`text` 7:1, AAA; `text_dim` and
     /// `text_faint` 4.5:1) on every surface, including a selected row over each background and
     /// the diff backgrounds; links and SHAs (`accent2`) and status colours 4.5:1 on plain
@@ -713,6 +774,37 @@ mod tests {
                     ("removed_bg", p.removed_bg),
                 ] {
                     check(&format!("syntax {what}"), fg, on, bg, 4.5);
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// Pills, avatars and badges keep their hue and still read at 4.5:1 wherever they are drawn.
+    #[test]
+    fn coloured_components_are_readable() {
+        let mut failures = Vec::new();
+        for id in ThemeId::ALL {
+            let p = id.palette();
+            let mut colours: Vec<Color32> = p.lanes.to_vec();
+            colours.extend([
+                p.accent, p.accent2, p.success, p.warning, p.danger, p.text_dim,
+            ]);
+            for c in colours {
+                let fills = [
+                    Palette::pill_fill(c, false),
+                    Palette::pill_fill(c, true),
+                    p.avatar_fill(c),
+                    Palette::badge_fill(c),
+                ];
+                for fill in fills {
+                    let ink = p.ink(c, fill);
+                    for s in p.component_surfaces() {
+                        let r = contrast(ink, over(fill, s));
+                        if r < 4.5 {
+                            failures.push(format!("{}: {c:?} on {fill:?} is {r:.2}:1", p.name));
+                        }
+                    }
                 }
             }
         }

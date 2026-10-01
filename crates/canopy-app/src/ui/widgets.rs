@@ -42,7 +42,7 @@ pub fn paint_ref_pill(ui: &Ui, x: f32, cy: f32, label: &RefLabel, lane: Color32)
     let size = vec2(galley.size().x + 14.0, 19.0);
     let rect = egui::Rect::from_min_size(pos2(x, cy - size.y / 2.0), size);
     let strong = label.kind == RefKind::CurrentBranch || label.kind == RefKind::Head;
-    let fill = Palette::tint(color, if strong { 60 } else { 30 });
+    let fill = Palette::pill_fill(color, strong);
     ui.painter().rect(
         rect,
         CornerRadius::same(10),
@@ -50,15 +50,10 @@ pub fn paint_ref_pill(ui: &Ui, x: f32, cy: f32, label: &RefLabel, lane: Color32)
         Stroke::new(1.0, Palette::tint(color, if strong { 220 } else { 110 })),
         egui::StrokeKind::Inside,
     );
-    let text_color = if p.dark {
-        color.gamma_multiply(1.15)
-    } else {
-        color
-    };
     ui.painter().galley(
         pos2(rect.min.x + 7.0, cy - galley.size().y / 2.0),
         galley,
-        text_color,
+        p.ink(color, fill),
     );
     size.x
 }
@@ -90,22 +85,15 @@ pub fn paint_avatar(ui: &Ui, center: egui::Pos2, radius: f32, name: &str, email:
     let p = palette(ui.ctx());
     let color = person_color(p, email);
     let painter = ui.painter();
-    painter.circle_filled(
-        center,
-        radius,
-        Palette::tint(color, if p.dark { 70 } else { 50 }),
-    );
+    let fill = p.avatar_fill(color);
+    painter.circle_filled(center, radius, fill);
     painter.circle_stroke(center, radius, Stroke::new(1.0, Palette::tint(color, 200)));
     painter.text(
         center,
         Align2::CENTER_CENTER,
         initials(name),
         FontId::new(radius * 0.85, theme::semibold()),
-        if p.dark {
-            color.gamma_multiply(1.2)
-        } else {
-            color
-        },
+        p.ink(color, fill),
     );
 }
 
@@ -131,30 +119,36 @@ pub fn change_badge(ui: &mut Ui, kind: ChangeKind) -> Response {
     let p = palette(ui.ctx());
     let color = change_style(p, kind);
     let (rect, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-    ui.painter()
-        .rect_filled(rect, CornerRadius::same(5), Palette::tint(color, 40));
+    let fill = Palette::badge_fill(color);
+    ui.painter().rect_filled(rect, CornerRadius::same(5), fill);
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,
         kind.letter(),
         FontId::new(11.0, theme::semibold()),
-        color,
+        p.ink(color, fill),
     );
     resp.on_hover_text(kind.label())
 }
 
 /// A rounded count badge.
 pub fn count_badge(ui: &mut Ui, n: usize, color: Color32) {
+    let p = palette(ui.ctx());
+    let fill = Palette::badge_fill(color);
     let text = n.to_string();
-    let galley = ui
-        .painter()
-        .layout_no_wrap(text, FontId::new(11.0, theme::semibold()), color);
+    let galley = ui.painter().layout_no_wrap(
+        text,
+        FontId::new(11.0, theme::semibold()),
+        p.ink(color, fill),
+    );
     let w = (galley.size().x + 12.0).max(20.0);
     let (rect, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
-    ui.painter()
-        .rect_filled(rect, CornerRadius::same(9), Palette::tint(color, 38));
-    ui.painter()
-        .galley(rect.center() - galley.size() / 2.0, galley, color);
+    ui.painter().rect_filled(rect, CornerRadius::same(9), fill);
+    ui.painter().galley(
+        rect.center() - galley.size() / 2.0,
+        galley,
+        Color32::PLACEHOLDER,
+    );
 }
 
 /// An icon-only button with a tooltip.

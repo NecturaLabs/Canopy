@@ -316,6 +316,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn midnight_is_the_default_theme() {
+        // The owner chose Midnight as Canopy's look: a fresh install, an empty settings file and
+        // settings saved before themes existed all start on it.
+        assert_eq!(Settings::default().theme, ThemeId::Midnight);
+        assert_eq!(ThemeId::default(), ThemeId::Midnight);
+        let mut empty: Settings = serde_json::from_str("{}").expect("parse");
+        empty.migrate();
+        assert_eq!(empty.theme, ThemeId::Midnight);
+        let mut old_dark: Settings = serde_json::from_str(r#"{"dark": true}"#).expect("parse");
+        old_dark.migrate();
+        assert_eq!(old_dark.theme, ThemeId::Midnight);
+    }
+
+    #[test]
     fn old_light_setting_migrates_to_daylight() {
         let mut s: Settings =
             serde_json::from_str(r#"{"dark": false, "zoom": 1.2}"#).expect("parse");

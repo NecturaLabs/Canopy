@@ -20,7 +20,9 @@ All notable changes to Canopy are documented here. The format follows
 
 - Secondary and faint text, links, status colours and graph lanes are readable on every surface
   they are drawn on, selected rows and diff lines included, in all seven themes (WCAG AA; body
-  text AAA). Selected values in Settings use the same calmer selection fill as lists.
+  text AAA). Selected values in Settings use the same calmer selection fill as lists. Branch and
+  tag pills, avatar initials and change and count badges keep their colour but are always at
+  least 4.5:1 on their own fill, which they were not in the light themes.
 
 ### Changed
 
