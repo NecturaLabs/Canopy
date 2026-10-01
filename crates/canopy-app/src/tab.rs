@@ -1185,6 +1185,8 @@ mod perf {
             additions: 3,
             deletions: 1,
             lfs: false,
+            old_mode: None,
+            new_mode: None,
         }
     }
 

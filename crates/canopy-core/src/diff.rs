@@ -81,13 +81,42 @@ pub struct FileDiff {
     pub deletions: usize,
     /// The path is a submodule on either side: the commits it moved between.
     pub submodule: Option<crate::submodule::SubmoduleChange>,
+    /// Git file mode on the old side; `None` when it does not exist (or the diff is empty).
+    pub old_mode: Option<u32>,
+    /// Git file mode on the new side; `None` when it does not exist (or the diff is empty).
+    pub new_mode: Option<u32>,
 }
 
 impl FileDiff {
-    /// There is nothing to show (e.g. a mode-only change).
+    /// No hunks and not binary. A mode-only change is empty but has a [`Self::mode_change`].
     pub fn is_empty(&self) -> bool {
         self.hunks.is_empty() && !self.binary
     }
+
+    /// The old and new mode when both sides exist and differ: an executable-bit change, or a
+    /// file/symbolic link type change (one entry carrying both sides, never two).
+    pub fn mode_change(&self) -> Option<(u32, u32)> {
+        match (self.old_mode, self.new_mode) {
+            (Some(old), Some(new)) if old != new => Some((old, new)),
+            _ => None,
+        }
+    }
+}
+
+/// Hunk and line staging refuse a file that changed type: its diff has no hunks, and applying
+/// part of it would make no sense.
+pub(crate) fn typechange_error() -> crate::Error {
+    crate::Error::invalid(
+        "This file changed type (file and symbolic link). Stage or discard the whole file \
+         instead of a part of it.",
+    )
+}
+
+/// A libgit2 file mode as Git writes it (`0o100644`), `None` for a side that does not exist.
+pub(crate) fn mode_of(file: &git2::DiffFile<'_>) -> Option<u32> {
+    u32::try_from(i32::from(file.mode()))
+        .ok()
+        .filter(|m| *m != 0)
 }
 
 /// Which diff of a file to compute.
@@ -139,6 +168,9 @@ pub(crate) fn options(
         .include_untracked(true)
         .recurse_untracked_dirs(true)
         .show_untracked_content(true)
+        // A file replaced by a symbolic link (or back) is one typechange delta, not a deletion
+        // and an addition of the same path.
+        .include_typechange(true)
         .context_lines(context)
         .interhunk_lines(0);
     match whitespace {
@@ -186,6 +218,8 @@ pub(crate) fn to_file_diff(diff: &Diff<'_>, path: &str) -> Result<FileDiff> {
             continue;
         };
         out.kind = delta_kind(delta.status());
+        out.old_mode = mode_of(&delta.old_file());
+        out.new_mode = mode_of(&delta.new_file());
         if let Some(new) = path_of(delta.new_file()) {
             out.path = new;
         }
@@ -251,6 +285,9 @@ pub(crate) fn hunk_patch(diff: &Diff<'_>, index: usize) -> Result<Option<(Vec<u8
         let Some(delta) = diff.get_delta(idx) else {
             continue;
         };
+        if delta.status() == git2::Delta::Typechange {
+            return Err(typechange_error());
+        }
         let Some(patch) = Patch::from_diff(diff, idx)? else {
             continue;
         };

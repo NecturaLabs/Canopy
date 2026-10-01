@@ -151,6 +151,9 @@ fn read_hunk(diff: &Diff<'_>, index: usize) -> Result<Option<(FileHeader, RawHun
         let Some(delta) = diff.get_delta(idx) else {
             continue;
         };
+        if delta.status() == git2::Delta::Typechange {
+            return Err(crate::diff::typechange_error());
+        }
         let Some(patch) = Patch::from_diff(diff, idx)? else {
             continue;
         };

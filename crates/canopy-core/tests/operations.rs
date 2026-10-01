@@ -1475,3 +1475,31 @@ fn merge_mode_squash_stages_changes_without_committing_or_merge_head() {
         assert_eq!(parents(p, "HEAD"), [main], "diverge={diverge}");
     }
 }
+
+#[test]
+fn stage_unstage_and_discard_treat_paths_literally() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    // `[ab].txt` as a glob also matches b.txt.
+    fs::write(p.join("[ab].txt"), "glob\n").unwrap();
+    fs::write(p.join("b.txt"), "b\n").unwrap();
+
+    repo.stage(&["[ab].txt".to_owned()]).unwrap();
+    assert_eq!(git(p, &["diff", "--cached", "--name-only"]), "[ab].txt\n");
+    git(p, &["add", "--", "b.txt"]);
+    repo.unstage(&["[ab].txt".to_owned()]).unwrap();
+    assert_eq!(git(p, &["diff", "--cached", "--name-only"]), "b.txt\n");
+    git(p, &["reset", "-q"]);
+
+    let st = canopy_core::status::collect(repo.git()).unwrap();
+    let glob: Vec<_> = st
+        .unstaged
+        .iter()
+        .filter(|e| e.path == "[ab].txt")
+        .cloned()
+        .collect();
+    assert_eq!(glob.len(), 1);
+    repo.discard(&glob).unwrap();
+    assert!(!p.join("[ab].txt").exists());
+    assert!(p.join("b.txt").exists(), "discard must not delete b.txt");
+}

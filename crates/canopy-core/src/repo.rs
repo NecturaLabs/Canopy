@@ -356,7 +356,7 @@ impl Repo {
         let tree = commit.tree()?;
         let parent_tree = commit.parents().next().map(|p| p.tree()).transpose()?;
         let mut opts = git2::DiffOptions::new();
-        opts.context_lines(0);
+        opts.context_lines(0).include_typechange(true);
         let mut d =
             self.git
                 .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))?;
@@ -388,6 +388,8 @@ impl Repo {
                 kind,
                 additions,
                 deletions,
+                old_mode: diff::mode_of(&delta.old_file()),
+                new_mode: diff::mode_of(&delta.new_file()),
             });
         }
 
@@ -453,7 +455,7 @@ impl Repo {
 
     /// The working copy of a conflicted file, every line as context, so conflict markers show.
     pub fn conflict_view(&self, path: &str) -> Result<FileDiff> {
-        let bytes = std::fs::read(self.workdir.join(path))?;
+        let bytes = std::fs::read(crate::paths::safe_join(&self.workdir, path)?)?;
         let text = String::from_utf8_lossy(&bytes);
         let lines: Vec<diff::DiffLine> = text
             .lines()
@@ -479,6 +481,11 @@ impl Repo {
             }],
             ..FileDiff::default()
         })
+    }
+
+    /// One level of the untracked folder `dir`; see [`status::untracked_children`].
+    pub fn untracked_children(&self, dir: &str) -> Result<UntrackedListing> {
+        status::untracked_children(&self.git, dir)
     }
 
     /// Message of the `HEAD` commit, for amending.

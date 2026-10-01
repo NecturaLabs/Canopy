@@ -271,6 +271,49 @@ pub fn run_with_input(workdir: &Path, args: &[&str], input: &[u8]) -> Result<Str
     }
 }
 
+/// Runs `git args…` in `workdir`, feeding `input` to standard input, and returns the exit code and
+/// standard output for commands whose exit status is part of the answer (`git check-ignore`
+/// exits 1 for "not ignored", `git config --get` for "not set"). Exit codes of `ok_codes` count
+/// as answers; any other code is an error carrying git's standard error.
+pub(crate) fn run_answer(
+    workdir: &Path,
+    args: &[&str],
+    input: &[u8],
+    ok_codes: &[i32],
+) -> Result<(i32, Vec<u8>)> {
+    let started = Instant::now();
+    let mut child = command(Some(workdir))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(Error::GitMissing)?;
+    if let Some(mut stdin) = child.stdin.take() {
+        // A git that exits early closes its end; its exit status and stderr say why.
+        match stdin.write_all(input) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e.into());
+            }
+            _ => {}
+        }
+    }
+    let out = child.wait_with_output()?;
+    let code = out.status.code();
+    match code {
+        Some(c) if ok_codes.contains(&c) => {
+            record(args, started, Some(0), &out.stderr);
+            Ok((c, out.stdout))
+        }
+        _ => {
+            record(args, started, code, &out.stderr);
+            Err(failure(args, &out.stdout, &out.stderr))
+        }
+    }
+}
+
 /// Runs a long command (clone, fetch, pull, push) and reports each progress line from standard
 /// error to `progress` as it arrives. Returns standard error's last lines on success, which is
 /// where git puts its summary.

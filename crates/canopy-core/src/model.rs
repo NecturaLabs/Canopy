@@ -208,6 +208,22 @@ pub struct FileEntry {
     pub deletions: usize,
     /// The path has the `filter=lfs` attribute: Git LFS stores its content.
     pub lfs: bool,
+    /// Git file mode on the old side (`0o100644`, `0o100755`, `0o120000` for a symbolic link,
+    /// `0o160000` for a submodule); `None` when the old side does not exist.
+    pub old_mode: Option<u32>,
+    /// Git file mode on the new side; `None` when the new side does not exist.
+    pub new_mode: Option<u32>,
+}
+
+impl FileEntry {
+    /// The old and new mode when both sides exist and differ: an executable-bit change
+    /// (`0o100644` to `0o100755`) or, with [`ChangeKind::Typechange`], a file/symbolic link swap.
+    pub fn mode_change(&self) -> Option<(u32, u32)> {
+        match (self.old_mode, self.new_mode) {
+            (Some(old), Some(new)) if old != new => Some((old, new)),
+            _ => None,
+        }
+    }
 }
 
 /// The working tree split the way the staging area shows it.
@@ -219,17 +235,50 @@ pub struct WorkingStatus {
     pub unstaged: Vec<FileEntry>,
     /// Files with unresolved conflicts.
     pub conflicted: Vec<FileEntry>,
+    /// Untracked folders listed as one entry each instead of file by file: every folder that
+    /// holds a repository of its own, and, when there are more untracked files than
+    /// [`crate::status::UNTRACKED_LIMIT`], every top-most untracked folder. Their files are not
+    /// in [`Self::unstaged`].
+    pub untracked_dirs: Vec<UntrackedDir>,
+}
+
+/// An untracked folder shown as a single entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UntrackedDir {
+    /// Path relative to the repository root, `/`-separated, ending in `/`.
+    pub path: String,
+    /// Untracked, unignored files below it; 0 for a repository of its own.
+    pub files: usize,
+    /// The folder is a Git repository of its own (it contains `.git`) and not a submodule.
+    /// `git add` would record it as a gitlink without a `.gitmodules` entry, so
+    /// [`crate::Repo::stage_all_except_repositories`] leaves it out.
+    pub repository: bool,
+    /// A collapsed folder with such a repository somewhere below it. Staging the folder as a
+    /// whole (`git add -- folder/`) would add that repository as a gitlink.
+    pub contains_repository: bool,
+}
+
+/// One level of an untracked folder, from [`crate::status::untracked_children`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UntrackedListing {
+    /// Untracked files directly in the folder.
+    pub files: Vec<FileEntry>,
+    /// Its subfolders that hold untracked files or a repository of their own.
+    pub dirs: Vec<UntrackedDir>,
 }
 
 impl WorkingStatus {
     /// No changes at all.
     pub fn is_clean(&self) -> bool {
-        self.staged.is_empty() && self.unstaged.is_empty() && self.conflicted.is_empty()
+        self.staged.is_empty()
+            && self.unstaged.is_empty()
+            && self.conflicted.is_empty()
+            && self.untracked_dirs.is_empty()
     }
 
-    /// Total number of entries across the three lists.
+    /// Total number of entries across the four lists.
     pub fn len(&self) -> usize {
-        self.staged.len() + self.unstaged.len() + self.conflicted.len()
+        self.staged.len() + self.unstaged.len() + self.conflicted.len() + self.untracked_dirs.len()
     }
 
     /// Same as [`Self::is_clean`].
