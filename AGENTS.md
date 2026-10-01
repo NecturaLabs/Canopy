@@ -39,7 +39,9 @@ These come from the owner and override anything else in the repository.
 - Screenshot: `tools/screenshot.sh <repo> <out.png> [--light] [--view history|changes]`
 
 CI (`.github/workflows/ci.yml`) runs fmt, clippy and tests (Linux, macOS, Windows) and
-cargo-deny. Tests need `git` on `PATH` and a git identity; CI sets one.
+cargo-deny. Tests need `git` on `PATH` and a git identity; CI sets one. Linux and Windows jobs run
+on the organisation's self-hosted runners (`.github/actions/setup-rust` gives each runner its own
+toolchain); the organisation variable `USE_SELF_HOSTED` set to `0` moves them to GitHub-hosted ones.
 
 ## Workflow
 

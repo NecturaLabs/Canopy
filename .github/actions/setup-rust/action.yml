@@ -28,8 +28,11 @@ inputs:
 runs:
   using: composite
   steps:
-    # Container jobs run as root in a fresh home; a root-owned toolchain in the
-    # host's tool cache would lock the runner's own user out of it.
+    # rustup is installed here with --no-modify-path rather than left to
+    # dtolnay/rust-toolchain, whose installer would add a line for every runner
+    # to the shared ~/.profile and ~/.bashrc. Container jobs run as root in a
+    # fresh home; a root-owned toolchain in the host's tool cache would lock the
+    # runner's own user out of it.
     - name: Use this runner's Rust homes
       if: runner.environment == 'self-hosted' && runner.os == 'Linux'
       shell: bash
@@ -37,13 +40,18 @@ runs:
         set -euo pipefail
         [[ -f /.dockerenv ]] && exit 0
         root="$RUNNER_TOOL_CACHE/rust"
-        echo "CARGO_HOME=$root/cargo" >> "$GITHUB_ENV"
-        echo "RUSTUP_HOME=$root/rustup" >> "$GITHUB_ENV"
-        echo "$root/cargo/bin" >> "$GITHUB_PATH"
+        export CARGO_HOME="$root/cargo" RUSTUP_HOME="$root/rustup"
+        if [[ ! -x "$CARGO_HOME/bin/rustup" ]]; then
+          curl --proto '=https' --tlsv1.2 --retry 10 --location --silent --show-error --fail https://sh.rustup.rs \
+            | sh -s -- --default-toolchain none --no-modify-path -y
+        fi
+        echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+        echo "RUSTUP_HOME=$RUSTUP_HOME" >> "$GITHUB_ENV"
+        echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
 
     # The machine-wide rustup in the service account's profile is already on
-    # PATH, so this runner's own one is installed here rather than left to
-    # dtolnay/rust-toolchain, which would find the shared one and skip it.
+    # PATH, so this runner's own one is installed here too: dtolnay/rust-toolchain
+    # would find the shared one and skip it.
     - name: Use this runner's Rust homes and Git Bash
       if: runner.environment == 'self-hosted' && runner.os == 'Windows'
       shell: pwsh
@@ -61,8 +69,10 @@ runs:
         }
         "CARGO_HOME=$env:CARGO_HOME" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "RUSTUP_HOME=$env:RUSTUP_HOME" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        $git = 'C:\Program Files\Git\bin'
+        if (-not (Test-Path (Join-Path $git 'bash.exe'))) { throw "Git Bash not found in $git" }
         # Each line is prepended, so the last one comes first.
-        'C:\Program Files\Git\bin' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        $git | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
         $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
     - uses: dtolnay/rust-toolchain@stable

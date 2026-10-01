@@ -78,4 +78,12 @@ jobs:
     runs-on: ${{ vars.USE_SELF_HOSTED == '0' && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
+      # A prebuilt binary: the cargo-deny action is a container action, which on
+      # the self-hosted runners would leave root-owned files in their work folders.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: cargo deny check

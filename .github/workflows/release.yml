@@ -21,10 +21,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The oldest supported Ubuntu runner keeps the glibc requirement low.
+          # Ubuntu 22.04, hosted or as the self-hosted container, keeps the glibc
+          # requirement at 2.35.
           - os: ubuntu-22.04
             self-hosted: '["self-hosted", "linux", "wsl"]'
-            container: ubuntu:22.04
+            container: ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
           - os: macos-latest
@@ -62,6 +63,14 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p canopy-app --target ${{ matrix.target }}
 
+      - name: Check the glibc requirement
+        if: runner.os == 'Linux'
+        run: |
+          need=$(objdump -T target/${{ matrix.target }}/release/canopy | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n1)
+          echo "Requires $need"
+          [[ "$(printf '%s\n' "$need" GLIBC_2.35 | sort -V | tail -n1)" == GLIBC_2.35 ]] \
+            || { echo "The Linux build requires $need, newer than GLIBC_2.35" >&2; exit 1; }
+
       - name: Package
         run: |
           name="canopy-${GITHUB_REF_NAME#v}-${{ matrix.target }}"
@@ -77,8 +86,12 @@ jobs:
           fi
           cd dist
           if [[ "${{ matrix.archive }}" == zip ]]; then
-            # Windows' own bsdtar writes zip; the self-hosted runners have no 7-Zip.
-            "$(cygpath -u "$SYSTEMROOT")/System32/tar.exe" -a -cf "$name.zip" "$name"
+            if command -v 7z > /dev/null; then
+              7z a -tzip "$name.zip" "$name" > /dev/null
+            else
+              # The self-hosted runners have no 7-Zip; Windows' own bsdtar writes zip.
+              "$(cygpath -u "$SYSTEMROOT")/System32/tar.exe" -a -cf "$name.zip" "$name"
+            fi
           else
             tar -czf "$name.tar.gz" "$name"
           fi
@@ -89,6 +102,15 @@ jobs:
           name: canopy-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
+
+      # The container runs as root on the runner's own work folder and home;
+      # hand them back so the runner's next job can clean and reuse them.
+      - name: Return container files to the runner's user
+        if: always() && runner.os == 'Linux'
+        run: |
+          [[ -f /.dockerenv ]] || exit 0
+          owner=$(stat -c %u:%g "$RUNNER_WORKSPACE")
+          chown -R "$owner" "$GITHUB_WORKSPACE" "$HOME"
 
   release:
     name: Publish release
