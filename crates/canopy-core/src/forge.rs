@@ -54,8 +54,14 @@ impl ForgeKind {
 pub struct Forge {
     /// Which provider.
     pub kind: ForgeKind,
-    /// Lower-case host name without port or credentials, e.g. `github.com`.
+    /// Lower-case host name without port or credentials, e.g. `github.com`. Use it to show
+    /// and match the host (settings, saved tokens); use [`Forge::authority`] to build URLs.
     pub host: String,
+    /// The web server's port when the remote is an `https://` or `http://` URL that names one
+    /// other than the scheme's default (443 or 80), e.g. `8443` for
+    /// `https://gitlab.corp:8443/group/app.git`. `None` for the default port and for SSH, `git://`
+    /// and scp-like remotes, whose ports are not web ports.
+    pub port: Option<u16>,
     /// Project path without `.git` and without leading or trailing slashes: `owner/repo` on
     /// GitHub, `group/subgroup/repo` on GitLab.
     pub path: String,
@@ -146,9 +152,21 @@ fn kind_of(host: &str, gitlab_hosts: &[String]) -> Option<ForgeKind> {
     None
 }
 
-/// Splits a remote URL into `(host, path)`, or `None` for local paths, `file://` and unknown
-/// schemes. The host keeps its case; credentials and port are removed.
-fn split_url(url: &str) -> Option<(&str, &str)> {
+/// A remote URL split by [`split_url`].
+struct Parts<'a> {
+    /// Host as written (case kept), without credentials or port.
+    host: &'a str,
+    /// The web port of an `https://` or `http://` URL, unless it is the scheme's default.
+    port: Option<u16>,
+    /// Everything after the host (and port).
+    path: &'a str,
+}
+
+/// Splits a remote URL into host, web port and path, or `None` for local paths, `file://`,
+/// unknown schemes and malformed ports. Credentials are removed. Only `https://` and `http://`
+/// URLs yield a port (SSH and `git://` ports are not web ports); a non-numeric port, or an
+/// out-of-range or zero port on a web URL, rejects the URL.
+fn split_url(url: &str) -> Option<Parts<'_>> {
     if let Some((scheme, rest)) = url.split_once("://") {
         let scheme = scheme.to_ascii_lowercase();
         if !SCHEMES.contains(&scheme.as_str()) {
@@ -156,16 +174,31 @@ fn split_url(url: &str) -> Option<(&str, &str)> {
         }
         let (authority, path) = rest.split_once('/')?;
         let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-        let host = match host_port.split_once(':') {
+        let (host, port) = match host_port.split_once(':') {
             Some((host, port)) => {
                 if !port.bytes().all(|b| b.is_ascii_digit()) {
                     return None;
                 }
-                host
+                (host, port)
             }
-            None => host_port,
+            None => (host_port, ""),
         };
-        return Some((host, path));
+        let default_port = match scheme.as_str() {
+            "https" => Some(443),
+            "http" => Some(80),
+            _ => None,
+        };
+        let port = match default_port {
+            // An empty port means the default, as in git.
+            Some(_) if port.is_empty() => None,
+            Some(default) => match port.parse::<u16>() {
+                Ok(0) | Err(_) => return None,
+                Ok(p) if p == default => None,
+                Ok(p) => Some(p),
+            },
+            None => None,
+        };
+        return Some(Parts { host, port, path });
     }
     // scp-like syntax `[user@]host:path`. As in git, it only counts when the colon comes before
     // any slash; otherwise the string is a local path.
@@ -179,7 +212,11 @@ fn split_url(url: &str) -> Option<(&str, &str)> {
     if host.len() == 1 {
         return None;
     }
-    Some((host, path))
+    Some(Parts {
+        host,
+        port: None,
+        path,
+    })
 }
 
 /// Percent-encodes `s`, keeping RFC 3986 unreserved characters and, when `keep_slash`, `/`.
@@ -212,14 +249,16 @@ impl Forge {
     /// Recognises a GitHub or GitLab remote URL: `https://`, `http://`, `ssh://` (with or without
     /// a port), `git://` and scp-like `git@host:path`, with or without credentials, a trailing
     /// `.git` or a trailing slash. `gitlab_hosts` lists self-hosted GitLab instances; any host
-    /// whose first label contains `gitlab` is recognised without being listed. Returns `None`
-    /// for local paths, `file://` URLs, other providers and malformed project paths.
+    /// whose first label contains `gitlab` is recognised without being listed (matching ignores
+    /// ports). Returns `None` for local paths, `file://` URLs, other providers, malformed project
+    /// paths and malformed ports. An `https://` or `http://` URL's non-default port is kept in
+    /// [`Forge::port`].
     pub fn parse(url: &str, gitlab_hosts: &[String]) -> Option<Forge> {
         let url = url.trim();
         if url.is_empty() || url.chars().any(char::is_whitespace) || url.contains('\\') {
             return None;
         }
-        let (host, path) = split_url(url)?;
+        let Parts { host, port, path } = split_url(url)?;
         let host = host.to_ascii_lowercase();
         if !valid_host(&host) {
             return None;
@@ -227,12 +266,26 @@ impl Forge {
         let host = canonical_host(&host).to_owned();
         let kind = kind_of(&host, gitlab_hosts)?;
         let path = normalise_path(kind, path)?;
-        Some(Forge { kind, host, path })
+        Some(Forge {
+            kind,
+            host,
+            port,
+            path,
+        })
     }
 
-    /// The project's home page: `https://host/path`.
+    /// The host with its web port when one is set (`gitlab.corp:8443`), else just the host: the
+    /// authority for web and API URLs on this forge.
+    pub fn authority(&self) -> String {
+        match self.port {
+            Some(port) => format!("{}:{port}", self.host),
+            None => self.host.clone(),
+        }
+    }
+
+    /// The project's home page: `https://host[:port]/path`.
     pub fn web_url(&self) -> String {
-        format!("https://{}/{}", self.host, self.path)
+        format!("https://{}/{}", self.authority(), self.path)
     }
 
     /// GitLab puts project sub-pages under `/-/`.
@@ -292,12 +345,12 @@ impl Forge {
         }
     }
 
-    /// `https://host/path.git`.
+    /// `https://host[:port]/path.git`.
     pub fn https_clone_url(&self) -> String {
-        format!("https://{}/{}.git", self.host, self.path)
+        format!("https://{}/{}.git", self.authority(), self.path)
     }
 
-    /// `git@host:path.git`.
+    /// `git@host:path.git` (the SSH port is unknown; [`Forge::port`] is a web port).
     pub fn ssh_clone_url(&self) -> String {
         format!("git@{}:{}.git", self.host, self.path)
     }
@@ -316,7 +369,12 @@ pub fn clone_url(kind: ForgeKind, host: Option<&str>, project: &str, ssh: bool) 
         return None;
     }
     let path = normalise_path(kind, project)?;
-    let forge = Forge { kind, host, path };
+    let forge = Forge {
+        kind,
+        host,
+        port: None,
+        path,
+    };
     Some(if ssh {
         forge.ssh_clone_url()
     } else {
@@ -543,6 +601,7 @@ mod tests {
                 Forge {
                     kind: *kind,
                     host: (*host).to_owned(),
+                    port: None,
                     path: (*path).to_owned()
                 },
                 "{url}"
@@ -624,6 +683,7 @@ mod tests {
         Forge {
             kind: GitHub,
             host: "github.com".into(),
+            port: None,
             path: "owner/repo".into(),
         }
     }
@@ -632,6 +692,7 @@ mod tests {
         Forge {
             kind: GitLab,
             host: "gitlab.example.org".into(),
+            port: None,
             path: "group/sub/repo".into(),
         }
     }
@@ -840,6 +901,92 @@ mod tests {
                 "{kind:?} {host:?} {project:?} ssh={ssh}"
             );
         }
+    }
+
+    #[test]
+    fn keeps_web_ports_only() {
+        let custom = hosts(&["https://code.corp:9443"]);
+        // (url, host, port)
+        let cases: &[(&str, &str, Option<u16>)] = &[
+            (
+                "https://gitlab.corp:8443/group/app.git",
+                "gitlab.corp",
+                Some(8443),
+            ),
+            (
+                "https://u:pw@gitlab.corp:8443/group/app",
+                "gitlab.corp",
+                Some(8443),
+            ),
+            (
+                "http://gitlab.corp:8080/group/app.git",
+                "gitlab.corp",
+                Some(8080),
+            ),
+            (
+                "HTTPS://GitLab.Corp:8443/group/app.git",
+                "gitlab.corp",
+                Some(8443),
+            ),
+            // The scheme's default port is no port.
+            ("https://gitlab.corp:443/group/app.git", "gitlab.corp", None),
+            ("http://gitlab.corp:80/group/app.git", "gitlab.corp", None),
+            ("https://gitlab.corp:/group/app.git", "gitlab.corp", None),
+            // SSH and git:// ports are not web ports.
+            (
+                "ssh://git@gitlab.corp:2222/group/app.git",
+                "gitlab.corp",
+                None,
+            ),
+            ("git://gitlab.corp:9418/group/app.git", "gitlab.corp", None),
+            ("git@gitlab.corp:group/app.git", "gitlab.corp", None),
+            // A host from settings matches whatever port the remote uses.
+            (
+                "https://code.corp:8443/group/app.git",
+                "code.corp",
+                Some(8443),
+            ),
+            ("https://code.corp/group/app.git", "code.corp", None),
+        ];
+        for (url, host, port) in cases {
+            let f = Forge::parse(url, &custom).unwrap_or_else(|| panic!("{url} not parsed"));
+            assert_eq!((f.host.as_str(), f.port), (*host, *port), "{url}");
+        }
+        for url in [
+            "https://gitlab.corp:0/group/app.git",
+            "https://gitlab.corp:65536/group/app.git",
+            "https://gitlab.corp:99999999999/group/app.git",
+            "https://gitlab.corp:84a3/group/app.git",
+        ] {
+            assert_eq!(Forge::parse(url, &[]), None, "{url}");
+        }
+    }
+
+    #[test]
+    fn urls_carry_the_web_port() {
+        let f = Forge::parse("https://gitlab.corp:8443/group/app.git", &[]).expect("parsed");
+        assert_eq!(f.authority(), "gitlab.corp:8443");
+        assert_eq!(f.web_url(), "https://gitlab.corp:8443/group/app");
+        assert_eq!(
+            f.commit_url("abc"),
+            "https://gitlab.corp:8443/group/app/-/commit/abc"
+        );
+        assert_eq!(
+            f.new_request_url("topic", None),
+            "https://gitlab.corp:8443/group/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=topic"
+        );
+        assert_eq!(
+            f.https_clone_url(),
+            "https://gitlab.corp:8443/group/app.git"
+        );
+        // The SSH port is unknown, so the SSH clone URL has none.
+        assert_eq!(f.ssh_clone_url(), "git@gitlab.corp:group/app.git");
+        // Without a port nothing changes.
+        assert_eq!(gl().authority(), "gitlab.example.org");
+        assert_eq!(gl().web_url(), "https://gitlab.example.org/group/sub/repo");
+        // Credentials never come along with the port.
+        let f = Forge::parse("https://me:s3cr3t@gitlab.corp:8443/g/a.git", &[]).expect("parsed");
+        assert!(!f.web_url().contains("s3cr3t") && !f.https_clone_url().contains("me@"));
     }
 
     #[test]

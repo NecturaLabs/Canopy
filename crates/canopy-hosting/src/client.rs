@@ -62,12 +62,14 @@ impl fmt::Debug for Client {
 }
 
 /// The REST API root for `forge`: `https://api.github.com` for github.com (`/api/v3` on any
-/// other GitHub host), `https://<host>/api/v4` for GitLab.
+/// other GitHub host), `https://<host>[:<port>]/api/v4` for GitLab. The port is the forge's web
+/// port ([`Forge::port`]), so a self-hosted GitLab at `https://gitlab.corp:8443` is called on
+/// 8443.
 fn default_api_base(forge: &Forge) -> String {
     match forge.kind {
         ForgeKind::GitHub if forge.host == "github.com" => "https://api.github.com".to_owned(),
-        ForgeKind::GitHub => format!("https://{}/api/v3", forge.host),
-        ForgeKind::GitLab => format!("https://{}/api/v4", forge.host),
+        ForgeKind::GitHub => format!("https://{}/api/v3", forge.authority()),
+        ForgeKind::GitLab => format!("https://{}/api/v4", forge.authority()),
     }
 }
 
@@ -190,6 +192,7 @@ mod tests {
         Forge {
             kind,
             host: host.into(),
+            port: None,
             path: path.into(),
         }
     }
@@ -207,6 +210,27 @@ mod tests {
         assert_eq!(
             default_api_base(&forge(ForgeKind::GitLab, "git.example.org", "g/s/r")),
             "https://git.example.org/api/v4"
+        );
+        let with_port =
+            |url: &str| Forge::parse(url, &[]).unwrap_or_else(|| panic!("{url} not parsed"));
+        assert_eq!(
+            default_api_base(&with_port("https://gitlab.corp:8443/g/r.git")),
+            "https://gitlab.corp:8443/api/v4"
+        );
+        assert_eq!(
+            default_api_base(&with_port("https://gitlab.corp:443/g/r.git")),
+            "https://gitlab.corp/api/v4"
+        );
+        // An SSH port is not the web server's port.
+        assert_eq!(
+            default_api_base(&with_port("ssh://git@gitlab.corp:2222/g/r.git")),
+            "https://gitlab.corp/api/v4"
+        );
+        assert_eq!(
+            Client::new(&with_port("https://gitlab.corp:8443/g/r.git"), None)
+                .http
+                .base(),
+            "https://gitlab.corp:8443/api/v4"
         );
     }
 

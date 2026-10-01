@@ -184,6 +184,7 @@ fn github(server: &Server, token: Option<&str>) -> Client {
     let forge = Forge {
         kind: ForgeKind::GitHub,
         host: "github.com".into(),
+        port: None,
         path: "octo/hello".into(),
     };
     Client::with_api_base(&forge, token.map(str::to_owned), &server.base)
@@ -193,6 +194,7 @@ fn gitlab(server: &Server, token: Option<&str>) -> Client {
     let forge = Forge {
         kind: ForgeKind::GitLab,
         host: "gitlab.example.com".into(),
+        port: None,
         path: "group/sub/proj".into(),
     };
     Client::with_api_base(
@@ -642,6 +644,7 @@ fn github_error_mapping() {
     let forge = Forge {
         kind: ForgeKind::GitHub,
         host: "github.com".into(),
+        port: None,
         path: "octo/hello".into(),
     };
     let offline = Client::with_api_base(
