@@ -8,8 +8,8 @@ the release it ships in. Add new entries where their priority puts them, not at 
 ## Now
 
 - [ ] **Verify the one-line installers on real machines** after the first stable release that
-  publishes them (`packaging/install.sh`, `packaging/install.ps1`; only the Linux script is tested
-  end to end, in CI). Accept: on Ubuntu 22.04, Fedora, macOS (Apple silicon) and Windows 11
+  publishes them (`packaging/install.sh`, `packaging/install.ps1`; CI tests `install.sh` end to end
+  against a fake feed on Linux and macOS, and only smoke-tests `install.ps1`). Accept: on Ubuntu 22.04, Fedora, macOS (Apple silicon) and Windows 11
   (Windows PowerShell 5.1 and PowerShell 7) the one-liner installs, Canopy starts from the
   launcher, Start Menu or Spotlight with its icon, a re-run upgrades, and uninstall leaves nothing
   but the user data.

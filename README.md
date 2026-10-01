@@ -76,6 +76,9 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1 | iex
 ```
 
+These work from the first stable release that ships the installers. Until then the addresses
+answer 404: `curl` reports the error, but `sh` gets an empty script and exits without a word.
+
 The installer reads Canopy's update manifest, downloads the build for your system over HTTPS,
 checks its SHA-256 against the manifest and refuses anything that does not match. It never asks
 for elevated rights and never installs git; it tells you whether `git` and `git-lfs` are present
@@ -102,8 +105,9 @@ curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1))) -Uninstall
 ```
 
-Uninstalling removes exactly what the installer created; your settings and logs stay
-unless you add `--purge`. Builds exist for Linux x86_64 (glibc 2.35 or newer, e.g. Ubuntu 22.04),
+Uninstalling removes exactly what the installer created (files of your own in its folder stay);
+your settings and logs stay unless you add `--purge`. Re-running never replaces a newer installed
+version with an older one unless you ask with `--version`. Builds exist for Linux x86_64 (glibc 2.35 or newer, e.g. Ubuntu 22.04),
 macOS on Apple silicon and Windows x64; Linux arm64 and Intel Macs are being added. Details:
 [packaging/README.md](packaging/README.md).
 

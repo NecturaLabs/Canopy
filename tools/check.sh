@@ -2,8 +2,9 @@
 # Usage: tools/check.sh
 #
 # The local part of CI: formatting check, clippy with warnings denied, the full test suite, the
-# release tooling's self-test, the licence notices check, the installer test, and ShellCheck and
-# cargo-deny when they are installed. CI also tests on macOS and Windows and parses install.ps1.
+# release tooling's self-test, the licence notices check, the installer test (Linux and macOS),
+# and ShellCheck and cargo-deny when they are installed. CI also tests on macOS and Windows and
+# checks install.ps1.
 # Run it before every commit; it must pass before a change is considered done.
 set -euo pipefail
 
@@ -33,8 +34,16 @@ python3 tools/release.py selftest
 step "tools/notices.py --check"
 python3 tools/notices.py --check
 
-step "packaging/test-install.sh"
-sh packaging/test-install.sh >/dev/null
+case "$(uname -s)" in
+  Linux | Darwin)
+    step "packaging/test-install.sh"
+    sh packaging/test-install.sh >/dev/null
+    ;;
+  *)
+    # install.sh is for Linux and macOS; install.ps1 is checked by CI's Windows job.
+    printf '\n(packaging/test-install.sh runs on Linux and macOS only; skipped here)\n'
+    ;;
+esac
 
 if command -v shellcheck >/dev/null; then
   step "shellcheck"

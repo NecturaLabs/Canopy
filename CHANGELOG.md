@@ -22,9 +22,25 @@ All notable changes to Canopy are documented here. The format follows
 - Saved hosting tokens are kept per host and port, so a GitLab instance on another port no longer
   shares a token with the default one.
 - Programs Canopy opens (terminal, editor, browser) never inherit the credential prompt's secret.
+- The installers' test-only feed override accepts nothing but a loopback host and a port, so a
+  value such as `http://127.0.0.1:1@elsewhere.example` is refused. `install.ps1` follows
+  redirects itself and refuses any that is not HTTPS; `install.sh` ignores `~/.curlrc` and
+  `~/.wgetrc`.
+- The installers never write through a symlink or over a desktop entry, icon, Start Menu shortcut
+  or Apps & features entry that another install owns, and `--purge` deletes a generically named
+  folder (`canopy`) only when it is marked as Canopy's (`.canopy-data`) or holds Canopy's own
+  files.
 
 ### Fixed
 
+- Installers: a failed or interrupted (Ctrl+C) upgrade puts the previous version back without
+  ever deleting part of it; uninstall removes only the installer's own files and keeps the folder
+  when it holds anything else; re-running no longer silently replaces a newer version (such as a
+  beta) with an older one; a failed first install leaves no empty folders behind and does not
+  claim an existing empty folder; a symlinked home folder no longer breaks uninstall; errors
+  during downloads, including a missing `curl` and `wget`, are always shown; a script cut short
+  in download runs nothing; and through `irm | iex` the Windows installer leaves the PowerShell
+  session as it found it.
 - Secondary and faint text, links, status colours and graph lanes are readable on every surface
   they are drawn on, selected rows and diff lines included, in all seven themes (WCAG AA; body
   text AAA). Selected values in Settings use the same calmer selection fill as lists. Branch and
