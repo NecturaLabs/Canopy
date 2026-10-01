@@ -1,5 +1,7 @@
 //! End-to-end tests of `canopy-core` against throwaway repositories built with the `git` CLI.
 
+#![allow(clippy::expect_used, clippy::unwrap_used)] // Test helpers may panic: that is a failed test.
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;

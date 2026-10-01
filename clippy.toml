@@ -1,0 +1,4 @@
+# Tests may unwrap and expect: a panic there is a failed assertion. Production code may not
+# (workspace lints `unwrap_used` and `expect_used`).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
