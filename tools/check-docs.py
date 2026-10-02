@@ -6,14 +6,17 @@ Usage: tools/check-docs.py
 Prints one `file:line: problem` per finding and exits 1 when there is any:
 
   - a file under docs/ that docs/README.md does not list, or an ADR that docs/adr/README.md does not
-  - a path in backticks, or a relative link, in a document that is kept true with the code, that
-    names nothing in the repository
-  - a source module under crates/*/src that docs/architecture.md does not mention
+  - a path in backticks, or a relative link, in a maintained document, that names nothing in the
+    repository
+  - a source module under crates/*/src that the section of docs/architecture.md for its crate does
+    not mention
   - a skill that differs between .claude/skills and its mirror .agents/skills
   - a file under tools/ that tools/README.md does not mention
 
-It reads the files git knows about (tracked, or untracked and not ignored), so a new document
-counts before it is committed. Standard library only. Part of tools/check.sh.
+The maintained documents are every Markdown file and the .codex agent files, except EXCLUDED below:
+records, research, the changelog, the mirror and the generic process skills. The check reads the
+files git knows about (tracked, or untracked and not ignored), so a new document counts before it
+is committed. Standard library only. Part of tools/check.sh.
 """
 
 from __future__ import annotations
@@ -26,22 +29,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Documents kept true with the code. Records (docs/adr), research and handoffs (docs/specs), legal
-# texts, the changelog and the process skills written for any repository are left out: they are
-# point-in-time, dated or generic.
-MAINTAINED_FILES = {
-    "AGENTS.md",
-    "CONTRIBUTING.md",
-    "README.md",
-    "tools/README.md",
-    "packaging/README.md",
-}
-MAINTAINED_PATTERNS = (
-    re.compile(r"docs/[^/]+\.md$"),
-    re.compile(r"\.claude/agents/[^/]+\.md$"),
-    re.compile(
-        r"\.claude/skills/(add-git-operation|add-keybinding|add-theme|fixture-repo|hosting-api|release|screenshot)/.+\.md$"
-    ),
+# Not kept true with the code, or checked another way: the changelog and the ADRs are history, the
+# specs are dated research and handoffs, .agents/skills is compared byte for byte with
+# .claude/skills, and the process skills are written for any repository (their paths are examples).
+EXCLUDED = (
+    "CHANGELOG.md",
+    "docs/adr/",
+    "docs/specs/",
+    ".agents/skills/",
+    ".claude/skills/agent-instructions/",
+    ".claude/skills/agent-orchestration/references/",
+    ".claude/skills/independent-review/",
+    ".claude/skills/memory-hygiene/",
+    ".claude/skills/project-docs/references/",
+    ".claude/skills/project-docs/templates/",
+    ".claude/skills/testing/",
 )
 
 # A backticked token that starts with one of these is a path from the repository root.
@@ -71,6 +73,9 @@ EXTERNAL_NAMES = {
     "canopy/install.ps1",
 }
 
+# Files the other checks read; without them the checks cannot run.
+REQUIRED = ("docs/README.md", "docs/adr/README.md", "docs/architecture.md", "tools/README.md")
+
 # A directory whose files are listed in a document of their own.
 DELEGATED_DOCS = {"docs/adr": "docs/adr/README.md"}
 
@@ -79,6 +84,7 @@ NOT_A_MODULE = {"mod.rs", "lib.rs", "main.rs", "tests.rs"}
 TOKEN = re.compile(r"`([^`\s]+)`")
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 BRACES = re.compile(r"^(.*)\{([^{}]*)\}(.*)$")
+LINE_SUFFIX = re.compile(r":\d+(?::\d+)?$")
 
 
 def project_files() -> list[str]:
@@ -89,7 +95,9 @@ def project_files() -> list[str]:
         capture_output=True,
         text=True,
     ).stdout
-    return sorted(f for f in out.splitlines() if f and (ROOT / f).exists())
+    return sorted(
+        f for f in out.splitlines() if f and "__pycache__/" not in f and (ROOT / f).exists()
+    )
 
 
 def read(path: str) -> str:
@@ -114,12 +122,25 @@ def expand(token: str) -> list[str]:
     return [m[1] + part + m[3] for part in m[2].split(",")]
 
 
+def names(text: str, name: str) -> bool:
+    """Whether `name` appears in `text` as a whole name, not inside a longer one."""
+    return re.search(r"(?<![\w./-])" + re.escape(name) + r"(?![\w-])", text) is not None
+
+
 def main() -> int:
     files = project_files()
     file_set = set(files)
-    dirs = {posixpath.dirname(f) for f in files}
-    dirs |= {posixpath.dirname(d) for d in dirs}
-    dirs.discard("")
+    missing = [f for f in REQUIRED if f not in file_set]
+    if missing:
+        for f in missing:
+            print(f"{f}:1: missing; the documentation checks read it")
+        return 1
+    dirs = set()
+    for f in files:
+        d = posixpath.dirname(f)
+        while d:
+            dirs.add(d)
+            d = posixpath.dirname(d)
     basenames = {posixpath.basename(f) for f in files}
     problems: list[str] = []
 
@@ -148,14 +169,19 @@ def main() -> int:
         delegate = next((d for d in DELEGATED_DOCS if f.startswith(d + "/")), None)
         if delegate:
             index = DELEGATED_DOCS[delegate]
-            if f != index and posixpath.basename(f) not in read(index):
+            if f != index and not names(read(index), posixpath.basename(f)):
                 problem(index, 1, f"{f} is not listed")
         elif not (rel in listed or any(t.endswith("/") and rel.startswith(t) for t in listed)):
             problem("docs/README.md", 1, f"{f} is not listed")
 
-    # 2. Paths and links in the documents that are kept true with the code.
-    maintained = [f for f in files if f in MAINTAINED_FILES or any(p.match(f) for p in MAINTAINED_PATTERNS)]
-    for doc in maintained:
+    # 2. Paths and links in the maintained documents.
+    documents = [
+        f
+        for f in files
+        if (f.endswith(".md") or (f.startswith(".codex/agents/") and f.endswith(".toml")))
+        and not f.startswith(EXCLUDED)
+    ]
+    for doc in documents:
         here = posixpath.dirname(doc)
         for number, line in prose_lines(doc):
             for target in LINK.findall(line):
@@ -164,7 +190,7 @@ def main() -> int:
                 if not exists(posixpath.normpath(posixpath.join(here, target.split("#")[0]))):
                     problem(doc, number, f"link to {target} names nothing")
             for written in TOKEN.findall(line):
-                for token in expand(written):
+                for token in expand(LINE_SUFFIX.sub("", written)):
                     if token in EXTERNAL_NAMES or token.startswith(("-", "~", "/", "http")):
                         continue
                     if any(c in token for c in "*{}<>$|()=:,;"):
@@ -183,21 +209,29 @@ def main() -> int:
                         if not (path in crate_paths or exists(posixpath.normpath(posixpath.join(here, token)))):
                             problem(doc, number, f"`{written}` names nothing")
 
-    # 3. Every source module is in the architecture document.
+    # 3. Every source module is in the section of the architecture document for its crate.
     architecture = read("docs/architecture.md")
-    written_paths = {t for w in TOKEN.findall(architecture) for t in expand(w)}
+    crate_text = {
+        section.split("\n", 1)[0].strip(): section for section in re.split(r"(?m)^## ", architecture)
+    }
+    crate_tokens = {
+        title: {t for w in TOKEN.findall(text) for t in expand(w)} for title, text in crate_text.items()
+    }
     modules = [f for f in files if re.match(r"crates/[^/]+/src/.+\.rs$", f)]
-    base_count: dict[str, int] = {}
+    base_count: dict[tuple[str, str], int] = {}
     for f in modules:
-        base_count[posixpath.basename(f)] = base_count.get(posixpath.basename(f), 0) + 1
+        key = (f.split("/")[1], posixpath.basename(f))
+        base_count[key] = base_count.get(key, 0) + 1
     for f in modules:
+        crate = f.split("/")[1]
         rel = f.split("/src/", 1)[1]
         base = posixpath.basename(f)
         if base in NOT_A_MODULE:
             continue
-        named = rel in written_paths or (base_count[base] == 1 and base in written_paths)
+        written = crate_tokens.get(crate, set())
+        named = rel in written or (base_count[(crate, base)] == 1 and base in written)
         if not named:
-            problem("docs/architecture.md", 1, f"{f} is not mentioned")
+            problem("docs/architecture.md", 1, f"{f} is not mentioned under `## {crate}`")
 
     # 4. The two copies of the skills are identical.
     claude = {f[len(".claude/skills/"):] for f in files if f.startswith(".claude/skills/")}
@@ -217,7 +251,7 @@ def main() -> int:
             continue
         rel = f[len("tools/"):]
         top = rel.split("/")[0]
-        if not (rel in tools_readme or posixpath.basename(f) in tools_readme or ("/" in rel and f"{top}/" in tools_readme)):
+        if not (names(tools_readme, rel) or names(tools_readme, posixpath.basename(f)) or ("/" in rel and names(tools_readme, top + "/"))):
             problem("tools/README.md", 1, f"{f} is not mentioned")
 
     for line in problems:

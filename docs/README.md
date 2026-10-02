@@ -30,8 +30,10 @@ in a document no longer exists.
 - **Kept true with the code, in the same change as the code** (a stale line is a defect):
   `architecture.md`, `design.md`, `features.md`, `keybindings.md`, `playbook.md`, `legal/`,
   `../tools/README.md`, `../packaging/README.md` and `../AGENTS.md`. `tools/check-docs.py` checks the
-  parts a script can: that every source module is in `architecture.md`, that every path in
-  backticks exists, and that the two copies of the skills match.
+  parts a script can: that every source module is in its crate's section of `architecture.md`,
+  that every path in backticks or link exists (in every Markdown document except the ones below and
+  the process skills written for any repository; `EXCLUDED` in the script lists them), and that the
+  two copies of the skills match.
 - **Point in time, never edited when the code moves on**: the records in `adr/`. A later record
   supersedes an earlier one.
 - **The queue**: `backlog.md` holds only open tasks; a finished one is deleted, and history lives in

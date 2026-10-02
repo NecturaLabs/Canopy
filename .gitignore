@@ -9,6 +9,9 @@
 flamegraph.svg
 perf.data*
 
+# Python bytecode from tools/
+__pycache__/
+
 # Local screenshot and fixture output
 /screenshots-out/
 /fixtures-out/
