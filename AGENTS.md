@@ -4,8 +4,8 @@ A fast, beautiful, Linux-first Git client for Linux, macOS and Windows, written 
 2024, MSRV 1.91). Three crates: `crates/canopy-core`, the UI-agnostic Git backend (libgit2 via
 `git2`, built without HTTPS/SSH, for reads; the `git` CLI for every mutation);
 `crates/canopy-hosting`, the GitHub/GitLab REST client (`ureq`, rustls); `crates/canopy-app`, the
-GUI (`eframe`/`egui` 0.36, glow), binary `canopy`. Docs: `docs/architecture.md`, decisions in
-`docs/adr/`, `docs/design.md`, `docs/features.md`.
+GUI (`eframe`/`egui` 0.36, glow), binary `canopy`. Docs: `docs/README.md` maps them (architecture,
+decisions in `docs/adr/`, design, features, playbook) and says which can lag.
 
 ## Product rules
 
@@ -62,8 +62,9 @@ token anywhere new, contacting a new host or adding a dependency.
 - Test: `cargo test --workspace --locked` (one: `cargo test -p canopy-core <name>`)
 - Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
 - `tools/check.sh`, on this platform: `fmt --check`, clippy, workspace tests,
-  `tools/release.py selftest`, `tools/notices.py --check`, `packaging/test-install.sh` on Linux
-  and macOS, and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck on
+  `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
+  paths in docs, module table and skill mirror), `packaging/test-install.sh` on Linux and macOS,
+  and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck on
   every push and `cargo deny check` whenever a file outside the docs changes; run `cargo deny
   check` yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change). CI (`ci.yml`) adds
   tests per platform, one repository variable each: Linux runs unless `CI_LINUX`
@@ -85,10 +86,9 @@ token anywhere new, contacting a new host or adding a dependency.
   (destructive and outward-facing actions still need the owner).
 - Project agents in `.claude/agents/` (Codex: `.codex/agents/`): `canopy-review`, `canopy-git`,
   `canopy-visual-qa`, `canopy-ux-research`.
-- Subagents (the owner's rule): at most 3 at a time, every one on `sonnet`, and `opus` only for
-  work in the security-sensitive areas above (in Claude Code; the Codex agents carry no model).
-  Small things are done directly. Each builder gets its own `CARGO_TARGET_DIR` in a scratch
-  directory, deleted afterwards; keep 5 GB of disk free.
+- Subagents (the owner's rule): at most 3 at a time. Small things are done directly. Each builder
+  gets its own `CARGO_TARGET_DIR` in a scratch directory, deleted afterwards; keep 5 GB of disk
+  free.
 - Branches: no pull requests and no long-lived branches. Small fixes go straight to `main`; larger
   work on a short branch merged with `git merge --no-ff` or a fast-forward. Push `main` when the
   owner asks. `tools/check.sh` must pass before merging; do not wait for CI. Where a check fails

@@ -23,8 +23,9 @@ Use fixtures for anything destructive, never a repository you care about.
 
 `tools/check.sh` runs CI's checks for this platform (`cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, the release
-tooling self-test and the licence-notice check, plus `shellcheck` and `cargo deny check` when they
-are installed) and one CI does not: the installer test, on Linux and macOS. It must pass before
+tooling self-test, the licence-notice check and the documentation check, plus `shellcheck` and
+`cargo deny check` when they are installed) and one CI does not: the installer test, on Linux and
+macOS. It must pass before
 you merge; a failure already listed in `docs/backlog.md` is reported, not hidden. Keep `TMPDIR` on
 a filesystem that accepts non-UTF-8 file names (the default `/tmp` does; NTFS does not).
 

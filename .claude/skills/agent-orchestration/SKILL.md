@@ -59,11 +59,9 @@ These hold for every delegation, whichever reference is loaded.
 
 ## In Canopy
 
-Prefer a project specialist when one fits; each already pins its model and effort and knows which
-files to read first, so its brief carries only the task-specific packet. Model tier, as the
-owner set it: every subagent, specialist or not, runs on `sonnet`, and `opus` only for work in
-the security-sensitive areas in `AGENTS.md`, at most 3 at a time. This overrides the tier table in
-`references/nodes.md`.
+Prefer a project specialist when one fits; each knows which files to read first, so its brief
+carries only the task-specific packet. At most 3 subagents at a time (`AGENTS.md`). This
+repository sets no model or effort; they come from the global agent instructions.
 
 | Node | Agent | Writes | Typical place in a graph |
 |---|---|---|---|

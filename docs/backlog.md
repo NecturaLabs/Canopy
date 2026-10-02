@@ -6,10 +6,9 @@ verified in the running app.
 ## Now
 
 - [ ] In-app update, what is left: press Update and Restart in the running app (the install itself
-      was verified on a real installer-made folder; the window could not be driven, see
+      was verified on a real installer-made folder; drive the window on a private Xvfb display, see
       `docs/playbook.md`); a native macOS bundle swap and a Windows folder swap with the running
-      executable renamed aside (both run the installer today); the first numbered release
-      (`docs/playbook.md`, "Releasing").
+      executable renamed aside (both run the installer today).
 - [ ] Partial clones: trusted locations. Downloads (which run the repository's own git config)
       only for repositories under folders trusted in Settings; compare canonicalized paths in the
       worker; a "Trust…" button offering the repository's folder or its parent; privacy text.
