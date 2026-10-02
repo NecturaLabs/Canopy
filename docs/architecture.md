@@ -176,6 +176,23 @@ thread.
 4. The `Event` (new snapshot, details, diff, progress line or error) is applied to the tab
    state on the next frame; errors become toasts.
 
+## Where common changes live
+
+Paths are under `crates/canopy-app/src/` unless they start with `crates/`.
+
+| To change | Start in | Then |
+|---|---|---|
+| A repository operation (stage, branch, rebase, ...) | The `add-git-operation` skill: the function and its test in `crates/canopy-core`, then an `Op` (with its `OpKind`) or `Job` in `worker.rs` and the `Event` it returns | An `Action` in `action.rs`, applied in `app/dispatch.rs`; in-flight state in `tab.rs`; a keybinding where one is wanted; `docs/features.md` |
+| A setting | A field on `Settings` in `settings.rs` (the struct is `#[serde(default)]`, so old files load) | The control in `views/settings_screen.rs` (sections Appearance, Git, Integrations, Accounts, Updates, Privacy, Keyboard); read it where the behaviour happens, since a setting that changes nothing is a defect. `CanopyApp::save` in `app/mod.rs` persists it under `settings::KEY` |
+| A dialog | A variant of `Dialog` and its drawing in `views/dialogs/mod.rs`, with a file beside it when it is large | Open it with `Action::OpenDialog`; stacking rules are in `views/dialogs/stack.rs` |
+| A message to the user | `self.toasts.push(ctx, ToastKind::..., title, body)` (`ui/toast.rs`); worker failures arrive as an `Event` handled in `app/background.rs` and carry git's own stderr | Log the detail with `tracing` |
+| A keyboard shortcut | The `add-keybinding` skill: `BINDINGS` in `keymap.rs` | `docs/keybindings.md` |
+| A colour, theme or token | The `add-theme` skill: `ui/theme.rs` (`ThemeId::ALL`) | `docs/design.md`; screenshots dark and light |
+| A GitHub or GitLab call | The `hosting-api` skill: `crates/canopy-hosting`, then a `HostJob` in `hosting.rs` | `docs/legal/privacy-policy.md` when what leaves the machine changes |
+| What first launch asks, or what a report carries | `TERMS_VERSION` and `PRIVACY_VERSION` in `ui/legal.rs`, `DATA_VERSION` in `crash_reports.rs`, the `Settings` fields `accepted_terms`, `accepted_privacy`, `crash_reports` and `seen_intro` | The texts in `docs/legal/`, with their `Last updated` date |
+| A test that must not see the user's git configuration | `in_isolated_git_env` in `crates/canopy-core/tests/operations.rs` | `tools/check.sh` runs the suite with an isolated configuration too |
+| CI, a release or the update feed | `docs/playbook.md`, the `release` skill and `.github/workflows/` | A change under `.github/` gets a security pass (`AGENTS.md`) |
+
 ## Commit graph layout
 
 `graph.rs` turns commits in topological order (newest first) into rows the history view can draw

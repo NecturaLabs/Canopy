@@ -41,7 +41,7 @@ Canopy's layout, and which change keeps each file true (the update rules come fr
 | File | Kind | Update when |
 |---|---|---|
 | `docs/README.md` | The documentation map: where each fact is written and how far to trust it; `tools/check-docs.py` fails when a document is missing from it | A document under `docs/` is added, renamed or removed |
-| `docs/architecture.md` | Architecture overview: crates, modules, threading, data flow, why libgit2 plus the CLI | A module is added or its responsibility changes |
+| `docs/architecture.md` | Architecture overview: crates, modules, threading, data flow, where common changes live, why libgit2 plus the CLI | A module is added or its responsibility changes |
 | `docs/design.md` | Reference: design tokens, typography, components | A token, theme or component changes in `ui/theme.rs` or `ui/widgets.rs` |
 | `docs/features.md` | Reference: feature matrix against Fork, GitKraken, Sourcetree | A feature is added, changed or re-scoped |
 | `docs/backlog.md` | Task board, with acceptance criteria | Owned by the workflow in `AGENTS.md`; not a document this skill restructures |
