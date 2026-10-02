@@ -85,10 +85,9 @@ token anywhere new, contacting a new host or adding a dependency.
   (destructive and outward-facing actions still need the owner).
 - Project agents in `.claude/agents/` (Codex: `.codex/agents/`): `canopy-review`, `canopy-git`,
   `canopy-visual-qa`, `canopy-ux-research`.
-- Subagents (the owner's rule): at most 3 at a time, every one on `sonnet`, and `opus` only for
-  work in the security-sensitive areas above (in Claude Code; the Codex agents carry no model).
-  Small things are done directly. Each builder gets its own `CARGO_TARGET_DIR` in a scratch
-  directory, deleted afterwards; keep 5 GB of disk free.
+- Subagents (the owner's rule): at most 3 at a time. Small things are done directly. Each builder
+  gets its own `CARGO_TARGET_DIR` in a scratch directory, deleted afterwards; keep 5 GB of disk
+  free.
 - Branches: no pull requests and no long-lived branches. Small fixes go straight to `main`; larger
   work on a short branch merged with `git merge --no-ff` or a fast-forward. Push `main` when the
   owner asks. `tools/check.sh` must pass before merging; do not wait for CI. Where a check fails
