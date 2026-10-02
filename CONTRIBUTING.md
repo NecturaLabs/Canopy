@@ -23,7 +23,8 @@ Use fixtures for anything destructive, never a repository you care about.
 
 `tools/check.sh` runs CI's checks for this platform (`cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, the release
-tooling self-test, the licence-notice check and the documentation check, plus `shellcheck` and
+tooling self-test, the licence-notice check, the documentation check and the hidden-window
+stall check (Linux, with a C compiler and `libwayland-server`), plus `shellcheck` and
 `cargo deny check` when they are installed) and one CI does not: the installer test, on Linux and
 macOS. It must pass before
 you merge; a failure already listed in `docs/backlog.md` is reported, not hidden. Keep `TMPDIR` on

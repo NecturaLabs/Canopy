@@ -52,6 +52,7 @@ ROOT_PREFIXES = (
     "docs/",
     "tools/",
     "packaging/",
+    "vendor/",
     "assets/",
     ".github/",
     ".claude/",

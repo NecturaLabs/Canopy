@@ -243,7 +243,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo run -p canopy-app -- <repo>
-tools/check.sh                       # fmt, clippy, tests, release, notices and docs checks, installer test
+tools/check.sh                       # fmt, clippy, tests, release, notices, docs and stall checks, installer test
 tools/mkfixture.sh /tmp/demo         # deterministic demo repository
 tools/screenshot.sh /tmp/demo out.png --view changes
 ```

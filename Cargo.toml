@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/canopy-core", "crates/canopy-app", "crates/canopy-hosting"]
+# Vendored third-party code is built as a dependency, never linted, formatted or tested as ours.
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.2.1-beta.1"
@@ -41,6 +43,12 @@ dbg_macro = "warn"
 todo = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
+
+# eframe 0.36.2 with one patch: its glow backend never calls winit's `pre_present_notify`, so on
+# Wayland a window the compositor is not drawing blocks in the buffer swap and the application
+# stops answering the compositor ("Application Not Responding"). See `vendor/README.md`.
+[patch.crates-io]
+eframe = { path = "vendor/eframe" }
 
 [profile.release]
 lto = "thin"

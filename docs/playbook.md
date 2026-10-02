@@ -11,7 +11,8 @@ What is open lives in `docs/backlog.md`, not here; a release's numbered build is
 `tools/check.sh` is the gate. Pieces: `cargo fmt --all --check`, `cargo clippy --workspace
 --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `python3
 tools/release.py selftest`, `python3 tools/notices.py --check` (run without `--check` after a
-dependency change), `python3 tools/check-docs.py`, `packaging/test-install.sh`.
+dependency change), `python3 tools/check-docs.py`, `python3 tools/stall-check.py`,
+`packaging/test-install.sh`.
 
 - The installer test passes with a `TMPDIR` that contains a space. It used to fail two
   "interrupted install exits 130" checks there, which looked like an ignored SIGINT and was the
@@ -25,9 +26,10 @@ dependency change), `python3 tools/check-docs.py`, `packaging/test-install.sh`.
 
 ## Running the app live (private Xvfb)
 
-Never open a Canopy window on the owner's Hyprland session. A window on a hidden workspace gets no
-frame callbacks, so Hyprland raises "Application Not Responding" on the workspace the owner is
-using, and a launch that still has `WAYLAND_DISPLAY` set opens there too. Run the app on its own
+Never open a Canopy window on the owner's Hyprland session. A launch that still has
+`WAYLAND_DISPLAY` set opens there. A window on a hidden workspace gets no frame callbacks; Canopy
+used to block in its buffer swap then and Hyprland raised "Application Not Responding" for it
+(ADR 0007). `tools/stall-check.py` tests that safely, on a stand-in compositor. Run the app on its own
 X display instead: `xorg-server-xvfb` and `xorg-xauth` (Arch) are installed, `xdotool` and
 ImageMagick's `import` do the rest, and `tools/screenshot.sh` already prefers `xvfb-run`.
 

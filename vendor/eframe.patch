@@ -1,0 +1,15 @@
+--- a/src/native/glow_integration.rs
++++ b/src/native/glow_integration.rs
+@@ -849,6 +849,12 @@
+                     )
+                 })?;
+ 
++                // Canopy patch (vendor/README.md): like egui-wgpu, ask winit for a frame callback
++                // before presenting. On Wayland winit then holds back `RedrawRequested` until the
++                // compositor draws the window again. Without this, a window the compositor is not
++                // drawing (another workspace) is repainted anyway, the vsync wait inside
++                // `swap_buffers` never ends and the thread stops answering the compositor's pings.
++                window.pre_present_notify();
+                 gl_surface.swap_buffers(context)?;
+                 frame_timer.resume();
+             }

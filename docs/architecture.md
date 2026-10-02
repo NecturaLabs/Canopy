@@ -171,6 +171,15 @@ thread.
   `Details` is kept in the tab (`details_error`) and shown in the details pane, with a Retry
   button when downloading can fix it.
 
+## Window and rendering
+
+eframe draws with OpenGL (glow). The build uses a patched copy of eframe (`vendor/eframe`,
+`vendor/README.md`, ADR 0007): on Wayland a window the compositor is not drawing, such as one on
+another workspace, must not be repainted, because the buffer swap would wait for a frame callback
+that never comes and the UI thread would stop answering the compositor's pings (Hyprland's
+"Application Not Responding"). The patch makes winit hold such repaints back until the window is
+drawn again; `tools/stall-check.py` fails if that stops being true. No view code is involved.
+
 ## Data flow
 
 1. A user action (click, shortcut, palette command) builds a `Job`, for example

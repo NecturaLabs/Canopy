@@ -2,9 +2,10 @@
 # Usage: tools/check.sh
 #
 # The local part of CI: formatting check, clippy with warnings denied, the full test suite, the
-# release tooling's self-test, the licence notices check, the documentation check, the installer
-# test (Linux and macOS), and ShellCheck and cargo-deny when they are installed. CI also tests on
-# macOS and Windows and checks install.ps1.
+# release tooling's self-test, the licence notices check, the documentation check, the
+# vendored-crate check, the hidden-window stall check (Linux, when its tools are installed), the
+# installer test (Linux and macOS), and ShellCheck and cargo-deny when they are installed. CI also
+# tests on macOS and Windows and checks install.ps1.
 # Run it before every commit; it must pass before a change is considered done.
 set -euo pipefail
 
@@ -36,6 +37,14 @@ python3 tools/notices.py --check
 
 step "tools/check-docs.py"
 python3 tools/check-docs.py
+
+# vendor/eframe must be the published crate plus vendor/eframe.patch (downloads the crate).
+step "tools/vendor-eframe.sh --check"
+tools/vendor-eframe.sh --check
+
+# Needs a C compiler and libwayland-server; says so and passes when they are missing.
+step "tools/stall-check.py"
+python3 tools/stall-check.py
 
 case "$(uname -s)" in
   Linux | Darwin)

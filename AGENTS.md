@@ -48,9 +48,10 @@ These come from the owner and override anything else in the repository.
 
 ## Security-sensitive areas
 
-`askpass.rs`; saved tokens (`tokens.json`, `hosting.rs`) and all of `crates/canopy-hosting/`;
-crash-report scrubbing (`crash_reports.rs`); URL opening in `platform.rs` (web addresses only);
-log redaction (`logging.rs`, `cli.rs`); URL building in `forge.rs`; the update feed; `Cargo.toml`,
+`vendor/` (third-party code we build, with our patch); `askpass.rs`; saved tokens (`tokens.json`,
+`hosting.rs`) and all of `crates/canopy-hosting/`; crash-report scrubbing (`crash_reports.rs`); URL
+opening in `platform.rs` (web addresses only); log redaction (`logging.rs`, `cli.rs`); URL building
+in `forge.rs`; the update feed; `Cargo.toml`,
 `Cargo.lock`, `deny.toml`; `.github/` (self-hosted runners run code). A change there gets a
 security pass (`/security-review`) before the general review. Ask the owner before storing a
 token anywhere new, contacting a new host or adding a dependency.
@@ -63,7 +64,9 @@ token anywhere new, contacting a new host or adding a dependency.
 - Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
 - `tools/check.sh`, on this platform: `fmt --check`, clippy, workspace tests,
   `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
-  paths in docs, module table and skill mirror), `packaging/test-install.sh` on Linux and macOS,
+  paths in docs, module table and skill mirror), `tools/stall-check.py` (a hidden window must
+  keep answering its compositor; Linux, skipped without a C compiler and `libwayland-server`),
+  `packaging/test-install.sh` on Linux and macOS,
   and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck on
   every push and `cargo deny check` whenever a file outside the docs changes; run `cargo deny
   check` yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change). CI (`ci.yml`) adds
