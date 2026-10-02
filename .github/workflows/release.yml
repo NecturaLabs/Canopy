@@ -1,8 +1,8 @@
-# Builds Canopy for every platform from a release tag, publishes the GitHub release and points
-# the update feed at it. The "Create release" workflow (create-release.yml) calls it after
-# tagging a release. Run it by hand (Actions → Release → Run workflow) with an existing tag to
-# rebuild or republish that release. It never decides versions, and a pushed tag alone does not
-# start it, so a release can never run twice.
+# Builds Canopy from a release tag for the platforms the CI variables turn on (the `platforms`
+# job), publishes the GitHub release and points the update feed at it. The "Create release"
+# workflow (create-release.yml) calls it after tagging a release. Run it by hand (Actions →
+# Release → Run workflow) with an existing tag to rebuild or republish that release. It never
+# decides versions, and a pushed tag alone does not start it, so a release can never run twice.
 #
 # `publish-update` copies the builds to NecturaLabs/app-updates and commits the update manifest
 # (`canopy/latest.json`, or `beta.json` for a pre-release), so running copies of Canopy offer the
@@ -14,7 +14,8 @@
 #   NecturaLabs/app-updates only. Without it the feed step is skipped with a warning.
 # Variables: CANOPY_SENTRY_DSN overrides the built-in crash-report DSN (`off` disables crash
 # reporting; unset keeps the built-in one);
-# USE_SELF_HOSTED = '0' moves the builds to GitHub-hosted runners, as in CI.
+# USE_SELF_HOSTED = '0' moves the builds to GitHub-hosted runners, as in CI; CI_LINUX, CI_MACOS
+# and CI_WINDOWS pick the platforms (the `platforms` job).
 #
 # The builds keep to the self-hosted runners, but take nothing from earlier jobs on them: each
 # starts from an empty workspace (a reused .git could carry hooks or config that run code) and
