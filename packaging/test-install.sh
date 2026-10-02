@@ -22,7 +22,9 @@ case $os in
         ;;
 esac
 
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/canopy-install-test.XXXXXX")
+# The name holds a space on purpose: the installer and this script must cope with a path that has
+# one, as a mounted disk's "/run/media/<user>/Programming SSD" does.
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/canopy install test.XXXXXX")
 # The real path: the installer records real paths (pwd -P), and macOS's /tmp and TMPDIR are
 # symlinks into /private.
 tmp=$(cd "$tmp" && pwd -P)
@@ -186,9 +188,12 @@ path_without() {
 
 # A stub `mv` in folder $1 for the installer's `mv -- SRC DST`: the first time SRC (or DST, when
 # $2 is "dst") matches case pattern $3, it does $4: "fail" (exit 1), or "interrupt" (move, then
-# send SIGINT to the installer, as Ctrl+C would).
+# send SIGINT to the installer, as Ctrl+C would). In $3 only `*` is a wildcard; every other
+# character that is not a plain path character is quoted, so a space in the temporary folder's
+# name (a TMPDIR such as "/mnt/My Disk/tmp") cannot turn the stub into a syntax error.
 stub_mv() {
     mkdir -p "$1"
+    pat=$(printf '%s\n' "$3" | sed 's|[^A-Za-z0-9_.*/-]|\\&|g')
     cat >"$1/mv" <<EOF
 #!/bin/sh
 real="$real_mv"
@@ -199,7 +204,7 @@ if [ "\$1" = -- ]; then
 fi
 if [ ! -e "\$flag" ]; then
     case \$arg in
-        $3)
+        $pat)
             : >"\$flag"
             if [ "$4" = fail ]; then
                 echo "mv: simulated failure" >&2
