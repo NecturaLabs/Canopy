@@ -4,8 +4,8 @@ A fast, beautiful, Linux-first Git client for Linux, macOS and Windows, written 
 2024, MSRV 1.91). Three crates: `crates/canopy-core`, the UI-agnostic Git backend (libgit2 via
 `git2`, built without HTTPS/SSH, for reads; the `git` CLI for every mutation);
 `crates/canopy-hosting`, the GitHub/GitLab REST client (`ureq`, rustls); `crates/canopy-app`, the
-GUI (`eframe`/`egui` 0.36, glow), binary `canopy`. Docs: `docs/architecture.md`, decisions in
-`docs/adr/`, `docs/design.md`, `docs/features.md`.
+GUI (`eframe`/`egui` 0.36, glow), binary `canopy`. Docs: `docs/README.md` maps them (architecture,
+decisions in `docs/adr/`, design, features, playbook) and says which can lag.
 
 ## Product rules
 
@@ -62,8 +62,8 @@ token anywhere new, contacting a new host or adding a dependency.
 - Test: `cargo test --workspace --locked` (one: `cargo test -p canopy-core <name>`)
 - Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
 - `tools/check.sh`, on this platform: `fmt --check`, clippy, workspace tests,
-  `tools/release.py selftest`, `tools/notices.py --check`, `packaging/test-install.sh` on Linux
-  and macOS, and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck on
+  `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
+  paths in docs, module table and skill mirror), `packaging/test-install.sh` on Linux and macOS, and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck on
   every push and `cargo deny check` whenever a file outside the docs changes; run `cargo deny
   check` yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change). CI (`ci.yml`) adds
   tests per platform, one repository variable each: Linux runs unless `CI_LINUX`
