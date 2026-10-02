@@ -3,26 +3,22 @@
 How to operate on Canopy beyond the code: live runs, update testing, releasing. Kept for the next
 session; edit it when a step changes. Rules and product limits stay in `AGENTS.md`.
 
-## Where things stand (2 October 2026)
-
-- Done: releases are numbered builds (`build 412 (a1b2c3d)`, tag `build-412`, no version bump) and
-  Canopy updates itself (`selfupdate.rs`, ADR 0006). The first numbered build, 120 (`9ea6a0f`), was
-  released as stable on 2 October 2026 for Linux only (`CI_MACOS`/`CI_WINDOWS` are off), and
-  `beta.json` was set to the same manifest, so both channels serve build 120.
-- Next in `docs/backlog.md`: the git identity items (Settings, warning, first-launch step), then the
-  rest of "Now".
-- Not verified: the Update and Restart buttons clicked in a real window; a native macOS or Windows
-  update (those run the installer); `cargo deny` and `shellcheck` (not installed here, CI runs them).
-- `packaging/test-install.sh` fails two checks ("interrupted install exits 130") in an agent shell
-  that ignores SIGINT; with the default disposition (`signal.signal(SIGINT, SIG_DFL)` in a Python
-  wrapper) all 223 pass.
+What is open lives in `docs/backlog.md`, not here; a release's numbered build is `git rev-list
+--count` on `main` (`release` skill).
 
 ## Checks
 
 `tools/check.sh` is the gate. Pieces: `cargo fmt --all --check`, `cargo clippy --workspace
 --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `python3
 tools/release.py selftest`, `python3 tools/notices.py --check` (run without `--check` after a
-dependency change), `packaging/test-install.sh`.
+dependency change), `python3 tools/check-docs.py`, `packaging/test-install.sh`.
+
+- It passes with a `TMPDIR` that contains a space (this machine's is `/run/media/nectura/Programming
+  SSD/tmp`); the installer test used to fail two "interrupted install exits 130" checks there, and
+  that was the space, not an ignored SIGINT.
+- `cargo test` stops at the first test binary that fails, so later binaries never run; add
+  `--no-fail-fast` to see every failure in one run.
+- `shellcheck` and `cargo deny` run only when installed; CI runs them either way.
 
 ## Running the app live (Hyprland, workspace 2)
 
@@ -78,9 +74,11 @@ Never `pkill -f` a pattern that appears in your own command line: it kills the s
   the owner, then `gh workflow run create-release.yml --ref main -f channel=beta -f dry-run=true`,
   and for real without `dry-run`. Nothing is committed to `main`; the tag is `build-<n>`.
 - `NecturaLabs/app-updates` (public) holds `canopy/latest.json`, `beta.json`, `install.sh`,
-  `install.ps1` and the releases `canopy-build-<n>`; both manifests name build 120. A stable release
+  `install.ps1` and the releases `canopy-build-<n>`. The build each channel serves is the `version`
+  in its manifest: `gh api -H 'Accept: application/vnd.github.raw'
+  repos/NecturaLabs/app-updates/contents/canopy/latest.json` (and `beta.json`). A stable release
   updates only `latest.json` and the installers: to keep the beta channel level with it, commit the
-  same manifest as `canopy/beta.json` afterwards (done for build 120).
+  same manifest as `canopy/beta.json` afterwards.
 - Copies of Canopy older than the first numbered build cannot read the numbered manifest and report
   an update-check error until reinstalled with the one-line installer.
 - The Release workflow's Linux builds run as root in an Ubuntu 22.04 container: the first run of

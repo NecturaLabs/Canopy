@@ -8,8 +8,7 @@ verified in the running app.
 - [ ] In-app update, what is left: press Update and Restart in the running app (the install itself
       was verified on a real installer-made folder; the window could not be driven, see
       `docs/playbook.md`); a native macOS bundle swap and a Windows folder swap with the running
-      executable renamed aside (both run the installer today); the first numbered release
-      (`docs/playbook.md`, "Releasing").
+      executable renamed aside (both run the installer today).
 - [ ] Git identity in Settings: show the effective `user.name` / `user.email` and where each comes
       from (local, global, env); edit them for this repository or globally through `git config`
       via `canopy_core::cli` on a worker `Op`; core tests against temporary repositories.
