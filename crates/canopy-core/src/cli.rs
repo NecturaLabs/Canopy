@@ -14,7 +14,7 @@
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{OnceLock, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
@@ -250,11 +250,10 @@ pub(crate) fn output_within(mut cmd: Command, args: &[&str], limit: Duration) ->
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
     let status = loop {
-        match child.try_wait()? {
-            Some(status) => break status,
-            None if started.elapsed() >= limit => {
-                let _ = child.kill();
-                let _ = child.wait();
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() >= limit => {
+                reap(child);
                 record(args, started, None, b"timed out");
                 // The readers are left to finish by themselves: a grandchild may still hold the pipes.
                 return Err(Error::invalid(format!(
@@ -263,7 +262,11 @@ pub(crate) fn output_within(mut cmd: Command, args: &[&str], limit: Duration) ->
                     limit.as_secs()
                 )));
             }
-            None => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(e) => {
+                reap(child);
+                return Err(e.into());
+            }
         }
     };
     let out = Output {
@@ -273,6 +276,15 @@ pub(crate) fn output_within(mut cmd: Command, args: &[&str], limit: Duration) ->
     };
     record(args, started, out.code, &out.stderr);
     Ok(out)
+}
+
+/// Kills and waits for `child` on a thread of its own: a git stuck in uninterruptible I/O (a hung
+/// network mount) cannot be reaped, and the caller must not wait for it.
+fn reap(mut child: Child) {
+    std::thread::spawn(move || {
+        let _ = child.kill();
+        let _ = child.wait();
+    });
 }
 
 /// The result of a command whose exit code carries an answer.

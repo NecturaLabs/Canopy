@@ -80,11 +80,15 @@ confused.
   same in advance.
 - **Timeout.** Every git call of the identity code goes through `cli::output_within`, which kills
   git after 15 seconds and fails with "git … did not answer", so a repository whose configuration
-  makes git block cannot stall the shared `git-identity` thread for longer than that.
-- **Refused repositories.** `git var` also exits 128 for a repository git refuses ("dubious
-  ownership"). Only the "who you are" failure means *unusable* (`identity_unknown`); the ownership
-  refusal is a read error, so Changes says "Could not read Git identity." and Settings → Git shows
-  git's own message.
+  makes git block cannot stall the shared `git-identity` thread for longer than that. Killing and
+  reaping happen on a detached thread, and writes get 60 seconds so a killed `git config` does not
+  leave `config.lock` behind. A clear that fails after removing the name puts the name back like a
+  save does.
+- **Refused repositories.** `git var` treats a repository git refuses to read ("dubious
+  ownership") as no repository and answers from global configuration. `Identity::read` therefore
+  first runs `git rev-parse --git-dir` (`check_repository`); a refusal is a read error, so Changes
+  says "Could not read Git identity." and Settings → Git shows git's own message. Tested with
+  `GIT_TEST_ASSUME_DIFFERENT_OWNER=1`.
 - **`cli::loggable`** hides the value after `user.name`, `user.email`, `author.*` and `committer.*`
   in `git config` calls, so a debug log shows `<redacted>` (test in `cli.rs`).
 - **App thread.** `identity_worker.rs`: one `IdentityWorker` owned by `CanopyApp`, jobs `ReadRepo`,
@@ -155,9 +159,10 @@ No new dependency, host or token.
 
 - Behaviour on a host whose hostname has a domain (a guessed identity succeeds); the code handles
   both and the test accepts either.
-- A real "dubious ownership" repository: it needs a repository owned by another user, which could
-  not be made without `sudo` (git's `GIT_TEST_ASSUME_DIFFERENT_OWNER` had no effect on `git var`).
-  The classification is unit-tested on git's documented message only.
+- Several re-reads queue behind a hung repository (each costs up to 15 seconds); they are not
+  deduplicated. The Windows launcher (`cmd\git.exe`) may survive a kill; the timeout test is Unix-only.
+- A separate `/security-review` of the `cli.rs` addition (`output_within`) was not run; the
+  independent review read it.
 - Real-GPU rendering and a native Wayland window: all runs used software rendering on Xvfb.
 - The confirmation dialog was rendered in both themes (`--overlay clear-identity`); the first-launch
   dialog in the light theme was covered before its buttons moved to the shared helper.

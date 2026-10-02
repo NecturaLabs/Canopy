@@ -74,6 +74,7 @@ impl Identity {
     /// The author and committer that `git commit` would use in `workdir` now. A missing identity
     /// is data, not an error: `usable` records whether `git var` accepted it.
     pub fn read(workdir: &Path) -> Result<Self> {
+        check_repository(command(Some(workdir)))?;
         let configured = read_config(Some(workdir))?;
         Ok(Self {
             author: read_person(Some(workdir), &configured, Kind::Author)?,
@@ -128,6 +129,14 @@ fn git(workdir: Option<&Path>, args: &[&str]) -> Result<cli::Output> {
     cli::output_within(command(workdir), args, GIT_LIMIT)
 }
 
+/// Writes get longer: killing a `git config` that holds `config.lock` leaves the lock behind, which
+/// would fail every later save until it is removed by hand.
+const WRITE_LIMIT: Duration = Duration::from_secs(60);
+
+fn git_write(workdir: Option<&Path>, args: &[&str]) -> Result<cli::Output> {
+    cli::output_within(command(workdir), args, WRITE_LIMIT)
+}
+
 /// Change Git's `user.*` settings. Git chooses the target global file itself. Environment and
 /// `author.*`/`committer.*` overrides may still take precedence, which the next read reveals.
 /// If the email cannot be written after the name was, the name is put back.
@@ -165,12 +174,7 @@ fn store(
         workdir,
         &["config", flag, "--replace-all", "--", "user.email", email],
     ) {
-        return Err(match restore(workdir, scope, "user.name", &previous) {
-            Ok(()) => err,
-            Err(undo) => Error::invalid(format!(
-                "{err}. The new name was saved but could not be put back: {undo}"
-            )),
-        });
+        return Err(put_back(err, workdir, scope, &previous));
     }
     Ok(())
 }
@@ -216,15 +220,27 @@ pub fn clear(workdir: Option<&Path>, scope: Scope) -> Result<()> {
             "A repository is needed for local identity settings.",
         ));
     }
-    for key in ["user.name", "user.email"] {
-        unset(workdir, scope, key)?;
+    let previous = scope_values(workdir, scope, "user.name")?;
+    unset(workdir, scope, "user.name")?;
+    if let Err(err) = unset(workdir, scope, "user.email") {
+        return Err(put_back(err, workdir, scope, &previous));
     }
     Ok(())
 }
 
+/// `err` after an attempt to put `user.name` back to `previous`; says so if that failed too.
+fn put_back(err: Error, workdir: Option<&Path>, scope: Scope, previous: &[String]) -> Error {
+    match restore(workdir, scope, "user.name", previous) {
+        Ok(()) => err,
+        Err(undo) => Error::invalid(format!(
+            "{err}. The name was changed but could not be put back: {undo}"
+        )),
+    }
+}
+
 fn unset(workdir: Option<&Path>, scope: Scope, key: &str) -> Result<()> {
     let args = ["config", scope.flag(), "--unset-all", "--", key];
-    let out = git(workdir, &args)?;
+    let out = git_write(workdir, &args)?;
     if matches!(out.code, Some(0 | 5)) {
         Ok(())
     } else {
@@ -258,7 +274,7 @@ fn validate<'a>(value: &'a str, what: &str) -> Result<&'a str> {
 }
 
 fn write(workdir: Option<&Path>, args: &[&str]) -> Result<()> {
-    let out = git(workdir, args)?;
+    let out = git_write(workdir, args)?;
     if out.code == Some(0) {
         Ok(())
     } else {
@@ -266,10 +282,16 @@ fn write(workdir: Option<&Path>, args: &[&str]) -> Result<()> {
     }
 }
 
-/// Whether a failed `git var GIT_*_IDENT` means "Git does not know who you are" (exit 128, the
-/// usable-or-not answer) rather than a repository it refuses to read at all, which exits 128 too.
-fn identity_unknown(out: &cli::Output) -> bool {
-    out.code == Some(128) && !String::from_utf8_lossy(&out.stderr).contains("dubious ownership")
+/// `git var` treats a repository git refuses to read ("dubious ownership") as no repository and
+/// answers from global configuration, so ask git to open the repository first and report its refusal.
+fn check_repository(cmd: std::process::Command) -> Result<()> {
+    let args = ["rev-parse", "--git-dir"];
+    let out = cli::output_within(cmd, &args, GIT_LIMIT)?;
+    if out.code == Some(0) {
+        Ok(())
+    } else {
+        Err(out.error(&args))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -344,7 +366,7 @@ fn read_person(workdir: Option<&Path>, configured: &Configured, kind: Kind) -> R
             name.source.get_or_insert(Source::Guessed);
             email.source.get_or_insert(Source::Guessed);
             true
-        } else if identity_unknown(&out) {
+        } else if out.code == Some(128) {
             false
         } else {
             return Err(out.error(&args));
@@ -478,21 +500,42 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_repository_is_not_an_unknown_identity() {
-        let out = |code, stderr: &str| cli::Output {
-            code,
-            stdout: Vec::new(),
-            stderr: stderr.as_bytes().to_vec(),
+    fn a_failed_clear_puts_the_name_back() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        run_git(dir.path(), &["init", "-q"]);
+        run_git(dir.path(), &["config", "--local", "user.name", "Old"]);
+        // The name was removed and the email step then fails: the name must come back.
+        let failing = |workdir: Option<&Path>, args: &[&str]| {
+            if args.contains(&"user.email") {
+                Err(Error::invalid("config.lock appeared"))
+            } else {
+                write(workdir, args)
+            }
         };
-        assert!(identity_unknown(&out(
-            Some(128),
-            "fatal: unable to auto-detect email address"
-        )));
-        assert!(!identity_unknown(&out(
-            Some(128),
-            "fatal: detected dubious ownership in repository at '/x'"
-        )));
-        assert!(!identity_unknown(&out(Some(1), "")));
+        let previous = scope_values(Some(dir.path()), Scope::Local, "user.name").expect("read");
+        unset(Some(dir.path()), Scope::Local, "user.name").expect("unset");
+        let err = put_back(
+            failing(Some(dir.path()), &["config", "x", "user.email"]).unwrap_err(),
+            Some(dir.path()),
+            Scope::Local,
+            &previous,
+        );
+        assert!(err.to_string().contains("config.lock appeared"), "{err}");
+        assert_eq!(
+            scope_values(Some(dir.path()), Scope::Local, "user.name").expect("read"),
+            ["Old"]
+        );
+    }
+
+    #[test]
+    fn a_repository_git_refuses_is_a_read_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        run_git(dir.path(), &["init", "-q"]);
+        check_repository(command(Some(dir.path()))).expect("an ordinary repository opens");
+        let mut refused = command(Some(dir.path()));
+        refused.env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
+        let err = check_repository(refused).expect_err("git refuses it");
+        assert!(err.to_string().contains("dubious ownership"), "{err}");
     }
 
     #[test]
