@@ -8,7 +8,7 @@ session; edit it when a step changes. Rules and product limits stay in `AGENTS.m
 - Done: releases are numbered builds (`build 412 (a1b2c3d)`, tag `build-412`, no version bump) and
   Canopy updates itself (`selfupdate.rs`, ADR 0006). The first numbered build, 120 (`9ea6a0f`), was
   released as stable on 2 October 2026 for Linux only (`CI_MACOS`/`CI_WINDOWS` are off), and
-  `beta.json` was set to the same manifest, so both channels serve build 120.
+  `beta.json` was set to the same manifest, so both channels served build 120; build 124 (git identity) was released the same way on 2 October 2026.
 - Git identity (Settings → Git, the commit warning, the first-launch step) is done and was driven in
   the running app; design and findings in `docs/specs/git-identity.md`. Next in `docs/backlog.md`:
   the rest of "Now".
@@ -91,9 +91,9 @@ Never `pkill -f` a pattern that appears in your own command line: it kills the s
   the owner, then `gh workflow run create-release.yml --ref main -f channel=beta -f dry-run=true`,
   and for real without `dry-run`. Nothing is committed to `main`; the tag is `build-<n>`.
 - `NecturaLabs/app-updates` (public) holds `canopy/latest.json`, `beta.json`, `install.sh`,
-  `install.ps1` and the releases `canopy-build-<n>`; both manifests name build 120. A stable release
+  `install.ps1` and the releases `canopy-build-<n>`; both manifests name build 124. A stable release
   updates only `latest.json` and the installers: to keep the beta channel level with it, commit the
-  same manifest as `canopy/beta.json` afterwards (done for build 120).
+  same manifest as `canopy/beta.json` afterwards (done for builds 120 and 124).
 - Copies of Canopy older than the first numbered build cannot read the numbered manifest and report
   an update-check error until reinstalled with the one-line installer.
 - The Release workflow's Linux builds run as root in an Ubuntu 22.04 container: the first run of
