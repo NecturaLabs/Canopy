@@ -1,6 +1,6 @@
 # Terms of Service
 
-Last updated: 1 October 2026
+Last updated: 3 October 2026
 
 These terms are an agreement between you and NecturaLabs about Canopy (the "software"). You accept them by choosing I agree in Canopy. If you do not accept them, choose Quit and do not use the software.
 
@@ -48,7 +48,7 @@ Beta and release-candidate versions are unfinished. They may be unstable, and th
 
 ## Your data
 
-The Privacy Policy explains what the software sends and to whom: crash reports (only if you agree), update checks, and requests to GitHub and GitLab. You can read it in the Privacy section of Settings.
+The Privacy Policy explains what the software sends and to whom: crash reports (only if you agree), update checks, requests to GitHub and GitLab, and optional author picture downloads from the hosts listed in the policy. You can read it in the Privacy section of Settings.
 
 ## No warranty
 

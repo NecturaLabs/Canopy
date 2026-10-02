@@ -36,7 +36,7 @@ Screenshots are rendered by Canopy itself from the deterministic fixture reposit
   (`--filter=blob:none`, `--filter=tree:0`) download the objects a view needs through `git` on
   demand.
 - **History**: commit graph with coloured lanes and curved merge edges, ref labels for `HEAD`,
-  local and remote branches and tags, initials avatars, relative dates, and filtering by message,
+  local and remote branches and tags, profile pictures with initials fallback, relative dates, and filtering by message,
   author or SHA.
 - **Commit details**: metadata, parents, changed files with added/removed line counts and a diff
   per file.
@@ -228,7 +228,8 @@ Three crates:
   GitLab remote URLs (`forge.rs`, offline).
 - **`canopy-hosting`**: the GitHub and GitLab REST client (pull and merge requests, `ureq` with
   rustls) and the update-manifest fetch. It contacts only the host a repository's own remote
-  points at, with a token the user supplied.
+  points at, with a token the user supplied; author images use the restricted picture hosts
+  listed in the Privacy Policy, without credentials.
 - **`canopy-app`**: the GUI, built on `eframe`/`egui` with the glow (OpenGL) renderer. Each open
   repository has a background worker thread; the UI thread sends it jobs and never calls git.
 

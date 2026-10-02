@@ -817,6 +817,7 @@ dependencies = [
  "flate2",
  "getrandom 0.4.3",
  "git2",
+ "image",
  "notify",
  "png 0.18.1",
  "rfd",
@@ -2258,6 +2259,8 @@ dependencies = [
  "num-traits",
  "png 0.18.1",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 # ADR 0003: Which network services Canopy contacts, and the consent that gates them
 
-**Status:** accepted
+**Status:** partially superseded by [ADR 0008](0008-author-profile-pictures.md) for author pictures
 **Date:** 2026-10-01
 
 ## Context and problem statement

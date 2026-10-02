@@ -233,7 +233,7 @@ An opened submenu item uses the same neutral surface as a hovered menu item.
 ### Avatar
 
 A circle, 20px in tables and 32px in details, filled with a lane colour chosen by hashing the
-author's email, showing up to two initials in Small SemiBold white. Avatars use local initials only; no images are downloaded.
+author's email, showing up to two initials in Small SemiBold white. Account pictures fill the same circle, with initials while unavailable or downloads are disabled. History and commit details share a twelve-hour local cache; a failed refresh retains the last picture.
 
 ### Toast
 
@@ -271,8 +271,7 @@ The Changes view repeats that line (`warning`, small size) with an "Edit identit
 commit button, in a footer anchored to the bottom of the commit area: the fields scroll and the
 commit button always stays visible, however the warning wraps. The button's tooltip explains the
 warning. The first-launch dialog ("Set your Git identity", name and email, "Save globally", Cancel)
-is an ordinary dialog opened once after the consent dialogs. History's column header says "Stored
-author", since it shows what each commit recorded, not the current settings.
+is an ordinary dialog opened once after the consent dialogs. History's column header says "Author"; it shows what each commit recorded, independently of current settings.
 
 ### Graph node and edges
 
@@ -304,3 +303,5 @@ keeps its values on failure, disables edits while running, and offers Continue i
 Constrained commit metadata and diff scrollers can shrink below their toolkit default height.
 Dialog bodies scroll within the viewport with a visible scrollbar, keeping the frame on screen
 at maximum zoom and minimum desktop size.
+
+Update progress and completion dialogs keep their action buttons in a content-height horizontal row, immediately below the status text, rather than expanding to fill the viewport.

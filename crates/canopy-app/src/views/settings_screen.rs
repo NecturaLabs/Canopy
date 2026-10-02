@@ -412,7 +412,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     row(
         ui,
         "Author avatars",
-        "Coloured initials next to authors. Canopy never downloads pictures.",
+        "Pictures or coloured initials next to authors.",
         |ui| {
             toggle(ui, &mut s.show_avatars);
         },
@@ -1105,6 +1105,15 @@ fn accounts(
 fn privacy(ui: &mut Ui, s: &mut Settings, actions: &mut Vec<Action>) {
     use crate::ui::legal::Document;
     let p = palette(ui.ctx());
+    heading(ui, "Profile pictures");
+    row(
+        ui,
+        "Download profile pictures",
+        "Fetch GitHub or GitLab account pictures for visible authors. Sends commit IDs to GitHub or author emails to GitLab. Pictures and failed lookups are cached locally for 12 hours. A failed refresh keeps the previous picture. Turn off to use initials and stop new requests. Also requires Pull and merge requests to be on.",
+        |ui| {
+            toggle(ui, &mut s.download_avatars);
+        },
+    );
     heading(ui, "Crash reports");
     if crate::crash_reports::available() {
         let before = s.crash_reports;

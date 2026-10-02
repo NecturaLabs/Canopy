@@ -6,8 +6,8 @@
 //! - It talks only to the REST API of the host the repository's own remote points at:
 //!   `api.github.com` for github.com, `https://<host>/api/v4` for gitlab.com and self-hosted
 //!   GitLab. The host comes from a [`canopy_core::forge::Forge`] recognised from a remote URL;
-//!   nothing else is contacted (no telemetry, avatars or third-party services). The one
-//!   exception is Canopy's own update manifest ([`updates`]), fetched anonymously from the public
+//!   author pictures also use validated image hosts ([`avatars`]), without credentials.
+//!   Canopy's own update manifest ([`updates`]) is fetched anonymously from the public
 //!   `NecturaLabs/app-updates` repository.
 //! - It authenticates only with a token the user supplied: an environment variable
 //!   ([`token_from_env_for`], which offers `GH_TOKEN` only to github.com and `GITLAB_TOKEN` only
@@ -21,6 +21,7 @@
 //!
 //! Errors carry the server's own message ([`Error`]).
 
+pub mod avatars;
 mod client;
 mod error;
 mod github;

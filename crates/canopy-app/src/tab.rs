@@ -376,6 +376,7 @@ pub struct RepoTab {
     /// Self-hosted GitLab hosts the user listed in settings: environment tokens may go there.
     pub trusted_gitlab_hosts: Vec<String>,
     pub requests: Requests,
+    pub avatars: crate::avatars::Avatars,
     /// The last fetch, for auto-fetch.
     pub last_fetch: Instant,
 }
@@ -440,6 +441,7 @@ impl RepoTab {
             host: None,
             trusted_gitlab_hosts: Vec::new(),
             requests: Requests::default(),
+            avatars: Default::default(),
             last_fetch: Instant::now(),
         }
     }
@@ -523,9 +525,20 @@ impl RepoTab {
             return;
         }
         self.requests = Requests::default();
+        self.avatars = Default::default();
         let trusted = self.trusted_gitlab_hosts.clone();
         self.host = want.map(|f| HostWorker::spawn(f, saved_token, trusted, ctx.clone()));
         self.load_requests();
+    }
+
+    /// Requests one visible author picture, without I/O on the UI thread.
+    pub fn request_avatar(&mut self, oid: Oid, email: &str) {
+        if let Some(host) = &self.host
+            && host.avatars_enabled()
+            && self.avatars.request(oid, email)
+        {
+            host.send(HostJob::Avatar(oid, email.to_owned()));
+        }
     }
 
     /// Restarts the API thread, e.g. after the token changed.
@@ -995,9 +1008,13 @@ impl RepoTab {
     fn poll_host(&mut self, notices: &mut Vec<Notice>) {
         let Some(host) = &self.host else { return };
         let kind = host.forge.kind;
+        let ctx = host.context().clone();
         let events: Vec<HostEvent> = host.events.try_iter().collect();
         for ev in events {
             match ev {
+                HostEvent::Avatar { oid, email, result } => {
+                    self.avatars.finish(&ctx, oid, email, result);
+                }
                 HostEvent::Token(t) => self.requests.token = Some(t),
                 HostEvent::List(filter, result) => {
                     if filter == self.requests.filter {

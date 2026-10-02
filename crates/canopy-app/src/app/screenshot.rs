@@ -31,6 +31,7 @@ impl CanopyApp {
                     && t.running.is_none()
                     && (t.diff.is_some() || t.file.is_none())
                     && requests_ready
+                    && !t.avatars.pending()
             });
         if ready {
             shot.ready_frames += 1;

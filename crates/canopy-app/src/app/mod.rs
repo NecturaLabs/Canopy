@@ -56,6 +56,8 @@ pub const OVERLAYS: &[&str] = &[
     "identity",
     "settings-git",
     "clear-identity",
+    "update-installed",
+    "update-running",
 ];
 
 /// Options from the command line.
@@ -66,9 +68,7 @@ pub struct Launch {
     pub zoom: Option<f32>,
     pub screenshot: Option<PathBuf>,
     pub view: Option<View>,
-    /// Open this overlay for a screenshot: settings, privacy, cheatsheet, palette, consent,
-    /// crash-consent, legal, licences, credential, host-key, merge, identity, settings-git or clear-identity (see
-    /// [`OVERLAYS`]).
+    /// Open this overlay for a screenshot (see [`OVERLAYS`]).
     pub overlay: Option<String>,
     /// Side-by-side diffs.
     pub split: bool,
@@ -158,7 +158,8 @@ impl CanopyApp {
             settings = Settings {
                 seen_intro: true,
                 check_updates: false,
-                hosting_api: std::env::var_os("CANOPY_HOSTING_API_BASE").is_some(),
+                hosting_api: std::env::var("CANOPY_HOSTING_API_BASE")
+                    .is_ok_and(|base| canopy_hosting::is_loopback_base(base.trim())),
                 // Answered, so the mock API loads; the consent overlays open the dialog directly.
                 accepted_terms: crate::ui::legal::TERMS_VERSION.to_owned(),
                 accepted_privacy: crate::ui::legal::PRIVACY_VERSION.to_owned(),
@@ -290,6 +291,27 @@ impl CanopyApp {
                 email: String::new(),
                 pending: false,
             }),
+            Some("update-installed" | "update-running") => {
+                let available = crate::updater::Available {
+                    build: 1001,
+                    manifest: canopy_hosting::updates::UpdateManifest {
+                        version: "1001".into(), notes: String::new(), pub_date: None,
+                        release_page: None, platforms: Default::default(),
+                    },
+                };
+                app.updater.install = if launch.overlay.as_deref() == Some("update-installed") {
+                    crate::updater::InstallState::Done {
+                        build: 1001, installed: crate::selfupdate::Installed {
+                            exe: Some("canopy".into()), notes: Vec::new(),
+                        },
+                    }
+                } else {
+                    crate::updater::InstallState::Running {
+                        build: 1001, phase: crate::selfupdate::Phase::Installing,
+                    }
+                };
+                app.dialogs.open(Dialog::Update(Box::new(available)));
+            }
             Some("clear-identity") => app.dialogs.open(Dialog::ConfirmClearIdentity {
                 repo: None,
                 scope: canopy_core::identity::Scope::Global,

@@ -130,6 +130,30 @@ impl Http {
         &self.base
     }
 
+    /// Profile lookup: no redirects, bounded JSON, and no author email in logs.
+    pub(crate) fn avatar_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let mut response = self
+            .headers(self.agent.get(format!("{}{}", self.base, path)))
+            .config()
+            .max_redirects(0)
+            .build()
+            .call()
+            .map_err(|_| {
+                Error::Network("Profile lookup could not reach the hosting service".into())
+            })?;
+        let status = response.status().as_u16();
+        let bytes = response
+            .body_mut()
+            .with_config()
+            .limit(1024 * 1024)
+            .read_to_vec()
+            .map_err(|_| Error::Network("Could not read the profile response".into()))?;
+        if !(200..300).contains(&status) {
+            return Err(map_status(status, response.headers(), &bytes, self.kind));
+        }
+        parse(&bytes, "profile response")
+    }
+
     /// Sends a request and parses a successful JSON response.
     pub(crate) fn json<T: DeserializeOwned>(
         &self,

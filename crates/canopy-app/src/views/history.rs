@@ -286,6 +286,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     tab.reveal_selected = false;
 
     let total_rows = row_count + usize::from(snap.truncated && filtered.is_none());
+    let mut wanted_pictures = Vec::new();
     area.show_rows(ui, ROW_H, total_rows, |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for ri in range {
@@ -385,13 +386,15 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             if show_author {
                 // Author.
                 if avatars {
-                    widgets::paint_avatar(
-                        ui,
-                        pos2(author_x + 16.0, cy),
-                        10.0,
-                        &c.author.name,
-                        &c.author.email,
-                    );
+                    wanted_pictures.push((c.oid, c.author.email.clone()));
+                    let center = pos2(author_x + 16.0, cy);
+                    if let Some(texture) = tab.avatars.get(&c.author.email) {
+                        egui::Image::new(texture)
+                            .corner_radius(egui::CornerRadius::same(10))
+                            .paint_at(ui, Rect::from_center_size(center, vec2(20.0, 20.0)));
+                    } else {
+                        widgets::paint_avatar(ui, center, 10.0, &c.author.name, &c.author.email);
+                    }
                 }
                 let ag = ui.painter().layout_no_wrap(
                     c.author.name.clone(),
@@ -461,6 +464,9 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         }
     });
 
+    for (oid, email) in wanted_pictures {
+        tab.request_avatar(oid, &email);
+    }
     if let Some(oid) = clicked {
         tab.select_commit(oid);
         return true;

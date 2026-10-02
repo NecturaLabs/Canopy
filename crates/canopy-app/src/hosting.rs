@@ -9,6 +9,10 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use serde::{Deserialize, Serialize};
@@ -156,7 +160,7 @@ impl TokenStore {
 }
 
 /// Writes `bytes` to a new file that only the user can read, from the moment it exists (Unix).
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let _ = std::fs::remove_file(path);
     let mut options = std::fs::OpenOptions::new();
@@ -211,6 +215,7 @@ pub fn token_page(kind: ForgeKind, host: &str) -> String {
 /// Work for the hosting thread.
 #[derive(Debug, Clone)]
 pub enum HostJob {
+    Avatar(canopy_core::Oid, String),
     List(StateFilter),
     Details(u64),
     Create(NewRequest),
@@ -225,6 +230,7 @@ impl HostJob {
     fn label(&self, kind: ForgeKind) -> String {
         let n = kind.request_abbrev();
         match self {
+            HostJob::Avatar(..) => "Loading an author picture".into(),
             HostJob::List(_) => format!("Loading {}s", kind.request_noun()),
             HostJob::Details(i) => format!("Loading {n} #{i}"),
             HostJob::Create(_) => format!("Creating {}", kind.request_noun()),
@@ -240,6 +246,11 @@ impl HostJob {
 /// What the hosting thread reports back.
 #[derive(Debug)]
 pub enum HostEvent {
+    Avatar {
+        oid: canopy_core::Oid,
+        email: String,
+        result: crate::avatars::Cached,
+    },
     Token(Option<TokenSource>),
     List(StateFilter, Result<Vec<RequestSummary>, String>),
     Details(u64, Box<Result<RequestDetails, String>>),
@@ -268,6 +279,8 @@ pub struct HostWorker {
     pub forge: Forge,
     jobs: Sender<HostJob>,
     pub events: Receiver<HostEvent>,
+    avatars_enabled: Arc<AtomicBool>,
+    ctx: egui::Context,
 }
 
 impl HostWorker {
@@ -281,9 +294,22 @@ impl HostWorker {
         let (jobs, job_rx) = unbounded::<HostJob>();
         let (tx, events) = unbounded::<HostEvent>();
         let thread_forge = forge.clone();
+        let avatars_enabled = Arc::new(AtomicBool::new(false));
+        let thread_avatars = avatars_enabled.clone();
+        let thread_ctx = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name(format!("hosting:{}", forge.host))
-            .spawn(move || run(thread_forge, saved, &trusted_gitlab_hosts, job_rx, tx, ctx));
+            .spawn(move || {
+                run(
+                    thread_forge,
+                    saved,
+                    &trusted_gitlab_hosts,
+                    job_rx,
+                    tx,
+                    thread_ctx,
+                    thread_avatars,
+                )
+            });
         if let Err(e) = &spawned {
             tracing::error!("could not start the hosting thread: {e}");
         }
@@ -291,11 +317,31 @@ impl HostWorker {
             forge,
             jobs,
             events,
+            avatars_enabled,
+            ctx,
         }
     }
 
     pub fn send(&self, job: HostJob) {
         let _ = self.jobs.send(job);
+    }
+
+    pub fn set_avatars_enabled(&self, enabled: bool) {
+        self.avatars_enabled.store(enabled, Ordering::SeqCst);
+    }
+
+    pub fn avatars_enabled(&self) -> bool {
+        self.avatars_enabled.load(Ordering::SeqCst)
+    }
+
+    pub fn context(&self) -> &egui::Context {
+        &self.ctx
+    }
+}
+
+impl Drop for HostWorker {
+    fn drop(&mut self) {
+        self.set_avatars_enabled(false);
     }
 }
 
@@ -306,6 +352,7 @@ fn run(
     jobs: Receiver<HostJob>,
     events: Sender<HostEvent>,
     ctx: egui::Context,
+    avatars_enabled: Arc<AtomicBool>,
 ) {
     let emit = |e: HostEvent| {
         let _ = events.send(e);
@@ -336,6 +383,10 @@ fn run(
         tracing::debug!(host = %forge.host, job = %label, "hosting job");
         let s = |e: canopy_hosting::Error| e.to_string();
         match job {
+            HostJob::Avatar(oid, email) => {
+                let result = crate::avatars::load(&client, &forge, oid, &email, &avatars_enabled);
+                emit(HostEvent::Avatar { oid, email, result });
+            }
             HostJob::List(filter) => {
                 emit(HostEvent::List(filter, client.list(filter, 100).map_err(s)))
             }

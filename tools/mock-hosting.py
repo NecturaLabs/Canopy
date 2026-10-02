@@ -10,6 +10,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 NOW = datetime.now(timezone.utc)
 
@@ -64,6 +65,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
         parts = path.strip("/").split("/")
+        if len(parts) == 5 and parts[3] == "commits":
+            return self.reply({"author": {"avatar_url": f"http://127.0.0.1:{self.server.server_port}/avatar.png"}})
+        if path == "/avatar.png":
+            # A bundled PNG fixture; never fetch a real person's picture for the demo.
+            body = (Path(__file__).resolve().parent.parent / "assets" / "icon-512.png").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path == "/user":
             return self.reply({"login": "maya-chen"})
         if len(parts) == 4 and parts[3] == "pulls":

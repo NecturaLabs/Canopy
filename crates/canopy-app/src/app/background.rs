@@ -233,6 +233,16 @@ impl CanopyApp {
     }
 
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
+        let pictures = crate::ui::legal::pending(&self.settings).is_none()
+            && self.settings.hosting_api
+            && self.settings.download_avatars
+            && self.settings.show_avatars;
+        for (index, tab) in self.tabs.iter_mut().enumerate() {
+            tab.avatars.set_enabled(pictures);
+            if let Some(host) = &tab.host {
+                host.set_avatars_enabled(pictures && index == self.active);
+            }
+        }
         self.poll_opened(ctx);
         self.poll_identity(ctx);
         for tab in &mut self.tabs {
@@ -271,6 +281,10 @@ impl CanopyApp {
                 .and_then(|(_, f)| self.tokens.get_for(f))
                 .map(str::to_owned);
             t.ensure_host(ctx, saved, self.settings.hosting_api);
+            t.avatars.set_enabled(pictures);
+            if let Some(host) = &t.host {
+                host.set_avatars_enabled(pictures);
+            }
         }
         let mut finished = None;
         if let Some((_, rx, status)) = &mut self.clone {

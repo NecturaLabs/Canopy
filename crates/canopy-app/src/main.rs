@@ -5,6 +5,7 @@
 mod action;
 mod app;
 mod askpass;
+mod avatars;
 mod build_info;
 mod crash_reports;
 mod highlight;
@@ -43,7 +44,7 @@ OPTIONS:
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
                               palette, consent, crash-consent, legal, licences,
                               credential, host-key, merge, identity, settings-git or
-                              clear-identity
+                              clear-identity, update-installed or update-running
         --size <WxH>          Initial window size [default: 1440x900]
         --zoom <FACTOR>       Initial interface zoom, from 0.8 to 1.6
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit

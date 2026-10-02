@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 2 October 2026
+Last updated: 3 October 2026
 
 This policy explains what Canopy sends over the internet, who receives it and what you can do about it.
 
@@ -97,6 +97,16 @@ Without any of these, Canopy reads public projects without signing in. A token i
 These requests go directly between your computer and that server, which receives your IP address, your token and your Canopy version. NecturaLabs receives none of it. The service's own privacy policy applies.
 
 Tokens you save in Canopy are stored in the file tokens.json in Canopy's data folder. The file is not encrypted. On Linux and macOS, Canopy makes it readable only by your user account. On Windows, it is protected by the permissions of your user profile. To delete a saved token, use Remove in the Accounts section of Settings.
+
+## Author profile pictures
+
+When Download profile pictures in Settings → Privacy is on, Canopy looks up pictures for authors visible in History and the selected commit. This also requires Author avatars in Appearance and Pull and merge requests in Integrations to be on. Nothing is requested before you accept the terms and this policy and answer the crash-report question.
+
+For GitHub, the repository's API receives a commit ID to identify its author account. For GitLab, the repository's API receives the author's email address recorded in the commit to look up its public account picture. API requests may use your existing hosting token, sent only to its own host.
+
+Canopy then downloads the direct image URL. It permits only HTTPS images on the repository's host, GitHub's avatars.githubusercontent.com, or, when GitLab returns such a link, Gravatar (gravatar.com, www.gravatar.com, secure.gravatar.com, 0.gravatar.com, 1.gravatar.com or 2.gravatar.com) and Libravatar (seccdn.libravatar.org). It follows no image redirects and uses no Gravatar or Libravatar API key. Image requests carry no token, cookie or referrer. The image host receives your IP address, Canopy version and the image URL, which may include an email hash supplied by GitLab. A hash is not a guarantee of anonymity. These services' own privacy policies apply. NecturaLabs receives none of this traffic.
+
+Pictures are stored as small thumbnails in the avatars folder inside Canopy's data folder, with a timestamp and an opaque filename derived from the hosting server and author email. Canopy caches successful and failed lookups for 12 hours across restarts. When an author is shown after that interval, it tries once again. A failed refresh keeps the previous picture, or coloured initials if none was cached, until the next due time. Pictures are not included in logs or crash reports. Turning Download profile pictures off stops new picture requests and displays initials; existing disk cache files remain until you delete that folder or purge Canopy's data during uninstall.
 
 ## Git
 

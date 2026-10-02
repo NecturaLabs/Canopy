@@ -46,6 +46,7 @@ pub(crate) fn optional<T>(what: &str, result: Result<T>) -> Option<T> {
 /// hides credentials embedded in a configured API root).
 pub struct Client {
     http: Http,
+    forge: Forge,
     kind: ForgeKind,
     /// `/repos/owner/repo` or `/projects/group%2Fproject`.
     project: String,
@@ -90,6 +91,7 @@ impl Client {
         };
         Client {
             http: Http::new(forge.kind, api_base, token),
+            forge: forge.clone(),
             kind: forge.kind,
             project,
         }
@@ -103,6 +105,16 @@ impl Client {
     /// Whether a (non-empty) token is set.
     pub fn has_token(&self) -> bool {
         self.http.has_token()
+    }
+
+    /// Resolves a commit author's account picture on this project's host. GitHub receives the
+    /// commit id; GitLab receives the author's email. Downloads never carry the hosting token.
+    pub fn author_avatar(
+        &self,
+        commit: &str,
+        email: &str,
+    ) -> Result<Option<crate::avatars::Avatar>> {
+        crate::avatars::lookup(&self.http, &self.forge, &self.project, commit, email)
     }
 
     /// The login (GitHub) or username (GitLab) the token belongs to. Fails with

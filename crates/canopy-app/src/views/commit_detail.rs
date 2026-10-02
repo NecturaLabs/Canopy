@@ -80,7 +80,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     .on_hover_text("Commit information");
                 });
                 ui.add_space(theme::XS);
-                author(ui, &d);
+                author(ui, &d, tab);
             } else {
                 let files_min = FILE_ROW_H * 2.0 + theme::XL + theme::SM + theme::XS;
                 egui::ScrollArea::vertical()
@@ -91,7 +91,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     .show(ui, |ui| {
                         message(ui, &d);
                         ui.add_space(theme::SM);
-                        author(ui, &d);
+                        author(ui, &d, tab);
                         ui.add_space(theme::XS);
                         metadata(ui, &d, actions);
                     });
@@ -129,10 +129,19 @@ fn message(ui: &mut Ui, d: &CommitDetails) {
     }
 }
 
-fn author(ui: &mut Ui, d: &CommitDetails) {
+fn author(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
     let p = palette(ui.ctx());
     ui.horizontal_wrapped(|ui| {
-        widgets::avatar(ui, 32.0, &d.author.name, &d.author.email);
+        tab.request_avatar(d.oid, &d.author.email);
+        if let Some(texture) = tab.avatars.get(&d.author.email) {
+            ui.add(
+                egui::Image::new(texture)
+                    .fit_to_exact_size(egui::vec2(32.0, 32.0))
+                    .corner_radius(egui::CornerRadius::same(16)),
+            );
+        } else {
+            widgets::avatar(ui, 32.0, &d.author.name, &d.author.email);
+        }
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.label(

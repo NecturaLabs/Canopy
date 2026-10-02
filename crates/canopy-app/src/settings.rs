@@ -105,8 +105,10 @@ pub struct Settings {
     pub zoom: f32,
     /// "3 hours ago" rather than "Sep 21, 2026" in the history.
     pub relative_dates: bool,
-    /// Initials avatars next to authors.
+    /// Avatars next to authors.
     pub show_avatars: bool,
+    /// Fetch account pictures after consent; initials remain when disabled.
+    pub download_avatars: bool,
     /// Turn off animations (hover fades, the welcome screen's drifting glow).
     pub reduce_motion: bool,
 
@@ -190,6 +192,7 @@ impl Default for Settings {
             zoom: 1.0,
             relative_dates: true,
             show_avatars: true,
+            download_avatars: true,
             reduce_motion: false,
             pull_mode: PullMode::Merge,
             prune_on_fetch: true,

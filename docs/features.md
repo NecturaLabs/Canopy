@@ -55,7 +55,7 @@ list anything, and says why when it cannot. Repositories made by Git before 2.24
 |---|---|---|---|---|
 | Commit graph with coloured lanes | Done | Yes | Yes | Yes |
 | Ref labels (HEAD, local, remote, tags) | Done | Yes | Yes | Yes |
-| Author avatars | Done (initials) | Yes | Yes | Yes |
+| Author avatars | Done (GitHub/GitLab pictures, initials fallback) | Yes | Yes | Yes |
 | On-demand History search by message, author or SHA (Ctrl+F or `/` toggles it) | Done | Yes | Yes | Yes |
 | Commit details: metadata, parents, files with +/- counts, per-file diff; expandable and compact full view | Done | Yes | Yes | Yes |
 | Incremental loading ("Load more") | Done | ? | ? | ? |
@@ -158,3 +158,5 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Update check, which can be turned off (nothing is sent before you accept the Terms) | Unreleased | ? | ? | ? |
 | Opt-in, scrubbed crash reports | Unreleased | ? | ? | ? |
 | Screen reader support (AccessKit) | Planned | ? | ? | ? |
+
+Author pictures are fetched after consent when enabled in Privacy, through the repository hosting worker. GitLab-provided Gravatar and Libravatar image URLs need no API keys. Pictures and failures are cached locally for 12 hours across restarts; failed refreshes retain the previous picture.

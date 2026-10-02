@@ -16,9 +16,12 @@ through the steps in order; a pull or merge request feature touches both provide
 - Allowed without asking: another endpoint of the pull request (GitHub) or merge request (GitLab)
   API of the repository's own host, called with the user's token, on behalf of a user action.
 - Ask the owner first: any other host, another provider, a new category of data (issues, user
-  profiles, avatars or any image download, organisation data), a call that runs without a user
-  action or the update check, polling, or storing a token somewhere new. Avatars, telemetry and
-  analytics are out entirely (AGENTS.md, Product rules).
+  profiles beyond the approved author pictures, other image downloads, organisation data), a call that runs without a user
+  action or the approved picture/update checks, polling, or storing a token somewhere new. Telemetry and
+  analytics are out entirely. Author pictures are approved under ADR 0008: the forge, GitHub's
+  avatar CDN, and exact Gravatar/Libravatar image hosts returned by GitLab, after consent and while
+  download_avatars and hosting_api are on. Follow the existing validators and twelve-hour cache
+  in avatars.rs; never send a token to an image URL (AGENTS.md, Product rules).
 - Anything sent to a third party must be true in `docs/legal/privacy-policy.md` (step 6).
 
 ## 1. Data (`crates/canopy-hosting/src/model.rs`)

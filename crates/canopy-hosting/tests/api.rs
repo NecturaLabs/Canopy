@@ -1218,3 +1218,151 @@ fn checkout_refs() {
         "refs/merge-requests/12/head"
     );
 }
+
+#[test]
+fn author_pictures_resolve_both_providers_and_download_without_tokens() {
+    let server = Server::start();
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let picture = format!("{}/picture.png", server.base);
+    server.route(
+        "GET",
+        &format!("/repos/octo/hello/commits/{sha}"),
+        200,
+        &json!({"author": {"avatar_url": picture}, "unknown": true}).to_string(),
+    );
+    server.route(
+        "GET",
+        "/api/v4/avatar?email=author%2Bgit%40example.com&size=64",
+        200,
+        &json!({"avatar_url": picture}).to_string(),
+    );
+    server.route("GET", "/picture.png", 200, "image fixture bytes");
+    for client in [github(&server, Some(TOKEN)), gitlab(&server, Some(TOKEN))] {
+        let avatar = client
+            .author_avatar(sha, "author+git@example.com")
+            .unwrap()
+            .unwrap();
+        assert!(!format!("{avatar:?}").contains(TOKEN));
+        assert_eq!(avatar.download().unwrap(), b"image fixture bytes");
+    }
+    let requests = server.requests();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(
+        requests[0].header("authorization"),
+        Some(&format!("Bearer {TOKEN}")[..])
+    );
+    assert_eq!(
+        requests[2].header("authorization"),
+        Some(&format!("Bearer {TOKEN}")[..])
+    );
+    for request in [&requests[1], &requests[3]] {
+        assert!(request.header("authorization").is_none());
+        assert!(request.header("cookie").is_none());
+        assert_eq!(request.target, "/picture.png");
+    }
+}
+
+#[test]
+fn author_picture_redirects_and_off_host_urls_are_never_followed() {
+    let server = Server::start();
+    let other = Server::start();
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let path = format!("/repos/octo/hello/commits/{sha}");
+    let external = format!("{}/stolen", other.base);
+    let client = github(&server, Some(TOKEN));
+    server.route_with_headers("GET", &path, 302, &[("Location", &external)], "");
+    assert!(client.author_avatar(sha, "a@example.com").is_err());
+    assert!(other.requests().is_empty());
+    server.route(
+        "GET",
+        &path,
+        200,
+        &json!({"author":{"avatar_url":external}}).to_string(),
+    );
+    assert!(
+        client
+            .author_avatar(sha, "a@example.com")
+            .unwrap()
+            .is_none()
+    );
+    let own = format!("{}/picture", server.base);
+    server.route(
+        "GET",
+        &path,
+        200,
+        &json!({"author":{"avatar_url":own}}).to_string(),
+    );
+    server.route_with_headers("GET", "/picture", 302, &[("Location", &external)], "");
+    assert!(
+        client
+            .author_avatar(sha, "a@example.com")
+            .unwrap()
+            .unwrap()
+            .download()
+            .is_err()
+    );
+    assert!(other.requests().is_empty());
+}
+
+#[test]
+fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
+    let server = Server::start();
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let path = format!("/repos/octo/hello/commits/{sha}");
+    let client = github(&server, None);
+    server.route("GET", &path, 200, r#"{"author":null}"#);
+    assert!(
+        client
+            .author_avatar(sha, "a@example.com")
+            .unwrap()
+            .is_none()
+    );
+    assert!(server.requests()[0].header("authorization").is_none());
+    let count = server.requests().len();
+    assert!(
+        client
+            .author_avatar("../../users", "a@example.com")
+            .is_err()
+    );
+    assert_eq!(server.requests().len(), count);
+    for status in [401, 403, 404, 429, 500] {
+        server.route("GET", &path, status, r#"{"message":"Unavailable"}"#);
+        assert!(client.author_avatar(sha, "a@example.com").is_err());
+        server.route(
+            "GET",
+            "/api/v4/avatar",
+            status,
+            r#"{"message":"Unavailable"}"#,
+        );
+        assert!(
+            gitlab(&server, None)
+                .author_avatar(sha, "a@example.com")
+                .is_err()
+        );
+    }
+    server.route("GET", &path, 200, "malformed");
+    assert!(matches!(
+        client.author_avatar(sha, "a@example.com"),
+        Err(Error::Parse(_))
+    ));
+    server.route("GET", "/api/v4/avatar", 200, "malformed");
+    assert!(matches!(
+        gitlab(&server, None).author_avatar(sha, "a@example.com"),
+        Err(Error::Parse(_))
+    ));
+    server.route(
+        "GET",
+        &path,
+        200,
+        &json!({"author":{"avatar_url":format!("{}/oversized",server.base)}}).to_string(),
+    );
+    server.route("GET", "/oversized", 200, &"x".repeat(2 * 1024 * 1024 + 1));
+    assert!(
+        client
+            .author_avatar(sha, "a@example.com")
+            .unwrap()
+            .unwrap()
+            .download()
+            .is_err()
+    );
+}

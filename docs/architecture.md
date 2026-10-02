@@ -64,6 +64,7 @@ thread.
 
 | Module | Responsibility |
 |---|---|
+| `avatars.rs` | Author profile lookup and validated, credential-free HTTPS image downloads; exact image hosts, no redirects and a 2 MiB compressed limit (ADR 0008). |
 | `client.rs` | `Client`: provider-neutral entry point for listing, reading, creating, merging, closing, commenting on and approving pull and merge requests. |
 | `github.rs`, `gitlab.rs` | The two providers' REST calls (GitHub API v3, GitLab API v4 including self-hosted hosts). |
 | `http.rs` | One `ureq` agent per client, the common headers, timeouts, and HTTP failures mapped to `Error` with the server's own message. The token travels only in an `Authorization` header. |
@@ -89,6 +90,7 @@ thread.
 | `tab.rs` | `RepoTab`: one open repository's snapshot, selections, in-flight work and the state a failed or superseded job leaves behind. |
 | `worker.rs` | One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; debounced file watcher. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it. |
 | `identity_worker.rs` | One background thread shared by tabs and first launch. It reads Git's effective author and committer through `canopy-core::identity`, writes `user.*` configuration only after a user action, and returns results for Settings and the commit warning. |
+| `avatars.rs` | Twelve-hour persistent thumbnail and negative cache, serialized across hosting threads, with bounded PNG/JPEG decoding off the UI thread and a per-tab texture cache. |
 | `hosting.rs` | A background thread per repository tab for pull and merge requests through `canopy-hosting` (`HostJob`), and the token store (`tokens.json`, per host and port). |
 | `askpass.rs` | Credential prompts for git and ssh: Canopy's own executable is `GIT_ASKPASS`/`SSH_ASKPASS`, and the running app answers over loopback (ADR 0005). |
 | `updater.rs` | The update check against the manifest, and the background install (`Updater::install`, `InstallState`); nothing is downloaded until the user chooses Update. |
