@@ -78,8 +78,8 @@ token anywhere new, contacting a new host or adding a dependency.
   "Now" down, and delete one only when verified in the running app, not when the code compiles.
 - Any change to what the UI shows needs a screenshot check (`screenshot` skill), dark and light
   where colours are involved; unit tests cannot see layout or colour.
-- `docs/playbook.md`: running the app live on workspace 2, testing an update end to end, releasing
-  and the app-updates feed. Read it before any of those.
+- `docs/playbook.md`: running the app live on a private Xvfb display, testing an update end to end,
+  releasing and the app-updates feed. Read it before any of those.
 - Recipes to follow end to end: `add-git-operation`, `hosting-api`, `add-theme`, `add-keybinding`.
 - The owner has given full authority: ask only for decisions that are truly theirs
   (destructive and outward-facing actions still need the owner).
