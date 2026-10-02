@@ -77,13 +77,15 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
                     .color(p.text_faint),
             );
             ui.add_space(12.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_sized([90.0, 34.0], egui::Button::new("Hide"))
-                    .clicked()
-                {
-                    outcome = Outcome::Close;
-                }
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_sized([90.0, 34.0], egui::Button::new("Hide"))
+                        .clicked()
+                    {
+                        outcome = Outcome::Close;
+                    }
+                });
             });
         }
         InstallState::Done { installed, .. } => {
@@ -107,18 +109,20 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
                 );
             }
             ui.add_space(12.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(exe) = &installed.exe
-                    && widgets::primary_button(ui, "Restart now", true, 150.0).clicked()
-                {
-                    outcome = Outcome::Run(vec![Action::RestartInto(exe.clone())]);
-                }
-                if ui
-                    .add_sized([90.0, 34.0], egui::Button::new("Later"))
-                    .clicked()
-                {
-                    outcome = Outcome::Close;
-                }
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(exe) = &installed.exe
+                        && widgets::primary_button(ui, "Restart now", true, 150.0).clicked()
+                    {
+                        outcome = Outcome::Run(vec![Action::RestartInto(exe.clone())]);
+                    }
+                    if ui
+                        .add_sized([90.0, 34.0], egui::Button::new("Later"))
+                        .clicked()
+                    {
+                        outcome = Outcome::Close;
+                    }
+                });
             });
         }
         InstallState::Idle | InstallState::Failed { .. } => {

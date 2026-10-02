@@ -1038,6 +1038,66 @@ mod tests {
         );
     }
     #[test]
+    fn update_progress_and_completion_dialogs_fit_their_content() {
+        use super::show;
+        use crate::selfupdate::{Installed, Phase};
+        use crate::updater::{Available, InstallState, Updater};
+
+        let available = Available {
+            build: 1001,
+            manifest: canopy_hosting::updates::UpdateManifest {
+                version: "1001".into(),
+                notes: String::new(),
+                pub_date: None,
+                release_page: None,
+                platforms: Default::default(),
+            },
+        };
+        for state in [
+            InstallState::Running {
+                build: 1001,
+                phase: Phase::Installing,
+            },
+            InstallState::Done {
+                build: 1001,
+                installed: Installed {
+                    exe: Some("canopy".into()),
+                    notes: Vec::new(),
+                },
+            },
+        ] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            let mut updater = Updater::default();
+            updater.install = state;
+            let mut dialog = Dialog::Update(Box::new(available.clone()));
+            let mut picker = crate::ui::folder_picker::FolderPicker::default();
+            for _ in 0..5 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1440.0, 900.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |_| {
+                        show(&ctx, &mut dialog, None, &mut picker, false, &updater);
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            let bounds = egui::containers::AreaState::load(&ctx, egui::Id::new("dialog"))
+                .expect("update dialog area")
+                .rect();
+            assert!(
+                bounds.height() < 300.0,
+                "update actions must stay beside their content, not consume the viewport: {bounds:?}"
+            );
+        }
+    }
+
+    #[test]
     fn clone_form_title_and_actions_are_reachable_at_minimum_window_scale() {
         use super::{Settings, show};
         let ctx = egui::Context::default();
