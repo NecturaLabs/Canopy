@@ -5,10 +5,9 @@ verified in the running app.
 
 ## Now
 
-- [ ] In-app update, what is left: press Update and Restart in the running app (the install itself
-      was verified on a real installer-made folder; drive the window on a private Xvfb display, see
-      `docs/playbook.md`); a native macOS bundle swap and a Windows folder swap with the running
-      executable renamed aside (both run the installer today).
+- [ ] In-app update, what is left: a native macOS bundle swap and a Windows folder swap with the
+      running executable renamed aside (both run the installer today). Update and Restart are
+      verified in the running app on a private Xvfb display (3 Oct 2026, `docs/playbook.md`).
 - [ ] Partial clones: trusted locations. Downloads (which run the repository's own git config)
       only for repositories under folders trusted in Settings; compare canonicalized paths in the
       worker; a "Trust…" button offering the repository's folder or its parent; privacy text.
@@ -32,8 +31,15 @@ verified in the running app.
       reported in the notification center with the setting, its value and where it is set. Today
       `pull` checks only `pull.rebase`, so it overrides a `branch.<name>.rebase`.
 - [ ] `cli::run_with_input`: show git's stderr, not "Broken pipe", when git exits early.
-- [ ] Security review of the installer fixes (`85d2961`); review canopy-3's core when the app
-      starts calling it.
+- [ ] Installer follow-ups from the security review (`install.sh` is fixed; `install.ps1` could not
+      be tested here and is untouched, and nothing in CI runs it): bring `install.ps1` to parity
+      (an upgrade must move only the installer's own entries aside, around lines 495 and 649; an
+      uninstall must act only on the entries it creates; its purge text, lines 416-417, still says
+      tokens are in the keychain, but they are `tokens.json` in the data folder); write the
+      receipt before `SWAP_PHASE` is cleared, so a first install interrupted after the swap does
+      not leave files that both install and uninstall then refuse; clean up `.previous.*`
+      leftovers on install; check the saved `uninstall.sh` against a checksum; refuse archive
+      members that are symlinks. Review canopy-3's core when the app starts calling it.
 - [ ] Wire canopy-2's core into the app: publish any branch, mode and type changes, collapsed
       untracked folders, ask before Stage all adds a nested repository; drop the compatibility
       wrappers.
