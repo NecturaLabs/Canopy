@@ -134,8 +134,7 @@ commits since the previous build.
 
 ### Changed
 
-- History's author column is titled "Stored author": it shows what each commit recorded, not your
-  current Git settings. Settings rows now keep their controls in one aligned column.
+- Settings rows now keep their controls in one aligned column.
 - Releases are numbered builds, named by `git rev-list --count` of their commit on `main` and its
   short hash (`build 412 (a1b2c3d)`), instead of semantic versions. The number is shown in About,
   `canopy --version`, the logs and the update check; the update check, the one-line installers

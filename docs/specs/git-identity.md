@@ -17,8 +17,8 @@ settings cannot change an old commit, and Canopy must not rewrite history to "fi
 repository checked, 28 of 121 reachable commits carried a placeholder-looking stored author (a
 one-character name or an email domain without a dot). The part Canopy can fix is the future: show
 what Git will use for the next commit, warn when that is unusable, guessed or a placeholder, and let
-the user correct it in Settings. History's column header says "Stored author" so the two are not
-confused.
+the user correct it in Settings. History's column header reads plainly "Author" (the owner's call);
+the column always shows what the commit recorded.
 
 ## What git does (probed)
 
@@ -112,7 +112,7 @@ confused.
   dialog opens, so dismissing it any way (Cancel, Escape, a click outside) never brings it back; a
   global identity that is already sensible sets it silently. "Save globally" writes `--global`, and
   the dialog stays open and shows git's error if the write fails. Screenshots skip the step.
-- **History**: the column header reads "STORED AUTHOR".
+- **History**: the column header reads "AUTHOR".
 
 ## Decisions made (the three open questions)
 

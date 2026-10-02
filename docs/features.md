@@ -76,7 +76,7 @@ repository. Canopy writes only `user.name` and `user.email`, never signs in as s
 never invents values. The Changes view warns, with a link to Settings, when Git has no usable
 identity, guessed it, or the values look like placeholders; Git's own error still appears if you
 commit anyway. After the consent dialogs, first launch asks once for a global identity when none
-is configured. History's "Stored author" column shows what each commit recorded, which does not
+is configured. History's "Author" column shows what each commit recorded, which does not
 change when current settings change; Canopy never rewrites existing commits to fix an author.
 
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
