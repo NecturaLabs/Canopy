@@ -1,7 +1,7 @@
 ---
 name: canopy-git
 description: Git semantics specialist and implementer for crates/canopy-core. Use when adding or changing a Git operation (ops.rs, cli.rs, diff.rs, status.rs, repo.rs, graph.rs, conflict.rs), when behaviour must match the git CLI exactly, when a libgit2 versus git CLI difference is suspected, or when a bug involves index, refs, merges, rebases, conflicts, renames, line endings or unusual repository states. It writes the core function and its tests against temporary repositories, and researches documentation and source when unsure.
-model: opus
+model: sonnet
 effort: high
 ---
 

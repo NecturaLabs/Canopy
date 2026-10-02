@@ -37,19 +37,20 @@ the review was not independent.
 
 ## In Canopy
 
-- **The reviewer is the `canopy-review` agent** (`.claude/agents/canopy-review.md`). It runs in
-  its own context, is read-only, reads `AGENTS.md` and `docs/architecture.md` itself, and carries
-  Canopy's domain checks (Git semantics, UI-thread blocking, data-loss safety, error surfacing,
-  cross-platform paths, theme tokens, docs in step). Claude Code's native `/code-review` may be
-  used instead where it can take the exact scope. Either way, brief it per step 2: do not paste
+- **The reviewer is the `canopy-review` agent** (`.claude/agents/canopy-review.md`; Codex's
+  copy is `.codex/agents/canopy-review.toml`). It runs in its own context, is read-only, reads
+  `AGENTS.md` and `docs/architecture.md` itself, and carries Canopy's domain checks (Git
+  semantics, UI-thread blocking, data-loss safety, error surfacing, cross-platform paths, theme
+  tokens, docs in step). The harness's native review command (`/code-review` in Claude Code) may
+  be used instead where it can take the exact scope. Either way, brief it per step 2: do not paste
   `AGENTS.md` into the brief; name the rules that bind this change.
 - **Scope commands.** Uncommitted work: `git diff` and `git diff --cached`, plus every untracked
   file from `git ls-files --others --exclude-standard` — a new module (a new `forge.rs`, a new
   crate) is invisible to `git diff` until it is added, and a brief without it reviews half the
   change. A branch: `git diff main...HEAD`. Record `git diff --stat` (and the untracked list)
   before dispatching.
-- **Security pass first** (Claude Code's `/security-review` where available) when the diff
-  touches: `crates/canopy-hosting` or anything else that makes HTTP requests; how a GitHub or
+- **Security pass first** (the harness's own, `/security-review` in Claude Code, where
+  available) when the diff touches: `crates/canopy-hosting` or anything else that makes HTTP requests; how a GitHub or
   GitLab token is read, stored (`tokens.json`), sent or logged; the update check; crash-report
   scrubbing (`crash_reports.rs`); URL building in `forge.rs` (credentials must never appear in a
   URL Canopy builds or logs); URL or file opening in `platform.rs`; argument or environment
@@ -62,9 +63,11 @@ the review was not independent.
   answered the crash-report question, changes what leaves the machine without updating
   `docs/legal/`, or puts a token into a URL, a log line or a toast is CRITICAL.
 - **Verification command:** `tools/check.sh` (fmt check, clippy with `-D warnings`, workspace
-  tests, `tools/release.py selftest`, `tools/notices.py --check`), plus
-  `cargo deny check` when dependencies or `deny.toml` change — CI runs it and `check.sh` does
-  not. For re-verifying one fix, the narrowest form: `cargo test -p <crate> <test-name>`.
+  tests, `tools/release.py selftest`, `tools/notices.py --check`, `packaging/test-install.sh` on
+  Linux and macOS, and `shellcheck` and `cargo deny check` when they are installed). When
+  dependencies or `deny.toml` change, confirm `cargo deny check` actually ran: `check.sh` skips it
+  without `cargo-deny`, and CI runs it only when a file outside the docs changed. For
+  re-verifying one fix, the narrowest form: `cargo test -p <crate> <test-name>`.
 - **Visible changes need images, not a diff read.** A reviewer cannot judge layout or colour
   from source; require screenshots from the `screenshot` skill or a `canopy-visual-qa` pass, in
   both themes where colours are involved.

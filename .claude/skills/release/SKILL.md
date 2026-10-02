@@ -11,7 +11,7 @@ Nobody bumps a version or tags by hand. Two workflows in `.github/workflows/` do
 | Workflow | Trigger | Does |
 |---|---|---|
 | `create-release.yml` ("Create release") | Manual, on `main` only | Picks the version, bumps files, commits `chore(release): vX.Y.Z` to `main`, tags `vX.Y.Z`, then calls Release on the tag |
-| `release.yml` ("Release") | Called by Create release, or manual with an existing tag | Builds every platform, publishes the GitHub release, points the update feed at it |
+| `release.yml` ("Release") | Called by Create release, or manual with an existing tag | Builds the platforms the CI variables turn on, publishes the GitHub release, points the update feed at it |
 
 A pushed tag alone starts nothing, so a release cannot run twice by accident.
 
@@ -52,7 +52,10 @@ is part of `tools/check.sh` and CI.
    skipped with a warning and running copies are not offered the update); `RELEASE_TOKEN` only if
    `main` is protected against direct pushes; variable `CANOPY_SENTRY_DSN` overrides the built-in
    crash-report DSN (`off` builds without crash reporting; unset keeps the built-in one);
-   variable `USE_SELF_HOSTED=0` moves the builds to GitHub-hosted runners.
+   variable `USE_SELF_HOSTED=0` moves the builds to GitHub-hosted runners; and the CI platform
+   variables `CI_LINUX`, `CI_MACOS` and `CI_WINDOWS` decide which platforms Release builds
+   (`CI_MACOS` and `CI_WINDOWS` are off unless `1`). Read them with `gh variable list` and tell
+   the user which platforms the release will ship before dispatching.
 
 ## Procedure
 
@@ -66,11 +69,14 @@ is part of `tools/check.sh` and CI.
 2. After the user confirms that version, run it for real (`-f dry-run=false`; `-f channel=beta`
    for a pre-release; `-f bump=patch|minor|major` only to override the commits).
 3. The workflow then runs `tools/release.py apply`, commits and tags, and calls Release, which:
-   - builds `canopy-app` with `--locked` for `x86_64-unknown-linux-gnu` (in an Ubuntu 22.04
-     container on the self-hosted runner, with a check that it needs no newer than glibc 2.35),
-     `aarch64-unknown-linux-gnu` (cross-compiled in the same container with Ubuntu's aarch64 GCC,
-     same glibc check), `aarch64-apple-darwin`, `x86_64-apple-darwin` (cross-compiled on the
-     Apple silicon runner) and `x86_64-pc-windows-msvc`; the Linux and Windows builds use the
+   - builds `canopy-app` with `--locked` for the platforms its `platforms` job turns on from the
+     CI variables, like CI's test job: Linux unless `CI_LINUX` is `0`, macOS only when `CI_MACOS`
+     is `1`, Windows only when `CI_WINDOWS` is `1` (it fails if all three are off). Linux is
+     `x86_64-unknown-linux-gnu` (in an Ubuntu 22.04 container on the self-hosted runner, with a
+     check that it needs no newer than glibc 2.35) and `aarch64-unknown-linux-gnu` (cross-compiled
+     in the same container with Ubuntu's aarch64 GCC, same glibc check); macOS is
+     `aarch64-apple-darwin` and `x86_64-apple-darwin` (cross-compiled on the Apple silicon
+     runner); Windows is `x86_64-pc-windows-msvc`. The Linux and Windows builds use the
      self-hosted runners from an empty workspace and job-local toolchain, macOS runs hosted. The
      two cross-compiled targets are `experimental`: their failure shows as a failed job but does
      not stop the release, and the installer reports that platform as having no build;
@@ -92,10 +98,12 @@ is part of `tools/check.sh` and CI.
 
 - `gh run list --workflow create-release.yml` and `--workflow release.yml` succeeded, including
   `Publish to the update feed` (it must not have warned that the token is missing).
-- `gh release view vX.Y.Z` lists five archives (three if an experimental build failed: check
-  why), `install.sh`, `install.ps1` and `SHA256SUMS`; the notes match the changelog.
-- Download the Linux archive: `sha256sum -c` against `SHA256SUMS`, `./canopy --version` prints
-  X.Y.Z, and the archive holds the desktop entry, metainfo, icons and `legal/`.
+- `gh release view vX.Y.Z` lists one archive per target built (two for Linux, two for macOS,
+  one for Windows, for the platforms that were on; one fewer for each experimental build that
+  failed: check why), `install.sh`, `install.ps1` and `SHA256SUMS`; the notes match the
+  changelog.
+- If Linux was built, download its archive: `sha256sum -c` against `SHA256SUMS`,
+  `./canopy --version` prints X.Y.Z, and the archive holds the desktop entry, metainfo, icons and `legal/`.
 - The manifest on the channel names X.Y.Z and the platform URLs resolve (`raw.githubusercontent.com`
   `/NecturaLabs/app-updates/main/canopy/latest.json`).
 - For a stable release, `canopy/install.sh` and `canopy/install.ps1` on app-updates' `main` match

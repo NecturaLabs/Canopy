@@ -7,9 +7,6 @@ A fast, beautiful, Linux-first Git client for Linux, macOS and Windows, written 
 GUI (`eframe`/`egui` 0.36, glow), binary `canopy`. Docs: `docs/architecture.md`, decisions in
 `docs/adr/`, `docs/design.md`, `docs/features.md`.
 
-**Then read `HANDOFF.md`** for the queue. It is a session note and can lag: where it disagrees
-with this file or the code, they win; fix the note (`memory-hygiene`).
-
 ## Product rules
 
 These come from the owner and override anything else in the repository.
@@ -32,6 +29,13 @@ These come from the owner and override anything else in the repository.
   `docs/legal/third-party-notices.txt`; CI checks it).
 - **Logging**: JSON-lines logs per run (`logging.rs`). Never log secrets or prompt answers; pass
   URLs through `canopy_core::cli::redact_url`, git arguments through `cli::loggable`.
+- **Git settings**: Canopy is the authority on what it does to a repository. Every action runs
+  with the option chosen in Canopy, passed to git explicitly, even where the user's git
+  configuration says otherwise; that configuration is the default Canopy's choices start from.
+  Whenever Canopy's choice differs from the user's git configuration, the UI says so: which
+  setting, its value and where it is set. Not yet true: `pull` still defers to the user's
+  `pull.rebase`, and nothing reports differences yet (`docs/backlog.md`, "Git settings" and
+  "Pull strategy").
 - **Toolkit**: egui stays (the owner chose it over React).
 - **Art**: SVG placeholders until Codex/OpenAI art (`docs/art-prompts.md`); keep file names and
   view boxes stable.
@@ -57,9 +61,12 @@ token anywhere new, contacting a new host or adding a dependency.
 - Lint: `cargo clippy --workspace --all-targets --locked -- -D warnings`
 - Test: `cargo test --workspace --locked` (one: `cargo test -p canopy-core <name>`)
 - Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
-- `tools/check.sh`: `fmt --check`, clippy, workspace tests, `tools/release.py selftest` and
-  `tools/notices.py --check`, on this platform. CI (`ci.yml`) adds `cargo deny check` (run it when
-  `Cargo.toml`, `Cargo.lock` or `deny.toml` change) and tests per platform, one repository variable each: Linux runs unless `CI_LINUX`
+- `tools/check.sh`, on this platform: `fmt --check`, clippy, workspace tests,
+  `tools/release.py selftest`, `tools/notices.py --check`, `packaging/test-install.sh` on Linux
+  and macOS, and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck on
+  every push and `cargo deny check` whenever a file outside the docs changes; run `cargo deny
+  check` yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change). CI (`ci.yml`) adds
+  tests per platform, one repository variable each: Linux runs unless `CI_LINUX`
   is `0`; macOS and Windows run only when `CI_MACOS` / `CI_WINDOWS` is `1` (off for now).
 - Demo repository: `tools/mkfixture.sh <dir> [kind]` (`fixture-repo` skill)
 - Screenshot: `tools/screenshot.sh <repo> <out.png> [--light|--theme NAME|--view V|--overlay NAME]`
@@ -72,9 +79,18 @@ token anywhere new, contacting a new host or adding a dependency.
 - Any change to what the UI shows needs a screenshot check (`screenshot` skill), dark and light
   where colours are involved; unit tests cannot see layout or colour.
 - Recipes to follow end to end: `add-git-operation`, `hosting-api`, `add-theme`, `add-keybinding`.
-- Project agents in `.claude/agents/`: `canopy-review`, `canopy-git`, `canopy-visual-qa`,
-  `canopy-ux-research`. Model tier: `opus` for costly, security-sensitive or cross-cutting work,
-  `sonnet` otherwise.
+- The owner has given full authority: ask only for decisions that are truly theirs
+  (destructive and outward-facing actions still need the owner).
+- Project agents in `.claude/agents/` (Codex: `.codex/agents/`): `canopy-review`, `canopy-git`,
+  `canopy-visual-qa`, `canopy-ux-research`.
+- Subagents (the owner's rule): at most 3 at a time, every one on `sonnet`, and `opus` only for
+  work in the security-sensitive areas above (in Claude Code; the Codex agents carry no model).
+  Small things are done directly. Each builder gets its own `CARGO_TARGET_DIR` in a scratch
+  directory, deleted afterwards; keep 5 GB of disk free.
+- Branches: no pull requests and no long-lived branches. Small fixes go straight to `main`; larger
+  work on a short branch merged with `git merge --no-ff` or a fast-forward. Push `main` when the
+  owner asks. `tools/check.sh` must pass before merging; do not wait for CI. Where a check fails
+  for a reason already in `docs/backlog.md`, report the actual run.
 - Before declaring work done: `tools/check.sh` passes and the `canopy-review` agent has reviewed
   the diff (brief it per the `independent-review` skill); fix or answer every Blocking finding.
   Only a typo or formatting-only change skips this.
@@ -82,9 +98,9 @@ token anywhere new, contacting a new host or adding a dependency.
 ## Conventions
 
 - The UI thread never calls git, libgit2, the hosting API, the network or the filesystem for
-  repository data. Add a `Job` or `Op` variant in `crates/canopy-app/src/worker.rs` (hosting: a `HostJob`
-  in `hosting.rs`), handle it off the UI thread and return an `Event`. Views render from tab state
-  only.
+  repository data. Add a `Job` or `Op` variant in `crates/canopy-app/src/worker.rs` (hosting: a
+  `HostJob` in `hosting.rs`), handle it off the UI thread and return an `Event`. Views render from
+  tab state only.
 - `canopy-core` has no UI dependencies. Every operation gets a test against a temporary
   repository (`tempfile`), compared with the `git` CLI where semantics are subtle.
 - Every repository mutation and all Git network traffic run the `git` executable through
@@ -105,8 +121,8 @@ token anywhere new, contacting a new host or adding a dependency.
 - Bundled fonts and assets need a licence row (fonts: `crates/canopy-app/assets/fonts/README.md`)
   and text in the same change; only OFL, MIT, Apache-2.0, CC0 or similar.
 - Commit messages follow Conventional Commits (`feat(graph): ...`); the type decides the release
-  bump (`tools/release.py`). Never bump versions or tag by hand: releases come from the manual
-  "Create release" workflow (`release` skill).
+  bump (`tools/release.py`). No model attribution in commits or files. Never bump versions or tag by
+  hand: releases come from the manual "Create release" workflow (`release` skill).
 
 ## Boundaries
 

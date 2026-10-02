@@ -1,6 +1,6 @@
 ---
 name: project-docs
-description: Create or maintain Canopy's durable project documentation — docs/architecture.md, docs/design.md, docs/features.md, ADRs, design documents, runbooks and reference docs. Use when recording a consequential decision and its rationale, documenting how a system is structured, or auditing documentation that has drifted from the code. Not for code comments, not for explaining code in conversation, not for cutting a release (the release skill), and not for AGENTS.md, AGENTS.md, .Codex/ agents or skills (agent-instructions).
+description: Create or maintain Canopy's durable project documentation — docs/architecture.md, docs/design.md, docs/features.md, ADRs, design documents, runbooks and reference docs. Use when recording a consequential decision and its rationale, documenting how a system is structured, or auditing documentation that has drifted from the code. Not for code comments, not for explaining code in conversation, not for cutting a release (the release skill), and not for AGENTS.md, CLAUDE.md, .claude/ agents or skills (agent-instructions).
 license: MIT (NecturaLabs/AgentSkills); see LICENSE.txt
 ---
 
@@ -48,7 +48,7 @@ Canopy's layout, and which change keeps each file true (the update rules come fr
 | `docs/adr/NNNN-<slug>.md` | ADRs, indexed in `docs/adr/README.md` | A consequential decision is made; append-only afterwards; add its row to the index |
 | `CHANGELOG.md` | Keep a Changelog, `[Unreleased]` section | Every user-visible change; the `release` skill turns `[Unreleased]` into a version |
 | `README.md`, `CONTRIBUTING.md`, `tools/README.md` | Entry points and runbooks | Commands, requirements, shortcuts or scripts change |
-| `HANDOFF.md` | Session handoff note | Owned by `memory-hygiene`: updated or retired, never extended into a second architecture doc |
+| `docs/specs/` | Research specs and handoffs from parallel sessions | Specs are point-in-time research; handoffs are owned by `memory-hygiene` and deleted when their status line says |
 
 Rules specific to Canopy:
 
@@ -132,7 +132,7 @@ without doing the verification it describes.
 - **Code comments and doc comments.** Those live at the call site, in the language's own convention,
   and are owned by whatever this repository uses for comment work — never this skill. A comment may
   *link* to a document this skill produced; it does not duplicate one.
-- **Editing a persistent-instruction file (`AGENTS.md`, `AGENTS.md`) or a skill.** Those tell an agent
+- **Editing a persistent-instruction file (`AGENTS.md`, `CLAUDE.md`) or a skill.** Those tell an agent
   how to behave or carry a procedure; this skill records what is true about the project. If a task
   needs the former, say so and route there instead of writing a document that will not be read the
   same way.

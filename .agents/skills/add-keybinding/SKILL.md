@@ -97,9 +97,8 @@ Never loosen one of the guard tests to fit a chord; change the chord.
 ## 5. Docs and look
 
 - `docs/keybindings.md` is the reference derived from the table (the module doc of `keymap.rs`
-  points at it). Update it in the same change; if the file does not exist yet, say so in your
-  report rather than restating the table elsewhere. The README's shortcut table is a copy and
-  goes stale: link to the reference instead of extending it.
+  points at it). Update it in the same change. The README's shortcut table is a copy and goes
+  stale: link to the reference instead of extending it.
 - `CHANGELOG.md` under `[Unreleased]`, and `docs/features.md` if the feature row changes.
 - Screenshot the cheatsheet and Settings → Keyboard (`screenshot` skill): `tools/screenshot.sh
   "$S/showcase" "$S/keys.png" --overlay cheatsheet`, and `--overlay settings`; confirm the new row

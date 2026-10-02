@@ -19,7 +19,7 @@ index or any branch, and never build into `target/` of a build someone else is r
    stats in your brief, stop and say so.
 4. `docs/design.md` when views or `ui/` change; `docs/legal/` when what leaves the machine does.
 5. The `independent-review` skill's checklists, as the diff requires:
-   `.Codex/skills/independent-review/references/review-checklist.md`, `comment-checklist.md`
+   `.agents/skills/independent-review/references/review-checklist.md`, `comment-checklist.md`
    and `test-gaps.md`. They apply alongside the Canopy checks below; the skill's evidence
    standard and "not a finding" rules bind your report.
 

@@ -1,7 +1,7 @@
 ---
 name: canopy-review
 description: Read-only reviewer for a Canopy diff, branch or pull request. Use after implementing a change and before declaring it done, or when asked to review someone else's change. It checks Git semantics, UI-thread blocking, data-loss safety, error surfacing, network and product rules (no other services, no token or credential leaks), keybinding rules, cross-platform paths, performance, theme tokens, tests and docs against AGENTS.md, and reports findings ranked by severity. It never edits files.
-model: opus
+model: sonnet
 effort: high
 tools: Glob, Grep, Read, Bash, WebFetch, WebSearch
 ---

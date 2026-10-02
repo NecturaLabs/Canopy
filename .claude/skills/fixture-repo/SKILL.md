@@ -30,11 +30,13 @@ same commit IDs, so screenshots and bug reports are reproducible.
 
 ## Usage
 
+`$S` is your scratch directory (the `screenshot` skill's step 1).
+
 ```sh
-tools/mkfixture.sh /tmp/canopy-showcase
-tools/mkfixture.sh --force /tmp/canopy-conflict conflict
-BIG_COMMITS=20000 tools/mkfixture.sh /tmp/canopy-big big
-cargo run -p canopy-app -- /tmp/canopy-showcase
+tools/mkfixture.sh "$S/showcase"
+tools/mkfixture.sh --force "$S/conflict" conflict
+BIG_COMMITS=20000 tools/mkfixture.sh "$S/big" big
+cargo run -p canopy-app -- "$S/showcase"
 ```
 
 Pushes from the showcase fixture go to `<dir>.remote.git`, a local bare repository, so fetch,

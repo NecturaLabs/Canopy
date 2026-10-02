@@ -1,6 +1,6 @@
 ---
 name: memory-hygiene
-description: Keep an agent's saved memories and Canopy's session handoff note (HANDOFF.md) true — verify each against the repository, merge duplicates, retire finished handoff items into docs/backlog.md or delete them, fix the memory index, and route drifted docs to an audit. Use when a startup check or a user flags stale memories, at a checkpoint after a batch of work, when a handoff's work is finished, or when a memory turns out to be wrong. Not for saving a new memory, not for writing or auditing project documentation (project-docs), and not for instruction files such as AGENTS.md (agent-instructions).
+description: Keep an agent's saved memories and Canopy's session handoff notes (docs/specs/HANDOFF-*.md) true — verify each against the repository, merge duplicates, retire finished handoff items into docs/backlog.md or delete them, fix the memory index, and route drifted docs to an audit. Use when a startup check or a user flags stale memories, at a checkpoint after a batch of work, when a handoff's work is finished, or when a memory turns out to be wrong. Not for saving a new memory, not for writing or auditing project documentation (project-docs), and not for instruction files such as AGENTS.md (agent-instructions).
 license: MIT (NecturaLabs/AgentSkills); see LICENSE.txt
 ---
 
@@ -29,25 +29,22 @@ the correction itself.
 
 ## In Canopy
 
-- **The handoff note is `HANDOFF.md`** at the repository root; `AGENTS.md` points every session at
-  it, so a stale line there misleads every session. Its parts age differently:
+- **Canopy keeps no standing handoff note.** The queue is `docs/backlog.md` (owner to-dos
+  included), owner rules that hold for every task are in `AGENTS.md`, and library API notes are
+  in `CONTRIBUTING.md`. Do not recreate a root `HANDOFF.md`; put each item where it lives.
+- **Handoffs for parallel sessions** are `docs/specs/HANDOFF-<branch>.md`. Each opens with a
+  status line saying when it is deleted. Their parts age differently:
   - **State** (CI status, test counts, what was verified): check against `git log`, `gh run list`
     and a run of the command it names; rewrite to what is true now or delete.
   - **What the owner asked for**: owner preferences under invariant 1. A requirement that holds
-    for every task belongs in `AGENTS.md`'s product rules — route it to `agent-instructions`
-    rather than keeping two copies. When the owner changes a rule (for example, hosting API
-    access or update checks), both places change.
+    for every task belongs in `AGENTS.md` — route it to `agent-instructions` rather than keeping
+    two copies.
   - **Queue**: an item is finished when its code, tests, docs and screenshot check are in the
-    tree; delete it. An item not yet started that is fully specified moves into `docs/backlog.md`
-    with its acceptance criterion, then leaves the handoff.
-  - **Known gaps and gotchas**: keep only what the repository does not already say (a gotcha now
-    in `docs/architecture.md` or a code comment is deleted here). API notes for a pinned crate
-    version (egui, git2) stay until that version changes.
-  - **Session notes**: retire once nothing later depends on them.
-- When every section is retired, delete `HANDOFF.md` and the `AGENTS.md` pointer to it in the same
-  change (the pointer is an `agent-instructions` edit).
-- `HANDOFF.md` is a tracked file: edits go through git like any other change, so invariant 6's
-  backup rule applies only to memories outside the repository.
+    tree; delete it. An item not yet started moves into `docs/backlog.md`, then leaves the
+    handoff.
+  - **Known gaps and gotchas**: keep only what the repository does not already say.
+- Handoffs are tracked files: edits and deletions go through git like any other change, so
+  invariant 6's backup rule applies only to memories outside the repository.
 
 ## Invariants
 

@@ -48,7 +48,7 @@ Canopy's layout, and which change keeps each file true (the update rules come fr
 | `docs/adr/NNNN-<slug>.md` | ADRs, indexed in `docs/adr/README.md` | A consequential decision is made; append-only afterwards; add its row to the index |
 | `CHANGELOG.md` | Keep a Changelog, `[Unreleased]` section | Every user-visible change; the `release` skill turns `[Unreleased]` into a version |
 | `README.md`, `CONTRIBUTING.md`, `tools/README.md` | Entry points and runbooks | Commands, requirements, shortcuts or scripts change |
-| `HANDOFF.md` | Session handoff note | Owned by `memory-hygiene`: updated or retired, never extended into a second architecture doc |
+| `docs/specs/` | Research specs and handoffs from parallel sessions | Specs are point-in-time research; handoffs are owned by `memory-hygiene` and deleted when their status line says |
 
 Rules specific to Canopy:
 

@@ -9,7 +9,7 @@ fixtures and images under a scratch directory (or `screenshots-out/`, which git 
 ## Read first
 
 1. `docs/design.md`: tokens, layout map and component specs you compare against.
-2. `.Codex/skills/screenshot/SKILL.md` and `tools/README.md`: how rendering works and its limits.
+2. `.agents/skills/screenshot/SKILL.md` and `tools/README.md`: how rendering works and its limits.
 3. The change you are checking (`git diff`, or the description you were given), so you know which
    screens and states to capture.
 

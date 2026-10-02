@@ -7,7 +7,9 @@ description: See the running Canopy app as an image. Use whenever a change affec
 
 Canopy can render itself once and save a PNG: `canopy --screenshot <file.png>` waits until the
 repository has loaded, captures the window and exits. `tools/screenshot.sh` wraps this with a
-release build, a virtual X server and software rendering.
+release build, a virtual X server and software rendering. Without Xvfb it falls back to a real
+window inside a running Hyprland session, on workspace `CANOPY_WORKSPACE` (default 3), which the
+user sees open and close.
 
 ## Procedure
 
@@ -52,7 +54,9 @@ release build, a virtual X server and software rendering.
 
 ## Troubleshooting
 
-- `xvfb-run not found`: install `xvfb` (Debian/Ubuntu `apt install xvfb`).
+- `screenshots need xvfb-run or a running Hyprland session`: install Xvfb (Arch
+  `xorg-server-xvfb`, Debian/Ubuntu `xvfb`), or run from inside Hyprland. Ask before installing a
+  package.
 - Timeout after 60 s or no PNG: run the binary under `xvfb-run` by hand with
   `CANOPY_LOG=canopy=debug` and read the log; a GL context error usually means Mesa is missing.
 - A black or empty image: the repository did not load; check the fixture path.

@@ -1,6 +1,6 @@
 ---
 name: agent-instructions
-description: Create, audit, shrink or restructure Canopy's agent instruction files — AGENTS.md, the AGENTS.md adapter, and the prompts in .Codex/agents/. Use when auditing them for stale or oversized guidance, deciding what belongs in persistent instructions versus a skill, a document or a lint rule, or migrating instruction files between agent harnesses. Not for editing ordinary project documentation (project-docs) or session handoff notes (memory-hygiene).
+description: Create, audit, shrink or restructure Canopy's agent instruction files — AGENTS.md, the CLAUDE.md adapter, and the prompts in .claude/agents/. Use when auditing them for stale or oversized guidance, deciding what belongs in persistent instructions versus a skill, a document or a lint rule, or migrating instruction files between agent harnesses. Not for editing ordinary project documentation (project-docs) or session handoff notes (memory-hygiene).
 license: MIT (NecturaLabs/AgentSkills); see LICENSE.txt
 ---
 
@@ -31,12 +31,13 @@ instruction file.
 | File | Role | Notes |
 |---|---|---|
 | `AGENTS.md` | The only maintained policy: overview, product rules, commands, workflow, conventions, boundaries | Product rules come from the owner and change only on the owner's word; record the change, never soften a rule on your own |
-| `AGENTS.md` | A one-line `@AGENTS.md` import | Keep it a pure adapter. Codex reads `AGENTS.md` natively only when no `AGENTS.md` exists, and behind a flag; the import is what reliably loads it. Never add policy here |
-| `.Codex/agents/*.md` | Subagent prompts: `canopy-git`, `canopy-review`, `canopy-visual-qa`, `canopy-ux-research` | Instruction files too: the same placement test, no restating `AGENTS.md` (they are told to read it), and every command and path in them verified like the root file's. Their `model`, `effort` and `tools` frontmatter is Codex agent configuration |
-| `.Codex/skills/*/SKILL.md` | Conditional procedure | A rule needed on a minority of tasks belongs here, not in `AGENTS.md` |
-| `HANDOFF.md` | Session state, owner's requests, queue | Not an instruction file; tended by `memory-hygiene`. Owner requirements recorded there that hold for every task belong in `AGENTS.md`'s product rules |
+| `CLAUDE.md` | A one-line `@AGENTS.md` import | Keep it a pure adapter. Claude Code reads `AGENTS.md` natively only when no `CLAUDE.md` exists, and behind a flag; the import is what reliably loads it. Never add policy here |
+| `.claude/agents/*.md` | Subagent prompts: `canopy-git`, `canopy-review`, `canopy-visual-qa`, `canopy-ux-research` | Instruction files too: the same placement test, no restating `AGENTS.md` (they are told to read it), and every command and path in them verified like the root file's. Their `model`, `effort` and `tools` frontmatter is Claude Code agent configuration |
+| `.claude/skills/*/SKILL.md` | Conditional procedure | A rule needed on a minority of tasks belongs here, not in `AGENTS.md` |
+| `.agents/skills/`, `.codex/agents/*.toml` | Codex's copies of the skills and subagent prompts | `.agents/skills/` is a byte-for-byte copy of `.claude/skills/` (`diff -r .claude/skills .agents/skills` prints nothing), so skill text names real paths and works in either harness. `.codex/agents/` carries the same prompts as `.claude/agents/` in Codex's TOML. Change both copies in the same commit |
+| `docs/specs/HANDOFF-*.md` | Handoffs from parallel sessions | Not instruction files; tended by `memory-hygiene`. Owner requirements recorded there that hold for every task belong in `AGENTS.md` |
 
-Measure with `wc -lwc AGENTS.md AGENTS.md .Codex/agents/*.md`. Verify commands against
+Measure with `wc -lwc AGENTS.md CLAUDE.md .claude/agents/*.md`. Verify commands against
 `tools/check.sh`, `.github/workflows/ci.yml` and the `-h` output of `tools/*.sh`; the
 terminating forms are `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked
 -- -D warnings` and `cargo test -p <crate> [name]`. Never run `cargo run` (it does not exit) or a
