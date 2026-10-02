@@ -56,6 +56,9 @@ tagged `canopy-build-<number>`. Nothing, in the scripts, the docs or the app, us
      redirects as they come; `--https-only` only governs recursive downloads. The first request
      always goes to GitHub over verified TLS, and GitHub's redirects go to HTTPS; the archive is
      checked against the SHA-256 from the manifest either way.
+   - The checksum proves the archive is the one the feed names, not who published it: with
+     `--version` the checksum file comes from the same GitHub release as the archive, and nothing
+     is signed. Trust rests on GitHub's TLS and on who can write to `NecturaLabs/app-updates`.
    - PowerShell: `install.ps1` follows redirects itself (`HttpWebRequest` with
      `AllowAutoRedirect` off, at most five) and refuses any hop that is not HTTPS, because Windows
      PowerShell 5.1 would follow one to plain HTTP. On 5.1 it asks for TLS 1.2 and puts the
@@ -94,7 +97,8 @@ own entries (Linux: `bin`, `share`, `legal`, `LICENSE`, `README.md`, `VERSION`, 
 `uninstall.ps1`, `.canopy-install`; both: leftover `.staging.*`, `.previous.*` and `.lock`), then
 the folder if that left it empty; otherwise it keeps the folder and lists what is in it. `--purge`
 also deletes Canopy's settings, logs and caches after asking (or with `--yes`), following the
-rules below. Tokens in the system keychain are left to Canopy's Settings → Accounts.
+rules below. Saved tokens are `tokens.json` in Canopy's data folder, so `--purge` deletes them with
+it (Canopy does not use the system keychain yet).
 
 ### Layout
 
@@ -161,11 +165,12 @@ script cut short at several points. `CANOPY_TEST_SHELL` picks the shell (default
 `busybox-static`) bypasses the test's stub `mv` and fake `uname`, so use one that runs commands
 from `PATH`.
 
-On Windows, CI parses `install.ps1` with Windows PowerShell 5.1 and PowerShell 7, checks its
-argument handling and the same malformed test feeds (with `CANOPY_INSTALL_DIR` under
-`RUNNER_TEMP`, and a check that the Start Menu, Apps & features and user `PATH` are unchanged),
-checks that a run through `iex` leaves no functions, variables, StrictMode or preferences in the
-session, and runs PSScriptAnalyzer where installed.
+Nothing in CI runs `install.ps1` today: its Windows job (parse with Windows PowerShell 5.1 and
+PowerShell 7, argument handling, the malformed test feeds with `CANOPY_INSTALL_DIR` under
+`RUNNER_TEMP`, an unchanged Start Menu, Apps & features and user `PATH`, a run through `iex` that
+leaves nothing in the session, PSScriptAnalyzer) was dropped from `ci.yml`. Run those checks by
+hand on Windows before publishing a change to it; the installer fixes made to `install.sh` are not
+yet in `install.ps1` (`docs/backlog.md`).
 
 ## Release archives
 

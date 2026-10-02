@@ -5,7 +5,7 @@
 # release tooling's self-test, the licence notices check, the documentation check, the
 # vendored-crate check, the hidden-window stall check (Linux, when its tools are installed), the
 # installer test (Linux and macOS), and ShellCheck and cargo-deny when they are installed. CI also
-# tests on macOS and Windows and checks install.ps1.
+# tests on macOS and Windows; nothing in CI runs install.ps1.
 # Run it before every commit; it must pass before a change is considered done.
 set -euo pipefail
 
@@ -52,7 +52,7 @@ case "$(uname -s)" in
     sh packaging/test-install.sh >/dev/null
     ;;
   *)
-    # install.sh is for Linux and macOS; install.ps1 is checked by CI's Windows job.
+    # install.sh is for Linux and macOS; nothing runs install.ps1 here or in CI.
     printf '\n(packaging/test-install.sh runs on Linux and macOS only; skipped here)\n'
     ;;
 esac

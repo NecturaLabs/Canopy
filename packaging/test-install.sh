@@ -296,6 +296,7 @@ linux_flow() {
     check "same files after reinstall" [ "$before" = "$(cd "$home" && find . | sort)" ]
 
     echo "== upgrade"
+    echo "my notes" >"$opt/notes.txt"
     publish latest 103
     run_status
     check "upgrade exits 0" [ "$status" = 0 ]
@@ -303,6 +304,8 @@ linux_flow() {
     check "says updated" out_has "Updated Canopy build 102 -> build 103"
     check "runs 103" [ "$("$link")" = "canopy 103 (fake)" ]
     check "no staging left after upgrade" no_leftovers "$opt"
+    check "the user's file survives an upgrade" [ "$(cat "$opt/notes.txt" 2>/dev/null)" = "my notes" ]
+    rm -f "$opt/notes.txt"
 
     echo "== checksum mismatch is refused"
     make_release 106
@@ -500,6 +503,36 @@ linux_flow() {
     rm -rf "$opt"
     run_status
 
+    echo "== a crafted receipt cannot make uninstall delete other files"
+    echo "keep me" >"$home/victim.png"
+    printf '[Desktop Entry]\nX-Canopy-Install-Dir=%s\n' "$opt" >"$home/victim.desktop"
+    ln -s "$opt/bin/canopy" "$home/victim-link"
+    {
+        printf 'icon=%s|%s\n' "$home/victim.png" "$home/victim.png"
+        printf 'desktop=%s\n' "$home/victim.desktop"
+        printf 'link=%s\n' "$home/victim-link"
+    } >>"$opt/.canopy-install"
+    run_raw "$SH" "$opt/uninstall.sh"
+    check "uninstall exits 0" [ "$status" = 0 ]
+    check "a file named by a crafted icon line survives" [ "$(cat "$home/victim.png" 2>/dev/null)" = "keep me" ]
+    check "a file named by a crafted desktop line survives" [ -f "$home/victim.desktop" ]
+    check "a link named by a crafted link line survives" [ -L "$home/victim-link" ]
+    check "Canopy's own entries are still removed" [ ! -e "$opt" ]
+    check "the real icon is removed" [ ! -e "$icon" ]
+    rm -f "$home/victim.png" "$home/victim.desktop" "$home/victim-link"
+    run_status
+
+    echo "== a command link that cannot be made does not lose the receipt"
+    home2=$tmp/home-nolink
+    mkdir -p "$home2/.local"
+    echo "not a folder" >"$home2/.local/bin"
+    run_raw HOME="$home2" CANOPY_INSTALL_BASE_URL="$base" "$SH" "$installer"
+    check "install still exits 0" [ "$status" = 0 ]
+    show
+    check "the missing command is reported" out_has "could not create"
+    check "the receipt still lists the desktop entry" grep -q '^desktop=' "$home2/.local/opt/canopy/.canopy-install"
+    rm -rf "$home2"
+
     echo "== uninstall with the installed uninstall.sh"
     mkdir -p "$home/.local/share/canopy" "$home/.config/canopy"
     echo '{"canopy-settings-v1":"(theme:Dark)"}' >"$home/.local/share/canopy/app.ron"
@@ -537,7 +570,7 @@ linux_flow() {
     run_status --uninstall --purge --yes
     check "purge exits 0" [ "$status" = 0 ]
     show
-    check "purge exits 0 (2)" out_has "keychain"
+    check "purge exits 0 (2)" out_has "tokens.json"
     check "purge also uninstalled" [ ! -e "$opt" ]
     check "eframe folder with Canopy's settings purged" [ ! -e "$home/.local/share/canopy" ]
     check "marked folder purged" [ ! -e "$home/.config/canopy" ]
