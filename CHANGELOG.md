@@ -63,6 +63,10 @@ All notable changes to Canopy are documented here. The format follows
 
 ### Fixed
 
+- Pull uses the chosen strategy (merge, rebase or fast-forward only) whenever `git` itself has
+  no `pull.rebase` setting. Canopy read the setting through libgit2, which ignores
+  `GIT_CONFIG_GLOBAL`, so it could skip the strategy, and recent versions of Git refuse to
+  pull diverged branches without one.
 - Commit details restore a readable height after a small window is enlarged. Expand and a
   compact History/Commit details switch give the author, changed files and diff useful space.
   A shorter initial pane leaves less empty space under short diffs.

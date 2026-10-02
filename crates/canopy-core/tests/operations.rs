@@ -586,6 +586,42 @@ fn upstream_and_clone() -> (tempfile::TempDir, Repo, tempfile::TempDir, Repo) {
     (up_dir, up, clone_dir, copy)
 }
 
+/// Runs the calling test again in a child process whose git sees no global or system
+/// configuration and whose libgit2 sees no global one, so a developer's own settings
+/// (`pull.rebase`, for one) cannot decide the result.
+/// Returns true in the child, where the test body runs, and false in the parent once the child
+/// has passed.
+fn in_isolated_git_env(test: &str) -> bool {
+    in_isolated_git_env_with_home_config(test, "")
+}
+
+/// [`in_isolated_git_env`], with `home_config` written to `$HOME/.gitconfig`: libgit2 reads that
+/// file as global configuration while git, told to use an empty `GIT_CONFIG_GLOBAL`, does not.
+fn in_isolated_git_env_with_home_config(test: &str, home_config: &str) -> bool {
+    if std::env::var_os("CANOPY_TEST_ISOLATED_GIT").is_some_and(|v| v == "1") {
+        return true;
+    }
+    let home = tempfile::tempdir().expect("tempdir");
+    fs::write(home.path().join(".gitconfig"), home_config).expect("write");
+    let out = Command::new(std::env::current_exe().expect("test binary"))
+        .args([test, "--exact", "--test-threads=1"])
+        .env("CANOPY_TEST_ISOLATED_GIT", "1")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", home.path().join("gitconfig"))
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .output()
+        .expect("test binary runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("1 passed"),
+        "{test} in an isolated git environment:\n{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    false
+}
+
 /// Upstream and the clone each gain one commit, so their histories diverge.
 fn diverge(up: &Path, copy: &Repo) {
     fs::write(up.join("up.txt"), "upstream\n").expect("write");
@@ -756,6 +792,9 @@ fn pull_strategy_labels() {
 
 #[test]
 fn pull_fast_forward_only_refuses_diverged_branches() {
+    if !in_isolated_git_env("pull_fast_forward_only_refuses_diverged_branches") {
+        return;
+    }
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     diverge(up_dir.path(), &copy);
     let before = copy.head().expect("head").oid;
@@ -777,6 +816,9 @@ fn pull_fast_forward_only_refuses_diverged_branches() {
 
 #[test]
 fn pull_fast_forward_only_fast_forwards() {
+    if !in_isolated_git_env("pull_fast_forward_only_fast_forwards") {
+        return;
+    }
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     let up = up_dir.path();
     fs::write(up.join("up.txt"), "upstream\n").expect("write");
@@ -794,6 +836,9 @@ fn pull_fast_forward_only_fast_forwards() {
 
 #[test]
 fn pull_rebase_replays_local_commits() {
+    if !in_isolated_git_env("pull_rebase_replays_local_commits") {
+        return;
+    }
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     diverge(up_dir.path(), &copy);
     copy.pull(PullStrategy::Rebase, |_| {}).expect("pull");
@@ -808,11 +853,29 @@ fn pull_rebase_replays_local_commits() {
 
 #[test]
 fn pull_merge_creates_a_merge_commit() {
+    if !in_isolated_git_env("pull_merge_creates_a_merge_commit") {
+        return;
+    }
     let (up_dir, _up, _c, copy) = upstream_and_clone();
     diverge(up_dir.path(), &copy);
     copy.pull(PullStrategy::Merge, |_| {}).expect("pull");
     assert_eq!(head_parents(&copy), 2);
     assert!(copy.workdir().join("up.txt").exists());
+}
+
+#[test]
+fn pull_reads_pull_rebase_as_git_does() {
+    // libgit2 sees pull.rebase=true in $HOME, git sees no setting: the strategy must apply.
+    if !in_isolated_git_env_with_home_config(
+        "pull_reads_pull_rebase_as_git_does",
+        "[pull]\n\trebase = true\n",
+    ) {
+        return;
+    }
+    let (up_dir, _up, _c, copy) = upstream_and_clone();
+    diverge(up_dir.path(), &copy);
+    copy.pull(PullStrategy::Merge, |_| {}).expect("pull");
+    assert_eq!(head_parents(&copy), 2);
 }
 
 #[test]

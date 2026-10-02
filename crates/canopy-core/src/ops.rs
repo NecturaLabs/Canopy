@@ -550,10 +550,17 @@ impl Repo {
 
     /// Pulls into the current branch. When the configuration sets `pull.rebase`, git follows it
     /// and `strategy` is ignored; otherwise `strategy` picks `--no-rebase`, `--rebase` or
-    /// `--ff-only`.
+    /// `--ff-only`. The setting is read through the same `git` that pulls, since libgit2 does not
+    /// honour `GIT_CONFIG_GLOBAL` and could see a value that git does not.
     pub fn pull(&self, strategy: PullStrategy, progress: impl FnMut(&str)) -> Result<String> {
         let mut args = vec!["pull", "--progress"];
-        if self.config_string("pull.rebase").is_none() {
+        let (code, _) = cli::run_answer(
+            self.workdir(),
+            &["config", "--get", "pull.rebase"],
+            b"",
+            &[0, 1],
+        )?;
+        if code == 1 {
             args.push(strategy.flag());
         }
         cli::run_streaming(Some(self.workdir()), &args, progress)
