@@ -428,7 +428,9 @@ uninstall_linux() {
     check_root "$ROOT"
     receipt=$ROOT/.canopy-install
     [ -f "$receipt" ] || die "$ROOT has no .canopy-install receipt, so this script did not create it; not touching it"
-    [ -O "$ROOT" ] && [ -O "$receipt" ] || die "$ROOT or its receipt belongs to another user; not touching it"
+    if [ ! -O "$ROOT" ] || [ ! -O "$receipt" ]; then
+        die "$ROOT or its receipt belongs to another user; not touching it"
+    fi
     take_lock "$ROOT/.lock"
     recorded=$(sed -n 's/^root=//p' "$receipt" | head -n 1)
     if [ -n "$recorded" ] && [ "$recorded" != "$ROOT" ]; then
