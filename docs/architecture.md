@@ -41,6 +41,7 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `ops.rs` | Every mutation, run through the `git` executable via `cli.rs`: stage, unstage, discard (paths passed literally); hunk and line stage/unstage/discard (`git apply`); commit and amend; branch create, checkout, rename, delete (`-d`, or `-D` as a separate call), publish; merge in four modes, rebase, continue/abort; tag create, delete, push; stash save, apply, pop, drop; reset soft, mixed, hard; detached checkout; cherry-pick; revert; remotes; clone, fetch, pull, push; fetching a pull request's head. |
 | `conflict.rs` | Merge conflicts: parsing conflict markers, rendering a partial resolution, and resolving a conflicted path (the one plain file write, saving a hand-edited resolution, goes through `paths::safe_join`, and staging it goes through git). |
 | `paths.rs` | `safe_join`: the only way `canopy-core` touches a file inside a working tree. Refuses empty, absolute, `..` and `.git` paths and any symbolic link component. |
+| `identity.rs` | The identity Git will put into the next commit: author and committer from `git var`, each value's source (environment variable, configuration scope and file, or Git's guess from the computer) from one `git config --get-regexp`, and `set` / `clear` for `user.name` and `user.email` at the local or global scope. Canopy keeps no identity of its own and never writes `author.*` or `committer.*`. Inputs are validated before git runs; `looks_like_placeholder` only warns. |
 | `ignore.rs` | Ignore rules: add a rule to `.gitignore`, `info/exclude` or the global file, preview what it would ignore, ask git why a path is ignored (`check-ignore -v`), stop tracking a path. |
 | `flow.rs` | git-flow without the `git flow` binary: the AVH config keys, start and finish for feature, bugfix, release and hotfix, with a `merge-tree` pre-flight that refuses on conflicts. |
 | `merged.rs` | Which local branches are merged into a base (reachable, upstream gone, squash-merged) and which check proved it. |
@@ -87,6 +88,7 @@ thread.
 | `app/screenshot.rs` | Headless screenshots for `--screenshot`. |
 | `tab.rs` | `RepoTab`: one open repository's snapshot, selections, in-flight work and the state a failed or superseded job leaves behind. |
 | `worker.rs` | One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; debounced file watcher. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it. |
+| `identity_worker.rs` | One background thread shared by tabs and first launch. It reads Git's effective author and committer through `canopy-core::identity`, writes `user.*` configuration only after a user action, and returns results for Settings and the commit warning. |
 | `hosting.rs` | A background thread per repository tab for pull and merge requests through `canopy-hosting` (`HostJob`), and the token store (`tokens.json`, per host and port). |
 | `askpass.rs` | Credential prompts for git and ssh: Canopy's own executable is `GIT_ASKPASS`/`SSH_ASKPASS`, and the running app answers over loopback (ADR 0005). |
 | `updater.rs` | The update check against the manifest, and the background install (`Updater::install`, `InstallState`); nothing is downloaded until the user chooses Update. |
@@ -155,6 +157,10 @@ thread.
 - Long-running CLI jobs (clone, fetch, push, ...) stream progress lines back as intermediate
   results; the status bar shows the running job with a spinner.
 - Closing a tab drops the job sender; the worker finishes its current job and exits.
+- One more thread, `git-identity` (`identity_worker.rs`), is shared by every tab and by the
+  first-launch question. It runs the `git` executable, not libgit2, because libgit2 ignores
+  `GIT_CONFIG_GLOBAL`, `includeIf`, `GIT_AUTHOR_*` and `EMAIL`, which decide the identity a commit
+  gets. It reads configuration only, so this does not move ADR 0001's line for repository data.
 - In a partial clone, reads that need objects the clone left on the server (`Details`, `Diff`,
   and a snapshot or status after a soft reset) fetch them on the worker through `git`, so the
   thread can wait for the network while later jobs queue behind it. The worker runs each read

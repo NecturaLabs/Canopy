@@ -17,6 +17,7 @@ mod error;
 pub mod flow;
 pub mod forge;
 pub mod graph;
+pub mod identity;
 pub mod ignore;
 pub mod lfs;
 mod lines;

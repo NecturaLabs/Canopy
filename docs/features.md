@@ -69,6 +69,16 @@ list anything, and says why when it cannot. Repositories made by Git before 2.24
 
 ## Working copy and committing
 
+Git identity can be inspected and changed in Settings → Git: the name and email Git would use for
+the next commit, where each comes from (environment variable, repository or global configuration, or
+Git's own guess), and a save or clear (after a confirmation) for this repository or for every
+repository. Canopy writes only `user.name` and `user.email`, never signs in as someone else and
+never invents values. The Changes view warns, with a link to Settings, when Git has no usable
+identity, guessed it, or the values look like placeholders; Git's own error still appears if you
+commit anyway. After the consent dialogs, first launch asks once for a global identity when none
+is configured. History's "Stored author" column shows what each commit recorded, which does not
+change when current settings change; Canopy never rewrites existing commits to fix an author.
+
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
 |---|---|---|---|---|
 | Unstaged, staged and conflicted lists | Done | Yes | Yes | Yes |

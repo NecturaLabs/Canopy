@@ -10,6 +10,11 @@ commits since the previous build.
 
 ### Added
 
+- Git identity in Settings shows the effective author and its source for the open repository, and
+  lets you save or clear repository or global Git configuration. A warning in Changes links to it
+  when Git cannot use the identity, guessed it, or it looks like a placeholder. First launch asks
+  for a global identity after consent when no sensible one is configured. Existing commit authors
+  remain exactly as stored in Git history.
 - Update from inside Canopy. The update dialog's Update button downloads the new build over HTTPS
   from Canopy's release, checks its SHA-256 against the update feed and installs it. Where the
   one-line installer put Canopy (Linux) it replaces its own folder in place, keeps the previous
@@ -129,6 +134,8 @@ commits since the previous build.
 
 ### Changed
 
+- History's author column is titled "Stored author": it shows what each commit recorded, not your
+  current Git settings. Settings rows now keep their controls in one aligned column.
 - Releases are numbered builds, named by `git rev-list --count` of their commit on `main` and its
   short hash (`build 412 (a1b2c3d)`), instead of semantic versions. The number is shown in About,
   `canopy --version`, the logs and the update check; the update check, the one-line installers

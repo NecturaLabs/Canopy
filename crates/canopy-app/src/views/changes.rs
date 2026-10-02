@@ -3,6 +3,7 @@
 use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Ui, vec2};
 use egui_phosphor::regular as icon;
 
+use canopy_core::identity::Identity;
 use canopy_core::{DiffSource, FileEntry};
 
 use crate::action::Action;
@@ -283,13 +284,8 @@ fn composer(
     snap: &canopy_core::RepoSnapshot,
     actions: &mut Vec<Action>,
 ) {
+    let p = palette(ui.ctx());
     ui.style_mut().spacing.scroll.floating = false;
-    egui::ScrollArea::vertical()
-        .id_salt("commit-fields")
-        .auto_shrink([false, false])
-        .max_height((ui.available_height() - 34.0 - theme::SM).max(0.0))
-        .show(ui, |ui| composer_fields(ui, tab, actions));
-    ui.add_space(theme::SM);
     let staged = snap.status.staged.len();
     let can = (staged > 0 || tab.amend)
         && !tab.commit_summary.trim().is_empty()
@@ -306,13 +302,42 @@ fn composer(
     } else {
         "Stage files to commit".to_owned()
     };
-    if widgets::primary_button(ui, &label, can, ui.available_width())
-        .on_hover_text(crate::keymap::hint(crate::keymap::Command::Commit))
-        .clicked()
-        && can
-    {
-        actions.push(Action::Commit);
-    }
+    let warning = identity_notice(tab.identity.as_ref(), tab.identity_error.is_some());
+    let hint = warning.map_or_else(
+        || crate::keymap::hint(crate::keymap::Command::Commit).to_owned(),
+        |w| format!("{w} Open Settings → Git to correct it. Git's own error will appear if you commit without a usable identity."),
+    );
+    // The button and the identity warning sit at the bottom; the fields take the rest, so a
+    // warning that wraps never pushes the button out of the panel.
+    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+        if widgets::primary_button(ui, &label, can, ui.available_width())
+            .on_hover_text(hint)
+            .clicked()
+            && can
+        {
+            actions.push(Action::Commit);
+        }
+        ui.add_space(theme::SM);
+        if let Some(warning) = warning {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(format!("{}  {warning}", icon::WARNING))
+                        .color(p.warning)
+                        .size(theme::SMALL_SIZE),
+                );
+                if ui.small_button("Edit identity").clicked() {
+                    actions.push(Action::IdentitySettings);
+                }
+            });
+            ui.add_space(theme::SM);
+        }
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("commit-fields")
+                .auto_shrink([false, false])
+                .show(ui, |ui| composer_fields(ui, tab, actions));
+        });
+    });
 }
 
 fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
@@ -374,9 +399,69 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     ui.add_space(8.0);
 }
 
+/// The line above the commit button when Git's identity needs attention.
+fn identity_notice(identity: Option<&Identity>, read_failed: bool) -> Option<&'static str> {
+    identity
+        .and_then(Identity::warning)
+        .or(read_failed.then_some("Could not read Git identity."))
+}
+
 #[cfg(test)]
 mod tests {
+    use canopy_core::identity::{Field, Person, Source};
+
     use super::*;
+
+    fn identity(name: &str, email: &str, source: Option<Source>, usable: bool) -> Identity {
+        let field = |value: &str| Field {
+            value: value.into(),
+            source: source.clone(),
+        };
+        let person = Person {
+            name: field(name),
+            email: field(email),
+            usable,
+        };
+        Identity {
+            author: person.clone(),
+            committer: person,
+        }
+    }
+
+    #[test]
+    fn the_commit_panel_warns_only_when_the_identity_needs_attention() {
+        let configured = Some(Source::Config {
+            scope: "global".into(),
+            origin: "file:/home/ada/.gitconfig".into(),
+        });
+        let good = identity("Ada Lovelace", "ada@example.com", configured.clone(), true);
+        assert_eq!(identity_notice(Some(&good), false), None);
+        assert_eq!(
+            identity_notice(None, false),
+            None,
+            "still reading: no warning yet"
+        );
+
+        let placeholder = identity("t", "t@t", configured.clone(), true);
+        assert_eq!(
+            identity_notice(Some(&placeholder), false),
+            Some("This identity looks like a placeholder.")
+        );
+        let guessed = identity("ada", "ada@host.example", Some(Source::Guessed), true);
+        assert_eq!(
+            identity_notice(Some(&guessed), false),
+            Some("Git guessed part of this identity from the computer.")
+        );
+        let unusable = identity("", "", None, false);
+        assert_eq!(
+            identity_notice(Some(&unusable), false),
+            Some("Git cannot use this identity for a commit.")
+        );
+        assert_eq!(
+            identity_notice(None, true),
+            Some("Could not read Git identity.")
+        );
+    }
 
     #[test]
     fn commit_button_is_visible_in_default_desktop_layouts() {

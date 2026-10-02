@@ -44,6 +44,7 @@ impl CanopyApp {
                     if i < self.tabs.len() {
                         self.active = i;
                         self.tabs[i].refresh();
+                        self.request_identity(IdentityJob::ReadRepo(self.tabs[i].path.clone()));
                     }
                 }
                 Action::SetView(v) => {
@@ -189,7 +190,41 @@ impl CanopyApp {
                 }
                 Action::Palette => self.palette.open(),
                 Action::Cheatsheet => self.cheatsheet.toggle(),
-                Action::Settings => self.settings_screen = Some(SettingsScreen::default()),
+                Action::Settings => {
+                    self.settings_screen = Some(SettingsScreen::default());
+                    if let Some(t) = self.tabs.get(self.active) {
+                        self.request_identity(IdentityJob::ReadRepo(t.path.clone()));
+                    } else {
+                        self.request_identity(IdentityJob::ReadGlobal);
+                    }
+                }
+                Action::IdentitySettings => {
+                    self.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git));
+                    if let Some(t) = self.tabs.get(self.active) {
+                        self.request_identity(IdentityJob::ReadRepo(t.path.clone()));
+                    } else {
+                        self.request_identity(IdentityJob::ReadGlobal);
+                    }
+                }
+                Action::SaveIdentity {
+                    repo,
+                    scope,
+                    name,
+                    email,
+                } => {
+                    if let Some(Dialog::Identity { pending, .. }) = self.dialogs.current_mut() {
+                        *pending = true;
+                    }
+                    self.request_identity(IdentityJob::Set {
+                        repo,
+                        scope,
+                        name,
+                        email,
+                    });
+                }
+                Action::ClearIdentity { repo, scope } => {
+                    self.request_identity(IdentityJob::Clear { repo, scope })
+                }
                 Action::Copy(text) => {
                     ctx.copy_text(text.clone());
                     self.toasts.push(ctx, ToastKind::Info, "Copied", text);

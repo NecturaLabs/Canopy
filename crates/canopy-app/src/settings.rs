@@ -118,6 +118,8 @@ pub struct Settings {
     pub auto_fetch_minutes: u32,
     /// `git commit --signoff`.
     pub signoff: bool,
+    /// The one-time Git identity question has been shown.
+    pub identity_asked: bool,
     /// Commits loaded per page in the history.
     pub commit_page: usize,
     /// Default diff options.
@@ -193,6 +195,7 @@ impl Default for Settings {
             prune_on_fetch: true,
             auto_fetch_minutes: 0,
             signoff: false,
+            identity_asked: false,
             commit_page: 2000,
             diff: DiffPrefs::default(),
             repo_diff: HashMap::new(),

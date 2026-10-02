@@ -87,6 +87,16 @@ pub enum Dialog {
         op: Op,
     },
     About,
+    Identity {
+        name: String,
+        email: String,
+        pending: bool,
+    },
+    /// Removing the identity from one Git configuration file.
+    ConfirmClearIdentity {
+        repo: Option<std::path::PathBuf>,
+        scope: canopy_core::identity::Scope,
+    },
     /// What's new in an available update.
     Update(Box<crate::updater::Available>),
     /// What's new in this version (after an upgrade, or from the palette).
@@ -232,6 +242,26 @@ pub fn show(
                 ui.add_space(12.0);
             };
             match dialog {
+                Dialog::Identity { name, email, pending } => {
+                    title(ui, icon::IDENTIFICATION_CARD, "Set your Git identity");
+                    ui.label("Git stores an author name and email in every new commit. Enter the details you want to use. Canopy will not guess them, and commits already made keep their authors.");
+                    ui.add_space(theme::MD);
+                    ui.label("Name");
+                    ui.add(egui::TextEdit::singleline(name).desired_width(ui.available_width()));
+                    ui.label("Email");
+                    ui.add(egui::TextEdit::singleline(email).desired_width(ui.available_width()));
+                    ui.add_space(theme::XS);
+                    ui.label(RichText::new("Saved to your global Git configuration, so every repository without its own identity uses it. You can change it later in Settings → Git.").size(12.0).color(p.text_dim));
+                    let ok = !name.trim().is_empty() && !email.trim().is_empty() && !*pending;
+                    if primary(ui, "Save globally", ok) {
+                        outcome = Outcome::RunKeep(vec![Action::SaveIdentity {
+                            repo: None,
+                            scope: canopy_core::identity::Scope::Global,
+                            name: name.clone(),
+                            email: email.clone(),
+                        }]);
+                    }
+                }
                 Dialog::Open { path } => {
                     title(ui, icon::FOLDER_OPEN, "Open repository");
                     ui.horizontal(|ui| {
@@ -449,6 +479,24 @@ pub fn show(
                     ui.add_space(16.0);
                     match confirm_buttons(ui, confirm, *danger) {
                         Some(true) => outcome = Outcome::Run(vec![Action::Op(op.clone())]),
+                        Some(false) => outcome = Outcome::Close,
+                        None => {}
+                    }
+                }
+                Dialog::ConfirmClearIdentity { repo, scope } => {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(icon::WARNING).size(20.0).color(p.danger));
+                        ui.label(RichText::new("Clear Git identity?").font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
+                    });
+                    ui.add_space(10.0);
+                    let target = match scope {
+                        canopy_core::identity::Scope::Local => "this repository's configuration",
+                        canopy_core::identity::Scope::Global => "your global Git configuration, which every repository without its own identity uses",
+                    };
+                    ui.label(RichText::new(format!("This removes user.name and user.email from {target}. Commits already made keep their authors. If the same value is also set in another file, that one stays in use.")).color(p.text_dim));
+                    ui.add_space(16.0);
+                    match confirm_buttons(ui, "Clear identity", true) {
+                        Some(true) => outcome = Outcome::Run(vec![Action::ClearIdentity { repo: repo.clone(), scope: *scope }]),
                         Some(false) => outcome = Outcome::Close,
                         None => {}
                     }

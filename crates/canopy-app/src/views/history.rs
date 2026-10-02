@@ -234,7 +234,10 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     for (x, t) in [
         (full.min.x + 12.0, if show_graph { "GRAPH" } else { "" }),
         (desc_x, "DESCRIPTION"),
-        (author_x + 6.0, if show_author { "AUTHOR" } else { "" }),
+        (
+            author_x + 6.0,
+            if show_author { "STORED AUTHOR" } else { "" },
+        ),
         (date_x, if show_date { "DATE" } else { "" }),
         (sha_x, if show_sha { "COMMIT" } else { "" }),
     ] {

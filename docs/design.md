@@ -256,6 +256,24 @@ buttons: secondary (outlined) then primary (accent gradient). Destructive confir
 `danger` primary button whose label names the action ("Delete branch", "Discard 3 files"), never
 "OK"; Enter does not confirm a destructive dialog unless the button has focus.
 
+### Git identity
+
+Settings → Git starts with an "Identity for future commits" group built from the ordinary settings
+rows: Name and Email, each with a text field and, as its help text, what Git uses now and where it
+comes from ("In use now: Ada (global: ~/.gitconfig)"); a Committer row only when the committer
+differs; a "Save to" choice between this repository and all repositories (only with a repository
+open); Save identity, which stays disabled until both fields have text; and Clear…, which asks first
+in a `danger` confirmation. A `warning` line with the warning icon sits above the rows when Git
+cannot use the identity, guessed part of it, or it looks like a placeholder. Fields offer only
+values someone chose, never Git's guess.
+
+The Changes view repeats that line (`warning`, small size) with an "Edit identity" button above the
+commit button, in a footer anchored to the bottom of the commit area: the fields scroll and the
+commit button always stays visible, however the warning wraps. The button's tooltip explains the
+warning. The first-launch dialog ("Set your Git identity", name and email, "Save globally", Cancel)
+is an ordinary dialog opened once after the consent dialogs. History's column header says "Stored
+author", since it shows what each commit recorded, not the current settings.
+
 ### Graph node and edges
 
 - Lane spacing 16px, node radius 4.5px, edge width 2px, all in the lane colour.
@@ -275,7 +293,8 @@ replaces the left navigation below 720 points. Below 620 points of content width
 label and help sit above its controls. Shortcut descriptions and keycaps stack when they cannot
 fit together. Zoom shows a percentage preview while dragging and applies
 on release, so the control stays under the pointer; typing a percentage applies on Enter or
-when the field loses focus.
+when the field loses focus. A row's label column is always half the width, so controls of different
+rows line up on the right however short their help text is.
 
 Browse opens the native folder chooser on a background thread. The requesting button displays
 “Choosing…” while it is open; the app keeps processing events. A closed requesting field discards

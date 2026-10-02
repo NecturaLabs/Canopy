@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use canopy_core::Oid;
+use canopy_core::identity::Scope;
 use canopy_hosting::RequestSummary;
 
 use crate::hosting::HostJob;
@@ -47,6 +48,17 @@ pub enum Action {
     Palette,
     Cheatsheet,
     Settings,
+    IdentitySettings,
+    SaveIdentity {
+        repo: Option<PathBuf>,
+        scope: Scope,
+        name: String,
+        email: String,
+    },
+    ClearIdentity {
+        repo: Option<PathBuf>,
+        scope: Scope,
+    },
     Copy(String),
     /// Open a file, folder or web page with the system's default handler.
     /// A web page (http or https only: API data and the update feed reach this).
