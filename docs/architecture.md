@@ -101,7 +101,7 @@ thread.
 | `ui/theme.rs` | Design tokens: the seven palettes, lane colours, syntax colours, spacing, radii. The only place colours are defined. |
 | `ui/motion.rs` | Motion tokens (100/150/200 ms), the reduce-motion preference and whether motion is currently reduced. |
 | `ui/fonts.rs` | Registers the bundled Inter, JetBrains Mono and Phosphor fonts. |
-| `ui/art.rs` | The SVG art in `assets/art/`, rendered through egui's image loaders. |
+| `ui/art.rs` | The SVG art in `crates/canopy-app/assets/art/`, rendered through egui's image loaders. |
 | `ui/widgets.rs` | Ref pills, avatars, icon buttons, badges. |
 | `ui/folder_picker.rs` | Native folder selection on a background thread; a bounded result channel and requesting-field lifetime keep the event loop responsive. |
 | `ui/toast.rs` | Toast queue and animation. |
