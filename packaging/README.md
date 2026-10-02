@@ -9,8 +9,8 @@ besides the binary lives here and in `assets/`.
 | `install.ps1` | One-line installer for Windows (Windows PowerShell 5.1 and PowerShell 7). Published as `canopy/install.ps1`. |
 | `test-install.sh` | End-to-end test of `install.sh` against a fake feed on 127.0.0.1 in a temporary `HOME`, on Linux and macOS (run by `tools/check.sh`; not in CI). |
 | `linux/io.necturalabs.Canopy.desktop` | freedesktop.org desktop entry. The app ID, the icon name and `StartupWMClass` are all `io.necturalabs.Canopy`, which must match the Wayland app ID / X11 `WM_CLASS` the binary sets. The installer rewrites `Exec=` to the absolute path of the installed binary. |
-| `linux/io.necturalabs.Canopy.metainfo.xml` | AppStream metadata for software centres. Add a `<release>` entry for every version. |
-| `macos/Info.plist` | `Info.plist` of `Canopy.app` (bundle id `io.necturalabs.Canopy`); the release fills in `@VERSION@` and `@BUNDLE_VERSION@`. |
+| `linux/io.necturalabs.Canopy.metainfo.xml` | AppStream metadata for software centres. The release workflow adds this build's `<release>` entry to the copy in the archive; the file in the repository needs none. |
+| `macos/Info.plist` | `Info.plist` of `Canopy.app` (bundle id `io.necturalabs.Canopy`); the release fills in `@BUILD@` (the build number) as both bundle versions. |
 | `../assets/icon.svg`, `../assets/icon-{64,256,512}.png` | Application icon. Linux archives carry the SVG and the 256 px PNG; the macOS `.icns` is generated from the 512 px PNG during the release. |
 
 ## The one-line installers
@@ -26,11 +26,11 @@ irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/instal
 A stable release commits the installers to app-updates. Before the first one they were copied
 there by hand from `v0.2.1-beta.1`, so the addresses answer, but the stable channel
 (`latest.json`) has no builds yet: the plain command stops with "no build", and `--beta`
-(`sh -s -- --beta`) installs the newest pre-release, which ships Linux builds only for now.
+(`sh -s -- --beta`) installs the newest beta build, which ships Linux builds only for now.
 
 These URLs are stable: everything Canopy publishes in the shared, public NecturaLabs/app-updates
 repository sits under its `canopy/` folder (scripts, `latest.json`, `beta.json`) or in releases
-tagged `canopy-v<version>`. Nothing, in the scripts, the docs or the app, uses the repository-wide
+tagged `canopy-build-<number>`. Nothing, in the scripts, the docs or the app, uses the repository-wide
 `releases/latest`, which may belong to another app.
 
 ### What the installers do
@@ -38,11 +38,15 @@ tagged `canopy-v<version>`. Nothing, in the scripts, the docs or the app, uses t
 1. Detect the platform: OS and architecture (an x86_64 shell under Rosetta still gets the Apple
    silicon build), and on Linux glibc 2.35 or newer (musl is refused). `install.sh` checks for
    `curl` or GNU `wget` before downloading anything, and says so when neither is there.
-2. Read `canopy/latest.json` (`--beta` also reads `beta.json` and takes the newer version). With
-   `--version X` they use the manifest when it names X, else the `SHA256SUMS` of release
-   `canopy-vX`. Without `--version` they never install a version older than the installed one:
-   they stop and suggest `--beta` or `--version X` (so a beta stays until asked otherwise).
-3. Accept only `https://github.com/NecturaLabs/app-updates/releases/download/canopy-v<version>/canopy-<version>-<target>.<ext>`
+2. Read `canopy/latest.json` (`--beta` also reads `beta.json` and takes the newer build). Builds
+   are numbered: the manifest's `version` is the build number, `git rev-list --count` of the
+   build's commit on `main`, and builds are ordered by that integer alone (a version such as
+   `0.2.1-beta.1`, from before builds were numbered, is older than every build, and a beta
+   manifest naming one counts as absent). With `--version N` they use the manifest when it names
+   N, else the `SHA256SUMS` of release `canopy-build-N`. Without `--version` they never install a
+   build older than the installed one: they stop and suggest `--beta` or `--version N` (so a beta
+   build stays until asked otherwise).
+3. Accept only `https://github.com/NecturaLabs/app-updates/releases/download/canopy-build-<number>/canopy-build-<number>-<target>.<ext>`
    and a 64-digit SHA-256, verify the checksum and stop on any mismatch before touching the
    installation. Downloads are HTTPS only, TLS 1.2 or newer:
    - `curl -q --proto =https --proto-redir =https --tlsv1.2`: no `~/.curlrc`, and a redirect to
@@ -144,7 +148,7 @@ or `http://localhost:<port>` with at most a trailing `/` (so not `http://127.0.0
 and then allow plain HTTP to exactly that base. On Linux it runs the Linux flow and then the
 macOS flow under a fake `uname`; on macOS it runs the macOS flow natively (`tools/check.sh`
 runs it on either; CI does not). It covers install, reinstall, upgrade, checksum and tampering refusal, a
-manifest URL outside Canopy's releases, `--version` (and a version spanning two lines), `--beta`
+manifest URL outside Canopy's releases, `--version` (and a number spanning two lines, a semantic version, a leading zero), builds ordered as integers (99 below 100), an installation from before builds were numbered, `--beta`
 and the refusal to downgrade from it, a missing platform, `--no-path`, a foreign
 `~/.local/bin/canopy`, a foreign or symlinked desktop entry and icons, malformed test feeds, no
 `curl` or `wget`, a move that fails while the old version is moved aside or the new one moved in,
@@ -165,8 +169,8 @@ session, and runs PSScriptAnalyzer where installed.
 
 ## Release archives
 
-`.github/workflows/release.yml` builds `canopy-<version>-<target>.tar.gz` (Linux, macOS) or
-`.zip` (Windows), each holding one folder `canopy-<version>-<target>/` with `README.md`,
+`.github/workflows/release.yml` builds `canopy-build-<number>-<target>.tar.gz` (Linux, macOS) or
+`.zip` (Windows), each holding one folder `canopy-build-<number>-<target>/` with `README.md`,
 `LICENSE`, `legal/` and:
 
 - Linux (`x86_64-unknown-linux-gnu`; `aarch64-unknown-linux-gnu` cross-compiled, experimental):
@@ -180,7 +184,7 @@ session, and runs PSScriptAnalyzer where installed.
 An experimental build may fail without holding back the release; the installer then reports
 that the platform has no build. The release also attaches `install.sh`, `install.ps1` and
 `SHA256SUMS`, and a stable release commits the two scripts to `canopy/` in app-updates next to
-`latest.json`. Pre-releases never replace them.
+`latest.json`. Beta builds never replace them.
 
 ## Other channels
 

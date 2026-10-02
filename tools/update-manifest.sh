@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Usage: tools/update-manifest.sh <dist-dir> <version> <release-page> <download-base> > latest.json
+# Usage: tools/update-manifest.sh <dist-dir> <build> <release-page> <download-base> <notes-file> > latest.json
 #
 # Writes the update manifest Canopy's in-app update check reads (format: NecturaLabs/app-updates
-# README). <dist-dir> holds the release archives and SHA256SUMS; <download-base> is the URL the
-# archives are downloadable under. Release notes come from this version's CHANGELOG.md section.
+# README). <dist-dir> holds the release archives and SHA256SUMS; <build> is the build number the
+# manifest's `version` names; <download-base> is the URL the archives are downloadable under;
+# <notes-file> holds the release notes (tools/release.py notes).
 set -euo pipefail
 
 dist=${1:?dist dir}
-version=${2:?version}
+version=${2:?build number}
 page=${3:?release page}
 base=${4:?download base}
-root=$(cd "$(dirname "$0")/.." && pwd)
-
-notes=$(python3 "$root/tools/release.py" notes "$version")
+notes=$(cat "${5:?notes file}")
+case $version in
+    '' | 0* | *[!0-9]*) echo "update-manifest.sh: $version is not a build number" >&2; exit 1 ;;
+esac
 
 python3 - "$dist" "$version" "$page" "$base" "$notes" <<'PY'
 import datetime, json, os, sys

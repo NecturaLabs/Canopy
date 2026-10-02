@@ -5,12 +5,14 @@
 mod action;
 mod app;
 mod askpass;
+mod build_info;
 mod crash_reports;
 mod highlight;
 mod hosting;
 mod keymap;
 mod logging;
 mod platform;
+mod selfupdate;
 mod settings;
 mod tab;
 mod ui;
@@ -66,7 +68,7 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 std::process::exit(0);
             }
             "-V" | "--version" => {
-                println!("canopy {}", env!("CARGO_PKG_VERSION"));
+                println!("canopy {}", build_info::label());
                 std::process::exit(0);
             }
             "--light" => launch.theme = Some(ui::theme::ThemeId::Daylight),
@@ -172,6 +174,7 @@ fn main() -> anyhow::Result<()> {
     }
     // Normal detail until the settings load; the app then applies the user's choice.
     logging::init(logging::LogLevel::Normal);
+    canopy_hosting::set_build(build_info::NUMBER);
 
     let (launch, size) = match parse_args() {
         Ok(v) => v,
@@ -201,6 +204,7 @@ fn main() -> anyhow::Result<()> {
     .map_err(|e| anyhow::anyhow!("could not start the window: {e}"));
     // Ends the crash-report session (if reporting is on) and sends anything queued.
     crash_reports::shutdown();
+    selfupdate::run_requested_restart();
     result
 }
 

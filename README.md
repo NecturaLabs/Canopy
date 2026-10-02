@@ -99,7 +99,7 @@ irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/instal
 ```
 
 There is no stable release yet, so these stop with an error saying the release has no build for
-your system. Until the first one, install the beta, which ships Linux builds only for now:
+your system. Until the first one, install the beta build, which ships Linux builds only for now:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.sh | sh -s -- --beta
@@ -108,9 +108,9 @@ curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy
 The installer reads Canopy's update manifest, downloads the build for your system over HTTPS,
 checks its SHA-256 against the manifest and refuses anything that does not match. It never asks
 for elevated rights and never installs git; it tells you whether `git` and `git-lfs` are present
-and how to install them. Options: `--beta` (pre-releases), `--version X`, `--no-path`,
+and how to install them. Options: `--beta` (beta builds), `--version N` (a build number such as 412), `--no-path`,
 `--uninstall` (`--purge` also deletes settings and logs), `--help`; on Windows `-Beta`,
-`-Version X`, `-NoPath`, `-Uninstall`, `-Purge`, `-Help`.
+`-Version N`, `-NoPath`, `-Uninstall`, `-Purge`, `-Help`.
 
 Canopy gets a folder of its own:
 

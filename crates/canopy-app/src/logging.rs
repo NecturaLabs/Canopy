@@ -297,7 +297,7 @@ pub fn init(level: LogLevel) {
     };
     tracing::info!(
         run = %run.id,
-        version = env!("CARGO_PKG_VERSION"),
+        version = %crate::build_info::label(),
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
         pid = std::process::id(),
@@ -351,7 +351,7 @@ fn render_report(message: &str, location: &str, thread: &str, backtrace: &str) -
          Backtrace:\n{backtrace}\n\n\
          This report stays on your computer. If you share it, check it first: it can contain\n\
          file paths and branch names.\n",
-        version = env!("CARGO_PKG_VERSION"),
+        version = crate::build_info::label(),
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
         time = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),

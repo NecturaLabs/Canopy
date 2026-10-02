@@ -14,7 +14,7 @@ pub const NOTICES: &str = include_str!("../../../../docs/legal/third-party-notic
 /// "Last updated" of the Terms of Service, as `YYYY-MM-DD`.
 pub const TERMS_VERSION: &str = "2026-10-01";
 /// "Last updated" of the Privacy Policy, as `YYYY-MM-DD`.
-pub const PRIVACY_VERSION: &str = "2026-10-01";
+pub const PRIVACY_VERSION: &str = "2026-10-02";
 
 /// Which document to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

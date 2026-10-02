@@ -1,44 +1,43 @@
 #!/usr/bin/env python3
-"""Release automation for Canopy, driven by Conventional Commits.
+"""Release automation for Canopy: build numbers, and release notes from Conventional Commits.
+
+A release is a build, named by its number: `git rev-list --count` of its commit on `main`. The
+release is the tag `build-<number>` on that commit; nothing is committed and no version is bumped.
 
 Usage:
-  tools/release.py plan [--bump auto|patch|minor|major] [--pre beta]
-                                                         next version, or nothing to release
-  tools/release.py apply <version> [--date YYYY-MM-DD]    bump files and write the changelog
-  tools/release.py notes <version>                        that version's CHANGELOG.md section
-  tools/release.py selftest                               run this script's tests
+  tools/release.py plan [--force]       the build number to release from HEAD, or nothing to release
+  tools/release.py number [REF]         the build number of REF (default HEAD)
+  tools/release.py notes [REF]          the release notes of the build at REF (default HEAD)
+  tools/release.py selftest             run this script's tests
 
-`plan` looks at the commits since the last `v*` tag (before the first tag: since the last change
-to the workspace version):
+`plan` looks at the commits since the last `build-*` tag (before the first tag: all of them) and
+prints HEAD's build number when one of them changes what users get; with `--force` whenever HEAD
+is not already a tagged build:
 
-  feat                         minor
-  fix, perf, revert, build(deps)  patch
-  a `!` after the type, or a `BREAKING CHANGE:` footer
-                               major (minor while the version is 0.x)
+  feat, fix, perf, revert, build(deps)   release
   anything else (docs, ci, chore, test, refactor, style, build)  no release
 
-`apply` sets the workspace version in Cargo.toml and the workspace crates in Cargo.lock, turns
-CHANGELOG.md's [Unreleased] section into the new version's section (generating it from the
-commits when [Unreleased] is empty), updates the comparison links, and adds the release to the
-AppStream metainfo. The "Create release" workflow (.github/workflows/create-release.yml) runs plan
-and apply, tags the result and hands it to the Release workflow, which builds and publishes it.
+`notes` writes the release notes: the commits since the last `build-*` tag, grouped as Keep a
+Changelog sections (feat Added, fix and revert Fixed, perf and build Changed). Before the first
+`build-*` tag it prints the Unreleased section of CHANGELOG.md instead, which holds the
+hand-written notes of everything since the last release made with semantic versions. The "Create
+release" workflow (.github/workflows/create-release.yml) runs `plan`, tags the result and hands it
+to the Release workflow, which builds, publishes and updates the feed.
 """
 
 from __future__ import annotations
 
-import datetime as _dt
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-REPO_URL = "https://github.com/NecturaLabs/Canopy"
-WORKSPACE_CRATES = ("canopy-app", "canopy-core", "canopy-hosting")
-METAINFO = ROOT / "packaging/linux/io.necturalabs.Canopy.metainfo.xml"
+TAG_PREFIX = "build-"
 
 SUBJECT = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[^)]*)\))?(?P<bang>!)?: (?P<desc>.+)$")
-VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$")
+TAG = re.compile(r"^build-([1-9][0-9]{0,8})$")
 
 
 def git(*args: str) -> str:
@@ -47,30 +46,38 @@ def git(*args: str) -> str:
     ).stdout
 
 
-def tags() -> list[str]:
-    """`v*` version tags reachable from HEAD, newest version first."""
-    out = git("tag", "--list", "v[0-9]*", "--merged", "HEAD", "--sort=-v:refname")
-    return [t for t in out.split() if VERSION.match(t[1:])]
+def number_of(ref: str = "HEAD") -> int:
+    """The build number of `ref`: the commits reachable from it."""
+    if git("rev-parse", "--is-shallow-repository").strip() == "true":
+        raise SystemExit("this clone is shallow: its commit count is not the build number (fetch the full history)")
+    return int(git("rev-list", "--count", ref).strip())
 
 
-def last_tag() -> str | None:
-    """The newest stable (non-pre-release) tag reachable from HEAD."""
-    return next((t for t in tags() if "-" not in t), None)
+def build_tags(ref: str = "HEAD") -> list[tuple[int, str]]:
+    """(number, tag) of the `build-*` tags reachable from `ref`, newest build first."""
+    out = git("tag", "--list", f"{TAG_PREFIX}*", "--merged", ref)
+    found = [(int(m[1]), t) for t in out.split() if (m := TAG.match(t))]
+    return sorted(found, reverse=True)
 
 
-def baseline() -> str | None:
-    """Where the current version starts: the last `v*` tag, else (before the first tag) the last
-    commit that changed the workspace version in Cargo.toml."""
-    tag = last_tag()
-    if tag:
-        return tag
-    out = git("log", "-1", "--format=%H", "-G", r'^version = "', "--", "Cargo.toml").strip()
-    return out or None
+def previous_tag(ref: str = "HEAD") -> str | None:
+    """The newest build tag before `ref`'s own commit."""
+    head = git("rev-parse", f"{ref}^{{commit}}").strip()
+    for _, tag in build_tags(ref):
+        if git("rev-parse", f"{tag}^{{commit}}").strip() != head:
+            return tag
+    return None
 
 
-def commits_since(base: str | None) -> list[tuple[str, str]]:
-    """(subject, body) of the commits after `base`, oldest first, merges skipped."""
-    rng = f"{base}..HEAD" if base else "HEAD"
+def tag_on(ref: str = "HEAD") -> str | None:
+    """A build tag on `ref`'s own commit."""
+    head = git("rev-parse", f"{ref}^{{commit}}").strip()
+    return next((t for _, t in build_tags(ref) if git("rev-parse", f"{t}^{{commit}}").strip() == head), None)
+
+
+def commits_since(base: str | None, ref: str = "HEAD") -> list[tuple[str, str]]:
+    """(subject, body) of the commits after `base` up to `ref`, oldest first, merges skipped."""
+    rng = f"{base}..{ref}" if base else ref
     out = git("log", "--no-merges", "--reverse", "--format=%s%x1f%b%x1e", rng)
     result = []
     for record in out.split("\x1e"):
@@ -82,74 +89,25 @@ def commits_since(base: str | None) -> list[tuple[str, str]]:
     return result
 
 
-def classify(subject: str, body: str) -> str | None:
-    """'major', 'minor', 'patch' or None for one commit."""
+def releasable(subject: str, body: str) -> bool:
+    """Whether one commit changes what users get."""
     m = SUBJECT.match(subject)
     if not m:
-        return None
+        return False
     kind, scope = m["type"], m["scope"] or ""
     if m["bang"] or re.search(r"^BREAKING[ -]CHANGE: ", body, re.M):
-        return "major"
-    if kind == "feat":
-        return "minor"
-    if kind in ("fix", "perf", "revert") or (kind == "build" and scope == "deps"):
-        return "patch"
-    return None
+        return True
+    return kind in ("feat", "fix", "perf", "revert") or (kind == "build" and scope == "deps")
 
 
-def bump(version: str, level: str) -> str:
-    m = VERSION.match(version)
-    if not m:
-        raise SystemExit(f"not a version: {version}")
-    major, minor, patch = (int(x) for x in m.groups())
-    if level == "major" and major == 0:
-        level = "minor"  # 0.x: breaking changes bump the minor version
-    if level == "major":
-        return f"{major + 1}.0.0"
-    if level == "minor":
-        return f"{major}.{minor + 1}.0"
-    return f"{major}.{minor}.{patch + 1}"
-
-
-def level_of(commits: list[tuple[str, str]]) -> str | None:
-    order = {"patch": 1, "minor": 2, "major": 3}
-    best = None
-    for subject, body in commits:
-        lvl = classify(subject, body)
-        if lvl and (best is None or order[lvl] > order[best]):
-            best = lvl
-    return best
-
-
-def workspace_version() -> str:
-    text = (ROOT / "Cargo.toml").read_text()
-    section = text.split("[workspace.package]", 1)[1]
-    m = re.search(r'^version = "([^"]+)"', section, re.M)
-    if not m:
-        raise SystemExit("no [workspace.package] version in Cargo.toml")
-    return m.group(1)
-
-
-def plan(forced: str, pre: str | None = None) -> str | None:
-    """The next version: from the last stable release, bumped as the commits (or `forced`) say.
-    With `pre` (e.g. "beta"), a pre-release of that version: X.Y.Z-beta.N, N one past the
-    newest existing one."""
-    tag = last_tag()
-    commits = commits_since(baseline())
-    level = level_of(commits) if forced == "auto" else forced
-    if level is None:
+def plan(force: bool, ref: str = "HEAD") -> int | None:
+    """The build number to release from `ref`, or None when there is nothing to release."""
+    if tag_on(ref):
         return None
-    base = tag[1:] if tag else workspace_version()
-    version = bump(base, level)
-    if pre:
-        return next_prerelease(version, pre, tags())
-    return version
-
-
-def next_prerelease(version: str, pre: str, existing: list[str]) -> str:
-    prefix = f"v{version}-{pre}."
-    numbers = [int(t[len(prefix):]) for t in existing if t.startswith(prefix) and t[len(prefix):].isdigit()]
-    return f"{version}-{pre}.{max(numbers, default=0) + 1}"
+    commits = commits_since(previous_tag(ref), ref)
+    if not force and not any(releasable(s, b) for s, b in commits):
+        return None
+    return number_of(ref)
 
 
 GROUPS = (
@@ -166,7 +124,7 @@ def generated_notes(commits: list[tuple[str, str]]) -> str:
         items = []
         for subject, body in commits:
             m = SUBJECT.match(subject)
-            if not m or classify(subject, body) is None or m["type"] not in kinds:
+            if not m or not releasable(subject, body) or m["type"] not in kinds:
                 continue
             desc = m["desc"].strip().rstrip(".")
             items.append(f"- {desc[:1].upper()}{desc[1:]}.")
@@ -175,37 +133,11 @@ def generated_notes(commits: list[tuple[str, str]]) -> str:
     return "\n\n".join(sections)
 
 
-def update_changelog(text: str, version: str, date: str, fallback: str, previous: str | None) -> str:
-    head, sep, rest = text.partition("## [Unreleased]")
-    if not sep:
-        raise SystemExit("CHANGELOG.md has no [Unreleased] section")
-    m = re.search(r"^## \[|^\[[^\]]+\]: ", rest, re.M)
-    body, tail = (rest[: m.start()], rest[m.start():]) if m else (rest, "")
-    notes = body.strip() or fallback.strip() or "### Changed\n\n- Maintenance release."
-    # A pre-release copies the notes; the stable release that follows takes them over.
-    kept = f"{body.strip()}\n\n" if "-" in version and body.strip() else ""
-    new = f"{head}## [Unreleased]\n\n{kept}## [{version}] - {date}\n\n{notes}\n\n{tail.lstrip()}"
-    # Comparison links.
-    link_unreleased = f"[Unreleased]: {REPO_URL}/compare/v{version}...HEAD"
-    link_version = (
-        f"[{version}]: {REPO_URL}/compare/v{previous}...v{version}"
-        if previous
-        else f"[{version}]: {REPO_URL}/releases/tag/v{version}"
-    )
-    if re.search(r"^\[Unreleased\]: .*$", new, re.M):
-        new = re.sub(
-            r"^\[Unreleased\]: .*$", f"{link_unreleased}\n{link_version}", new, count=1, flags=re.M
-        )
-    else:
-        new = new.rstrip("\n") + f"\n\n{link_unreleased}\n{link_version}\n"
-    return new
-
-
-def section(text: str, version: str) -> str:
-    lines = text.splitlines()
+def section(text: str, name: str) -> str:
+    """The body of `## [name]` in a Keep a Changelog file."""
     out, inside = [], False
-    for line in lines:
-        if line.startswith(f"## [{version}]"):
+    for line in text.splitlines():
+        if line.startswith(f"## [{name}]"):
             inside = True
             continue
         if inside and (line.startswith("## [") or re.match(r"^\[[^\]]+\]: ", line)):
@@ -215,55 +147,15 @@ def section(text: str, version: str) -> str:
     return "\n".join(out).strip()
 
 
-def plain_summary(notes: str) -> str:
-    items = [l[2:].strip() for l in notes.splitlines() if l.startswith("- ")]
-    text = " ".join(items[:4]) if items else "Maintenance release."
-    text = re.sub(r"[`*]", "", text)
-    if len(text) > 400:
-        text = text[:397].rsplit(" ", 1)[0] + "…"
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def apply(version: str, date: str) -> None:
-    if not VERSION.match(version):
-        raise SystemExit(f"not a version: {version}")
-    previous_tag = last_tag()
-    previous = previous_tag[1:] if previous_tag else None
-    # Cargo.toml
-    cargo = ROOT / "Cargo.toml"
-    text = cargo.read_text()
-    head, sep, rest = text.partition("[workspace.package]")
-    rest = re.sub(r'^version = "[^"]+"', f'version = "{version}"', rest, count=1, flags=re.M)
-    cargo.write_text(head + sep + rest)
-    # Cargo.lock: the workspace crates only.
-    lock = ROOT / "Cargo.lock"
-    if lock.exists():
-        lt = lock.read_text()
-        for name in WORKSPACE_CRATES:
-            lt = re.sub(
-                rf'(\[\[package\]\]\nname = "{re.escape(name)}"\nversion = )"[^"]+"',
-                rf'\1"{version}"',
-                lt,
-            )
-        lock.write_text(lt)
-    # CHANGELOG.md
-    changelog = ROOT / "CHANGELOG.md"
-    fallback = generated_notes(commits_since(baseline()))
-    new_log = update_changelog(changelog.read_text(), version, date, fallback, previous)
-    changelog.write_text(new_log)
-    # AppStream metainfo
-    if METAINFO.exists():
-        xml = METAINFO.read_text()
-        if f'<release version="{version}"' not in xml:
-            summary = plain_summary(section(new_log, version))
-            kind = ' type="development"' if "-" in version else ""
-            entry = (
-                f'    <release version="{version}" date="{date}"{kind}>\n'
-                f"      <description>\n        <p>{summary}</p>\n      </description>\n"
-                f"    </release>\n"
-            )
-            xml = xml.replace("<releases>\n", "<releases>\n" + entry, 1)
-            METAINFO.write_text(xml)
+def notes(ref: str = "HEAD") -> str:
+    """The release notes of the build at `ref`."""
+    previous = previous_tag(ref)
+    if previous:
+        text = generated_notes(commits_since(previous, ref))
+    else:
+        changelog = git("show", f"{ref}:CHANGELOG.md")
+        text = section(changelog, "Unreleased")
+    return text or "### Changed\n\n- Maintenance build."
 
 
 class SelftestFailure(Exception):
@@ -281,43 +173,77 @@ def expect_eq(actual: object, expected: object) -> None:
 
 
 def selftest() -> None:
-    expect_eq(classify("feat(app): x", ""), "minor")
-    expect_eq(classify("fix: x", ""), "patch")
-    expect_eq(classify("build(deps): bump egui", ""), "patch")
-    expect_eq(classify("build: tweak", ""), None)
-    expect_eq(classify("docs: x", ""), None)
-    expect_eq(classify("feat!: drop y", ""), "major")
-    expect_eq(classify("refactor: z", "BREAKING CHANGE: gone"), "major")
-    expect_eq(classify("Merge branch 'x'", ""), None)
-    expect_eq(classify("chore(release): v1.2.3", ""), None)
-    expect_eq(bump("0.1.0", "major"), "0.2.0")
-    expect_eq(bump("1.4.2", "major"), "2.0.0")
-    expect_eq(bump("1.4.2", "minor"), "1.5.0")
-    expect_eq(bump("1.4.2", "patch"), "1.4.3")
-    expect_eq(bump("1.5.0-rc.1", "patch"), "1.5.1")
-    expect_eq(level_of([("docs: a", ""), ("fix: b", ""), ("feat: c", "")]), "minor")
-    expect_eq(next_prerelease("0.3.0", "beta", []), "0.3.0-beta.1")
-    expect_eq(next_prerelease("0.3.0", "beta", ["v0.3.0-beta.2", "v0.3.0-beta.10", "v0.2.0-beta.7"]), "0.3.0-beta.11")
-    expect_eq(level_of([("ci: a", ""), ("chore: b", "")]), None)
-    notes = generated_notes([("feat(app): side by side diffs", ""), ("fix: crash on empty repo.", ""), ("docs: x", "")])
-    expect_eq(notes, "### Added\n\n- Side by side diffs.\n\n### Fixed\n\n- Crash on empty repo.")
-    log = (
-        "# Changelog\n\nIntro.\n\n## [Unreleased]\n\n### Added\n\n- New thing.\n\n"
-        "## [0.1.0] - 2026-09-01\n\n- First.\n\n"
-        "[Unreleased]: https://x/compare/v0.1.0...HEAD\n[0.1.0]: https://x/releases/tag/v0.1.0\n"
-    )
-    out = update_changelog(log, "0.2.0", "2026-10-01", "### Fixed\n\n- Ignored.", "0.1.0")
-    expect("## [Unreleased]\n\n## [0.2.0] - 2026-10-01\n\n### Added\n\n- New thing.\n\n## [0.1.0]" in out, "the release section under Unreleased", out)
-    expect("Ignored" not in out, "generated notes ignored when Unreleased has entries", out)
-    expect(f"[Unreleased]: {REPO_URL}/compare/v0.2.0...HEAD\n[0.2.0]: {REPO_URL}/compare/v0.1.0...v0.2.0" in out, "updated compare links", out)
-    expect_eq(section(out, "0.2.0"), "### Added\n\n- New thing.")
-    empty = update_changelog(log.replace("### Added\n\n- New thing.\n\n", ""), "0.2.0", "2026-10-01", "### Fixed\n\n- Generated.", "0.1.0")
-    expect_eq(section(empty, "0.2.0"), "### Fixed\n\n- Generated.")
-    beta = update_changelog(log, "0.2.0-beta.1", "2026-10-01", "", "0.1.0")
-    expect_eq(section(beta, "Unreleased"), "### Added\n\n- New thing.")
-    expect_eq(section(beta, "0.2.0-beta.1"), "### Added\n\n- New thing.")
-    expect_eq(plain_summary("### Added\n\n- A `b`.\n- C & D."), "A b. C &amp; D.")
+    for subject, body, expected in [
+        ("feat(app): x", "", True),
+        ("fix: x", "", True),
+        ("perf(graph): x", "", True),
+        ("revert: x", "", True),
+        ("build(deps): bump egui", "", True),
+        ("build: tweak", "", False),
+        ("docs: x", "", False),
+        ("ci: x", "", False),
+        ("chore: x", "", False),
+        ("feat!: drop y", "", True),
+        ("refactor: z", "BREAKING CHANGE: gone", True),
+        ("Merge branch 'x'", "", False),
+    ]:
+        expect_eq(releasable(subject, body), expected)
+    notes_text = generated_notes([("feat(app): side by side diffs", ""), ("fix: crash on empty repo.", ""), ("docs: x", ""), ("build: y", "")])
+    expect_eq(notes_text, "### Added\n\n- Side by side diffs.\n\n### Fixed\n\n- Crash on empty repo.")
+    expect_eq(generated_notes([("docs: x", "")]), "")
+    log = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- New thing.\n\n## [0.1.0] - 2026-09-01\n\n- First.\n\n[0.1.0]: https://x\n"
+    expect_eq(section(log, "Unreleased"), "### Added\n\n- New thing.")
+    expect_eq(section(log, "0.1.0"), "- First.")
+    expect_eq(section(log, "9.9.9"), "")
+    expect_eq(TAG.match("build-412") is not None, True)
+    for bad in ("build-0", "build-0412", "build-4x", "v1.2.3", "build-", "build-1234567890", "build-412-beta"):
+        expect(TAG.match(bad) is None, f"{bad} is not a build tag")
+    repo_selftest(log)
     print("release.py: all tests passed")
+
+
+def repo_selftest(changelog: str) -> None:
+    """plan, notes and the tags, against a temporary repository."""
+    global ROOT
+    saved = ROOT
+    with tempfile.TemporaryDirectory() as tmp:
+        ROOT = Path(tmp)
+        try:
+            def commit(subject: str, text: str | None = None) -> None:
+                (ROOT / "file.txt").write_text(f"{subject}\n")
+                if text is not None:
+                    (ROOT / "CHANGELOG.md").write_text(text)
+                git("add", "-A")
+                git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", subject)
+
+            git("init", "-q", "-b", "main")
+            commit("docs: start", changelog)
+            expect_eq(plan(False), None)
+            expect_eq(plan(True), 1)
+            commit("feat: a thing")
+            expect_eq(number_of(), 2)
+            expect_eq(plan(False), 2)
+            expect_eq(notes(), "### Added\n\n- New thing.")
+            git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "tag", "-a", "build-2", "-m", "build 2")
+            expect_eq(tag_on(), "build-2")
+            expect_eq(plan(True), None)
+            commit("docs: more docs")
+            expect_eq(tag_on(), None)
+            expect_eq(plan(False), None)
+            expect_eq(plan(True), 3)
+            expect_eq(notes(), "### Changed\n\n- Maintenance build.")
+            commit("fix(core): a crash.")
+            commit("chore: tidy")
+            expect_eq(plan(False), 5)
+            expect_eq(notes(), "### Fixed\n\n- A crash.")
+            # Tags are ordered as numbers: build-10 is newer than build-9 (the names are arbitrary here).
+            git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "tag", "-a", "build-9", "-m", "x", "HEAD~1")
+            git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "tag", "-a", "build-10", "-m", "x", "HEAD")
+            expect_eq([n for n, _ in build_tags()], [10, 9, 2])
+            expect_eq(previous_tag(), "build-9")
+            expect_eq(previous_tag("HEAD~1"), "build-2")
+        finally:
+            ROOT = saved
 
 
 def main(argv: list[str]) -> None:
@@ -325,33 +251,14 @@ def main(argv: list[str]) -> None:
         print(__doc__)
         return
     cmd, args = argv[0], argv[1:]
-    if cmd == "plan":
-        forced, pre = "auto", None
-        it = iter(args)
-        for a in it:
-            if a == "--bump":
-                forced = next(it, "")
-            elif a == "--pre":
-                pre = next(it, "") or None
-            else:
-                raise SystemExit(f"unknown argument {a}")
-        if forced not in ("auto", "patch", "minor", "major"):
-            raise SystemExit(f"--bump takes auto, patch, minor or major, not {forced}")
-        if pre is not None and not re.fullmatch(r"[a-z]+", pre):
-            raise SystemExit(f"--pre takes a lower-case label such as beta or rc, not {pre}")
-        v = plan(forced, pre)
-        if v:
-            print(v)
-    elif cmd == "apply" and args:
-        date = _dt.date.today().isoformat()
-        if args[1:2] == ["--date"] and len(args) > 2:
-            date = args[2]
-        apply(args[0], date)
-    elif cmd == "notes" and args:
-        text = section((ROOT / "CHANGELOG.md").read_text(), args[0])
-        if not text:
-            raise SystemExit(f"no CHANGELOG.md section for {args[0]}")
-        print(text)
+    if cmd == "plan" and args in ([], ["--force"]):
+        n = plan(bool(args))
+        if n is not None:
+            print(n)
+    elif cmd == "number" and len(args) <= 1:
+        print(number_of(*args))
+    elif cmd == "notes" and len(args) <= 1:
+        print(notes(*args))
     elif cmd == "selftest":
         selftest()
     else:

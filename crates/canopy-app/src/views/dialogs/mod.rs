@@ -21,6 +21,7 @@ mod common;
 mod credential;
 mod stack;
 mod start;
+mod update;
 mod url;
 
 use common::*;
@@ -189,6 +190,7 @@ pub fn show(
     tab: Option<&RepoTab>,
     picker: &mut crate::ui::folder_picker::FolderPicker,
     clone_running: bool,
+    updater: &crate::updater::Updater,
 ) -> Outcome {
     let p = palette(ctx);
     let mut outcome = Outcome::Keep;
@@ -470,35 +472,7 @@ pub fn show(
                     outcome = credential(ui, prompt, answer, reveal, enter);
                 }
                 Dialog::Update(a) => {
-                    title(ui, icon::ARROW_CIRCLE_UP, &format!("Canopy {} is available", a.version));
-                    ui.label(RichText::new(format!("You have {}.{}", env!("CARGO_PKG_VERSION"), a.manifest.pub_date.as_deref().and_then(|d| d.get(..10)).map(|d| format!(" Released {d}.")).unwrap_or_default())).size(12.5).color(p.text_dim));
-                    ui.add_space(8.0);
-                    egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                        ui.set_max_width(ui.available_width());
-                        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
-                            let notes = a.manifest.notes.trim();
-                            if notes.is_empty() {
-                                ui.label(RichText::new("No release notes.").color(p.text_faint));
-                            } else {
-                                crate::ui::notes::markdown(ui, notes);
-                            }
-                        });
-                    });
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let download = a.manifest.artifact().is_some();
-                            if widgets::primary_button(ui, if download { "Download" } else { "Open release" }, true, 150.0).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenUrl(a.download())]);
-                            }
-                            if ui.add_sized([90.0, 34.0], egui::Button::new("Later")).clicked() {
-                                outcome = Outcome::Close;
-                            }
-                            if ui.add_sized([130.0, 34.0], egui::Button::new("Skip this version")).clicked() {
-                                outcome = Outcome::Run(vec![Action::SkipVersion(a.version.to_string())]);
-                            }
-                        });
-                    });
+                    outcome = update::update(ui, a, updater);
                 }
                 Dialog::WhatsNew { version, notes } => {
                     title(ui, icon::SPARKLE, &format!("What's new in Canopy {version}"));
@@ -688,7 +662,7 @@ pub fn show(
                     ui.vertical_centered(|ui| {
                         art::show(ui, art::logo(), egui::vec2(64.0, 64.0));
                         ui.label(RichText::new("Canopy").font(FontId::new(24.0, theme::semibold())));
-                        ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).color(p.text_dim));
+                        ui.label(RichText::new(crate::build_info::title_label()).color(p.text_dim));
                         ui.add_space(8.0);
                         ui.label(RichText::new("A fast, beautiful, Linux-first Git client.").color(p.text_dim));
                         ui.label(RichText::new("© 2026 NecturaLabs. Built with Rust, egui and libgit2.").size(12.0).color(p.text_faint));
@@ -963,7 +937,14 @@ mod tests {
                     ..Default::default()
                 },
                 |_| {
-                    let result = show(&ctx, &mut dialog, None, &mut picker, false);
+                    let result = show(
+                        &ctx,
+                        &mut dialog,
+                        None,
+                        &mut picker,
+                        false,
+                        &crate::updater::Updater::default(),
+                    );
                     if pressed {
                         kept = matches!(result, Outcome::RunKeep(_));
                     }
@@ -1039,7 +1020,14 @@ mod tests {
                         ..Default::default()
                     },
                     |_| {
-                        show(&ctx, &mut dialog, None, &mut picker, false);
+                        show(
+                            &ctx,
+                            &mut dialog,
+                            None,
+                            &mut picker,
+                            false,
+                            &crate::updater::Updater::default(),
+                        );
                     },
                 );
                 output.textures_delta.clear();

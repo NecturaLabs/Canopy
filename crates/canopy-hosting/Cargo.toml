@@ -14,9 +14,13 @@ canopy-core.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.11"
 thiserror.workspace = true
 tracing.workspace = true
 ureq.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

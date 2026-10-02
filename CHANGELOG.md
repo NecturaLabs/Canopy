@@ -1,13 +1,33 @@
 # Changelog
 
 All notable changes to Canopy are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases up to 0.2.1-beta.1 used
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html); from the first numbered build on, a
+release is a build named by its number (see Unreleased), and its notes are generated from the
+commits since the previous build.
 
 ## [Unreleased]
 
+### Changed
+
+- Releases are numbered builds, named by `git rev-list --count` of their commit on `main` and its
+  short hash (`build 412 (a1b2c3d)`), instead of semantic versions. The number is shown in About,
+  `canopy --version`, the logs and the update check; the update check, the one-line installers
+  (`--version N`) and the update feed compare builds as integers, and a version such as
+  `0.2.1-beta.1` counts as older than every build. Nothing is committed or bumped to release: the
+  Create release workflow tags `build-N`. Installations older than the first numbered build do
+  not understand the new feed: their update check reports an error until Canopy is reinstalled with
+  the one-line installer.
+
 ### Added
 
+- Update from inside Canopy. The update dialog's Update button downloads the new build over HTTPS
+  from Canopy's release, checks its SHA-256 against the update feed and installs it. Where the
+  one-line installer put Canopy (Linux) it replaces its own folder in place, keeps the previous
+  version if anything fails, keeps the command link, launcher entry, icons and `uninstall.sh`
+  consistent, and never touches settings, tokens, logs or caches. Any other installation runs the
+  one-line installer pinned to the new build. A restart button follows. Nothing is downloaded until
+  you press Update; the Privacy Policy describes it.
 - GitHub and GitLab (self-hosted GitLab included): forge icons on remotes, "Open on" links for
   commits, branches and remotes, and a pull and merge request view with checks, reviews and the
   conversation, plus create, check out, comment, approve, merge and close, through the host's REST

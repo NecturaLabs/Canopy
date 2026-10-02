@@ -1,38 +1,38 @@
 # Creates a Canopy release. Run it by hand: Actions → Create release → Run workflow.
 #
-# It reads the Conventional Commits since the last stable release and bumps the version
-# semantically (tools/release.py):
-#   feat → minor · fix, perf, revert, build(deps) → patch · `!` or BREAKING CHANGE → major
-#   (minor while the version is 0.x) · docs, ci, chore, test, refactor and style → no release.
-# "bump" overrides that choice; "channel: beta" makes a pre-release (X.Y.Z-beta.N) that goes to
-# the beta update channel. "dry-run" only reports the version it would release.
+# A release is a build: its number is `git rev-list --count` of the commit on main (tools/release.py
+# number), and the release is the tag `build-<number>` on that commit. Nothing is committed to main
+# and no version is bumped; the build's number, short commit hash and release notes are embedded
+# when the Release workflow builds it. A release is made only when a feat, fix, perf, revert or
+# dependency commit is new since the last build tag; "force" releases anyway (docs, ci and chore
+# commits alone change nothing for users). The release notes are the Conventional Commits since
+# the last build tag (before the first one, the Unreleased section of CHANGELOG.md).
+# "channel: beta" publishes the build to the beta update channel. "dry-run" only reports the
+# build number it would release.
 #
-# Then it bumps Cargo.toml and Cargo.lock, moves CHANGELOG.md's [Unreleased] notes into the new
-# version (generating them from the commits when [Unreleased] is empty), adds the AppStream
-# release entry, commits `chore(release): vX.Y.Z` to main, tags it, and runs the Release
-# workflow (release.yml) on the tag, which builds, publishes and updates the feed.
+# It tags the tested commit and runs the Release workflow (release.yml) on the tag, which builds,
+# publishes and updates the feed.
 #
-# Secrets: RELEASE_TOKEN only if main is protected against direct pushes: a token allowed to push
-# the release commit and tag (best: a GitHub App on the ruleset's bypass list; a fine-grained
-# token works too). Otherwise the workflow's own token is used. APP_UPDATES_TOKEN is passed on to
-# the Release workflow.
+# Secrets: RELEASE_TOKEN only if tags are protected against creation by the workflow's own token:
+# a token allowed to push the tag (best: a GitHub App on the ruleset's bypass list; a
+# fine-grained token works too). Otherwise the workflow's own token is used. APP_UPDATES_TOKEN is
+# passed on to the Release workflow.
 name: Create release
 
 on:
   workflow_dispatch:
     inputs:
-      bump:
-        description: Version bump (auto follows the commits)
-        type: choice
-        options: [auto, patch, minor, major]
-        default: auto
       channel:
-        description: stable, or beta for a pre-release
+        description: stable, or beta for the beta update channel
         type: choice
         options: [stable, beta]
         default: stable
+      force:
+        description: Release even when no feat, fix or perf commit is new
+        type: boolean
+        default: false
       dry-run:
-        description: Only report the version, change nothing
+        description: Only report the build number, change nothing
         type: boolean
         default: false
 
@@ -45,8 +45,8 @@ concurrency:
 
 jobs:
   prepare:
-    name: Version and changelog
-    # A throwaway GitHub-hosted runner: this job holds a token that can push to main.
+    name: Build number and tag
+    # A throwaway GitHub-hosted runner: this job holds a token that can push tags.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -60,64 +60,56 @@ jobs:
         run: |
           echo "::error::Run Create release on main (it was started on $GITHUB_REF)."
           exit 1
-      # The only checkout that keeps its credentials: this job pushes the release commit and tag.
+      # The only checkout that keeps its credentials: this job pushes the tag. The whole history
+      # and every tag, since the build number counts commits.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN || github.token }}
-      - name: Decide the version
+      - name: Decide the build
         id: plan
         env:
-          BUMP: ${{ inputs.bump }}
-          CHANNEL: ${{ inputs.channel }}
+          FORCE: ${{ inputs.force }}
         run: |
           python3 tools/release.py selftest
-          args=(--bump "$BUMP")
-          [[ $CHANNEL == beta ]] && args+=(--pre beta)
-          version=$(python3 tools/release.py plan "${args[@]}")
-          if [[ -z $version ]]; then
-            echo "::notice::Nothing to release: no feat, fix, perf, revert or dependency commits since the last release. Choose a bump to release anyway."
+          args=()
+          [[ $FORCE == true ]] && args+=(--force)
+          build=$(python3 tools/release.py plan "${args[@]}")
+          if [[ -z $build ]]; then
+            echo "::notice::Nothing to release: no feat, fix, perf, revert or dependency commit since the last build, or this commit is already a build. Choose force to release anyway."
             exit 0
           fi
-          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
-            echo "::error::v$version already exists."
+          if git rev-parse -q --verify "refs/tags/build-$build" > /dev/null; then
+            echo "::error::build-$build already exists."
             exit 1
           fi
-          echo "::notice::Next version: $version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "::notice::Next build: $build"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
       - name: Check the commit CI tested
-        if: steps.plan.outputs.version != ''
+        if: steps.plan.outputs.build != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           sha=$(git rev-parse HEAD)
           state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&event=push&per_page=1" \
             --jq '.workflow_runs[0] | if . == null then "not run" else (.conclusion // .status) end')
-          # A release commit pushed with the workflow token starts no CI run; it only changed
-          # the version and the changelog, and the commit before it was tested.
-          if [[ $state == "not run" && $(git log -1 --format=%s) == "chore(release): "* ]]; then
-            state=success
-          fi
           if [[ $state != success ]]; then
             echo "::error::CI has not passed on main ($sha: $state). Release after it is green."
             exit 1
           fi
-      - name: Commit, tag and push
+      - name: Tag and push
         id: push
-        if: steps.plan.outputs.version != '' && !inputs.dry-run
+        if: steps.plan.outputs.build != '' && !inputs.dry-run
         env:
-          VERSION: ${{ steps.plan.outputs.version }}
+          BUILD: ${{ steps.plan.outputs.build }}
+          CHANNEL: ${{ inputs.channel }}
         run: |
-          python3 tools/release.py apply "$VERSION"
-          python3 tools/release.py notes "$VERSION" > /dev/null
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml Cargo.lock CHANGELOG.md packaging/linux/io.necturalabs.Canopy.metainfo.xml
-          git commit -m "chore(release): v$VERSION"
-          git tag -a "v$VERSION" -m "Canopy $VERSION"
-          git push --atomic origin HEAD:main "refs/tags/v$VERSION"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          git tag -a "build-$BUILD" -m "Canopy build $BUILD ($CHANNEL)"
+          git push origin "refs/tags/build-$BUILD"
+          echo "tag=build-$BUILD" >> "$GITHUB_OUTPUT"
 
   publish:
     name: Build and publish
@@ -128,6 +120,7 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.prepare.outputs.tag }}
-    # Only the feed token: RELEASE_TOKEN, which can push to main, stays in this workflow.
+      channel: ${{ inputs.channel }}
+    # Only the feed token: RELEASE_TOKEN, which can push tags, stays in this workflow.
     secrets:
       APP_UPDATES_TOKEN: ${{ secrets.APP_UPDATES_TOKEN }}

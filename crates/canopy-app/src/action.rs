@@ -60,6 +60,10 @@ pub enum Action {
     Command(Command),
     CheckUpdates,
     SkipVersion(String),
+    /// Install the update the dialog shows (in place, or through the installer).
+    InstallUpdate(Box<crate::updater::Available>),
+    /// Close Canopy and start this program, the updated one.
+    RestartInto(PathBuf),
     /// Show what's new in an available update.
     ShowUpdate,
     /// Show this version's release notes.

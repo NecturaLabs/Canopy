@@ -19,6 +19,8 @@ Update this table in the same change that adds or alters a feature.
 | Windows | Done | Yes | Yes | Yes |
 | Native (non-Electron) UI | Done | Yes | No | Yes |
 | One-line install into its own folder, with uninstall (Linux, macOS, Windows) | Unreleased | No | No | No |
+| In-app update: download, SHA-256 check and install in place where the installer put Canopy (Linux), the installer elsewhere, then restart | Unreleased | ? | ? | ? |
+| Releases named by build number (`build 412 (a1b2c3d)`), shown in About, `--version`, logs and the update check; no version bumps | Unreleased | ? | ? | ? |
 | Builds for Linux arm64 and Intel macOS | Experimental | No | Yes | Yes |
 | Network operations through the system `git` (credential helpers, SSH config, hooks) | Done | Yes | ? | Partial |
 

@@ -102,12 +102,35 @@ impl CanopyApp {
             }
         }
         self.poll_prompts(ctx);
+        if self.updater.poll_install() {
+            match &self.updater.install {
+                updater::InstallState::Done { build, installed } => self.toasts.push(
+                    ctx,
+                    ToastKind::Success,
+                    format!("Canopy {} is installed", crate::build_info::name(build)),
+                    if installed.exe.is_some() {
+                        "Restart Canopy to use it.".to_owned()
+                    } else {
+                        "Start it from your launcher; this window still runs the old build."
+                            .to_owned()
+                    },
+                ),
+                updater::InstallState::Failed { error, .. } => self.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    "Could not update Canopy",
+                    error.clone(),
+                ),
+                _ => {}
+            }
+        }
         if self.updater.poll() {
             let manual = self.updater.manual;
             match &self.updater.state {
                 UpdateState::Available(a) => {
-                    let v = &a.version;
-                    let skipped = self.settings.skipped_version.as_deref() == Some(&v.to_string());
+                    let v = a.label();
+                    let skipped = self.settings.skipped_version.as_deref()
+                        == Some(a.build.to_string().as_str());
                     if manual {
                         self.dialogs.open(Dialog::Update(a.clone()));
                     } else if !skipped {
@@ -125,7 +148,7 @@ impl CanopyApp {
                     ctx,
                     ToastKind::Success,
                     "Canopy is up to date",
-                    format!("Version {}", env!("CARGO_PKG_VERSION")),
+                    format!("You have {}", crate::build_info::label()),
                 ),
                 UpdateState::Failed(e) if manual => self.toasts.push(
                     ctx,

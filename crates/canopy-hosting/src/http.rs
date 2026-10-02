@@ -2,6 +2,7 @@
 //! to [`Error`] with the server's own message.
 
 use std::fmt;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use canopy_core::forge::ForgeKind;
@@ -18,6 +19,23 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Longest server message kept from a non-JSON error body.
 const MAX_MESSAGE: usize = 300;
+
+/// The running build, announced in the `User-Agent` of every request.
+static BUILD: OnceLock<String> = OnceLock::new();
+
+/// Tells this crate which Canopy build is running (its build number, or `dev`). The application
+/// calls it once at start-up; without it requests carry this crate's own version.
+pub fn set_build(build: &str) {
+    let _ = BUILD.set(build.to_owned());
+}
+
+/// `Canopy/<build>`, the only identification a request carries.
+pub(crate) fn user_agent() -> String {
+    let build = BUILD
+        .get()
+        .map_or(env!("CARGO_PKG_VERSION"), String::as_str);
+    format!("Canopy/{build}")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Method {
@@ -86,7 +104,7 @@ impl Http {
             .http_status_as_error(false)
             .timeout_connect(Some(CONNECT_TIMEOUT))
             .timeout_global(Some(TOTAL_TIMEOUT))
-            .user_agent(format!("Canopy/{}", env!("CARGO_PKG_VERSION")))
+            .user_agent(user_agent())
             // GitHub redirects renamed repositories; keep the token on the same host only.
             .redirect_auth_headers(RedirectAuthHeaders::SameHost)
             .tls_config(tls);

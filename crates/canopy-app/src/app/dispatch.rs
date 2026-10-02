@@ -228,6 +228,11 @@ impl CanopyApp {
                     self.updater
                         .start(ctx, self.settings.include_prereleases, true);
                 }
+                Action::InstallUpdate(available) => self.updater.install(ctx, &available),
+                Action::RestartInto(exe) => {
+                    crate::selfupdate::request_restart(exe);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
                 Action::SkipVersion(v) => {
                     self.settings.skipped_version = Some(v);
                     self.updater.state = UpdateState::UpToDate;

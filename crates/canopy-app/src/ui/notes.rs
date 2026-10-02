@@ -154,10 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_changelog_has_the_current_or_unreleased_section() {
-        assert!(
-            changelog_section(CHANGELOG, env!("CARGO_PKG_VERSION")).is_some()
-                || CHANGELOG.contains("## [Unreleased]")
-        );
+    fn bundled_changelog_has_an_unreleased_section() {
+        assert!(changelog_section(CHANGELOG, "Unreleased").is_some());
     }
 }

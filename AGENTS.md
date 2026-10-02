@@ -15,10 +15,10 @@ These come from the owner and override anything else in the repository.
   with no remote at all.
 - **Network**: Canopy talks to exactly four things: the local `git` executable (all Git
   traffic); the REST API of a repository's own GitHub or GitLab host for pull/merge requests,
-  with a user-supplied token (`crates/canopy-hosting`); Canopy's update check (`updater.rs`);
-  opt-in, scrubbed crash reports to Sentry (`crash_reports.rs`). The last three have an off
-  switch and send nothing before the user accepted the Terms and Privacy Policy and answered the
-  crash question. No other telemetry, analytics, avatar or image downloads, backend or service.
+  with a user-supplied token (`crates/canopy-hosting`); Canopy's update check, and its download only
+  when the user chooses Update (`updater.rs`, `selfupdate.rs`); opt-in, scrubbed crash reports to
+  Sentry (`crash_reports.rs`). The last three have an off switch and send nothing before the user
+  accepted the Terms and Privacy Policy and answered the crash question. No other telemetry, analytics, avatar or image downloads, backend or service.
 - **Credentials**: never put credentials into a URL Canopy builds or logs. A hosting token goes
   only to its own host. Git and ssh prompts go through Canopy's own askpass
   (`crates/canopy-app/src/askpass.rs`), never a terminal.
@@ -78,6 +78,8 @@ token anywhere new, contacting a new host or adding a dependency.
   "Now" down, and delete one only when verified in the running app, not when the code compiles.
 - Any change to what the UI shows needs a screenshot check (`screenshot` skill), dark and light
   where colours are involved; unit tests cannot see layout or colour.
+- `docs/playbook.md`: running the app live on workspace 2, testing an update end to end, releasing
+  and the app-updates feed. Read it before any of those.
 - Recipes to follow end to end: `add-git-operation`, `hosting-api`, `add-theme`, `add-keybinding`.
 - The owner has given full authority: ask only for decisions that are truly theirs
   (destructive and outward-facing actions still need the owner).
@@ -115,14 +117,17 @@ token anywhere new, contacting a new host or adding a dependency.
   never a generic "operation failed"; log details with `tracing`.
 - Propagate `canopy_core::Result`; clippy rejects `unwrap`/`expect` outside tests; no `unsafe`.
 - Paths are `Path`/`PathBuf`, joined with `join`, never concatenated with `/`; not assumed UTF-8.
-- In the same change: a feature updates `docs/features.md` and `CHANGELOG.md` (Unreleased); a
+- In the same change: a feature updates `docs/features.md` and, until the first numbered build is released,
+  `CHANGELOG.md` (Unreleased; afterwards the commit subject is the release note); a
   module, `docs/architecture.md`; a token or component, `docs/design.md`. A consequential,
   hard-to-reverse decision gets an ADR in `docs/adr/` (`project-docs` skill).
 - Bundled fonts and assets need a licence row (fonts: `crates/canopy-app/assets/fonts/README.md`)
   and text in the same change; only OFL, MIT, Apache-2.0, CC0 or similar.
-- Commit messages follow Conventional Commits (`feat(graph): ...`); the type decides the release
-  bump (`tools/release.py`). No model attribution in commits or files. Never bump versions or tag by
-  hand: releases come from the manual "Create release" workflow (`release` skill).
+- Commit messages follow Conventional Commits (`feat(graph): ...`); a `feat`, `fix`, `perf`,
+  `revert` or `build(deps)` commit makes a build releasable and its subject becomes the release
+  note (`tools/release.py`), so write it for users. A release is a numbered build (`git rev-list
+  --count` on `main`): there is no version to bump. Never tag by hand: releases come from the
+  manual "Create release" workflow (`release` skill). No model attribution in commits or files.
 
 ## Boundaries
 

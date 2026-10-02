@@ -1007,15 +1007,15 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
     row(
         ui,
         "Check for updates",
-        "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest version. GitHub sees your IP address and your Canopy version, nothing else. Nothing is downloaded or installed by itself.",
+        "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
         |ui| {
             toggle(ui, &mut s.check_updates);
         },
     );
     row(
         ui,
-        "Include pre-releases",
-        "Also offer beta and release-candidate versions.",
+        "Include beta builds",
+        "Also offer beta builds, which are tried out less before they are published.",
         |ui| {
             toggle(ui, &mut s.include_prereleases);
         },
@@ -1023,7 +1023,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(format!("Canopy {}", env!("CARGO_PKG_VERSION")))
+            RichText::new(format!("Canopy {}", crate::build_info::label()))
                 .font(FontId::new(13.5, theme::medium())),
         );
         let (text, color) = match update {
@@ -1034,7 +1034,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
                 format!(
                     "{}  Canopy {} is available",
                     icon::ARROW_CIRCLE_UP,
-                    a.version
+                    a.label()
                 ),
                 p.accent,
             ),

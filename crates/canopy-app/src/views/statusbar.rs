@@ -6,7 +6,7 @@ use egui_phosphor::regular as icon;
 use crate::action::Action;
 use crate::tab::RepoTab;
 use crate::ui::theme::{Palette, palette};
-use crate::updater::UpdateState;
+use crate::updater::{InstallState, UpdateState};
 
 /// Draws the status bar.
 pub fn show(
@@ -14,6 +14,7 @@ pub fn show(
     tab: Option<&RepoTab>,
     git_version: &str,
     update: &UpdateState,
+    install: &InstallState,
     actions: &mut Vec<Action>,
 ) {
     let p = palette(ui.ctx());
@@ -83,8 +84,35 @@ pub fn show(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(10.0);
-            if let UpdateState::Available(a) = update {
-                let v = &a.version;
+            if let InstallState::Running { build, .. } = install {
+                ui.add(egui::Spinner::new().size(12.0).color(p.accent));
+                ui.label(small(
+                    format!("Updating to {}…", crate::build_info::name(build)),
+                    p.accent,
+                ));
+            } else if let InstallState::Done {
+                installed: crate::selfupdate::Installed { exe: Some(exe), .. },
+                ..
+            } = install
+            {
+                let resp = egui::Frame::new()
+                    .fill(Palette::tint(p.accent, 50))
+                    .corner_radius(egui::CornerRadius::same(9))
+                    .inner_margin(egui::Margin::symmetric(8, 1))
+                    .show(ui, |ui| {
+                        ui.label(small(
+                            format!("{}  Restart to finish updating", icon::ARROW_CLOCKWISE),
+                            p.text,
+                        ))
+                    })
+                    .response
+                    .interact(egui::Sense::click())
+                    .on_hover_text("Close Canopy and start the updated build");
+                if resp.clicked() {
+                    actions.push(Action::RestartInto(exe.clone()));
+                }
+            } else if let UpdateState::Available(a) = update {
+                let v = a.label();
                 let resp = egui::Frame::new()
                     .fill(Palette::tint(p.accent, 50))
                     .corner_radius(egui::CornerRadius::same(9))

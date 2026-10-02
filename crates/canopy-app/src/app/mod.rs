@@ -285,7 +285,7 @@ impl CanopyApp {
             notices.push(Dialog::Crash(report));
         }
         // Release notes once after an upgrade (not on a fresh install).
-        let version = env!("CARGO_PKG_VERSION");
+        let version = crate::build_info::NUMBER;
         if !shooting && app.settings.last_seen_version != version {
             if !app.settings.last_seen_version.is_empty()
                 && let Some(d) = whats_new()
@@ -336,7 +336,7 @@ impl CanopyApp {
         use std::fmt::Write as _;
         let mut t = String::new();
         let run = crate::logging::run();
-        let _ = writeln!(t, "Canopy {}", env!("CARGO_PKG_VERSION"));
+        let _ = writeln!(t, "Canopy {}", crate::build_info::label());
         let _ = writeln!(
             t,
             "Platform: {} {}",
@@ -424,15 +424,20 @@ impl CanopyApp {
     }
 }
 
-/// The "What's new" dialog for this version, from the bundled changelog (the Unreleased
-/// section in development builds).
+/// The "What's new" dialog for this build: the release notes the release workflow embedded, else
+/// the changelog's Unreleased section (development builds).
 fn whats_new() -> Option<Dialog> {
     use crate::ui::notes::{CHANGELOG, changelog_section};
-    let version = env!("CARGO_PKG_VERSION");
-    changelog_section(CHANGELOG, version)
-        .map(|notes| (version.to_owned(), notes))
-        .or_else(|| changelog_section(CHANGELOG, "Unreleased").map(|n| (format!("{version}+"), n)))
-        .map(|(version, notes)| Dialog::WhatsNew { version, notes })
+    let embedded = crate::build_info::RELEASE_NOTES.trim();
+    let notes = if embedded.is_empty() {
+        changelog_section(CHANGELOG, "Unreleased")?
+    } else {
+        embedded.to_owned()
+    };
+    Some(Dialog::WhatsNew {
+        version: crate::build_info::label(),
+        notes,
+    })
 }
 
 fn is_consent(d: &Dialog) -> bool {
@@ -561,6 +566,7 @@ impl eframe::App for CanopyApp {
                         self.tabs.get(self.active),
                         &self.git_version,
                         &self.updater.state,
+                        &self.updater.install,
                         &mut actions,
                     );
                 }
@@ -639,6 +645,7 @@ impl eframe::App for CanopyApp {
                 self.tabs.get(self.active),
                 &mut self.folder_picker,
                 self.clone.is_some(),
+                &self.updater,
             ) {
                 Outcome::Keep => {}
                 Outcome::Close => {

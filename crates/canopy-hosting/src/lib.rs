@@ -32,7 +32,7 @@ pub mod updates;
 
 pub use client::Client;
 pub use error::{Error, Result};
-pub use http::is_loopback_base;
+pub use http::{is_loopback_base, set_build};
 pub use model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
     RequestSummary, Review, StateFilter, checkout_ref,

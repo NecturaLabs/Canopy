@@ -86,7 +86,7 @@ write_sums() {
 # Builds Linux release $1 into the fake feed.
 make_release() {
     v=$1
-    name=canopy-$v-$target
+    name=canopy-build-$v-$target
     d=$tmp/build/$name
     rm -rf "$d"
     mkdir -p "$d/legal"
@@ -100,7 +100,7 @@ make_release() {
     printf '\n[Desktop Action new-window]\nName=New Window\nExec=canopy --new-window\n' >>"$d/io.necturalabs.Canopy.desktop"
     cp "$root/assets/icon.svg" "$d/io.necturalabs.Canopy.svg"
     cp "$root/assets/icon-256.png" "$d/io.necturalabs.Canopy.png"
-    rel=$srv/releases/download/canopy-v$v
+    rel=$srv/releases/download/canopy-build-$v
     mkdir -p "$rel"
     tar -czf "$rel/$name.tar.gz" -C "$tmp/build" "$name"
     write_sums "$rel"
@@ -109,16 +109,16 @@ make_release() {
 # Builds macOS release $1 into the fake feed.
 make_mac_release() {
     v=$1
-    name=canopy-$v-$target
+    name=canopy-build-$v-$target
     d=$tmp/build/$name
     rm -rf "$d"
     app=$d/Canopy.app/Contents
     mkdir -p "$app/MacOS" "$app/Resources" "$d/legal"
     printf '#!/bin/sh\necho "canopy %s (fake mac)"\n' "$v" >"$app/MacOS/canopy"
     chmod 755 "$app/MacOS/canopy"
-    sed -e "s/@VERSION@/$v/g" -e "s/@BUNDLE_VERSION@/${v%%-*}/g" "$root/packaging/macos/Info.plist" >"$app/Info.plist"
+    sed -e "s/@BUILD@/$v/g" "$root/packaging/macos/Info.plist" >"$app/Info.plist"
     echo "Proprietary" >"$d/LICENSE"
-    rel=$srv/releases/download/canopy-v$v
+    rel=$srv/releases/download/canopy-build-$v
     mkdir -p "$rel"
     tar -czf "$rel/$name.tar.gz" -C "$tmp/build" "$name"
     write_sums "$rel"
@@ -127,17 +127,17 @@ make_mac_release() {
 # Writes channel manifest $1 for version $2; $3 overrides the checksum.
 publish() {
     ch=$1 v=$2
-    name=canopy-$v-$target
-    digest=${3:-$(sha "$srv/releases/download/canopy-v$v/$name.tar.gz")}
+    name=canopy-build-$v-$target
+    digest=${3:-$(sha "$srv/releases/download/canopy-build-$v/$name.tar.gz")}
     cat >"$srv/canopy/$ch.json" <<EOF
 {
   "version": "$v",
   "notes": "Notes with \"quotes\", braces { } and a fake \"platforms\": {\"$key\": {\"url\": \"https://evil.invalid/x\"}}\\n- line",
   "pub_date": "2026-10-01T00:00:00Z",
-  "release_page": "$base/releases/tag/canopy-v$v",
+  "release_page": "$base/releases/tag/canopy-build-$v",
   "platforms": {
     "$key": {
-      "url": "$base/releases/download/canopy-v$v/$name.tar.gz",
+      "url": "$base/releases/download/canopy-build-$v/$name.tar.gz",
       "sha256": "$digest"
     }
   }
@@ -251,17 +251,17 @@ linux_flow() {
     svg=$home/.local/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg
     link=$home/.local/bin/canopy
 
-    make_release 0.2.0
-    make_release 0.3.0
-    make_release 0.4.0-beta.1
-    publish latest 0.2.0
+    make_release 102
+    make_release 103
+    make_release 105
+    publish latest 102
 
     echo "== fresh install"
     run_status
     check "install exits 0" [ "$status" = 0 ]
     show
     check "binary installed" [ -x "$opt/bin/canopy" ]
-    check "VERSION is 0.2.0" [ "$(cat "$opt/VERSION")" = 0.2.0 ]
+    check "VERSION is 102" [ "$(cat "$opt/VERSION")" = 102 ]
     check "uninstall.sh installed" [ -x "$opt/uninstall.sh" ]
     check "receipt written" [ -f "$opt/.canopy-install" ]
     check "receipt records the folder" grep -qxF "root=$opt" "$opt/.canopy-install"
@@ -269,7 +269,7 @@ linux_flow() {
     check "licence installed" [ -f "$opt/LICENSE" ]
     check "metainfo inside the install folder" [ -f "$opt/share/metainfo/io.necturalabs.Canopy.metainfo.xml" ]
     check "command symlink" [ "$(readlink "$link")" = "$opt/bin/canopy" ]
-    check "command runs" [ "$("$link")" = "canopy 0.2.0 (fake)" ]
+    check "command runs" [ "$("$link")" = "canopy 102 (fake)" ]
     check "desktop entry registered" [ -f "$apps" ]
     check "desktop Exec is absolute" grep -qxF "Exec=\"$opt/bin/canopy\" %F" "$apps"
     check "desktop action keeps its own Exec" grep -qxF "Exec=canopy --new-window" "$apps"
@@ -287,44 +287,44 @@ linux_flow() {
     before=$(cd "$home" && find . | sort)
     run_status
     check "reinstall exits 0" [ "$status" = 0 ]
-    check "says reinstalled" out_has "Reinstalled Canopy 0.2.0"
+    check "says reinstalled" out_has "Reinstalled Canopy build 102"
     check "same files after reinstall" [ "$before" = "$(cd "$home" && find . | sort)" ]
 
     echo "== upgrade"
-    publish latest 0.3.0
+    publish latest 103
     run_status
     check "upgrade exits 0" [ "$status" = 0 ]
     show
-    check "says updated" out_has "Updated Canopy 0.2.0 -> 0.3.0"
-    check "runs 0.3.0" [ "$("$link")" = "canopy 0.3.0 (fake)" ]
+    check "says updated" out_has "Updated Canopy build 102 -> build 103"
+    check "runs 103" [ "$("$link")" = "canopy 103 (fake)" ]
     check "no staging left after upgrade" no_leftovers "$opt"
 
     echo "== checksum mismatch is refused"
-    make_release 0.5.0
-    publish latest 0.5.0 0000000000000000000000000000000000000000000000000000000000000000
+    make_release 106
+    publish latest 106 0000000000000000000000000000000000000000000000000000000000000000
     run_status
     check "mismatch exits non-zero" [ "$status" != 0 ]
     show
     check "mismatch reported" out_has "checksum mismatch"
-    check "old version kept" [ "$("$link")" = "canopy 0.3.0 (fake)" ]
-    check "old version kept (2)" [ "$(cat "$opt/VERSION")" = 0.3.0 ]
+    check "old version kept" [ "$("$link")" = "canopy 103 (fake)" ]
+    check "old version kept (2)" [ "$(cat "$opt/VERSION")" = 103 ]
     check "no staging left after failure" no_leftovers "$opt"
-    publish latest 0.3.0
+    publish latest 103
 
     echo "== tampered archive with the right name is refused"
-    cp "$srv/releases/download/canopy-v0.3.0/canopy-0.3.0-$target.tar.gz" "$tmp/good.tar.gz"
-    printf 'x' >>"$srv/releases/download/canopy-v0.3.0/canopy-0.3.0-$target.tar.gz"
+    cp "$srv/releases/download/canopy-build-103/canopy-build-103-$target.tar.gz" "$tmp/good.tar.gz"
+    printf 'x' >>"$srv/releases/download/canopy-build-103/canopy-build-103-$target.tar.gz"
     run_status
     check "tampered archive exits non-zero" [ "$status" != 0 ]
     check "tampered archive exits non-zero (2)" out_has "checksum mismatch"
-    cp "$tmp/good.tar.gz" "$srv/releases/download/canopy-v0.3.0/canopy-0.3.0-$target.tar.gz"
+    cp "$tmp/good.tar.gz" "$srv/releases/download/canopy-build-103/canopy-build-103-$target.tar.gz"
 
     echo "== manifest pointing elsewhere is refused"
-    sed 's#"url": "[^"]*"#"url": "https://example.invalid/canopy-0.3.0-'"$target"'.tar.gz"#' "$srv/canopy/latest.json" >"$tmp/m" && cp "$tmp/m" "$srv/canopy/latest.json"
+    sed 's#"url": "[^"]*"#"url": "https://example.invalid/canopy-build-103-'"$target"'.tar.gz"#' "$srv/canopy/latest.json" >"$tmp/m" && cp "$tmp/m" "$srv/canopy/latest.json"
     run_status
     check "foreign URL exits non-zero" [ "$status" != 0 ]
     check "foreign URL exits non-zero (2)" out_has "outside Canopy"
-    publish latest 0.3.0
+    publish latest 103
 
     echo "== a move that fails while the old version is moved aside"
     stub_mv "$tmp/mv-aside" src "$opt/legal" fail
@@ -333,23 +333,23 @@ linux_flow() {
     run_path=/usr/local/bin:/usr/bin:/bin
     check "failed swap exits non-zero" [ "$status" != 0 ]
     check "failed swap reported" out_has "the previous one was kept"
-    check "old version intact" [ "$("$link")" = "canopy 0.3.0 (fake)" ]
-    check "old version intact (VERSION)" [ "$(cat "$opt/VERSION")" = 0.3.0 ]
+    check "old version intact" [ "$("$link")" = "canopy 103 (fake)" ]
+    check "old version intact (VERSION)" [ "$(cat "$opt/VERSION")" = 103 ]
     check "old version intact (entry not yet moved)" [ -f "$opt/legal/third-party-notices.txt" ]
     check "old version intact (moved entries back)" [ -x "$opt/uninstall.sh" ]
     check "old version intact (share)" [ -f "$opt/share/applications/io.necturalabs.Canopy.desktop" ]
     check "no leftovers after the failed swap" no_leftovers "$opt"
 
     echo "== a move that fails while the new version is moved in"
-    make_release 0.3.1
-    publish latest 0.3.1
+    make_release 104
+    publish latest 104
     stub_mv "$tmp/mv-in" src "$opt/.staging.*/new/legal" fail
     run_path=$tmp/mv-in:/usr/local/bin:/usr/bin:/bin
     run_status
     run_path=/usr/local/bin:/usr/bin:/bin
     check "failed swap exits non-zero" [ "$status" != 0 ]
-    check "old version intact" [ "$("$link")" = "canopy 0.3.0 (fake)" ]
-    check "old version intact (VERSION)" [ "$(cat "$opt/VERSION")" = 0.3.0 ]
+    check "old version intact" [ "$("$link")" = "canopy 103 (fake)" ]
+    check "old version intact (VERSION)" [ "$(cat "$opt/VERSION")" = 103 ]
     check "old version intact (legal)" [ -f "$opt/legal/third-party-notices.txt" ]
     check "old version intact (uninstall.sh)" [ -x "$opt/uninstall.sh" ]
     check "no leftovers after the failed swap" no_leftovers "$opt"
@@ -360,47 +360,81 @@ linux_flow() {
     run_status
     run_path=/usr/local/bin:/usr/bin:/bin
     check "interrupted install exits 130" [ "$status" = 130 ]
-    check "old version put back" [ "$("$link")" = "canopy 0.3.0 (fake)" ]
-    check "old version put back (VERSION)" [ "$(cat "$opt/VERSION")" = 0.3.0 ]
+    check "old version put back" [ "$("$link")" = "canopy 103 (fake)" ]
+    check "old version put back (VERSION)" [ "$(cat "$opt/VERSION")" = 103 ]
     check "old version put back (share)" [ -f "$opt/share/applications/io.necturalabs.Canopy.desktop" ]
     check "old version put back (uninstall.sh)" [ -x "$opt/uninstall.sh" ]
     check "no leftovers after the interrupt" no_leftovers "$opt"
-    publish latest 0.3.0
+    publish latest 103
 
     echo "== pinned older version"
-    run_status --version 0.2.0
+    run_status --version 102
     check "--version exits 0" [ "$status" = 0 ]
-    check "runs 0.2.0" [ "$("$link")" = "canopy 0.2.0 (fake)" ]
-    run_status --version 9.9.9
+    check "runs 102" [ "$("$link")" = "canopy 102 (fake)" ]
+    run_status --version 999
     check "unknown version exits non-zero" [ "$status" != 0 ]
     check "unknown version exits non-zero (2)" out_has "not published"
-    run_status --version "$(printf '0.3.0\nx')"
+    run_status --version "$(printf '103\nx')"
     check "a version with two lines is refused" [ "$status" != 0 ]
-    check "a version with two lines is refused (2)" out_has "is not a version"
+    check "a version with two lines is refused (2)" out_has "is not a build number"
     run_status
-    check "back to the newest" [ "$("$link")" = "canopy 0.3.0 (fake)" ]
+    check "back to the newest" [ "$("$link")" = "canopy 103 (fake)" ]
 
     echo "== beta channel, and no silent downgrade"
-    publish beta 0.4.0-beta.1
+    publish beta 105
     run_status --beta
     check "--beta exits 0" [ "$status" = 0 ]
-    check "runs the beta" [ "$("$link")" = "canopy 0.4.0-beta.1 (fake)" ]
+    check "runs the beta" [ "$("$link")" = "canopy 105 (fake)" ]
     run_status
     check "the stable channel does not downgrade the beta" [ "$status" != 0 ]
     show
     check "downgrade refusal suggests --beta" out_has "--beta"
-    check "downgrade refusal suggests --version" out_has "--version 0.3.0"
-    check "beta still installed" [ "$("$link")" = "canopy 0.4.0-beta.1 (fake)" ]
-    run_status --version 0.3.0
+    check "downgrade refusal suggests --version" out_has "--version 103"
+    check "beta still installed" [ "$("$link")" = "canopy 105 (fake)" ]
+    run_status --version 103
     check "--version goes back to stable" [ "$status" = 0 ]
-    check "--version goes back to stable (2)" [ "$("$link")" = "canopy 0.3.0 (fake)" ]
+    check "--version goes back to stable (2)" [ "$("$link")" = "canopy 103 (fake)" ]
+
+    echo "== builds are ordered as integers"
+    make_release 99
+    make_release 100
+    publish latest 99
+    run_status --version 99
+    check "an older build can be pinned" [ "$status" = 0 ]
+    check "an older build can be pinned (2)" [ "$("$link")" = "canopy 99 (fake)" ]
+    publish latest 100
+    run_status
+    check "build 100 replaces build 99" [ "$status" = 0 ]
+    check "build 100 replaces build 99 (2)" [ "$("$link")" = "canopy 100 (fake)" ]
+    publish latest 99
+    run_status
+    check "build 99 does not replace build 100" [ "$status" != 0 ]
+    check "build 99 does not replace build 100 (2)" [ "$("$link")" = "canopy 100 (fake)" ]
+    run_status --version 0.2.0
+    check "a semantic version cannot be pinned" [ "$status" != 0 ]
+    check "a semantic version cannot be pinned (2)" out_has "is not a build number"
+    run_status --version 0100
+    check "a build number with a leading zero is refused" [ "$status" != 0 ]
+
+    echo "== an installation from before builds were numbered"
+    publish latest 103
+    printf '0.2.0-beta.1\n' >"$opt/VERSION"
+    run_status
+    check "an old semantic version is older than any build" [ "$status" = 0 ]
+    check "an old semantic version is older than any build (2)" out_has "Updated Canopy 0.2.0-beta.1 -> build 103"
+    check "an old semantic version is older than any build (3)" [ "$(cat "$opt/VERSION")" = 103 ]
+    sed 's/"version": "103"/"version": "0.4.0-beta.1"/' "$srv/canopy/latest.json" >"$srv/canopy/beta.json"
+    run_status --beta
+    check "a beta manifest with a semantic version is ignored" [ "$status" = 0 ]
+    check "a beta manifest with a semantic version is ignored (2)" out_has "Reinstalled Canopy build 103"
+    publish beta 105
 
     echo "== platform missing from the manifest"
     sed "s/\"$key\": {\$/\"$other\": {/" "$srv/canopy/latest.json" >"$tmp/m" && cp "$tmp/m" "$srv/canopy/latest.json"
     run_status
     check "missing platform exits non-zero" [ "$status" != 0 ]
-    check "missing platform exits non-zero (2)" out_has "has no build for"
-    publish latest 0.3.0
+    check "missing platform exits non-zero (2)" out_has "has no archive for"
+    publish latest 103
 
     echo "== --no-path"
     run_status --no-path
@@ -440,7 +474,7 @@ linux_flow() {
     check "no downloader exits non-zero" [ "$status" != 0 ]
     show
     check "no downloader is explained" out_has "needs curl or GNU wget"
-    check "nothing changed without a downloader" [ "$(cat "$opt/VERSION")" = 0.3.0 ]
+    check "nothing changed without a downloader" [ "$(cat "$opt/VERSION")" = 103 ]
 
     echo "== bad option"
     run_status --frobnicate
@@ -523,7 +557,7 @@ linux_flow() {
 
     echo "== a failed install into an existing empty folder does not claim it"
     mkdir -p "$home/empty"
-    publish latest 0.5.0 0000000000000000000000000000000000000000000000000000000000000000
+    publish latest 106 0000000000000000000000000000000000000000000000000000000000000000
     run_raw CANOPY_INSTALL_BASE_URL="$base" CANOPY_INSTALL_DIR="$home/empty" "$SH" "$installer"
     check "failed install exits non-zero" [ "$status" != 0 ]
     check "the folder is kept, empty" is_empty_dir "$home/empty"
@@ -537,7 +571,7 @@ linux_flow() {
     check "no ~/.local left" [ ! -e "$home/.local" ]
 
     echo "== a desktop entry and icons the installer does not own"
-    publish latest 0.3.0
+    publish latest 103
     mkdir -p "$(dirname "$apps")" "$(dirname "$svg")" "$(dirname "$icon")"
     printf '[Desktop Entry]\nName=Mine\nExec=mine\n' >"$apps"
     echo "other icon" >"$tmp/other.svg"
@@ -600,7 +634,7 @@ linux_flow() {
         run_path=$tmp/nocurl
         run_status
         check "install with wget exits 0" [ "$status" = 0 ]
-        check "installed with wget" [ "$(cat "$opt/VERSION" 2>/dev/null)" = 0.3.0 ]
+        check "installed with wget" [ "$(cat "$opt/VERSION" 2>/dev/null)" = 103 ]
         run_status --uninstall
         run_path=/usr/local/bin:/usr/bin:/bin
     else
@@ -649,49 +683,49 @@ EOF
     mapp=$home/Applications/Canopy.app
     link=$home/.local/bin/canopy
 
-    make_mac_release 0.2.0
-    make_mac_release 0.3.0
-    make_mac_release 0.5.0
+    make_mac_release 102
+    make_mac_release 103
+    make_mac_release 106
 
     echo "== macOS: a failed first install leaves nothing"
-    publish latest 0.5.0 0000000000000000000000000000000000000000000000000000000000000000
+    publish latest 106 0000000000000000000000000000000000000000000000000000000000000000
     run_status
     check "mac failed install exits non-zero" [ "$status" != 0 ]
     check "no ~/Applications left" [ ! -e "$home/Applications" ]
 
     echo "== macOS: install, upgrade, refusals"
-    publish latest 0.2.0
+    publish latest 102
     run_status
     check "mac install exits 0" [ "$status" = 0 ]
     show
     check "app bundle installed" [ -x "$mapp/Contents/MacOS/canopy" ]
     check "mac command symlink" [ "$(readlink "$link")" = "$mapp/Contents/MacOS/canopy" ]
-    check "mac command runs" [ "$("$link")" = "canopy 0.2.0 (fake mac)" ]
-    publish latest 0.3.0
+    check "mac command runs" [ "$("$link")" = "canopy 102 (fake mac)" ]
+    publish latest 103
     run_status
     check "mac upgrade exits 0" [ "$status" = 0 ]
-    check "mac says updated" out_has "Updated Canopy 0.2.0 -> 0.3.0"
-    check "mac runs 0.3.0" [ "$("$link")" = "canopy 0.3.0 (fake mac)" ]
+    check "mac says updated" out_has "Updated Canopy build 102 -> build 103"
+    check "mac runs 103" [ "$("$link")" = "canopy 103 (fake mac)" ]
     check "no temporary folders left in ~/Applications" [ "$(ls -A "$home/Applications")" = Canopy.app ]
-    publish latest 0.2.0
+    publish latest 102
     run_status
     check "mac does not downgrade silently" [ "$status" != 0 ]
-    check "mac does not downgrade silently (2)" [ "$("$link")" = "canopy 0.3.0 (fake mac)" ]
-    publish latest 0.5.0 0000000000000000000000000000000000000000000000000000000000000000
+    check "mac does not downgrade silently (2)" [ "$("$link")" = "canopy 103 (fake mac)" ]
+    publish latest 106 0000000000000000000000000000000000000000000000000000000000000000
     run_status
     check "mac mismatch refused" [ "$status" != 0 ]
-    check "mac old version kept" [ "$("$link")" = "canopy 0.3.0 (fake mac)" ]
+    check "mac old version kept" [ "$("$link")" = "canopy 103 (fake mac)" ]
 
     echo "== macOS: Ctrl+C after the new app is moved in"
-    publish latest 0.5.0
+    publish latest 106
     stub_mv "$tmp/mv-mac" dst "$mapp" interrupt
     run_path=$tmp/mv-mac:$base_path
     run_status
     run_path=$base_path
     check "interrupted mac install exits 130" [ "$status" = 130 ]
-    check "mac old version put back" [ "$("$link")" = "canopy 0.3.0 (fake mac)" ]
+    check "mac old version put back" [ "$("$link")" = "canopy 103 (fake mac)" ]
     check "no temporary folders left in ~/Applications" [ "$(ls -A "$home/Applications")" = Canopy.app ]
-    publish latest 0.3.0
+    publish latest 103
 
     echo "== macOS: uninstall"
     mkdir -p "$home/Other.app/Contents"

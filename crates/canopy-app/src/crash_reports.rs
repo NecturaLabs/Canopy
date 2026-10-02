@@ -69,7 +69,7 @@ fn init() -> sentry::ClientInitGuard {
     let home = crate::settings::home_dir().display().to_string();
     let mut o = sentry::ClientOptions::default();
     o.dsn = DSN.parse().ok();
-    o.release = Some(Cow::Owned(format!("canopy@{}", env!("CARGO_PKG_VERSION"))));
+    o.release = Some(Cow::Owned(format!("canopy@{}", crate::build_info::NUMBER)));
     o.environment = Some(Cow::Borrowed(if cfg!(debug_assertions) {
         "development"
     } else {
