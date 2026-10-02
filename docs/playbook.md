@@ -6,13 +6,16 @@ session; edit it when a step changes. Rules and product limits stay in `AGENTS.m
 ## Where things stand (2 October 2026)
 
 - Done: releases are numbered builds (`build 412 (a1b2c3d)`, tag `build-412`, no version bump) and
-  Canopy updates itself (`selfupdate.rs`, ADR 0006). Both are unreleased: no `build-*` tag exists yet.
+  Canopy updates itself (`selfupdate.rs`, ADR 0006). The first numbered build, 120 (`9ea6a0f`), was
+  released as stable on 2 October 2026 for Linux only (`CI_MACOS`/`CI_WINDOWS` are off), and
+  `beta.json` was set to the same manifest, so both channels serve build 120.
 - Next in `docs/backlog.md`: the git identity items (Settings, warning, first-launch step), then the
   rest of "Now".
 - Not verified: the Update and Restart buttons clicked in a real window; a native macOS or Windows
   update (those run the installer); `cargo deny` and `shellcheck` (not installed here, CI runs them).
-- `packaging/test-install.sh` fails two checks here ("interrupted install exits 130", Linux and
-  macOS): they fail the same on untouched `main` in the agent's shell, which ignores SIGINT.
+- `packaging/test-install.sh` fails two checks ("interrupted install exits 130") in an agent shell
+  that ignores SIGINT; with the default disposition (`signal.signal(SIGINT, SIG_DFL)` in a Python
+  wrapper) all 223 pass.
 
 ## Checks
 
@@ -75,14 +78,13 @@ Never `pkill -f` a pattern that appears in your own command line: it kills the s
   the owner, then `gh workflow run create-release.yml --ref main -f channel=beta -f dry-run=true`,
   and for real without `dry-run`. Nothing is committed to `main`; the tag is `build-<n>`.
 - `NecturaLabs/app-updates` (public) holds `canopy/latest.json`, `beta.json`, `install.sh`,
-  `install.ps1` and the releases `canopy-build-<n>`. Today it still serves the semantic-version
-  files: `latest.json` 0.1.0 (no builds), `beta.json` 0.2.1-beta.1, and the installers of that beta.
-  Its schema and README already accept build numbers (2 October 2026).
-- The first numbered release is a handoff of formats. The new installers read only build numbers and
-  treat a semantic-version manifest as absent, and the Release workflow replaces the installers in
-  the feed only for a stable release. So publish the first numbered build as stable, or copy
-  `packaging/install.sh` and `install.ps1` to `canopy/` in the same session as a beta, and never
-  before the manifest exists: replacing them earlier breaks `sh -s -- --beta` for the current beta.
-  Copies of Canopy older than the first numbered build cannot read the new manifest and report an
-  update-check error until reinstalled with the one-line installer.
+  `install.ps1` and the releases `canopy-build-<n>`; both manifests name build 120. A stable release
+  updates only `latest.json` and the installers: to keep the beta channel level with it, commit the
+  same manifest as `canopy/beta.json` afterwards (done for build 120).
+- Copies of Canopy older than the first numbered build cannot read the numbered manifest and report
+  an update-check error until reinstalled with the one-line installer.
+- The Release workflow's Linux builds run as root in an Ubuntu 22.04 container: the first run of
+  build 119 failed there (git's "dubious ownership"), so its tag was deleted and the fix released
+  as build 120. A release job's composite actions come from the tag's own commit, so a workflow fix
+  needs a new build, not a rerun of the old tag.
 - `APP_UPDATES_TOKEN` must exist in the Canopy repository's secrets or the feed step is skipped.
