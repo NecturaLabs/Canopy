@@ -63,7 +63,8 @@ token anywhere new, contacting a new host or adding a dependency.
 - Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
 - `tools/check.sh`, on this platform: `fmt --check`, clippy, workspace tests,
   `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
-  paths in docs, module table and skill mirror), `packaging/test-install.sh` on Linux and macOS, and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck on
+  paths in docs, module table and skill mirror), `packaging/test-install.sh` on Linux and macOS,
+  and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck on
   every push and `cargo deny check` whenever a file outside the docs changes; run `cargo deny
   check` yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change). CI (`ci.yml`) adds
   tests per platform, one repository variable each: Linux runs unless `CI_LINUX`

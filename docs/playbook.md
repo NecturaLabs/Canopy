@@ -13,9 +13,12 @@ What is open lives in `docs/backlog.md`, not here; a release's numbered build is
 tools/release.py selftest`, `python3 tools/notices.py --check` (run without `--check` after a
 dependency change), `python3 tools/check-docs.py`, `packaging/test-install.sh`.
 
-- It passes with a `TMPDIR` that contains a space (this machine's is `/run/media/nectura/Programming
-  SSD/tmp`); the installer test used to fail two "interrupted install exits 130" checks there, and
-  that was the space, not an ignored SIGINT.
+- The installer test passes with a `TMPDIR` that contains a space. It used to fail two
+  "interrupted install exits 130" checks there, which looked like an ignored SIGINT and was the
+  space.
+- Keep `TMPDIR` on a filesystem that accepts non-UTF-8 file names. On NTFS the test
+  `non_utf8_folders_are_listed_and_never_staged_as_gitlinks` fails with "Invalid argument", and
+  `check.sh` stops there (`CONTRIBUTING.md`, `docs/backlog.md`).
 - `cargo test` stops at the first test binary that fails, so later binaries never run; add
   `--no-fail-fast` to see every failure in one run.
 - `shellcheck` and `cargo deny` run only when installed; CI runs them either way.
