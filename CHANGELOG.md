@@ -8,17 +8,6 @@ commits since the previous build.
 
 ## [Unreleased]
 
-### Changed
-
-- Releases are numbered builds, named by `git rev-list --count` of their commit on `main` and its
-  short hash (`build 412 (a1b2c3d)`), instead of semantic versions. The number is shown in About,
-  `canopy --version`, the logs and the update check; the update check, the one-line installers
-  (`--version N`) and the update feed compare builds as integers, and a version such as
-  `0.2.1-beta.1` counts as older than every build. Nothing is committed or bumped to release: the
-  Create release workflow tags `build-N`. Installations older than the first numbered build do
-  not understand the new feed: their update check reports an error until Canopy is reinstalled with
-  the one-line installer.
-
 ### Added
 
 - Update from inside Canopy. The update dialog's Update button downloads the new build over HTTPS
@@ -96,7 +85,6 @@ commits since the previous build.
 - Commit detail Expand and Back sit at the right end of the filename row instead of adding another
   header row. Ref and request pills use clearer color fills and legible text; opened context submenu
   items match hovered menu items rather than flashing purple.
-
 - Interface zoom no longer moves the Settings slider during a drag; percentage entry now parses
   correctly; increasing zoom no longer increases the native window minimum size.
 - Clone destination validation runs off the UI thread and keeps the entered values on failure.
@@ -141,6 +129,14 @@ commits since the previous build.
 
 ### Changed
 
+- Releases are numbered builds, named by `git rev-list --count` of their commit on `main` and its
+  short hash (`build 412 (a1b2c3d)`), instead of semantic versions. The number is shown in About,
+  `canopy --version`, the logs and the update check; the update check, the one-line installers
+  (`--version N`) and the update feed compare builds as integers, and a version such as
+  `0.2.1-beta.1` counts as older than every build. Nothing is committed or bumped to release: the
+  Create release workflow tags `build-N`. Installations older than the first numbered build do
+  not understand the new feed: their update check reports an error until Canopy is reinstalled with
+  the one-line installer.
 - Compact windows move repository navigation into a menu, adapt pane widths and history columns,
   and scroll tabs and toolbar actions. Shared typography, control outlines and keyboard focus
   indicators are more consistent across themes.
