@@ -21,9 +21,12 @@ Use fixtures for anything destructive, never a repository you care about.
 
 ## Checks
 
-`tools/check.sh` runs what CI runs: `cargo fmt --all --check`,
-`cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`. It must
-pass before you open a pull request.
+`tools/check.sh` runs CI's checks for this platform (`cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, the release
+tooling self-test and the licence-notice check, plus `shellcheck` and `cargo deny check` when they
+are installed) and one CI does not: the installer test, on Linux and macOS. It must pass before
+you merge; a failure already listed in `docs/backlog.md` is reported, not hidden. Keep `TMPDIR` on
+a filesystem that accepts non-UTF-8 file names (the default `/tmp` does; NTFS does not).
 
 ## Commit messages
 
@@ -36,9 +39,9 @@ pass before you open a pull request.
 
 Example: `feat(changes): stage individual lines from the diff viewer`.
 
-## Pull requests
+## Before merging
 
-- [ ] One logical change; the branch is up to date with `main`.
+- [ ] One logical change, on top of the current `main`.
 - [ ] `tools/check.sh` passes.
 - [ ] New or changed Git operations have tests against a temporary repository.
 - [ ] UI changes include before and after screenshots (dark, and light where colours change),
@@ -47,3 +50,18 @@ Example: `feat(changes): stage individual lines from the diff viewer`.
       (Unreleased) are updated where the change touches them.
 - [ ] Destructive actions go through a confirmation dialog.
 - [ ] No credentials, tokens or personal paths in code, tests or screenshots.
+
+## Library notes
+
+API details of the pinned versions that older examples get wrong:
+
+- **egui 0.36**: the app implements `eframe::App::ui(&mut self, ui, frame)`; panels are
+  `egui::Panel::left/right/top/bottom(id).show(ui, …)` and take a `Ui`, not a `Context`;
+  `CentralPanel::default().show(ui, …)`; `ctx.global_style()` and
+  `ctx.egui_wants_keyboard_input()`; `Shadow`, `Margin` and `CornerRadius` have integer fields.
+- **git2 0.21** returns `Result` from many string getters (`Reference::name`, `Remote::url`;
+  `StringArray` iteration yields `Result<Option<&str>>`); prefer the `*_bytes` variants.
+- **Inter**: the bundled files have their private-use code points removed so Phosphor icons
+  render; re-apply that when updating Inter (`crates/canopy-app/assets/fonts/README.md`).
+
+Update this section when one of these crates is upgraded.

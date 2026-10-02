@@ -23,9 +23,10 @@ curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy
 irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1 | iex
 ```
 
-These work from the first stable release that ships the installers: the release commits them to
-app-updates. Until then the addresses answer 404, and `curl -fsSL … | sh` exits 0 with nothing
-installed (`curl` prints the error; `sh` reads an empty script).
+A stable release commits the installers to app-updates. Before the first one they were copied
+there by hand from `v0.2.1-beta.1`, so the addresses answer, but the stable channel
+(`latest.json`) has no builds yet: the plain command stops with "no build", and `--beta`
+(`sh -s -- --beta`) installs the newest pre-release, which ships Linux builds only for now.
 
 These URLs are stable: everything Canopy publishes in the shared, public NecturaLabs/app-updates
 repository sits under its `canopy/` folder (scripts, `latest.json`, `beta.json`) or in releases

@@ -60,7 +60,7 @@ interface.
 - **Bad:** immediate mode punishes per-frame work: no allocation of large collections, no
   repository access and no re-layout of off-screen rows per frame.
 - **Bad:** egui's API changes between releases (the 0.36 `App::ui` and panel changes recorded in
-  `HANDOFF.md`), so upgrades are deliberate work.
+  `CONTRIBUTING.md`), so upgrades are deliberate work.
 
 ## Related
 

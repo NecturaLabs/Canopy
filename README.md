@@ -98,8 +98,12 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1 | iex
 ```
 
-These work from the first stable release that ships the installers. Until then the addresses
-answer 404: `curl` reports the error, but `sh` gets an empty script and exits without a word.
+There is no stable release yet, so these stop with an error saying the release has no build for
+your system. Until the first one, install the beta, which ships Linux builds only for now:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.sh | sh -s -- --beta
+```
 
 The installer reads Canopy's update manifest, downloads the build for your system over HTTPS,
 checks its SHA-256 against the manifest and refuses anything that does not match. It never asks
@@ -142,7 +146,8 @@ Requirements:
 - `git` 2.30 or newer on `PATH` at runtime.
 - A C compiler (libgit2 is built from source by the `git2` crate). No OpenSSL or libssh2 is needed.
 - Linux: a Wayland or X11 session with OpenGL 3.3 or OpenGL ES 3.0, plus an XDG desktop portal for
-  the folder picker (installed by default on GNOME, KDE and most other desktops).
+  the folder picker (installed by default on GNOME, KDE and most other desktops; on Hyprland,
+  whose own portal has no file chooser, install `xdg-desktop-portal-gtk`).
 
 Linux runtime libraries:
 
