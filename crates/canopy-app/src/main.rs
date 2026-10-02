@@ -9,6 +9,7 @@ mod build_info;
 mod crash_reports;
 mod highlight;
 mod hosting;
+mod identity_worker;
 mod keymap;
 mod logging;
 mod platform;
@@ -41,7 +42,8 @@ OPTIONS:
         --split               Show diffs side by side
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
                               palette, consent, crash-consent, legal, licences,
-                              credential, host-key or merge
+                              credential, host-key, merge, identity, settings-git or
+                              clear-identity
         --size <WxH>          Initial window size [default: 1440x900]
         --zoom <FACTOR>       Initial interface zoom, from 0.8 to 1.6
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit

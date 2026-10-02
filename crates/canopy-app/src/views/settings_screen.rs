@@ -2,12 +2,14 @@
 //! Every setting changes behaviour; nothing here is decorative.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use crossbeam_channel::Receiver;
 use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Ui, vec2};
 use egui_phosphor::regular as icon;
 
 use canopy_core::forge::{Forge, ForgeKind};
+use canopy_core::identity::{Field, Identity, Scope, Source};
 
 use crate::action::Action;
 use crate::hosting::{self, TokenStore};
@@ -17,6 +19,7 @@ use crate::ui::theme::{self, Palette, ThemeId, palette};
 use crate::ui::widgets;
 use crate::ui::widgets::forge_icon;
 use crate::updater::{self, UpdateState, Updater};
+use crate::views::dialogs::Dialog;
 
 /// The sections, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -70,6 +73,11 @@ pub struct SettingsScreen {
     token_input: HashMap<String, String>,
     tests: HashMap<String, TokenTest>,
     token_error: Option<String>,
+    identity_for: Option<PathBuf>,
+    loaded_identity: Option<Identity>,
+    identity_name: String,
+    identity_email: String,
+    identity_scope: Scope,
 }
 
 impl std::fmt::Debug for SettingsScreen {
@@ -80,6 +88,7 @@ impl std::fmt::Debug for SettingsScreen {
             .field("token_input", &self.token_input.keys().collect::<Vec<_>>())
             .field("tests", &self.tests)
             .field("token_error", &self.token_error)
+            .field("identity_scope", &self.identity_scope)
             .finish()
     }
 }
@@ -101,6 +110,18 @@ pub struct SettingsResult {
     pub tokens_changed: bool,
 }
 
+pub struct IdentityView<'a> {
+    pub repo: Option<&'a Path>,
+    pub identity: Option<&'a Identity>,
+    pub error: Option<&'a str>,
+}
+
+pub struct SettingsData<'a> {
+    pub forges: &'a [Forge],
+    pub update: &'a UpdateState,
+    pub identity: IdentityView<'a>,
+}
+
 /// Draws the screen. `forges` are the GitHub/GitLab remotes of open repositories, so their hosts
 /// show up under Accounts.
 pub fn show(
@@ -108,8 +129,7 @@ pub fn show(
     screen: &mut SettingsScreen,
     settings: &mut Settings,
     tokens: &mut TokenStore,
-    forges: &[Forge],
-    update: &UpdateState,
+    data: SettingsData<'_>,
     actions: &mut Vec<Action>,
 ) -> SettingsResult {
     let p = palette(ctx);
@@ -226,16 +246,25 @@ pub fn show(
                                         Section::Appearance => {
                                             appearance(ui, settings, &mut screen.zoom_preview)
                                         }
-                                        Section::Git => git(ui, settings),
+                                        Section::Git => {
+                                            git(ui, screen, settings, &data.identity, actions)
+                                        }
                                         Section::Integrations => {
                                             integrations(ui, settings, &mut screen.picker)
                                         }
                                         Section::Accounts => {
                                             result.tokens_changed |= accounts(
-                                                ui, screen, settings, tokens, forges, actions,
+                                                ui,
+                                                screen,
+                                                settings,
+                                                tokens,
+                                                data.forges,
+                                                actions,
                                             )
                                         }
-                                        Section::Updates => updates(ui, settings, update, actions),
+                                        Section::Updates => {
+                                            updates(ui, settings, data.update, actions)
+                                        }
                                         Section::Privacy => privacy(ui, settings, actions),
                                         Section::Keyboard => keyboard(ui),
                                     }
@@ -321,10 +350,15 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
                 ui.allocate_ui_with_layout(
                     vec2(width * 0.50, 0.0),
                     egui::Layout::top_down(egui::Align::Min),
-                    label,
+                    |ui| {
+                        // Without this the column is only as wide as its text, and the controls
+                        // of rows with short help text sit at different distances from the edge.
+                        ui.set_min_width(width * 0.50);
+                        label(ui);
+                    },
                 );
                 ui.allocate_ui_with_layout(
-                    vec2(width * 0.50 - theme::SM, 0.0),
+                    vec2(width * 0.50 - 2.0 * theme::SM, 0.0),
                     egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
                     control,
                 );
@@ -535,7 +569,174 @@ fn toggle(ui: &mut Ui, on: &mut bool) {
     ui.selectable_value(on, false, "Off");
 }
 
-fn git(ui: &mut Ui, s: &mut Settings) {
+/// Where an identity value comes from, as a short phrase.
+pub(crate) fn source_label(source: Option<&Source>) -> String {
+    source_label_in(source, &crate::settings::home_dir())
+}
+
+/// [`source_label`], with `home` shown as `~`.
+fn source_label_in(source: Option<&Source>, home: &Path) -> String {
+    match source {
+        Some(Source::Environment(key)) => format!("the {key} environment variable"),
+        Some(Source::Config { scope, .. }) if scope == "command" => "the git command line".into(),
+        Some(Source::Config { scope, origin }) => {
+            let file = origin.strip_prefix("file:").unwrap_or(origin);
+            // An unknown home directory is an empty path, which every path starts with.
+            let file = Path::new(file)
+                .strip_prefix(home)
+                .ok()
+                .filter(|_| !home.as_os_str().is_empty())
+                .map_or_else(|| file.to_owned(), |rest| format!("~/{}", rest.display()));
+            let scope = match scope.as_str() {
+                "local" => "this repository",
+                "worktree" => "this worktree",
+                other => other,
+            };
+            format!("{scope}: {file}")
+        }
+        Some(Source::Guessed) => "guessed by Git from this computer".into(),
+        None => "not set".into(),
+    }
+}
+
+/// What Git would use now for one part of an identity, and why.
+fn in_use(field: &Field) -> String {
+    if field.value.is_empty() {
+        "Not set.".into()
+    } else {
+        format!(
+            "In use now: {} ({}).",
+            field.value,
+            source_label(field.source.as_ref())
+        )
+    }
+}
+
+fn identity_group(
+    ui: &mut Ui,
+    screen: &mut SettingsScreen,
+    repo: Option<&Path>,
+    identity: Option<&Identity>,
+    error: Option<&str>,
+    actions: &mut Vec<Action>,
+) {
+    let p = palette(ui.ctx());
+    let repo_path = repo.map(Path::to_path_buf);
+    if screen.identity_for != repo_path {
+        screen.identity_scope = if repo.is_some() {
+            Scope::Local
+        } else {
+            Scope::Global
+        };
+        screen.loaded_identity = None;
+    }
+    if screen.identity_for != repo_path || screen.loaded_identity.as_ref() != identity {
+        screen.identity_for = repo_path.clone();
+        screen.loaded_identity = identity.cloned();
+        // Only values someone chose are offered for editing: a guess built from the user and host
+        // names would be saved as if it were a choice.
+        let chosen = |field: &Field| {
+            if field.explicit() {
+                field.value.clone()
+            } else {
+                String::new()
+            }
+        };
+        screen.identity_name = identity.map_or_else(String::new, |i| chosen(&i.author.name));
+        screen.identity_email = identity.map_or_else(String::new, |i| chosen(&i.author.email));
+    }
+    heading(ui, "Identity for future commits");
+    if let Some(error) = error {
+        ui.label(RichText::new(error).color(p.warning));
+    } else if let Some(identity) = identity {
+        if let Some(warning) = identity.warning() {
+            ui.label(RichText::new(format!("{}  {warning}", icon::WARNING)).color(p.warning));
+            ui.add_space(theme::SM);
+        }
+    } else {
+        ui.label(RichText::new("Reading Git identity…").color(p.text_dim));
+    }
+    let current =
+        |pick: fn(&Identity) -> &Field| identity.map(pick).map(in_use).unwrap_or_default();
+    row(ui, "Name", &current(|i| &i.author.name), |ui| {
+        ui.add(egui::TextEdit::singleline(&mut screen.identity_name).desired_width(260.0));
+    });
+    row(ui, "Email", &current(|i| &i.author.email), |ui| {
+        ui.add(egui::TextEdit::singleline(&mut screen.identity_email).desired_width(260.0));
+    });
+    if let Some(i) = identity.filter(|i| i.committer != i.author) {
+        row(
+            ui,
+            "Committer",
+            &format!(
+                "Git records {} <{}> as the committer ({}). Saving here does not change it.",
+                i.committer.name.value,
+                i.committer.email.value,
+                source_label(i.committer.name.source.as_ref())
+            ),
+            |_| {},
+        );
+    }
+    if repo.is_some() {
+        row(
+            ui,
+            "Save to",
+            "This repository writes its own .git/config; all repositories write your global Git configuration.",
+            |ui| {
+                ui.selectable_value(&mut screen.identity_scope, Scope::Local, "This repository");
+                ui.selectable_value(
+                    &mut screen.identity_scope,
+                    Scope::Global,
+                    "All repositories",
+                );
+            },
+        );
+    }
+    let can_save =
+        !screen.identity_name.trim().is_empty() && !screen.identity_email.trim().is_empty();
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(can_save, egui::Button::new("Save identity"))
+            .clicked()
+        {
+            actions.push(Action::SaveIdentity {
+                repo: repo_path.clone(),
+                scope: screen.identity_scope,
+                name: screen.identity_name.clone(),
+                email: screen.identity_email.clone(),
+            });
+        }
+        if ui.button("Clear…").clicked() {
+            actions.push(Action::OpenDialog(Dialog::ConfirmClearIdentity {
+                repo: repo_path.clone(),
+                scope: screen.identity_scope,
+            }));
+        }
+    });
+    ui.add_space(theme::XS);
+    ui.label(
+        RichText::new("Changes apply to future commits only; commits already made keep their authors. An environment variable or an author setting can still override what you save.")
+            .size(theme::SMALL_SIZE)
+            .color(p.text_faint),
+    );
+}
+
+fn git(
+    ui: &mut Ui,
+    screen: &mut SettingsScreen,
+    s: &mut Settings,
+    identity: &IdentityView<'_>,
+    actions: &mut Vec<Action>,
+) {
+    identity_group(
+        ui,
+        screen,
+        identity.repo,
+        identity.identity,
+        identity.error,
+        actions,
+    );
+    ui.add_space(theme::LG);
     heading(ui, "Remote");
     row(
         ui,
@@ -1239,8 +1440,15 @@ mod tests {
                             &mut screen,
                             &mut settings,
                             &mut tokens,
-                            &[],
-                            &UpdateState::Idle,
+                            SettingsData {
+                                forges: &[],
+                                update: &UpdateState::Idle,
+                                identity: IdentityView {
+                                    repo: None,
+                                    identity: None,
+                                    error: None,
+                                },
+                            },
                             &mut Vec::new(),
                         );
                     },
@@ -1255,5 +1463,135 @@ mod tests {
                 "{section:?}: {rect:?} exceeds {bounds:?}"
             );
         }
+    }
+    fn field(value: &str, source: Option<Source>) -> Field {
+        Field {
+            value: value.into(),
+            source,
+        }
+    }
+
+    fn identity(name: Field, email: Field) -> Identity {
+        let person = canopy_core::identity::Person {
+            name,
+            email,
+            usable: true,
+        };
+        Identity {
+            author: person.clone(),
+            committer: person,
+        }
+    }
+
+    fn local_source() -> Option<Source> {
+        Some(Source::Config {
+            scope: "local".into(),
+            origin: "file:.git/config".into(),
+        })
+    }
+
+    #[test]
+    fn sources_say_where_a_value_comes_from() {
+        let home = Path::new("/home/ada");
+        let label = |source: &Source| source_label_in(Some(source), home);
+        assert_eq!(
+            label(&Source::Environment("GIT_AUTHOR_NAME")),
+            "the GIT_AUTHOR_NAME environment variable"
+        );
+        assert_eq!(
+            label(&Source::Config {
+                scope: "command".into(),
+                origin: "command line:".into(),
+            }),
+            "the git command line"
+        );
+        assert_eq!(
+            label(&local_source().expect("a source")),
+            "this repository: .git/config"
+        );
+        assert_eq!(
+            label(&Source::Config {
+                scope: "global".into(),
+                origin: "file:/home/ada/.gitconfig".into(),
+            }),
+            "global: ~/.gitconfig"
+        );
+        assert_eq!(
+            label(&Source::Config {
+                scope: "global".into(),
+                origin: "file:/etc/elsewhere/gitconfig".into(),
+            }),
+            "global: /etc/elsewhere/gitconfig"
+        );
+        assert_eq!(label(&Source::Guessed), "guessed by Git from this computer");
+        assert_eq!(source_label_in(None, home), "not set");
+    }
+
+    #[test]
+    fn an_unknown_home_directory_is_never_shown_as_a_tilde() {
+        let source = Source::Config {
+            scope: "global".into(),
+            origin: "file:/etc/gitconfig".into(),
+        };
+        assert_eq!(
+            source_label_in(Some(&source), Path::new("")),
+            "global: /etc/gitconfig"
+        );
+    }
+
+    #[test]
+    fn the_editor_offers_chosen_values_and_never_a_guess() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut settings = Settings::default();
+        let mut screen = SettingsScreen::default();
+        let repo = std::path::PathBuf::from("/repo");
+        let mut draw = |screen: &mut SettingsScreen, repo: Option<&Path>, id: &Identity| {
+            let mut actions = Vec::new();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    git(
+                        ui,
+                        screen,
+                        &mut settings,
+                        &IdentityView {
+                            repo,
+                            identity: Some(id),
+                            error: None,
+                        },
+                        &mut actions,
+                    );
+                });
+            });
+            output.textures_delta.clear();
+            actions
+        };
+
+        let guessed = identity(
+            field("someone", Some(Source::Guessed)),
+            field("someone@host.(none)", Some(Source::Guessed)),
+        );
+        draw(&mut screen, Some(&repo), &guessed);
+        assert!(
+            screen.identity_name.is_empty() && screen.identity_email.is_empty(),
+            "a value Git made up must not be offered as if someone chose it"
+        );
+        assert_eq!(screen.identity_scope, Scope::Local);
+
+        let chosen = identity(
+            field("Ada Lovelace", local_source()),
+            field("ada@example.com", local_source()),
+        );
+        let actions = draw(&mut screen, Some(&repo), &chosen);
+        assert_eq!(screen.identity_name, "Ada Lovelace");
+        assert_eq!(screen.identity_email, "ada@example.com");
+        assert!(actions.is_empty(), "drawing alone changes nothing");
+
+        draw(&mut screen, None, &chosen);
+        assert_eq!(
+            screen.identity_scope,
+            Scope::Global,
+            "without a repository only the global configuration can be written"
+        );
     }
 }

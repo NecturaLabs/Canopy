@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use canopy_core::identity::{self, Scope, Source};
 use canopy_core::ops::{HunkAction, MergeMode, ResetMode};
 use canopy_core::{
     ChangeKind, Choice, ConflictFile, ConflictKind, ConflictRegion, DiffSource, LineKind,
@@ -611,6 +612,11 @@ fn in_isolated_git_env_with_home_config(test: &str, home_config: &str) -> bool {
         .env("HOME", home.path())
         .env("USERPROFILE", home.path())
         .env("XDG_CONFIG_HOME", home.path())
+        .env_remove("GIT_AUTHOR_NAME")
+        .env_remove("GIT_AUTHOR_EMAIL")
+        .env_remove("GIT_COMMITTER_NAME")
+        .env_remove("GIT_COMMITTER_EMAIL")
+        .env_remove("EMAIL")
         .output()
         .expect("test binary runs");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -620,6 +626,322 @@ fn in_isolated_git_env_with_home_config(test: &str, home_config: &str) -> bool {
         String::from_utf8_lossy(&out.stderr)
     );
     false
+}
+
+#[test]
+fn identity_uses_git_scope_and_keeps_stored_history_authors() {
+    if !in_isolated_git_env("identity_uses_git_scope_and_keeps_stored_history_authors") {
+        return;
+    }
+    let global = std::env::var("GIT_CONFIG_GLOBAL").expect("global path");
+    fs::write(
+        &global,
+        "[user]\nname = Global Person\nemail = global@example.com\n",
+    )
+    .expect("global config");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let p = dir.path();
+    git(p, &["init", "-q", "-b", "main"]);
+
+    let before = identity::Identity::read(p).expect("identity");
+    assert_eq!(before.author.name.value, "Global Person");
+    assert_eq!(before.author.email.value, "global@example.com");
+    assert!(
+        matches!(before.author.name.source, Some(Source::Config { ref scope, .. }) if scope == "global")
+    );
+    assert_eq!(before.warning(), None);
+
+    identity::set(Some(p), Scope::Local, "t", "t@t").expect("set local");
+    let placeholder = identity::Identity::read(p).expect("local identity");
+    assert_eq!(placeholder.author.name.value, "t");
+    assert!(
+        matches!(placeholder.author.name.source, Some(Source::Config { ref scope, .. }) if scope == "local")
+    );
+    assert!(placeholder.warning().is_some());
+
+    fs::write(p.join("one.txt"), "one\n").expect("write");
+    git(p, &["add", "--", "one.txt"]);
+    git(p, &["commit", "-q", "-m", "first"]);
+    let repo = Repo::open(p).expect("repo");
+    let (commits, _) = repo.commits(10).expect("commits");
+    assert_eq!(commits[0].author.name, "Ada Lovelace");
+
+    identity::set(
+        Some(p),
+        Scope::Local,
+        "Current Person",
+        "current@example.com",
+    )
+    .expect("replace local");
+    let (commits, _) = repo.commits(10).expect("history after config edit");
+    assert_eq!(
+        commits[0].author.name, "Ada Lovelace",
+        "stored history must not change"
+    );
+    assert_eq!(
+        identity::Identity::read(p)
+            .expect("current")
+            .author
+            .name
+            .value,
+        "Current Person"
+    );
+
+    identity::clear(Some(p), Scope::Local).expect("clear local");
+    assert_eq!(
+        identity::Identity::read(p)
+            .expect("fallback")
+            .author
+            .name
+            .value,
+        "Global Person"
+    );
+}
+
+/// Runs the calling test again in a child process whose git sees a throw-away global
+/// configuration and none of the identity variables except those in `env`. Returns true in the
+/// child, where the test body runs, and false in the parent once the child has passed.
+fn in_identity_child(test: &str, env: &[(&str, &str)]) -> bool {
+    if std::env::var_os("CANOPY_IDENTITY_CHILD").is_some() {
+        return true;
+    }
+    let home = tempfile::tempdir().expect("home");
+    let mut child = Command::new(std::env::current_exe().expect("test binary"));
+    child
+        .args([test, "--exact", "--test-threads=1"])
+        .env("CANOPY_IDENTITY_CHILD", "1")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", home.path().join("global"));
+    for key in [
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+        "EMAIL",
+    ] {
+        child.env_remove(key);
+    }
+    for (key, value) in env {
+        child.env(key, value);
+    }
+    let out = child.output().expect("test binary runs");
+    assert!(
+        out.status.success(),
+        "{test}:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    false
+}
+
+#[test]
+fn identity_follows_author_overrides_and_git_environment() {
+    if !in_identity_child(
+        "identity_follows_author_overrides_and_git_environment",
+        &[("GIT_AUTHOR_NAME", "Environment Author")],
+    ) {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("repo");
+    let p = dir.path();
+    git(p, &["init", "-q", "-b", "main"]);
+    git(p, &["config", "user.name", "User Name"]);
+    git(p, &["config", "user.email", "user@example.com"]);
+    git(p, &["config", "author.name", "Configured Author"]);
+    git(p, &["config", "author.email", "author@example.com"]);
+    let identity = identity::Identity::read(p).expect("identity");
+    assert_eq!(identity.author.name.value, "Environment Author");
+    assert_eq!(identity.author.email.value, "author@example.com");
+    assert!(matches!(
+        identity.author.name.source,
+        Some(Source::Environment("GIT_AUTHOR_NAME"))
+    ));
+    assert!(
+        matches!(identity.author.email.source, Some(Source::Config { ref scope, .. }) if scope == "local")
+    );
+    assert_eq!(identity.committer.name.value, "User Name");
+    assert!(
+        matches!(identity.committer.name.source, Some(Source::Config { ref scope, .. }) if scope == "local")
+    );
+}
+
+#[test]
+fn identity_flags_missing_and_unusable_identities() {
+    if !in_isolated_git_env("identity_flags_missing_and_unusable_identities") {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let p = dir.path();
+    git(p, &["init", "-q", "-b", "main"]);
+
+    // Nothing configured: git either refuses or guesses from the computer, depending on the host.
+    let none = identity::Identity::read(p).expect("identity");
+    assert!(!none.author.explicit());
+    assert!(none.warning().is_some());
+    if none.author.usable {
+        assert_eq!(none.author.name.source, Some(Source::Guessed));
+        assert_eq!(
+            none.warning(),
+            Some("Git guessed part of this identity from the computer.")
+        );
+    } else {
+        assert_eq!(
+            none.warning(),
+            Some("Git cannot use this identity for a commit.")
+        );
+    }
+
+    // With guessing switched off, a name alone is not an identity.
+    git(p, &["config", "user.useConfigOnly", "true"]);
+    git(p, &["config", "user.name", "Only Name"]);
+    let half = identity::Identity::read(p).expect("name only");
+    assert!(!half.author.usable);
+    assert_eq!(half.author.name.value, "Only Name");
+    assert!(half.author.email.value.is_empty());
+    assert_eq!(
+        half.warning(),
+        Some("Git cannot use this identity for a commit.")
+    );
+
+    // The first-launch view sees global configuration only: the repository's name does not count.
+    let global = identity::Identity::read_global().expect("global");
+    assert!(!global.author.usable);
+    assert!(global.author.name.value.is_empty());
+    assert!(global.warning().is_some());
+}
+
+#[test]
+fn identity_writes_awkward_values_and_reads_every_scope() {
+    if !in_isolated_git_env("identity_writes_awkward_values_and_reads_every_scope") {
+        return;
+    }
+    let global_file = std::path::PathBuf::from(std::env::var("GIT_CONFIG_GLOBAL").expect("global"));
+    let dir = tempfile::tempdir().expect("tempdir");
+    let p = dir.path();
+    git(p, &["init", "-q", "-b", "main"]);
+
+    // A value that starts with a dash is a value, and a second write replaces duplicates.
+    git(p, &["config", "--add", "user.name", "Old One"]);
+    git(p, &["config", "--add", "user.name", "Old Two"]);
+    identity::set(Some(p), Scope::Local, "-dash", "dash@example.com").expect("dash");
+    assert_eq!(
+        git(p, &["config", "--local", "--get-all", "user.name"]),
+        "-dash\n"
+    );
+    let read = identity::Identity::read(p).expect("identity");
+    assert_eq!(read.author.name.value, "-dash");
+    assert_eq!(read.author.email.value, "dash@example.com");
+    assert_eq!(read.warning(), None);
+
+    // Values git cannot store, or that make no sense as an address, are refused before git runs.
+    for (name, email) in [
+        ("", "a@example.com"),
+        ("A<b>", "a@example.com"),
+        ("Ada\nLovelace", "a@example.com"),
+        ("Ada", "no-at-sign"),
+        ("Ada", "ada@"),
+        ("Ada", "a<b>@example.com"),
+    ] {
+        assert!(
+            identity::set(Some(p), Scope::Local, name, email).is_err(),
+            "{name:?} {email:?} must be refused"
+        );
+    }
+    assert!(identity::set(None, Scope::Local, "Ada", "ada@example.com").is_err());
+    assert!(identity::clear(None, Scope::Local).is_err());
+    assert_eq!(
+        git(p, &["config", "--local", "--get", "user.name"]),
+        "-dash\n"
+    );
+
+    // A file included from the global configuration reports the global scope and its own path.
+    let included = p.join("included.gitconfig");
+    fs::write(
+        &included,
+        "[user]\n\tname = Included\n\temail = included@example.com\n",
+    )
+    .expect("included");
+    // Forward slashes: git reads a backslash in a value as an escape.
+    let included_path = included.to_string_lossy().replace('\\', "/");
+    fs::write(
+        &global_file,
+        format!("[include]\n\tpath = {included_path}\n"),
+    )
+    .expect("global");
+    identity::clear(Some(p), Scope::Local).expect("clear local");
+    let included_read = identity::Identity::read(p).expect("included identity");
+    assert_eq!(included_read.author.name.value, "Included");
+    match included_read.author.name.source {
+        Some(Source::Config { scope, origin }) => {
+            assert_eq!(scope, "global");
+            assert!(origin.ends_with("included.gitconfig"), "{origin}");
+        }
+        other => panic!("unexpected source {other:?}"),
+    }
+
+    // Writing and clearing the global scope without a repository.
+    fs::write(&global_file, "").expect("empty global");
+    assert!(
+        !identity::Identity::read_global()
+            .expect("empty")
+            .author
+            .usable
+    );
+    identity::set(None, Scope::Global, "Glo Bal", "glo@example.com").expect("set global");
+    let global = identity::Identity::read_global().expect("global");
+    assert!(global.author.usable);
+    assert_eq!(global.author.name.value, "Glo Bal");
+    assert_eq!(global.warning(), None);
+    assert!(
+        fs::read_to_string(&global_file)
+            .expect("file")
+            .contains("glo@example.com")
+    );
+    identity::clear(None, Scope::Global).expect("clear global");
+    identity::clear(None, Scope::Global).expect("clearing nothing is fine");
+    assert!(
+        !identity::Identity::read_global()
+            .expect("cleared")
+            .author
+            .usable
+    );
+}
+
+#[test]
+fn identity_takes_the_email_variable_when_nothing_else_names_an_address() {
+    if !in_identity_child(
+        "identity_takes_the_email_variable_when_nothing_else_names_an_address",
+        &[("EMAIL", "from-env@example.com")],
+    ) {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("repo");
+    let p = dir.path();
+    git(p, &["init", "-q", "-b", "main"]);
+    git(p, &["config", "user.name", "Only Name"]);
+    let read = identity::Identity::read(p).expect("identity");
+    assert!(read.author.usable);
+    assert_eq!(read.author.email.value, "from-env@example.com");
+    assert_eq!(read.author.email.source, Some(Source::Environment("EMAIL")));
+    assert_eq!(read.warning(), None);
+}
+
+#[test]
+fn identity_ignores_an_empty_email_variable() {
+    if !in_identity_child("identity_ignores_an_empty_email_variable", &[("EMAIL", "")]) {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("repo");
+    let p = dir.path();
+    git(p, &["init", "-q", "-b", "main"]);
+    git(p, &["config", "user.name", "Only Name"]);
+    // Git ignores an empty EMAIL: the address is then missing, or guessed on a host with a domain.
+    let read = identity::Identity::read(p).expect("identity");
+    assert_ne!(read.author.email.source, Some(Source::Environment("EMAIL")));
+    assert!(read.warning().is_some(), "{read:?}");
 }
 
 /// Upstream and the clone each gain one commit, so their histories diverge.

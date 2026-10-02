@@ -9,9 +9,11 @@ use egui::{RichText, Stroke};
 use egui_phosphor::regular as icon;
 
 use canopy_core::Repo;
+use canopy_core::identity::Identity;
 use canopy_hosting::{NewRequest, RequestSummary};
 
 use crate::hosting::{HostJob, TokenStore};
+use crate::identity_worker::{IdentityWorker, Job as IdentityJob};
 use crate::keymap::{self, Command};
 use crate::settings::{self, Settings};
 use crate::tab::{RepoTab, View};
@@ -51,6 +53,9 @@ pub const OVERLAYS: &[&str] = &[
     "credential",
     "host-key",
     "merge",
+    "identity",
+    "settings-git",
+    "clear-identity",
 ];
 
 /// Options from the command line.
@@ -62,7 +67,8 @@ pub struct Launch {
     pub screenshot: Option<PathBuf>,
     pub view: Option<View>,
     /// Open this overlay for a screenshot: settings, privacy, cheatsheet, palette, consent,
-    /// crash-consent, legal, licences, credential, host-key or merge (see [`OVERLAYS`]).
+    /// crash-consent, legal, licences, credential, host-key, merge, identity, settings-git or clear-identity (see
+    /// [`OVERLAYS`]).
     pub overlay: Option<String>,
     /// Side-by-side diffs.
     pub split: bool,
@@ -118,6 +124,9 @@ pub struct CanopyApp {
     git_version: String,
     tokens: TokenStore,
     updater: Updater,
+    identity_worker: Option<IdentityWorker>,
+    global_identity: Option<Identity>,
+    global_identity_error: Option<String>,
     gitlab_hosts: Vec<String>,
     /// The start-up update check waits until the user has accepted the terms.
     update_check_due: bool,
@@ -204,6 +213,9 @@ impl CanopyApp {
                 TokenStore::load()
             },
             updater: Updater::default(),
+            identity_worker: IdentityWorker::start(&cc.egui_ctx),
+            global_identity: None,
+            global_identity_error: None,
             gitlab_hosts,
             update_check_due: false,
             askpass: if shooting {
@@ -225,8 +237,14 @@ impl CanopyApp {
             };
             app.request_open(&cc.egui_ctx, request);
         }
+        if !shooting && !app.settings.identity_asked {
+            app.request_identity(IdentityJob::ReadGlobal);
+        }
         match launch.overlay.as_deref() {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
+            Some("settings-git") => {
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git))
+            }
             Some("cheatsheet") => app.cheatsheet.open = true,
             Some("palette") => app.palette.open(),
             Some("privacy") => {
@@ -267,6 +285,15 @@ impl CanopyApp {
                     mode: canopy_core::MergeMode::Squash,
                 })
             }
+            Some("identity") => app.dialogs.open(Dialog::Identity {
+                name: String::new(),
+                email: String::new(),
+                pending: false,
+            }),
+            Some("clear-identity") => app.dialogs.open(Dialog::ConfirmClearIdentity {
+                repo: None,
+                scope: canopy_core::identity::Scope::Global,
+            }),
             _ => {}
         }
         if git_version_missing(&app.git_version) {
@@ -377,6 +404,7 @@ impl CanopyApp {
     fn consent_done(&mut self, ctx: &egui::Context) {
         crate::crash_reports::set_enabled(self.settings.crash_reports == Some(true));
         self.start_due_update_check(ctx);
+        self.offer_identity_step();
     }
 
     /// Applies settings that changed in the settings screen.
@@ -497,6 +525,7 @@ impl eframe::App for CanopyApp {
             && let Some(t) = self.tabs.get(self.active)
         {
             t.refresh();
+            self.request_identity(IdentityJob::ReadRepo(t.path.clone()));
         }
 
         egui::Panel::top("tabs")
@@ -606,6 +635,7 @@ impl eframe::App for CanopyApp {
         self.folder_picker.begin_frame();
         if let Some(screen) = &mut self.settings_screen {
             let before = self.settings.clone();
+            let active_tab = self.tabs.get(self.active);
             let forges: Vec<canopy_core::forge::Forge> = self
                 .tabs
                 .iter()
@@ -616,8 +646,18 @@ impl eframe::App for CanopyApp {
                 screen,
                 &mut self.settings,
                 &mut self.tokens,
-                &forges,
-                &self.updater.state,
+                settings_screen::SettingsData {
+                    forges: &forges,
+                    update: &self.updater.state,
+                    identity: settings_screen::IdentityView {
+                        repo: active_tab.map(|t| t.path.as_path()),
+                        identity: active_tab
+                            .map_or(self.global_identity.as_ref(), |t| t.identity.as_ref()),
+                        error: active_tab.map_or(self.global_identity_error.as_deref(), |t| {
+                            t.identity_error.as_deref()
+                        }),
+                    },
+                },
                 &mut actions,
             );
             if result.tokens_changed {

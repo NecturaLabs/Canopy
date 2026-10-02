@@ -313,6 +313,8 @@ impl SnapIndex {
 #[derive(Debug)]
 pub struct RepoTab {
     pub path: PathBuf,
+    pub identity: Option<canopy_core::identity::Identity>,
+    pub identity_error: Option<String>,
     pub name: String,
     pub worker: Worker,
     pub snap: Option<Arc<RepoSnapshot>>,
@@ -394,6 +396,8 @@ impl RepoTab {
         worker.send(Job::Refresh(commit_limit));
         Self {
             path,
+            identity: None,
+            identity_error: None,
             name,
             worker,
             snap: None,

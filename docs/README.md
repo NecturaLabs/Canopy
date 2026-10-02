@@ -38,9 +38,10 @@ in a document no longer exists.
   supersedes an earlier one.
 - **The queue**: `backlog.md` holds only open tasks; a finished one is deleted, and history lives in
   `CHANGELOG.md` and `git log`.
-- **Research, dated, may lag the code**: [specs/ui-spec.md](specs/ui-spec.md) and
-  [specs/lfs-flow-spec.md](specs/lfs-flow-spec.md). Where one disagrees with the code, the code is
-  right: fix or delete the sentence.
+- **Research, dated, may lag the code**: [specs/ui-spec.md](specs/ui-spec.md),
+  [specs/lfs-flow-spec.md](specs/lfs-flow-spec.md) and
+  [specs/git-identity.md](specs/git-identity.md) (findings and design of the shipped identity
+  settings). Where one disagrees with the code, the code is right: fix or delete the sentence.
 - **Temporary, delete when the status line says so** (check `git log` before trusting any state in
   them): [specs/parallel-sessions.md](specs/parallel-sessions.md) (briefs for parallel sessions, kept
   as a template), [specs/HANDOFF-canopy-2-core-safety.md](specs/HANDOFF-canopy-2-core-safety.md) and

@@ -14,9 +14,9 @@
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{OnceLock, PoisonError, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{Error, Result};
 
@@ -140,6 +140,7 @@ pub(crate) fn failure(args: &[&str], stdout: &[u8], stderr: &[u8]) -> Error {
 pub fn loggable(args: &[&str]) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     let mut hide_next = false;
+    let config = subcommand(args) == "config";
     for arg in args {
         if hide_next {
             out.push("<redacted>".to_owned());
@@ -147,7 +148,18 @@ pub fn loggable(args: &[&str]) -> Vec<String> {
             continue;
         }
         let a = *arg;
-        if matches!(a, "-m" | "--message" | "-c" | "-F" | "--file") {
+        if matches!(a, "-m" | "--message" | "-c" | "-F" | "--file")
+            || (config
+                && matches!(
+                    a,
+                    "user.name"
+                        | "user.email"
+                        | "author.name"
+                        | "author.email"
+                        | "committer.name"
+                        | "committer.email"
+                ))
+        {
             hide_next = true;
             out.push(a.to_owned());
         } else if let Some((flag, _)) = a
@@ -212,6 +224,67 @@ pub fn run(workdir: &Path, args: &[&str]) -> Result<String> {
     } else {
         Err(failure(args, &out.stdout, &out.stderr))
     }
+}
+
+/// Runs `cmd`, a git command built with [`command`], and collects its output, but gives up after
+/// `limit`: the child is killed and the call fails. For reads that share a thread with other
+/// work, where a repository whose configuration makes git block must not stall everything behind it.
+pub(crate) fn output_within(mut cmd: Command, args: &[&str], limit: Duration) -> Result<Output> {
+    fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            buf
+        })
+    }
+    let started = Instant::now();
+    let mut child = cmd
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(Error::GitMissing)?;
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() >= limit => {
+                reap(child);
+                record(args, started, None, b"timed out");
+                // The readers are left to finish by themselves: a grandchild may still hold the pipes.
+                return Err(Error::invalid(format!(
+                    "git {} did not answer within {} seconds.",
+                    subcommand(args),
+                    limit.as_secs()
+                )));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(e) => {
+                reap(child);
+                return Err(e.into());
+            }
+        }
+    };
+    let out = Output {
+        code: status.code(),
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    };
+    record(args, started, out.code, &out.stderr);
+    Ok(out)
+}
+
+/// Kills and waits for `child` on a thread of its own: a git stuck in uninterruptible I/O (a hung
+/// network mount) cannot be reaped, and the caller must not wait for it.
+fn reap(mut child: Child) {
+    std::thread::spawn(move || {
+        let _ = child.kill();
+        let _ = child.wait();
+    });
 }
 
 /// The result of a command whose exit code carries an answer.
@@ -459,6 +532,24 @@ mod tests {
         assert_eq!(redact_url("ssh://git@host/x"), "ssh://<redacted>@host/x");
         assert_eq!(redact_url("https://host/a@b"), "https://host/a@b");
         assert_eq!(redact_url("no url"), "no url");
+        assert_eq!(
+            loggable(&[
+                "config",
+                "--local",
+                "--replace-all",
+                "--",
+                "user.email",
+                "ada@example.com"
+            ]),
+            [
+                "config",
+                "--local",
+                "--replace-all",
+                "--",
+                "user.email",
+                "<redacted>"
+            ]
+        );
     }
 
     #[test]
@@ -613,6 +704,22 @@ mod tests {
             Some("prefer")
         );
         assert_eq!(env_of(&cmd, "CANOPY_ASKPASS_TOKEN").as_deref(), Some("42"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_git_that_never_answers_is_killed_at_the_limit() {
+        let mut cmd = command(None);
+        cmd.args(["-c", "alias.nap=!sleep 3"]);
+        let started = Instant::now();
+        let err = output_within(cmd, &["nap"], Duration::from_millis(300))
+            .expect_err("a command that outlasts the limit fails");
+        assert!(started.elapsed() < Duration::from_secs(2), "{err}");
+        assert!(err.to_string().contains("did not answer"), "{err}");
+        let quick = output_within(command(None), &["--version"], Duration::from_secs(30))
+            .expect("a quick command finishes");
+        assert_eq!(quick.code, Some(0));
+        assert!(!quick.stdout.is_empty());
     }
 
     #[test]

@@ -152,6 +152,8 @@ impl CanopyApp {
                 self.active = self.tabs.len() - 1;
             }
         }
+        let identity_path = root.clone();
         self.settings.touch_recent(root);
+        self.request_identity(IdentityJob::ReadRepo(identity_path));
     }
 }
