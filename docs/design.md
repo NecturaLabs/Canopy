@@ -69,8 +69,21 @@ and `text-dim` and `text-faint` 4.5:1 on every surface (`bg`, `panel`, `elevated
 selected row over each, `added-bg`, `removed-bg` and the warning tint); links and SHAs
 (`accent-2`) and status colours 4.5:1 on plain surfaces and selected rows, `success` on added
 lines, `danger` on removed lines and `warning` on its tint; `accent` 4.5:1 on plain surfaces;
-`control-border`, the focus ring and lane colours 3:1. The five other themes (Aurora, Ember, Neon, Forest, Paper) define the same tokens;
-`theme.rs` is the reference for their values.
+`control-border`, the focus ring and lane colours 3:1. The six other themes define the same tokens;
+`theme.rs` is the reference for their values:
+
+- **Aurora** (dark): cool arctic blues after the Nord palette.
+- **Ember** (dark): warm charcoal with orange and gold.
+- **Neon** (dark): deep violet night; electric cyan carries selection and focus and hot pink the
+  links, so selection never reads as the orange-red of removed lines and destructive actions.
+- **Forest** (dark): deep greens lit with sunlit gold; gold carries selection and focus and sky
+  blue the links, so neither is mistaken for the green of added lines.
+- **Paper** (light): warm off-white with rust and teal.
+- **Contrast** (dark): black and white with saturated signal colours, a blue accent, yellow
+  links and strong outlines, for low vision and bright rooms.
+
+In every theme the accent's hue stays clear of `success` and `danger`, so a selected row is never
+confused with an added or removed line.
 
 The accent gradient runs from `accent` to `accent-2` (violet to cyan in Midnight). It is used
 sparingly: the active tab indicator, the welcome screen mark and progress bars. The primary
