@@ -31,6 +31,13 @@ verified in the running app.
       reported in the notification center with the setting, its value and where it is set. Today
       `pull` checks only `pull.rebase`, so it overrides a `branch.<name>.rebase`.
 - [ ] `cli::run_with_input`: show git's stderr, not "Broken pipe", when git exits early.
+- [ ] Author pictures, from the review of ADR 0008: a lookup spends one API request per author from
+      the same quota as pull/merge requests (unauthenticated GitHub allows 60 an hour, so scrolling
+      a repository with many authors can leave the request list unable to load; reserve a share or
+      skip lookups when the quota is low); the hosting thread runs a lookup, up to about 40 s on an
+      unreachable host, ahead of a queued pull/merge request action (`avatars.rs`, `CACHE_LOCK`
+      is held across the network call); a tab stops asking after 256 authors in a session
+      (`MAX_PICTURES`, no eviction).
 - [ ] Installer follow-ups from the security review (`install.sh` is fixed; `install.ps1` could not
       be tested here and is untouched, and nothing in CI runs it): bring `install.ps1` to parity
       (an upgrade must move only the installer's own entries aside, around lines 495 and 649; an
@@ -78,6 +85,23 @@ verified in the running app.
 
 ## Next
 
+- [ ] Repositories of connected accounts: list the repositories of the GitHub or GitLab account a
+      token belongs to (own, organisations, optionally starred; searchable, paged, with the
+      visibility and fork markers) in the start screen and clone one into the default folder with
+      the account's protocol. New data category: ask the owner first (`hosting-api` skill), then an
+      ADR, privacy text and an off switch.
+- [ ] Create a repository on GitHub or GitLab from Canopy: name, description, visibility, owner or
+      organisation or group, and optionally the first push of a local-only repository (joins
+      Publish). Confirmation dialog, token scope explained, errors as git or the server states them.
+- [ ] Repository details from the host, beside the sidebar: about text, topics, visibility
+      (public, private, internal), fork-of link, stars, forks, watchers, open issues and pull
+      requests, default branch, licence, main language, last push. Cached like pictures, behind
+      the same switches, nothing sent without the hosting API on.
+- [ ] Repository and branch metrics, local first (libgit2, no network, no privacy change): commits
+      per week for the last year, top authors, last commit, repository size and object count;
+      per branch ahead/behind the default branch and its upstream, unique commits, last commit
+      author and date, age and a stale mark, merged or squash-merged state, and CI status where the
+      host provides it (check runs are already read for requests).
 - [ ] Interactive rebase editor.
 - [ ] File history (following renames).
 - [ ] Blame view.
