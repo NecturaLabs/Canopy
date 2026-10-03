@@ -10,6 +10,8 @@
 # path. Builds the release binary first (a no-op when it is up to date); set CANOPY_BIN to use a
 # different binary and skip the build. Uses Xvfb when available, else a native Hyprland window
 # on CANOPY_WORKSPACE (default 3). Output and native-run temporary files stay beside <out.png>.
+# On Xvfb the app gets private data, config and cache folders and a fixed Git identity, so the
+# image never depends on your own Canopy state or Git configuration.
 set -euo pipefail
 
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; }
@@ -56,8 +58,15 @@ out_abs="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
 rm -f "$out_abs"
 
 if command -v xvfb-run >/dev/null; then
+  # Private data, config and cache folders and a fixed Git identity: the image must not depend on
+  # (or write to) your own Canopy state, such as its saved window size, or your Git configuration.
+  isolated=$(mktemp -d)
+  trap 'rm -rf "$isolated"' EXIT
+  printf '[user]\n\tname = Showcase Author\n\temail = author@example.com\n' > "$isolated/gitconfig"
   # Force X11 inside Xvfb even when called from a Wayland session.
   env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 \
+    XDG_DATA_HOME="$isolated/data" XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache" \
+    GIT_CONFIG_GLOBAL="$isolated/gitconfig" GIT_CONFIG_NOSYSTEM=1 \
     timeout 60 xvfb-run -a -s "-screen 0 ${size}x24" \
     "$CANOPY_BIN" --screenshot "$out_abs" --size "$size" "${extra[@]}" "${repo_args[@]}"
 else
