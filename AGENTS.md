@@ -72,10 +72,12 @@ token anywhere new, contacting a new host or adding a dependency.
   `tools/stall-check.py` (a hidden window must keep answering its compositor; Linux, skipped
   without a C compiler, `pkg-config` and `libwayland-server`), `packaging/test-install.sh` on Linux
   and macOS,
-  and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck and the vendor
-  check on every push, `stall-check.py` in its Linux test job (required on GitHub-hosted runners,
-  advisory on the self-hosted one) and `cargo deny check` whenever a file outside the docs changes; run `cargo deny
-  check` yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change). CI (`ci.yml`) adds
+  and `shellcheck` and `cargo deny check` only when installed. CI runs the docs check on every
+  push; the rest is skipped only when everything changed since the last commit CI passed is
+  documentation (Markdown and `docs/`, except `CHANGELOG.md` and `docs/legal/`, which the app
+  embeds), and runs whenever that cannot be established. `stall-check.py` runs in CI's Linux test
+  job (required on GitHub-hosted runners, advisory on the self-hosted one). Run `cargo deny check`
+  yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change. CI (`ci.yml`) adds
   tests per platform, one repository variable each: Linux runs unless `CI_LINUX`
   is `0`; macOS and Windows run only when `CI_MACOS` / `CI_WINDOWS` is `1` (off for now).
 - Demo repository: `tools/mkfixture.sh <dir> [kind]` (`fixture-repo` skill)

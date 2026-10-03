@@ -34,7 +34,7 @@ which paint inside their parent's frame and not on `RedrawRequested`; Canopy ope
 checks its SHA-256, applies the patch, diffs the result against `vendor/eframe` and asks
 `cargo metadata` which eframe the workspace builds, failing when it is not `vendor/eframe`: after
 an eframe upgrade cargo only warns that the unused `[patch]` entry was ignored. `tools/check.sh`
-and CI (the "Release tooling and licence notices" job) run it, so a Dependabot bump of eframe, which
+and CI (the "Format, docs, tooling and dependencies" job) run it, so a Dependabot bump of eframe, which
 Dependabot groups with the egui crates, fails CI until the patch is regenerated.
 `tools/stall-check.py` is the behaviour test: it hides Canopy's window on a stand-in compositor and
 fails when the app stops answering pings, and it refuses to run unless the build uses

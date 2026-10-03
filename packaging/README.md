@@ -7,7 +7,7 @@ besides the binary lives here and in `assets/`.
 |---|---|
 | `install.sh` | One-line installer for Linux and macOS (POSIX `sh`). Published as `canopy/install.sh` in NecturaLabs/app-updates. |
 | `install.ps1` | One-line installer for Windows (Windows PowerShell 5.1 and PowerShell 7). Published as `canopy/install.ps1`. |
-| `test-install.sh` | End-to-end test of `install.sh` against a fake feed on 127.0.0.1 in a temporary `HOME`, on Linux and macOS (run by `tools/check.sh`; not in CI). |
+| `test-install.sh` | End-to-end test of `install.sh` against a fake feed on 127.0.0.1 in a temporary `HOME`, on Linux and macOS (run by `tools/check.sh` and CI). |
 | `linux/io.necturalabs.Canopy.desktop` | freedesktop.org desktop entry. The app ID, the icon name and `StartupWMClass` are all `io.necturalabs.Canopy`, which must match the Wayland app ID / X11 `WM_CLASS` the binary sets. The installer rewrites `Exec=` to the absolute path of the installed binary. |
 | `linux/io.necturalabs.Canopy.metainfo.xml` | AppStream metadata for software centres. The release workflow adds this build's `<release>` entry to the copy in the archive; the file in the repository needs none. |
 | `macos/Info.plist` | `Info.plist` of `Canopy.app` (bundle id `io.necturalabs.Canopy`); the release fills in `@BUILD@` (the build number) as both bundle versions. |
