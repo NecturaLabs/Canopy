@@ -4,6 +4,7 @@ use egui::{Align2, CornerRadius, FontId, Id, Key, Order, RichText, Sense, Stroke
 use egui_phosphor::regular as icon;
 
 use super::theme::{self, Palette, palette};
+use super::widgets;
 
 /// One entry the palette can run.
 #[derive(Debug, Clone)]
@@ -236,7 +237,7 @@ impl<T: Clone> CommandPalette<T> {
                             let edit = ui.add(
                                 egui::TextEdit::singleline(&mut self.query)
                                     .hint_text("Type a command, branch or repository…")
-                                    .font(FontId::proportional(15.0))
+                                    .font(FontId::proportional(theme::TITLE_SIZE))
                                     .frame(egui::Frame::NONE)
                                     .desired_width(f32::INFINITY),
                             );
@@ -263,10 +264,20 @@ impl<T: Clone> CommandPalette<T> {
                             ui.add_space(10.0);
                             return;
                         }
-                        egui::ScrollArea::vertical()
-                            .max_height(
-                                (screen.height() - top - theme::XL * 2.0 - 60.0).clamp(0.0, 380.0),
-                            )
+                        // Whole rows only, so the list never ends in a half-cut entry.
+                        let pitch = 34.0 + ui.spacing().item_spacing.y;
+                        let room =
+                            (screen.height() - top - theme::XL * 2.0 - 60.0).clamp(0.0, 380.0);
+                        let list_h = ((room + ui.spacing().item_spacing.y) / pitch)
+                            .floor()
+                            .max(1.0)
+                            * pitch
+                            - ui.spacing().item_spacing.y;
+                        // Both bounds: the area's own size comes from its last frame and would
+                        // otherwise cap the list part-way through a row.
+                        let list = egui::ScrollArea::vertical()
+                            .max_height(list_h)
+                            .min_scrolled_height(list_h)
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
                                 for (row, (_, i)) in ranked.iter().enumerate() {
@@ -311,7 +322,7 @@ impl<T: Clone> CommandPalette<T> {
                                         .painter()
                                         .layout_no_wrap(
                                             e.shortcut.clone(),
-                                            FontId::monospace(theme::SMALL_SIZE),
+                                            FontId::monospace(theme::MONO_SMALL_SIZE),
                                             p.text_faint,
                                         )
                                         .size()
@@ -325,7 +336,7 @@ impl<T: Clone> CommandPalette<T> {
                                         c + vec2(34.0, 0.0),
                                         Align2::LEFT_CENTER,
                                         &e.label,
-                                        FontId::new(13.5, theme::medium()),
+                                        FontId::new(theme::LEAD_SIZE, theme::medium()),
                                         p.text,
                                     );
                                     if !e.detail.is_empty() {
@@ -333,7 +344,7 @@ impl<T: Clone> CommandPalette<T> {
                                             egui::pos2(label.max.x + 10.0, c.y),
                                             Align2::LEFT_CENTER,
                                             &e.detail,
-                                            FontId::proportional(12.0),
+                                            FontId::proportional(theme::META_SIZE),
                                             p.text_faint,
                                         );
                                     }
@@ -342,7 +353,7 @@ impl<T: Clone> CommandPalette<T> {
                                             rect.right_center() - vec2(10.0, 0.0),
                                             Align2::RIGHT_CENTER,
                                             &e.shortcut,
-                                            FontId::monospace(11.5),
+                                            FontId::monospace(theme::MONO_SMALL_SIZE),
                                             p.text_faint,
                                         );
                                     }
@@ -351,6 +362,7 @@ impl<T: Clone> CommandPalette<T> {
                                     }
                                 }
                             });
+                        widgets::scroll_fade(ui, &list, p.elevated);
                     });
             });
 

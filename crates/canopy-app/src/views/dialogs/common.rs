@@ -33,7 +33,7 @@ pub(super) fn confirm_buttons(ui: &mut Ui, confirm: &str, danger: bool) -> Optio
             } else {
                 "Enter confirms · Esc cancels"
             })
-            .size(12.0)
+            .size(theme::META_SIZE)
             .color(p.text_faint),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -67,7 +67,7 @@ pub(super) fn bullet(ui: &mut Ui, glyph: &str, color: egui::Color32, text: &str)
     let p = palette(ui.ctx());
     ui.horizontal_top(|ui| {
         ui.label(RichText::new(glyph).color(color));
-        ui.add(egui::Label::new(RichText::new(text).size(12.5).color(p.text)).wrap());
+        ui.add(egui::Label::new(RichText::new(text).size(theme::META_SIZE).color(p.text)).wrap());
     });
     ui.add_space(2.0);
 }
@@ -89,12 +89,16 @@ pub(super) fn field(
     focus: bool,
 ) -> egui::Response {
     let p = palette(ui.ctx());
-    ui.label(RichText::new(label).size(12.0).color(p.text_dim));
+    ui.label(
+        RichText::new(label)
+            .size(theme::META_SIZE)
+            .color(p.text_dim),
+    );
     let r = ui.add(
         egui::TextEdit::singleline(value)
             .hint_text(hint)
             .desired_width(f32::INFINITY)
-            .margin(egui::Margin::symmetric(8, 6)),
+            .margin(theme::FIELD_MARGIN),
     );
     if focus && ui.memory(|m| m.focused().is_none()) {
         r.request_focus();
@@ -134,7 +138,8 @@ pub(super) fn document_actions(ui: &mut Ui, dialog: &Dialog) -> Outcome {
                             .add_sized(
                                 [170.0, 34.0],
                                 egui::Button::new(
-                                    RichText::new(label).font(FontId::new(13.5, theme::medium())),
+                                    RichText::new(label)
+                                        .font(FontId::new(theme::LEAD_SIZE, theme::medium())),
                                 ),
                             )
                             .clicked()
@@ -144,7 +149,9 @@ pub(super) fn document_actions(ui: &mut Ui, dialog: &Dialog) -> Outcome {
                     }
                 }
                 Dialog::Legal(_)
-                    if widgets::primary_button(ui, "Close", true, 110.0).clicked()
+                    if ui
+                        .add(egui::Button::new("Close").min_size(egui::vec2(110.0, 34.0)))
+                        .clicked()
                         || ui.input(|i| i.key_pressed(Key::Enter)) =>
                 {
                     outcome = Outcome::Close;

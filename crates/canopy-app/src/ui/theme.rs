@@ -16,11 +16,35 @@ pub const MD: f32 = 12.0;
 pub const LG: f32 = 16.0;
 pub const XL: f32 = 24.0;
 pub const COMPACT_WIDTH: f32 = 1000.0;
-pub const BODY_SIZE: f32 = 13.0;
+// Type scale (points, before interface zoom). Text sizes come only from these; icon glyphs are
+// sized for their own optical weight.
+/// Pills, badges and uppercase section labels.
+pub const MICRO_SIZE: f32 = 10.5;
+/// Dates, counts, hints and other secondary detail.
 pub const SMALL_SIZE: f32 = 11.5;
+/// Metadata beside a row's main text: author, date, palette detail.
+pub const META_SIZE: f32 = 12.0;
+/// Default interface text.
+pub const BODY_SIZE: f32 = 13.0;
+/// The text that leads a row, a field label or a button.
+pub const LEAD_SIZE: f32 = 13.5;
+/// Card and group titles, the repository name.
+pub const SUBTITLE_SIZE: f32 = 14.0;
+/// View and dialog titles, the palette query.
 pub const TITLE_SIZE: f32 = 16.0;
+/// The subject of a detail view and first-run dialog headings.
+pub const HEADLINE_SIZE: f32 = 20.0;
+/// The About dialog's name.
+pub const DISPLAY_SIZE: f32 = 24.0;
+/// The welcome screen's title.
+pub const HERO_SIZE: f32 = 38.0;
+/// Code, diffs and identifiers.
 pub const MONO_SIZE: f32 = 12.5;
+/// Short identifiers and key chords beside proportional text.
+pub const MONO_SMALL_SIZE: f32 = 11.5;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
+/// Inner margin of every framed text field, so fields match the 26-point control height.
+pub const FIELD_MARGIN: Margin = Margin::symmetric(8, 5);
 
 /// Colours of one theme.
 #[derive(Debug, Clone, Copy)]
@@ -681,6 +705,7 @@ fn visuals(p: &Palette) -> Visuals {
     v.selection.stroke = Stroke::new(1.5, p.accent);
     v.text_cursor.stroke = Stroke::new(2.0, p.accent);
     v.slider_trailing_fill = true;
+    v.handle_shape = egui::style::HandleShape::Circle;
     v.striped = false;
     v.indent_has_left_vline = false;
 

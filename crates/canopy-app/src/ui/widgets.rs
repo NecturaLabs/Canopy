@@ -97,9 +97,9 @@ fn paint_ref_pill_with_palette(
     let fill = Palette::pill_fill(color, strong);
     let ink = p.ink(p.text, fill);
     let text = format!("{} {}", ref_icon(label.kind), label.name);
-    let galley = ui
-        .painter()
-        .layout_no_wrap(text, FontId::new(11.5, theme::medium()), ink);
+    let galley =
+        ui.painter()
+            .layout_no_wrap(text, FontId::new(theme::SMALL_SIZE, theme::medium()), ink);
     let size = vec2(galley.size().x + 14.0, 19.0);
     let rect = egui::Rect::from_min_size(pos2(x, cy - size.y / 2.0), size);
     ui.painter().rect(
@@ -146,7 +146,7 @@ pub fn paint_avatar(ui: &Ui, center: egui::Pos2, radius: f32, name: &str, email:
     let painter = ui.painter();
     let fill = p.avatar_fill(color);
     painter.circle_filled(center, radius, fill);
-    painter.circle_stroke(center, radius, Stroke::new(1.0, Palette::tint(color, 200)));
+    painter.circle_stroke(center, radius, Stroke::new(1.0, Palette::tint(color, 90)));
     painter.text(
         center,
         Align2::CENTER_CENTER,
@@ -184,7 +184,7 @@ pub fn change_badge(ui: &mut Ui, kind: ChangeKind) -> Response {
         rect.center(),
         Align2::CENTER_CENTER,
         kind.letter(),
-        FontId::new(11.0, theme::semibold()),
+        FontId::new(theme::SMALL_SIZE, theme::semibold()),
         p.ink(color, fill),
     );
     resp.on_hover_text(kind.label())
@@ -197,7 +197,7 @@ pub fn count_badge(ui: &mut Ui, n: usize, color: Color32) {
     let text = n.to_string();
     let galley = ui.painter().layout_no_wrap(
         text,
-        FontId::new(11.0, theme::semibold()),
+        FontId::new(theme::SMALL_SIZE, theme::semibold()),
         p.ink(color, fill),
     );
     let w = (galley.size().x + 12.0).max(20.0);
@@ -279,7 +279,7 @@ pub fn tool_button(
         rect.center_bottom() - vec2(0.0, theme::SM),
         Align2::CENTER_CENTER,
         label,
-        FontId::new(11.0, theme::medium()),
+        FontId::new(theme::SMALL_SIZE, theme::medium()),
         color,
     );
     if resp.has_focus() {
@@ -295,6 +295,263 @@ pub fn tool_button(
     resp.on_hover_text(tooltip)
 }
 
+/// Mutually exclusive options in one recessed track; the chosen one is a raised segment, the others
+/// stay quiet but still read as options. `options` are in visual order, left to right, whatever the
+/// surrounding layout's direction. Returns whether the value changed.
+pub fn segmented<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, options: &[(T, &str)]) -> bool {
+    let font = FontId::new(theme::BODY_SIZE, theme::medium());
+    let segments: Vec<Segment<'_>> = options
+        .iter()
+        .map(|(option, label)| Segment {
+            text: label,
+            name: label,
+            selected: *value == *option,
+            font: font.clone(),
+        })
+        .collect();
+    match segment_track(ui, &segments, ui.spacing().interact_size.y, theme::MD) {
+        Some(i) => {
+            *value = options[i].0.clone();
+            true
+        }
+        None => false,
+    }
+}
+
+/// [`segmented`] with icons; each option is `(glyph, name)` and shows its name as a tooltip.
+/// Returns the index of a newly chosen option.
+pub fn icon_segmented(ui: &mut Ui, selected: usize, options: &[(&str, &str)]) -> Option<usize> {
+    let segments: Vec<Segment<'_>> = options
+        .iter()
+        .enumerate()
+        .map(|(i, (glyph, name))| Segment {
+            text: glyph,
+            name,
+            selected: i == selected,
+            font: FontId::proportional(14.0),
+        })
+        .collect();
+    segment_track(ui, &segments, ui.spacing().interact_size.y, theme::SM)
+}
+
+struct Segment<'a> {
+    text: &'a str,
+    name: &'a str,
+    selected: bool,
+    font: FontId,
+}
+
+/// Paints the track and its segments; returns the index of a segment clicked while not selected.
+fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -> Option<usize> {
+    let p = palette(ui.ctx());
+    let galleys: Vec<_> = segments
+        .iter()
+        .map(|s| {
+            ui.painter()
+                .layout_no_wrap(s.text.to_owned(), s.font.clone(), p.text)
+        })
+        .collect();
+    let inset = 2.0;
+    let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + 2.0 * pad).collect();
+    let (outer, _) = ui.allocate_exact_size(
+        vec2(widths.iter().sum::<f32>() + 2.0 * inset, height),
+        Sense::hover(),
+    );
+    ui.painter().rect(
+        outer,
+        CornerRadius::same(theme::RADIUS_SM + 1),
+        p.bg,
+        Stroke::new(1.0, p.border),
+        egui::StrokeKind::Inside,
+    );
+    let mut chosen = None;
+    let mut x = outer.min.x + inset;
+    let id = ui.next_auto_id();
+    for (i, (segment, galley)) in segments.iter().zip(galleys).enumerate() {
+        let rect = egui::Rect::from_min_size(
+            pos2(x, outer.min.y + inset),
+            vec2(widths[i], height - 2.0 * inset),
+        );
+        x += widths[i];
+        let mut resp = ui.interact(rect, id.with(i), Sense::click());
+        if segment.text != segment.name {
+            resp = resp.on_hover_text(segment.name);
+        }
+        if resp.clicked() && !segment.selected {
+            chosen = Some(i);
+        }
+        let selected = chosen.map_or(segment.selected, |c| c == i);
+        let hover = ui.ctx().animate_bool_with_time(
+            resp.id,
+            resp.hovered() && !selected,
+            super::motion::time(super::motion::FAST),
+        );
+        let radius = CornerRadius::same(theme::RADIUS_SM - 1);
+        if selected {
+            ui.painter().rect(
+                rect,
+                radius,
+                p.elevated,
+                Stroke::new(1.0, Palette::tint(p.accent, 150)),
+                egui::StrokeKind::Inside,
+            );
+        } else if hover > 0.0 {
+            ui.painter().rect_filled(
+                rect,
+                radius,
+                Palette::tint(p.text, (hover * if p.dark { 12.0 } else { 14.0 }) as u8),
+            );
+        }
+        let color = if selected {
+            p.text
+        } else {
+            p.text_dim.lerp_to_gamma(p.text, hover)
+        };
+        ui.painter()
+            .galley(rect.center() - galley.size() / 2.0, galley, color);
+        if resp.has_focus() {
+            ui.painter().rect_stroke(
+                rect.expand(1.0),
+                CornerRadius::same(theme::RADIUS_SM),
+                Stroke::new(1.5, p.accent),
+                egui::StrokeKind::Outside,
+            );
+        }
+        let name = segment.name.to_owned();
+        resp.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, &name)
+        });
+    }
+    chosen
+}
+
+/// A square checkbox with its label. egui's own draws a 14-point box with the 6-point control
+/// radius, which reads as a radio button.
+pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> Response {
+    let p = palette(ui.ctx());
+    let box_size = 16.0;
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        FontId::new(theme::BODY_SIZE, egui::FontFamily::Proportional),
+        p.text,
+    );
+    let size = vec2(
+        box_size + theme::SM + galley.size().x,
+        ui.spacing().interact_size.y,
+    );
+    let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
+    if resp.clicked() {
+        *checked = !*checked;
+        resp.mark_changed();
+    }
+    let enabled = ui.is_enabled();
+    let t = ui.ctx().animate_bool_with_time(
+        resp.id,
+        *checked,
+        super::motion::time(super::motion::FAST),
+    );
+    let b = egui::Rect::from_center_size(
+        pos2(rect.left() + box_size / 2.0, rect.center().y),
+        Vec2::splat(box_size),
+    );
+    let off_fill = if resp.hovered() && enabled {
+        p.hover
+    } else {
+        p.bg
+    };
+    let fill = off_fill.lerp_to_gamma(p.button, t);
+    let stroke = if resp.hovered() && enabled && t < 1.0 {
+        Palette::tint(p.accent, 200)
+    } else {
+        p.control_border.lerp_to_gamma(p.button, t)
+    };
+    ui.painter().rect(
+        b,
+        CornerRadius::same(4),
+        fill,
+        Stroke::new(1.0, stroke),
+        egui::StrokeKind::Inside,
+    );
+    if t > 0.0 {
+        let c = b.shrink(4.0);
+        let ink = Palette::tint(p.on_button, (t * 255.0) as u8);
+        ui.painter().add(egui::Shape::line(
+            vec![
+                pos2(c.left(), c.center().y + 0.5),
+                pos2(c.left() + c.width() * 0.38, c.bottom() - 0.5),
+                pos2(c.right(), c.top() + 1.0),
+            ],
+            Stroke::new(1.8, ink),
+        ));
+    }
+    if resp.has_focus() {
+        ui.painter().rect_stroke(
+            b.expand(2.0),
+            CornerRadius::same(6),
+            Stroke::new(1.5, p.accent),
+            egui::StrokeKind::Outside,
+        );
+    }
+    ui.painter().galley(
+        pos2(
+            b.right() + theme::SM,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        if enabled { p.text } else { p.text_faint },
+    );
+    let name = label.to_owned();
+    let state = *checked;
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state, &name)
+    });
+    resp
+}
+
+/// An on/off switch named `label` for assistive technology (the visible label is the setting's
+/// row). Returns whether it was flipped.
+pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
+    let p = palette(ui.ctx());
+    let size = vec2(36.0, 20.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let flipped = resp.clicked();
+    if flipped {
+        *on = !*on;
+    }
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(resp.id, *on, super::motion::time(super::motion::FAST));
+    let hovered = resp.hovered();
+    let radius = CornerRadius::same(10);
+    let off_fill = if hovered { p.hover } else { p.bg };
+    let fill = off_fill.lerp_to_gamma(p.button, t);
+    let stroke = p.control_border.lerp_to_gamma(p.button, t);
+    ui.painter().rect(
+        rect,
+        radius,
+        fill,
+        Stroke::new(1.0, stroke),
+        egui::StrokeKind::Inside,
+    );
+    let r = 7.0;
+    let cx = egui::lerp((rect.left() + 3.0 + r)..=(rect.right() - 3.0 - r), t);
+    let thumb = p.text_dim.lerp_to_gamma(p.on_button, t);
+    ui.painter()
+        .circle_filled(pos2(cx, rect.center().y), r, thumb);
+    if resp.has_focus() {
+        ui.painter().rect_stroke(
+            rect.expand(2.0),
+            CornerRadius::same(12),
+            Stroke::new(1.5, p.accent),
+            egui::StrokeKind::Outside,
+        );
+    }
+    let name = label.to_owned();
+    let state = *on;
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, state, &name));
+    flipped
+}
+
 /// A button for a dangerous action: danger-coloured label on a tinted fill, readable in every
 /// theme.
 pub fn danger_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
@@ -307,21 +564,32 @@ pub fn danger_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
     )
 }
 
-/// The filled accent button used outside gradients (confirmations).
+/// The primary call to action sized to its label, at least `min_size`: the same gradient button as
+/// [`primary_button`], for confirmations whose width follows their text.
 pub fn accent_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
-    let p = palette(ui.ctx());
-    ui.add(
-        egui::Button::new(RichText::new(text).color(p.on_button).strong())
-            .fill(p.button)
-            .min_size(min_size),
-    )
+    let label = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), primary_font(), Color32::PLACEHOLDER);
+    let size = vec2(
+        (label.size().x + 2.0 * theme::LG).max(min_size.x),
+        min_size.y.max(ui.spacing().interact_size.y),
+    );
+    primary_button_sized(ui, text, true, size)
+}
+
+fn primary_font() -> FontId {
+    FontId::new(theme::LEAD_SIZE, theme::semibold())
 }
 
 /// The primary call to action: a gradient button.
 pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Response {
+    primary_button_sized(ui, text, enabled, vec2(width, 34.0))
+}
+
+fn primary_button_sized(ui: &mut Ui, text: &str, enabled: bool, size: Vec2) -> Response {
     let p = palette(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(
-        vec2(width, 34.0),
+        size,
         if enabled {
             Sense::click()
         } else {
@@ -354,12 +622,20 @@ pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Res
             egui::StrokeKind::Outside,
         );
     }
+    if resp.has_focus() {
+        ui.painter().rect_stroke(
+            rect.expand(2.0),
+            CornerRadius::same(theme::RADIUS + 2),
+            Stroke::new(1.5, p.accent),
+            egui::StrokeKind::Outside,
+        );
+    }
     let fg = if enabled { p.on_button } else { p.text_faint };
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,
         text,
-        FontId::new(13.5, theme::semibold()),
+        primary_font(),
         fg,
     );
     let label = text.to_owned();
@@ -401,6 +677,36 @@ pub fn gradient_rect(
     painter.add(mesh);
 }
 
+/// Fades the top and bottom edges of a vertical scroll area into `surface` where more content lies
+/// beyond them, so a row cut by the viewport reads as "scroll for more" rather than a clipping
+/// error.
+pub fn scroll_fade<R>(ui: &Ui, output: &egui::scroll_area::ScrollAreaOutput<R>, surface: Color32) {
+    let rect = output.inner_rect;
+    let hidden_above = output.state.offset.y;
+    let hidden_below = output.content_size.y - rect.height() - output.state.offset.y;
+    let painter = ui.painter_at(rect);
+    // Narrow and never opaque: a row at the edge must still read as live, not disabled.
+    let band = theme::MD.min(rect.height() / 4.0);
+    let surface = surface.gamma_multiply(0.85);
+    let clear = Color32::from_rgba_premultiplied(0, 0, 0, 0);
+    let fade = |top: f32, from: Color32, to: Color32| {
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(pos2(rect.left(), top), from);
+        mesh.colored_vertex(pos2(rect.right(), top), from);
+        mesh.colored_vertex(pos2(rect.right(), top + band), to);
+        mesh.colored_vertex(pos2(rect.left(), top + band), to);
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.add(mesh);
+    };
+    if hidden_above > 1.0 {
+        fade(rect.top(), surface, clear);
+    }
+    if hidden_below > 1.0 {
+        fade(rect.bottom() - band, clear, surface);
+    }
+}
+
 /// A soft radial glow centred on `center`, used behind the welcome screen.
 pub fn glow(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Color32) {
     let mut mesh = egui::Mesh::default();
@@ -424,7 +730,7 @@ pub fn section_label(ui: &mut Ui, text: &str) {
     let p = palette(ui.ctx());
     ui.label(
         RichText::new(text.to_uppercase())
-            .font(FontId::new(10.5, theme::semibold()))
+            .font(FontId::new(theme::MICRO_SIZE, theme::semibold()))
             .color(p.text_faint)
             .extra_letter_spacing(0.8),
     );

@@ -100,16 +100,20 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
                 let (name, dir) = widgets::split_path(&r.path);
                 ui.label(
                     RichText::new(name)
-                        .font(FontId::new(13.5, theme::semibold()))
+                        .font(FontId::new(theme::LEAD_SIZE, theme::semibold()))
                         .color(p.text),
                 );
                 if !dir.is_empty() {
-                    ui.label(RichText::new(dir).size(12.0).color(p.text_faint));
+                    ui.label(
+                        RichText::new(dir)
+                            .size(theme::META_SIZE)
+                            .color(p.text_faint),
+                    );
                 }
                 if let Some(kind) = r.kind {
                     ui.label(
                         RichText::new(kind.label())
-                            .size(11.5)
+                            .size(theme::SMALL_SIZE)
                             .color(p.warning)
                             .background_color(Palette::tint(p.warning, 30)),
                     );
@@ -137,7 +141,7 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
                         let color = if done == n { p.success } else { p.text_dim };
                         ui.label(
                             RichText::new(format!("{done} of {n} resolved"))
-                                .size(12.0)
+                                .size(theme::META_SIZE)
                                 .color(color),
                         );
                     }
@@ -202,7 +206,7 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
             ui.label(RichText::new(body).color(p.text_dim));
         }
         if let Some(e) = error {
-            ui.label(RichText::new(e).size(11.5).color(p.text_faint));
+            ui.label(RichText::new(e).size(theme::SMALL_SIZE).color(p.text_faint));
         }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
@@ -267,7 +271,7 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
 }
 
 fn code_font() -> FontId {
-    FontId::monospace(12.5)
+    FontId::monospace(theme::MONO_SIZE)
 }
 
 /// Height of one laid-out code line: what a label of it takes (the galley's height, rounded the
@@ -293,7 +297,7 @@ fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
     if lines.is_empty() {
         ui.label(
             RichText::new("(nothing)")
-                .size(11.5)
+                .size(theme::SMALL_SIZE)
                 .italics()
                 .color(palette(ui.ctx()).text_faint),
         );
@@ -532,7 +536,7 @@ fn common(ui: &mut Ui, r: &mut Resolver, i: usize, lines: &[String], last_segmen
             .add(
                 egui::Button::new(
                     RichText::new(format!("{}  {hidden} unchanged lines", icon::DOTS_THREE))
-                        .size(11.5)
+                        .size(theme::SMALL_SIZE)
                         .color(p.text_faint),
                 )
                 .frame(false),
@@ -570,17 +574,17 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(format!("Conflict {}", k + 1))
-                        .font(FontId::new(13.0, theme::semibold())),
+                        .font(FontId::new(theme::BODY_SIZE, theme::semibold())),
                 );
                 match &choice {
                     Some(c) => ui.label(
                         RichText::new(format!("{}  {}", icon::CHECK, choice_label(c)))
-                            .size(11.5)
+                            .size(theme::SMALL_SIZE)
                             .color(p.success),
                     ),
                     None => ui.label(
                         RichText::new(format!("{}  Unresolved", icon::WARNING))
-                            .size(11.5)
+                            .size(theme::SMALL_SIZE)
                             .color(p.warning),
                     ),
                 };
@@ -597,7 +601,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                         ui.set_width(w);
                         ui.label(
                             RichText::new(format!("{title} · {label}"))
-                                .size(11.5)
+                                .size(theme::SMALL_SIZE)
                                 .color(color),
                         );
                         egui::Frame::new()
@@ -616,7 +620,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
             {
                 ui.label(
                     RichText::new(format!("Ancestor · {}", region.base_label))
-                        .size(11.5)
+                        .size(theme::SMALL_SIZE)
                         .color(p.text_dim),
                 );
                 egui::Frame::new()
@@ -682,7 +686,8 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                     egui::TextEdit::multiline(text)
                         .code_editor()
                         .desired_rows(rows)
-                        .desired_width(f32::INFINITY),
+                        .desired_width(f32::INFINITY)
+                        .margin(theme::FIELD_MARGIN),
                 );
                 ui.horizontal(|ui| {
                     if widgets::accent_button(ui, "Use this text", egui::vec2(120.0, 28.0))
@@ -708,7 +713,11 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 && r.editing.as_ref().is_none_or(|(i, _)| *i != k)
             {
                 ui.add_space(4.0);
-                ui.label(RichText::new("Result").size(11.5).color(p.success));
+                ui.label(
+                    RichText::new("Result")
+                        .size(theme::SMALL_SIZE)
+                        .color(p.success),
+                );
                 egui::Frame::new()
                     .fill(Palette::tint(p.success, if p.dark { 18 } else { 14 }))
                     .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM))

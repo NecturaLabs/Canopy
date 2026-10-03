@@ -119,22 +119,31 @@ align. Both are bundled (SIL OFL 1.1), so metrics are consistent on Linux, macOS
 Inter Regular, Medium and SemiBold distinguish body text, controls and headings; monospace is
 reserved for code and identifiers. Sizes scale with the interface zoom and display density.
 
-| Style | Font | Size (pt) | Use |
+One scale, as tokens in `theme.rs` (`*_SIZE`); views never write a size of their own. Icon glyphs
+are sized for their optical weight and are not part of the scale.
+
+| Token | Font | Size (pt) | Use |
 |---|---|---|---|
-| Display | Inter SemiBold | 22 | Welcome screen title |
-| Title | Inter SemiBold | 16 | Dialog titles, commit summary in details |
-| Section label | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Compact sidebar and settings group headers |
-| Body | Inter Regular | 13 | Default text, table rows |
-| Body strong | Inter Medium | 13 | Branch names, selected items, buttons |
-| Small | Inter Regular | 11.5 | Dates, counts, status bar, badges |
-| Mono | JetBrains Mono Regular | 12.5 | Diffs, SHAs, commit message editor |
+| `HERO_SIZE` | Inter SemiBold | 38 | Welcome screen title |
+| `DISPLAY_SIZE` | Inter SemiBold | 24 | The About dialog's name |
+| `HEADLINE_SIZE` | Inter SemiBold | 20 | Pull request title in details, first-run dialog headings |
+| `TITLE_SIZE` | Inter SemiBold | 16 | View and dialog titles, the palette query |
+| `SUBTITLE_SIZE` | Inter SemiBold | 14 | Card and group titles, the repository name, commit summary |
+| `LEAD_SIZE` | Inter Medium or SemiBold | 13.5 | The text that leads a row, field labels, toasts, primary buttons |
+| `BODY_SIZE` | Inter Regular or Medium | 13 | Default text, table rows, branch names |
+| `META_SIZE` | Inter Regular | 12 | Metadata beside a row's main text, setting descriptions |
+| `SMALL_SIZE` | Inter Regular or Medium | 11.5 | Hints, counts, badges, status bar |
+| `MICRO_SIZE` | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Pills and section labels |
+| `MONO_SIZE` | JetBrains Mono Regular | 12.5 | Diffs, commit message editor, error output |
+| `MONO_SMALL_SIZE` | JetBrains Mono Regular | 11.5 | Short SHAs, key chords |
 
 The global Body, Button, Small and Heading styles use the typography tokens in `theme.rs`.
 History rows are 30 points tall, diff lines 20 points.
 
 ## Spacing
 
-A 4px base grid. Tokens: `xs` 4, `sm` 8, `md` 12, `lg` 16, `xl` 24. Panels use `md` inner
+Controls (buttons, text fields, combo boxes, checkboxes) are 26 points high; text fields use
+`FIELD_MARGIN` (8 by 5) so they match. A 4px base grid. Tokens: `xs` 4, `sm` 8, `md` 12, `lg` 16, `xl` 24. Panels use `md` inner
 padding; dialogs `xl`; rows `sm` horizontally. Related controls are `sm` apart, groups `lg`.
 
 ## Radii
@@ -243,6 +252,34 @@ the actual drawn text uses a neutral ink with at least 4.5:1 contrast against it
 When a local branch and its upstream point to the same commit they merge into one pill showing
 both icons. Pills that do not fit collapse to a `+N` badge with a tooltip.
 
+### Segmented control
+
+`widgets::segmented` (text) and `widgets::icon_segmented` (icons with tooltips) for a choice
+between a few exclusive options: settings choices, the merge dialog's merge or rebase, the clone
+source and protocol, the request state filter and the diff layout. A recessed `bg` track with a
+hairline `border`; the chosen segment is raised (`elevated`, `accent` outline at 60%) with `text`,
+the others `text-dim` brightening on hover. Each segment is a radio button for assistive
+technology and shows the focus ring.
+
+### Switch and checkbox
+
+On/off settings use `widgets::switch`: a 36×20 track, `bg` with a `control-border` outline when off
+and the `button` colour when on, with a 14-point thumb that slides (`FAST`). Checkboxes in forms
+use `widgets::checkbox`: a 16-point square, radius 4, filled with `button` and an `on-button` tick
+when checked. Both carry their name for assistive technology and show the focus ring.
+
+### Scroll edges
+
+Lists that scroll inside a fixed area (settings content, the command palette, the cheatsheet) fade
+their top and bottom 16 points into the surface where more content lies beyond, so a cut row reads
+as "more" (`widgets::scroll_fade`). The palette's list also shows whole rows only.
+
+### Illustrations
+
+Drawn in code in the theme's colours (`ui/art.rs`, `docs/art-prompts.md`): the logo mark, the
+welcome canopy and four empty-state spots. Each grows in once when it appears and then stays
+still; reduce motion shows it finished.
+
 ### Context menu
 
 An opened submenu item uses the same neutral surface as a hovered menu item.
@@ -269,7 +306,8 @@ appear as "Checkout <branch>" entries.
 ### Dialog
 
 Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, bounded by the viewport. Title, body, then right-aligned
-buttons: secondary (outlined) then primary (accent gradient). Destructive confirmations use a
+buttons: secondary (outlined) then primary (the `button` gradient, the same widget everywhere,
+with a focus ring). Destructive confirmations use a
 `danger` primary button whose label names the action ("Delete branch", "Discard 3 files"), never
 "OK"; Enter does not confirm a destructive dialog unless the button has focus.
 

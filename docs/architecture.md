@@ -103,11 +103,11 @@ thread.
 | `settings.rs` | Settings persisted through eframe storage: appearance, Git, integrations, updates, privacy answers, trusted folders, recent and open repositories. |
 | `trust.rs` | The trusted folders (`Settings::trusted_folders`) as a process-wide list the repository threads read; adding a folder (never a root) and the parent offered next to a repository's own folder (ADR 0009). |
 | `platform.rs` | Handing things to the operating system (web pages, folders, files in an editor, a terminal) and reading its settings, such as reduced motion, off the UI thread. |
-| `ui/theme.rs` | Design tokens: the seven palettes, lane colours, syntax colours, spacing, radii. The only place colours are defined. |
+| `ui/theme.rs` | Design tokens: the eight palettes, lane colours, syntax colours, spacing, radii. The only place colours are defined. |
 | `ui/motion.rs` | Motion tokens (100/150/200 ms), the reduce-motion preference and whether motion is currently reduced. |
 | `ui/fonts.rs` | Registers the bundled Inter, JetBrains Mono and Phosphor fonts. |
 | `ui/art.rs` | The illustrations (logo mark, welcome canopy, empty-state spots) drawn with the painter in the active theme's colours; each grows in once when it appears. |
-| `ui/widgets.rs` | Ref pills, avatars, icon buttons, badges. |
+| `ui/widgets.rs` | Ref pills, avatars, icon buttons, badges, segmented controls, switches, checkboxes, primary buttons and scroll-edge fades. |
 | `ui/folder_picker.rs` | Native folder selection on a background thread; a bounded result channel and requesting-field lifetime keep the event loop responsive. |
 | `ui/toast.rs` | Toast queue and animation. |
 | `ui/palette.rs` | Command palette with fuzzy matching; entries built on opening, ranked on query change. |

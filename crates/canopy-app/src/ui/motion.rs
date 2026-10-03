@@ -12,7 +12,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::{Deserialize, Serialize};
 
 /// Hover and press feedback, switch thumbs, checkboxes.
-#[expect(dead_code, reason = "adopted by the motion pass")]
 pub const FAST: f32 = 0.10;
 /// Popovers, menus and tooltips appearing; expand and collapse; toasts leaving.
 pub const BASE: f32 = 0.15;

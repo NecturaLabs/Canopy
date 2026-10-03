@@ -107,12 +107,14 @@ impl Toasts {
                                 ui.vertical(|ui| {
                                     ui.label(
                                         RichText::new(&t.title)
-                                            .font(FontId::new(13.5, theme::semibold()))
+                                            .font(FontId::new(theme::LEAD_SIZE, theme::semibold()))
                                             .color(p.text),
                                     );
                                     if !t.body.is_empty() {
                                         ui.label(
-                                            RichText::new(&t.body).size(12.0).color(p.text_dim),
+                                            RichText::new(&t.body)
+                                                .size(theme::META_SIZE)
+                                                .color(p.text_dim),
                                         );
                                     }
                                 });

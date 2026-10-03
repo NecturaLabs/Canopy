@@ -5,7 +5,7 @@ use egui_phosphor::regular as icon;
 
 use crate::action::Action;
 use crate::tab::RepoTab;
-use crate::ui::theme::{Palette, palette};
+use crate::ui::theme::{self, Palette, palette};
 use crate::updater::{InstallState, UpdateState};
 use crate::views::dialogs::Dialog;
 
@@ -22,7 +22,7 @@ pub fn show(
     ui.horizontal_centered(|ui| {
         ui.add_space(10.0);
         ui.spacing_mut().item_spacing.x = 14.0;
-        let small = |t: String, c| RichText::new(t).size(12.0).color(c);
+        let small = |t: String, c| RichText::new(t).size(theme::META_SIZE).color(c);
         if let Some(tab) = tab {
             if let Some(s) = &tab.snap {
                 ui.label(small(
@@ -70,7 +70,7 @@ pub fn show(
                 }
             }
             if let Some(job) = &tab.running {
-                ui.add(egui::Spinner::new().size(12.0).color(p.accent));
+                ui.add(egui::Spinner::new().size(theme::META_SIZE).color(p.accent));
                 let mut t = job.clone();
                 if let Some(pr) = &tab.progress {
                     t.push_str("  ·  ");
@@ -79,7 +79,7 @@ pub fn show(
                 ui.label(small(t, p.accent));
             } else if let Some(line) = &tab.progress {
                 // A download for a read in a partial clone, outside any operation.
-                ui.add(egui::Spinner::new().size(12.0).color(p.accent));
+                ui.add(egui::Spinner::new().size(theme::META_SIZE).color(p.accent));
                 ui.label(small(line.clone(), p.accent));
             }
             if let Some(remote) = &tab.downloads_refused {
@@ -110,7 +110,7 @@ pub fn show(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(10.0);
             if let InstallState::Running { build, .. } = install {
-                ui.add(egui::Spinner::new().size(12.0).color(p.accent));
+                ui.add(egui::Spinner::new().size(theme::META_SIZE).color(p.accent));
                 ui.label(small(
                     format!("Updating to {}…", crate::build_info::name(build)),
                     p.accent,

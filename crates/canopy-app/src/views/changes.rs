@@ -82,7 +82,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                             art::show(ui, art::empty_error(), vec2(160.0, 120.0));
                             ui.add_space(6.0);
                             ui.label(RichText::new("Changes not available").font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
-                            ui.label(RichText::new(&u.message).color(p.text_dim).size(12.5));
+                            ui.label(RichText::new(&u.message).color(p.text_dim).size(theme::META_SIZE));
                             if u.can_download {
                                 ui.add_space(8.0);
                                 if ui.button(format!("{}  Retry", icon::ARROWS_CLOCKWISE)).clicked() {
@@ -98,7 +98,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                             art::show(ui, art::empty_clean(), vec2(160.0, 120.0));
                             ui.add_space(6.0);
                             ui.label(RichText::new("Working tree clean").font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
-                            ui.label(RichText::new("Nothing to commit. Edit some files and they show up here.").color(p.text_dim).size(12.5));
+                            ui.label(RichText::new("Nothing to commit. Edit some files and they show up here.").color(p.text_dim).size(theme::META_SIZE));
                         });
                         return;
                     }
@@ -167,7 +167,7 @@ fn list(
                 } else {
                     "No unstaged changes"
                 })
-                .size(12.0)
+                .size(theme::META_SIZE)
                 .color(p.text_faint),
             );
         });
@@ -215,7 +215,7 @@ fn list(
                 btn.center(),
                 Align2::CENTER_CENTER,
                 glyph,
-                FontId::proportional(13.0),
+                FontId::proportional(theme::BODY_SIZE),
                 p.text,
             );
         }
@@ -360,8 +360,12 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             } else {
                 p.text_faint
             };
-            ui.label(RichText::new(format!("{n}/72")).size(11.5).color(color))
-                .on_hover_text("Keep the summary under 50 characters; 72 at most.");
+            ui.label(
+                RichText::new(format!("{n}/72"))
+                    .size(theme::SMALL_SIZE)
+                    .color(color),
+            )
+            .on_hover_text("Keep the summary under 50 characters; 72 at most.");
         });
     });
     ui.add_space(4.0);
@@ -369,9 +373,9 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         egui::TextEdit::singleline(&mut tab.commit_summary)
             .id(egui::Id::new("commit-summary"))
             .hint_text("Summary (required)")
-            .font(FontId::new(13.5, theme::medium()))
+            .font(FontId::new(theme::LEAD_SIZE, theme::medium()))
             .desired_width(f32::INFINITY)
-            .margin(egui::Margin::symmetric(8, 6)),
+            .margin(theme::FIELD_MARGIN),
     );
     if tab.focus_summary {
         summary.request_focus();
@@ -387,12 +391,12 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 4
             })
             .desired_width(f32::INFINITY)
-            .margin(egui::Margin::symmetric(8, 6)),
+            .margin(theme::FIELD_MARGIN),
     );
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         let was = tab.amend;
-        ui.checkbox(&mut tab.amend, "Amend last commit")
+        widgets::checkbox(ui, &mut tab.amend, "Amend last commit")
             .on_hover_text("Replace the last commit with the staged changes and this message");
         if tab.amend && !was && tab.commit_summary.is_empty() {
             actions.push(Action::PrefillAmend);

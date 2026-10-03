@@ -262,7 +262,7 @@ convention and pull request checklist, and [docs/backlog.md](docs/backlog.md) fo
 │   │                       git-flow, ignore rules, LFS, submodules, forge URLs, conflicts
 │   ├── canopy-hosting/     GitHub and GitLab REST client and the update-manifest fetch
 │   └── canopy-app/         GUI binary `canopy`
-│       ├── assets/         bundled fonts (OFL), SVG art and window icon
+│       ├── assets/         bundled fonts (OFL) and window icon
 │       └── src/            main, app/, worker, tab, settings, keymap, hosting, askpass, ui/, views/
 ├── assets/                 application icon (SVG and PNG)
 ├── docs/                   architecture, design system, feature matrix, keybindings, backlog,

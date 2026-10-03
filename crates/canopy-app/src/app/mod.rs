@@ -619,8 +619,8 @@ impl eframe::App for CanopyApp {
                 if let Some(s) = &clone_status {
                     ui.horizontal_centered(|ui| {
                         ui.add_space(10.0);
-                        ui.add(egui::Spinner::new().size(12.0).color(p.accent));
-                        ui.label(RichText::new(s).size(12.0).color(p.accent));
+                        ui.add(egui::Spinner::new().size(theme::META_SIZE).color(p.accent));
+                        ui.label(RichText::new(s).size(theme::META_SIZE).color(p.accent));
                     });
                 } else {
                     statusbar::show(

@@ -50,15 +50,18 @@ impl UrlBuilder {
 
     pub(super) fn ui(&mut self, ui: &mut Ui, focus: bool) {
         let p = palette(ui.ctx());
-        ui.horizontal(|ui| {
-            for (s, glyph, label) in [
-                (UrlSource::GitHub, icon::GITHUB_LOGO, "GitHub"),
-                (UrlSource::GitLab, icon::GITLAB_LOGO_SIMPLE, "GitLab"),
-                (UrlSource::Url, icon::LINK, "URL"),
-            ] {
-                ui.selectable_value(&mut self.source, s, format!("{glyph}  {label}"));
-            }
-        });
+        let github = format!("{}  GitHub", icon::GITHUB_LOGO);
+        let gitlab = format!("{}  GitLab", icon::GITLAB_LOGO_SIMPLE);
+        let url = format!("{}  URL", icon::LINK);
+        widgets::segmented(
+            ui,
+            &mut self.source,
+            &[
+                (UrlSource::GitHub, github.as_str()),
+                (UrlSource::GitLab, gitlab.as_str()),
+                (UrlSource::Url, url.as_str()),
+            ],
+        );
         ui.add_space(8.0);
         match self.source {
             UrlSource::Url => {
@@ -86,18 +89,18 @@ impl UrlBuilder {
                     "group/subgroup/project"
                 };
                 field(ui, "Project", &mut self.project, hint, focus);
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.ssh, false, "HTTPS");
-                    ui.selectable_value(&mut self.ssh, true, "SSH");
-                });
+                widgets::segmented(ui, &mut self.ssh, &[(false, "HTTPS"), (true, "SSH")]);
                 ui.add_space(4.0);
                 match self.resolve() {
-                    Some(u) => {
-                        ui.label(RichText::new(u).monospace().size(11.5).color(p.text_faint))
-                    }
+                    Some(u) => ui.label(
+                        RichText::new(u)
+                            .monospace()
+                            .size(theme::SMALL_SIZE)
+                            .color(p.text_faint),
+                    ),
                     None if !self.project.trim().is_empty() => ui.label(
                         RichText::new("Use the form owner/repository")
-                            .size(12.0)
+                            .size(theme::META_SIZE)
                             .color(p.danger),
                     ),
                     None => ui.label(""),

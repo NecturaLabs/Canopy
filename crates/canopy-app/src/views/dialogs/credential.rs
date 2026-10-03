@@ -34,7 +34,11 @@ pub(super) fn credential(
     } else {
         "Git asks:"
     };
-    ui.label(RichText::new(asker).size(12.0).color(p.text_dim));
+    ui.label(
+        RichText::new(asker)
+            .size(theme::META_SIZE)
+            .color(p.text_dim),
+    );
     ui.add_space(4.0);
     egui::Frame::new()
         .fill(p.panel)
@@ -49,7 +53,7 @@ pub(super) fn credential(
                     ui.add(
                         egui::Label::new(
                             RichText::new(&prompt.text)
-                                .font(FontId::monospace(12.0))
+                                .font(FontId::monospace(theme::MONO_SIZE))
                                 .color(p.text),
                         )
                         .wrap(),
@@ -72,7 +76,7 @@ pub(super) fn credential(
                     egui::TextEdit::singleline(answer)
                         .password(secret && !*reveal)
                         .desired_width(width)
-                        .margin(egui::Margin::symmetric(8, 6)),
+                        .margin(theme::FIELD_MARGIN),
                 );
                 if ui.memory(|m| m.focused().is_none()) {
                     r.request_focus();
@@ -93,7 +97,7 @@ pub(super) fn credential(
                 }
             });
             ui.add_space(4.0);
-            ui.label(RichText::new("Canopy hands this to git and does not keep it. Your git credential helper may save it.").size(12.0).color(p.text_faint));
+            ui.label(RichText::new("Canopy hands this to git and does not keep it. Your git credential helper may save it.").size(theme::META_SIZE).color(p.text_faint));
             ui.add_space(14.0);
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -114,7 +118,7 @@ pub(super) fn credential(
         }
         PromptKind::YesNo | PromptKind::Approve | PromptKind::Notice => {
             if prompt.kind == PromptKind::YesNo {
-                ui.label(RichText::new("Only trust the host if its fingerprint matches the one its owner publishes (GitHub and GitLab list theirs in their documentation).").size(12.5).color(p.text_dim));
+                ui.label(RichText::new("Only trust the host if its fingerprint matches the one its owner publishes (GitHub and GitLab list theirs in their documentation).").size(theme::META_SIZE).color(p.text_dim));
                 ui.add_space(14.0);
             }
             let (yes, no, yes_answer) = if prompt.kind == PromptKind::YesNo {

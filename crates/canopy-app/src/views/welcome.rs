@@ -55,12 +55,12 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new("Canopy")
-                        .font(FontId::new(38.0, theme::semibold()))
+                        .font(FontId::new(theme::HERO_SIZE, theme::semibold()))
                         .color(p.text),
                 );
                 ui.label(
                     RichText::new("A fast, beautiful, Linux-first Git client")
-                        .size(15.0)
+                        .size(theme::TITLE_SIZE)
                         .color(p.text_dim),
                 );
                 ui.add_space(theme::LG);
@@ -199,7 +199,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                         "{} for the command palette   ·   ? for keyboard shortcuts",
                         hint(Command::Palette)
                     ))
-                    .size(12.0)
+                    .size(theme::META_SIZE)
                     .color(p.text_faint),
                 );
             });
@@ -224,7 +224,7 @@ fn intro(ui: &mut Ui, width: f32, actions: &mut Vec<Action>) {
                         ui.label(RichText::new(icon::LIGHTBULB).size(18.0).color(p.accent));
                         ui.label(
                             RichText::new("Canopy is keyboard-first")
-                                .font(FontId::new(14.0, theme::semibold())),
+                                .font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold())),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("Got it").clicked() {
@@ -238,7 +238,7 @@ fn intro(ui: &mut Ui, width: f32, actions: &mut Vec<Action>) {
                         "?  shows every shortcut. 1 / 2 / 3 switch views, j / k move, f / p / P fetch, pull, push.".to_owned(),
                         format!("Settings ({}) has themes, Git defaults and your GitHub / GitLab tokens for pull requests.", hint(Command::Settings)),
                     ] {
-                        ui.label(RichText::new(line).size(12.5).color(p.text_dim));
+                        ui.label(RichText::new(line).size(theme::META_SIZE).color(p.text_dim));
                     }
                 });
         },
@@ -300,11 +300,11 @@ fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) ->
             r.right_top() + vec2(-14.0, 28.0),
             Align2::RIGHT_CENTER,
             keys,
-            FontId::monospace(10.5),
+            FontId::monospace(theme::MONO_SMALL_SIZE),
             p.text_faint,
         );
     }
-    resp.on_hover_text(sub).clicked()
+    resp.clicked()
 }
 
 #[cfg(test)]
