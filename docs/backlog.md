@@ -6,15 +6,13 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Now
 
-- [ ] Partial clones: trusted locations. Downloads (which run the repository's own git config)
-      only for repositories under folders trusted in Settings; compare canonicalized paths in the
-      worker; a "Trust…" button offering the repository's folder or its parent; privacy text.
-      Built and checked live on branch `feature/trusted-folders` (not merged: its second external
-      review could not run, the Codex usage limit; the remaining work is in the
-      HANDOFF-trusted-folders note under docs/specs on that branch).
 - [ ] Partial clones: remember a failed download until Retry (no retry on every refresh); a fetch
       timeout; a Retry for failed diffs; a "not downloaded" marker per file; offer to convert a
       `LegacyPartialClone`, behind a confirmation.
+- [ ] Trusted folders (ADR 0009): a linked worktree needs its own folder and the folder of its main
+      repository trusted, but the Trust… dialog offers only the opened folder and its parent
+      (pass the common git directory with `Event::DownloadsRefused` to offer both). Check on macOS
+      and Windows that paths compare by the same spelling on a case-insensitive volume.
 - [ ] Real art in place of every SVG (owner's decisions): generate the app icon, logo mark,
       welcome backdrop and four spot illustrations (`docs/art-prompts.md`) with Codex
       (`codex exec -m gpt-6-sol`, medium effort, at most 2 calls at once); accept only art that is
