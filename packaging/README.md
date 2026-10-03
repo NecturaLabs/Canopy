@@ -11,7 +11,7 @@ besides the binary lives here and in `assets/`.
 | `linux/io.necturalabs.Canopy.desktop` | freedesktop.org desktop entry. The app ID, the icon name and `StartupWMClass` are all `io.necturalabs.Canopy`, which must match the Wayland app ID / X11 `WM_CLASS` the binary sets. The installer rewrites `Exec=` to the absolute path of the installed binary. |
 | `linux/io.necturalabs.Canopy.metainfo.xml` | AppStream metadata for software centres. The release workflow adds this build's `<release>` entry to the copy in the archive; the file in the repository needs none. |
 | `macos/Info.plist` | `Info.plist` of `Canopy.app` (bundle id `io.necturalabs.Canopy`); the release fills in `@BUILD@` (the build number) as both bundle versions. |
-| `../assets/icon.svg`, `../assets/icon-{64,256,512}.png` | Application icon. Linux archives carry the SVG and the 256 px PNG; the macOS `.icns` is generated from the 512 px PNG during the release. |
+| `../assets/icon-{64,256,512}.png` | Application icon. Linux archives carry the 256 px PNG; the macOS `.icns` is generated from the 512 px PNG during the release. |
 
 ## The one-line installers
 
@@ -179,7 +179,7 @@ yet in `install.ps1` (`docs/backlog.md`).
 `LICENSE`, `legal/` and:
 
 - Linux (`x86_64-unknown-linux-gnu`; `aarch64-unknown-linux-gnu` cross-compiled, experimental):
-  `canopy`, the desktop entry, the metainfo, `io.necturalabs.Canopy.svg` and `.png`.
+  `canopy`, the desktop entry, the metainfo, and `io.necturalabs.Canopy.png`.
 - macOS (`aarch64-apple-darwin`; `x86_64-apple-darwin` cross-compiled, experimental):
   `Canopy.app`, ad-hoc signed, not notarised. The installer downloads with curl, so Gatekeeper
   does not quarantine it; an archive downloaded in a browser needs right-click → Open the first

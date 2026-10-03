@@ -491,14 +491,10 @@ fn the_receipt_is_read_and_registered_copies_follow_the_new_files() {
                 "share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png",
                 "new png",
             ),
-            (
-                "share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg",
-                "new svg",
-            ),
         ],
     );
-    // What the old receipt registered: an entry that is ours, an icon, an icon that became a
-    // symlink, a link that still points at the install and an entry someone else took over.
+    // What the old receipt registered: an entry that is ours, an icon, the scalable icon earlier
+    // builds shipped, now a symlink, a link that still points at the install and an entry someone else took over.
     write(&entry, &format!("old desktop\n{marker}\n"));
     write(&png, "old png");
     write(&foreign_entry, "someone else's\n");
@@ -539,11 +535,14 @@ fn the_receipt_is_read_and_registered_copies_follow_the_new_files() {
         "not ours: untouched"
     );
     #[cfg(unix)]
-    assert_eq!(
-        read(&tmp.path().join("elsewhere.svg")),
-        "elsewhere",
-        "never written through a symlink"
-    );
+    {
+        assert_eq!(
+            read(&tmp.path().join("elsewhere.svg")),
+            "elsewhere",
+            "never written through a symlink"
+        );
+        assert!(is_symlink(&svg), "a symlink is never removed");
+    }
     let receipt = parse_receipt(&read(&root.join(RECEIPT)));
     assert_eq!(receipt.desktops, vec![entry.clone()]);
     assert_eq!(receipt.icons.len(), 1);
@@ -551,8 +550,50 @@ fn the_receipt_is_read_and_registered_copies_follow_the_new_files() {
     #[cfg(unix)]
     assert_eq!(receipt.links, vec![link]);
     assert!(read(&root.join(RECEIPT)).contains(&format!("root={}\nversion=413\n", root.display())));
-    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(!root.join(".canopy-install.new").exists());
+}
+
+#[test]
+fn the_scalable_icon_earlier_builds_registered_is_removed() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    let data = tmp.path().join("data");
+    let png = data.join("icons/hicolor/256x256/apps/io.necturalabs.Canopy.png");
+    let svg = data.join("icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
+    let other = data.join("icons/hicolor/scalable/apps/other.svg");
+    folder(
+        &root,
+        &[(
+            "share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png",
+            "new png",
+        )],
+    );
+    write(&png, "old png");
+    write(&svg, "old svg");
+    write(&other, "someone else's");
+    let old = parse_receipt(&format!(
+        "icon={}|{}\nicon={}|{}\nicon={}|{}\n",
+        png.display(),
+        root.join("share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png")
+            .display(),
+        svg.display(),
+        root.join("share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg")
+            .display(),
+        other.display(),
+        root.join("share/icons/hicolor/scalable/apps/other.svg")
+            .display(),
+    ));
+
+    let mut notes = Vec::new();
+    integrate(&root, 413, &old, &mut notes);
+
+    assert_eq!(read(&png), "new png");
+    assert!(!exists(&svg), "the old scalable icon is gone");
+    assert_eq!(read(&other), "someone else's", "only Canopy's own icon");
+    let receipt = parse_receipt(&read(&root.join(RECEIPT)));
+    assert_eq!(receipt.icons.len(), 1);
+    assert!(notes.is_empty(), "{notes:?}");
 }
 
 // ---------------------------------------------------------------------------------------------

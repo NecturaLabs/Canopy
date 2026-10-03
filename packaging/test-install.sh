@@ -100,7 +100,6 @@ make_release() {
     cp "$root/packaging/linux/io.necturalabs.Canopy.desktop" "$root/packaging/linux/io.necturalabs.Canopy.metainfo.xml" "$d/"
     # A second group with its own Exec=, which the installer must leave alone.
     printf '\n[Desktop Action new-window]\nName=New Window\nExec=canopy --new-window\n' >>"$d/io.necturalabs.Canopy.desktop"
-    cp "$root/assets/icon.svg" "$d/io.necturalabs.Canopy.svg"
     cp "$root/assets/icon-256.png" "$d/io.necturalabs.Canopy.png"
     rel=$srv/releases/download/canopy-build-$v
     mkdir -p "$rel"
@@ -280,13 +279,23 @@ linux_flow() {
     check "desktop action keeps its own Exec" grep -qxF "Exec=canopy --new-window" "$apps"
     check "install marker inside [Desktop Entry]" marker_in_main_group "$apps" "X-Canopy-Install-Dir=$opt"
     check "icons registered" [ -f "$icon" ]
-    check "icons registered (2)" [ -f "$svg" ]
+    check "no scalable icon any more" [ ! -e "$svg" ]
     check "no staging left" no_leftovers "$opt"
     check "PATH note shown" out_has "is not on your PATH"
     check "git reported" out_has "git:"
     check "checksum reported" out_has "Checksum verified"
     outside=$(cd "$home" && find . \( -type f -o -type l \) | grep -v '^\./\.local/opt/canopy/' | sort | tr '\n' ' ')
-    check "nothing else written outside the install folder ($outside)" [ "$outside" = "./.local/bin/canopy ./.local/share/applications/io.necturalabs.Canopy.desktop ./.local/share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png ./.local/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg " ]
+    check "nothing else written outside the install folder ($outside)" [ "$outside" = "./.local/bin/canopy ./.local/share/applications/io.necturalabs.Canopy.desktop ./.local/share/icons/hicolor/256x256/apps/io.necturalabs.Canopy.png " ]
+
+    echo "== the scalable icon earlier builds registered"
+    printf 'icon=%s|%s\n' "$svg" "$opt/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg" >>"$opt/.canopy-install"
+    mkdir -p "$(dirname "$svg")"
+    echo "old svg" >"$svg"
+    run_status
+    check "install exits 0" [ "$status" = 0 ]
+    check "old scalable icon removed" [ ! -e "$svg" ]
+    check "and dropped from the receipt" [ -z "$(grep -F "$svg" "$opt/.canopy-install")" ]
+    rmdir "$(dirname "$svg")" "$(dirname "$(dirname "$svg")")"
 
     echo "== reinstall (idempotent)"
     before=$(cd "$home" && find . | sort)
