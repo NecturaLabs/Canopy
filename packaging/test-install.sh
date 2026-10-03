@@ -503,6 +503,16 @@ linux_flow() {
     rm -rf "$opt"
     run_status
 
+    echo "== a shell without test -O refuses to uninstall instead of skipping the owner check"
+    # -Z is no operator in any shell, so the mutated copy behaves like a shell that lacks -O.
+    sed 's/\[ -O /[ -Z /g' "$installer" >"$tmp/install-no-owner-test.sh"
+    check "the mutated copy has no -O test left" [ -z "$(grep -F '[ -O ' "$tmp/install-no-owner-test.sh" || true)" ]
+    run_raw "$SH" "$tmp/install-no-owner-test.sh" --uninstall
+    check "uninstall is refused" [ "$status" != 0 ]
+    check "it says why" out_has "belongs to another user"
+    check "the install folder is untouched" [ -x "$opt/bin/canopy" ]
+    rm -f "$tmp/install-no-owner-test.sh"
+
     echo "== a crafted receipt cannot make uninstall delete other files"
     echo "keep me" >"$home/victim.png"
     printf '[Desktop Entry]\nX-Canopy-Install-Dir=%s\n' "$opt" >"$home/victim.desktop"
