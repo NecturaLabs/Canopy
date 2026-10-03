@@ -47,6 +47,11 @@ partial clone opened for the first time shows only what is on disk until the use
   once more, and a read that core stopped because trust was withdrawn in between is reported as a
   refusal (with the Trust… chip), not as a failed download. A download already running when trust
   is withdrawn finishes: it was allowed when it began, and a running git cannot be recalled.
+- The gate answers for the repository Canopy opened, so git must work in that one: commands
+  run in its working directory with the environment's repository variables removed
+  (`GIT_DIR`, `GIT_WORK_TREE`, ... in `cli.rs`). Without that, a Canopy started by a git alias
+  or hook inside another repository would fetch in that repository while the gate approved the
+  tab's. libgit2 reads none of them, so Canopy never meant them to apply.
 - A refusal reaches the tab stamped with the version of the list that made it. A tab that has
   since been told of a newer list reads again instead of showing the refusal, so a refusal the
   change overtook never leaves the status bar chip behind, and one the new list made shows at once.

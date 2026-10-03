@@ -66,8 +66,32 @@ pub fn command(workdir: Option<&Path>) -> Command {
     cmd
 }
 
-/// Sets the non-interactive environment, and the registered [`Askpass`] if any, on `cmd`.
+/// The variables that point git at a repository or reshape its object store
+/// (`git rev-parse --local-env-vars`, less the configuration ones, which belong to the user).
+/// Canopy picks the repository by the working directory it gives a command, and libgit2 reads
+/// none of these. One inherited from the environment (a git alias or hook that starts Canopy sets
+/// `GIT_DIR`) would send a command to another repository than the one Canopy checked and shows.
+const REPOSITORY_ENV: [&str; 12] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_DIR",
+    "GIT_GRAFT_FILE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PREFIX",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_SHALLOW_FILE",
+    "GIT_WORK_TREE",
+];
+
+/// Sets the non-interactive environment, and the registered [`Askpass`] if any, on `cmd`, and
+/// keeps the repository variables of Canopy's own environment out of it.
 pub(crate) fn apply_env(cmd: &mut Command) {
+    for key in REPOSITORY_ENV {
+        cmd.env_remove(key);
+    }
     cmd.env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_EDITOR", "true")
         .env("GIT_MERGE_AUTOEDIT", "no");
@@ -664,6 +688,56 @@ mod tests {
             .find(|(k, _)| *k == OsStr::new(key))
             .and_then(|(_, v)| v)
             .map(|v| v.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn a_repository_chosen_by_the_environment_does_not_reach_git() {
+        let git = |dir: &Path, args: &[&str]| {
+            let out = Command::new("git")
+                .current_dir(dir)
+                .args(args)
+                .output()
+                .expect("git runs");
+            assert!(out.status.success(), "git {args:?}");
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+        let (mine, other) = (
+            tempfile::tempdir().expect("tempdir"),
+            tempfile::tempdir().expect("tempdir"),
+        );
+        git(mine.path(), &["init", "-q"]);
+        git(other.path(), &["init", "-q"]);
+
+        // As if Canopy had been started by a git alias inside `other`: every variable set.
+        let inherited: Vec<(&str, String)> = REPOSITORY_ENV
+            .iter()
+            .map(|key| (*key, other.path().join(".git").display().to_string()))
+            .collect();
+        let mut cmd = Command::new("git");
+        for (key, value) in &inherited {
+            cmd.env(key, value);
+        }
+        apply_env(&mut cmd);
+        for key in REPOSITORY_ENV {
+            assert!(
+                cmd.get_envs()
+                    .any(|(k, v)| k == OsStr::new(key) && v.is_none()),
+                "{key} is kept out of the command"
+            );
+        }
+        // Run for real the way `command` does: `mine` is where git works, whatever the
+        // environment said.
+        let out = cmd
+            .current_dir(mine.path())
+            .args(["rev-parse", "--absolute-git-dir"])
+            .output()
+            .expect("git runs");
+        assert!(out.status.success());
+        let found = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        assert_eq!(
+            found.canonicalize().expect("exists"),
+            mine.path().join(".git").canonicalize().expect("exists")
+        );
     }
 
     #[test]

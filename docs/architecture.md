@@ -49,7 +49,7 @@ UI-agnostic and synchronous. It returns plain data and never spawns threads of i
 | `submodule.rs` | Submodule status, update, sync, add and remove, and the commit pair a submodule's diff shows. |
 | `forge.rs` | Recognises GitHub and GitLab remotes and builds their web, request and clone URLs. Pure string handling; credentials in a remote URL are dropped, never emitted. |
 | `update.rs` | Build numbers for the update check: `parse_build` reads one (digits only; a semantic version has none) and `is_newer` orders builds as integers. |
-| `cli.rs` | Runs the `git` executable non-interactively (`GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`, no console window on Windows), returns git's stderr on failure and streams `--progress` output line by line for long operations. Registers Canopy's askpass hook and redacts URLs and arguments for the log (`redact_url`, `loggable`). |
+| `cli.rs` | Runs the `git` executable non-interactively (`GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true`, no console window on Windows), returns git's stderr on failure and streams `--progress` output line by line for long operations. Keeps the environment's repository variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the rest of `git rev-parse --local-env-vars` but the configuration ones) away from git, so a command works in the repository Canopy gave it, the one it checked and shows. Registers Canopy's askpass hook and redacts URLs and arguments for the log (`redact_url`, `loggable`). |
 
 The app still calls `delete_branch(name, force)` and `stage_all()`, thin wrappers over the newer
 calls. It does not yet use `ignore.rs`, `flow.rs`, `merged.rs`, `lfs.rs`, `submodule.rs`,
