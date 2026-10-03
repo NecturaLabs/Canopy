@@ -42,12 +42,18 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            // Sit the whole stack a little above the middle, from its height last frame; a tall
+            // window otherwise leaves everything in its upper half.
+            let height_id = egui::Id::new("welcome-content-height");
+            let last: f32 = ui.ctx().data(|d| d.get_temp(height_id)).unwrap_or(0.0);
+            let top = if rect.height() < 400.0 {
+                theme::XS
+            } else {
+                ((rect.height() - last) * 0.42).max((rect.height() * 0.04).max(theme::LG))
+            };
+            let start = ui.cursor().top();
             ui.vertical_centered(|ui| {
-                ui.add_space(if rect.height() < 400.0 {
-                    theme::XS
-                } else {
-                    (rect.height() * 0.04).max(theme::LG)
-                });
+                ui.add_space(top);
                 let art_w = (rect.width() * 0.5)
                     .min(rect.height() * if rect.height() < 400.0 { 0.30 } else { 0.50 })
                     .clamp(120.0, 520.0);
@@ -55,12 +61,12 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new("Canopy")
-                        .font(FontId::new(38.0, theme::semibold()))
+                        .font(FontId::new(theme::HERO_SIZE, theme::semibold()))
                         .color(p.text),
                 );
                 ui.label(
                     RichText::new("A fast, beautiful, Linux-first Git client")
-                        .size(15.0)
+                        .size(theme::TITLE_SIZE)
                         .color(p.text_dim),
                 );
                 ui.add_space(theme::LG);
@@ -199,10 +205,15 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                         "{} for the command palette   ·   ? for keyboard shortcuts",
                         hint(Command::Palette)
                     ))
-                    .size(12.0)
+                    .size(theme::META_SIZE)
                     .color(p.text_faint),
                 );
             });
+            let used = ui.cursor().top() - start - top;
+            if (used - last).abs() > 0.5 {
+                ui.ctx().data_mut(|d| d.insert_temp(height_id, used));
+                ui.ctx().request_repaint();
+            }
         });
 }
 
@@ -224,7 +235,7 @@ fn intro(ui: &mut Ui, width: f32, actions: &mut Vec<Action>) {
                         ui.label(RichText::new(icon::LIGHTBULB).size(18.0).color(p.accent));
                         ui.label(
                             RichText::new("Canopy is keyboard-first")
-                                .font(FontId::new(14.0, theme::semibold())),
+                                .font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold())),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("Got it").clicked() {
@@ -238,7 +249,7 @@ fn intro(ui: &mut Ui, width: f32, actions: &mut Vec<Action>) {
                         "?  shows every shortcut. 1 / 2 / 3 switch views, j / k move, f / p / P fetch, pull, push.".to_owned(),
                         format!("Settings ({}) has themes, Git defaults and your GitHub / GitLab tokens for pull requests.", hint(Command::Settings)),
                     ] {
-                        ui.label(RichText::new(line).size(12.5).color(p.text_dim));
+                        ui.label(RichText::new(line).size(theme::META_SIZE).color(p.text_dim));
                     }
                 });
         },
@@ -300,11 +311,11 @@ fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) ->
             r.right_top() + vec2(-14.0, 28.0),
             Align2::RIGHT_CENTER,
             keys,
-            FontId::monospace(10.5),
+            FontId::monospace(theme::MONO_SMALL_SIZE),
             p.text_faint,
         );
     }
-    resp.on_hover_text(sub).clicked()
+    resp.clicked()
 }
 
 #[cfg(test)]

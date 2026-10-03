@@ -9,7 +9,7 @@ use egui::{Align2, Color32, CornerRadius, FontId, Rect, RichText, Sense, Stroke,
 use egui_phosphor::regular as icon;
 
 use canopy_core::ops::HunkAction;
-use canopy_core::{DiffLine, DiffSource, FileDiff, Hunk, LineKind};
+use canopy_core::{ChangeKind, DiffLine, DiffSource, FileDiff, Hunk, LineKind};
 
 use crate::action::Action;
 use crate::highlight::{Highlights, Span, Token};
@@ -272,9 +272,12 @@ fn click_line(
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let Some(sel) = tab.file.clone() else {
-        ui.centered_and_justified(|ui| {
-            ui.label(RichText::new("Select a file to see its diff").color(p.text_faint))
-        });
+        // A clean tree has nothing to select: the list beside this already says so.
+        if !tab.snap.as_ref().is_some_and(|s| s.status.is_clean()) {
+            ui.centered_and_justified(|ui| {
+                ui.label(RichText::new("Select a file to see its diff").color(p.text_faint))
+            });
+        }
         return;
     };
     header(ui, tab, &sel, actions);
@@ -321,7 +324,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         return;
     };
     let num_w = layout.digits as f32 * 7.6 + 12.0;
-    let mono = FontId::monospace(12.5);
+    let mono = FontId::monospace(theme::MONO_SIZE);
     let char_w = ui.fonts_mut(|f| f.glyph_width(&mono, 'm'));
     let longest = layout.columns as f32;
     let content_w = if split {
@@ -388,6 +391,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         ) {
                             click_line(line_sel, hunk, h, l, m);
                         }
+                        // Gutter separator, per line so it never crosses a hunk header.
+                        ui.painter().vline(
+                            origin.x + num_w * 2.0 + 2.0,
+                            rect.y_range(),
+                            Stroke::new(1.0, p.border),
+                        );
                     }
                     Row::Pair(h, left, right) => {
                         let hunk = &d.hunks[h];
@@ -439,16 +448,35 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                 }
             }
-            if !split {
-                // Gutter separator.
-                let gx = origin.x + num_w * 2.0 + 2.0;
-                ui.painter().vline(
-                    gx,
-                    (origin.y + viewport.min.y)..=(origin.y + viewport.max.y),
-                    Stroke::new(1.0, p.border),
-                );
+            if split && !d.hunks.is_empty() {
+                // A side that is only filler: say why once, instead of leaving it blank.
+                if let Some((at, text)) = empty_side(&d) {
+                    let shown = viewport.translate(origin.to_vec2());
+                    ui.painter().text(
+                        pos2(
+                            origin.x + content_w * at,
+                            shown.top().max(origin.y)
+                                + shown.height().min(layout.total_height()) / 2.0,
+                        ),
+                        Align2::CENTER_CENTER,
+                        text,
+                        FontId::proportional(theme::SMALL_SIZE),
+                        p.text_faint,
+                    );
+                }
             }
         });
+}
+
+/// Where a side-by-side diff has a side that is only filler, and what to say there: the horizontal
+/// centre of that side as a fraction of the width, and the note.
+/// Hunks alone cannot tell: without context lines a modified file's hunks can all be insertions.
+fn empty_side(d: &FileDiff) -> Option<(f32, &'static str)> {
+    match d.kind? {
+        ChangeKind::Added | ChangeKind::Untracked => Some((0.25, "New file — nothing before")),
+        ChangeKind::Deleted => Some((0.75, "Deleted — nothing after")),
+        _ => None,
+    }
 }
 
 /// The file header: name, counts, layout and options, and the file-level action.
@@ -476,7 +504,7 @@ fn header(
                 ui.add(
                     egui::Label::new(
                         RichText::new(name)
-                            .font(FontId::new(13.5, theme::semibold()))
+                            .font(FontId::new(theme::LEAD_SIZE, theme::semibold()))
                             .color(p.text),
                     )
                     .truncate(),
@@ -484,8 +512,12 @@ fn header(
                 .on_hover_text(&sel.entry.path);
                 if !dir.is_empty() {
                     ui.add(
-                        egui::Label::new(RichText::new(dir).size(12.0).color(p.text_faint))
-                            .truncate(),
+                        egui::Label::new(
+                            RichText::new(dir)
+                                .size(theme::META_SIZE)
+                                .color(p.text_faint),
+                        )
+                        .truncate(),
                     )
                     .on_hover_text(dir);
                 }
@@ -493,7 +525,7 @@ fn header(
                     ui.add(
                         egui::Label::new(
                             RichText::new(format!("← {old}"))
-                                .size(12.0)
+                                .size(theme::META_SIZE)
                                 .color(p.text_faint),
                         )
                         .truncate(),
@@ -512,18 +544,22 @@ fn header(
                     .filter(|_| tab.highlight_diff)
                     .map(|h| h.language.clone())
                 {
-                    ui.label(RichText::new(lang).size(11.5).color(p.text_faint));
+                    ui.label(
+                        RichText::new(lang)
+                            .size(theme::SMALL_SIZE)
+                            .color(p.text_faint),
+                    );
                 }
                 if let Some(d) = &tab.diff {
                     ui.label(
                         RichText::new(format!("+{}", d.additions))
                             .color(p.success)
-                            .size(12.0),
+                            .size(theme::META_SIZE),
                     );
                     ui.label(
                         RichText::new(format!("−{}", d.deletions))
                             .color(p.danger)
-                            .size(12.0),
+                            .size(theme::META_SIZE),
                     );
                 }
                 let path = sel.entry.path.clone();
@@ -610,30 +646,10 @@ fn header(
 
 /// Unified / side-by-side switch.
 fn layout_toggle(ui: &mut Ui, split: bool, actions: &mut Vec<Action>) {
-    let p = palette(ui.ctx());
-    ui.spacing_mut().item_spacing.x = 2.0;
-    for (value, glyph, tip) in [
-        (true, icon::COLUMNS, "Side by side"),
-        (false, icon::ROWS, "Unified"),
-    ]
-    .iter()
-    .copied()
-    {
-        let on = split == value;
-        let r = ui
-            .add(egui::Button::selectable(
-                on,
-                RichText::new(glyph)
-                    .size(14.0)
-                    .color(if on { p.accent } else { p.text_dim }),
-            ))
-            .on_hover_text(tip);
-        r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, tip));
-        if r.clicked() && !on {
-            actions.push(Action::SetSplitDiff(value));
-        }
+    let options = [(icon::ROWS, "Unified"), (icon::COLUMNS, "Side by side")];
+    if let Some(i) = widgets::icon_segmented(ui, usize::from(split), &options) {
+        actions.push(Action::SetSplitDiff(i == 1));
     }
-    ui.spacing_mut().item_spacing.x = 8.0;
 }
 
 /// Paints one line (or one side of a pair). Returns the click modifiers when the user picked it.
@@ -690,7 +706,7 @@ fn line_cell(
         );
     }
     let cy = rect.center().y;
-    let nf = FontId::monospace(11.5);
+    let nf = FontId::monospace(theme::MONO_SMALL_SIZE);
     let mut x = rect.min.x;
     if show_old {
         if let Some(n) = line.old_no {
@@ -769,7 +785,7 @@ fn hunk_header(
             pos2(visible_left + theme::MD, band.center().y),
             Align2::LEFT_CENTER,
             &hunk.header,
-            FontId::monospace(theme::SMALL_SIZE),
+            FontId::monospace(theme::MONO_SMALL_SIZE),
             p.text_dim,
         );
         return;
@@ -791,18 +807,21 @@ fn hunk_header(
         } else {
             right
         };
-        ui.painter()
-            .with_clip_rect(ui.clip_rect().intersect(Rect::from_min_max(
-                pos2(visible_left, band.min.y),
-                pos2(header_right, band.max.y),
-            )))
-            .text(
-                pos2(visible_left + theme::MD, band.center().y),
-                Align2::LEFT_CENTER,
-                &hunk.header,
-                FontId::monospace(theme::SMALL_SIZE),
-                p.text_dim,
-            );
+        let header = widgets::single_line_galley(
+            ui,
+            hunk.header.clone(),
+            FontId::monospace(theme::MONO_SMALL_SIZE),
+            p.text_dim,
+            header_right - (visible_left + theme::MD),
+        );
+        ui.painter().galley(
+            pos2(
+                visible_left + theme::MD,
+                band.center().y - header.size().y / 2.0,
+            ),
+            header,
+            p.text_dim,
+        );
         if show_note {
             ui.painter().text(
                 pos2(right, band.center().y),
@@ -865,9 +884,11 @@ fn hunk_header(
         } else {
             format!("{glyph}  {label}")
         };
-        let g = ui
-            .painter()
-            .layout_no_wrap(text, FontId::new(12.0, theme::medium()), p.text);
+        let g = ui.painter().layout_no_wrap(
+            text,
+            FontId::new(theme::META_SIZE, theme::medium()),
+            p.text,
+        );
         let br = Rect::from_min_max(
             pos2(bx - g.size().x - 16.0, band.min.y + 2.0),
             pos2(bx, band.max.y - 2.0),
@@ -947,24 +968,25 @@ fn hunk_header(
         }
         bx = br.min.x - 8.0;
     }
-    ui.painter()
-        .with_clip_rect(Rect::from_min_max(
-            pos2(visible_left, band.min.y),
-            pos2(bx - theme::SM, band.max.y),
-        ))
-        .text(
-            pos2(visible_left + 12.0, band.center().y),
-            Align2::LEFT_CENTER,
-            &hunk.header,
-            FontId::monospace(11.5),
-            p.accent.lerp_to_gamma(p.text_dim, 0.4),
-        );
+    let ink = p.accent.lerp_to_gamma(p.text_dim, 0.4);
+    let header = widgets::single_line_galley(
+        ui,
+        hunk.header.clone(),
+        FontId::monospace(theme::MONO_SMALL_SIZE),
+        ink,
+        bx - theme::SM - (visible_left + 12.0),
+    );
+    ui.painter().galley(
+        pos2(visible_left + 12.0, band.center().y - header.size().y / 2.0),
+        header,
+        ink,
+    );
     if n == 0 && h == 0 && bx - visible_left > 360.0 {
         ui.painter().text(
             pos2(bx - 6.0, band.center().y),
             Align2::RIGHT_CENTER,
             "Click lines to pick part of a hunk",
-            FontId::proportional(11.5),
+            FontId::proportional(theme::SMALL_SIZE),
             p.text_faint,
         );
     }
@@ -978,7 +1000,7 @@ fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let resp = ui
         .add(egui::Button::new(
             RichText::new(format!("{}  {}", icon::SLIDERS_HORIZONTAL, prefs.context))
-                .size(12.0)
+                .size(theme::META_SIZE)
                 .color(p.text_dim),
         ))
         .on_hover_text("Diff options: context lines and whitespace (this repository)");
@@ -986,12 +1008,20 @@ fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.set_min_width(230.0);
-            ui.label(RichText::new("Context lines").size(12.0).color(p.text_dim));
+            ui.label(
+                RichText::new("Context lines")
+                    .size(theme::META_SIZE)
+                    .color(p.text_dim),
+            );
             changed |= ui
                 .add(egui::Slider::new(&mut prefs.context, 0..=25))
                 .changed();
             ui.add_space(6.0);
-            ui.label(RichText::new("Whitespace").size(12.0).color(p.text_dim));
+            ui.label(
+                RichText::new("Whitespace")
+                    .size(theme::META_SIZE)
+                    .color(p.text_dim),
+            );
             for mode in WhitespaceMode::ALL {
                 changed |= ui
                     .radio_value(&mut prefs.whitespace, mode, mode.label())
@@ -1038,6 +1068,36 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn only_a_new_or_deleted_file_has_an_empty_side() {
+        let hunk = |old_lines, new_lines| Hunk {
+            header: String::new(),
+            old_start: 0,
+            old_lines,
+            new_start: 1,
+            new_lines,
+            lines: Vec::new(),
+        };
+        let diff = |kind, hunks| FileDiff {
+            kind: Some(kind),
+            hunks,
+            ..FileDiff::default()
+        };
+        assert_eq!(
+            empty_side(&diff(ChangeKind::Added, vec![hunk(0, 3)])).map(|n| n.0),
+            Some(0.25)
+        );
+        assert_eq!(
+            empty_side(&diff(ChangeKind::Deleted, vec![hunk(3, 0)])).map(|n| n.0),
+            Some(0.75)
+        );
+        // Without context lines, a modified file's hunks can all be pure insertions.
+        assert_eq!(
+            empty_side(&diff(ChangeKind::Modified, vec![hunk(0, 2), hunk(0, 1)])),
+            None
+        );
     }
 
     #[test]

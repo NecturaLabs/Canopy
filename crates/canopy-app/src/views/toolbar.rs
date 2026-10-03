@@ -36,7 +36,7 @@ pub fn tabs(
         ui.add_space(4.0);
         ui.label(
             RichText::new("Canopy")
-                .font(FontId::new(14.0, theme::semibold()))
+                .font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold()))
                 .color(p.text),
         );
         ui.add_space(14.0);
@@ -52,7 +52,7 @@ pub fn tabs(
                         let text = tab.name.clone();
                         let galley = ui.painter().layout_no_wrap(
                             text,
-                            FontId::new(13.0, theme::medium()),
+                            FontId::new(theme::BODY_SIZE, theme::medium()),
                             p.text,
                         );
                         // Commits to push and pull, like the status bar, so every tab shows its sync state.
@@ -63,7 +63,7 @@ pub fn tabs(
                             .filter(|b| b.upstream.is_some() && (b.ahead > 0 || b.behind > 0))
                             .map(|b| {
                                 let mut job = egui::text::LayoutJob::default();
-                                let font = FontId::new(11.5, theme::medium());
+                                let font = FontId::new(theme::SMALL_SIZE, theme::medium());
                                 if b.ahead > 0 {
                                     job.append(
                                         &format!("↑{}", b.ahead),
@@ -267,21 +267,21 @@ pub fn tabs(
                 rect.left_center() + vec2(14.0, 0.0),
                 Align2::CENTER_CENTER,
                 icon::MAGNIFYING_GLASS,
-                FontId::proportional(13.0),
+                FontId::proportional(theme::BODY_SIZE),
                 p.text_faint,
             );
             ui.painter().text(
                 rect.left_center() + vec2(28.0, 0.0),
                 Align2::LEFT_CENTER,
                 "Search commands",
-                FontId::proportional(12.5),
+                FontId::proportional(theme::META_SIZE),
                 p.text_faint,
             );
             ui.painter().text(
                 rect.right_center() - vec2(12.0, 0.0),
                 Align2::RIGHT_CENTER,
                 hint(Command::Palette),
-                FontId::monospace(11.0),
+                FontId::monospace(theme::MONO_SMALL_SIZE),
                 p.text_faint,
             );
             resp.widget_info(|| {
@@ -488,7 +488,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     ui.painter()
                         .layout_no_wrap(
                             format!("{}  Local only", icon::HARD_DRIVES),
-                            FontId::proportional(12.0),
+                            FontId::proportional(theme::META_SIZE),
                             p.accent2,
                         )
                         .size()
@@ -548,7 +548,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                         .show(ui, |ui| {
                             ui.label(
                                 RichText::new(format!("{}  Local only", icon::HARD_DRIVES))
-                                    .size(12.0)
+                                    .size(theme::META_SIZE)
                                     .color(p.accent2),
                             )
                         })
@@ -592,16 +592,21 @@ fn segmented(
         ));
     }
     let compact = ui.ctx().content_rect().width() < theme::COMPACT_WIDTH;
+    // Compact: only the active view keeps its name; the others show their glyph and count.
+    let caption = |v: View, glyph: &str, label: &str| {
+        if compact && v != view {
+            glyph.to_owned()
+        } else if compact && v == View::Requests {
+            format!("{glyph}  Requests")
+        } else {
+            format!("{glyph}  {label}")
+        }
+    };
     let widths: Vec<f32> = items
         .iter()
-        .map(|(view, glyph, label, count, _)| {
-            let label = if compact && *view == View::Requests {
-                "Requests"
-            } else {
-                label
-            };
+        .map(|(v, glyph, label, count, _)| {
             let text = ui.painter().layout_no_wrap(
-                format!("{glyph}  {label}"),
+                caption(*v, glyph, label),
                 FontId::new(theme::BODY_SIZE, theme::medium()),
                 p.text,
             );
@@ -654,12 +659,7 @@ fn segmented(
         } else {
             p.text_dim
         };
-        let display_label = if compact && v == View::Requests {
-            "Requests"
-        } else {
-            label
-        };
-        let text = format!("{glyph}  {display_label}");
+        let text = caption(v, glyph, label);
         let galley = ui.painter().layout_no_wrap(
             text,
             FontId::new(theme::BODY_SIZE, theme::medium()),
@@ -687,7 +687,7 @@ fn segmented(
                 } else {
                     count.to_string()
                 },
-                FontId::new(10.5, theme::semibold()),
+                FontId::new(theme::MICRO_SIZE, theme::semibold()),
                 p.on_button,
             );
         }

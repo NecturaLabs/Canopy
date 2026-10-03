@@ -61,7 +61,11 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
                 Phase::Installing => 0.92,
                 Phase::Finishing => 0.98,
             };
-            ui.add(egui::ProgressBar::new(fraction).desired_height(8.0));
+            ui.add(
+                egui::ProgressBar::new(fraction)
+                    .desired_height(8.0)
+                    .fill(p.accent),
+            );
             ui.add_space(6.0);
             let detail = match phase {
                 Phase::Downloading { done, total } if *done > 0 => {
@@ -69,11 +73,15 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
                 }
                 _ => phase.text(),
             };
-            ui.label(RichText::new(detail).size(12.5).color(p.text_dim));
+            ui.label(
+                RichText::new(detail)
+                    .size(theme::META_SIZE)
+                    .color(p.text_dim),
+            );
             ui.add_space(6.0);
             ui.label(
                 RichText::new("Canopy keeps working while it updates, and stays as it is if anything goes wrong.")
-                    .size(12.0)
+                    .size(theme::META_SIZE)
                     .color(p.text_faint),
             );
             ui.add_space(12.0);
@@ -104,7 +112,7 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(format!("{}  {note}", icon::WARNING))
-                        .size(12.0)
+                        .size(theme::META_SIZE)
                         .color(p.warning),
                 );
             }
@@ -136,7 +144,7 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
                     "You have {}.{released}",
                     crate::build_info::label()
                 ))
-                .size(12.5)
+                .size(theme::META_SIZE)
                 .color(p.text_dim),
             );
             ui.add_space(8.0);
@@ -166,12 +174,16 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
                 ),
                 Install::Other => "This copy was not put here by Canopy's installer. Updating runs the installer, which installs a copy of its own and leaves this one as it is.".to_owned(),
             };
-            ui.label(RichText::new(how).size(12.0).color(p.text_faint));
+            ui.label(
+                RichText::new(how)
+                    .size(theme::META_SIZE)
+                    .color(p.text_faint),
+            );
             if let InstallState::Failed { error, .. } = state {
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new(format!("{}  {error}", icon::WARNING))
-                        .size(12.0)
+                        .size(theme::META_SIZE)
                         .color(p.danger),
                 );
             }

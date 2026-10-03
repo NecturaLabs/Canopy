@@ -53,14 +53,14 @@ fn section(
         rect.left_center() + vec2(34.0, 0.0),
         Align2::LEFT_CENTER,
         title.to_uppercase(),
-        FontId::new(10.5, theme::semibold()),
+        FontId::new(theme::MICRO_SIZE, theme::semibold()),
         color,
     );
     ui.painter().text(
         rect.right_center() - vec2(8.0, 0.0),
         Align2::RIGHT_CENTER,
         count.to_string(),
-        FontId::new(11.0, theme::medium()),
+        FontId::new(theme::SMALL_SIZE, theme::medium()),
         p.text_faint,
     );
     if resp.clicked() {
@@ -118,9 +118,11 @@ fn row(ui: &mut Ui, r: Row<'_>) -> egui::Response {
     for (n, arrow, c) in [(r.behind, "↓", p.accent2), (r.ahead, "↑", p.success)] {
         if n > 0 {
             let t = format!("{arrow}{n}");
-            let g = ui
-                .painter()
-                .layout_no_wrap(t, FontId::new(10.5, theme::semibold()), c);
+            let g = ui.painter().layout_no_wrap(
+                t,
+                FontId::new(theme::MICRO_SIZE, theme::semibold()),
+                c,
+            );
             let br = egui::Rect::from_min_max(
                 egui::pos2(right - g.size().x - 10.0, rect.center().y - 8.0),
                 egui::pos2(right, rect.center().y + 8.0),
@@ -136,11 +138,12 @@ fn row(ui: &mut Ui, r: Row<'_>) -> egui::Response {
         egui::pos2(right, rect.max.y),
     );
     let font = if r.strong {
-        FontId::new(13.0, theme::semibold())
+        FontId::new(theme::BODY_SIZE, theme::semibold())
     } else {
-        FontId::proportional(13.0)
+        FontId::proportional(theme::BODY_SIZE)
     };
-    let g = ui.painter().layout_no_wrap(
+    let g = widgets::single_line_galley(
+        ui,
         r.label.to_owned(),
         font,
         if r.strong {
@@ -148,7 +151,9 @@ fn row(ui: &mut Ui, r: Row<'_>) -> egui::Response {
         } else {
             p.text_dim.lerp_to_gamma(p.text, 0.45 + hover * 0.4)
         },
+        text_rect.width(),
     );
+    let elided = g.elided;
     ui.painter().with_clip_rect(text_rect).galley(
         egui::pos2(text_rect.min.x, rect.center().y - g.size().y / 2.0),
         g,
@@ -156,6 +161,8 @@ fn row(ui: &mut Ui, r: Row<'_>) -> egui::Response {
     );
     match r.hint {
         Some(h) => resp.on_hover_text(h),
+        // A shortened name is shown in full on hover.
+        None if elided => resp.on_hover_text(r.label),
         None => resp,
     }
 }
@@ -247,7 +254,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 if resp.clicked() {
                     actions.push(Action::Publish);
                 }
-                if ui.add(egui::Button::new(RichText::new(format!("{}  Publish…", icon::CLOUD_ARROW_UP)).size(12.0).color(p.accent)).frame(false)).clicked() {
+                if ui.add(egui::Button::new(RichText::new(format!("{}  Publish…", icon::CLOUD_ARROW_UP)).size(theme::META_SIZE).color(p.accent)).frame(false)).clicked() {
                     actions.push(Action::Publish);
                 }
             }
@@ -322,7 +329,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     });
                 });
             }
-            if ui.add(egui::Button::new(RichText::new(format!("{}  Add remote", icon::PLUS)).size(12.0).color(p.text_dim)).frame(false)).clicked() {
+            if ui.add(egui::Button::new(RichText::new(format!("{}  Add remote", icon::PLUS)).size(theme::META_SIZE).color(p.text_dim)).frame(false)).clicked() {
                 actions.push(Action::AddRemoteDialog);
             }
             ui.add_space(8.0);

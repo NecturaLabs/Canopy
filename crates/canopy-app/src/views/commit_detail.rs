@@ -31,7 +31,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         ui.centered_and_justified(|ui| {
             if tab.selected_commit.is_some() {
                 ui.spinner();
-            } else {
+            } else if tab.snap.as_ref().is_some_and(|s| !s.commits.is_empty()) {
                 ui.label(RichText::new("Select a commit to see its changes").color(p.text_faint));
             }
         });
@@ -203,7 +203,9 @@ fn message(ui: &mut Ui, d: &CommitDetails) {
     );
     if !body.is_empty() {
         ui.add_space(theme::XS);
-        ui.add(egui::Label::new(RichText::new(body).color(p.text_dim).size(12.5)).wrap());
+        ui.add(
+            egui::Label::new(RichText::new(body).color(p.text_dim).size(theme::META_SIZE)).wrap(),
+        );
     }
 }
 
@@ -255,12 +257,16 @@ fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
                 } else {
                     "Parent"
                 })
-                .size(12.0)
+                .size(theme::META_SIZE)
                 .color(p.text_faint),
             );
             for parent in &d.parents {
                 if ui
-                    .link(RichText::new(short_id(*parent)).monospace().size(11.5))
+                    .link(
+                        RichText::new(short_id(*parent))
+                            .monospace()
+                            .size(theme::SMALL_SIZE),
+                    )
                     .clicked()
                 {
                     actions.push(Action::Reveal(*parent));
@@ -283,22 +289,26 @@ fn file_stats(ui: &mut Ui, d: &CommitDetails) {
                 d.files.len(),
                 if d.files.len() == 1 { "" } else { "s" }
             ))
-            .font(FontId::new(12.5, theme::semibold()))
+            .font(FontId::new(theme::META_SIZE, theme::semibold()))
             .color(p.text_dim),
         );
         if d.stats_known {
             ui.label(
                 RichText::new(format!("+{adds}"))
                     .color(p.success)
-                    .size(12.0),
+                    .size(theme::META_SIZE),
             );
-            ui.label(RichText::new(format!("−{dels}")).color(p.danger).size(12.0));
+            ui.label(
+                RichText::new(format!("−{dels}"))
+                    .color(p.danger)
+                    .size(theme::META_SIZE),
+            );
         } else {
             // A partial clone that has not downloaded the file contents.
             ui.label(
                 RichText::new("line counts not downloaded")
                     .color(p.text_faint)
-                    .size(11.5),
+                    .size(theme::SMALL_SIZE),
             )
             .on_hover_text(
                 "This is a partial clone: the line counts and renamed files \
@@ -338,9 +348,13 @@ fn failed(ui: &mut Ui, tab: &mut RepoTab, error: &DetailsError) {
                 art::show(ui, art::empty_error(), vec2(120.0, 90.0));
                 ui.label(
                     RichText::new(format!("Could not load commit {}", short_id(error.oid)))
-                        .font(FontId::new(14.0, theme::semibold())),
+                        .font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold())),
                 );
-                ui.label(RichText::new(&error.message).size(12.0).color(p.text_dim));
+                ui.label(
+                    RichText::new(&error.message)
+                        .size(theme::META_SIZE)
+                        .color(p.text_dim),
+                );
                 if error.can_download {
                     ui.add_space(8.0);
                     if ui
@@ -359,7 +373,9 @@ fn meta_row(ui: &mut Ui, glyph: &str, text: &str) {
     let p = palette(ui.ctx());
     ui.horizontal(|ui| {
         ui.label(RichText::new(glyph).color(p.text_faint));
-        ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.text_dim)).wrap());
+        ui.add(
+            egui::Label::new(RichText::new(text).size(theme::META_SIZE).color(p.text_dim)).wrap(),
+        );
     });
 }
 
@@ -432,7 +448,7 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egu
         badge.center(),
         Align2::CENTER_CENTER,
         f.kind.letter(),
-        FontId::new(11.0, theme::semibold()),
+        FontId::new(theme::SMALL_SIZE, theme::semibold()),
         color,
     );
     let (name, dir) = widgets::split_path(&f.path);
@@ -442,14 +458,14 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egu
             egui::pos2(right, rect.center().y),
             Align2::RIGHT_CENTER,
             format!("−{}", f.deletions),
-            FontId::proportional(11.5),
+            FontId::proportional(theme::SMALL_SIZE),
             p.danger,
         );
         let ag = ui.painter().text(
             egui::pos2(dg.min.x - 6.0, rect.center().y),
             Align2::RIGHT_CENTER,
             format!("+{}", f.additions),
-            FontId::proportional(11.5),
+            FontId::proportional(theme::SMALL_SIZE),
             p.success,
         );
         right = ag.min.x - 8.0;
@@ -459,7 +475,11 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egu
         egui::pos2(right, rect.max.y),
     );
     let painter = ui.painter().with_clip_rect(clip);
-    let ng = painter.layout_no_wrap(name.to_owned(), FontId::new(13.0, theme::medium()), p.text);
+    let ng = painter.layout_no_wrap(
+        name.to_owned(),
+        FontId::new(theme::BODY_SIZE, theme::medium()),
+        p.text,
+    );
     let nx = clip.min.x;
     painter.galley(
         egui::pos2(nx, rect.center().y - ng.size().y / 2.0),
@@ -471,7 +491,7 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egu
             egui::pos2(nx + ng.size().x + 8.0, rect.center().y),
             Align2::LEFT_CENTER,
             dir,
-            FontId::proportional(11.5),
+            FontId::proportional(theme::SMALL_SIZE),
             p.text_faint,
         );
     }

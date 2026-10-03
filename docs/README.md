@@ -22,7 +22,7 @@ in a document no longer exists.
 | Installers, packaging and the update feed | [../packaging/README.md](../packaging/README.md) |
 | What leaves the machine, and under which terms | [legal/privacy-policy.md](legal/privacy-policy.md), [legal/terms-of-service.md](legal/terms-of-service.md) |
 | How to check performance with 100 repositories open | [stress-test.md](stress-test.md) |
-| What art is wanted and what stands in for it | [art-prompts.md](art-prompts.md) |
+| How the illustrations and the app icon are made | [art-prompts.md](art-prompts.md) |
 | What changed in a release | [../CHANGELOG.md](../CHANGELOG.md) |
 
 ## How far to trust each kind

@@ -21,6 +21,7 @@ impl CanopyApp {
             shot.started = now;
         }
         let ready = self.pending_opens == 0
+            && !crate::ui::art::growing(ctx)
             && self.tabs.iter().all(|t| {
                 let requests_ready = t.view != View::Requests
                     || t.host.is_none()

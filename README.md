@@ -70,8 +70,8 @@ Screenshots are rendered by Canopy itself from the deterministic fixture reposit
 - **Workflow**: command palette for every command and branch checkout, keyboard shortcuts with a
   cheatsheet, toasts that carry git's own error output, automatic refresh on file changes and
   window focus, status bar with branch, ahead/behind, repository state and the running job.
-- **Appearance and settings**: seven themes (Midnight, the default, then Daylight, Aurora, Ember,
-  Neon, Forest and Paper), interface zoom, reduced motion, and a settings screen (Ctrl+,) for
+- **Appearance and settings**: eight themes (Midnight, the default, then Daylight, Aurora, Ember,
+  Neon, Forest, Paper and the high-contrast Contrast), interface zoom, reduced motion, and a settings screen (Ctrl+,) for
   appearance, Git, integrations, accounts, updates and privacy.
 - **Diagnostics and privacy**: structured per-run logs and local crash reports in Canopy's data
   folder; opt-in, scrubbed crash reports to NecturaLabs after you accept the Terms and Privacy
@@ -187,7 +187,7 @@ path, the welcome screen lists recent repositories.
 | Option | Effect |
 |---|---|
 | `--light` | Start with the Daylight theme. |
-| `--theme <THEME>` | Start with a theme: `midnight`, `daylight`, `aurora`, `ember`, `neon`, `forest` or `paper`. |
+| `--theme <THEME>` | Start with a theme: `midnight`, `daylight`, `aurora`, `ember`, `neon`, `forest`, `paper` or `contrast`. |
 | `--view <history\|changes\|requests>` | Initial view. |
 | `--split` | Show diffs side by side. |
 | `--overlay <NAME>` | Open an overlay (for screenshots): `settings`, `privacy`, `cheatsheet`, `palette`, `consent`, `crash-consent`, `legal`, `licences`, `credential`, `host-key` or `merge`. |
@@ -262,7 +262,7 @@ convention and pull request checklist, and [docs/backlog.md](docs/backlog.md) fo
 │   │                       git-flow, ignore rules, LFS, submodules, forge URLs, conflicts
 │   ├── canopy-hosting/     GitHub and GitLab REST client and the update-manifest fetch
 │   └── canopy-app/         GUI binary `canopy`
-│       ├── assets/         bundled fonts (OFL), SVG art and window icon
+│       ├── assets/         bundled fonts (OFL) and window icon
 │       └── src/            main, app/, worker, tab, settings, keymap, hosting, askpass, ui/, views/
 ├── assets/                 application icon (SVG and PNG)
 ├── docs/                   architecture, design system, feature matrix, keybindings, backlog,

@@ -261,11 +261,11 @@ pub fn show(
                     ui.label("Git stores an author name and email in every new commit. Enter the details you want to use. Canopy will not guess them, and commits already made keep their authors.");
                     ui.add_space(theme::MD);
                     ui.label("Name");
-                    ui.add(egui::TextEdit::singleline(name).desired_width(ui.available_width()));
+                    ui.add(egui::TextEdit::singleline(name).desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
                     ui.label("Email");
-                    ui.add(egui::TextEdit::singleline(email).desired_width(ui.available_width()));
+                    ui.add(egui::TextEdit::singleline(email).desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
                     ui.add_space(theme::XS);
-                    ui.label(RichText::new("Saved to your global Git configuration, so every repository without its own identity uses it. You can change it later in Settings → Git.").size(12.0).color(p.text_dim));
+                    ui.label(RichText::new("Saved to your global Git configuration, so every repository without its own identity uses it. You can change it later in Settings → Git.").size(theme::META_SIZE).color(p.text_dim));
                     let ok = !name.trim().is_empty() && !email.trim().is_empty() && !*pending;
                     if primary(ui, "Save globally", ok) {
                         outcome = Outcome::RunKeep(vec![Action::SaveIdentity {
@@ -279,10 +279,10 @@ pub fn show(
                 Dialog::Open { path } => {
                     title(ui, icon::FOLDER_OPEN, "Open repository");
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Folder").size(12.0).color(p.text_dim));
+                        ui.label(RichText::new("Folder").size(theme::META_SIZE).color(p.text_dim));
                     });
                     ui.horizontal(|ui| {
-                        let r = ui.add(egui::TextEdit::singleline(path).desired_width((ui.available_width() - 110.0).max(80.0)).margin(egui::Margin::symmetric(8, 6)));
+                        let r = ui.add(egui::TextEdit::singleline(path).desired_width((ui.available_width() - 110.0).max(80.0)).margin(theme::FIELD_MARGIN));
                         if ui.memory(|m| m.focused().is_none()) {
                             r.request_focus();
                         }
@@ -301,9 +301,9 @@ pub fn show(
                     let (url, dest, ok) = ui.add_enabled_ui(!*pending, |ui| {
                         builder.ui(ui, true);
                         let url = builder.resolve().unwrap_or_default();
-                        ui.label(RichText::new("Clone into").size(12.0).color(p.text_dim));
+                        ui.label(RichText::new("Clone into").size(theme::META_SIZE).color(p.text_dim));
                         ui.horizontal(|ui| {
-                            ui.add(egui::TextEdit::singleline(parent).desired_width((ui.available_width() - 110.0).max(80.0)).margin(egui::Margin::symmetric(8, 6)));
+                            ui.add(egui::TextEdit::singleline(parent).desired_width((ui.available_width() - 110.0).max(80.0)).margin(theme::FIELD_MARGIN));
                             if let Some(picked) = picker.show(ui, "clone", &crate::settings::expand_home(parent)) {
                                 *parent = picked.display().to_string();
                             }
@@ -311,7 +311,7 @@ pub fn show(
                         let name = url.trim().trim_end_matches('/').trim_end_matches(".git").rsplit(['/', ':']).next().unwrap_or("").to_owned();
                         let dest = crate::settings::expand_home(parent).join(&name);
                         ui.add_space(4.0);
-                        ui.label(RichText::new(format!("→ {}", dest.display())).size(12.0).color(p.text_faint));
+                        ui.label(RichText::new(format!("→ {}", dest.display())).size(theme::META_SIZE).color(p.text_faint));
                         let ok = !url.trim().is_empty() && !name.is_empty();
                         (url, dest, ok)
                     }).inner;
@@ -326,9 +326,9 @@ pub fn show(
                 }
                 Dialog::Init { path } => {
                     title(ui, icon::PLANT, "New repository");
-                    ui.label(RichText::new("Folder (created if missing)").size(12.0).color(p.text_dim));
+                    ui.label(RichText::new("Folder (created if missing)").size(theme::META_SIZE).color(p.text_dim));
                     ui.horizontal(|ui| {
-                        let r = ui.add(egui::TextEdit::singleline(path).desired_width((ui.available_width() - 110.0).max(80.0)).hint_text("~/src/my-project").margin(egui::Margin::symmetric(8, 6)));
+                        let r = ui.add(egui::TextEdit::singleline(path).desired_width((ui.available_width() - 110.0).max(80.0)).hint_text("~/src/my-project").margin(theme::FIELD_MARGIN));
                         if ui.memory(|m| m.focused().is_none()) {
                             r.request_focus();
                         }
@@ -346,13 +346,13 @@ pub fn show(
                     let r = field(ui, "Name", name, "feature/something", true);
                     let _ = r;
                     let from = start.label(|| tab.and_then(|t| t.snap.as_ref()).map(|s| s.head.label()).unwrap_or_else(|| "HEAD".into()));
-                    ui.label(RichText::new(format!("{}  Starts at {from}", icon::GIT_COMMIT)).size(12.0).color(p.text_faint));
+                    ui.label(RichText::new(format!("{}  Starts at {from}", icon::GIT_COMMIT)).size(theme::META_SIZE).color(p.text_faint));
                     ui.add_space(6.0);
-                    ui.checkbox(checkout, "Check out after creating");
+                    widgets::checkbox(ui, checkout, "Check out after creating");
                     ui.add_space(8.0);
                     let ok = valid_ref_name(name.trim());
                     if !name.is_empty() && !ok {
-                        ui.label(RichText::new("Not a valid branch name").size(12.0).color(p.danger));
+                        ui.label(RichText::new("Not a valid branch name").size(theme::META_SIZE).color(p.danger));
                     }
                     if primary(ui, "Create branch", ok) {
                         outcome = Outcome::Run(vec![Action::Op(Op::CreateBranch { name: name.trim().to_owned(), start: start.rev(), checkout: *checkout })]);
@@ -369,8 +369,8 @@ pub fn show(
                 Dialog::NewTag { name, target, message } => {
                     title(ui, icon::TAG, &format!("Tag {}", short_id(*target)));
                     field(ui, "Name", name, "v1.2.0", true);
-                    ui.label(RichText::new("Message (makes an annotated tag)").size(12.0).color(p.text_dim));
-                    let r = ui.add(egui::TextEdit::multiline(message).desired_rows(3).desired_width(f32::INFINITY).margin(egui::Margin::symmetric(8, 6)));
+                    ui.label(RichText::new("Message (makes an annotated tag)").size(theme::META_SIZE).color(p.text_dim));
+                    let r = ui.add(egui::TextEdit::multiline(message).desired_rows(3).desired_width(f32::INFINITY).margin(theme::FIELD_MARGIN));
                     remember_multiline(ui, r.id);
                     ui.add_space(8.0);
                     let ok = valid_ref_name(name.trim());
@@ -382,7 +382,7 @@ pub fn show(
                 Dialog::Stash { message, untracked } => {
                     title(ui, icon::ARCHIVE, "Stash changes");
                     field(ui, "Message (optional)", message, "WIP: what you were doing", true);
-                    ui.checkbox(untracked, "Include untracked files");
+                    widgets::checkbox(ui, untracked, "Include untracked files");
                     ui.add_space(8.0);
                     if primary(ui, "Stash", true) {
                         let m = (!message.trim().is_empty()).then(|| message.trim().to_owned());
@@ -392,10 +392,7 @@ pub fn show(
                 Dialog::Merge { target, rebase, mode } => {
                     let current = tab.and_then(|t| t.snap.as_ref()).map(|s| s.head.label()).unwrap_or_default();
                     title(ui, icon::GIT_MERGE, if *rebase { "Rebase" } else { "Merge" });
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(rebase, false, "Merge into current");
-                        ui.selectable_value(rebase, true, "Rebase current onto");
-                    });
+                    widgets::segmented(ui, rebase, &[(false, "Merge into current"), (true, "Rebase current onto")]);
                     ui.add_space(8.0);
                     let branches: Vec<String> = tab
                         .and_then(|t| t.snap.as_ref())
@@ -408,7 +405,7 @@ pub fn show(
                     });
                     ui.add_space(8.0);
                     if !*rebase {
-                        ui.label(RichText::new("How").size(12.0).color(p.text_dim));
+                        ui.label(RichText::new("How").size(theme::META_SIZE).color(p.text_dim));
                         for m in canopy_core::MergeMode::ALL {
                             ui.radio_value(mode, m, m.label());
                         }
@@ -423,7 +420,7 @@ pub fn show(
                             (false, M::FastForwardOnly) => format!("Move {current} forward to {target}; stops without changes if they have diverged."),
                             (false, M::Squash) => format!("Stage all of {target}'s changes on {current} as one change, without committing. Review them in Changes, then commit."),
                         };
-                        ui.label(RichText::new(text).size(12.0).color(p.text_faint));
+                        ui.label(RichText::new(text).size(theme::META_SIZE).color(p.text_faint));
                     }
                     ui.add_space(8.0);
                     let verb = match (*rebase, *mode) {
@@ -439,7 +436,7 @@ pub fn show(
                 Dialog::AddRemote { name, builder, publish } => {
                     if *publish {
                         title(ui, icon::CLOUD_ARROW_UP, "Publish repository");
-                        ui.label(RichText::new("This repository is local only. Create an empty repository on GitHub or GitLab, enter it here, and Canopy adds it as a remote and pushes the current branch.").size(12.5).color(p.text_dim));
+                        ui.label(RichText::new("This repository is local only. Create an empty repository on GitHub or GitLab, enter it here, and Canopy adds it as a remote and pushes the current branch.").size(theme::META_SIZE).color(p.text_dim));
                         ui.add_space(10.0);
                     } else {
                         title(ui, icon::CLOUD, "Add remote");
@@ -460,7 +457,7 @@ pub fn show(
                 }
                 Dialog::NewRequest { kind, request, branches } => {
                     title(ui, icon::GIT_PULL_REQUEST, &format!("New {}", kind.request_noun()));
-                    ui.label(RichText::new(format!("{}  {}  →", icon::GIT_BRANCH, request.source)).size(12.5).color(p.text_dim));
+                    ui.label(RichText::new(format!("{}  {}  →", icon::GIT_BRANCH, request.source)).size(theme::META_SIZE).color(p.text_dim));
                     ui.add_space(4.0);
                     egui::ComboBox::from_id_salt("request-target").width(410.0).selected_text(format!("{}  {}", icon::GIT_BRANCH, request.target)).show_ui(ui, |ui| {
                         for b in branches.iter().filter(|b| **b != request.source) {
@@ -469,11 +466,11 @@ pub fn show(
                     });
                     ui.add_space(10.0);
                     field(ui, "Title", &mut request.title, "What this change does", true);
-                    ui.label(RichText::new("Description").size(12.0).color(p.text_dim));
-                    let r = ui.add(egui::TextEdit::multiline(&mut request.body).desired_rows(6).desired_width(f32::INFINITY).hint_text("Why, how it was tested, anything reviewers should know (Markdown)").margin(egui::Margin::symmetric(8, 6)));
+                    ui.label(RichText::new("Description").size(theme::META_SIZE).color(p.text_dim));
+                    let r = ui.add(egui::TextEdit::multiline(&mut request.body).desired_rows(6).desired_width(f32::INFINITY).hint_text("Why, how it was tested, anything reviewers should know (Markdown)").margin(theme::FIELD_MARGIN));
                     remember_multiline(ui, r.id);
                     ui.add_space(6.0);
-                    ui.checkbox(&mut request.draft, "Create as draft");
+                    widgets::checkbox(ui, &mut request.draft, "Create as draft");
                     ui.add_space(8.0);
                     let ok = !request.title.trim().is_empty() && !request.target.is_empty() && request.target != request.source;
                     if primary(ui, &format!("Create {}", kind.request_abbrev()), ok) {
@@ -589,7 +586,7 @@ pub fn show(
                         ui.add_space(8.0);
                         egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
                             ui.set_max_width(ui.available_width());
-                            ui.label(RichText::new(&report.message).font(FontId::monospace(12.0)).color(p.text));
+                            ui.label(RichText::new(&report.message).font(FontId::monospace(theme::MONO_SIZE)).color(p.text));
                         });
                     }
                     ui.add_space(14.0);
@@ -632,7 +629,7 @@ pub fn show(
                         Pending::Terms => {
                             ui.horizontal(|ui| {
                                 art::show(ui, art::logo(), egui::vec2(28.0, 28.0));
-                                ui.label(RichText::new(if *updated { "We've updated our terms" } else { "Welcome to Canopy" }).font(FontId::new(18.0, theme::semibold())));
+                                ui.label(RichText::new(if *updated { "We've updated our terms" } else { "Welcome to Canopy" }).font(FontId::new(theme::HEADLINE_SIZE, theme::semibold())));
                             });
                             ui.add_space(10.0);
                             ui.label(RichText::new(if *updated {
@@ -664,7 +661,7 @@ pub fn show(
                                 bullet(ui, glyph, color, text);
                             }
                             ui.add_space(6.0);
-                            ui.label(RichText::new("Canopy works the same either way. You can change this at any time in Settings → Privacy.").size(12.0).color(p.text_faint));
+                            ui.label(RichText::new("Canopy works the same either way. You can change this at any time in Settings → Privacy.").size(theme::META_SIZE).color(p.text_faint));
                             ui.add_space(8.0);
                             let mut privacy_only = reading.filter(|d| *d == Document::Privacy);
                             ui.horizontal(|ui| {
@@ -700,7 +697,7 @@ pub fn show(
                         ui.set_max_width(ui.available_width());
                         if *doc == Document::Notices {
                             // Thousands of lines: lay out only the visible ones.
-                            let font = FontId::monospace(11.5);
+                            let font = FontId::monospace(theme::MONO_SMALL_SIZE);
                             let row = ui.fonts_mut(|f| f.row_height(&font));
                             static LINES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
                             let lines = LINES.get_or_init(|| crate::ui::legal::NOTICES.lines().collect());
@@ -718,13 +715,13 @@ pub fn show(
                 Dialog::About => {
                     ui.vertical_centered(|ui| {
                         art::show(ui, art::logo(), egui::vec2(64.0, 64.0));
-                        ui.label(RichText::new("Canopy").font(FontId::new(24.0, theme::semibold())));
+                        ui.label(RichText::new("Canopy").font(FontId::new(theme::DISPLAY_SIZE, theme::semibold())));
                         ui.label(RichText::new(crate::build_info::title_label()).color(p.text_dim));
                         ui.add_space(8.0);
                         ui.label(RichText::new("A fast, beautiful, Linux-first Git client.").color(p.text_dim));
-                        ui.label(RichText::new("© 2026 NecturaLabs. Built with Rust, egui and libgit2.").size(12.0).color(p.text_faint));
-                        ui.label(RichText::new("Fonts: Inter and JetBrains Mono (SIL OFL 1.1). Icons: Phosphor (MIT).").size(12.0).color(p.text_faint));
-                        if ui.link(RichText::new("Open-source licences").size(12.0)).clicked() {
+                        ui.label(RichText::new("© 2026 NecturaLabs. Built with Rust, egui and libgit2.").size(theme::META_SIZE).color(p.text_faint));
+                        ui.label(RichText::new("Fonts: Inter and JetBrains Mono (SIL OFL 1.1). Icons: Phosphor (MIT).").size(theme::META_SIZE).color(p.text_faint));
+                        if ui.link(RichText::new("Open-source licences").size(theme::META_SIZE)).clicked() {
                             outcome = Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Notices))]);
                         }
                         ui.add_space(10.0);

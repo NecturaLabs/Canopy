@@ -39,7 +39,7 @@ ARGS:
 OPTIONS:
         --light               Start with the Daylight theme
         --theme <THEME>       Start with a theme: midnight, daylight, aurora, ember, neon,
-                              forest or paper
+                              forest, paper or contrast
         --view <VIEW>         Initial view: history, changes or requests
         --split               Show diffs side by side
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,

@@ -1,6 +1,6 @@
 //! Design tokens. This is the only place colours are defined; see `docs/design.md`.
 //!
-//! Canopy ships seven themes. Each is a [`Palette`] with the same tokens, so views never need to
+//! Canopy ships eight themes. Each is a [`Palette`] with the same tokens, so views never need to
 //! know which theme is active: they ask [`palette`] for the current one.
 
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -16,11 +16,37 @@ pub const MD: f32 = 12.0;
 pub const LG: f32 = 16.0;
 pub const XL: f32 = 24.0;
 pub const COMPACT_WIDTH: f32 = 1000.0;
-pub const BODY_SIZE: f32 = 13.0;
+/// The widest a column of prose and its fields grow, so lines stay readable on wide windows.
+pub const MEASURE: f32 = 920.0;
+// Type scale (points, before interface zoom). Text sizes come only from these; icon glyphs are
+// sized for their own optical weight.
+/// Pills, badges and uppercase section labels.
+pub const MICRO_SIZE: f32 = 10.5;
+/// Dates, counts, hints and other secondary detail.
 pub const SMALL_SIZE: f32 = 11.5;
+/// Metadata beside a row's main text: author, date, palette detail.
+pub const META_SIZE: f32 = 12.0;
+/// Default interface text.
+pub const BODY_SIZE: f32 = 13.0;
+/// The text that leads a row, a field label or a button.
+pub const LEAD_SIZE: f32 = 13.5;
+/// Card and group titles, the repository name.
+pub const SUBTITLE_SIZE: f32 = 14.0;
+/// View and dialog titles, the palette query.
 pub const TITLE_SIZE: f32 = 16.0;
+/// The subject of a detail view and first-run dialog headings.
+pub const HEADLINE_SIZE: f32 = 20.0;
+/// The About dialog's name.
+pub const DISPLAY_SIZE: f32 = 24.0;
+/// The welcome screen's title.
+pub const HERO_SIZE: f32 = 38.0;
+/// Code, diffs and identifiers.
 pub const MONO_SIZE: f32 = 12.5;
+/// Short identifiers and key chords beside proportional text.
+pub const MONO_SMALL_SIZE: f32 = 11.5;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
+/// Inner margin of every framed text field, so fields match the 26-point control height.
+pub const FIELD_MARGIN: Margin = Margin::symmetric(8, 5);
 
 /// Colours of one theme.
 #[derive(Debug, Clone, Copy)]
@@ -258,7 +284,8 @@ pub const EMBER: Palette = Palette {
     dark: true,
 };
 
-/// "Neon": deep violet night with hot pink and cyan.
+/// "Neon": deep violet night with electric cyan and hot pink. Cyan carries selection and focus so
+/// they never read as the pink-red of removed lines and destructive actions.
 pub const NEON: Palette = Palette {
     name: "Neon",
     bg: hex(0x0B0716),
@@ -268,16 +295,16 @@ pub const NEON: Palette = Palette {
     border: hex(0x2D1F4A),
     control_border: hex(0x6F6386),
     text: hex(0xF5EEFF),
-    text_dim: hex(0xB3A3D1),
-    text_faint: hex(0x9B8EC2),
-    accent: hex(0xFF2E97),
-    accent2: hex(0x00E5FF),
+    text_dim: hex(0xCDBFE6),
+    text_faint: hex(0xBBAEDC),
+    accent: hex(0x00E5FF),
+    accent2: hex(0xFF7ABD),
     success: hex(0x3DF5A0),
     warning: hex(0xFFD60A),
-    danger: hex(0xFF4D6D),
+    danger: hex(0xFF6B4A),
     added_bg: hex(0x0B2A22),
     removed_bg: hex(0x2E0B1E),
-    button: hex(0xD6006F),
+    button: hex(0x0E7490),
     button2: hex(0x7C3AED),
     on_button: hex(0xFFFFFF),
     lanes: [
@@ -304,7 +331,8 @@ pub const NEON: Palette = Palette {
     dark: true,
 };
 
-/// "Forest": deep greens with emerald and lime.
+/// "Forest": deep greens lit with sunlit gold. Gold carries selection and focus and sky blue the
+/// links, so neither is mistaken for the green of added lines and success.
 pub const FOREST: Palette = Palette {
     name: "Forest",
     bg: hex(0x0E1411),
@@ -316,15 +344,15 @@ pub const FOREST: Palette = Palette {
     text: hex(0xE4EEE8),
     text_dim: hex(0xB3C5BB),
     text_faint: hex(0xA7B4AD),
-    accent: hex(0x34D399),
-    accent2: hex(0xA3E635),
+    accent: hex(0xE2B84F),
+    accent2: hex(0x7DD3FC),
     success: hex(0x4ADE80),
-    warning: hex(0xFBBF24),
+    warning: hex(0xFB923C),
     danger: hex(0xF98282),
     added_bg: hex(0x12301F),
     removed_bg: hex(0x2E1618),
-    button: hex(0x047857),
-    button2: hex(0x4D7C0F),
+    button: hex(0x8A5A00),
+    button2: hex(0x166534),
     on_button: hex(0xFFFFFF),
     lanes: DARK_LANES,
     syntax: Syntax {
@@ -378,11 +406,58 @@ pub const PAPER: Palette = Palette {
         string: hex(0x3F6212),
         comment: hex(0x62594B),
         number: hex(0x7E22CE),
-        function: hex(0x1D4ED8),
+        function: hex(0x2F4A8A),
         type_: hex(0x0E6B63),
         constant: hex(0x9D174D),
     },
     dark: false,
+};
+
+/// "Contrast": black and white with saturated signal colours and strong outlines, for low vision,
+/// bright rooms and anyone who wants every edge unmistakable.
+pub const CONTRAST: Palette = Palette {
+    name: "Contrast",
+    bg: hex(0x000000),
+    panel: hex(0x0A0A0A),
+    elevated: hex(0x121212),
+    hover: hex(0x242424),
+    border: hex(0x6B6B6B),
+    control_border: hex(0xB3B3B3),
+    text: hex(0xFFFFFF),
+    text_dim: hex(0xE6E6E6),
+    text_faint: hex(0xCCCCCC),
+    accent: hex(0x4CC2FF),
+    accent2: hex(0xFFE14D),
+    success: hex(0x3DFF8A),
+    warning: hex(0xFFA62B),
+    danger: hex(0xFF6B6B),
+    added_bg: hex(0x002B14),
+    removed_bg: hex(0x3B0009),
+    button: hex(0x005FB8),
+    button2: hex(0x005FB8),
+    on_button: hex(0xFFFFFF),
+    lanes: [
+        hex(0x4CC2FF),
+        hex(0xFFE14D),
+        hex(0xFF7AD9),
+        hex(0x3DFF8A),
+        hex(0xFFA62B),
+        hex(0xB69CFF),
+        hex(0xFF6B6B),
+        hex(0x00F0D8),
+        hex(0xD4FF3D),
+        hex(0xFFFFFF),
+    ],
+    syntax: Syntax {
+        keyword: hex(0x8FD6FF),
+        string: hex(0x7DFFB0),
+        comment: hex(0xC2C2C2),
+        number: hex(0xFFC46B),
+        function: hex(0xFFE14D),
+        type_: hex(0xD2BFFF),
+        constant: hex(0xFF9EE6),
+    },
+    dark: true,
 };
 
 /// A theme the user can pick.
@@ -396,11 +471,12 @@ pub enum ThemeId {
     Neon,
     Forest,
     Paper,
+    Contrast,
 }
 
 impl ThemeId {
     /// Every theme, in menu order.
-    pub const ALL: [ThemeId; 7] = [
+    pub const ALL: [ThemeId; 8] = [
         ThemeId::Midnight,
         ThemeId::Daylight,
         ThemeId::Aurora,
@@ -408,6 +484,7 @@ impl ThemeId {
         ThemeId::Neon,
         ThemeId::Forest,
         ThemeId::Paper,
+        ThemeId::Contrast,
     ];
 
     /// The theme's colours.
@@ -420,6 +497,7 @@ impl ThemeId {
             ThemeId::Neon => &NEON,
             ThemeId::Forest => &FOREST,
             ThemeId::Paper => &PAPER,
+            ThemeId::Contrast => &CONTRAST,
         }
     }
 
@@ -629,6 +707,7 @@ fn visuals(p: &Palette) -> Visuals {
     v.selection.stroke = Stroke::new(1.5, p.accent);
     v.text_cursor.stroke = Stroke::new(2.0, p.accent);
     v.slider_trailing_fill = true;
+    v.handle_shape = egui::style::HandleShape::Circle;
     v.striped = false;
     v.indent_has_left_vline = false;
 

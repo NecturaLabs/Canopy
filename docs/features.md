@@ -156,7 +156,7 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Compact layouts and 80–160% interface zoom | Unreleased | ? | ? | ? |
 | Native folder chooser without blocking the app | Unreleased | ? | ? | ? |
 | Configurable keybindings | Planned | ? | ? | ? |
-| Dark and light themes (two in v0.1, seven in `main`) | Done | Yes | Yes | ? |
+| Dark and light themes (two in v0.1, eight in `main`, one high-contrast) | Done | Yes | Yes | ? |
 | Custom themes | Planned | No | Yes | No |
 | Confirmation for destructive operations | Done | Yes | Yes | Yes |
 | Toast notifications with git's error output | Done | ? | ? | ? |

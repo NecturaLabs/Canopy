@@ -5,6 +5,7 @@ use egui::{Align2, CornerRadius, FontId, Id, Order, RichText, Sense, Stroke, vec
 use egui_phosphor::regular as icon;
 
 use super::theme::{self, Palette, palette};
+use super::widgets;
 use crate::keymap::{self, BINDINGS, Section};
 
 /// Cheatsheet state.
@@ -69,7 +70,7 @@ impl Cheatsheet {
                                 |ui| {
                                     ui.label(
                                         RichText::new("Esc to close")
-                                            .size(11.5)
+                                            .size(theme::SMALL_SIZE)
                                             .color(p.text_faint),
                                     );
                                     let edit = ui.add(
@@ -78,7 +79,8 @@ impl Cheatsheet {
                                                 "{}  Search shortcuts",
                                                 icon::MAGNIFYING_GLASS
                                             ))
-                                            .desired_width(240.0),
+                                            .desired_width(240.0)
+                                            .margin(theme::FIELD_MARGIN),
                                     );
                                     if self.just_opened {
                                         edit.request_focus();
@@ -92,13 +94,13 @@ impl Cheatsheet {
                             RichText::new(
                                 "Single keys work when no text field has focus. Super is left to your window manager.",
                             )
-                            .size(12.0)
+                            .size(theme::META_SIZE)
                             .color(p.text_dim),
                         ).wrap());
                         ui.add_space(10.0);
                         let q = self.query.trim().to_lowercase();
                         let remaining = (height - (ui.cursor().min.y - content_top)).max(0.0);
-                        egui::ScrollArea::vertical()
+                        let list = egui::ScrollArea::vertical()
                             .max_height(remaining)
                             .min_scrolled_height(remaining)
                             .auto_shrink([false, true])
@@ -115,6 +117,7 @@ impl Cheatsheet {
                                     });
                                 }
                             });
+                        widgets::scroll_fade(ui, &list, p.elevated);
                     });
             });
     }
@@ -144,7 +147,7 @@ fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
                 ui.painter()
                     .layout_no_wrap(
                         key.to_owned(),
-                        FontId::monospace(theme::SMALL_SIZE),
+                        FontId::monospace(theme::MONO_SMALL_SIZE),
                         p.text_dim,
                     )
                     .size()
@@ -182,9 +185,11 @@ fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
         // Key caps, right-aligned.
         let mut x = rect.right() - 4.0;
         for chord in keys.iter().rev() {
-            let g =
-                ui.painter()
-                    .layout_no_wrap(chord.to_owned(), FontId::monospace(11.5), p.text_dim);
+            let g = ui.painter().layout_no_wrap(
+                chord.to_owned(),
+                FontId::monospace(theme::MONO_SMALL_SIZE),
+                p.text_dim,
+            );
             let r = egui::Rect::from_min_max(
                 egui::pos2(x - g.size().x - 12.0, key_y - 10.0),
                 egui::pos2(x, key_y + 10.0),

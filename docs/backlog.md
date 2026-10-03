@@ -20,18 +20,13 @@ yet true, then correctness and the features people meet first, then polish. Take
       already, but the gate should cover what git reads). The Downloads off chip also stays after
       switching from History to Changes while line counts are undone, and after a status-only
       refusal that ends in `Event::Failed` (`tab.rs`, `clear_obsolete_refusal`).
-- [ ] Real art in place of every SVG (owner's decisions): generate the app icon, logo mark,
-      welcome backdrop and four spot illustrations (`docs/art-prompts.md`) with Codex
-      (`codex exec -m gpt-6-sol`, medium effort, at most 2 calls at once); accept only art that is
-      flawless and matches every theme; ship PNG only, no SVG left. Matching the themes: recolour
-      at load from the palette in `ui/art.rs` (roles accent, accent2, success, warning, danger;
-      a dark master and a light master for Daylight and Paper; cached per theme and size; a box
-      filter for the 22 px logo), and check all seven themes with `tools/screenshot.sh --theme`.
-      The icon goes PNG-only: `selfupdate.rs` (icon list near line 444, and its tests),
-      `.github/workflows/release.yml` (line 297), `packaging/install.sh` (lines 414, 681-706,
-      828) and `test-install.sh`, `tools/install-desktop.sh`, the README header, `assets/README.md`,
-      `packaging/README.md`; an upgrade must remove the `scalable/…svg` an earlier install put
-      there. The updater is security-sensitive: security pass first.
+- [ ] App icon PNG-only (owner's decision; the in-app art is now drawn in code, `ui/art.rs`, and
+      no SVG is left in the app): drop `assets/icon.svg` and ship PNGs only. Touches
+      `selfupdate.rs` (icon list near line 444, and its tests), `.github/workflows/release.yml`
+      (line 297), `packaging/install.sh` (lines 414, 681-706, 828) and `test-install.sh`,
+      `tools/install-desktop.sh`, the README header, `assets/README.md`, `packaging/README.md`; an
+      upgrade must remove the `scalable/…svg` an earlier install put there. The updater is
+      security-sensitive: security pass first.
 - [ ] `cli::run_with_input`: show git's stderr, not "Broken pipe", when git exits early.
 - [ ] Installer follow-ups from the security review (`install.sh` is fixed; `install.ps1` could not
       be tested here and is untouched, and nothing in CI runs it): bring `install.ps1` to parity

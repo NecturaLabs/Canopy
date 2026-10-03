@@ -45,7 +45,7 @@ Canopy's layout, and which change keeps each file true (the update rules come fr
 | `docs/design.md` | Reference: design tokens, typography, components | A token, theme or component changes in `ui/theme.rs` or `ui/widgets.rs` |
 | `docs/features.md` | Reference: feature matrix against Fork, GitKraken, Sourcetree | A feature is added, changed or re-scoped |
 | `docs/backlog.md` | Task board, with acceptance criteria | Owned by the workflow in `AGENTS.md`; not a document this skill restructures |
-| `docs/art-prompts.md` | Reference: prompts for generated art, file names and view boxes | An art asset is added or renamed |
+| `docs/art-prompts.md` | Reference: how the illustrations and app icon are made, and the list of scenes | An illustration is added or changed |
 | `docs/adr/NNNN-<slug>.md` | ADRs, indexed in `docs/adr/README.md` | A consequential decision is made; append-only afterwards; add its row to the index |
 | `CHANGELOG.md` | Keep a Changelog, `[Unreleased]` section | Every user-visible change; the `release` skill turns `[Unreleased]` into a version |
 | `README.md`, `CONTRIBUTING.md`, `tools/README.md` | Entry points and runbooks | Commands, requirements, shortcuts or scripts change |

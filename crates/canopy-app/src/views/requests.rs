@@ -83,7 +83,7 @@ fn cap(s: &str) -> String {
 
 fn empty(
     ui: &mut Ui,
-    image: egui::ImageSource<'static>,
+    image: art::Art,
     title: &str,
     body: &str,
     button: Option<(String, Action)>,
@@ -94,7 +94,7 @@ fn empty(
         ui.add_space((ui.available_height() * 0.22).max(30.0));
         art::show(ui, image, vec2(160.0, 120.0));
         ui.add_space(8.0);
-        ui.label(RichText::new(title).font(FontId::new(16.0, theme::semibold())));
+        ui.label(RichText::new(title).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
         ui.add_space(2.0);
         ui.label(RichText::new(body).color(p.text_dim));
         if let Some((label, action)) = button {
@@ -121,16 +121,10 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Actio
         .inner_margin(egui::Margin::symmetric(10, 10))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                for f in StateFilter::ALL {
-                    if ui
-                        .selectable_label(tab.requests.filter == f, f.label())
-                        .clicked()
-                        && tab.requests.filter != f
-                    {
-                        tab.requests.filter = f;
-                        tab.requests.list = None;
-                        tab.load_requests();
-                    }
+                let options = StateFilter::ALL.map(|f| (f, f.label()));
+                if widgets::segmented(ui, &mut tab.requests.filter, &options) {
+                    tab.requests.list = None;
+                    tab.load_requests();
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if tab.requests.loading {
@@ -186,9 +180,9 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Actio
                             } else {
                                 format!("Could not load {}s", kind.request_noun())
                             })
-                            .font(FontId::new(14.0, theme::semibold())),
+                            .font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold())),
                         );
-                        ui.label(RichText::new(&e).size(12.0).color(p.text_dim));
+                        ui.label(RichText::new(&e).size(theme::META_SIZE).color(p.text_dim));
                         ui.add_space(8.0);
                         ui.horizontal_wrapped(|ui| {
                             ui.add_space((ui.available_width() - 230.0).max(0.0) / 2.0);
@@ -277,7 +271,7 @@ fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Respo
     let title = widgets::single_line_galley(
         ui,
         r.title.clone(),
-        FontId::new(13.5, theme::medium()),
+        FontId::new(theme::LEAD_SIZE, theme::medium()),
         p.text,
         clip.width(),
     );
@@ -346,6 +340,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
             egui::Frame::new()
                 .inner_margin(egui::Margin::symmetric(22, 18))
                 .show(ui, |ui| {
+                    ui.set_max_width(ui.available_width().min(theme::MEASURE));
                     // Header.
                     let (glyph, color, state) = state_style(p, &summary);
                     ui.horizontal(|ui| {
@@ -356,20 +351,21 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new(format!("{glyph}  {state}"))
-                                        .size(12.0)
+                                        .size(theme::META_SIZE)
                                         .color(color)
                                         .strong(),
                                 )
                             });
                         ui.label(
                             RichText::new(format!("#{}", summary.number))
-                                .size(14.0)
+                                .size(theme::SUBTITLE_SIZE)
                                 .color(p.text_faint),
                         );
                     });
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new(&summary.title).font(FontId::new(19.0, theme::semibold())),
+                        RichText::new(&summary.title)
+                            .font(FontId::new(theme::HEADLINE_SIZE, theme::semibold())),
                     );
                     ui.add_space(4.0);
                     ui.horizontal_wrapped(|ui| {
@@ -384,7 +380,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                                 widgets::relative_time(summary.updated_at, now)
                             ))
                             .color(p.text_faint)
-                            .size(12.0),
+                            .size(theme::META_SIZE),
                         );
                     });
                     if !summary.labels.is_empty() {
@@ -396,7 +392,11 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                                     .corner_radius(CornerRadius::same(9))
                                     .inner_margin(egui::Margin::symmetric(8, 1))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new(l).size(11.5).color(p.accent2))
+                                        ui.label(
+                                            RichText::new(l)
+                                                .size(theme::SMALL_SIZE)
+                                                .color(p.accent2),
+                                        )
                                     });
                             }
                         });
@@ -579,7 +579,7 @@ fn action_bar(
         }
         if let Some(b) = &tab.requests.busy {
             ui.spinner();
-            ui.label(RichText::new(b).size(12.0).color(p.accent));
+            ui.label(RichText::new(b).size(theme::META_SIZE).color(p.accent));
         }
     });
     if let Some(Some(source)) = tab.requests.token
@@ -587,7 +587,7 @@ fn action_bar(
     {
         ui.label(
             RichText::new(format!("{}  Using the token {}", icon::KEY, source.label()))
-                .size(11.5)
+                .size(theme::SMALL_SIZE)
                 .color(p.text_faint),
         );
     }
@@ -616,7 +616,7 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
     if !stats.is_empty() {
         ui.label(
             RichText::new(stats.join("  ·  "))
-                .size(12.5)
+                .size(theme::META_SIZE)
                 .color(p.text_dim),
         );
         ui.add_space(12.0);
@@ -687,7 +687,11 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
     // Reviews.
     if !d.reviews.is_empty() {
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Reviews").size(12.5).color(p.text_dim));
+            ui.label(
+                RichText::new("Reviews")
+                    .size(theme::META_SIZE)
+                    .color(p.text_dim),
+            );
             for r in &d.reviews {
                 let (g, c) = match r.state.as_str() {
                     "Approved" => (icon::CHECK_CIRCLE, p.success),
@@ -696,7 +700,7 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
                 };
                 ui.label(
                     RichText::new(format!("{g} {}", r.author))
-                        .size(12.5)
+                        .size(theme::META_SIZE)
                         .color(c),
                 )
                 .on_hover_text(&r.state);
@@ -737,7 +741,7 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
                         ui.label(RichText::new(&c.author).strong());
                         ui.label(
                             RichText::new(widgets::relative_time(c.created_at, now))
-                                .size(11.5)
+                                .size(theme::SMALL_SIZE)
                                 .color(p.text_faint),
                         );
                     });
@@ -755,7 +759,8 @@ fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Ac
         egui::TextEdit::multiline(&mut tab.requests.comment)
             .hint_text("Leave a comment (Markdown)")
             .desired_rows(3)
-            .desired_width(f32::INFINITY),
+            .desired_width(f32::INFINITY)
+            .margin(theme::FIELD_MARGIN),
     );
     ui.add_space(6.0);
     let can = !tab.requests.comment.trim().is_empty() && tab.requests.busy.is_none();

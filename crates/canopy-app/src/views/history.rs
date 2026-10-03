@@ -104,7 +104,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         let detail_max = (h - table_min).min(h * 0.70);
         egui::Panel::bottom("details")
             .resizable(true)
-            .default_size((h * 0.40).clamp(300.0, 320.0).min(detail_max))
+            .default_size((h * 0.40).clamp(260.0, 320.0).min(detail_max))
             .min_size(260.0_f32.min(detail_max))
             .max_size(detail_max)
             .frame(
@@ -241,7 +241,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
 
     // Header.
     let (hdr, _) = ui.allocate_exact_size(vec2(full.width(), 22.0), Sense::hover());
-    let hf = FontId::new(10.5, theme::semibold());
+    let hf = FontId::new(theme::MICRO_SIZE, theme::semibold());
     for (x, t) in [
         (full.min.x + 12.0, if show_graph { "GRAPH" } else { "" }),
         (desc_x, "DESCRIPTION"),
@@ -381,9 +381,9 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 p.text.gamma_multiply(0.92)
             };
             let font = if is_head {
-                FontId::new(13.0, theme::medium())
+                FontId::new(theme::BODY_SIZE, theme::medium())
             } else {
-                FontId::proportional(13.0)
+                FontId::proportional(theme::BODY_SIZE)
             };
             let galley = ui
                 .painter()
@@ -412,7 +412,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 }
                 let ag = ui.painter().layout_no_wrap(
                     c.author.name.clone(),
-                    FontId::proportional(12.5),
+                    FontId::proportional(theme::META_SIZE),
                     p.text_dim,
                 );
                 ui.painter()
@@ -438,7 +438,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                     } else {
                         widgets::absolute_date(c.author.time)
                     },
-                    FontId::proportional(12.5),
+                    FontId::proportional(theme::META_SIZE),
                     p.text_faint,
                 );
             }
@@ -447,7 +447,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                     pos2(sha_x, cy),
                     Align2::LEFT_CENTER,
                     short_id(c.oid),
-                    FontId::monospace(12.0),
+                    FontId::monospace(theme::MONO_SMALL_SIZE),
                     if selected { p.accent2 } else { p.text_faint },
                 );
             }
@@ -515,7 +515,7 @@ fn state_banner(ui: &mut Ui, state: canopy_core::RepoState, actions: &mut Vec<Ac
             ui.label(
                 RichText::new(format!("{}  {} in progress", icon::WARNING, state.label()))
                     .color(p.warning)
-                    .size(12.5),
+                    .size(theme::META_SIZE),
             );
         });
 }

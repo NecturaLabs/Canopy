@@ -169,7 +169,12 @@ pub fn show(
                             ui.vertical(|ui| {
                                 ui.set_width(nav_width - theme::MD * 2.0);
                                 ui.set_height(height - theme::MD * 2.0);
+                                // Lines the title up with the section heading, whose frame has
+                                // the larger content margin.
+                                ui.add_space(theme::LG - theme::MD);
                                 ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = theme::SM;
+                                    ui.add_space(theme::XS);
                                     ui.label(
                                         RichText::new(icon::GEAR_SIX)
                                             .size(theme::TITLE_SIZE)
@@ -314,7 +319,7 @@ fn nav_item(ui: &mut Ui, current: &mut Section, s: Section) {
         rect.left_center() + vec2(30.0, 0.0),
         Align2::LEFT_CENTER,
         label,
-        FontId::new(13.5, theme::medium()),
+        FontId::new(theme::LEAD_SIZE, theme::medium()),
         if selected { p.text } else { p.text_dim },
     );
     resp.widget_info(|| {
@@ -348,7 +353,10 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
             ui.add_space(theme::XS);
             ui.with_layout(
                 egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
-                control,
+                |ui| {
+                    ui.add_space(theme::SM);
+                    control(ui)
+                },
             );
         } else {
             ui.horizontal_top(|ui| {
@@ -365,7 +373,11 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
                 ui.allocate_ui_with_layout(
                     vec2(width * 0.50 - 2.0 * theme::SM, 0.0),
                     egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
-                    control,
+                    |ui| {
+                        // Keeps controls clear of the scroll bar.
+                        ui.add_space(theme::SM);
+                        control(ui)
+                    },
                 );
             });
         }
@@ -402,7 +414,12 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             crate::keymap::hint(crate::keymap::Command::ZoomOut)
         ),
         |ui| {
-            zoom_slider(ui, s, preview);
+            // Left to right, so the value follows the track.
+            ui.allocate_ui_with_layout(
+                vec2(220.0, ui.spacing().interact_size.y),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| zoom_slider(ui, s, preview),
+            );
         },
     );
     row(
@@ -410,8 +427,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Dates",
         "How the history shows when a commit was made. The exact time is in the tooltip.",
         |ui| {
-            ui.selectable_value(&mut s.relative_dates, false, "Sep 21, 2026");
-            ui.selectable_value(&mut s.relative_dates, true, "3 hours ago");
+            widgets::segmented(
+                ui,
+                &mut s.relative_dates,
+                &[(true, "3 hours ago"), (false, "Sep 21, 2026")],
+            );
         },
     );
     row(
@@ -419,7 +439,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Author avatars",
         "Pictures or coloured initials next to authors.",
         |ui| {
-            toggle(ui, &mut s.show_avatars);
+            toggle(ui, &mut s.show_avatars, "Author avatars");
         },
     );
     row(
@@ -427,14 +447,15 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Reduce motion",
         "Turns off fades and the welcome screen's drifting glow.",
         |ui| {
-            toggle(ui, &mut s.reduce_motion);
+            toggle(ui, &mut s.reduce_motion, "Reduce motion");
         },
     );
 }
 
 fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> egui::Response {
     let mut preview = draft.unwrap_or(s.zoom);
-    ui.spacing_mut().slider_width = 160.0_f32.min((ui.available_width() - 72.0).max(48.0));
+    ui.spacing_mut().slider_width = 140.0;
+    recessed_rail(ui);
     let response = ui.add(
         egui::Slider::new(&mut preview, 0.8..=1.6)
             .step_by(0.05)
@@ -459,6 +480,16 @@ fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> egui::
         *draft = None;
     }
     response
+}
+
+/// egui paints a slider's rail in the inactive widget fill, which is the settings surface itself:
+/// recess it like the segmented control's track so the whole range shows, and fill the chosen
+/// part with the accent rather than the pale selection tint.
+fn recessed_rail(ui: &mut Ui) {
+    let p = palette(ui.ctx());
+    let v = ui.visuals_mut();
+    v.widgets.inactive.bg_fill = if p.dark { p.bg } else { p.border };
+    v.selection.bg_fill = p.accent;
 }
 
 /// A theme preview: a miniature of the window drawn from the theme's own palette.
@@ -552,14 +583,14 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool) -> egui::Response {
         egui::pos2(rect.min.x + 2.0, mock.max.y + 16.0),
         Align2::LEFT_CENTER,
         label,
-        FontId::new(13.0, theme::medium()),
+        FontId::new(theme::BODY_SIZE, theme::medium()),
         if selected { p.text } else { p.text_dim },
     );
     painter.text(
         egui::pos2(rect.max.x - 2.0, mock.max.y + 16.0),
         Align2::RIGHT_CENTER,
         if tp.dark { "dark" } else { "light" },
-        FontId::proportional(11.0),
+        FontId::proportional(theme::SMALL_SIZE),
         p.text_faint,
     );
     let name = format!("{} theme", id.name());
@@ -569,9 +600,8 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool) -> egui::Response {
     resp
 }
 
-fn toggle(ui: &mut Ui, on: &mut bool) {
-    ui.selectable_value(on, true, "On");
-    ui.selectable_value(on, false, "Off");
+fn toggle(ui: &mut Ui, on: &mut bool, label: &str) {
+    widgets::switch(ui, on, label);
 }
 
 /// Where an identity value comes from, as a short phrase.
@@ -664,10 +694,18 @@ fn identity_group(
     let current =
         |pick: fn(&Identity) -> &Field| identity.map(pick).map(in_use).unwrap_or_default();
     row(ui, "Name", &current(|i| &i.author.name), |ui| {
-        ui.add(egui::TextEdit::singleline(&mut screen.identity_name).desired_width(260.0));
+        ui.add(
+            egui::TextEdit::singleline(&mut screen.identity_name)
+                .desired_width(260.0)
+                .margin(theme::FIELD_MARGIN),
+        );
     });
     row(ui, "Email", &current(|i| &i.author.email), |ui| {
-        ui.add(egui::TextEdit::singleline(&mut screen.identity_email).desired_width(260.0));
+        ui.add(
+            egui::TextEdit::singleline(&mut screen.identity_email)
+                .desired_width(260.0)
+                .margin(theme::FIELD_MARGIN),
+        );
     });
     if let Some(i) = identity.filter(|i| i.committer != i.author) {
         row(
@@ -688,11 +726,13 @@ fn identity_group(
             "Save to",
             "This repository writes its own .git/config; all repositories write your global Git configuration.",
             |ui| {
-                ui.selectable_value(&mut screen.identity_scope, Scope::Local, "This repository");
-                ui.selectable_value(
+                widgets::segmented(
+                    ui,
                     &mut screen.identity_scope,
-                    Scope::Global,
-                    "All repositories",
+                    &[
+                        (Scope::Global, "All repositories"),
+                        (Scope::Local, "This repository"),
+                    ],
                 );
             },
         );
@@ -748,9 +788,8 @@ fn git(
         "Pull strategy",
         "Used when git's pull.rebase is not configured for the repository.",
         |ui| {
-            for m in PullMode::ALL.into_iter().rev() {
-                ui.selectable_value(&mut s.pull_mode, m, m.label());
-            }
+            let options = PullMode::ALL.map(|m| (m, m.label()));
+            widgets::segmented(ui, &mut s.pull_mode, &options);
         },
     );
     row(
@@ -758,7 +797,7 @@ fn git(
         "Prune on fetch",
         "Remove remote-tracking branches that were deleted on the remote.",
         |ui| {
-            toggle(ui, &mut s.prune_on_fetch);
+            toggle(ui, &mut s.prune_on_fetch, "Prune on fetch");
         },
     );
     row(
@@ -789,7 +828,7 @@ fn git(
         "Add Signed-off-by",
         "Appends a Signed-off-by trailer (git commit --signoff), as DCO projects require.",
         |ui| {
-            toggle(ui, &mut s.signoff);
+            toggle(ui, &mut s.signoff, "Add Signed-off-by");
         },
     );
     row(
@@ -810,8 +849,11 @@ fn git(
         "Layout",
         "Unified shows old and new lines in one column; side by side puts the old file on the left and the new on the right.",
         |ui| {
-            ui.selectable_value(&mut s.split_diff, true, "Side by side");
-            ui.selectable_value(&mut s.split_diff, false, "Unified");
+            widgets::segmented(
+                ui,
+                &mut s.split_diff,
+                &[(false, "Unified"), (true, "Side by side")],
+            );
         },
     );
     row(
@@ -819,7 +861,7 @@ fn git(
         "Syntax highlighting",
         "Colours code in diffs by language (Rust, TypeScript, Python, Markdown and about 200 more).",
         |ui| {
-            toggle(ui, &mut s.syntax_highlight);
+            toggle(ui, &mut s.syntax_highlight, "Syntax highlighting");
         },
     );
     heading(ui, "Diff defaults (every repository)");
@@ -828,6 +870,7 @@ fn git(
         "Context lines",
         "Unchanged lines shown around each change. Each repository can override this from the diff header.",
         |ui| {
+            recessed_rail(ui);
             ui.add(egui::Slider::new(&mut s.diff.context, 0..=25));
         },
     );
@@ -884,7 +927,8 @@ fn integrations(
             ui.add(
                 egui::TextEdit::singleline(&mut s.clone_dir)
                     .hint_text(hint)
-                    .desired_width(200.0),
+                    .desired_width(200.0)
+                    .margin(theme::FIELD_MARGIN),
             );
         },
     );
@@ -893,8 +937,11 @@ fn integrations(
         "Clone protocol",
         "For URLs built from owner/repository. SSH needs a key added to your account.",
         |ui| {
-            ui.selectable_value(&mut s.clone_protocol, CloneProtocol::Ssh, "SSH");
-            ui.selectable_value(&mut s.clone_protocol, CloneProtocol::Https, "HTTPS");
+            widgets::segmented(
+                ui,
+                &mut s.clone_protocol,
+                &[(CloneProtocol::Https, "HTTPS"), (CloneProtocol::Ssh, "SSH")],
+            );
         },
     );
     heading(ui, "GitHub and GitLab");
@@ -906,7 +953,8 @@ fn integrations(
             ui.add(
                 egui::TextEdit::singleline(&mut s.gitlab_hosts)
                     .hint_text("git.example.com, code.corp.io")
-                    .desired_width(240.0),
+                    .desired_width(240.0)
+                    .margin(theme::FIELD_MARGIN),
             );
         },
     );
@@ -915,7 +963,7 @@ fn integrations(
         "Pull and merge requests",
         "Load, review and act on pull/merge requests through the GitHub and GitLab APIs. Requests load when you open a repository hosted there. Off keeps Canopy offline apart from git itself.",
         |ui| {
-            toggle(ui, &mut s.hosting_api);
+            toggle(ui, &mut s.hosting_api, "Pull and merge requests");
         },
     );
     heading(ui, "Tools");
@@ -927,7 +975,8 @@ fn integrations(
             ui.add(
                 egui::TextEdit::singleline(&mut s.terminal)
                     .hint_text("kitty, alacritty, wezterm start --cwd .")
-                    .desired_width(240.0),
+                    .desired_width(240.0)
+                    .margin(theme::FIELD_MARGIN),
             );
         },
     );
@@ -939,7 +988,8 @@ fn integrations(
             ui.add(
                 egui::TextEdit::singleline(&mut s.editor)
                     .hint_text("code, zed, gnome-text-editor")
-                    .desired_width(240.0),
+                    .desired_width(240.0)
+                    .margin(theme::FIELD_MARGIN),
             );
         },
     );
@@ -960,7 +1010,7 @@ fn accounts(
         RichText::new(
             "Canopy uses a personal access token to list and act on pull/merge requests. Tokens are sent only to the host they belong to. Without one, Canopy falls back to GH_TOKEN / GITLAB_TOKEN and then to your git credential helper.",
         )
-        .size(12.5)
+        .size(theme::META_SIZE)
         .color(p.text_dim),
     );
     if !settings.hosting_api {
@@ -970,7 +1020,7 @@ fn accounts(
                 "{}  Pull and merge requests are turned off in Integrations.",
                 icon::INFO
             ))
-            .size(12.5)
+            .size(theme::META_SIZE)
             .color(p.warning),
         );
     }
@@ -1020,7 +1070,7 @@ fn accounts(
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(forge_icon(kind)).size(18.0).color(p.text));
-                    ui.label(RichText::new(&host).font(FontId::new(14.0, theme::semibold())));
+                    ui.label(RichText::new(&host).font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold())));
                     let saved = tokens.get_for(&forge).is_some();
                     let env = canopy_hosting::token_from_env_for(kind, &forge.host, &settings.gitlab_host_list()).is_some();
                     let (status, color) = if saved {
@@ -1030,7 +1080,7 @@ fn accounts(
                     } else {
                         (format!("{}  No saved token (the git credential helper is tried)", icon::CIRCLE_DASHED), p.text_faint)
                     };
-                    ui.label(RichText::new(status).size(12.0).color(color));
+                    ui.label(RichText::new(status).size(theme::META_SIZE).color(color));
                 });
                 ui.add_space(6.0);
                 let input = screen.token_input.entry(host.clone()).or_default();
@@ -1039,7 +1089,8 @@ fn accounts(
                         egui::TextEdit::singleline(input)
                             .password(true)
                             .hint_text("Paste a personal access token")
-                            .desired_width(280.0),
+                            .desired_width(280.0)
+                            .margin(theme::FIELD_MARGIN),
                     );
                     let has_input = !input.trim().is_empty();
                     if ui.add_enabled(has_input, egui::Button::new(format!("{}  Save", icon::FLOPPY_DISK))).clicked() {
@@ -1076,14 +1127,14 @@ fn accounts(
                     Some(TokenTest::Running(_)) => {
                         ui.horizontal(|ui| {
                             ui.spinner();
-                            ui.label(RichText::new("Checking the token…").size(12.0).color(p.text_dim));
+                            ui.label(RichText::new("Checking the token…").size(theme::META_SIZE).color(p.text_dim));
                         });
                     }
                     Some(TokenTest::Done(Ok(user))) => {
-                        ui.label(RichText::new(format!("{}  Signed in as {user}", icon::CHECK)).size(12.0).color(p.success));
+                        ui.label(RichText::new(format!("{}  Signed in as {user}", icon::CHECK)).size(theme::META_SIZE).color(p.success));
                     }
                     Some(TokenTest::Done(Err(e))) => {
-                        ui.label(RichText::new(format!("{}  {e}", icon::WARNING)).size(12.0).color(p.danger));
+                        ui.label(RichText::new(format!("{}  {e}", icon::WARNING)).size(theme::META_SIZE).color(p.danger));
                     }
                     None => {}
                 }
@@ -1093,8 +1144,8 @@ fn accounts(
                     ForgeKind::GitLab => "Needs the api scope (read_api is enough to only browse).",
                 };
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(scopes).size(11.5).color(p.text_faint));
-                    if ui.link(RichText::new(format!("Create a token {}", icon::ARROW_SQUARE_OUT)).size(11.5)).clicked() {
+                    ui.label(RichText::new(scopes).size(theme::SMALL_SIZE).color(p.text_faint));
+                    if ui.link(RichText::new(format!("Create a token {}", icon::ARROW_SQUARE_OUT)).size(theme::SMALL_SIZE)).clicked() {
                         actions.push(Action::OpenUrl(hosting::token_page(kind, &host)));
                     }
                 });
@@ -1169,7 +1220,7 @@ fn privacy(
         "Download profile pictures",
         "Fetch GitHub or GitLab account pictures for visible authors. Sends commit IDs to GitHub or author emails to GitLab. Pictures and failed lookups are cached locally for 12 hours. A failed refresh keeps the previous picture. Turn off to use initials and stop new requests. Also requires Pull and merge requests to be on.",
         |ui| {
-            toggle(ui, &mut s.download_avatars);
+            toggle(ui, &mut s.download_avatars, "Download profile pictures");
         },
     );
     heading(ui, "Crash reports");
@@ -1181,7 +1232,7 @@ fn privacy(
             "Send crash reports",
             "When Canopy crashes, send the error, a stack trace, the Canopy version and your operating system to NecturaLabs, and a short record of each session. Stored by Sentry in the EU and deleted after 90 days. Takes effect immediately.",
             |ui| {
-                toggle(ui, &mut on);
+                toggle(ui, &mut on, "Send crash reports");
             },
         );
         if before != Some(on) && (before.is_some() || on) {
@@ -1277,7 +1328,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
         "Check for updates",
         "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
         |ui| {
-            toggle(ui, &mut s.check_updates);
+            toggle(ui, &mut s.check_updates, "Check for updates");
         },
     );
     row(
@@ -1285,14 +1336,14 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
         "Include beta builds",
         "Also offer beta builds, which are tried out less before they are published.",
         |ui| {
-            toggle(ui, &mut s.include_prereleases);
+            toggle(ui, &mut s.include_prereleases, "Include beta builds");
         },
     );
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(format!("Canopy {}", crate::build_info::label()))
-                .font(FontId::new(13.5, theme::medium())),
+                .font(FontId::new(theme::LEAD_SIZE, theme::medium())),
         );
         let (text, color) = match update {
             UpdateState::Idle => (String::new(), p.text_dim),
@@ -1308,7 +1359,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
             ),
             UpdateState::Failed(e) => (format!("{}  {e}", icon::WARNING), p.danger),
         };
-        ui.label(RichText::new(text).size(12.5).color(color));
+        ui.label(RichText::new(text).size(theme::META_SIZE).color(color));
     });
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -1340,7 +1391,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(format!("Skipping version {v}."))
-                    .size(12.0)
+                    .size(theme::META_SIZE)
                     .color(p.text_dim),
             );
             if ui.small_button("Stop skipping").clicked() {
@@ -1354,7 +1405,7 @@ fn keyboard(ui: &mut Ui) {
     let p = palette(ui.ctx());
     ui.label(
         RichText::new(format!("Press ? (or {}) anywhere for this list as an overlay. Single keys work when no text field has focus; Super is never used.", crate::keymap::hint(crate::keymap::Command::Cheatsheet).split(" · ").next().unwrap_or_default()))
-            .size(12.5)
+            .size(theme::META_SIZE)
             .color(p.text_dim),
     );
     ui.add_space(10.0);
