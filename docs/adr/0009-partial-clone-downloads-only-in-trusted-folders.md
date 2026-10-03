@@ -38,9 +38,12 @@ partial clone opened for the first time shows only what is on disk until the use
 
 ## Limits, decided on purpose
 
-- The list is published to every repository thread the moment it changes (`trust::set`), and each
-  download asks again immediately before git starts. A download already running when trust is
-  withdrawn finishes: it was allowed when it began, and a running git cannot be recalled.
+- The list is published to every repository thread the moment it changes (`trust::set`). The
+  worker asks before a read goes to the network (to say why nothing downloaded), and core asks
+  again at the very point where `git fetch` starts, for every remote and round of one read,
+  through the rule the application installs (`partial::set_download_gate`). A download already
+  running when trust is withdrawn finishes: it was allowed when it began, and a running git
+  cannot be recalled.
 - Trust follows where the repository's directories really are, after resolving links. A link
   inside a trusted folder that leads out gives no trust; a link elsewhere that leads in does not
   need any, because the repository and its configuration are inside the folder.

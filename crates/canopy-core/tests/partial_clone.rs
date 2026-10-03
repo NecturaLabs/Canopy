@@ -472,6 +472,36 @@ fn huge_commits_skip_the_blob_download_and_leave_counts_unknown() {
     assert_eq!(our_lines(&d), ["+file 7"]);
 }
 
+/// The rule an application installs: no download for a repository whose path says so.
+fn deny_marked_repositories(common_dir: &Path, _workdir: Option<&Path>) -> bool {
+    !common_dir.to_string_lossy().contains("denied-by-gate")
+}
+
+#[test]
+fn the_download_gate_stops_the_fetch_itself() {
+    canopy_core::partial::set_download_gate(deny_marked_repositories);
+    let fx = Fixture::new();
+    let denied = fx.clone("denied-by-gate", &["--filter=blob:none"]);
+    let repo = Repo::open(&denied).expect("open");
+    let before = missing(&denied);
+    assert!(!before.is_empty());
+    let err = repo
+        .commit_details(fx.commits[0], Download)
+        .expect_err("the gate refuses the fetch");
+    assert!(
+        matches!(&err, Error::NotDownloaded { remote: None, reason: Some(r) } if r.contains("trusted")),
+        "{err:?}"
+    );
+    assert_eq!(missing(&denied), before, "nothing was fetched");
+
+    // Another repository in the same process still downloads.
+    let allowed = fx.clone("allowed", &["--filter=blob:none"]);
+    Repo::open(&allowed)
+        .expect("open")
+        .commit_details(fx.commits[0], Download)
+        .expect("downloads");
+}
+
 #[test]
 fn blobless_clone_downloads_blobs_and_matches_cli() {
     let fx = Fixture::new();

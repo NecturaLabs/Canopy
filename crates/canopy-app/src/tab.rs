@@ -382,6 +382,8 @@ pub struct RepoTab {
     /// The promisor remote a read needed but Canopy did not download from, because the
     /// repository is outside every trusted folder; the status bar offers to trust it.
     pub downloads_refused: Option<String>,
+    /// Trust changed while no refusal was recorded: a refusal that arrives next is stale.
+    reread_on_refusal: bool,
     pub avatars: crate::avatars::Avatars,
     /// The last fetch, for auto-fetch.
     pub last_fetch: Instant,
@@ -448,6 +450,7 @@ impl RepoTab {
             trusted_gitlab_hosts: Vec::new(),
             requests: Requests::default(),
             downloads_refused: None,
+            reread_on_refusal: false,
             avatars: Default::default(),
             last_fetch: Instant::now(),
         }
@@ -631,17 +634,44 @@ impl RepoTab {
     }
 
     /// The trusted folders changed. A tab whose downloads were refused asks again for what it
-    /// was showing, which may now download.
+    /// was showing, which may now download. A tab with no refusal on record may still have one
+    /// on its way from the worker, which that refusal then finds stale.
     pub fn trust_changed(&mut self) {
-        if self.downloads_refused.take().is_none() {
-            return;
+        if self.downloads_refused.take().is_some() {
+            self.reread();
+        } else {
+            self.reread_on_refusal = true;
         }
+    }
+
+    fn reread(&mut self) {
         self.refresh();
         self.details_error = None;
         if let Some(oid) = self.selected_commit {
             self.worker.send(Job::Details(oid));
         }
         self.reload_diff();
+    }
+
+    /// Hides the "Downloads off" chip once nothing it explains is left on screen: the status is
+    /// there, the selected commit is complete and no diff or details error is shown.
+    fn clear_obsolete_refusal(&mut self) {
+        let status_shown = self
+            .snap
+            .as_ref()
+            .is_some_and(|s| s.status_unavailable.is_none());
+        let details_complete = self.selected_commit.is_none()
+            || self
+                .details
+                .as_ref()
+                .is_some_and(|d| Some(d.oid) == self.selected_commit && d.stats_known);
+        if status_shown
+            && details_complete
+            && self.details_error.is_none()
+            && self.diff_error.is_none()
+        {
+            self.downloads_refused = None;
+        }
     }
 
     fn diff_key(&self, sel: &FileSelection) -> DiffKey {
@@ -868,6 +898,7 @@ impl RepoTab {
                         self.details_error = None;
                     }
                     self.reconcile_file_selection();
+                    self.clear_obsolete_refusal();
                 }
                 Event::Status(st) => {
                     if let Some(s) = &mut self.snap {
@@ -878,6 +909,7 @@ impl RepoTab {
                         s.status_unavailable = None;
                     }
                     self.reconcile_file_selection();
+                    self.clear_obsolete_refusal();
                 }
                 Event::DetailsFailed {
                     oid,
@@ -892,16 +924,18 @@ impl RepoTab {
                         });
                     }
                 }
-                Event::DownloadsRefused { remote } => self.downloads_refused = Some(remote),
+                Event::DownloadsRefused { remote } => {
+                    if std::mem::take(&mut self.reread_on_refusal) {
+                        self.reread();
+                    } else {
+                        self.downloads_refused = Some(remote);
+                    }
+                }
                 Event::Details(d) => {
                     if Some(d.oid) == self.selected_commit {
                         let first = d.files.first().cloned();
                         let oid = d.oid;
                         self.details_error = None;
-                        // Everything about this commit is on disk: no refusal applies to it.
-                        if d.stats_known {
-                            self.downloads_refused = None;
-                        }
                         // A second reply for the same commit (the line counts arriving after the
                         // file list) replaces the first and leaves the open diff alone.
                         self.details = Some(d);
@@ -916,6 +950,7 @@ impl RepoTab {
                             });
                         }
                     }
+                    self.clear_obsolete_refusal();
                 }
                 Event::Diff(key, result) => {
                     if self.pending_diff.as_ref() == Some(&key) {
@@ -1291,6 +1326,78 @@ mod tests {
         events.send(Event::Diff(key, Ok(new)))?;
         tab.poll(&[]);
         assert!(tab.highlights.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn a_refusal_that_trust_overtook_rereads_instead_of_showing_the_chip()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, jobs) = Worker::detached();
+        tab.worker = worker;
+        // Trust changes while no refusal is on record...
+        tab.trust_changed();
+        while jobs.try_recv().is_ok() {}
+        // ...and the refusal the worker had already queued arrives afterwards.
+        events.send(Event::DownloadsRefused {
+            remote: "origin".into(),
+        })?;
+        tab.poll(&[]);
+        assert!(tab.downloads_refused.is_none(), "a stale refusal");
+        assert!(jobs.try_recv().is_ok(), "the tab asked the worker again");
+        // The next refusal is genuine.
+        events.send(Event::DownloadsRefused {
+            remote: "origin".into(),
+        })?;
+        tab.poll(&[]);
+        assert_eq!(tab.downloads_refused.as_deref(), Some("origin"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_complete_commit_does_not_hide_a_refusal_still_in_effect()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.snap = Some(Arc::new(RepoSnapshot {
+            status_unavailable: Some(canopy_core::StatusUnavailable {
+                message: "not downloaded".into(),
+                can_download: false,
+            }),
+            ..Default::default()
+        }));
+        let commit = Oid::from_bytes(&[1; 20])?;
+        tab.selected_commit = Some(commit);
+        tab.downloads_refused = Some("origin".into());
+        let author = canopy_core::Signature {
+            name: "Ada".into(),
+            email: "ada@example.com".into(),
+            time: 0,
+            offset_minutes: 0,
+        };
+        let complete = Arc::new(CommitDetails {
+            oid: commit,
+            message: "A commit".into(),
+            author: author.clone(),
+            committer: author,
+            parents: Vec::new(),
+            files: Vec::new(),
+            stats_known: true,
+        });
+        events.send(Event::Details(complete))?;
+        tab.poll(&[]);
+        assert!(
+            tab.downloads_refused.is_some(),
+            "the status still cannot be shown"
+        );
+        events.send(Event::Status(canopy_core::WorkingStatus::default()))?;
+        tab.poll(&[]);
+        assert!(tab.downloads_refused.is_none(), "nothing left to explain");
         Ok(())
     }
 

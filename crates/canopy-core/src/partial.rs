@@ -120,6 +120,16 @@ fn refused_reason(remotes: &[String]) -> String {
 /// that cannot be resolved (removed, unreadable) trusts nothing, and a filesystem root is never
 /// accepted as a trusted folder.
 pub fn is_in_trusted_folder(repo: &Repository, trusted: &[std::path::PathBuf]) -> bool {
+    paths_in_trusted_folder(repo.commondir(), repo.workdir(), trusted)
+}
+
+/// [`is_in_trusted_folder`] for the two folders it looks at: the common git directory and, when
+/// there is one, the working folder.
+pub fn paths_in_trusted_folder(
+    common_dir: &Path,
+    workdir: Option<&Path>,
+    trusted: &[std::path::PathBuf],
+) -> bool {
     let trusted: Vec<std::path::PathBuf> = trusted
         .iter()
         .filter_map(|t| std::fs::canonicalize(t).ok())
@@ -128,7 +138,27 @@ pub fn is_in_trusted_folder(repo: &Repository, trusted: &[std::path::PathBuf]) -
     let inside = |path: &Path| {
         std::fs::canonicalize(path).is_ok_and(|p| trusted.iter().any(|t| p.starts_with(t)))
     };
-    inside(repo.commondir()) && repo.workdir().is_none_or(inside)
+    inside(common_dir) && workdir.is_none_or(inside)
+}
+
+/// What decides, right before each `git fetch` starts, whether the repository (its common git
+/// directory and working folder) may download. The application installs it.
+type DownloadGate = fn(common_dir: &Path, workdir: Option<&Path>) -> bool;
+
+static DOWNLOAD_GATE: std::sync::OnceLock<DownloadGate> = std::sync::OnceLock::new();
+
+/// Installs the rule every download passes at the very point where `git fetch` would start, so
+/// that no read path can reach a fetch around it, however many remotes or rounds one read takes.
+/// Only the application knows what the user trusts. Until a rule is installed downloads are not
+/// restricted; the first call wins.
+pub fn set_download_gate(gate: DownloadGate) {
+    let _ = DOWNLOAD_GATE.set(gate);
+}
+
+fn download_allowed(repo: &Repository) -> bool {
+    DOWNLOAD_GATE
+        .get()
+        .is_none_or(|gate| gate(repo.commondir(), repo.workdir()))
 }
 
 /// Whether `repo` is a partial clone: it has a promisor remote, or objects that came from one
@@ -247,6 +277,13 @@ pub(crate) fn download(repo: &Repository, workdir: &Path, oids: &[Oid]) -> Resul
     let mut wanted: Vec<Oid> = oids.to_vec();
     let mut last_error = None;
     for remote in usable(&remotes) {
+        // Asked again for every remote: trust may be withdrawn while an earlier fetch runs.
+        if !download_allowed(repo) {
+            return Err(Error::NotDownloaded {
+                remote: None,
+                reason: Some("The repository is not in a folder trusted for downloads.".into()),
+            });
+        }
         let input: String = wanted.iter().map(|o| format!("{o}\n")).collect();
         let args = [
             "-c",

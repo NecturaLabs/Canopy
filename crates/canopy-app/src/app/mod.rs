@@ -183,6 +183,7 @@ impl CanopyApp {
         crate::logging::set_level(settings.log_level);
         // Before any tab opens, so a repository thread never sees an empty list.
         crate::trust::set(&settings.trusted_folders);
+        crate::trust::install_gate();
         crate::ui::fonts::install(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);

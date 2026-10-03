@@ -410,6 +410,8 @@ impl Job {
 fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Context) {
     // Every event this thread logs carries the repository.
     let _repo = tracing::info_span!("repo", path = %path.display()).entered();
+    // Before this thread can start a download: core asks the trust list at every fetch.
+    crate::trust::install_gate();
     let emit = |e: Event| {
         let _ = events.send(e);
         ctx.request_repaint();
@@ -1417,5 +1419,24 @@ mod read_tests {
         assert!(e.to_string().contains("trusted folder"), "{e}");
         assert_eq!(*refused.borrow(), ["origin".to_owned()]);
         assert!(lines.borrow().is_empty());
+
+        // Trust withdrawn between the first check and the moment the fetch would start: it
+        // does not start.
+        let asked = Cell::new(0);
+        let modes = RefCell::new(Vec::new());
+        let r: canopy_core::Result<u8> = read_downloading(
+            &emit,
+            &|| {
+                asked.set(asked.get() + 1);
+                asked.get() == 1
+            },
+            |m| {
+                modes.borrow_mut().push(m);
+                Err(not_downloaded(Some("origin")))
+            },
+        );
+        assert!(r.is_err());
+        assert_eq!(*modes.borrow(), [MissingObjects::Fail]);
+        assert_eq!(asked.get(), 2, "asked again right before the download");
     }
 }

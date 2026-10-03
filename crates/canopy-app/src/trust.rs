@@ -60,9 +60,22 @@ pub fn parent_offer(repo: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// Adds `folder` to `list` unless it is already there. A filesystem root is refused.
+/// Gives core the rule every download passes right where `git fetch` would start, so that no
+/// read path reaches a fetch around the trust list. Safe to call again.
+pub fn install_gate() {
+    canopy_core::partial::set_download_gate(|common_dir, workdir| {
+        canopy_core::partial::paths_in_trusted_folder(common_dir, workdir, &folders())
+    });
+}
+
+/// Adds `folder` to `list` unless it is already there. A filesystem root is refused, whether
+/// spelled `/`, `/..` or as a link that leads to it.
 pub fn add(list: &mut Vec<PathBuf>, folder: PathBuf) -> bool {
-    if folder.parent().is_none() || list.contains(&folder) {
+    let is_root = |path: &Path| path.parent().is_none();
+    if is_root(&folder)
+        || std::fs::canonicalize(&folder).is_ok_and(|resolved| is_root(&resolved))
+        || list.contains(&folder)
+    {
         return false;
     }
     list.push(folder);
@@ -92,5 +105,19 @@ mod tests {
         assert!(!add(&mut list, PathBuf::from("/home/ada/src")));
         assert!(!add(&mut list, PathBuf::from("/")));
         assert_eq!(list, [PathBuf::from("/home/ada/src")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_alias_of_the_root_is_refused_like_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("everything");
+        std::os::unix::fs::symlink("/", &link).unwrap();
+        let mut list = Vec::new();
+        assert!(!add(&mut list, link));
+        assert!(!add(&mut list, PathBuf::from("/..")));
+        assert!(!add(&mut list, dir.path().join("../../..")));
+        assert!(list.is_empty());
+        assert!(add(&mut list, dir.path().to_path_buf()));
     }
 }
