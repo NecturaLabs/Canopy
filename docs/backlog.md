@@ -78,7 +78,7 @@ yet true, then correctness and the features people meet first, then polish. Take
       (`docs/stress-test.md`) only when the owner asks.
 - [ ] Accessibility: AccessKit names and roles, focus order, Orca on history, changes and composer.
 - [ ] Architecture: shared widgets, tab-state and palette tests,
-      a lint against colours outside `theme.rs`, the merge dialog's per-frame branch list.
+      a lint against colours outside `theme.rs`.
 - [ ] Design, in order: colour tokens everywhere, typography and controls
       (`docs/specs/ui-spec.md`), motion (reduce-motion setting), responsive 960×600 to 4K, polish
       and a design review.
