@@ -27,9 +27,6 @@ yet true, then correctness and the features people meet first, then polish. Take
       828) and `test-install.sh`, `tools/install-desktop.sh`, the README header, `assets/README.md`,
       `packaging/README.md`; an upgrade must remove the `scalable/…svg` an earlier install put
       there. The updater is security-sensitive: security pass first.
-- [ ] Keys: pull and push use other letters in the two layers (bare `p` and `P`, but Ctrl+Shift+L
-      and Ctrl+Shift+P, Fork's). Decide whether the typing-safe twins should follow the bare
-      letters; pull then needs a free Ctrl chord (Ctrl+P is a palette alias).
 - [ ] `cli::run_with_input`: show git's stderr, not "Broken pipe", when git exits early.
 - [ ] Installer follow-ups from the security review (`install.sh` is fixed; `install.ps1` could not
       be tested here and is untouched, and nothing in CI runs it): bring `install.ps1` to parity

@@ -47,7 +47,10 @@ Rules, each guarded by a test in `keymap.rs`:
   both, `g` and `G`, Ctrl+Tab and Ctrl+Shift+Tab.
 - **Bare keys never fire while a text field has focus.** Only the "Anywhere" chords, which all
   carry Ctrl, or are F5 or Esc, work while typing. Their Git twins are Fork's Ctrl+Shift chords,
-  chosen so they never take a text-editing chord (Ctrl+A, C, V, X, Z, Y).
+  chosen so they never take a text-editing chord (Ctrl+A, C, V, X, Z, Y). Pull and push are the
+  one family whose letters differ between the layers (`p` and `P` against Ctrl+Shift+L and
+  Ctrl+Shift+P), on purpose: the Ctrl twin of `p` would be Ctrl+P, the palette's alias, and
+  Fork's pair keeps push, the one that leaves the machine, apart from pull.
 - **One owner per chord.** A test fails if two bindings in overlapping scopes share one.
 - Ctrl is Cmd on macOS (the Control key is accepted there too). A chord written as a character
   (`?`, `/`, `[`, `]`, `=`) matches whatever keys the layout needs to type it.
