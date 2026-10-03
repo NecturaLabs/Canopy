@@ -218,6 +218,7 @@ pub fn show(
                                     );
                                 } else {
                                     egui::ComboBox::from_id_salt("settings-section")
+                                        .icon(crate::ui::widgets::combo_caret)
                                         .selected_text(title)
                                         .show_ui(ui, |ui| {
                                             for section in Section::ALL {
@@ -806,6 +807,7 @@ fn git(
         "Fetches every remote of open repositories while Canopy is idle.",
         |ui| {
             egui::ComboBox::from_id_salt("auto-fetch")
+                .icon(crate::ui::widgets::combo_caret)
                 .selected_text(match s.auto_fetch_minutes {
                     0 => "Off".to_owned(),
                     m => format!("Every {m} minutes"),
@@ -880,6 +882,7 @@ fn git(
         "Ignoring whitespace turns off hunk staging, since such a diff cannot be applied.",
         |ui| {
             egui::ComboBox::from_id_salt("whitespace")
+                .icon(crate::ui::widgets::combo_caret)
                 .selected_text(s.diff.whitespace.label())
                 .show_ui(ui, |ui| {
                     for m in WhitespaceMode::ALL {
@@ -1251,6 +1254,7 @@ fn privacy(
         |ui| {
             let before = s.log_level;
             egui::ComboBox::from_id_salt("log-level")
+                .icon(crate::ui::widgets::combo_caret)
                 .selected_text(s.log_level.label())
                 .show_ui(ui, |ui| {
                     for level in crate::logging::LogLevel::ALL {

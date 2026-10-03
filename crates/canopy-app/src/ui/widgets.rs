@@ -341,6 +341,21 @@ struct Segment<'a> {
     font: FontId,
 }
 
+/// The caret of every drop-down (`ComboBox::icon`), from the icon font like the rest of the app.
+pub fn combo_caret(ui: &Ui, rect: egui::Rect, visuals: &egui::style::WidgetVisuals, open: bool) {
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        if open {
+            icon::CARET_UP
+        } else {
+            icon::CARET_DOWN
+        },
+        FontId::proportional(theme::BODY_SIZE),
+        visuals.fg_stroke.color,
+    );
+}
+
 /// Paints the track and its segments; returns the index of a segment clicked while not selected.
 fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -> Option<usize> {
     let p = palette(ui.ctx());

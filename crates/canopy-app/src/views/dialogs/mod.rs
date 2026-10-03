@@ -398,7 +398,7 @@ pub fn show(
                         .and_then(|t| t.snap.as_ref())
                         .map(|s| s.branches.iter().filter(|b| !b.is_head).map(|b| b.name.clone()).chain(s.remote_branches.iter().map(|b| b.full_name())).collect())
                         .unwrap_or_default();
-                    egui::ComboBox::from_id_salt("merge-target").width(410.0).selected_text(if target.is_empty() { "Choose a branch…".to_owned() } else { target.clone() }).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt("merge-target").icon(crate::ui::widgets::combo_caret).width(ui.available_width()).selected_text(if target.is_empty() { "Choose a branch…".to_owned() } else { target.clone() }).show_ui(ui, |ui| {
                         for b in branches {
                             ui.selectable_value(target, b.clone(), b);
                         }
@@ -459,7 +459,7 @@ pub fn show(
                     title(ui, icon::GIT_PULL_REQUEST, &format!("New {}", kind.request_noun()));
                     ui.label(RichText::new(format!("{}  {}  →", icon::GIT_BRANCH, request.source)).size(theme::META_SIZE).color(p.text_dim));
                     ui.add_space(4.0);
-                    egui::ComboBox::from_id_salt("request-target").width(410.0).selected_text(format!("{}  {}", icon::GIT_BRANCH, request.target)).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt("request-target").icon(crate::ui::widgets::combo_caret).width(ui.available_width()).selected_text(format!("{}  {}", icon::GIT_BRANCH, request.target)).show_ui(ui, |ui| {
                         for b in branches.iter().filter(|b| **b != request.source) {
                             ui.selectable_value(&mut request.target, b.clone(), b);
                         }

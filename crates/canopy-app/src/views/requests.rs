@@ -504,7 +504,7 @@ fn action_bar(
             }
             // Merge: method picker and a confirming second click.
             let mergeable = d.and_then(|d| d.mergeable).unwrap_or(true) && !r.draft;
-            egui::ComboBox::from_id_salt("merge-method")
+            egui::ComboBox::from_id_salt("merge-method").icon(crate::ui::widgets::combo_caret)
                 .selected_text(tab.requests.merge_method.label())
                 .width(170.0_f32.min(ui.max_rect().width()))
                 .wrap_mode(egui::TextWrapMode::Truncate)
