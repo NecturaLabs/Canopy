@@ -344,7 +344,10 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
         if width < 620.0 {
             label(ui);
             ui.add_space(theme::XS);
-            ui.horizontal_wrapped(control);
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
+                control,
+            );
         } else {
             ui.horizontal_top(|ui| {
                 ui.allocate_ui_with_layout(
@@ -1302,17 +1305,51 @@ fn keyboard(ui: &mut Ui) {
     ui.add_space(10.0);
     for section in KeySection::ALL {
         heading(ui, section.title());
-        egui::Grid::new(("keys", section.title()))
-            .num_columns(2)
-            .spacing([24.0, 6.0])
-            .striped(false)
-            .show(ui, |ui| {
-                for b in BINDINGS.iter().filter(|b| b.section == section) {
-                    ui.label(RichText::new(b.keys()).monospace().size(12.0).color(p.text));
-                    ui.label(RichText::new(b.description).size(12.5).color(p.text_dim));
-                    ui.end_row();
-                }
-            });
+        for b in BINDINGS.iter().filter(|b| b.section == section) {
+            if ui.available_width() < 520.0 {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(b.description)
+                            .size(theme::BODY_SIZE)
+                            .color(p.text),
+                    )
+                    .wrap(),
+                );
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(b.keys())
+                            .monospace()
+                            .size(theme::SMALL_SIZE)
+                            .color(p.text_dim),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(theme::XS);
+            } else {
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        vec2(180.0, ui.spacing().interact_size.y),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label(
+                                RichText::new(b.keys())
+                                    .monospace()
+                                    .size(theme::SMALL_SIZE)
+                                    .color(p.text),
+                            );
+                        },
+                    );
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(b.description)
+                                .size(theme::BODY_SIZE)
+                                .color(p.text_dim),
+                        )
+                        .wrap(),
+                    );
+                });
+            }
+        }
         ui.add_space(8.0);
     }
 }
@@ -1432,7 +1469,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, ThemeId::Midnight, true);
-        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(600.0, 375.0));
+        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(562.5, 350.0));
         let mut settings = Settings::default();
         let mut tokens = TokenStore::default();
         for section in Section::ALL {
@@ -1467,6 +1504,10 @@ mod tests {
             let rect = ctx
                 .memory(|m| m.area_rect(egui::Id::new("settings")))
                 .expect("settings area");
+            assert!(
+                rect.width() - 2.0 <= (bounds.width() - theme::XL * 2.0).ceil(),
+                "{section:?}: modal must retain its viewport margins: {rect:?}"
+            );
             assert!(
                 bounds.contains_rect(rect),
                 "{section:?}: {rect:?} exceeds {bounds:?}"

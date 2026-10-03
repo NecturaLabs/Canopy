@@ -564,7 +564,7 @@ impl eframe::App for CanopyApp {
             });
         if let Some(tab) = self.tabs.get_mut(self.active) {
             egui::Panel::top("actions")
-                .exact_size(56.0)
+                .exact_size(theme::XL + theme::LG + theme::XS)
                 .frame(
                     egui::Frame::new()
                         .fill(p.panel)
@@ -654,6 +654,13 @@ impl eframe::App for CanopyApp {
         }
 
         // Overlays.
+        if self.settings_screen.is_some()
+            || self.dialogs.current().is_some()
+            || self.palette.open
+            || self.cheatsheet.open
+        {
+            crate::ui::widgets::dismiss_underlying_tooltips(&ctx);
+        }
         self.folder_picker.begin_frame();
         if let Some(screen) = &mut self.settings_screen {
             let before = self.settings.clone();
@@ -700,6 +707,7 @@ impl eframe::App for CanopyApp {
         }
         // Dialogs draw above the settings screen (the Privacy Policy opens from there).
         if let Some(d) = self.dialogs.current_mut() {
+            crate::ui::widgets::dismiss_underlying_tooltips(&ctx);
             let consent = is_consent(d);
             match dialogs::show(
                 &ctx,
@@ -729,6 +737,7 @@ impl eframe::App for CanopyApp {
         }
         self.folder_picker.end_frame();
         if self.palette.open {
+            crate::ui::widgets::dismiss_underlying_tooltips(&ctx);
             // Built when the palette opens or its inputs change, not every frame.
             let inputs = self.palette_inputs();
             if self.palette.needs_entries(inputs) {
@@ -738,6 +747,9 @@ impl eframe::App for CanopyApp {
             if let Some(a) = self.palette.show(&ctx) {
                 actions.push(a);
             }
+        }
+        if self.cheatsheet.open {
+            crate::ui::widgets::dismiss_underlying_tooltips(&ctx);
         }
         self.cheatsheet.show(&ctx);
         self.toasts.show(&ctx);

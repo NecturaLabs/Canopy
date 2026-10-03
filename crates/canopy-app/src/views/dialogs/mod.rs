@@ -210,10 +210,18 @@ pub fn show(
         .show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - theme::XL * 4.0).clamp(0.0, 460.0));
             ui.set_max_height((ctx.content_rect().height() - theme::XL * 4.0).max(0.0));
-            ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+            ui.spacing_mut().scroll = theme::solid_scroll();
+            let document_actions = matches!(dialog, Dialog::Consent { .. } | Dialog::Legal(_));
+            let pinned_actions = document_actions && ctx.content_rect().height() < 600.0;
+            if pinned_actions {
+                ui.set_height((ctx.content_rect().height() - theme::XL * 4.0).max(0.0));
+                egui::Panel::bottom("dialog-actions")
+                    .frame(egui::Frame::new())
+                    .show(ui, |ui| { outcome = common::document_actions(ui, dialog); });
+            }
             egui::ScrollArea::vertical()
                 .id_salt(("dialog-body", std::mem::discriminant(dialog)))
-                .max_height((ctx.content_rect().height() - theme::XL * 4.0).max(0.0))
+                .max_height(if pinned_actions { ui.available_height() } else { (ctx.content_rect().height() - theme::XL * 4.0).max(0.0) })
                 .min_scrolled_height(0.0)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
@@ -590,7 +598,6 @@ pub fn show(
                             });
                         }
                     };
-                    let equal = |ui: &mut Ui, text: &str| ui.add_sized([170.0, 34.0], egui::Button::new(RichText::new(text).font(FontId::new(13.5, theme::medium()))));
                     match step {
                         Pending::Terms => {
                             ui.horizontal(|ui| {
@@ -613,17 +620,7 @@ pub fn show(
                             }
                             ui.add_space(8.0);
                             read_buttons(ui, reading);
-                            ui.add_space(12.0);
-                            ui.horizontal(|ui| {
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if widgets::primary_button(ui, "I agree", true, 130.0).clicked() {
-                                        outcome = Outcome::Run(vec![Action::AcceptTerms]);
-                                    }
-                                    if ui.add_sized([90.0, 34.0], egui::Button::new("Quit")).clicked() {
-                                        outcome = Outcome::Run(vec![Action::Quit]);
-                                    }
-                                });
-                            });
+
                         }
                         Pending::CrashReports => {
                             title(ui, icon::FIRST_AID_KIT, "Send crash reports?");
@@ -654,18 +651,7 @@ pub fn show(
                                     egui::ScrollArea::vertical().id_salt("legal-privacy").max_height(240.0).show(ui, |ui| crate::ui::notes::markdown(ui, Document::Privacy.body()));
                                 });
                             }
-                            ui.add_space(12.0);
-                            // Both answers equally prominent: consent must be a free choice.
-                            ui.horizontal(|ui| {
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if equal(ui, "Send crash reports").clicked() {
-                                        outcome = Outcome::Run(vec![Action::SetCrashReports(true)]);
-                                    }
-                                    if equal(ui, "Don't send").clicked() {
-                                        outcome = Outcome::Run(vec![Action::SetCrashReports(false)]);
-                                    }
-                                });
-                            });
+
                         }
                     }
                 }
@@ -697,14 +683,7 @@ pub fn show(
                             egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 180.0).clamp(0.0, 420.0)).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
                         }
                     });
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if widgets::primary_button(ui, "Close", true, 110.0).clicked() || enter {
-                                outcome = Outcome::Close;
-                            }
-                        });
-                    });
+
                 }
                 Dialog::About => {
                     ui.vertical_centered(|ui| {
@@ -748,6 +727,9 @@ pub fn show(
             }
             ui.add_space(theme::SM);
             });
+            if document_actions && !pinned_actions {
+                outcome = common::document_actions(ui, dialog);
+            }
         });
     if modal.should_close()
         && matches!(outcome, Outcome::Keep)
@@ -1165,6 +1147,63 @@ mod tests {
             assert!(
                 visible,
                 "Clone title and scrolled action must fit the minimum scaled window (scrolling={scrolling})"
+            );
+        }
+    }
+    #[test]
+    fn consent_choices_are_visible_without_scrolling_at_maximum_zoom() {
+        for step in [Pending::Terms, Pending::CrashReports] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            crate::ui::theme::apply(&ctx, crate::ui::theme::ThemeId::Daylight, true);
+            let mut dialog = Dialog::Consent {
+                step,
+                updated: false,
+                reading: Some(Document::Privacy),
+            };
+            let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(562.5, 350.0));
+            let mut picker = crate::ui::folder_picker::FolderPicker::default();
+            let mut visible = 0;
+            for _ in 0..4 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(viewport),
+                        ..Default::default()
+                    },
+                    |_| {
+                        super::show(
+                            &ctx,
+                            &mut dialog,
+                            None,
+                            &mut picker,
+                            false,
+                            &crate::updater::Updater::default(),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                let choices = match step {
+                    Pending::Terms => ["I agree", "Quit"],
+                    Pending::CrashReports => ["Send crash reports", "Don't send"],
+                };
+                visible = output
+                    .shapes
+                    .iter()
+                    .filter(|shape| {
+                        if let egui::Shape::Text(text) = &shape.shape
+                            && choices.contains(&text.galley.text())
+                        {
+                            let rect = text.visual_bounding_rect();
+                            viewport.contains_rect(rect) && shape.clip_rect.contains_rect(rect)
+                        } else {
+                            false
+                        }
+                    })
+                    .count();
+            }
+            assert_eq!(
+                visible, 2,
+                "both consent choices must stay visible while reading"
             );
         }
     }

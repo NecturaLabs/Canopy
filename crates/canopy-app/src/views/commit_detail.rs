@@ -16,6 +16,7 @@ use crate::views::diff;
 /// Draws the details pane.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    header(ui, tab);
     let Some(d) = tab.details.clone() else {
         // A failed load stays on screen with its reason, so selecting the same commit again is
         // not the only way out.
@@ -39,64 +40,69 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let pane_max = (ui.available_width() * 0.4).max(160.0);
     egui::Panel::left("detail-meta")
         .resizable(true)
-        .default_size(pane_max.min(380.0))
+        .default_size(pane_max.min(320.0))
         .min_size(pane_max.min(220.0))
         .max_size(pane_max.min(640.0))
         .frame(
             egui::Frame::new()
                 .fill(p.panel)
-                .inner_margin(egui::Margin::same(14)),
+                .inner_margin(egui::Margin::same(theme::SM as i8)),
         )
         .show(ui, |ui| {
-            ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-            let compact = ui.available_height() < theme::XL * 10.0;
-            if compact {
-                ui.horizontal(|ui| {
-                    let title_width = (ui.available_width() - theme::XL - theme::SM).max(0.0);
-                    ui.allocate_ui_with_layout(
-                        vec2(title_width, theme::XL),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(d.message.lines().next().unwrap_or("").trim())
-                                        .font(FontId::new(theme::TITLE_SIZE, theme::semibold()))
-                                        .color(p.text),
-                                )
-                                .truncate(),
-                            )
-                            .on_hover_text(&d.message);
-                        },
-                    );
-                    ui.menu_button(icon::INFO, |ui| {
-                        ui.set_max_width(
-                            (ui.ctx().content_rect().width() - theme::XL * 2.0).min(380.0),
-                        );
-                        message(ui, &d);
-                        ui.add_space(theme::SM);
-                        metadata(ui, &d, actions);
-                    })
-                    .response
-                    .on_hover_text("Commit information");
-                });
-                ui.add_space(theme::XS);
-                author(ui, &d, tab);
+            ui.spacing_mut().scroll = theme::solid_scroll();
+            ui.spacing_mut().item_spacing.y = theme::XS;
+            author(ui, &d, tab);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(short_id(d.oid))
+                        .monospace()
+                        .size(theme::SMALL_SIZE)
+                        .color(p.accent2),
+                )
+                .on_hover_text(d.oid.to_string());
+                if widgets::icon_button(ui, icon::COPY, "Copy SHA").clicked() {
+                    actions.push(Action::Copy(d.oid.to_string()));
+                }
+                ui.label(
+                    RichText::new(widgets::absolute_date(d.author.time))
+                        .size(theme::SMALL_SIZE)
+                        .color(p.text_faint),
+                )
+                .on_hover_text(widgets::full_date(d.author.time, d.author.offset_minutes));
+            });
+            let files_min = FILE_ROW_H * 2.0 + theme::XL + theme::SM;
+            let glyph = if tab.history_layout.information_open {
+                icon::CARET_DOWN
             } else {
-                let files_min = FILE_ROW_H * 2.0 + theme::XL + theme::SM + theme::XS;
+                icon::CARET_RIGHT
+            };
+            if ui
+                .add(egui::Button::new(format!("{glyph}  Commit information")).frame(false))
+                .clicked()
+            {
+                tab.history_layout.information_open = !tab.history_layout.information_open;
+            }
+            if tab.history_layout.information_open {
                 egui::ScrollArea::vertical()
                     .id_salt("commit-metadata")
-                    .max_height((ui.available_height() - files_min).max(0.0))
+                    .max_height((ui.available_height() - files_min).max(theme::XL))
                     .min_scrolled_height(0.0)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         message(ui, &d);
-                        ui.add_space(theme::SM);
-                        author(ui, &d, tab);
                         ui.add_space(theme::XS);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&d.author.email)
+                                    .size(theme::SMALL_SIZE)
+                                    .color(p.text_dim),
+                            )
+                            .wrap(),
+                        );
                         metadata(ui, &d, actions);
                     });
             }
-            ui.add_space(theme::SM);
+            ui.add_space(theme::XS);
             file_stats(ui, &d);
             ui.add_space(theme::XS);
             egui::ScrollArea::vertical()
@@ -108,6 +114,78 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(p.bg))
         .show(ui, |ui| diff::show(ui, tab, actions));
+}
+
+/// Pane navigation belongs to the commit, including when its files have not loaded.
+fn header(ui: &mut Ui, tab: &mut RepoTab) {
+    if tab.history_layout.compact {
+        return;
+    }
+    let p = palette(ui.ctx());
+    egui::Panel::top("commit-pane-header")
+        .frame(
+            egui::Frame::new()
+                .fill(p.panel)
+                .inner_margin(egui::Margin::symmetric(theme::MD as i8, theme::XS as i8)),
+        )
+        .show(ui, |ui| {
+            let label = if tab.history_layout.expanded {
+                format!("{}  Back to history", icon::ARROWS_IN_SIMPLE)
+            } else {
+                format!("{}  Expand", icon::ARROWS_OUT_SIMPLE)
+            };
+            let button_width = ui
+                .painter()
+                .layout_no_wrap(
+                    label.clone(),
+                    FontId::new(theme::BODY_SIZE, theme::medium()),
+                    p.text,
+                )
+                .size()
+                .x
+                + ui.spacing().button_padding.x * 2.0;
+            let (row, _) = ui.allocate_exact_size(
+                vec2(ui.available_width(), ui.spacing().interact_size.y),
+                Sense::hover(),
+            );
+            let button_rect =
+                egui::Rect::from_min_max(egui::pos2(row.max.x - button_width, row.min.y), row.max);
+            let summary_rect = egui::Rect::from_min_max(
+                row.min,
+                egui::pos2(button_rect.min.x - theme::SM, row.max.y),
+            );
+            let mut summary_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(summary_rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            summary_ui.set_clip_rect(summary_rect.intersect(ui.clip_rect()));
+            let summary = tab
+                .details
+                .as_ref()
+                .map(|d| d.message.lines().next().unwrap_or("").trim())
+                .unwrap_or("Commit details");
+            summary_ui
+                .add(
+                    egui::Label::new(
+                        RichText::new(summary)
+                            .font(FontId::new(theme::BODY_SIZE, theme::semibold()))
+                            .color(p.text),
+                    )
+                    .truncate(),
+                )
+                .on_hover_text(summary);
+            if ui
+                .add_enabled_ui(tab.selected_commit.is_some(), |ui| {
+                    ui.put(button_rect, egui::Button::new(label))
+                })
+                .inner
+                .clicked()
+            {
+                tab.history_layout.expanded = !tab.history_layout.expanded;
+                tab.history_layout.compact_details = true;
+            }
+        });
 }
 
 fn message(ui: &mut Ui, d: &CommitDetails) {
@@ -124,41 +202,33 @@ fn message(ui: &mut Ui, d: &CommitDetails) {
         .wrap(),
     );
     if !body.is_empty() {
-        ui.add_space(4.0);
+        ui.add_space(theme::XS);
         ui.add(egui::Label::new(RichText::new(body).color(p.text_dim).size(12.5)).wrap());
     }
 }
 
 fn author(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
     let p = palette(ui.ctx());
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         tab.request_avatar(d.oid, &d.author.email);
         if let Some(texture) = tab.avatars.get(&d.author.email) {
             ui.add(
                 egui::Image::new(texture)
-                    .fit_to_exact_size(egui::vec2(32.0, 32.0))
-                    .corner_radius(egui::CornerRadius::same(16)),
+                    .fit_to_exact_size(vec2(theme::XL, theme::XL))
+                    .corner_radius(egui::CornerRadius::same((theme::XL / 2.0) as u8)),
             );
         } else {
-            widgets::avatar(ui, 32.0, &d.author.name, &d.author.email);
+            widgets::avatar(ui, theme::XL, &d.author.name, &d.author.email);
         }
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            ui.label(
+        ui.add(
+            egui::Label::new(
                 RichText::new(&d.author.name)
-                    .font(FontId::new(13.0, theme::medium()))
+                    .font(FontId::new(theme::BODY_SIZE, theme::medium()))
                     .color(p.text),
-            );
-            ui.add(
-                egui::Label::new(
-                    RichText::new(&d.author.email)
-                        .size(theme::SMALL_SIZE)
-                        .color(p.text_faint),
-                )
-                .truncate(),
             )
-            .on_hover_text(&d.author.email);
-        });
+            .truncate(),
+        )
+        .on_hover_text(format!("{} <{}>", d.author.name, d.author.email));
     });
 }
 
@@ -176,21 +246,8 @@ fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
             &format!("Committed by {}", d.committer.name),
         );
     }
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(icon::HASH).color(p.text_faint));
-        ui.label(
-            RichText::new(short_id(d.oid))
-                .monospace()
-                .size(theme::SMALL_SIZE)
-                .color(p.accent2),
-        )
-        .on_hover_text(d.oid.to_string());
-        if widgets::icon_button(ui, icon::COPY, "Copy SHA").clicked() {
-            actions.push(Action::Copy(d.oid.to_string()));
-        }
-    });
     if !d.parents.is_empty() {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(icon::GIT_COMMIT).color(p.text_faint));
             ui.label(
                 RichText::new(if d.parents.len() > 1 {
@@ -219,7 +276,7 @@ fn file_stats(ui: &mut Ui, d: &CommitDetails) {
         .files
         .iter()
         .fold((0, 0), |(a, r), f| (a + f.additions, r + f.deletions));
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(
             RichText::new(format!(
                 "{} file{} changed",

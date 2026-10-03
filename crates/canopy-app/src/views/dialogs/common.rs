@@ -102,3 +102,56 @@ pub(super) fn field(
     ui.add_space(8.0);
     r
 }
+
+/// Document choices stay outside the scrolling body.
+pub(super) fn document_actions(ui: &mut Ui, dialog: &Dialog) -> Outcome {
+    let mut outcome = Outcome::Keep;
+    ui.add_space(theme::SM);
+    ui.horizontal(|ui| {
+        ui.with_layout(
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| match dialog {
+                Dialog::Consent {
+                    step: Pending::Terms,
+                    ..
+                } => {
+                    if widgets::primary_button(ui, "I agree", true, 130.0).clicked() {
+                        outcome = Outcome::Run(vec![Action::AcceptTerms]);
+                    }
+                    if ui
+                        .add_sized([90.0, 34.0], egui::Button::new("Quit"))
+                        .clicked()
+                    {
+                        outcome = Outcome::Run(vec![Action::Quit]);
+                    }
+                }
+                Dialog::Consent {
+                    step: Pending::CrashReports,
+                    ..
+                } => {
+                    for (label, enabled) in [("Send crash reports", true), ("Don't send", false)] {
+                        if ui
+                            .add_sized(
+                                [170.0, 34.0],
+                                egui::Button::new(
+                                    RichText::new(label).font(FontId::new(13.5, theme::medium())),
+                                ),
+                            )
+                            .clicked()
+                        {
+                            outcome = Outcome::Run(vec![Action::SetCrashReports(enabled)]);
+                        }
+                    }
+                }
+                Dialog::Legal(_)
+                    if widgets::primary_button(ui, "Close", true, 110.0).clicked()
+                        || ui.input(|i| i.key_pressed(Key::Enter)) =>
+                {
+                    outcome = Outcome::Close;
+                }
+                _ => {}
+            },
+        );
+    });
+    outcome
+}

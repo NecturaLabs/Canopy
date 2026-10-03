@@ -43,9 +43,13 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space((rect.height() * 0.04).max(16.0));
+                ui.add_space(if rect.height() < 400.0 {
+                    theme::XS
+                } else {
+                    (rect.height() * 0.04).max(theme::LG)
+                });
                 let art_w = (rect.width() * 0.5)
-                    .min(rect.height() * 0.50)
+                    .min(rect.height() * if rect.height() < 400.0 { 0.30 } else { 0.50 })
                     .clamp(120.0, 520.0);
                 art::show(ui, art::welcome(), vec2(art_w, art_w * 9.0 / 16.0));
                 ui.add_space(4.0);
@@ -139,20 +143,30 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                             FontId::proportional(17.0),
                             p.accent.lerp_to_gamma(p.accent2, hover),
                         );
-                        ui.painter().text(
-                            r.left_center() + vec2(42.0, -8.0),
-                            Align2::LEFT_CENTER,
-                            name,
-                            FontId::new(13.5, theme::semibold()),
-                            p.text,
-                        );
-                        ui.painter().text(
-                            r.left_center() + vec2(42.0, 9.0),
-                            Align2::LEFT_CENTER,
-                            path.display().to_string(),
-                            FontId::proportional(11.5),
-                            p.text_faint,
-                        );
+                        let text_width = (r.width() - theme::XL * 3.0).max(0.0);
+                        let painter = ui.painter().with_clip_rect(r.intersect(ui.clip_rect()));
+                        for (text, font, color, y) in [
+                            (
+                                name,
+                                FontId::new(theme::BODY_SIZE, theme::semibold()),
+                                p.text,
+                                -8.0,
+                            ),
+                            (
+                                path.display().to_string(),
+                                FontId::proportional(theme::SMALL_SIZE),
+                                p.text_faint,
+                                9.0,
+                            ),
+                        ] {
+                            let galley =
+                                widgets::single_line_galley(ui, text, font, color, text_width);
+                            painter.galley(
+                                r.left_center() + vec2(42.0, y - galley.size().y / 2.0),
+                                galley,
+                                color,
+                            );
+                        }
                         let x = egui::Rect::from_center_size(
                             r.right_center() - vec2(20.0, 0.0),
                             vec2(22.0, 22.0),
@@ -169,7 +183,11 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                         }
                         if xr.on_hover_text("Remove from list").clicked() {
                             actions.push(Action::ForgetRecent(path.clone()));
-                        } else if resp.clicked() {
+                        } else if resp
+                            .clone()
+                            .on_hover_text(path.display().to_string())
+                            .clicked()
+                        {
                             actions.push(Action::OpenRepo(path.clone()));
                         }
                         ui.add_space(6.0);
@@ -263,11 +281,16 @@ fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) ->
         FontId::new(theme::TITLE_SIZE, theme::semibold()),
         p.text,
     );
-    ui.painter().text(
-        r.left_top() + vec2(18.0, 84.0),
-        Align2::LEFT_CENTER,
-        sub,
-        FontId::proportional(12.0),
+    let subtitle = widgets::single_line_galley(
+        ui,
+        sub.to_owned(),
+        FontId::proportional(theme::SMALL_SIZE),
+        p.text_dim,
+        (r.width() - theme::LG * 2.0).max(0.0),
+    );
+    ui.painter().galley(
+        r.left_top() + vec2(theme::LG, 84.0 - subtitle.size().y / 2.0),
+        subtitle,
         p.text_dim,
     );
     let name = title.to_owned();
@@ -281,5 +304,48 @@ fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) ->
             p.text_faint,
         );
     }
-    resp.clicked()
+    resp.on_hover_text(sub).clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_action_text_fits_a_minimum_zoomed_window() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            card(
+                ui,
+                icon::CLOUD_ARROW_DOWN,
+                "Clone",
+                "GitHub, GitLab or any URL",
+                "Ctrl+Shift+O",
+                160.0,
+            );
+        });
+        output.textures_delta.clear();
+        let card_rect = output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::Shape::Rect(rect) = &shape.shape {
+                    Some(rect.rect)
+                } else {
+                    None
+                }
+            })
+            .expect("card surface");
+        for shape in &output.shapes {
+            if let egui::Shape::Text(text) = &shape.shape {
+                assert!(
+                    card_rect.contains_rect(text.visual_bounding_rect()),
+                    "quick action text overflows: {:?}",
+                    text.visual_bounding_rect()
+                );
+            }
+        }
+    }
 }

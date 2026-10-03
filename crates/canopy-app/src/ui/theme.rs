@@ -660,6 +660,15 @@ fn visuals(p: &Palette) -> Visuals {
     v
 }
 
+/// Solid scrollbars use foreground ink so they remain visible on raised light surfaces.
+pub fn solid_scroll() -> egui::style::ScrollStyle {
+    egui::style::ScrollStyle {
+        foreground_color: true,
+        bar_width: SM,
+        ..egui::style::ScrollStyle::solid()
+    }
+}
+
 /// Makes `id` the active theme and installs its style on `ctx`. `reduce_motion` turns off
 /// animations.
 pub fn apply(ctx: &egui::Context, id: ThemeId, reduce_motion: bool) {

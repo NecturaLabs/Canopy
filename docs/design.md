@@ -196,8 +196,12 @@ always have a tooltip naming the action and its shortcut.
 - History details sit below the graph, initially 40% of its available height capped to 300–320
   points where space permits. The resizable pane can shrink to 260 points; its maximum leaves
   history controls and two complete rows. Expand opens the details in the content area, with Back
-  to history to restore the split. When that readable split cannot fit, History and Commit details
+  to history to restore the split. Both controls sit beside the commit summary and remain
+  available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
+- Commit details use a compact author, SHA and date above the changed files. Commit information
+  opens independently of pane expansion and retains its state; its body scrolls while the files
+  stay reachable.
 - Commit metadata, the Changes file list, and the request list take at most 40% of their
   available width, leaving the rest for the diff or request details. Pane limits follow the
   current viewport. Read-only diff headers share a wrapping row at short heights to keep more
@@ -207,9 +211,9 @@ always have a tooltip naming the action and its shortcut.
 - History search stays hidden until Ctrl+F or `/` opens it and focuses the field. The same
   shortcut, Esc or the close button hides it and clears the query. The commit count does not
   occupy the table header; an in-progress operation banner remains visible without search.
-- Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has a visible
+- The action toolbar is 44 points high with 36-point buttons. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has a visible
   scrollbar. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
-  a tooltip. Diff controls wrap below the filename, and hunk actions use named icons in narrow
+  a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
 - The in-progress banner (merge, rebase, cherry-pick) appears above the history table with
   continue and abort buttons.
@@ -232,7 +236,7 @@ An opened submenu item uses the same neutral surface as a hovered menu item.
 
 ### Avatar
 
-A circle, 20px in tables and 32px in details, filled with a lane colour chosen by hashing the
+A circle, 20px in tables and 24px in details, filled with a lane colour chosen by hashing the
 author's email, showing up to two initials in Small SemiBold white. Account pictures fill the same circle, with initials while unavailable or downloads are disabled. History and commit details share a twelve-hour local cache; a failed refresh retains the last picture.
 
 ### Toast
@@ -302,6 +306,8 @@ validation runs in the clone worker; an existing folder is refused before Git ru
 keeps its values on failure, disables edits while running, and offers Continue in background.
 Constrained commit metadata and diff scrollers can shrink below their toolkit default height.
 Dialog bodies scroll within the viewport with a visible scrollbar, keeping the frame on screen
-at maximum zoom and minimum desktop size.
+at maximum zoom and minimum desktop size. Legal and consent choices stay outside their scrolling
+bodies; short windows pin them at the bottom. Tooltips from underlying content disappear when
+a blocking overlay opens.
 
 Update progress and completion dialogs keep their action buttons in a content-height horizontal row, immediately below the status text, rather than expanding to fill the viewport.

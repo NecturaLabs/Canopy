@@ -459,15 +459,15 @@ fn header(
     actions: &mut Vec<Action>,
 ) {
     let p = palette(ui.ctx());
-    let compact =
-        matches!(sel.source, DiffSource::Commit(_)) && ui.available_height() < theme::XL * 10.0;
+    let compact = ui.available_height() < theme::XL * 10.0;
+    let single_row = ui.available_width() >= 720.0;
     let vertical_padding = if compact { theme::XS } else { theme::SM };
-    let detail_toggle = matches!(sel.source, DiffSource::Commit(_)) && !tab.history_layout.compact;
-    let mut expanded = tab.history_layout.expanded;
-    let mut toggle_changed = false;
     egui::Frame::new()
         .fill(p.panel)
-        .inner_margin(egui::Margin::symmetric(14, vertical_padding as i8))
+        .inner_margin(egui::Margin::symmetric(
+            theme::MD as i8,
+            vertical_padding as i8,
+        ))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             let identity = |ui: &mut Ui| {
@@ -555,43 +555,25 @@ fn header(
                     (DiffSource::Commit(_), _) => {}
                 }
             };
-            if detail_toggle {
-                let text = if expanded {
-                    format!("{}  Back to history", icon::ARROWS_IN_SIMPLE)
-                } else {
-                    format!("{}  Expand", icon::ARROWS_OUT_SIMPLE)
-                };
-                let width = ui
-                    .painter()
-                    .layout_no_wrap(
-                        text.clone(),
-                        FontId::new(theme::BODY_SIZE, theme::medium()),
-                        p.text,
-                    )
-                    .size()
-                    .x
-                    + ui.spacing().button_padding.x * 2.0;
-                let (row, _) = ui.allocate_exact_size(
-                    vec2(ui.available_width(), ui.spacing().interact_size.y),
-                    Sense::hover(),
-                );
-                let button_rect = Rect::from_min_max(pos2(row.max.x - width, row.min.y), row.max);
-                let identity_rect = Rect::from_min_max(
-                    row.min,
-                    pos2((button_rect.min.x - theme::SM).max(row.min.x), row.max.y),
-                );
-                let mut identity_ui = ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(identity_rect)
-                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                );
-                identity_ui.set_clip_rect(identity_rect.intersect(ui.clip_rect()));
-                identity(&mut identity_ui);
-                if ui.put(button_rect, egui::Button::new(text)).clicked() {
-                    expanded = !expanded;
-                    toggle_changed = true;
-                }
-                ui.horizontal_wrapped(controls);
+            if single_row {
+                ui.horizontal(|ui| {
+                    let controls_width = if matches!(sel.source, DiffSource::Commit(_)) {
+                        280.0
+                    } else {
+                        400.0
+                    };
+                    let identity_width =
+                        (ui.available_width() - controls_width - theme::SM).max(0.0);
+                    ui.allocate_ui_with_layout(
+                        vec2(identity_width, ui.spacing().interact_size.y),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                            identity(ui);
+                        },
+                    );
+                    ui.horizontal_wrapped(controls);
+                });
             } else if compact {
                 ui.horizontal_wrapped(|ui| {
                     identity(ui);
@@ -604,10 +586,6 @@ fn header(
                 });
             }
         });
-    if toggle_changed {
-        tab.history_layout.expanded = expanded;
-        tab.history_layout.compact_details = true;
-    }
     ui.painter().hline(
         ui.min_rect().x_range(),
         ui.min_rect().max.y,

@@ -120,7 +120,7 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Actio
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(10, 10))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 for f in StateFilter::ALL {
                     if ui
                         .selectable_label(tab.requests.filter == f, f.label())
@@ -172,33 +172,38 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Actio
         }
         Some(Err(e)) => {
             let no_token = tab.requests.token == Some(None);
-            ui.add_space(24.0);
-            ui.vertical_centered(|ui| {
-                ui.set_max_width(ui.available_width() - 32.0);
-                art::show(ui, art::empty_error(), vec2(120.0, 90.0));
-                ui.label(
-                    RichText::new(if no_token {
-                        format!("Connect {} to see {}s", kind.name(), kind.request_noun())
-                    } else {
-                        format!("Could not load {}s", kind.request_noun())
-                    })
-                    .font(FontId::new(14.0, theme::semibold())),
-                );
-                ui.label(RichText::new(&e).size(12.0).color(p.text_dim));
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.add_space((ui.available_width() - 230.0).max(0.0) / 2.0);
-                    if ui.button(format!("{}  Add a token…", icon::KEY)).clicked() {
-                        actions.push(Action::Settings);
-                    }
-                    if ui
-                        .button(format!("{}  Retry", icon::ARROWS_CLOCKWISE))
-                        .clicked()
-                    {
-                        tab.load_requests();
-                    }
+            egui::ScrollArea::vertical()
+                .id_salt("request-error")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add_space(24.0);
+                    ui.vertical_centered(|ui| {
+                        ui.set_max_width(ui.available_width() - 32.0);
+                        art::show(ui, art::empty_error(), vec2(120.0, 90.0));
+                        ui.label(
+                            RichText::new(if no_token {
+                                format!("Connect {} to see {}s", kind.name(), kind.request_noun())
+                            } else {
+                                format!("Could not load {}s", kind.request_noun())
+                            })
+                            .font(FontId::new(14.0, theme::semibold())),
+                        );
+                        ui.label(RichText::new(&e).size(12.0).color(p.text_dim));
+                        ui.add_space(8.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add_space((ui.available_width() - 230.0).max(0.0) / 2.0);
+                            if ui.button(format!("{}  Add a token…", icon::KEY)).clicked() {
+                                actions.push(Action::Settings);
+                            }
+                            if ui
+                                .button(format!("{}  Retry", icon::ARROWS_CLOCKWISE))
+                                .clicked()
+                            {
+                                tab.load_requests();
+                            }
+                        });
+                    });
                 });
-            });
         }
         Some(Ok(items)) if items.is_empty() => {
             ui.add_space(30.0);
@@ -269,7 +274,13 @@ fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Respo
         rect.right_bottom() - vec2(10.0, 0.0),
     );
     let painter = ui.painter().with_clip_rect(clip);
-    let title = painter.layout_no_wrap(r.title.clone(), FontId::new(13.5, theme::medium()), p.text);
+    let title = widgets::single_line_galley(
+        ui,
+        r.title.clone(),
+        FontId::new(13.5, theme::medium()),
+        p.text,
+        clip.width(),
+    );
     painter.galley(
         egui::pos2(clip.min.x, rect.min.y + 18.0 - title.size().y / 2.0),
         title,
@@ -283,18 +294,26 @@ fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Respo
         r.source_branch,
         r.target_branch
     );
-    painter.text(
-        egui::pos2(clip.min.x, rect.min.y + 40.0),
-        Align2::LEFT_CENTER,
+    let meta = widgets::single_line_galley(
+        ui,
         meta,
-        FontId::proportional(11.5),
+        FontId::proportional(theme::SMALL_SIZE),
+        p.text_faint,
+        clip.width(),
+    );
+    painter.galley(
+        egui::pos2(clip.min.x, rect.min.y + 40.0 - meta.size().y / 2.0),
+        meta,
         p.text_faint,
     );
     let info = format!("{state} request #{} {} by {}", r.number, r.title, r.author);
     resp.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &info)
     });
-    resp.on_hover_text(&r.title)
+    resp.on_hover_text(format!(
+        "{}\n#{} · {}\n{} → {}",
+        r.title, r.number, r.author, r.source_branch, r.target_branch
+    ))
 }
 
 fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Action>) {
@@ -416,11 +435,15 @@ fn branch_pill(ui: &mut Ui, name: &str) {
         .corner_radius(CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(6, 1))
         .show(ui, |ui| {
-            ui.label(
-                RichText::new(format!("{}  {name}", icon::GIT_BRANCH))
-                    .font(egui::FontId::new(theme::SMALL_SIZE, theme::medium()))
-                    .color(p.ink(p.text, fill)),
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!("{}  {name}", icon::GIT_BRANCH))
+                        .font(egui::FontId::new(theme::SMALL_SIZE, theme::medium()))
+                        .color(p.ink(p.text, fill)),
+                )
+                .truncate(),
             )
+            .on_hover_text(name);
         });
 }
 

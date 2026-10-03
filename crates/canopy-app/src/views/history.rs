@@ -76,6 +76,17 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
                             layout.compact_details = true;
                         }
                     });
+                    if layout.compact_details && selected {
+                        let summary = tab
+                            .details
+                            .as_ref()
+                            .map(|d| d.message.lines().next().unwrap_or("").trim())
+                            .unwrap_or("Commit details");
+                        ui.add(
+                            egui::Label::new(RichText::new(summary).color(p.text_dim)).truncate(),
+                        )
+                        .on_hover_text(summary);
+                    }
                 });
             });
     }
@@ -1112,7 +1123,28 @@ mod tests {
         }
     }
     #[test]
-    fn detail_expander_shares_the_selected_filename_row() {
+    fn expanded_details_can_return_without_a_selected_file() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let (mut tab, _dir) = populated_tab(&ctx);
+        tab.history_layout.expanded = true;
+        tab.file = None;
+        tab.diff = None;
+        for loading in [false, true] {
+            if loading {
+                tab.details = None;
+            }
+            let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
+            assert!(
+                visible.iter().any(|text| text.ends_with("Back to history")),
+                "the pane needs a return control without a file, loading={loading}: {visible:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn detail_expander_shares_the_commit_summary_row() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, true);
@@ -1156,11 +1188,13 @@ mod tests {
         };
         let filename = bounds("file.rs");
         let expand = bounds("Expand");
+        let summary = bounds("Selected commit");
         assert!(
-            (expand.center().y - filename.center().y).abs() <= theme::XS,
-            "expand {expand:?} belongs on the filename row {filename:?}"
+            (expand.center().y - summary.center().y).abs() <= theme::XS,
+            "expand {expand:?} belongs on the commit summary row {summary:?}"
         );
-        assert!(expand.center().x > filename.center().x);
+        assert!(expand.center().x > summary.center().x);
+        assert!(filename.min.y > expand.max.y);
         assert!(
             expand.max.x >= size.x - theme::XL * 2.0,
             "expand {expand:?} must sit at the right edge of the diff pane"
@@ -1168,15 +1202,14 @@ mod tests {
     }
 
     #[test]
-    fn long_diff_paths_stop_before_the_expander() {
+    fn long_commit_messages_stop_before_the_expander() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, true);
         let (mut tab, _dir) = populated_tab(&ctx);
-        let file = &mut tab.file.as_mut().expect("selected file").entry;
-        file.path =
-            "very-long-folder-name/another-very-long-folder-name/deeply-nested/file.rs".into();
-        file.old_path = Some("old-folder-with-a-long-name/another/deeply-nested/file.rs".into());
+        let mut details = (**tab.details.as_ref().expect("fixture details")).clone();
+        details.message = "very-long-commit-summary ".repeat(20);
+        tab.details = Some(std::sync::Arc::new(details));
         let size = vec2(900.0, 560.0);
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -1211,17 +1244,17 @@ mod tests {
                 }
             })
             .expect("rendered Expand control");
-        let path = output
+        let summary = output
             .shapes
             .iter()
             .find(|shape| {
-                matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().contains("very-long-folder-name"))
+                matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().contains("very-long-commit-summary"))
             })
-            .expect("rendered directory path");
+            .expect("rendered commit summary");
         assert!(
-            path.clip_rect.max.x <= expand.min.x - theme::XS,
-            "the long path may paint over Expand: path clip {:?}, Expand {expand:?}",
-            path.clip_rect
+            summary.clip_rect.max.x <= expand.min.x - theme::XS,
+            "the long summary may paint over Expand: summary clip {:?}, Expand {expand:?}",
+            summary.clip_rect
         );
     }
 }

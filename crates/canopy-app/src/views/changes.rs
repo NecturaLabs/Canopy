@@ -309,35 +309,38 @@ fn composer(
     );
     // The button and the identity warning sit at the bottom; the fields take the rest, so a
     // warning that wraps never pushes the button out of the panel.
-    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-        if widgets::primary_button(ui, &label, can, ui.available_width())
-            .on_hover_text(hint)
-            .clicked()
-            && can
-        {
-            actions.push(Action::Commit);
-        }
-        ui.add_space(theme::SM);
-        if let Some(warning) = warning {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new(format!("{}  {warning}", icon::WARNING))
-                        .color(p.warning)
-                        .size(theme::SMALL_SIZE),
-                );
-                if ui.small_button("Edit identity").clicked() {
-                    actions.push(Action::IdentitySettings);
-                }
-            });
-            ui.add_space(theme::SM);
-        }
-        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("commit-fields")
-                .auto_shrink([false, false])
-                .show(ui, |ui| composer_fields(ui, tab, actions));
+    egui::Panel::bottom("commit-footer")
+        .frame(egui::Frame::new())
+        .show(ui, |ui| {
+            if let Some(warning) = warning {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("{}  {warning}", icon::WARNING))
+                                .color(p.warning)
+                                .size(theme::SMALL_SIZE),
+                        )
+                        .wrap(),
+                    );
+                    if ui.small_button("Edit identity").clicked() {
+                        actions.push(Action::IdentitySettings);
+                    }
+                });
+                ui.add_space(theme::XS);
+            }
+            if widgets::primary_button(ui, &label, can, ui.available_width())
+                .on_hover_text(hint)
+                .clicked()
+                && can
+            {
+                actions.push(Action::Commit);
+            }
         });
-    });
+    egui::ScrollArea::vertical()
+        .id_salt("commit-fields")
+        .min_scrolled_height(0.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| composer_fields(ui, tab, actions));
 }
 
 fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
@@ -461,6 +464,70 @@ mod tests {
             identity_notice(None, true),
             Some("Could not read Git identity.")
         );
+    }
+
+    #[test]
+    fn wrapped_identity_notice_does_not_overlap_commit_fields() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let dir = tempfile::tempdir().expect("temporary tab");
+        let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
+        let unusable = identity("", "", None, false);
+        let warning = unusable.warning().expect("identity warning");
+        tab.identity = Some(unusable);
+        tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot::default()));
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(562.5, 350.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::Panel::top("test-actions")
+                        .exact_size(84.0)
+                        .show(ui, |_| {});
+                    egui::Panel::bottom("test-status")
+                        .exact_size(26.0)
+                        .show(ui, |_| {});
+                    show(ui, &mut tab, &mut Vec::new());
+                },
+            );
+            output.textures_delta.clear();
+            let warning_rect = output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && text.galley.text().contains(warning)
+                    {
+                        Some(text.visual_bounding_rect())
+                    } else {
+                        None
+                    }
+                })
+                .expect("painted identity notice");
+            let summary = output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && text.galley.text().contains("Summary (required)")
+                    {
+                        Some(text.visual_bounding_rect().intersect(shape.clip_rect))
+                    } else {
+                        None
+                    }
+                })
+                .expect("painted summary hint");
+            assert!(
+                !summary.is_positive() || !warning_rect.intersects(summary),
+                "identity notice {warning_rect:?} overlaps painted summary {summary:?}",
+            );
+        }
     }
 
     #[test]

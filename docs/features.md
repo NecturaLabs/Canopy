@@ -57,7 +57,7 @@ list anything, and says why when it cannot. Repositories made by Git before 2.24
 | Ref labels (HEAD, local, remote, tags) | Done | Yes | Yes | Yes |
 | Author avatars | Done (GitHub/GitLab pictures, initials fallback) | Yes | Yes | Yes |
 | On-demand History search by message, author or SHA (Ctrl+F or `/` toggles it) | Done | Yes | Yes | Yes |
-| Commit details: metadata, parents, files with +/- counts, per-file diff; expandable and compact full view | Done | Yes | Yes | Yes |
+| Commit details: metadata, parents, files with +/- counts, per-file diff; persistent information disclosure, expand/return header and compact full view | Done | Yes | Yes | Yes |
 | Incremental loading ("Load more") | Done | ? | ? | ? |
 | Search file contents across history (pickaxe) | Planned | ? | ? | ? |
 | File history | Planned | Yes | Yes | Yes |

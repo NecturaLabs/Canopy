@@ -9,6 +9,38 @@ use canopy_core::{ChangeKind, RefKind, RefLabel};
 
 use super::theme::{self, Palette, palette};
 
+/// A painted one-line label that ends in an ellipsis instead of cutting through a glyph.
+pub fn single_line_galley(
+    ui: &Ui,
+    text: String,
+    font: FontId,
+    color: Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple(text, font, color, width.max(0.0));
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    ui.painter().layout_job(job)
+}
+
+/// Removes tooltips from content below a newly drawn blocking overlay.
+/// egui can keep an existing tooltip open while the pointer stays over its old widget.
+pub fn dismiss_underlying_tooltips(ctx: &egui::Context) {
+    let layers = ctx.memory(|memory| {
+        memory
+            .layer_ids()
+            .filter(|layer| layer.order == egui::Order::Tooltip)
+            .collect::<Vec<_>>()
+    });
+    ctx.graphics_mut(|graphics| {
+        for layer in layers {
+            if let Some(list) = graphics.get_mut(layer) {
+                *list = Default::default();
+            }
+        }
+    });
+}
+
 /// Shows context actions above their containing navigation popup.
 pub fn context_menu(
     response: &Response,
@@ -194,7 +226,7 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
     response
 }
 
-/// A toolbar action: icon above a small label, like Fork and Sourcetree.
+/// A compact toolbar action with its label kept below the icon.
 pub fn tool_button(
     ui: &mut Ui,
     glyph: &str,
@@ -209,7 +241,7 @@ pub fn tool_button(
         } else {
             58.0
         },
-        46.0,
+        theme::XL + theme::MD,
     );
     let (rect, resp) = ui.allocate_exact_size(
         size,
@@ -237,14 +269,14 @@ pub fn tool_button(
         p.text_dim.lerp_to_gamma(p.text, hover)
     };
     ui.painter().text(
-        rect.center_top() + vec2(0.0, 15.0),
+        rect.center_top() + vec2(0.0, theme::MD),
         Align2::CENTER_CENTER,
         glyph,
-        FontId::proportional(19.0),
+        FontId::proportional(16.0),
         color,
     );
     ui.painter().text(
-        rect.center_bottom() - vec2(0.0, 10.0),
+        rect.center_bottom() - vec2(0.0, theme::SM),
         Align2::CENTER_CENTER,
         label,
         FontId::new(11.0, theme::medium()),
@@ -461,6 +493,58 @@ pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocking_overlay_hides_underlying_tooltips_and_keeps_its_own() {
+        let ctx = egui::Context::default();
+        for frame in 0..3 {
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                egui::Tooltip::always_open(
+                    ctx.clone(),
+                    ui.layer_id(),
+                    egui::Id::new("underlying"),
+                    egui::pos2(20.0, 20.0),
+                )
+                .show(|ui| {
+                    ui.label("Underlying tooltip");
+                });
+                dismiss_underlying_tooltips(&ctx);
+                egui::Modal::new(egui::Id::new("blocking-overlay")).show(&ctx, |ui| {
+                    ui.label("Overlay content");
+                    egui::Tooltip::always_open(
+                        ctx.clone(),
+                        ui.layer_id(),
+                        egui::Id::new("overlay-tooltip"),
+                        egui::pos2(100.0, 100.0),
+                    )
+                    .show(|ui| {
+                        ui.label("Overlay tooltip");
+                    });
+                });
+            });
+            output.textures_delta.clear();
+            if frame < 2 {
+                continue;
+            }
+            let text: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some(text.galley.text())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert!(text.contains(&"Overlay content"));
+            assert!(text.contains(&"Overlay tooltip"));
+            assert!(
+                !text.contains(&"Underlying tooltip"),
+                "background tooltip painted above overlay"
+            );
+        }
+    }
 
     #[test]
     fn initials_and_paths() {
