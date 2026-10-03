@@ -16,13 +16,15 @@ so nothing appears on the real session. It hides the window, makes it repaint (c
 repository it shows, and resizes) and fails when three pings in a row go unanswered, the condition
 that raises the dialog. It then shows the window again and fails when it does not repaint.
 
-Needs Linux, a C compiler, wayland-scanner, libwayland-server and wayland-protocols. Without them
-it says so and exits 0, like ShellCheck in tools/check.sh; with --require that is an error. Without
-a path it builds the debug app with cargo. Standard library only. Part of tools/check.sh.
+Needs Linux, a C compiler, wayland-scanner, pkg-config, libwayland-server and wayland-protocols.
+Without them it says so and exits 0, like ShellCheck in tools/check.sh; with --require that is an
+error. Without a path it builds the debug app with cargo. Standard library only. Part of
+tools/check.sh.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -91,7 +93,7 @@ def build_stub(work: Path, xdg_xml: Path) -> Path:
     run(["wayland-scanner", "server-header", str(xdg_xml), str(header)])
     run(["wayland-scanner", "private-code", str(xdg_xml), str(glue)])
     flags = run(["pkg-config", "--cflags", "--libs", "wayland-server"]).stdout.split()
-    run(["cc", "-std=gnu17", "-O1", "-w", f"-I{work}", "-o", str(binary), str(STUB_SOURCE), str(glue), *flags])
+    run(["cc", "-std=gnu17", "-O1", "-Wall", f"-I{work}", "-o", str(binary), str(STUB_SOURCE), str(glue), *flags])
     return binary
 
 
@@ -216,17 +218,20 @@ def check(canopy: Path, stub_binary: Path, work: Path) -> list[str]:
     try:
         if not wait_for(lambda: any(l.startswith("READY") for l in stub.snapshot()), 10):
             return ["the stand-in compositor did not start: " + " | ".join(stub.snapshot())]
-        app = subprocess.Popen(
-            [str(canopy), str(repo)],
-            env=canopy_env(work, runtime),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        # A file, not a pipe: nothing reads the app's output while the scenario runs, and a full pipe
+        # would block it.
+        app_log = work / "canopy.log"
+        with app_log.open("w") as log:
+            app = subprocess.Popen(
+                [str(canopy), str(repo)],
+                env=canopy_env(work, runtime),
+                stdout=subprocess.DEVNULL,
+                stderr=log,
+            )
         if not wait_for(lambda: stub.commits() >= FIRST_FRAMES or app.poll() is not None, START_TIMEOUT):
             return [f"Canopy drew {stub.commits()} frames in {START_TIMEOUT:.0f} s; the check cannot run"]
         if app.poll() is not None:
-            return [f"Canopy exited early ({app.returncode}): {(app.stderr.read() or '').strip()[-400:]}"]
+            return [f"Canopy exited early ({app.returncode}): {app_log.read_text(errors='replace').strip()[-400:]}"]
 
         # Start from a client that is answering, so a slow start-up is not counted as a hang.
         if not wait_for(lambda: stub.missed() == 0, 30):
@@ -268,14 +273,17 @@ def check(canopy: Path, stub_binary: Path, work: Path) -> list[str]:
 
 
 def main() -> int:
-    args = sys.argv[1:]
-    require = "--require" in args
-    paths = [a for a in args if a != "--require"]
+    parser = argparse.ArgumentParser(
+        description="Fails when Canopy stops answering its compositor while its window is hidden."
+    )
+    parser.add_argument("--require", action="store_true", help="a missing prerequisite is an error, not a skip")
+    parser.add_argument("canopy", nargs="?", metavar="PATH-TO-CANOPY", help="the executable to test (default: build the debug app)")
+    args = parser.parse_args()
     try:
         xdg_xml = prerequisites()
     except Skip as why:
         print(f"stall-check: skipped, {why}")
-        return 2 if require else 0
+        return 2 if args.require else 0
 
     not_vendored = eframe_is_vendored()
     if not_vendored:
@@ -285,7 +293,7 @@ def main() -> int:
     work = Path(tempfile.mkdtemp(prefix="canopy-stall-"))
     try:
         stub_binary = build_stub(work, xdg_xml)
-        canopy = Path(paths[0]).resolve() if paths else build_canopy()
+        canopy = Path(args.canopy).resolve() if args.canopy else build_canopy()
         problems = check(canopy, stub_binary, work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -298,4 +306,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Exiting through SystemExit lets the `finally` blocks stop the children and remove the work folder.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     sys.exit(main())

@@ -9,8 +9,8 @@
 // It pings every second like Hyprland (which shows "Application Not Responding" after three
 // missed pings by default) and prints READY, HIDDEN, SHOWN, RESIZE, MISSED, ANR, PONG and
 // STATUS lines on stdout. Only wl_compositor, wl_shm and xdg_wm_base are served; request handlers
-// that need no behaviour are one shared no-op, called with more arguments than it declares,
-// which is harmless on every ABI this builds for.
+// that need no behaviour are no-ops declared with their real signatures (NOOP), so the compiler
+// checks every one against the protocol.
 //
 // Build: see tools/stall-check.py.
 #define _GNU_SOURCE
@@ -34,7 +34,21 @@ static uint64_t now_ms(void) {
     return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-static void noop(void) {}
+// A request handler that does nothing: (client, resource, ...arguments).
+#define NOOP(name, ...) \
+    static void name(struct wl_client *c, struct wl_resource *r __VA_OPT__(,) __VA_ARGS__) {}
+NOOP(noop_none)
+NOOP(noop_id, uint32_t id)
+NOOP(noop_int, int32_t value)
+NOOP(noop_serial, uint32_t serial)
+NOOP(noop_string, const char *text)
+NOOP(noop_resource, struct wl_resource *other)
+NOOP(noop_size, int32_t width, int32_t height)
+NOOP(noop_rect, int32_t x, int32_t y, int32_t width, int32_t height)
+NOOP(noop_seat_serial, struct wl_resource *seat, uint32_t serial)
+NOOP(noop_seat_serial_edges, struct wl_resource *seat, uint32_t serial, uint32_t edges)
+NOOP(noop_seat_serial_point, struct wl_resource *seat, uint32_t serial, int32_t x, int32_t y)
+NOOP(noop_popup, uint32_t id, struct wl_resource *parent, struct wl_resource *positioner)
 
 struct frame {
     struct wl_resource *cb;
@@ -43,6 +57,7 @@ struct frame {
 
 struct surface {
     struct wl_resource *res, *buffer, *current, *xdg_surface, *toplevel;
+    struct wl_listener buffer_listener, current_listener;
     struct wl_list pending, queued, link;
     bool configured;
 };
@@ -55,11 +70,32 @@ static void frame_destroyed(struct wl_resource *r) {
     free(f);
 }
 
+// The buffers are the client's, and it may destroy one while the surface still points at it: the
+// committed one waiting for its release, or the attached one before the commit. The surface listens
+// for that and forgets the buffer.
+static void hold(struct wl_resource **slot, struct wl_listener *listener, struct wl_resource *buffer) {
+    if (*slot) wl_list_remove(&listener->link);
+    *slot = buffer;
+    if (buffer) wl_resource_add_destroy_listener(buffer, listener);
+}
+
+static void buffer_gone(struct wl_listener *listener, void *data) {
+    struct surface *s = wl_container_of(listener, s, buffer_listener);
+    wl_list_remove(&listener->link);
+    s->buffer = NULL;
+}
+
+static void current_gone(struct wl_listener *listener, void *data) {
+    struct surface *s = wl_container_of(listener, s, current_listener);
+    wl_list_remove(&listener->link);
+    s->current = NULL;
+}
+
 static void surface_destroy_req(struct wl_client *c, struct wl_resource *r) { wl_resource_destroy(r); }
 
 static void surface_attach(struct wl_client *c, struct wl_resource *r, struct wl_resource *buffer, int32_t x, int32_t y) {
     struct surface *s = wl_resource_get_user_data(r);
-    s->buffer = buffer;
+    hold(&s->buffer, &s->buffer_listener, buffer);
 }
 
 static void surface_frame(struct wl_client *c, struct wl_resource *r, uint32_t id) {
@@ -81,9 +117,10 @@ static void surface_commit(struct wl_client *c, struct wl_resource *r) {
         s->configured = true;
     }
     if (s->buffer) {
-        if (s->current && s->current != s->buffer) wl_buffer_send_release(s->current);
-        s->current = s->buffer;
-        s->buffer = NULL;
+        struct wl_resource *committed = s->buffer;
+        hold(&s->buffer, &s->buffer_listener, NULL);
+        if (s->current && s->current != committed) wl_buffer_send_release(s->current);
+        hold(&s->current, &s->current_listener, committed);
         commits++;
     }
     // Frame callbacks requested before this commit belong to it.
@@ -97,14 +134,14 @@ static void surface_commit(struct wl_client *c, struct wl_resource *r) {
 static const struct wl_surface_interface surface_impl = {
     .destroy = surface_destroy_req,
     .attach = surface_attach,
-    .damage = (void *)noop,
+    .damage = noop_rect,
     .frame = surface_frame,
-    .set_opaque_region = (void *)noop,
-    .set_input_region = (void *)noop,
+    .set_opaque_region = noop_resource,
+    .set_input_region = noop_resource,
     .commit = surface_commit,
-    .set_buffer_transform = (void *)noop,
-    .set_buffer_scale = (void *)noop,
-    .damage_buffer = (void *)noop,
+    .set_buffer_transform = noop_int,
+    .set_buffer_scale = noop_int,
+    .damage_buffer = noop_rect,
 };
 
 static void surface_gone(struct wl_resource *r) {
@@ -113,6 +150,8 @@ static void surface_gone(struct wl_resource *r) {
     struct frame *f, *tmp;
     wl_list_for_each_safe(f, tmp, &s->pending, link) wl_resource_destroy(f->cb);
     wl_list_for_each_safe(f, tmp, &s->queued, link) wl_resource_destroy(f->cb);
+    hold(&s->buffer, &s->buffer_listener, NULL);
+    hold(&s->current, &s->current_listener, NULL);
     wl_list_remove(&s->link);
     free(s);
 }
@@ -121,6 +160,8 @@ static void compositor_create_surface(struct wl_client *c, struct wl_resource *r
     struct surface *s = calloc(1, sizeof *s);
     wl_list_init(&s->pending);
     wl_list_init(&s->queued);
+    s->buffer_listener.notify = buffer_gone;
+    s->current_listener.notify = current_gone;
     s->res = wl_resource_create(c, &wl_surface_interface, wl_resource_get_version(r), id);
     wl_resource_set_implementation(s->res, &surface_impl, s, surface_gone);
     wl_list_insert(&surfaces, &s->link);
@@ -128,7 +169,7 @@ static void compositor_create_surface(struct wl_client *c, struct wl_resource *r
 
 static void region_destroy(struct wl_client *c, struct wl_resource *r) { wl_resource_destroy(r); }
 static const struct wl_region_interface region_impl = {
-    .destroy = region_destroy, .add = (void *)noop, .subtract = (void *)noop,
+    .destroy = region_destroy, .add = noop_rect, .subtract = noop_rect,
 };
 
 static void compositor_create_region(struct wl_client *c, struct wl_resource *r, uint32_t id) {
@@ -150,11 +191,11 @@ static void xdg_destroy_req(struct wl_client *c, struct wl_resource *r) { wl_res
 
 static const struct xdg_toplevel_interface toplevel_impl = {
     .destroy = xdg_destroy_req,
-    .set_parent = (void *)noop, .set_title = (void *)noop, .set_app_id = (void *)noop,
-    .show_window_menu = (void *)noop, .move = (void *)noop, .resize = (void *)noop,
-    .set_max_size = (void *)noop, .set_min_size = (void *)noop, .set_maximized = (void *)noop,
-    .unset_maximized = (void *)noop, .set_fullscreen = (void *)noop,
-    .unset_fullscreen = (void *)noop, .set_minimized = (void *)noop,
+    .set_parent = noop_resource, .set_title = noop_string, .set_app_id = noop_string,
+    .show_window_menu = noop_seat_serial_point, .move = noop_seat_serial, .resize = noop_seat_serial_edges,
+    .set_max_size = noop_size, .set_min_size = noop_size, .set_maximized = noop_none,
+    .unset_maximized = noop_none, .set_fullscreen = noop_resource,
+    .unset_fullscreen = noop_none, .set_minimized = noop_none,
 };
 
 static void xs_get_toplevel(struct wl_client *c, struct wl_resource *r, uint32_t id) {
@@ -164,8 +205,8 @@ static void xs_get_toplevel(struct wl_client *c, struct wl_resource *r, uint32_t
 }
 
 static const struct xdg_surface_interface xdg_surface_impl = {
-    .destroy = xdg_destroy_req, .get_toplevel = xs_get_toplevel, .get_popup = (void *)noop,
-    .set_window_geometry = (void *)noop, .ack_configure = (void *)noop,
+    .destroy = xdg_destroy_req, .get_toplevel = xs_get_toplevel, .get_popup = noop_popup,
+    .set_window_geometry = noop_rect, .ack_configure = noop_serial,
 };
 
 static struct wl_resource *wm_bases[8];
@@ -191,7 +232,7 @@ static void wm_pong(struct wl_client *c, struct wl_resource *r, uint32_t serial)
 }
 
 static const struct xdg_wm_base_interface wm_impl = {
-    .destroy = xdg_destroy_req, .create_positioner = (void *)noop,
+    .destroy = xdg_destroy_req, .create_positioner = noop_id,
     .get_xdg_surface = wm_get_xdg_surface, .pong = wm_pong,
 };
 
