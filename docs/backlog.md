@@ -12,7 +12,14 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] Trusted folders (ADR 0009): a linked worktree needs its own folder and the folder of its main
       repository trusted, but the Trust… dialog offers only the opened folder and its parent
       (pass the common git directory with `Event::DownloadsRefused` to offer both). Check on macOS
-      and Windows that paths compare by the same spelling on a case-insensitive volume.
+      and Windows that paths compare by the same spelling on a case-insensitive volume. From the
+      ninth external review, not yet fixed: the gate checks the common git directory and the
+      working folder but not a linked worktree's own git directory (`repo.path()`), which git
+      reads `config.worktree` from under `extensions.worktreeConfig`; add it to `download_allowed`
+      and `is_in_trusted_folder` (a crafted `.git` file would have to sit in the trusted folder
+      already, but the gate should cover what git reads). The Downloads off chip also stays after
+      switching from History to Changes while line counts are undone, and after a status-only
+      refusal that ends in `Event::Failed` (`tab.rs`, `clear_obsolete_refusal`).
 - [ ] Real art in place of every SVG (owner's decisions): generate the app icon, logo mark,
       welcome backdrop and four spot illustrations (`docs/art-prompts.md`) with Codex
       (`codex exec -m gpt-6-sol`, medium effort, at most 2 calls at once); accept only art that is
