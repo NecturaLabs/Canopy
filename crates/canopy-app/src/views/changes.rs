@@ -64,10 +64,13 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .frame(egui::Frame::new().fill(p.panel).stroke(Stroke::new(1.0, p.border)))
         .show(ui, |ui| {
             let composer_height = (ui.available_height() * 0.60).max(60.0);
+            // Short windows show a two-row description (`composer_fields`), so the composer
+            // needs less room and the file lists keep it.
+            let cap = if ui.ctx().content_rect().height() < 600.0 { 240.0 } else { 280.0 };
             egui::Panel::bottom("composer")
-                .default_size(composer_height.min(280.0))
-                .min_size(composer_height.min(250.0))
-                .max_size(composer_height.min(280.0))
+                .default_size(composer_height.min(cap))
+                .min_size(composer_height.min(cap.min(250.0)))
+                .max_size(composer_height.min(cap))
                 .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin::same(12)))
                 .show(ui, |ui| composer(ui, tab, &snap, actions));
             egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 8))).show(ui, |ui| {

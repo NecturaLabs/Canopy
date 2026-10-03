@@ -340,6 +340,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
             egui::Frame::new()
                 .inner_margin(egui::Margin::symmetric(22, 18))
                 .show(ui, |ui| {
+                    ui.set_max_width(ui.available_width().min(theme::MEASURE));
                     // Header.
                     let (glyph, color, state) = state_style(p, &summary);
                     ui.horizontal(|ui| {

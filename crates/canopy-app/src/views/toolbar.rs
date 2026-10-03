@@ -592,16 +592,21 @@ fn segmented(
         ));
     }
     let compact = ui.ctx().content_rect().width() < theme::COMPACT_WIDTH;
+    // Compact: only the active view keeps its name; the others show their glyph and count.
+    let caption = |v: View, glyph: &str, label: &str| {
+        if compact && v != view {
+            glyph.to_owned()
+        } else if compact && v == View::Requests {
+            format!("{glyph}  Requests")
+        } else {
+            format!("{glyph}  {label}")
+        }
+    };
     let widths: Vec<f32> = items
         .iter()
-        .map(|(view, glyph, label, count, _)| {
-            let label = if compact && *view == View::Requests {
-                "Requests"
-            } else {
-                label
-            };
+        .map(|(v, glyph, label, count, _)| {
             let text = ui.painter().layout_no_wrap(
-                format!("{glyph}  {label}"),
+                caption(*v, glyph, label),
                 FontId::new(theme::BODY_SIZE, theme::medium()),
                 p.text,
             );
@@ -654,12 +659,7 @@ fn segmented(
         } else {
             p.text_dim
         };
-        let display_label = if compact && v == View::Requests {
-            "Requests"
-        } else {
-            label
-        };
-        let text = format!("{glyph}  {display_label}");
+        let text = caption(v, glyph, label);
         let galley = ui.painter().layout_no_wrap(
             text,
             FontId::new(theme::BODY_SIZE, theme::medium()),

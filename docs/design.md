@@ -241,6 +241,11 @@ always have a tooltip naming the action and its shortcut.
   continue and abort buttons.
 - Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
   interface zoom up to 160%; dimensions above are logical points after zoom.
+- Below `COMPACT_WIDTH` the view switcher names only the active view; the others keep their icon
+  and count. In windows under 600 points tall the history inspector starts at 260 points and the
+  commit composer stops at 240, so the lists keep their rows. Prose and its fields (pull request
+  details) stop at `MEASURE`, 920 points, and the welcome screen centres its content on tall
+  windows. Layouts are checked at 900×560, 960×600, 1440×900 and 2560×1440.
 
 ## Components
 
