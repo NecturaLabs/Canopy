@@ -179,11 +179,12 @@ Enter and hover transitions ease out (cubic). Exits take about three quarters of
 and only fade; closing a menu, tooltip or the palette is instant. Spinners turn once per second,
 linearly.
 
-Running jobs show a spinner in the status bar and on the triggering toolbar button. No animation
-loops while idle, so an idle Canopy does not repaint. Reduce motion makes every duration
-zero. Today it is an on/off switch in Settings → Appearance; the three-way preference (match the
-system, reduced or full) and the `FAST` and `SLOW` tokens exist in `ui/motion.rs` but are not
-wired up yet (the backlog's "Motion" entry). The system setting it will follow is read by
+Running jobs show a spinner in the status bar and on the triggering toolbar button. Outside the
+welcome screen, whose glow drifts and whose canopy's halos breathe, no animation loops while
+idle, so an idle repository view does not repaint. Reduce motion makes every duration zero and
+stills the welcome screen. Today it is an on/off switch in Settings → Appearance; `FAST` times
+the segmented controls and switches, while the three-way preference (match the system, reduced
+or full) and the `SLOW` token are not wired up yet (the backlog's "Motion" entry). The system setting it will follow is read by
 `platform::prefers_reduced_motion` from the desktop portal or GNOME settings on Linux,
 `com.apple.universalaccess` on macOS and the client-area animation setting on Windows, off the UI
 thread.
@@ -275,8 +276,8 @@ when checked. Both carry their name for assistive technology and show the focus 
 
 ### Scroll edges
 
-Lists that scroll inside a fixed area (settings content, the command palette, the cheatsheet) fade
-their top and bottom 16 points into the surface where more content lies beyond, so a cut row reads
+Lists that scroll inside a fixed area (the command palette, the cheatsheet) fade their top and
+bottom 12 points into the surface, at 85% strength, where more content lies beyond, so a cut row reads
 as "more" (`widgets::scroll_fade`). The palette's list also shows whole rows only.
 
 ### Illustrations
