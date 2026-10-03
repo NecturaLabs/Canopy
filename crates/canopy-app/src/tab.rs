@@ -626,11 +626,13 @@ impl RepoTab {
         self.worker.send(Job::Details(oid));
     }
 
-    /// Closes the open file and its diff, with any error that was shown on it.
+    /// Closes the open file and its diff, with any error that was shown on it. A diff still on its
+    /// way for that file is no longer wanted.
     pub fn deselect_file(&mut self) {
         self.file = None;
         self.diff = None;
         self.diff_error = None;
+        self.pending_diff = None;
         self.clear_obsolete_refusal();
     }
 
@@ -928,6 +930,7 @@ impl RepoTab {
                             can_download,
                         });
                     }
+                    self.clear_obsolete_refusal();
                 }
                 Event::DownloadsRefused { remote, trust } => {
                     if trust < self.trust_version {
@@ -968,7 +971,6 @@ impl RepoTab {
                                 }
                                 self.diff = Some(d);
                                 self.diff_error = None;
-                                self.clear_obsolete_refusal();
                             }
                             Err(e) => {
                                 self.diff = None;
@@ -978,6 +980,9 @@ impl RepoTab {
                             }
                         }
                     }
+                    // The refusal that came with this result, if any, explains it only while it
+                    // is on screen.
+                    self.clear_obsolete_refusal();
                 }
                 Event::Highlight(key, diff, h) => {
                     // Only for the diff on screen: a highlight of an older version of the same
@@ -1209,6 +1214,24 @@ mod tests {
     use super::*;
     use canopy_core::{Choice, ConflictFile};
 
+    /// The unstaged change to `a.rs`, open in the diff pane.
+    fn open_unstaged_file() -> FileSelection {
+        FileSelection {
+            source: DiffSource::Unstaged,
+            entry: FileEntry {
+                path: "a.rs".into(),
+                old_path: None,
+                kind: canopy_core::ChangeKind::Modified,
+                additions: 0,
+                deletions: 0,
+                lfs: false,
+                old_mode: None,
+                new_mode: None,
+            },
+            conflicted: false,
+        }
+    }
+
     const TWO: &str = "a\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nb\n<<<<<<< ours\n1\n=======\n2\n>>>>>>> theirs\n";
 
     #[test]
@@ -1394,20 +1417,7 @@ mod tests {
         let (worker, events, _jobs) = Worker::detached();
         tab.worker = worker;
         tab.snap = Some(Arc::new(RepoSnapshot::default()));
-        tab.file = Some(FileSelection {
-            source: DiffSource::Unstaged,
-            entry: FileEntry {
-                path: "a.rs".into(),
-                old_path: None,
-                kind: canopy_core::ChangeKind::Modified,
-                additions: 0,
-                deletions: 0,
-                lfs: false,
-                old_mode: None,
-                new_mode: None,
-            },
-            conflicted: false,
-        });
+        tab.file = Some(open_unstaged_file());
         tab.diff_error = Some("not downloaded".into());
         tab.downloads_refused = Some("origin".into());
         // The refreshed status no longer lists the file: nothing is left to show the error on.
@@ -1428,25 +1438,38 @@ mod tests {
         let (worker, _events, _jobs) = Worker::detached();
         tab.worker = worker;
         tab.snap = Some(Arc::new(RepoSnapshot::default()));
-        tab.file = Some(FileSelection {
-            source: DiffSource::Unstaged,
-            entry: FileEntry {
-                path: "a.rs".into(),
-                old_path: None,
-                kind: canopy_core::ChangeKind::Modified,
-                additions: 0,
-                deletions: 0,
-                lfs: false,
-                old_mode: None,
-                new_mode: None,
-            },
-            conflicted: false,
-        });
+        tab.file = Some(open_unstaged_file());
         tab.diff_error = Some("not downloaded".into());
         tab.downloads_refused = Some("origin".into());
         // Another view, or another commit, takes the diff off the screen.
         tab.deselect_file();
         assert!(tab.file.is_none() && tab.diff_error.is_none());
+        assert!(tab.downloads_refused.is_none(), "nothing left to explain");
+        Ok(())
+    }
+
+    #[test]
+    fn a_refusal_that_arrives_after_its_file_was_closed_does_not_keep_the_chip()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        let sel = open_unstaged_file();
+        let key = tab.diff_key(&sel);
+        tab.select_file(sel);
+        // The user leaves the file before the worker answers...
+        tab.deselect_file();
+        // ...which then says the diff needed a download it did not run.
+        events.send(Event::DownloadsRefused {
+            remote: "origin".into(),
+            trust: 0,
+        })?;
+        events.send(Event::Diff(key, Err("not downloaded".into())))?;
+        tab.poll(&[]);
+        assert!(tab.diff_error.is_none(), "nobody waits for that diff");
         assert!(tab.downloads_refused.is_none(), "nothing left to explain");
         Ok(())
     }
@@ -1561,6 +1584,7 @@ mod tests {
         let (worker, events, _jobs) = Worker::detached();
         tab.worker = worker;
         tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        tab.file = Some(open_unstaged_file());
         tab.downloads_refused = Some("origin".into());
         let key = DiffKey {
             source: canopy_core::DiffSource::Unstaged,
