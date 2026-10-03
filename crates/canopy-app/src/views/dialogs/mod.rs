@@ -394,13 +394,12 @@ pub fn show(
                     title(ui, icon::GIT_MERGE, if *rebase { "Rebase" } else { "Merge" });
                     widgets::segmented(ui, rebase, &[(false, "Merge into current"), (true, "Rebase current onto")]);
                     ui.add_space(8.0);
-                    let branches: Vec<String> = tab
-                        .and_then(|t| t.snap.as_ref())
-                        .map(|s| s.branches.iter().filter(|b| !b.is_head).map(|b| b.name.clone()).chain(s.remote_branches.iter().map(|b| b.full_name())).collect())
-                        .unwrap_or_default();
                     egui::ComboBox::from_id_salt("merge-target").icon(crate::ui::widgets::combo_caret).width(ui.available_width()).selected_text(if target.is_empty() { "Choose a branch…".to_owned() } else { target.clone() }).show_ui(ui, |ui| {
-                        for b in branches {
-                            ui.selectable_value(target, b.clone(), b);
+                        // Listed only while the menu is open, not on every frame of the dialog.
+                        if let Some(s) = tab.and_then(|t| t.snap.as_ref()) {
+                            for b in s.branches.iter().filter(|b| !b.is_head).map(|b| b.name.clone()).chain(s.remote_branches.iter().map(|b| b.full_name())) {
+                                ui.selectable_value(target, b.clone(), b);
+                            }
                         }
                     });
                     ui.add_space(8.0);
