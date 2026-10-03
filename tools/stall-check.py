@@ -57,12 +57,24 @@ class Skip(Exception):
 
 
 def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
-    """Runs a command; on failure shows its error output and stops."""
+    """Runs a command; on failure shows its error output and stops. The command gets its own process
+    group, which an interruption (SIGTERM, ^C) kills as a whole, so a build leaves no compiler behind."""
+    process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True, **kwargs
+    )
     try:
-        return subprocess.run(cmd, check=True, capture_output=True, text=True, **kwargs)
-    except subprocess.CalledProcessError as failed:
-        sys.stderr.write(failed.stderr or "")
-        raise SystemExit(f"stall-check: `{' '.join(cmd[:4])}` failed ({failed.returncode})")
+        stdout, stderr = process.communicate()
+    except BaseException:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+        raise
+    if process.returncode != 0:
+        sys.stderr.write(stderr or "")
+        raise SystemExit(f"stall-check: `{' '.join(cmd[:4])}` failed ({process.returncode})")
+    return subprocess.CompletedProcess(cmd, 0, stdout, stderr)
 
 
 def tool_output(cmd: list[str]) -> str | None:

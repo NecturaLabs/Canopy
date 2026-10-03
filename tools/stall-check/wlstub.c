@@ -108,7 +108,7 @@ static void surface_frame(struct wl_client *c, struct wl_resource *r, uint32_t i
 
 static void surface_commit(struct wl_client *c, struct wl_resource *r) {
     struct surface *s = wl_resource_get_user_data(r);
-    if (s->toplevel && !s->configured) {
+    if (s->toplevel && s->xdg_surface && !s->configured) {
         struct wl_array states;
         wl_array_init(&states);
         xdg_toplevel_send_configure(s->toplevel, 0, 0, &states);
@@ -152,6 +152,8 @@ static void surface_gone(struct wl_resource *r) {
     wl_list_for_each_safe(f, tmp, &s->queued, link) wl_resource_destroy(f->cb);
     hold(&s->buffer, &s->buffer_listener, NULL);
     hold(&s->current, &s->current_listener, NULL);
+    if (s->toplevel) wl_resource_set_user_data(s->toplevel, NULL);
+    if (s->xdg_surface) wl_resource_set_user_data(s->xdg_surface, NULL);
     wl_list_remove(&s->link);
     free(s);
 }
@@ -189,6 +191,19 @@ static void bind_compositor(struct wl_client *c, void *d, uint32_t version, uint
 // xdg-shell
 static void xdg_destroy_req(struct wl_client *c, struct wl_resource *r) { wl_resource_destroy(r); }
 
+// The client may destroy its xdg objects and keep the wl_surface, or the other way round. Each side
+// forgets the other: a destroyed xdg object clears the surface's pointer, and a destroyed surface
+// clears the user data of the xdg objects it still has.
+static void toplevel_gone(struct wl_resource *r) {
+    struct surface *s = wl_resource_get_user_data(r);
+    if (s) s->toplevel = NULL;
+}
+
+static void xdg_surface_gone(struct wl_resource *r) {
+    struct surface *s = wl_resource_get_user_data(r);
+    if (s) s->xdg_surface = NULL;
+}
+
 static const struct xdg_toplevel_interface toplevel_impl = {
     .destroy = xdg_destroy_req,
     .set_parent = noop_resource, .set_title = noop_string, .set_app_id = noop_string,
@@ -200,8 +215,9 @@ static const struct xdg_toplevel_interface toplevel_impl = {
 
 static void xs_get_toplevel(struct wl_client *c, struct wl_resource *r, uint32_t id) {
     struct surface *s = wl_resource_get_user_data(r);
+    if (!s) return;
     s->toplevel = wl_resource_create(c, &xdg_toplevel_interface, wl_resource_get_version(r), id);
-    wl_resource_set_implementation(s->toplevel, &toplevel_impl, s, NULL);
+    wl_resource_set_implementation(s->toplevel, &toplevel_impl, s, toplevel_gone);
 }
 
 static const struct xdg_surface_interface xdg_surface_impl = {
@@ -218,7 +234,7 @@ static int missed;
 static void wm_get_xdg_surface(struct wl_client *c, struct wl_resource *r, uint32_t id, struct wl_resource *surface) {
     struct surface *s = wl_resource_get_user_data(surface);
     s->xdg_surface = wl_resource_create(c, &xdg_surface_interface, wl_resource_get_version(r), id);
-    wl_resource_set_implementation(s->xdg_surface, &xdg_surface_impl, s, NULL);
+    wl_resource_set_implementation(s->xdg_surface, &xdg_surface_impl, s, xdg_surface_gone);
 }
 
 static void wm_pong(struct wl_client *c, struct wl_resource *r, uint32_t serial) {
@@ -309,7 +325,7 @@ static int on_sighup(int sig, void *d) {
     width = width == 1000 ? 1001 : 1000;
     struct surface *s;
     wl_list_for_each(s, &surfaces, link) {
-        if (!s->toplevel || !s->configured) continue;
+        if (!s->toplevel || !s->xdg_surface || !s->configured) continue;
         struct wl_array states;
         wl_array_init(&states);
         xdg_toplevel_send_configure(s->toplevel, width, 700, &states);
