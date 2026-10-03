@@ -856,6 +856,42 @@ mod tests {
     }
 
     #[test]
+    fn segmented_dims_the_options_that_are_not_selected() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut value = 0;
+        for frame in 0..2 {
+            let mut output = ctx.run_ui(Default::default(), |ui| {
+                segmented(ui, &mut value, &[(0, "One"), (1, "Two")]);
+            });
+            output.textures_delta.clear();
+            if frame == 0 {
+                continue;
+            }
+            let ink = |label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(t) if t.galley.text() == label => {
+                            let own = t.galley.job.sections[0].format.color;
+                            Some(if own == Color32::PLACEHOLDER {
+                                t.fallback_color
+                            } else {
+                                own
+                            })
+                        }
+                        _ => None,
+                    })
+                    .expect(label)
+            };
+            let p = palette(&ctx);
+            assert_eq!(ink("One"), p.text);
+            assert_eq!(ink("Two"), p.text_dim);
+        }
+    }
+
+    #[test]
     fn initials_and_paths() {
         assert_eq!(initials("ada lovelace"), "AL");
         assert_eq!(initials("Linus"), "L");
