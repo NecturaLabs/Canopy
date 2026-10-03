@@ -70,6 +70,13 @@ jobs:
               --jq '.workflow_runs[0].head_sha // ""') || BASE=
           fi
           [[ $BASE =~ ^[0-9a-f]{40}$ && ! $BASE =~ ^0+$ ]] || BASE=
+          # A pull request is compared with its base branch, which counts only when CI passed on
+          # that very commit.
+          if [[ $EVENT == pull_request && -n $BASE ]]; then
+            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$BASE&event=push&status=success&per_page=1" \
+              --jq '.total_count') || passed=
+            [[ $passed =~ ^[1-9][0-9]*$ ]] || BASE=
+          fi
           echo "Compared with: ${BASE:-nothing}"
           # The comparison lists what changed since the merge base. A push counts only when the
           # tested commit is an ancestor (status "ahead"): after a force-push the merge base can
@@ -178,29 +185,32 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Only the cargo steps need Rust, and a documentation-only change runs none of them.
       - id: rust
+        if: needs.changes.outputs.code == 'true'
         uses: ./.github/actions/setup-rust
         with:
           components: rustfmt
           cache: "false"
       - name: cargo fmt --all --check
-        if: ${{ !cancelled() && steps.rust.outcome == 'success' && needs.changes.outputs.code == 'true' }}
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo fmt --all --check
       # The docs map, paths named in docs, the module table and the skill mirror.
       - name: Documentation check
-        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 tools/check-docs.py
       - name: Release tooling self-test
-        if: ${{ !cancelled() && steps.rust.outcome == 'success' && needs.changes.outputs.code == 'true' }}
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && needs.changes.outputs.code == 'true' }}
         run: python3 tools/release.py selftest
       # A pinned, checksum-verified ShellCheck, so every runner reports the same findings.
       # packaging/ is held to every rule; tools/ to warnings and errors. A self-hosted runner keeps
       # the archive in its tool cache and checks it again before every use.
       - name: ShellCheck
-        if: ${{ !cancelled() && steps.rust.outcome == 'success' && needs.changes.outputs.code == 'true' }}
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && needs.changes.outputs.code == 'true' }}
         env:
           SHELLCHECK_VERSION: v0.10.0
           SHELLCHECK_SHA256: 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
@@ -224,12 +234,12 @@ jobs:
           rm -rf "$dir"
       # install.sh against a fake update feed on 127.0.0.1, in a temporary HOME.
       - name: Installer test
-        if: ${{ !cancelled() && steps.rust.outcome == 'success' && needs.changes.outputs.code == 'true' }}
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && needs.changes.outputs.code == 'true' }}
         env:
           TMPDIR: ${{ runner.temp }}
         run: sh packaging/test-install.sh
       - id: fetch
-        if: ${{ !cancelled() && steps.rust.outcome == 'success' && needs.changes.outputs.code == 'true' }}
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo fetch --locked
       # vendor/eframe must be the published eframe plus vendor/eframe.patch, and the workspace must
       # build it. Cargo only warns when the [patch] entry stops applying, which an eframe version
@@ -244,7 +254,7 @@ jobs:
       # A prebuilt binary: the cargo-deny action is a container action, which on
       # the self-hosted runners would leave root-owned files in their work folders.
       - id: deny
-        if: ${{ !cancelled() && steps.rust.outcome == 'success' && needs.changes.outputs.code == 'true' }}
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-deny
