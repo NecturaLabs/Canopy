@@ -125,6 +125,7 @@ struct Account {
 
 #[derive(Deserialize)]
 struct Commit {
+    sha: String,
     author: Option<Account>,
 }
 
@@ -140,8 +141,16 @@ pub(crate) fn lookup(
             if !matches!(commit.len(), 40 | 64) || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Err(Error::Parse("Invalid commit id for profile lookup".into()));
             }
-            let commit: Commit = http.avatar_json(&format!("{project}/commits/{commit}"))?;
-            commit.author.and_then(|a| a.avatar_url)
+            // The list endpoint, not `commits/<sha>`: that one carries the changed files and, for a
+            // large commit, outgrows the lookup's size limit.
+            let commits: Vec<Commit> =
+                http.avatar_json(&format!("{project}/commits?sha={commit}&per_page=1"))?;
+            commits
+                .into_iter()
+                .next()
+                .filter(|c| c.sha.eq_ignore_ascii_case(commit))
+                .and_then(|c| c.author)
+                .and_then(|a| a.avatar_url)
         }
         ForgeKind::GitLab => {
             if email.is_empty() || email.len() > 320 || email.chars().any(char::is_control) {

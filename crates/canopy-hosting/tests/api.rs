@@ -1224,11 +1224,13 @@ fn author_pictures_resolve_both_providers_and_download_without_tokens() {
     let server = Server::start();
     let sha = "0123456789abcdef0123456789abcdef01234567";
     let picture = format!("{}/picture.png", server.base);
+    // The list endpoint answers with the commit and its author account but without the changed
+    // files, which for a large commit would not fit the lookup's size limit.
     server.route(
         "GET",
-        &format!("/repos/octo/hello/commits/{sha}"),
+        "/repos/octo/hello/commits",
         200,
-        &json!({"author": {"avatar_url": picture}, "unknown": true}).to_string(),
+        &json!([{"sha": sha, "author": {"avatar_url": picture}, "unknown": true}]).to_string(),
     );
     server.route(
         "GET",
@@ -1247,6 +1249,10 @@ fn author_pictures_resolve_both_providers_and_download_without_tokens() {
     }
     let requests = server.requests();
     assert_eq!(requests.len(), 4);
+    assert_eq!(
+        requests[0].target,
+        format!("/repos/octo/hello/commits?sha={sha}&per_page=1")
+    );
     assert_eq!(
         requests[0].header("authorization"),
         Some(&format!("Bearer {TOKEN}")[..])
@@ -1267,7 +1273,7 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
     let server = Server::start();
     let other = Server::start();
     let sha = "0123456789abcdef0123456789abcdef01234567";
-    let path = format!("/repos/octo/hello/commits/{sha}");
+    let path = "/repos/octo/hello/commits".to_owned();
     let external = format!("{}/stolen", other.base);
     let client = github(&server, Some(TOKEN));
     server.route_with_headers("GET", &path, 302, &[("Location", &external)], "");
@@ -1277,7 +1283,7 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
         "GET",
         &path,
         200,
-        &json!({"author":{"avatar_url":external}}).to_string(),
+        &json!([{"sha":sha,"author":{"avatar_url":external}}]).to_string(),
     );
     assert!(
         client
@@ -1290,7 +1296,7 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
         "GET",
         &path,
         200,
-        &json!({"author":{"avatar_url":own}}).to_string(),
+        &json!([{"sha":sha,"author":{"avatar_url":own}}]).to_string(),
     );
     server.route_with_headers("GET", "/picture", 302, &[("Location", &external)], "");
     assert!(
@@ -1308,9 +1314,14 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
 fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
     let server = Server::start();
     let sha = "0123456789abcdef0123456789abcdef01234567";
-    let path = format!("/repos/octo/hello/commits/{sha}");
+    let path = "/repos/octo/hello/commits".to_owned();
     let client = github(&server, None);
-    server.route("GET", &path, 200, r#"{"author":null}"#);
+    server.route(
+        "GET",
+        &path,
+        200,
+        &json!([{"sha":sha,"author":null}]).to_string(),
+    );
     assert!(
         client
             .author_avatar(sha, "a@example.com")
@@ -1340,6 +1351,27 @@ fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
                 .is_err()
         );
     }
+    // No commit, or a different one than asked for, never yields someone else's picture.
+    server.route("GET", &path, 200, "[]");
+    assert!(
+        client
+            .author_avatar(sha, "a@example.com")
+            .unwrap()
+            .is_none()
+    );
+    server.route(
+        "GET",
+        &path,
+        200,
+        &json!([{"sha":"f".repeat(40),"author":{"avatar_url":format!("{}/picture",server.base)}}])
+            .to_string(),
+    );
+    assert!(
+        client
+            .author_avatar(sha, "a@example.com")
+            .unwrap()
+            .is_none()
+    );
     server.route("GET", &path, 200, "malformed");
     assert!(matches!(
         client.author_avatar(sha, "a@example.com"),
@@ -1354,7 +1386,8 @@ fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
         "GET",
         &path,
         200,
-        &json!({"author":{"avatar_url":format!("{}/oversized",server.base)}}).to_string(),
+        &json!([{"sha":sha,"author":{"avatar_url":format!("{}/oversized",server.base)}}])
+            .to_string(),
     );
     server.route("GET", "/oversized", 200, &"x".repeat(2 * 1024 * 1024 + 1));
     assert!(
