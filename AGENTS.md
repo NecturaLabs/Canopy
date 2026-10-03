@@ -73,7 +73,8 @@ token anywhere new, contacting a new host or adding a dependency.
   without a C compiler, `pkg-config` and `libwayland-server`), `packaging/test-install.sh` on Linux
   and macOS,
   and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck and the vendor
-  check on every push and `cargo deny check` whenever a file outside the docs changes; run `cargo deny
+  check on every push, `stall-check.py` in its Linux test job (required on GitHub-hosted runners,
+  advisory on the self-hosted one) and `cargo deny check` whenever a file outside the docs changes; run `cargo deny
   check` yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change). CI (`ci.yml`) adds
   tests per platform, one repository variable each: Linux runs unless `CI_LINUX`
   is `0`; macOS and Windows run only when `CI_MACOS` / `CI_WINDOWS` is `1` (off for now).

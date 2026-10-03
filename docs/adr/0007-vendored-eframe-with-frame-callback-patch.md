@@ -57,9 +57,10 @@ pacing cost. Option 5 leaves the owner's dialog in place for an unknown time.
 or tested as ours. `tools/vendor-eframe.sh --check`, run by `tools/check.sh` and CI, proves the
 copy equals the published crate (SHA-256 pinned) plus the patch and that the workspace builds that
 copy, so an eframe bump that leaves the `[patch]` entry unused fails CI. `tools/stall-check.py`,
-run by `tools/check.sh` (not by CI, which has no stand-in compositor yet), hides the window on the
-stand-in compositor and fails when three pings in a row go unanswered, so a patch that stops
-working, or a renderer change, fails the local check.
+run by `tools/check.sh` and by CI's Linux test job, hides the window on the stand-in compositor and
+fails when three pings in a row go unanswered, so a patch that stops working, or a renderer change,
+fails the check. On a GitHub-hosted runner, where pull requests and Dependabot run, the job installs
+the tools and the check is required; on the self-hosted runner a failure is only logged.
 
 ### Consequences
 

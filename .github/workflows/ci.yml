@@ -146,6 +146,23 @@ jobs:
           git config --global user.email "ci@canopy.invalid"
           git config --global init.defaultBranch main
       - run: cargo test --workspace --locked
+      # A window the compositor is not drawing must keep answering its pings (ADR 0007). The check
+      # runs the app on a stand-in compositor with software OpenGL. A GitHub-hosted runner (pull
+      # requests, Dependabot's eframe bumps) gets the tools installed and must pass. A self-hosted
+      # runner has whatever its owner installed: the check runs there when it can, and a failure
+      # shows in the log without failing the job.
+      - name: Install the tools for the hidden-window check
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        run: >
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          pkg-config libwayland-dev wayland-protocols libwayland-bin
+          libxkbcommon0 libegl1 libegl-mesa0 libgl1-mesa-dri
+      - name: Hidden-window check
+        if: runner.os == 'Linux'
+        continue-on-error: ${{ runner.environment != 'github-hosted' }}
+        env:
+          REQUIRE: ${{ runner.environment == 'github-hosted' && '--require' || '' }}
+        run: python3 tools/stall-check.py $REQUIRE
 
   deny:
     name: cargo-deny

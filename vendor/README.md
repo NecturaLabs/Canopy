@@ -11,7 +11,10 @@ never converts line endings in the copy or the patch (a Windows checkout with
 
 `vendor/eframe` is the published `eframe` 0.36.2 crate (manifest, sources and the embedded icon;
 licence `MIT OR Apache-2.0`) plus `vendor/eframe.patch`, and `[patch.crates-io]` in `Cargo.toml`
-points the build at it. The rest of the egui family stays on crates.io.
+points the build at it. The rest of the egui family stays on crates.io. The published crate ships no
+licence file, so none sits beside the copy; its licence text and copyright line are in
+`docs/legal/third-party-notices.txt` (written by `tools/notices.py`), which every release ships in
+`legal/`.
 
 **Why.** eframe's glow backend never calls winit's `Window::pre_present_notify` (its wgpu backend
 does). On Wayland that call is what makes winit hold back `RedrawRequested` until the compositor
@@ -35,8 +38,10 @@ and CI (the "Release tooling and licence notices" job) run it, so a Dependabot b
 Dependabot groups with the egui crates, fails CI until the patch is regenerated.
 `tools/stall-check.py` is the behaviour test: it hides Canopy's window on a stand-in compositor and
 fails when the app stops answering pings, and it refuses to run unless the build uses
-`vendor/eframe`. `tools/check.sh` runs it; CI does not (it needs a C compiler, libwayland-server
-and software OpenGL).
+`vendor/eframe`. `tools/check.sh` runs it, and so does the "Test (Linux)" job in CI. On a
+GitHub-hosted runner (pull requests, including Dependabot's eframe bumps) that job installs what the
+check needs and the check must pass. A self-hosted runner has only what its owner installed, so
+there a failure shows in the log without failing the job.
 
 **Advisories.** `cargo deny check` skips the advisory and yanked-version checks for a package that
 has no registry source, which `vendor/eframe` is (cargo-deny 0.20.2; its licence is still checked
