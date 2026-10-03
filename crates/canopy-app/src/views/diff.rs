@@ -557,11 +557,17 @@ fn header(
             };
             if single_row {
                 ui.horizontal(|ui| {
-                    let controls_width = if matches!(sel.source, DiffSource::Commit(_)) {
-                        280.0
-                    } else {
-                        400.0
-                    };
+                    // The room the controls need, learnt from how they laid out last frame: it
+                    // grows while they wrap and settles on what they use, so a font, language
+                    // or button change needs no new guess. The numbers are only the first one.
+                    let width_id = ui.id().with("diff-controls-width");
+                    let controls_width = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(
+                        if matches!(sel.source, DiffSource::Commit(_)) {
+                            280.0
+                        } else {
+                            400.0
+                        },
+                    );
                     let identity_width =
                         (ui.available_width() - controls_width - theme::SM).max(0.0);
                     ui.allocate_ui_with_layout(
@@ -572,7 +578,16 @@ fn header(
                             identity(ui);
                         },
                     );
-                    ui.horizontal_wrapped(controls);
+                    let laid_out = ui.horizontal_wrapped(controls).response.rect;
+                    let learnt = if laid_out.height() > ui.spacing().interact_size.y * 1.5 {
+                        controls_width + 40.0
+                    } else {
+                        laid_out.width().max(1.0)
+                    };
+                    if (learnt - controls_width).abs() > 0.5 {
+                        ui.data_mut(|d| d.insert_temp(width_id, learnt));
+                        ui.ctx().request_repaint();
+                    }
                 });
             } else if compact {
                 ui.horizontal_wrapped(|ui| {
