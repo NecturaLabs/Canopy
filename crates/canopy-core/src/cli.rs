@@ -363,7 +363,15 @@ pub fn run_with_input(workdir: &Path, args: &[&str], input: &[u8]) -> Result<Str
         .spawn()
         .map_err(Error::GitMissing)?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input)?;
+        // A git that exits early closes its end; its exit status and stderr say why.
+        match stdin.write_all(input) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e.into());
+            }
+            _ => {}
+        }
     }
     let out = child.wait_with_output()?;
     record(args, started, out.status.code(), &out.stderr);
@@ -527,6 +535,18 @@ pub(crate) fn has_merge_tree_write_tree() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_git_that_exits_before_reading_its_input_reports_its_own_error() {
+        let dir = tempfile::tempdir().expect("tmp");
+        run(dir.path(), &["init", "-q"]).expect("init");
+        // More than a pipe buffer, so writing it fails once git has exited.
+        let input = vec![b'x'; 1 << 20];
+        match run_with_input(dir.path(), &["rev-parse", "--verify", "missing"], &input) {
+            Err(Error::Cli { stderr, .. }) => assert!(stderr.contains("fatal"), "{stderr}"),
+            other => panic!("expected git's error, got {other:?}"),
+        }
+    }
 
     #[test]
     fn logged_arguments_hide_secrets_and_messages() {
