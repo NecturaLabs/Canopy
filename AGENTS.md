@@ -67,11 +67,13 @@ token anywhere new, contacting a new host or adding a dependency.
 - Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
 - `tools/check.sh`, on this platform: `fmt --check`, clippy, workspace tests,
   `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
-  paths in docs, module table and skill mirror), `tools/stall-check.py` (a hidden window must
-  keep answering its compositor; Linux, skipped without a C compiler and `libwayland-server`),
-  `packaging/test-install.sh` on Linux and macOS,
-  and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck on
-  every push and `cargo deny check` whenever a file outside the docs changes; run `cargo deny
+  paths in docs, module table and skill mirror), `tools/vendor-eframe.sh --check` (`vendor/eframe`
+  is the published crate plus our patch and the build uses it; needs network access),
+  `tools/stall-check.py` (a hidden window must keep answering its compositor; Linux, skipped
+  without a C compiler, `pkg-config` and `libwayland-server`), `packaging/test-install.sh` on Linux
+  and macOS,
+  and `shellcheck` and `cargo deny check` only when installed (CI runs ShellCheck and the vendor
+  check on every push and `cargo deny check` whenever a file outside the docs changes; run `cargo deny
   check` yourself when `Cargo.toml`, `Cargo.lock` or `deny.toml` change). CI (`ci.yml`) adds
   tests per platform, one repository variable each: Linux runs unless `CI_LINUX`
   is `0`; macOS and Windows run only when `CI_MACOS` / `CI_WINDOWS` is `1` (off for now).

@@ -15,7 +15,8 @@ frame callbacks from a hidden window and pings like Hyprland (`tools/stall-check
 
 - With a hidden window, one repaint (a resize, or a change to a file in the open repository) is
   enough; the second blocks. Pings go unanswered, the third raises the dialog, and the pong
-  arrives only when the window is shown again (6 to 8 seconds in the runs).
+  arrives only when the window is shown again (the check shows it right after the third miss, and
+  in the runs without the patch the first pong came 3005 to 3006 ms after its ping).
 - The main thread's stack at that moment is `ppoll` under `wl_display_dispatch_queue` under
   `libEGL_mesa`: the wait for the previous frame callback inside `eglSwapBuffers`, which Mesa
   performs because eframe asks for a swap interval of one (`vsync`, the default).
@@ -53,10 +54,12 @@ pacing cost. Option 5 leaves the owner's dialog in place for an unknown time.
 
 `vendor/eframe` is the published crate plus `vendor/eframe.patch`; `Cargo.toml` points
 `[patch.crates-io]` at it and excludes `vendor/` from the workspace so it is not linted, formatted
-or tested as ours. `tools/vendor-eframe.sh --check` proves the copy equals the published crate
-(SHA-256 pinned) plus the patch. `tools/stall-check.py`, run by `tools/check.sh`, hides the window
-on the stand-in compositor and fails when three pings in a row go unanswered, so an upgrade that
-drops the patch, or a renderer change, fails the build.
+or tested as ours. `tools/vendor-eframe.sh --check`, run by `tools/check.sh` and CI, proves the
+copy equals the published crate (SHA-256 pinned) plus the patch and that the workspace builds that
+copy, so an eframe bump that leaves the `[patch]` entry unused fails CI. `tools/stall-check.py`,
+run by `tools/check.sh` (not by CI, which has no stand-in compositor yet), hides the window on the
+stand-in compositor and fails when three pings in a row go unanswered, so a patch that stops
+working, or a renderer change, fails the local check.
 
 ### Consequences
 
@@ -69,9 +72,11 @@ drops the patch, or a renderer change, fails the build.
   worker results and prompts wait until the window is shown. That was already true while it was
   blocked.
 - **Cost:** `Cargo.lock` lists eframe without a registry source, so `cargo deny` and
-  `tools/notices.py` treat it as a path crate; both still see its licence.
+  `tools/notices.py` treat it as a path crate. Both still see its licence, but `cargo deny` skips
+  the advisory and yanked-version checks for such a crate (cargo-deny 0.20.2), so a RustSec
+  advisory against eframe has to be watched by hand (`vendor/README.md`).
 - **Not covered:** immediate viewports, which Canopy does not open. `pre_present_notify` does
-  nothing under X11 (XWayland included), macOS or Windows, so this changes nothing there. The check runs Mesa's software path, which needs no GPU;
-  the hardware path waits on the same frame callback and matches the owner's dialog, but it was
-  not run.
+  nothing under X11 (XWayland included), macOS or Windows, so this changes nothing there. The check
+  runs Mesa's software path, which needs no GPU; the hardware path waits on the same frame callback
+  and matches the owner's dialog, but it was not run.
 - The patch is a candidate to offer upstream to egui; that is the owner's call.

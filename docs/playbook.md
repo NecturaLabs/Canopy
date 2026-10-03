@@ -11,8 +11,8 @@ What is open lives in `docs/backlog.md`, not here; a release's numbered build is
 `tools/check.sh` is the gate. Pieces: `cargo fmt --all --check`, `cargo clippy --workspace
 --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `python3
 tools/release.py selftest`, `python3 tools/notices.py --check` (run without `--check` after a
-dependency change), `python3 tools/check-docs.py`, `python3 tools/stall-check.py`,
-`packaging/test-install.sh`.
+dependency change), `python3 tools/check-docs.py`, `tools/vendor-eframe.sh --check` (network
+access), `python3 tools/stall-check.py`, `packaging/test-install.sh`.
 
 - The installer test passes with a `TMPDIR` that contains a space. It used to fail two
   "interrupted install exits 130" checks there, which looked like an ignored SIGINT and was the

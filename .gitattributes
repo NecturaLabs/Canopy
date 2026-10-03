@@ -1,0 +1,3 @@
+# The vendored crates and their patches must stay byte-exact: no line-ending conversion, even with
+# core.autocrlf=true (tools/vendor-eframe.sh --check compares them with the published crate).
+vendor/** -text
