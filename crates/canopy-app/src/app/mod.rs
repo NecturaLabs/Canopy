@@ -58,6 +58,7 @@ pub const OVERLAYS: &[&str] = &[
     "clear-identity",
     "update-installed",
     "update-running",
+    "trust-folder",
 ];
 
 /// Options from the command line.
@@ -178,6 +179,8 @@ impl CanopyApp {
             settings.split_diff = true;
         }
         crate::logging::set_level(settings.log_level);
+        // Before any tab opens, so a repository thread never sees an empty list.
+        crate::trust::set(&settings.trusted_folders);
         crate::ui::fonts::install(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
@@ -312,6 +315,11 @@ impl CanopyApp {
                 };
                 app.dialogs.open(Dialog::Update(Box::new(available)));
             }
+            // A fixed illustrative path, so the screenshot never shows the fixture's temporary one.
+            Some("trust-folder") => app.dialogs.open(Dialog::TrustFolder {
+                repo: PathBuf::from("/home/ada/src/tidepool"),
+                remote: "origin".into(),
+            }),
             Some("clear-identity") => app.dialogs.open(Dialog::ConfirmClearIdentity {
                 repo: None,
                 scope: canopy_core::identity::Scope::Global,

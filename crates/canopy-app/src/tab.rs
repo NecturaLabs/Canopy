@@ -379,6 +379,9 @@ pub struct RepoTab {
     /// Self-hosted GitLab hosts the user listed in settings: environment tokens may go there.
     pub trusted_gitlab_hosts: Vec<String>,
     pub requests: Requests,
+    /// The promisor remote a read needed but Canopy did not download from, because the
+    /// repository is outside every trusted folder; the status bar offers to trust it.
+    pub downloads_refused: Option<String>,
     pub avatars: crate::avatars::Avatars,
     /// The last fetch, for auto-fetch.
     pub last_fetch: Instant,
@@ -444,6 +447,7 @@ impl RepoTab {
             host: None,
             trusted_gitlab_hosts: Vec::new(),
             requests: Requests::default(),
+            downloads_refused: None,
             avatars: Default::default(),
             last_fetch: Instant::now(),
         }
@@ -624,6 +628,20 @@ impl RepoTab {
         if let Some(error) = self.details_error.take() {
             self.worker.send(Job::Details(error.oid));
         }
+    }
+
+    /// The trusted folders changed. A tab whose downloads were refused asks again for what it
+    /// was showing, which may now download.
+    pub fn trust_changed(&mut self) {
+        if self.downloads_refused.take().is_none() {
+            return;
+        }
+        self.refresh();
+        self.details_error = None;
+        if let Some(oid) = self.selected_commit {
+            self.worker.send(Job::Details(oid));
+        }
+        self.reload_diff();
     }
 
     fn diff_key(&self, sel: &FileSelection) -> DiffKey {
@@ -874,6 +892,7 @@ impl RepoTab {
                         });
                     }
                 }
+                Event::DownloadsRefused { remote } => self.downloads_refused = Some(remote),
                 Event::Details(d) => {
                     if Some(d.oid) == self.selected_commit {
                         let first = d.files.first().cloned();

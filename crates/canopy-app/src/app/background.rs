@@ -233,6 +233,11 @@ impl CanopyApp {
     }
 
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
+        if crate::trust::set(&self.settings.trusted_folders) {
+            for tab in &mut self.tabs {
+                tab.trust_changed();
+            }
+        }
         let pictures = crate::ui::legal::pending(&self.settings).is_none()
             && self.settings.hosting_api
             && self.settings.download_avatars

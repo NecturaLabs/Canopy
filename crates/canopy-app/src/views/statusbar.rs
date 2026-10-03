@@ -7,6 +7,7 @@ use crate::action::Action;
 use crate::tab::RepoTab;
 use crate::ui::theme::{Palette, palette};
 use crate::updater::{InstallState, UpdateState};
+use crate::views::dialogs::Dialog;
 
 /// Draws the status bar.
 pub fn show(
@@ -80,6 +81,30 @@ pub fn show(
                 // A download for a read in a partial clone, outside any operation.
                 ui.add(egui::Spinner::new().size(12.0).color(p.accent));
                 ui.label(small(line.clone(), p.accent));
+            }
+            if let Some(remote) = &tab.downloads_refused {
+                let resp = egui::Frame::new()
+                    .fill(Palette::tint(p.warning, 40))
+                    .corner_radius(egui::CornerRadius::same(9))
+                    .inner_margin(egui::Margin::symmetric(8, 1))
+                    .show(ui, |ui| {
+                        ui.label(small(
+                            format!("{}  Downloads off  ·  Trust…", icon::SHIELD_WARNING),
+                            p.warning,
+                        ))
+                    })
+                    .response
+                    .interact(egui::Sense::click())
+                    .on_hover_text(format!(
+                        "This partial clone needs files from {remote}. Canopy downloads them \
+                         only for repositories in a trusted folder. Click to choose."
+                    ));
+                if resp.clicked() {
+                    actions.push(Action::OpenDialog(Dialog::TrustFolder {
+                        repo: tab.path.clone(),
+                        remote: remote.clone(),
+                    }));
+                }
             }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

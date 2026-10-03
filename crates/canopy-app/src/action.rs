@@ -59,6 +59,9 @@ pub enum Action {
         repo: Option<PathBuf>,
         scope: Scope,
     },
+    /// Let repositories in this folder download missing objects in partial clones (Settings,
+    /// `trusted_folders`).
+    TrustFolder(PathBuf),
     Copy(String),
     /// Open a file, folder or web page with the system's default handler.
     /// A web page (http or https only: API data and the update feed reach this).

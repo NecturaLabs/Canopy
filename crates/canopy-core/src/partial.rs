@@ -106,6 +106,31 @@ fn refused_reason(remotes: &[String]) -> String {
     )
 }
 
+/// Whether the repository's working folder and its git directory both lie inside one of the
+/// `trusted` folders.
+///
+/// A download runs `git fetch` in the repository, and git then obeys the repository's own
+/// configuration, which can name programs to run (`core.sshCommand`, a credential helper) and
+/// servers to contact. Canopy therefore downloads without being asked only for a repository the
+/// user placed in a folder they trust. The git directory counts too: a repository whose `.git`
+/// file points elsewhere takes its configuration from there.
+///
+/// Every path is resolved first (symbolic links, `..`), so a link or a relative spelling can
+/// neither enter nor leave a trusted folder, and `/a/bc` is not inside `/a/b`. A trusted folder
+/// that cannot be resolved (removed, unreadable) trusts nothing, and a filesystem root is never
+/// accepted as a trusted folder.
+pub fn is_in_trusted_folder(repo: &Repository, trusted: &[std::path::PathBuf]) -> bool {
+    let trusted: Vec<std::path::PathBuf> = trusted
+        .iter()
+        .filter_map(|t| std::fs::canonicalize(t).ok())
+        .filter(|t| t.parent().is_some())
+        .collect();
+    let inside = |path: &Path| {
+        std::fs::canonicalize(path).is_ok_and(|p| trusted.iter().any(|t| p.starts_with(t)))
+    };
+    inside(repo.commondir()) && repo.workdir().is_none_or(inside)
+}
+
 /// Whether `repo` is a partial clone: it has a promisor remote, or objects that came from one
 /// (`objects/pack/*.promisor`), which is still true after that remote was removed.
 pub fn is_partial_clone(repo: &Repository) -> bool {
@@ -377,6 +402,76 @@ mod tests {
         assert_eq!(promisor_remotes(&repo), ["second", "first"]);
         config.set_str("extensions.partialclone", "legacy").unwrap();
         assert_eq!(promisor_remotes(&repo), ["first", "second", "legacy"]);
+    }
+
+    #[test]
+    fn a_repository_is_trusted_only_inside_a_trusted_folder() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let work = root.path().join("work");
+        let repo_dir = work.join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let repo = Repository::init(&repo_dir).expect("init");
+        let trust = |folders: &[&Path]| {
+            let folders: Vec<_> = folders.iter().map(|p| p.to_path_buf()).collect();
+            is_in_trusted_folder(&repo, &folders)
+        };
+
+        assert!(!trust(&[]), "nothing is trusted by default");
+        assert!(trust(&[&repo_dir]), "the repository's own folder");
+        assert!(trust(&[&work]), "its parent");
+        assert!(
+            trust(&[&work.join("..").join("work")]),
+            "an unresolved spelling"
+        );
+
+        // A sibling whose name merely starts the same is a different folder.
+        let sibling = root.path().join("wor");
+        std::fs::create_dir_all(&sibling).unwrap();
+        assert!(!trust(&[&sibling]));
+        let child = repo_dir.join("sub");
+        std::fs::create_dir_all(&child).unwrap();
+        assert!(
+            !trust(&[&child]),
+            "a folder inside the repository does not trust it"
+        );
+
+        // A folder that is gone trusts nothing, even if the entry is still listed.
+        assert!(!trust(&[&root.path().join("removed")]));
+        assert!(!trust(&[&root.path().join("removed"), &sibling]));
+        assert!(trust(&[&sibling, &work]));
+
+        // A filesystem root is never accepted, whatever it contains.
+        let mut anchor = root.path().to_path_buf();
+        while anchor.pop() {}
+        assert!(!trust(&[&anchor]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_cannot_carry_trust_in_or_out() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let trusted = root.path().join("trusted");
+        let elsewhere = root.path().join("elsewhere");
+        std::fs::create_dir_all(&trusted).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+
+        // A repository outside the trusted folder, reached through a link inside it.
+        let outside = elsewhere.join("repo");
+        std::fs::create_dir_all(&outside).unwrap();
+        Repository::init(&outside).expect("init");
+        std::os::unix::fs::symlink(&outside, trusted.join("link")).unwrap();
+        let through_link = Repository::open(trusted.join("link")).expect("open through link");
+        assert!(!is_in_trusted_folder(
+            &through_link,
+            std::slice::from_ref(&trusted)
+        ));
+
+        // A trusted folder that is itself a link counts as the folder it leads to.
+        std::os::unix::fs::symlink(&elsewhere, root.path().join("alias")).unwrap();
+        assert!(is_in_trusted_folder(
+            &through_link,
+            &[root.path().join("alias")]
+        ));
     }
 
     #[test]

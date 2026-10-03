@@ -146,6 +146,9 @@ pub struct Settings {
     pub editor: String,
     /// Load pull/merge requests from GitHub and GitLab.
     pub hosting_api: bool,
+    /// Folders whose repositories may download missing objects in a partial clone without being
+    /// asked, because git then runs the repository's own configuration (see `trust.rs`).
+    pub trusted_folders: Vec<PathBuf>,
 
     // Updates.
     pub check_updates: bool,
@@ -210,6 +213,7 @@ impl Default for Settings {
             terminal: String::new(),
             editor: String::new(),
             hosting_api: true,
+            trusted_folders: Vec::new(),
             check_updates: true,
             include_prereleases: false,
             last_update_check: 0,
@@ -238,6 +242,9 @@ impl Settings {
         self.zoom = self.zoom.clamp(0.8, 1.6);
         self.commit_page = self.commit_page.clamp(200, 50_000);
         self.diff.context = self.diff.context.min(25);
+        let mut seen = Vec::new();
+        self.trusted_folders
+            .retain(|f| f.is_absolute() && crate::trust::add(&mut seen, f.clone()));
     }
 
     /// Moves `path` to the front of the recent list.
@@ -354,6 +361,24 @@ mod tests {
         assert_eq!(
             s.gitlab_host_list(),
             vec!["git.example.com", "code.corp.io", "lab.x"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trusted_folders_keep_only_distinct_absolute_non_root_paths() {
+        let mut s: Settings = serde_json::from_str(
+            r#"{"trusted_folders": ["/home/ada/src", "relative/dir", "/", "/home/ada/src", "/srv/git"]}"#,
+        )
+        .expect("parse");
+        s.migrate();
+        assert_eq!(
+            s.trusted_folders,
+            [PathBuf::from("/home/ada/src"), PathBuf::from("/srv/git")]
+        );
+        assert!(
+            Settings::default().trusted_folders.is_empty(),
+            "nothing is trusted until the user says so"
         );
     }
 

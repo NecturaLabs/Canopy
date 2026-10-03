@@ -294,6 +294,11 @@ pub enum Event {
         can_download: bool,
     },
     Diff(DiffKey, Result<Arc<FileDiff>, String>),
+    /// A read needed a download from this promisor remote, which Canopy did not run because the
+    /// repository is outside every trusted folder (`trust.rs`).
+    DownloadsRefused {
+        remote: String,
+    },
     /// Syntax highlighting for the diff (sent before with the same key). It comes from the
     /// highlighter threads, so it may arrive after a newer diff; it applies only to this one.
     Highlight(DiffKey, Arc<FileDiff>, Arc<crate::highlight::Highlights>),
@@ -439,6 +444,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             }
         };
 
+        // Whether a partial clone may download on its own here; asked only when one needs to.
+        let allowed = || repo.is_in_trusted_folder(&crate::trust::folders());
         let rest = coalesce_reads(rest);
         let mut mutated = false;
         for job in rest {
@@ -448,7 +455,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 Job::Details(oid) => {
                     // The file list needs no file contents, so it is shown first, offline. A
                     // treeless clone downloads trees for it (network, with a progress line).
-                    match read_downloading(&emit, |m| repo.commit_details(oid, m)) {
+                    match read_downloading(&emit, &allowed, |m| repo.commit_details(oid, m)) {
                         Ok(d) => {
                             let wants_counts = !d.stats_known
                                 && d.files.len() <= canopy_core::repo::MAX_STAT_FILES;
@@ -456,14 +463,18 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             // Line counts need blobs: fetch them after the list is on screen,
                             // unless the user already moved on (a newer job is waiting).
                             if wants_counts && jobs.is_empty() {
-                                match with_progress(&emit, repo.promisor_remote(), || {
-                                    repo.commit_details(oid, MissingObjects::Download)
-                                }) {
-                                    Ok(d) if d.stats_known => emit(Event::Details(Arc::new(d))),
-                                    Ok(_) => {}
-                                    // The list stays; only the counts are missing.
-                                    Err(e) => {
-                                        tracing::warn!(error = %redacted(&e), "line counts not downloaded")
+                                if !allowed() {
+                                    download_refused(&emit, repo.promisor_remote());
+                                } else {
+                                    match with_progress(&emit, repo.promisor_remote(), || {
+                                        repo.commit_details(oid, MissingObjects::Download)
+                                    }) {
+                                        Ok(d) if d.stats_known => emit(Event::Details(Arc::new(d))),
+                                        Ok(_) => {}
+                                        // The list stays; only the counts are missing.
+                                        Err(e) => {
+                                            tracing::warn!(error = %redacted(&e), "line counts not downloaded")
+                                        }
                                     }
                                 }
                             }
@@ -483,7 +494,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         repo.conflict_view(&key.path)
                     } else {
                         // Partial clones: download missing objects like `git show` does.
-                        read_downloading(&emit, |missing| {
+                        read_downloading(&emit, &allowed, |missing| {
                             repo.file_diff(
                                 &key.source,
                                 &key.path,
@@ -590,7 +601,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         }
         if want_full.is_some() || mutated {
             let started = std::time::Instant::now();
-            match snapshot_completing(&repo, limit, &emit) {
+            match snapshot_completing(&repo, limit, &emit, &allowed) {
                 Ok(s) => {
                     tracing::debug!(
                         commits = s.commits.len(),
@@ -605,7 +616,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 }
             }
         } else if want_status {
-            match read_downloading(&emit, |m| repo.status(m)) {
+            match read_downloading(&emit, &allowed, |m| repo.status(m)) {
                 Ok(s) => emit(Event::Status(s)),
                 Err(e) => emit(Event::Failed(e.to_string())),
             }
@@ -660,18 +671,45 @@ fn with_progress<T>(emit: &impl Fn(Event), remote: Option<String>, f: impl FnOnc
     result
 }
 
+/// Why a download did not run in a repository outside every trusted folder.
+const NOT_TRUSTED: &str = "Canopy downloads it only for repositories in a trusted folder. \
+                           Choose Trust… in the status bar to allow it for this one.";
+
+/// Reports a download that was not run because the repository is not in a trusted folder, and
+/// returns the error the read ends with. `can_download()` is false for it: trying again cannot
+/// help until the folder is trusted.
+fn download_refused(emit: &impl Fn(Event), remote: Option<String>) -> canopy_core::Error {
+    if let Some(remote) = remote {
+        tracing::info!(remote = %canopy_core::cli::redact_url(&remote), "download refused: folder not trusted");
+        emit(Event::DownloadsRefused { remote });
+    }
+    canopy_core::Error::NotDownloaded {
+        remote: None,
+        reason: Some(NOT_TRUSTED.into()),
+    }
+}
+
 /// A read in a repository that may be a partial clone: offline first, and only when it fails
 /// because objects were not downloaded and a remote can supply them, again with downloading
-/// allowed (network), with a progress line while it runs. Full clones run `read` once.
+/// allowed (network), with a progress line while it runs. Full clones run `read` once. A
+/// repository outside every trusted folder (`allowed` says) never downloads: its configuration
+/// would run.
 fn read_downloading<T>(
     emit: &impl Fn(Event),
+    allowed: &impl Fn() -> bool,
     read: impl Fn(MissingObjects) -> canopy_core::Result<T>,
 ) -> canopy_core::Result<T> {
     match read(MissingObjects::Fail) {
         Err(canopy_core::Error::NotDownloaded {
             remote: Some(remote),
             ..
-        }) => with_progress(emit, Some(remote), || read(MissingObjects::Download)),
+        }) => {
+            if allowed() {
+                with_progress(emit, Some(remote), || read(MissingObjects::Download))
+            } else {
+                Err(download_refused(emit, Some(remote)))
+            }
+        }
         other => other,
     }
 }
@@ -683,6 +721,7 @@ fn snapshot_completing(
     repo: &Repo,
     limit: usize,
     emit: &impl Fn(Event),
+    allowed: &impl Fn() -> bool,
 ) -> canopy_core::Result<RepoSnapshot> {
     let mut snap = repo.snapshot(limit)?;
     if snap
@@ -690,6 +729,14 @@ fn snapshot_completing(
         .as_ref()
         .is_some_and(|u| u.can_download)
     {
+        if !allowed() {
+            let error = download_refused(emit, repo.promisor_remote());
+            snap.status_unavailable = Some(canopy_core::StatusUnavailable {
+                message: error.to_string(),
+                can_download: false,
+            });
+            return Ok(snap);
+        }
         with_progress(emit, repo.promisor_remote(), || {
             repo.complete_status(&mut snap, MissingObjects::Download);
         });
@@ -1162,9 +1209,62 @@ mod read_tests {
             .collect()
     }
 
+    /// [`partial_clone`] inside a folder the user trusted, as the downloads need.
+    fn trusted_partial_clone(filter: &str) -> (tempfile::TempDir, PathBuf, PathBuf, Oid, Oid) {
+        let made = partial_clone(filter);
+        crate::trust::add_for_tests(made.0.path().to_path_buf());
+        made
+    }
+
+    #[test]
+    fn an_untrusted_partial_clone_downloads_nothing_and_says_why() {
+        // Blobless: the file list is offline, the line counts would need a download.
+        let (_root, _src, copy, _oldest, middle) = partial_clone("--filter=blob:none");
+        let worker = Worker::spawn(copy.clone(), egui::Context::default());
+        worker.send(Job::Details(middle));
+        let events = events_until(&worker, |e| matches!(e, Event::DownloadsRefused { .. }));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Details(d) if !d.stats_known && d.files.len() == 1)),
+            "the file list still shows: {events:?}"
+        );
+        assert!(
+            matches!(events.last(), Some(Event::DownloadsRefused { remote }) if remote == "origin"),
+            "{events:?}"
+        );
+        assert!(progress(&events).is_empty(), "no download ran: {events:?}");
+
+        // Treeless: even the file list needs a download, so the read fails and explains.
+        let (_root, _src, copy, oldest, _) = partial_clone("--filter=tree:0");
+        let worker = Worker::spawn(copy, egui::Context::default());
+        worker.send(Job::Details(oldest));
+        let events = events_until(&worker, |e| matches!(e, Event::DetailsFailed { .. }));
+        let Some(Event::DetailsFailed {
+            message,
+            can_download,
+            ..
+        }) = events.last()
+        else {
+            panic!("expected a failure, got {events:?}");
+        };
+        assert!(
+            !can_download,
+            "retrying cannot help until the folder is trusted"
+        );
+        assert!(message.contains("trusted folder"), "{message}");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::DownloadsRefused { remote } if remote == "origin")),
+            "{events:?}"
+        );
+        assert!(progress(&events).is_empty(), "no download ran: {events:?}");
+    }
+
     #[test]
     fn details_in_a_blobless_clone_show_the_file_list_first_and_the_counts_after_downloading() {
-        let (_root, _src, copy, _oldest, middle) = partial_clone("--filter=blob:none");
+        let (_root, _src, copy, _oldest, middle) = trusted_partial_clone("--filter=blob:none");
         let worker = Worker::spawn(copy, egui::Context::default());
 
         // The blobs of this commit are not local: the list comes first, offline, and the line
@@ -1197,7 +1297,7 @@ mod read_tests {
 
     #[test]
     fn a_failed_download_of_details_is_reported_with_its_oid_and_can_be_retried() {
-        let (root, src, copy, oldest, _) = partial_clone("--filter=tree:0");
+        let (root, src, copy, oldest, _) = trusted_partial_clone("--filter=tree:0");
         let worker = Worker::spawn(copy, egui::Context::default());
         let moved = root.path().join("src-moved");
         std::fs::rename(&src, &moved).expect("hide the remote");
@@ -1228,10 +1328,11 @@ mod read_tests {
     #[test]
     fn a_read_retries_with_downloading_only_when_a_remote_can_supply_it() {
         let lines = RefCell::new(Vec::new());
-        let emit = |e: Event| {
-            if let Event::Progress(line) = e {
-                lines.borrow_mut().push(line);
-            }
+        let refused = RefCell::new(Vec::new());
+        let emit = |e: Event| match e {
+            Event::Progress(line) => lines.borrow_mut().push(line),
+            Event::DownloadsRefused { remote } => refused.borrow_mut().push(remote),
+            _ => {}
         };
         let not_downloaded = |remote: Option<&str>| Error::NotDownloaded {
             remote: remote.map(str::to_owned),
@@ -1240,7 +1341,7 @@ mod read_tests {
 
         // Succeeds offline: one call, no progress.
         let calls = Cell::new(0);
-        let r = read_downloading(&emit, |m| {
+        let r = read_downloading(&emit, &|| true, |m| {
             calls.set(calls.get() + 1);
             assert_eq!(m, MissingObjects::Fail);
             Ok(1)
@@ -1251,7 +1352,7 @@ mod read_tests {
 
         // Missing objects and a remote: downloads, bracketed by progress lines.
         let modes = RefCell::new(Vec::new());
-        let r = read_downloading(&emit, |m| {
+        let r = read_downloading(&emit, &|| true, |m| {
             modes.borrow_mut().push(m);
             match m {
                 MissingObjects::Fail => Err(not_downloaded(Some("origin"))),
@@ -1271,12 +1372,29 @@ mod read_tests {
         // No remote to download from: the error is returned as it is, with no network attempt.
         lines.borrow_mut().clear();
         let calls = Cell::new(0);
-        let r: canopy_core::Result<u8> = read_downloading(&emit, |_| {
+        let r: canopy_core::Result<u8> = read_downloading(&emit, &|| true, |_| {
             calls.set(calls.get() + 1);
             Err(not_downloaded(None))
         });
         assert!(matches!(r, Err(Error::NotDownloaded { remote: None, .. })));
         assert_eq!(calls.get(), 1);
+        assert!(lines.borrow().is_empty());
+        assert!(refused.borrow().is_empty());
+
+        // A remote but an untrusted folder: nothing is downloaded, and the refusal is reported
+        // with the remote, in an error that offers no retry.
+        let modes = RefCell::new(Vec::new());
+        let r: canopy_core::Result<u8> = read_downloading(&emit, &|| false, |m| {
+            modes.borrow_mut().push(m);
+            Err(not_downloaded(Some("origin")))
+        });
+        let Err(e) = r else {
+            panic!("an untrusted folder must not download")
+        };
+        assert_eq!(*modes.borrow(), [MissingObjects::Fail]);
+        assert!(!e.can_download(), "{e}");
+        assert!(e.to_string().contains("trusted folder"), "{e}");
+        assert_eq!(*refused.borrow(), ["origin".to_owned()]);
         assert!(lines.borrow().is_empty());
     }
 }

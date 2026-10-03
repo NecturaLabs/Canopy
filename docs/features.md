@@ -49,6 +49,12 @@ treeless clone after `git reset --soft` downloads the tree of `HEAD` before the 
 list anything, and says why when it cannot. Repositories made by Git before 2.24
 (`extensions.partialClone`) are refused with the commands that convert them.
 
+Downloads run on their own only for repositories inside a folder trusted in Settings (Privacy,
+Trusted folders), because git then follows the repository's own configuration, which can run
+programs and contact servers. Elsewhere Canopy shows what is on disk, says why a read needs a
+download, and the status bar offers "Downloads off · Trust…" with the repository's folder or its
+parent. Nothing is trusted by default (ADR 0009).
+
 ## History
 
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |

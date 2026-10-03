@@ -97,6 +97,12 @@ pub enum Dialog {
         repo: Option<std::path::PathBuf>,
         scope: canopy_core::identity::Scope,
     },
+    /// Allow downloads in the partial clones of a folder: the repository's own, or its parent.
+    TrustFolder {
+        repo: std::path::PathBuf,
+        /// The promisor remote the downloads would come from.
+        remote: String,
+    },
     /// What's new in an available update.
     Update(Box<crate::updater::Available>),
     /// What's new in this version (after an upgrade, or from the palette).
@@ -507,6 +513,30 @@ pub fn show(
                         Some(true) => outcome = Outcome::Run(vec![Action::ClearIdentity { repo: repo.clone(), scope: *scope }]),
                         Some(false) => outcome = Outcome::Close,
                         None => {}
+                    }
+                }
+                Dialog::TrustFolder { repo, remote } => {
+                    title(ui, icon::SHIELD_CHECK, "Trust this folder?");
+                    let name = |path: &std::path::Path| path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+                    ui.label(RichText::new(format!("{} is a partial clone: some of its files were left on the server. To show them, Canopy has to download them from {remote} with git, and git then follows this repository's own configuration, which can run programs and contact servers.", name(repo))).color(p.text_dim));
+                    ui.add_space(theme::SM);
+                    ui.label(RichText::new("Trust a folder only if everything in it was made by you or by people you trust. You can remove it again in Settings.").color(p.text_dim));
+                    ui.add_space(16.0);
+                    let wide = |ui: &Ui| egui::vec2(ui.available_width(), 34.0);
+                    if widgets::accent_button(ui, &format!("Trust {}", name(repo)), wide(ui)).clicked() {
+                        outcome = Outcome::Run(vec![Action::TrustFolder(repo.clone())]);
+                    }
+                    if let Some(parent) = crate::trust::parent_offer(repo) {
+                        ui.add_space(theme::XS);
+                        let size = wide(ui);
+                        if ui.add_sized(size, egui::Button::new(format!("Trust everything in {}", name(&parent)))).on_hover_text(parent.display().to_string()).clicked() {
+                            outcome = Outcome::Run(vec![Action::TrustFolder(parent)]);
+                        }
+                    }
+                    ui.add_space(theme::XS);
+                    let size = wide(ui);
+                    if ui.add_sized(size, egui::Button::new("Not now")).clicked() {
+                        outcome = Outcome::Close;
                     }
                 }
                 Dialog::ConfirmHost { title: t, body, confirm, danger, job } => {

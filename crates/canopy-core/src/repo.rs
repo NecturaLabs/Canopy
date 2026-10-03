@@ -394,6 +394,12 @@ impl Repo {
         partial::is_partial_clone(&self.git)
     }
 
+    /// Whether the repository lies inside one of the `trusted` folders, so that a download may
+    /// run its own git configuration (see [`partial::is_in_trusted_folder`]).
+    pub fn is_in_trusted_folder(&self, trusted: &[PathBuf]) -> bool {
+        partial::is_in_trusted_folder(&self.git, trusted)
+    }
+
     /// The promisor remote a download would use first, to name in a progress message; `None` for
     /// a full clone or when no remote can be fetched from.
     pub fn promisor_remote(&self) -> Option<String> {

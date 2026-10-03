@@ -225,6 +225,14 @@ impl CanopyApp {
                 Action::ClearIdentity { repo, scope } => {
                     self.request_identity(IdentityJob::Clear { repo, scope })
                 }
+                Action::TrustFolder(folder) => {
+                    let shown = folder.display().to_string();
+                    // The tabs pick the new list up in the next `poll`.
+                    if crate::trust::add(&mut self.settings.trusted_folders, folder) {
+                        self.toasts
+                            .push(ctx, ToastKind::Success, "Folder trusted", shown);
+                    }
+                }
                 Action::Copy(text) => {
                     ctx.copy_text(text.clone());
                     self.toasts.push(ctx, ToastKind::Info, "Copied", text);

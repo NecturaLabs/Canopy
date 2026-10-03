@@ -265,7 +265,9 @@ pub fn show(
                                         Section::Updates => {
                                             updates(ui, settings, data.update, actions)
                                         }
-                                        Section::Privacy => privacy(ui, settings, actions),
+                                        Section::Privacy => {
+                                            privacy(ui, settings, actions, &mut screen.picker)
+                                        }
                                         Section::Keyboard => keyboard(ui),
                                     }
                                 });
@@ -1105,9 +1107,59 @@ fn accounts(
     changed
 }
 
-fn privacy(ui: &mut Ui, s: &mut Settings, actions: &mut Vec<Action>) {
+fn privacy(
+    ui: &mut Ui,
+    s: &mut Settings,
+    actions: &mut Vec<Action>,
+    picker: &mut crate::ui::folder_picker::FolderPicker,
+) {
     use crate::ui::legal::Document;
     let p = palette(ui.ctx());
+    heading(ui, "Partial clones");
+    row(
+        ui,
+        "Trusted folders",
+        "In a partial clone, opening a commit or a diff downloads the files the clone left on the server. git then follows the repository's own configuration, which can run programs and contact servers, so Canopy does this on its own only for repositories inside these folders. Trust a folder only if everything in it comes from you or from people you trust. Elsewhere you see what is already on disk, with a Trust… button in the status bar.",
+        |ui| {
+            if let Some(dir) = picker.show(
+                ui,
+                "trusted-folder",
+                &crate::settings::expand_home(&s.clone_parent()),
+            ) && crate::trust::add(&mut s.trusted_folders, dir)
+            {
+                ui.ctx().request_repaint();
+            }
+        },
+    );
+    let mut remove = None;
+    for (i, folder) in s.trusted_folders.iter().enumerate() {
+        ui.horizontal(|ui| {
+            if widgets::icon_button(ui, icon::X, "Stop trusting this folder").clicked() {
+                remove = Some(i);
+            }
+            ui.add(
+                egui::Label::new(
+                    RichText::new(folder.display().to_string())
+                        .monospace()
+                        .size(theme::SMALL_SIZE)
+                        .color(p.text_dim),
+                )
+                .truncate(),
+            )
+            .on_hover_text(folder.display().to_string());
+        });
+    }
+    if let Some(i) = remove {
+        s.trusted_folders.remove(i);
+    }
+    if s.trusted_folders.is_empty() {
+        ui.label(
+            RichText::new("No folder is trusted yet.")
+                .size(theme::SMALL_SIZE)
+                .color(p.text_faint),
+        );
+    }
+    ui.add_space(theme::SM);
     heading(ui, "Profile pictures");
     row(
         ui,
