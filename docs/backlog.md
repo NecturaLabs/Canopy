@@ -82,7 +82,7 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] Design, in order: colour tokens everywhere, typography and controls
       (`docs/specs/ui-spec.md`), motion (reduce-motion setting), responsive 960×600 to 4K, polish
       and a design review.
-- [ ] Docs: `docs/design.md` for the other five themes, fresh screenshots, a CONTRIBUTING review.
+- [ ] Docs: a CONTRIBUTING review.
 - [ ] `tests/safety.rs` non-UTF-8 folder test: when the filesystem refuses the name (NTFS under
       `TMPDIR`), fail with a message naming that cause instead of an `unwrap` panic.
 - [ ] Verify the one-line installers on real machines after the first stable release.

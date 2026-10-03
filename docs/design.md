@@ -69,8 +69,8 @@ and `text-dim` and `text-faint` 4.5:1 on every surface (`bg`, `panel`, `elevated
 selected row over each, `added-bg`, `removed-bg` and the warning tint); links and SHAs
 (`accent-2`) and status colours 4.5:1 on plain surfaces and selected rows, `success` on added
 lines, `danger` on removed lines and `warning` on its tint; `accent` 4.5:1 on plain surfaces;
-`control-border`, the focus ring and lane colours 3:1. The six other themes define the same tokens;
-`theme.rs` is the reference for their values:
+`control-border`, the focus ring and lane colours 3:1. The six other themes define the same tokens
+(their lanes and syntax colours are in `theme.rs`):
 
 - **Aurora** (dark): cool arctic blues after the Nord palette.
 - **Ember** (dark): warm charcoal with orange and gold.
@@ -81,6 +81,28 @@ lines, `danger` on removed lines and `warning` on its tint; `accent` 4.5:1 on pl
 - **Paper** (light): warm off-white with rust and teal.
 - **Contrast** (dark): black and white with saturated signal colours, a blue accent, yellow
   links and strong outlines, for low vision and bright rooms.
+
+| Token | Aurora | Ember | Neon | Forest | Paper | Contrast |
+|---|---|---|---|---|---|---|
+| `bg` | `#1E222A` | `#16110F` | `#0B0716` | `#0E1411` | `#F4EFE6` | `#000000` |
+| `panel` | `#242933` | `#1D1714` | `#110B20` | `#131B17` | `#FBF8F2` | `#0A0A0A` |
+| `elevated` | `#2B303B` | `#241C18` | `#170F2B` | `#18221D` | `#FFFDF8` | `#121212` |
+| `hover` | `#333A47` | `#2E241F` | `#211638` | `#1F2B25` | `#EDE6DA` | `#242424` |
+| `border` | `#3B4252` | `#3A2E27` | `#2D1F4A` | `#2A3830` | `#DCD3C4` | `#6B6B6B` |
+| `control-border` | `#7E8490` | `#796E67` | `#6F6386` | `#67746D` | `#8B8379` | `#B3B3B3` |
+| `text` | `#ECEFF4` | `#F3E9E2` | `#F5EEFF` | `#E4EEE8` | `#2B2620` | `#FFFFFF` |
+| `text-dim` | `#C2C8D3` | `#BCAB9F` | `#CDBFE6` | `#B3C5BB` | `#585044` | `#E6E6E6` |
+| `text-faint` | `#B1B8C4` | `#AC9D93` | `#BBAEDC` | `#A7B4AD` | `#655B50` | `#CCCCCC` |
+| `accent` | `#88C0D0` | `#F97316` | `#00E5FF` | `#E2B84F` | `#A14A08` | `#4CC2FF` |
+| `accent-2` | `#CAAFC5` | `#FACC15` | `#FF7ABD` | `#7DD3FC` | `#0E6E67` | `#FFE14D` |
+| `success` | `#A5C08F` | `#4ADE80` | `#3DF5A0` | `#4ADE80` | `#166534` | `#3DFF8A` |
+| `warning` | `#EBCB8B` | `#FBBF24` | `#FFD60A` | `#FB923C` | `#825500` | `#FFA62B` |
+| `danger` | `#EAA5AB` | `#F87171` | `#FF6B4A` | `#F98282` | `#B91C1C` | `#FF6B6B` |
+| `added-bg` | `#253229` | `#15281B` | `#0B2A22` | `#12301F` | `#E3F0DC` | `#002B14` |
+| `removed-bg` | `#3A262C` | `#331816` | `#2E0B1E` | `#2E1618` | `#F8E1DC` | `#3B0009` |
+| `button` | `#88C0D0` | `#C2410C` | `#0E7490` | `#8A5A00` | `#B45309` | `#005FB8` |
+| `button2` | `#B48EAD` | `#A16207` | `#7C3AED` | `#166534` | `#0F766E` | `#005FB8` |
+| `on-button` | `#1E222A` | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` |
 
 In every theme the accent's hue stays clear of `success` and `danger`, so a selected row is never
 confused with an added or removed line.
