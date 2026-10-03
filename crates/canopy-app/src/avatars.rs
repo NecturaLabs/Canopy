@@ -153,6 +153,15 @@ fn write_record(path: &Path, record: &Record) -> std::io::Result<()> {
     std::fs::rename(tmp, path)
 }
 
+/// Why a refresh produced no picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Miss {
+    /// Nothing was asked: pictures were switched off, or the tab went to the background.
+    Skipped,
+    Failed,
+    RateLimited,
+}
+
 /// Reads the cache and, only when due and still enabled, asks the provider once.
 pub fn load(
     client: &canopy_hosting::Client,
@@ -161,36 +170,50 @@ pub fn load(
     email: &str,
     enabled: &AtomicBool,
 ) -> Cached {
-    let _lock = CACHE_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let now = chrono::Utc::now().timestamp();
     let path = eframe::storage_dir("canopy").map(|p| {
         p.join("avatars").join(format!(
             "{}.json",
             canopy_hosting::avatars::cache_key(forge, email)
         ))
     });
+    load_at(path, client, oid, email, enabled)
+}
+
+fn load_at(
+    path: Option<std::path::PathBuf>,
+    client: &canopy_hosting::Client,
+    oid: Oid,
+    email: &str,
+    enabled: &AtomicBool,
+) -> Cached {
+    let _lock = CACHE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let now = chrono::Utc::now().timestamp();
     let old = path.as_deref().and_then(read_record);
     let due = old.as_ref().is_none_or(|r| !fresh(r.checked_at, now));
     let (record, rate_limited) = refresh(old, now, || {
         if !enabled.load(Ordering::SeqCst) {
-            return Err(false);
+            return Err(Miss::Skipped);
         }
         let avatar = client
             .author_avatar(&oid.to_string(), email)
-            .map_err(|e| matches!(e, canopy_hosting::Error::RateLimited { .. }))?;
+            .map_err(|e| match e {
+                canopy_hosting::Error::RateLimited { .. } => Miss::RateLimited,
+                _ => Miss::Failed,
+            })?;
         if !enabled.load(Ordering::SeqCst) {
-            return Err(false);
+            return Err(Miss::Skipped);
         }
         let Some(avatar) = avatar else {
-            return Err(false);
+            return Err(Miss::Failed);
         };
-        let bytes = avatar.download().map_err(|_| false)?;
-        let image = decode(&bytes).map_err(|_| false)?;
+        let bytes = avatar.download().map_err(|_| Miss::Failed)?;
+        let image = decode(&bytes).map_err(|_| Miss::Failed)?;
         Ok(image.pixels.iter().flat_map(|p| p.to_array()).collect())
     });
     if due
+        && record.checked_at == now
         && enabled.load(Ordering::SeqCst)
         && let Some(path) = path
         && let Err(e) = write_record(&path, &record)
@@ -206,22 +229,28 @@ pub fn load(
     }
 }
 
+/// The record after one due refresh. A skipped refresh changes nothing, so the author stays due.
 fn refresh(
     old: Option<Record>,
     now: i64,
-    fetch: impl FnOnce() -> Result<Vec<u8>, bool>,
+    fetch: impl FnOnce() -> Result<Vec<u8>, Miss>,
 ) -> (Record, bool) {
     if old.as_ref().is_some_and(|r| fresh(r.checked_at, now)) {
         return (old.unwrap_or_default(), false);
     }
     let mut record = old.unwrap_or_default();
-    let mut rate_limited = false;
     match fetch() {
-        Ok(pixels) => record.pixels = Some(pixels),
-        Err(limited) => rate_limited = limited,
+        Ok(pixels) => {
+            record.pixels = Some(pixels);
+            record.checked_at = now;
+            (record, false)
+        }
+        Err(Miss::Skipped) => (record, false),
+        Err(miss) => {
+            record.checked_at = now;
+            (record, miss == Miss::RateLimited)
+        }
     }
-    record.checked_at = now;
-    (record, rate_limited)
 }
 
 pub fn decode(bytes: &[u8]) -> Result<ColorImage, String> {
@@ -259,12 +288,12 @@ mod tests {
         let (record, _) = refresh(Some(record), 100 + CACHE_SECS - 1, || {
             panic!("fresh cache fetched again")
         });
-        let (record, _) = refresh(Some(record), 100 + CACHE_SECS, || Err(false));
+        let (record, _) = refresh(Some(record), 100 + CACHE_SECS, || Err(Miss::Failed));
         assert_eq!(record.pixels, Some(pixels));
         let (_, _) = refresh(Some(record), 100 + 2 * CACHE_SECS - 1, || {
             panic!("failed refresh retried early")
         });
-        let (missing, _) = refresh(None, 100, || Err(false));
+        let (missing, _) = refresh(None, 100, || Err(Miss::Failed));
         assert!(missing.pixels.is_none());
         let (missing, _) = refresh(Some(missing), 100 + CACHE_SECS - 1, || {
             panic!("negative cache fetched again")
@@ -313,6 +342,42 @@ mod tests {
         pictures.set_enabled(false);
         assert!(!pictures.pending());
     }
+    #[test]
+    fn a_lookup_skipped_while_pictures_are_off_does_not_mark_the_author_checked() {
+        let forge = canopy_core::forge::Forge::parse("https://github.com/example/repo", &[])
+            .expect("github forge");
+        let client = canopy_hosting::Client::new(&forge, None);
+        let oid = Oid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("picture.json");
+        let skipped = load_at(
+            Some(path.clone()),
+            &client,
+            oid,
+            "skipped-lookup@example.invalid",
+            &AtomicBool::new(false),
+        );
+        assert_eq!(
+            skipped.checked_at, 0,
+            "no request was made, so nothing is checked"
+        );
+        assert!(skipped.image.is_none() && !skipped.rate_limited);
+        assert!(!path.exists(), "a skipped lookup stores no negative record");
+
+        // A stale picture stays due, and visible, until a request really happens.
+        let (record, _) = refresh(
+            Some(Record {
+                checked_at: 100,
+                pixels: Some(vec![7; PIXEL_BYTES]),
+            }),
+            100 + CACHE_SECS,
+            || Err(Miss::Skipped),
+        );
+        assert_eq!(record.checked_at, 100);
+        assert!(record.pixels.is_some());
+        assert!(!fresh(record.checked_at, 100 + CACHE_SECS));
+    }
+
     #[test]
     fn png_and_jpeg_decode_to_bounded_pictures_and_other_input_is_refused() {
         let image = image::DynamicImage::new_rgb8(80, 100);
