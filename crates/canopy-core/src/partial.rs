@@ -485,6 +485,18 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_trusted_folder_that_is_a_link_to_the_root_trusts_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let repo = Repository::init(&repo_dir).expect("init");
+        let link = dir.path().join("everything");
+        std::os::unix::fs::symlink("/", &link).unwrap();
+        assert!(!is_in_trusted_folder(&repo, &[link]));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn trust_follows_where_the_repository_really_lives() {
         let root = tempfile::tempdir().expect("tempdir");
         let trusted = root.path().join("trusted");

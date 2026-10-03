@@ -963,6 +963,7 @@ impl RepoTab {
                                 }
                                 self.diff = Some(d);
                                 self.diff_error = None;
+                                self.clear_obsolete_refusal();
                             }
                             Err(e) => {
                                 self.diff = None;
@@ -1397,6 +1398,44 @@ mod tests {
         );
         events.send(Event::Status(canopy_core::WorkingStatus::default()))?;
         tab.poll(&[]);
+        assert!(tab.downloads_refused.is_none(), "nothing left to explain");
+        Ok(())
+    }
+
+    #[test]
+    fn a_good_diff_clears_the_refusal_its_failed_twin_left()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        tab.downloads_refused = Some("origin".into());
+        let key = DiffKey {
+            source: canopy_core::DiffSource::Unstaged,
+            path: "a.rs".into(),
+            old_path: None,
+            conflicted: false,
+            context: 3,
+            whitespace: canopy_core::Whitespace::default(),
+            highlight: false,
+        };
+        tab.pending_diff = Some(key.clone());
+        events.send(Event::Diff(key.clone(), Err("not downloaded".into())))?;
+        tab.poll(&[]);
+        assert!(tab.diff_error.is_some());
+        assert!(
+            tab.downloads_refused.is_some(),
+            "the diff error still needs the chip"
+        );
+        let diff = Arc::new(canopy_core::FileDiff {
+            path: "a.rs".into(),
+            ..Default::default()
+        });
+        events.send(Event::Diff(key, Ok(diff)))?;
+        tab.poll(&[]);
+        assert!(tab.diff_error.is_none());
         assert!(tab.downloads_refused.is_none(), "nothing left to explain");
         Ok(())
     }

@@ -47,8 +47,13 @@ partial clone opened for the first time shows only what is on disk until the use
 - Trust follows where the repository's directories really are, after resolving links. A link
   inside a trusted folder that leads out gives no trust; a link elsewhere that leads in does not
   need any, because the repository and its configuration are inside the folder.
-- Only the filesystem root is refused. The root of a mounted volume can be trusted: an external
-  drive of projects is a normal thing to trust whole.
+- No gate closes the gap between its check and the new process: a trusted folder withdrawn in
+  that instant is the same as one withdrawn a moment after git started. Someone who can rewrite
+  the repository's own folders at that moment already has the user's files.
+- Only the filesystem root is refused as a trusted folder: by its spelling when it is added (a
+  reading of the path, since that runs on the UI thread), and again by core after resolving
+  links, so a link to the root can be saved but trusts nothing. The root of a mounted volume
+  may be trusted: an external drive of projects is a normal thing to trust whole.
 - A linked worktree needs both its own folder and the folder of the repository that holds its
   common git directory trusted; the dialog offers the opened folder and its parent only.
 

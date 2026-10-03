@@ -56,8 +56,22 @@ fn read() -> std::sync::RwLockReadGuard<'static, Vec<PathBuf>> {
 /// can never be trusted.
 pub fn parent_offer(repo: &Path) -> Option<PathBuf> {
     repo.parent()
-        .filter(|parent| parent.parent().is_some())
+        .filter(|parent| !is_root(parent))
         .map(Path::to_path_buf)
+}
+
+/// Whether `path` names a filesystem root once `.` and `..` are read lexically.
+fn is_root(path: &Path) -> bool {
+    use std::path::Component;
+    let mut depth = 0usize;
+    for part in path.components() {
+        match part {
+            Component::Normal(_) => depth += 1,
+            Component::ParentDir => depth = depth.saturating_sub(1),
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    depth == 0
 }
 
 /// Gives core the rule every download passes right where `git fetch` would start, so that no
@@ -69,13 +83,11 @@ pub fn install_gate() {
 }
 
 /// Adds `folder` to `list` unless it is already there. A filesystem root is refused, whether
-/// spelled `/`, `/..` or as a link that leads to it.
+/// spelled `/`, `C:\` or `/a/../..`. This is a reading of the path, without touching the disk
+/// (it runs on the UI thread); core resolves links when it checks, and a link that leads to a
+/// root trusts nothing there.
 pub fn add(list: &mut Vec<PathBuf>, folder: PathBuf) -> bool {
-    let is_root = |path: &Path| path.parent().is_none();
-    if is_root(&folder)
-        || std::fs::canonicalize(&folder).is_ok_and(|resolved| is_root(&resolved))
-        || list.contains(&folder)
-    {
+    if is_root(&folder) || list.contains(&folder) {
         return false;
     }
     list.push(folder);
@@ -109,15 +121,12 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn an_alias_of_the_root_is_refused_like_the_root() {
-        let dir = tempfile::tempdir().unwrap();
-        let link = dir.path().join("everything");
-        std::os::unix::fs::symlink("/", &link).unwrap();
+    fn a_path_that_reads_as_the_root_is_refused_like_the_root() {
         let mut list = Vec::new();
-        assert!(!add(&mut list, link));
         assert!(!add(&mut list, PathBuf::from("/..")));
-        assert!(!add(&mut list, dir.path().join("../../..")));
+        assert!(!add(&mut list, PathBuf::from("/a/../..")));
+        assert!(!add(&mut list, PathBuf::from("/./")));
         assert!(list.is_empty());
-        assert!(add(&mut list, dir.path().to_path_buf()));
+        assert!(add(&mut list, PathBuf::from("/a/../b")));
     }
 }
