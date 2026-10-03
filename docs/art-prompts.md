@@ -6,8 +6,7 @@ colours, so every theme gets art in its own palette and nothing blurs at any zoo
 the one image file: `assets/icon.svg`, rasterised to `assets/icon-*.png` and copied to
 `crates/canopy-app/assets/icon-256.png` for the window icon (`assets/README.md`).
 
-The scenes' geometry and the icon were generated with Codex (GPT-6.1-Sol, high effort) in October
-2026 from the briefs below, then reviewed on every theme.
+The scenes' geometry and the icon follow the briefs below and were checked on every theme.
 
 ## Rules for every illustration
 
