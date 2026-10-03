@@ -104,8 +104,6 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
-    env:
-      RUSTFLAGS: -D warnings
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -113,6 +111,9 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy
+      # `-D warnings` after `--` applies to the workspace members only. RUSTFLAGS would also apply
+      # it to vendor/eframe, a path dependency cargo does not cap, so a newer rustc's warnings in
+      # code we do not write would fail CI.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
@@ -201,5 +202,9 @@ jobs:
           "$shellcheck" --severity=warning tools/*.sh
           rm -rf "$dir"
       - run: cargo fetch --locked
+      # vendor/eframe must be the published eframe plus vendor/eframe.patch, and the workspace must
+      # build it. Cargo only warns when the [patch] entry stops applying, which an eframe version
+      # bump from Dependabot does, and the window would stall on a hidden workspace again (ADR 0007).
+      - run: tools/vendor-eframe.sh --check
       # Every release ships docs/legal/third-party-notices.txt; a dependency change must update it.
       - run: python3 tools/notices.py --check
