@@ -51,8 +51,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 conflicted,
             });
         } else if tab.file.is_some() {
-            tab.file = None;
-            tab.diff = None;
+            tab.deselect_file();
         }
     }
 

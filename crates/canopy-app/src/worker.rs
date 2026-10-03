@@ -473,7 +473,14 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                                 } else {
                                     match with_progress(&emit, repo.promisor_remote(), || {
                                         if allowed() {
-                                            repo.commit_details(oid, MissingObjects::Download)
+                                            let result =
+                                                repo.commit_details(oid, MissingObjects::Download);
+                                            refused_after(
+                                                &emit,
+                                                &allowed,
+                                                repo.promisor_remote(),
+                                                result,
+                                            )
                                         } else {
                                             Err(download_refused(&emit, repo.promisor_remote()))
                                         }
@@ -715,6 +722,21 @@ fn download_refused(emit: &impl Fn(Event), remote: Option<String>) -> canopy_cor
     }
 }
 
+/// Core asks the trusted list again right before each `git fetch`, so a download that failed may
+/// have been stopped there by trust withdrawn after `allowed` last said yes. Looks again and
+/// then reports a refusal like any other, which the status bar's Trust… answers.
+fn refused_after<T>(
+    emit: &impl Fn(Event),
+    allowed: &impl Fn() -> bool,
+    remote: Option<String>,
+    result: canopy_core::Result<T>,
+) -> canopy_core::Result<T> {
+    match result {
+        Err(_) if !allowed() => Err(download_refused(emit, remote)),
+        other => other,
+    }
+}
+
 /// A read in a repository that may be a partial clone: offline first, and only when it fails
 /// because objects were not downloaded and a remote can supply them, again with downloading
 /// allowed (network), with a progress line while it runs. Full clones run `read` once. A
@@ -734,7 +756,8 @@ fn read_downloading<T>(
                 with_progress(emit, Some(remote.clone()), || {
                     // Asked again as late as possible: trust may have been withdrawn meanwhile.
                     if allowed() {
-                        read(MissingObjects::Download)
+                        let result = read(MissingObjects::Download);
+                        refused_after(emit, allowed, Some(remote), result)
                     } else {
                         Err(download_refused(emit, Some(remote)))
                     }
@@ -771,10 +794,12 @@ fn snapshot_completing(
             return Ok(snap);
         }
         with_progress(emit, repo.promisor_remote(), || {
-            // Asked again as late as possible: trust may have been withdrawn meanwhile.
+            // Asked again as late as possible: trust may have been withdrawn meanwhile...
             if allowed() {
                 repo.complete_status(&mut snap, MissingObjects::Download);
-            } else {
+            }
+            // ...even after a fetch that core's own check stopped.
+            if snap.status_unavailable.is_some() && !allowed() {
                 let error = download_refused(emit, repo.promisor_remote());
                 snap.status_unavailable = Some(canopy_core::StatusUnavailable {
                     message: error.to_string(),
@@ -1481,5 +1506,45 @@ mod read_tests {
         assert!(r.is_err());
         assert_eq!(*modes.borrow(), [MissingObjects::Fail]);
         assert_eq!(asked.get(), 2, "asked again right before the download");
+
+        // Core's own check, right before `git fetch`, stopped a download that both of ours let
+        // through: trust was withdrawn in between. That is a refusal like any other.
+        refused.borrow_mut().clear();
+        let asked = Cell::new(0);
+        let r: canopy_core::Result<u8> = read_downloading(
+            &emit,
+            &|| {
+                asked.set(asked.get() + 1);
+                asked.get() <= 2
+            },
+            |m| match m {
+                MissingObjects::Fail => Err(not_downloaded(Some("origin"))),
+                MissingObjects::Download => Err(Error::NotDownloaded {
+                    remote: None,
+                    reason: Some("The repository is not in a folder trusted for downloads.".into()),
+                }),
+            },
+        );
+        let Err(e) = r else {
+            panic!("the stopped download is an error")
+        };
+        assert!(e.to_string().contains("Choose Trust…"), "{e}");
+        assert_eq!(*refused.borrow(), ["origin".to_owned()]);
+        assert_eq!(asked.get(), 3, "asked once more after the failure");
+
+        // A download that fails while trust stands keeps its own error and reports no refusal.
+        refused.borrow_mut().clear();
+        let r: canopy_core::Result<u8> = read_downloading(&emit, &|| true, |m| match m {
+            MissingObjects::Fail => Err(not_downloaded(Some("origin"))),
+            MissingObjects::Download => Err(Error::NotDownloaded {
+                remote: Some("origin".into()),
+                reason: Some("network down".into()),
+            }),
+        });
+        let Err(e) = r else {
+            panic!("the failed download is an error")
+        };
+        assert!(e.to_string().contains("network down"), "{e}");
+        assert!(refused.borrow().is_empty());
     }
 }

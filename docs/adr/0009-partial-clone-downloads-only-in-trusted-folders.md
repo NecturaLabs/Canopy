@@ -43,7 +43,9 @@ partial clone opened for the first time shows only what is on disk until the use
   again at the very point where `git fetch` starts, for every remote and round of one read,
   through the rule the application installs (`partial::set_download_gate`). Resolving paths takes
   time and holds no lock, so the rule asks again when the list changed while it was working: its
-  yes always belongs to the list in force when it answers. A download already running when trust
+  yes always belongs to the list in force when it answers. When a download fails, the worker asks
+  once more, and a read that core stopped because trust was withdrawn in between is reported as a
+  refusal (with the Trust… chip), not as a failed download. A download already running when trust
   is withdrawn finishes: it was allowed when it began, and a running git cannot be recalled.
 - A refusal reaches the tab stamped with the version of the list that made it. A tab that has
   since been told of a newer list reads again instead of showing the refusal, so a refusal the

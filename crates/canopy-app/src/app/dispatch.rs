@@ -54,8 +54,7 @@ impl CanopyApp {
                         }
                         if t.view != v {
                             t.view = v;
-                            t.file = None;
-                            t.diff = None;
+                            t.deselect_file();
                             if v == View::History
                                 && let Some(oid) = t.selected_commit.take()
                             {

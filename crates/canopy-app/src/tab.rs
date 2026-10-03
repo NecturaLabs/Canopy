@@ -622,9 +622,16 @@ impl RepoTab {
         self.selected_commit = Some(oid);
         self.details = None;
         self.details_error = None;
+        self.deselect_file();
+        self.worker.send(Job::Details(oid));
+    }
+
+    /// Closes the open file and its diff, with any error that was shown on it.
+    pub fn deselect_file(&mut self) {
         self.file = None;
         self.diff = None;
-        self.worker.send(Job::Details(oid));
+        self.diff_error = None;
+        self.clear_obsolete_refusal();
     }
 
     /// Asks again for the details that failed to load (the Retry button of the details pane).
@@ -856,9 +863,7 @@ impl RepoTab {
                     conflicted: false,
                 });
             } else {
-                self.file = None;
-                self.diff = None;
-                self.diff_error = None;
+                self.deselect_file();
             }
         }
     }
@@ -1410,6 +1415,38 @@ mod tests {
         tab.poll(&[]);
         assert!(tab.file.is_none());
         assert!(tab.diff_error.is_none());
+        assert!(tab.downloads_refused.is_none(), "nothing left to explain");
+        Ok(())
+    }
+
+    #[test]
+    fn closing_the_file_clears_the_refusal_only_its_diff_needed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, _events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        tab.file = Some(FileSelection {
+            source: DiffSource::Unstaged,
+            entry: FileEntry {
+                path: "a.rs".into(),
+                old_path: None,
+                kind: canopy_core::ChangeKind::Modified,
+                additions: 0,
+                deletions: 0,
+                lfs: false,
+                old_mode: None,
+                new_mode: None,
+            },
+            conflicted: false,
+        });
+        tab.diff_error = Some("not downloaded".into());
+        tab.downloads_refused = Some("origin".into());
+        // Another view, or another commit, takes the diff off the screen.
+        tab.deselect_file();
+        assert!(tab.file.is_none() && tab.diff_error.is_none());
         assert!(tab.downloads_refused.is_none(), "nothing left to explain");
         Ok(())
     }
