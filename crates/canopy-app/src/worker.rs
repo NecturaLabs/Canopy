@@ -295,9 +295,12 @@ pub enum Event {
     },
     Diff(DiffKey, Result<Arc<FileDiff>, String>),
     /// A read needed a download from this promisor remote, which Canopy did not run because the
-    /// repository is outside every trusted folder (`trust.rs`).
+    /// repository is outside every trusted folder (`trust.rs`). `trust` is the version of the
+    /// trusted list that said so (`trust::changes()`): a tab that has seen a newer one knows the
+    /// refusal is out of date.
     DownloadsRefused {
         remote: String,
+        trust: u64,
     },
     /// Syntax highlighting for the diff (sent before with the same key). It comes from the
     /// highlighter threads, so it may arrive after a newer diff; it applies only to this one.
@@ -447,7 +450,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         };
 
         // Whether a partial clone may download on its own here; asked only when one needs to.
-        let allowed = || repo.is_in_trusted_folder(&crate::trust::folders());
+        let allowed = || trusted_now(&repo);
         let rest = coalesce_reads(rest);
         let mut mutated = false;
         for job in rest {
@@ -677,6 +680,19 @@ fn with_progress<T>(emit: &impl Fn(Event), remote: Option<String>, f: impl FnOnc
     result
 }
 
+thread_local! {
+    /// The version of the trusted list (`trust::changes()`) behind the latest answer a repository
+    /// thread was given, which is the one a refusal on that thread reports.
+    static TRUST_VERSION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether `repo` is inside a trusted folder now, noting which version of the list said so.
+fn trusted_now(repo: &Repo) -> bool {
+    let (version, folders) = crate::trust::snapshot();
+    TRUST_VERSION.set(version);
+    repo.is_in_trusted_folder(&folders)
+}
+
 /// Why a download did not run in a repository outside every trusted folder.
 const NOT_TRUSTED: &str = "Canopy downloads it only for repositories in a trusted folder. \
                            Choose Trust… in the status bar to allow it for this one. A linked \
@@ -688,7 +704,10 @@ const NOT_TRUSTED: &str = "Canopy downloads it only for repositories in a truste
 fn download_refused(emit: &impl Fn(Event), remote: Option<String>) -> canopy_core::Error {
     if let Some(remote) = remote {
         tracing::info!(remote = %canopy_core::cli::redact_url(&remote), "download refused: folder not trusted");
-        emit(Event::DownloadsRefused { remote });
+        emit(Event::DownloadsRefused {
+            remote,
+            trust: TRUST_VERSION.get(),
+        });
     }
     canopy_core::Error::NotDownloaded {
         remote: None,
@@ -1253,7 +1272,7 @@ mod read_tests {
             "the file list still shows: {events:?}"
         );
         assert!(
-            matches!(events.last(), Some(Event::DownloadsRefused { remote }) if remote == "origin"),
+            matches!(events.last(), Some(Event::DownloadsRefused { remote, .. }) if remote == "origin"),
             "{events:?}"
         );
         assert!(progress(&events).is_empty(), "no download ran: {events:?}");
@@ -1279,7 +1298,7 @@ mod read_tests {
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, Event::DownloadsRefused { remote } if remote == "origin")),
+                .any(|e| matches!(e, Event::DownloadsRefused { remote, .. } if remote == "origin")),
             "{events:?}"
         );
         assert!(progress(&events).is_empty(), "no download ran: {events:?}");
@@ -1349,12 +1368,36 @@ mod read_tests {
     }
 
     #[test]
+    fn a_refusal_names_the_version_of_the_trusted_list_that_made_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let repo = Repo::init(dir.path())?;
+        let before = crate::trust::changes();
+        assert!(!trusted_now(&repo), "nothing is trusted here");
+        let after = crate::trust::changes();
+        // The list may change meanwhile (other tests publish one); the count only grows.
+        assert!((before..=after).contains(&TRUST_VERSION.get()));
+
+        let sent = RefCell::new(Vec::new());
+        let emit = |e: Event| {
+            if let Event::DownloadsRefused { trust, .. } = e {
+                sent.borrow_mut().push(trust);
+            }
+        };
+        TRUST_VERSION.set(7);
+        let error = download_refused(&emit, Some("origin".into()));
+        assert!(matches!(error, Error::NotDownloaded { .. }));
+        assert_eq!(*sent.borrow(), [7]);
+        Ok(())
+    }
+
+    #[test]
     fn a_read_retries_with_downloading_only_when_a_remote_can_supply_it() {
         let lines = RefCell::new(Vec::new());
         let refused = RefCell::new(Vec::new());
         let emit = |e: Event| match e {
             Event::Progress(line) => lines.borrow_mut().push(line),
-            Event::DownloadsRefused { remote } => refused.borrow_mut().push(remote),
+            Event::DownloadsRefused { remote, .. } => refused.borrow_mut().push(remote),
             _ => {}
         };
         let not_downloaded = |remote: Option<&str>| Error::NotDownloaded {

@@ -45,6 +45,14 @@ partial clone opened for the first time shows only what is on disk until the use
   time and holds no lock, so the rule asks again when the list changed while it was working: its
   yes always belongs to the list in force when it answers. A download already running when trust
   is withdrawn finishes: it was allowed when it began, and a running git cannot be recalled.
+- A refusal reaches the tab stamped with the version of the list that made it. A tab that has
+  since been told of a newer list reads again instead of showing the refusal, so a refusal the
+  change overtook never leaves the status bar chip behind, and one the new list made shows at once.
+- Paths are compared by their resolved spelling. On a volume that ignores capitalization and
+  keeps the one it was given (macOS, possibly), the same folder written another way is not
+  recognised: nothing downloads, which is the safe side, and Trust… offers the spelling Canopy
+  resolved itself. Comparing without regard to capitalization would trust a different folder on a
+  case-sensitive volume. Not tested on macOS or Windows.
 - Trust follows where the repository's directories really are, after resolving links. A link
   inside a trusted folder that leads out gives no trust; a link elsewhere that leads in does not
   need any, because the repository and its configuration are inside the folder.

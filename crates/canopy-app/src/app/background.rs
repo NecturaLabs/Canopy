@@ -239,7 +239,7 @@ impl CanopyApp {
         if changes != self.trust_seen {
             self.trust_seen = changes;
             for tab in &mut self.tabs {
-                tab.trust_changed();
+                tab.trust_changed(changes);
             }
         }
         let pictures = crate::ui::legal::pending(&self.settings).is_none()

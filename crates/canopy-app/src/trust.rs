@@ -83,9 +83,9 @@ pub fn add_for_tests(folder: PathBuf) {
     list.push(folder);
 }
 
-/// The trusted folders.
-pub fn folders() -> Vec<PathBuf> {
-    TRUST.snapshot().1
+/// The trusted folders and the version of that list (`changes()` as it stood when it was read).
+pub fn snapshot() -> (u64, Vec<PathBuf>) {
+    TRUST.snapshot()
 }
 
 /// The folder to offer next to `repo`'s own: its parent, unless that is a filesystem root, which
