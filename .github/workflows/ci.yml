@@ -36,15 +36,19 @@ env:
 
 jobs:
   # A push or pull request that changes only documentation (docs/ other than docs/legal/, and
-  # Markdown other than CHANGELOG.md, both of which the app embeds) skips the Rust jobs. The
-  # run still exists and passes, which is what a release checks for. When the changed files
-  # cannot be listed (no passing run on the branch yet), everything runs.
+  # Markdown other than CHANGELOG.md, both of which the app embeds) skips the Rust jobs.
+  # The run still exists and passes, which is what a release checks for. When the changed
+  # files cannot be listed (no passing run on the branch yet, or one a force-push left behind),
+  # everything runs.
   changes:
     name: What changed
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || startsWith(github.head_ref, 'dependabot/')
+    timeout-minutes: 5
     permissions:
       contents: read
+      # Listing this workflow's earlier runs.
+      actions: read
     outputs:
       code: ${{ steps.diff.outputs.code }}
     steps:
@@ -54,19 +58,32 @@ jobs:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
           HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           BRANCH: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
         run: |
           code=true
           # A push is compared with the last commit CI passed on this branch, not only with the
-          # previous push, whose run may have been cancelled before it tested anything.
+          # previous push, whose run may have been cancelled before it tested anything. A failed
+          # call prints the error body on stdout, which must not be taken for a commit.
           if [[ -z $BASE ]]; then
-            BASE=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=$BRANCH&event=push&status=success&per_page=1" \
-              --jq '.workflow_runs[0].head_sha // ""' || true)
+            encoded=$(jq -rn --arg b "$BRANCH" '$b | @uri')
+            BASE=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=$encoded&event=push&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha // ""') || BASE=
           fi
-          if [[ -n $BASE && ! $BASE =~ ^0+$ ]] \
-            && files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD" --jq '.files[].filename'); then
+          [[ $BASE =~ ^[0-9a-f]{40}$ && ! $BASE =~ ^0+$ ]] || BASE=
+          echo "Compared with: ${BASE:-nothing}"
+          # The comparison lists what changed since the merge base. A push counts only when the
+          # tested commit is an ancestor (status "ahead"): after a force-push the merge base can
+          # hold code that was never tested. A rename counts under both names, so code moved into
+          # docs/ still runs the Rust jobs.
+          if [[ -n $BASE ]] \
+            && compared=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD" \
+              --jq '.status, (.files[] | .filename, (.previous_filename // empty))'); then
+            status=$(head -n 1 <<<"$compared")
+            files=$(tail -n +2 <<<"$compared")
             count=$(grep -c . <<<"$files" || true)
+            echo "Comparison: $status, $count paths"
             # The comparison lists at most 300 files.
-            if (( count > 0 && count < 300 )); then
+            if [[ $EVENT != push || $status == ahead ]] && (( count > 0 && count < 300 )); then
               code=false
               while IFS= read -r f; do
                 case $f in
