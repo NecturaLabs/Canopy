@@ -662,22 +662,33 @@ impl RepoTab {
         self.reload_diff();
     }
 
-    /// Hides the "Downloads off" chip once nothing it explains is left on screen: the status is
-    /// there, the selected commit is complete and no diff or details error is shown.
+    /// Hides the "Downloads off" chip once nothing it explains is left on screen. It explains a
+    /// refusal's own message in the status, the details or the diff, line counts left undone, and
+    /// a commit whose details are still on their way (they may be refused too); an error of
+    /// another kind is not its to explain.
     fn clear_obsolete_refusal(&mut self) {
-        let status_shown = self
-            .snap
+        let refusal = |message: &str| message.contains(crate::worker::NOT_TRUSTED);
+        // No snapshot yet: the status is still to come.
+        let status = self.snap.as_ref().is_none_or(|s| {
+            s.status_unavailable
+                .as_ref()
+                .is_some_and(|u| refusal(&u.message))
+        });
+        let details_refused = self
+            .details_error
             .as_ref()
-            .is_some_and(|s| s.status_unavailable.is_none());
-        // The worker asks for line counts only of a commit with up to `MAX_STAT_FILES` files.
-        let details_complete = self.selected_commit.is_none()
-            || self.details.as_ref().is_some_and(|d| {
-                Some(d.oid) == self.selected_commit
-                    && (d.stats_known || d.files.len() > canopy_core::repo::MAX_STAT_FILES)
-            });
+            .is_some_and(|e| refusal(&e.message));
         // With no file open there is no diff to show the error on.
-        let diff_error_shown = self.file.is_some() && self.diff_error.is_some();
-        if status_shown && details_complete && self.details_error.is_none() && !diff_error_shown {
+        let diff_refused = self.file.is_some() && self.diff_error.as_deref().is_some_and(refusal);
+        // The worker asks for line counts only of a commit with up to `MAX_STAT_FILES` files.
+        let details_open = self.selected_commit.is_some_and(|oid| {
+            self.details_error.is_none()
+                && self.details.as_ref().is_none_or(|d| {
+                    d.oid != oid
+                        || (!d.stats_known && d.files.len() <= canopy_core::repo::MAX_STAT_FILES)
+                })
+        });
+        if !(status || details_refused || diff_refused || details_open) {
             self.downloads_refused = None;
         }
     }
@@ -1418,7 +1429,7 @@ mod tests {
         tab.worker = worker;
         tab.snap = Some(Arc::new(RepoSnapshot::default()));
         tab.file = Some(open_unstaged_file());
-        tab.diff_error = Some("not downloaded".into());
+        tab.diff_error = Some(crate::worker::NOT_TRUSTED.into());
         tab.downloads_refused = Some("origin".into());
         // The refreshed status no longer lists the file: nothing is left to show the error on.
         events.send(Event::Status(canopy_core::WorkingStatus::default()))?;
@@ -1439,7 +1450,7 @@ mod tests {
         tab.worker = worker;
         tab.snap = Some(Arc::new(RepoSnapshot::default()));
         tab.file = Some(open_unstaged_file());
-        tab.diff_error = Some("not downloaded".into());
+        tab.diff_error = Some(crate::worker::NOT_TRUSTED.into());
         tab.downloads_refused = Some("origin".into());
         // Another view, or another commit, takes the diff off the screen.
         tab.deselect_file();
@@ -1467,10 +1478,52 @@ mod tests {
             remote: "origin".into(),
             trust: 0,
         })?;
-        events.send(Event::Diff(key, Err("not downloaded".into())))?;
+        events.send(Event::Diff(key, Err(crate::worker::NOT_TRUSTED.into())))?;
         tab.poll(&[]);
         assert!(tab.diff_error.is_none(), "nobody waits for that diff");
         assert!(tab.downloads_refused.is_none(), "nothing left to explain");
+        Ok(())
+    }
+
+    #[test]
+    fn the_chip_explains_only_errors_that_are_refusals() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        let (a, b) = (Oid::from_bytes(&[1; 20])?, Oid::from_bytes(&[2; 20])?);
+        tab.selected_commit = Some(a);
+        tab.downloads_refused = Some("origin".into());
+        // Another commit is selected: until its details are in, they may be refused too.
+        tab.select_commit(b);
+        assert!(
+            tab.downloads_refused.is_some(),
+            "its details are on their way"
+        );
+        // They fail for a reason that has nothing to do with trust.
+        events.send(Event::DetailsFailed {
+            oid: b,
+            message: "object not found".into(),
+            can_download: false,
+        })?;
+        tab.poll(&[]);
+        assert!(tab.details_error.is_some());
+        assert!(tab.downloads_refused.is_none(), "not the chip's to explain");
+
+        // The same failure as a refusal keeps it.
+        tab.downloads_refused = Some("origin".into());
+        events.send(Event::DetailsFailed {
+            oid: b,
+            message: format!(
+                "This content hasn't been downloaded yet. {}",
+                crate::worker::NOT_TRUSTED
+            ),
+            can_download: false,
+        })?;
+        tab.poll(&[]);
+        assert!(tab.downloads_refused.is_some(), "this one is a refusal");
         Ok(())
     }
 
@@ -1540,7 +1593,7 @@ mod tests {
         tab.worker = worker;
         tab.snap = Some(Arc::new(RepoSnapshot {
             status_unavailable: Some(canopy_core::StatusUnavailable {
-                message: "not downloaded".into(),
+                message: crate::worker::NOT_TRUSTED.into(),
                 can_download: false,
             }),
             ..Default::default()
@@ -1596,7 +1649,10 @@ mod tests {
             highlight: false,
         };
         tab.pending_diff = Some(key.clone());
-        events.send(Event::Diff(key.clone(), Err("not downloaded".into())))?;
+        events.send(Event::Diff(
+            key.clone(),
+            Err(crate::worker::NOT_TRUSTED.into()),
+        ))?;
         tab.poll(&[]);
         assert!(tab.diff_error.is_some());
         assert!(

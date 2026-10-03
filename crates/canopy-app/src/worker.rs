@@ -701,7 +701,7 @@ fn trusted_now(repo: &Repo) -> bool {
 }
 
 /// Why a download did not run in a repository outside every trusted folder.
-const NOT_TRUSTED: &str = "Canopy downloads it only for repositories in a trusted folder. \
+pub(crate) const NOT_TRUSTED: &str = "Canopy downloads it only for repositories in a trusted folder. \
                            Choose Trust… in the status bar to allow it for this one. A linked \
                            worktree also needs the folder of its main repository trusted.";
 
