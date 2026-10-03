@@ -347,8 +347,11 @@ fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -
     let galleys: Vec<_> = segments
         .iter()
         .map(|s| {
-            ui.painter()
-                .layout_no_wrap(s.text.to_owned(), s.font.clone(), p.text)
+            ui.painter().layout_no_wrap(
+                s.text.to_owned(),
+                s.font.clone(),
+                egui::Color32::PLACEHOLDER,
+            )
         })
         .collect();
     let inset = 2.0;
