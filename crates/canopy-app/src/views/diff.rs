@@ -9,7 +9,7 @@ use egui::{Align2, Color32, CornerRadius, FontId, Rect, RichText, Sense, Stroke,
 use egui_phosphor::regular as icon;
 
 use canopy_core::ops::HunkAction;
-use canopy_core::{DiffLine, DiffSource, FileDiff, Hunk, LineKind};
+use canopy_core::{ChangeKind, DiffLine, DiffSource, FileDiff, Hunk, LineKind};
 
 use crate::action::Action;
 use crate::highlight::{Highlights, Span, Token};
@@ -450,14 +450,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             }
             if split && !d.hunks.is_empty() {
                 // A side that is only filler: say why once, instead of leaving it blank.
-                let note = if d.hunks.iter().all(|h| h.old_lines == 0) {
-                    Some((0.25, "New file — nothing before"))
-                } else if d.hunks.iter().all(|h| h.new_lines == 0) {
-                    Some((0.75, "Deleted — nothing after"))
-                } else {
-                    None
-                };
-                if let Some((at, text)) = note {
+                if let Some((at, text)) = empty_side(&d) {
                     let shown = viewport.translate(origin.to_vec2());
                     ui.painter().text(
                         pos2(
@@ -473,6 +466,17 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 }
             }
         });
+}
+
+/// Where a side-by-side diff has a side that is only filler, and what to say there: the horizontal
+/// centre of that side as a fraction of the width, and the note.
+/// Hunks alone cannot tell: without context lines a modified file's hunks can all be insertions.
+fn empty_side(d: &FileDiff) -> Option<(f32, &'static str)> {
+    match d.kind? {
+        ChangeKind::Added | ChangeKind::Untracked => Some((0.25, "New file — nothing before")),
+        ChangeKind::Deleted => Some((0.75, "Deleted — nothing after")),
+        _ => None,
+    }
 }
 
 /// The file header: name, counts, layout and options, and the file-level action.
@@ -1064,6 +1068,36 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn only_a_new_or_deleted_file_has_an_empty_side() {
+        let hunk = |old_lines, new_lines| Hunk {
+            header: String::new(),
+            old_start: 0,
+            old_lines,
+            new_start: 1,
+            new_lines,
+            lines: Vec::new(),
+        };
+        let diff = |kind, hunks| FileDiff {
+            kind: Some(kind),
+            hunks,
+            ..FileDiff::default()
+        };
+        assert_eq!(
+            empty_side(&diff(ChangeKind::Added, vec![hunk(0, 3)])).map(|n| n.0),
+            Some(0.25)
+        );
+        assert_eq!(
+            empty_side(&diff(ChangeKind::Deleted, vec![hunk(3, 0)])).map(|n| n.0),
+            Some(0.75)
+        );
+        // Without context lines, a modified file's hunks can all be pure insertions.
+        assert_eq!(
+            empty_side(&diff(ChangeKind::Modified, vec![hunk(0, 2), hunk(0, 1)])),
+            None
+        );
     }
 
     #[test]
