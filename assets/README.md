@@ -6,19 +6,20 @@
 | `icon-64.png`, `icon-256.png`, `icon-512.png` | Rasterised from `icon.svg`, transparent background. |
 
 The icon is original work owned by NecturaLabs and covered by the repository's [LICENSE](../LICENSE).
-It shows a commit graph shaped like a tree canopy: a trunk with two branches that curve out and
-merge back at the top, in the violet-to-cyan accent gradient on a midnight rounded square.
+It is the in-app Canopy mark (`crates/canopy-app/src/ui/art.rs`, `logo`) on a midnight rounded
+square: a trunk with two branches that curve outwards to round nodes, violet, blue and cyan, bold
+enough to read at 32 px. Generated with Codex (GPT-6.1-Sol), October 2026.
 
 `crates/canopy-app/assets/icon-256.png` is a copy of `icon-256.png` embedded as the window icon.
 
 ## Regenerating the PNGs
 
-Any SVG renderer that supports gradients and filters works, for example:
+Any SVG renderer that supports gradients works, for example:
 
 ```sh
 for size in 64 256 512; do rsvg-convert -w $size -h $size icon.svg -o icon-$size.png; done
 cp icon-256.png ../crates/canopy-app/assets/icon-256.png
 ```
 
-The committed PNGs were rendered with headless Chromium. Check the result at 32px and 64px: the
-graph must stay legible at small sizes.
+The committed PNGs were rendered with `rsvg-convert`. Check the result at 32px and 64px: the
+mark must stay legible at small sizes.
