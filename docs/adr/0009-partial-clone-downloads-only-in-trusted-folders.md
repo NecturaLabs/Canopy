@@ -41,15 +41,18 @@ partial clone opened for the first time shows only what is on disk until the use
 - The list is published to every repository thread the moment it changes (`trust::set`). The
   worker asks before a read goes to the network (to say why nothing downloaded), and core asks
   again at the very point where `git fetch` starts, for every remote and round of one read,
-  through the rule the application installs (`partial::set_download_gate`). A download already
-  running when trust is withdrawn finishes: it was allowed when it began, and a running git
-  cannot be recalled.
+  through the rule the application installs (`partial::set_download_gate`). Resolving paths takes
+  time and holds no lock, so the rule asks again when the list changed while it was working: its
+  yes always belongs to the list in force when it answers. A download already running when trust
+  is withdrawn finishes: it was allowed when it began, and a running git cannot be recalled.
 - Trust follows where the repository's directories really are, after resolving links. A link
   inside a trusted folder that leads out gives no trust; a link elsewhere that leads in does not
   need any, because the repository and its configuration are inside the folder.
 - No gate closes the gap between its check and the new process: a trusted folder withdrawn in
   that instant is the same as one withdrawn a moment after git started. Someone who can rewrite
   the repository's own folders at that moment already has the user's files.
+- A folder is saved as an absolute path, whatever way it was offered, and settings never read a
+  relative entry back: it would mean another folder from another working directory.
 - Only the filesystem root is refused as a trusted folder: by its spelling when it is added (a
   reading of the path, since that runs on the UI thread), and again by core after resolving
   links, so a link to the root can be saved but trusts nothing. The root of a mounted volume
