@@ -83,7 +83,7 @@ fn cap(s: &str) -> String {
 
 fn empty(
     ui: &mut Ui,
-    image: egui::ImageSource<'static>,
+    image: art::Art,
     title: &str,
     body: &str,
     button: Option<(String, Action)>,

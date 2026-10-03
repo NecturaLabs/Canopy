@@ -27,8 +27,6 @@ getrandom = "0.4"
 chrono.workspace = true
 eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "persistence", "wayland", "x11"] }
 egui = "0.36"
-# SVG art (placeholders in assets/art/, rendered with resvg).
-egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
 egui-phosphor = { version = "0.14", features = ["regular", "fill"] }
 rfd = "0.17"
 # Opt-in crash reports (see docs/legal/privacy-policy.md). ureq + rustls transport, as

@@ -185,7 +185,6 @@ impl CanopyApp {
         crate::trust::set(&settings.trusted_folders);
         crate::trust::install_gate();
         crate::ui::fonts::install(&cc.egui_ctx);
-        egui_extras::install_image_loaders(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         theme::apply(&cc.egui_ctx, settings.theme, settings.reduce_motion);
         apply_zoom(&cc.egui_ctx, settings.zoom);

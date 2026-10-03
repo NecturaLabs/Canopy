@@ -40,8 +40,8 @@ These come from the owner and override anything else in the repository.
   `pull.rebase`, and nothing reports differences yet (`docs/backlog.md`, "Git settings" and
   "Pull strategy").
 - **Toolkit**: egui stays (the owner chose it over React).
-- **Art**: SVG placeholders until Codex/OpenAI art (`docs/art-prompts.md`); keep file names and
-  view boxes stable.
+- **Art**: in-app illustrations are drawn in code from the active theme (`ui/art.rs`,
+  `docs/art-prompts.md`), never shipped as SVG; the app icon is `assets/icon.svg` and its PNGs.
 - **Themes**: a handful of well-designed themes, all in `ui/theme.rs` (`add-theme` skill), and a
   settings screen covering every needed option. Every setting must change behaviour.
 - **Keybindings** follow the spirit of Omarchy: keyboard-first, a launcher-style palette, a
