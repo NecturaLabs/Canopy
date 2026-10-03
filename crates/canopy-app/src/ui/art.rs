@@ -164,9 +164,14 @@ fn progress(ui: &Ui, art: Art, id: egui::Id) -> f32 {
     if art == Art::Logo || motion::reduced() {
         return 1.0;
     }
+    growth(ui, art, id)
+}
+
+/// The grow-in timing behind `progress`, whatever the motion settings.
+fn growth(ui: &Ui, art: Art, id: egui::Id) -> f32 {
     let now = ui.input(|i| i.time);
     let frame = ui.ctx().cumulative_frame_nr();
-    let key = id.with("art-growth");
+    let key = id.with(("art-growth", art));
     let start = ui.ctx().data_mut(|d| {
         let (start, last) = d.get_temp::<(f64, u64)>(key).unwrap_or((now, frame));
         let start = if frame > last + 1 { now } else { start };
@@ -909,6 +914,22 @@ mod tests {
             assert!(!output.shapes.is_empty());
         }
         assert!(!growing(&ctx), "still growing after the animation's length");
+    }
+
+    #[test]
+    fn a_different_scene_in_the_same_place_grows_in_again() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("spot");
+        let mut seen = Vec::new();
+        for (time, art) in [(0.0, Art::Clean), (2.0, Art::Clean), (2.5, Art::Error)] {
+            let input = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| seen.push(growth(ui, art, id)));
+            output.textures_delta.clear();
+        }
+        assert_eq!(seen, [0.0, 1.0, 0.0]);
     }
 
     #[test]
