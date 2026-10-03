@@ -9,9 +9,27 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] Partial clones: trusted locations. Downloads (which run the repository's own git config)
       only for repositories under folders trusted in Settings; compare canonicalized paths in the
       worker; a "Trust…" button offering the repository's folder or its parent; privacy text.
+      Built and checked live on branch `feature/trusted-folders` (not merged: its second external
+      review could not run, the Codex usage limit; the remaining work is in the
+      HANDOFF-trusted-folders note under docs/specs on that branch).
 - [ ] Partial clones: remember a failed download until Retry (no retry on every refresh); a fetch
       timeout; a Retry for failed diffs; a "not downloaded" marker per file; offer to convert a
       `LegacyPartialClone`, behind a confirmation.
+- [ ] Real art in place of every SVG (owner's decisions): generate the app icon, logo mark,
+      welcome backdrop and four spot illustrations (`docs/art-prompts.md`) with Codex
+      (`codex exec -m gpt-6-sol`, medium effort, at most 2 calls at once); accept only art that is
+      flawless and matches every theme; ship PNG only, no SVG left. Matching the themes: recolour
+      at load from the palette in `ui/art.rs` (roles accent, accent2, success, warning, danger;
+      a dark master and a light master for Daylight and Paper; cached per theme and size; a box
+      filter for the 22 px logo), and check all seven themes with `tools/screenshot.sh --theme`.
+      The icon goes PNG-only: `selfupdate.rs` (icon list near line 444, and its tests),
+      `.github/workflows/release.yml` (line 297), `packaging/install.sh` (lines 414, 681-706,
+      828) and `test-install.sh`, `tools/install-desktop.sh`, the README header, `assets/README.md`,
+      `packaging/README.md`; an upgrade must remove the `scalable/…svg` an earlier install put
+      there. The updater is security-sensitive: security pass first.
+- [ ] Keys: pull and push use other letters in the two layers (bare `p` and `P`, but Ctrl+Shift+L
+      and Ctrl+Shift+P, Fork's). Decide whether the typing-safe twins should follow the bare
+      letters; pull then needs a free Ctrl chord (Ctrl+P is a palette alias).
 - [ ] `cli::run_with_input`: show git's stderr, not "Broken pipe", when git exits early.
 - [ ] Installer follow-ups from the security review (`install.sh` is fixed; `install.ps1` could not
       be tested here and is untouched, and nothing in CI runs it): bring `install.ps1` to parity
