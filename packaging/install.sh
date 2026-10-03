@@ -681,7 +681,7 @@ stage_linux() {
     new=$1
     [ -f "$SRC/canopy" ] || die "$ASSET has no canopy binary"
     mkdir -p "$new/bin" "$new/share/applications" "$new/share/metainfo" \
-        "$new/share/icons/hicolor/256x256/apps" "$new/share/icons/hicolor/scalable/apps"
+        "$new/share/icons/hicolor/256x256/apps"
     cp "$SRC/canopy" "$new/bin/canopy"
     chmod 755 "$new/bin/canopy"
     for f in README.md LICENSE; do
@@ -706,7 +706,6 @@ stage_linux() {
     fi
     if [ -f "$SRC/$APP_ID.metainfo.xml" ]; then cp "$SRC/$APP_ID.metainfo.xml" "$new/share/metainfo/"; fi
     if [ -f "$SRC/$APP_ID.png" ]; then cp "$SRC/$APP_ID.png" "$new/share/icons/hicolor/256x256/apps/"; fi
-    if [ -f "$SRC/$APP_ID.svg" ]; then cp "$SRC/$APP_ID.svg" "$new/share/icons/hicolor/scalable/apps/"; fi
     printf '%s\n' "$VERSION" >"$new/VERSION"
     install_self "$new/uninstall.sh"
 }
@@ -830,8 +829,15 @@ integrate_linux() {
     fi
     for rel in "256x256/apps/$APP_ID.png" "scalable/apps/$APP_ID.svg"; do
         src=$ROOT/share/icons/hicolor/$rel
-        [ -f "$src" ] || continue
         dst=$DATA_HOME/icons/hicolor/$rel
+        if [ ! -f "$src" ]; then
+            # Earlier builds also shipped a scalable SVG; remove the copy this installer made.
+            if [ "$rel" = "scalable/apps/$APP_ID.svg" ] && [ -f "$dst" ] && [ ! -L "$dst" ] &&
+                grep -qxF "icon=$dst|$src" "$receipt" 2>/dev/null; then
+                rm -f -- "$dst"
+            fi
+            continue
+        fi
         if [ -L "$dst" ]; then
             warn "$dst is a symlink, not this installer's icon; left it alone"
             continue

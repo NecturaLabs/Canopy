@@ -6,7 +6,6 @@
 #   ~/.local/share/applications/io.necturalabs.Canopy.desktop
 #   ~/.local/share/metainfo/io.necturalabs.Canopy.metainfo.xml
 #   ~/.local/share/icons/hicolor/{64x64,256x256,512x512}/apps/io.necturalabs.Canopy.png
-#   ~/.local/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg
 # --uninstall removes those files. Make sure ~/.local/bin is on PATH.
 set -euo pipefail
 
@@ -23,6 +22,7 @@ files=(
   "$icons/64x64/apps/$APP_ID.png"
   "$icons/256x256/apps/$APP_ID.png"
   "$icons/512x512/apps/$APP_ID.png"
+  # Earlier versions installed a scalable SVG too.
   "$icons/scalable/apps/$APP_ID.svg"
 )
 
@@ -59,7 +59,7 @@ install -Dm644 "$root/packaging/linux/$APP_ID.metainfo.xml" "$data/metainfo/$APP
 for size in 64 256 512; do
   install -Dm644 "$root/assets/icon-$size.png" "$icons/${size}x${size}/apps/$APP_ID.png"
 done
-install -Dm644 "$root/assets/icon.svg" "$icons/scalable/apps/$APP_ID.svg"
+rm -f "$icons/scalable/apps/$APP_ID.svg"
 refresh_caches
 
 echo "Installed Canopy to $bin_dir/canopy"

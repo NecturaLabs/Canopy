@@ -3,7 +3,7 @@
 Canopy's in-app illustrations are drawn in code, not shipped as image files: `ui/art.rs` holds
 each one as a small scene of strokes, fills and nodes and paints it with the active theme's
 colours, so every theme gets art in its own palette and nothing blurs at any zoom. The app icon is
-the one image file: `assets/icon.svg`, rasterised to `assets/icon-*.png` and copied to
+the one image file: `assets/icon-512.png`, scaled to `assets/icon-*.png` and copied to
 `crates/canopy-app/assets/icon-256.png` for the window icon (`assets/README.md`).
 
 The scenes' geometry and the icon follow the briefs below and were checked on every theme.
@@ -47,6 +47,6 @@ The scenes' geometry and the icon follow the briefs below and were checked on ev
 
 ## The app icon
 
-`assets/icon.svg`, `viewBox="0 0 256 256"`: the logo mark, bolder (stroke about 16), on a rounded
-midnight tile (corner radius 56) with a gentle radial halo. It must read at 32 px. After changing
+`assets/icon-512.png`: the logo mark, bolder (a stroke about 1/16 of the tile), on a rounded
+midnight tile (corner radius about 22% of its side) with a gentle radial halo. It must read at 32 px. After changing
 it, regenerate the PNGs as `assets/README.md` shows and check them at 32 and 64 px.

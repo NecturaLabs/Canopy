@@ -20,13 +20,9 @@ yet true, then correctness and the features people meet first, then polish. Take
       already, but the gate should cover what git reads). The Downloads off chip also stays after
       switching from History to Changes while line counts are undone, and after a status-only
       refusal that ends in `Event::Failed` (`tab.rs`, `clear_obsolete_refusal`).
-- [ ] App icon PNG-only (owner's decision; the in-app art is now drawn in code, `ui/art.rs`, and
-      no SVG is left in the app): drop `assets/icon.svg` and ship PNGs only. Touches
-      `selfupdate.rs` (icon list near line 444, and its tests), `.github/workflows/release.yml`
-      (line 297), `packaging/install.sh` (lines 414, 681-706, 828) and `test-install.sh`,
-      `tools/install-desktop.sh`, the README header, `assets/README.md`, `packaging/README.md`; an
-      upgrade must remove the `scalable/…svg` an earlier install put there. The updater is
-      security-sensitive: security pass first.
+- [ ] App icon: an update made by build 192 or older drops the scalable SVG it registered from the
+      receipt but leaves the copy in `~/.local/share/icons/hicolor/scalable/apps`; nothing removes
+      it now (`selfupdate.rs` `integrate` and `install.sh` remove only a copy the receipt lists).
 - [ ] `cli::run_with_input`: show git's stderr, not "Broken pipe", when git exits early.
 - [ ] Installer follow-ups from the security review (`install.sh` is fixed; `install.ps1` could not
       be tested here and is untouched, and nothing in CI runs it): bring `install.ps1` to parity

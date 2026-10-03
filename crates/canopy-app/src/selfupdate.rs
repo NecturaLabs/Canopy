@@ -408,7 +408,6 @@ fn stage(
         "share/applications",
         "share/metainfo",
         "share/icons/hicolor/256x256/apps",
-        "share/icons/hicolor/scalable/apps",
     ] {
         fs::create_dir_all(new.join(dir))
             .map_err(|e| io_err("could not create", &new.join(dir), &e))?;
@@ -441,7 +440,6 @@ fn stage(
     for (name, dir) in [
         (format!("{APP_ID}.metainfo.xml"), "share/metainfo"),
         (format!("{APP_ID}.png"), "share/icons/hicolor/256x256/apps"),
-        (format!("{APP_ID}.svg"), "share/icons/hicolor/scalable/apps"),
     ] {
         if src.join(&name).is_file() {
             copy_file(&src.join(&name), &new.join(dir).join(&name), 0o644)?;
@@ -656,7 +654,17 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
         }
     }
     for (dst, src) in &old.icons {
-        if !src.is_file() || !src.starts_with(root) {
+        if !src.starts_with(root) {
+            continue;
+        }
+        if !src.is_file() {
+            // Earlier builds also registered a scalable SVG; this one ships none.
+            if dst.ends_with(format!("hicolor/scalable/apps/{APP_ID}.svg"))
+                && dst.symlink_metadata().is_ok_and(|m| m.is_file())
+                && fs::remove_file(dst).is_err()
+            {
+                notes.push(format!("could not remove {}", dst.display()));
+            }
             continue;
         }
         if is_symlink(dst) {

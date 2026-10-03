@@ -294,7 +294,6 @@ jobs:
             # This build's entry first in the AppStream release list.
             sed "s|<releases>|<releases>\n    <release version=\"$BUILD\" date=\"$(date -u +%F)\"/>|" \
               packaging/linux/io.necturalabs.Canopy.metainfo.xml > "dist/$name/io.necturalabs.Canopy.metainfo.xml"
-            cp assets/icon.svg "dist/$name/io.necturalabs.Canopy.svg"
             cp assets/icon-256.png "dist/$name/io.necturalabs.Canopy.png"
           fi
           cd dist
