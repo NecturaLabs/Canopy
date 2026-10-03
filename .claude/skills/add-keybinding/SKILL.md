@@ -28,7 +28,13 @@ These come from the owner (AGENTS.md) and are enforced by tests and by `keyboard
    appears twice anywhere in the table, even in sections that are never active together. Reusing
    a bare key in another section therefore means choosing another key.
 4. **No Alt chords.** Alt is not matched; `symbol` chords tolerate AltGr only so that characters
-   such as `[` and `?` work on every layout.
+   such as `[` and `?` work on every layout. Omarchy gives Alt and Ctrl+Alt to window and monitor
+   cycling and to tmux, and Print, F9 and the media keys to the system:
+   `alt_belongs_to_the_window_manager_and_the_terminal` and
+   `nothing_fires_on_a_chord_omarchy_owns` guard that.
+5. **Shift turns a family around** (`p` pull, `P` push): `shift_turns_a_family_around` lists the
+   pairs; add a new pair there. `docs/keybindings.md` explains why Omarchy's keys are laid out
+   this way and maps its Super chords to Canopy's Ctrl ones; read it before choosing a chord.
 
 ## 1. Pick the chord
 

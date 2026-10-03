@@ -7,11 +7,47 @@ draws the cheatsheet (`?`, or Ctrl+/) and Settings → Keyboard, so those two al
 code. This page is a reference copy of that table: change the table first, then this page (the
 `add-keybinding` skill is the recipe).
 
-Rules:
+## Why the keys are what they are
 
-- **Super is never bound.** It belongs to the window manager.
+Omarchy's own bindings (`/usr/share/omarchy/default/hypr/bindings/`, its tmux and terminal
+configs) follow a few rules, and Canopy's follow the same ones:
+
+- **Each layer owns its modifiers and a lower layer never uses a higher one's.** Super is the
+  window manager's: every window, workspace, launcher and menu action. Alt and Ctrl+Alt belong to
+  cycling windows and monitors (Alt+Tab, Ctrl+Alt+Tab, Ctrl+Alt+Delete) and to tmux's no-prefix
+  chords; tmux's prefix is Ctrl+Space (and Ctrl+B), which only reaches a terminal, never a
+  Canopy window. Print, F9 (push-to-talk dictation), the media keys and the
+  Caps Lock compose key belong to the system. Whatever runs inside gets Ctrl and bare keys.
+- **The key names the thing, the modifier names the variant.** Shift reverses or moves
+  (Tab/Shift+Tab, focus/swap, move to workspace); Alt is the fine or quiet form; Ctrl is the
+  broader one. The same letter keeps its family across the variants.
+- **Mnemonic letters, positional digits, Tab to cycle, arrows to move, Esc to dismiss, comma for
+  settings, Space for the launcher, help one key away.** Every binding has a description.
+- **One owner per chord**, and nothing is rebound silently.
+
+Canopy is the app inside, so it uses the Ctrl layer, mirroring Omarchy's Super chords with Ctrl:
+
+| Omarchy (Super) | Canopy (Ctrl) |
+|---|---|
+| Space, the launcher | Ctrl+Space, the command palette (also Ctrl+K) |
+| W, close window | Ctrl+W, close tab |
+| Tab / Shift+Tab, next / previous workspace | Ctrl+Tab / Ctrl+Shift+Tab, next / previous tab |
+| 1 … 0, workspace | Ctrl+1 … 9, tab |
+| − / =, resize | Ctrl+− / =, zoom |
+| K, keybindings | ? or Ctrl+/, the cheatsheet |
+| comma, notifications | Ctrl+, settings |
+
+Rules, each guarded by a test in `keymap.rs`:
+
+- **Super is never bound.** It belongs to the window manager, and nothing fires while it is held.
+- **Alt is never bound.** A press carrying Alt matches no chord, except a character typed with
+  AltGr (`[`, `?`). That keeps Alt+Tab, Ctrl+Alt+Tab, Ctrl+Alt+Delete and tmux's chords
+  Omarchy's, and the keys Omarchy owns (F9, Print, media keys) are not used either.
+- **Shift turns a family around:** `p` pull and `P` push, `s` stash and `S` pop, `b` and `B` take
+  both, `g` and `G`, Ctrl+Tab and Ctrl+Shift+Tab.
 - **Bare keys never fire while a text field has focus.** Only the "Anywhere" chords, which all
-  carry Ctrl, or are F5 or Esc, work while typing.
+  carry Ctrl, or are F5 or Esc, work while typing. Their Git twins are Fork's Ctrl+Shift chords,
+  chosen so they never take a text-editing chord (Ctrl+A, C, V, X, Z, Y).
 - **One owner per chord.** A test fails if two bindings in overlapping scopes share one.
 - Ctrl is Cmd on macOS (the Control key is accepted there too). A chord written as a character
   (`?`, `/`, `[`, `]`, `=`) matches whatever keys the layout needs to type it.

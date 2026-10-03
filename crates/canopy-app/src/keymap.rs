@@ -2,8 +2,11 @@
 //! so the documentation cannot drift from the behaviour. See `docs/keybindings.md`.
 //!
 //! In the spirit of Omarchy and lazygit: a launcher-style palette, a cheatsheet one key away,
-//! vim motions and single-key actions. Two rules: Super is never bound (it belongs to the window
-//! manager), and bare keys never fire while a text field has focus.
+//! vim motions and single-key actions. Omarchy gives every layer its own modifiers and never
+//! lets a lower layer use a higher one's: Super is the window manager's, Alt and Ctrl+Alt belong
+//! to window cycling and tmux, Print, F9 and the media keys to the system. Canopy lives in the
+//! Ctrl layer, so Super, Alt and those keys are never bound, and bare keys never fire while a
+//! text field has focus. In a family Shift turns the action around (`p` pull, `P` push).
 
 use egui::{Key, Modifiers};
 
@@ -826,6 +829,76 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn alt_belongs_to_the_window_manager_and_the_terminal() {
+        for b in BINDINGS {
+            for c in b.chords.iter().filter(|c| !c.symbol) {
+                let held = Modifiers {
+                    alt: true,
+                    ctrl: c.ctrl,
+                    shift: c.shift,
+                    command: c.ctrl,
+                    ..Modifiers::NONE
+                };
+                assert!(
+                    !c.matches(c.key, &held),
+                    "{} fires with Alt held",
+                    c.label()
+                );
+            }
+        }
+    }
+
+    /// Omarchy's chords that are not Super chords: window cycling, monitor focus, close all
+    /// windows, and the push-to-talk dictation key (`hypr/bindings/*.lua`).
+    #[test]
+    fn nothing_fires_on_a_chord_omarchy_owns() {
+        let alt = Modifiers::ALT;
+        let ctrl_alt = Modifiers::ALT | Modifiers::COMMAND;
+        let owned = [
+            (Key::Tab, alt),
+            (Key::Tab, alt | Modifiers::SHIFT),
+            (Key::Tab, ctrl_alt),
+            (Key::Tab, ctrl_alt | Modifiers::SHIFT),
+            (Key::Delete, ctrl_alt),
+            (Key::F9, Modifiers::NONE),
+        ];
+        for (key, held) in owned {
+            for b in BINDINGS {
+                assert!(
+                    !b.chords.iter().any(|c| c.matches(key, &held)),
+                    "{key:?} with {held:?} would fire {:?}",
+                    b.command
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shift_turns_a_family_around() {
+        let chord = |command: Command| {
+            BINDINGS
+                .iter()
+                .filter(|b| b.command == command)
+                .max_by_key(|b| b.section.is_bare())
+                .map(|b| b.chords[0])
+                .expect("bound")
+        };
+        for (forward, back) in [
+            (Command::Pull, Command::Push),
+            (Command::Stash, Command::PopStash),
+            (Command::TakeBoth, Command::TakeBothTheirsFirst),
+            (Command::NextTab, Command::PrevTab),
+            (Command::First, Command::Last),
+        ] {
+            let (f, r) = (chord(forward), chord(back));
+            assert!(
+                f.key == r.key && f.ctrl == r.ctrl && !f.shift && r.shift,
+                "{forward:?} and {back:?} must differ by Shift only"
+            );
         }
     }
 
