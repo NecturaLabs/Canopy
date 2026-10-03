@@ -133,6 +133,8 @@ pub struct CanopyApp {
     update_check_due: bool,
     /// Receives git's and ssh's credential prompts (`None` when it could not start).
     askpass: Option<crate::askpass::Server>,
+    /// `trust::changes()` as the tabs last saw it.
+    trust_seen: u64,
 }
 
 impl std::fmt::Debug for CanopyApp {
@@ -190,6 +192,7 @@ impl CanopyApp {
         let git_version = canopy_core::cli::version().unwrap_or_else(|_| "git not found".into());
         let gitlab_hosts = settings.gitlab_host_list();
         let mut app = Self {
+            trust_seen: crate::trust::changes(),
             settings,
             tabs: Vec::new(),
             active: 0,

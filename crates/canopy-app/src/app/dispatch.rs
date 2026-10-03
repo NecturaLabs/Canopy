@@ -227,8 +227,8 @@ impl CanopyApp {
                 }
                 Action::TrustFolder(folder) => {
                     let shown = folder.display().to_string();
-                    // The tabs pick the new list up in the next `poll`.
                     if crate::trust::add(&mut self.settings.trusted_folders, folder) {
+                        crate::trust::set(&self.settings.trusted_folders);
                         self.toasts
                             .push(ctx, ToastKind::Success, "Folder trusted", shown);
                     }

@@ -1127,6 +1127,7 @@ fn privacy(
                 &crate::settings::expand_home(&s.clone_parent()),
             ) && crate::trust::add(&mut s.trusted_folders, dir)
             {
+                crate::trust::set(&s.trusted_folders);
                 ui.ctx().request_repaint();
             }
         },
@@ -1151,6 +1152,8 @@ fn privacy(
     }
     if let Some(i) = remove {
         s.trusted_folders.remove(i);
+        // At once, not on the next frame: a download queued on a repository thread must see it.
+        crate::trust::set(&s.trusted_folders);
     }
     if s.trusted_folders.is_empty() {
         ui.label(

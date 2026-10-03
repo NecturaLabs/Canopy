@@ -233,7 +233,11 @@ impl CanopyApp {
     }
 
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
-        if crate::trust::set(&self.settings.trusted_folders) {
+        // Also a backstop for any path that changed the list without publishing it.
+        crate::trust::set(&self.settings.trusted_folders);
+        let changes = crate::trust::changes();
+        if changes != self.trust_seen {
+            self.trust_seen = changes;
             for tab in &mut self.tabs {
                 tab.trust_changed();
             }

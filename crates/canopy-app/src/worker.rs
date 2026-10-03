@@ -467,7 +467,11 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                                     download_refused(&emit, repo.promisor_remote());
                                 } else {
                                     match with_progress(&emit, repo.promisor_remote(), || {
-                                        repo.commit_details(oid, MissingObjects::Download)
+                                        if allowed() {
+                                            repo.commit_details(oid, MissingObjects::Download)
+                                        } else {
+                                            Err(download_refused(&emit, repo.promisor_remote()))
+                                        }
                                     }) {
                                         Ok(d) if d.stats_known => emit(Event::Details(Arc::new(d))),
                                         Ok(_) => {}
@@ -673,7 +677,8 @@ fn with_progress<T>(emit: &impl Fn(Event), remote: Option<String>, f: impl FnOnc
 
 /// Why a download did not run in a repository outside every trusted folder.
 const NOT_TRUSTED: &str = "Canopy downloads it only for repositories in a trusted folder. \
-                           Choose Trust… in the status bar to allow it for this one.";
+                           Choose Trust… in the status bar to allow it for this one. A linked \
+                           worktree also needs the folder of its main repository trusted.";
 
 /// Reports a download that was not run because the repository is not in a trusted folder, and
 /// returns the error the read ends with. `can_download()` is false for it: trying again cannot
@@ -705,7 +710,14 @@ fn read_downloading<T>(
             ..
         }) => {
             if allowed() {
-                with_progress(emit, Some(remote), || read(MissingObjects::Download))
+                with_progress(emit, Some(remote.clone()), || {
+                    // Asked again as late as possible: trust may have been withdrawn meanwhile.
+                    if allowed() {
+                        read(MissingObjects::Download)
+                    } else {
+                        Err(download_refused(emit, Some(remote)))
+                    }
+                })
             } else {
                 Err(download_refused(emit, Some(remote)))
             }
@@ -738,7 +750,16 @@ fn snapshot_completing(
             return Ok(snap);
         }
         with_progress(emit, repo.promisor_remote(), || {
-            repo.complete_status(&mut snap, MissingObjects::Download);
+            // Asked again as late as possible: trust may have been withdrawn meanwhile.
+            if allowed() {
+                repo.complete_status(&mut snap, MissingObjects::Download);
+            } else {
+                let error = download_refused(emit, repo.promisor_remote());
+                snap.status_unavailable = Some(canopy_core::StatusUnavailable {
+                    message: error.to_string(),
+                    can_download: false,
+                });
+            }
         });
         if let Some(u) = &snap.status_unavailable {
             tracing::warn!(reason = %canopy_core::cli::redact_url(&u.message), "status not downloaded");

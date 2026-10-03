@@ -7,10 +7,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 static FOLDERS: RwLock<Vec<PathBuf>> = RwLock::new(Vec::new());
+static CHANGES: AtomicU64 = AtomicU64::new(0);
 
-/// Replaces the trusted folders. Returns whether the list changed.
+/// Replaces the trusted folders, for every repository thread at once: call it the moment the
+/// list changes, so a download that has not started yet sees a removal. Returns whether the
+/// list changed.
 pub fn set(folders: &[PathBuf]) -> bool {
     if *read() == folders {
         return false;
@@ -18,7 +22,13 @@ pub fn set(folders: &[PathBuf]) -> bool {
     *FOLDERS
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = folders.to_vec();
+    CHANGES.fetch_add(1, Ordering::SeqCst);
     true
+}
+
+/// How many times the list has changed, for whoever must react to a change once.
+pub fn changes() -> u64 {
+    CHANGES.load(Ordering::SeqCst)
 }
 
 /// Trusts `folder` for the rest of the test run. Unlike [`set`] it adds to the list under one

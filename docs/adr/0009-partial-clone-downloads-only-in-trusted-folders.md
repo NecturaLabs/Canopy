@@ -36,6 +36,19 @@ remote's. Running the fetch with git's configuration neutralised (`-c core.sshCo
 make the download work for the user. The cost of the chosen rule is one decision per folder: a
 partial clone opened for the first time shows only what is on disk until the user trusts its folder.
 
+## Limits, decided on purpose
+
+- The list is published to every repository thread the moment it changes (`trust::set`), and each
+  download asks again immediately before git starts. A download already running when trust is
+  withdrawn finishes: it was allowed when it began, and a running git cannot be recalled.
+- Trust follows where the repository's directories really are, after resolving links. A link
+  inside a trusted folder that leads out gives no trust; a link elsewhere that leads in does not
+  need any, because the repository and its configuration are inside the folder.
+- Only the filesystem root is refused. The root of a mounted volume can be trusted: an external
+  drive of projects is a normal thing to trust whole.
+- A linked worktree needs both its own folder and the folder of the repository that holds its
+  common git directory trusted; the dialog offers the opened folder and its parent only.
+
 ## References
 
 - [git-config: core.sshCommand, credential.helper, url.<base>.insteadOf](https://git-scm.com/docs/git-config)

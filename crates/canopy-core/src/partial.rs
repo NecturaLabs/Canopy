@@ -448,7 +448,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn links_cannot_carry_trust_in_or_out() {
+    fn trust_follows_where_the_repository_really_lives() {
         let root = tempfile::tempdir().expect("tempdir");
         let trusted = root.path().join("trusted");
         let elsewhere = root.path().join("elsewhere");
@@ -471,6 +471,18 @@ mod tests {
         assert!(is_in_trusted_folder(
             &through_link,
             &[root.path().join("alias")]
+        ));
+
+        // A link elsewhere that leads into the trusted folder: the repository (and the
+        // configuration git would follow) really is inside it, however it was reached.
+        let inside = trusted.join("real");
+        std::fs::create_dir_all(&inside).unwrap();
+        Repository::init(&inside).expect("init");
+        std::os::unix::fs::symlink(&inside, elsewhere.join("shortcut")).unwrap();
+        let through_shortcut = Repository::open(elsewhere.join("shortcut")).expect("open");
+        assert!(is_in_trusted_folder(
+            &through_shortcut,
+            std::slice::from_ref(&trusted)
         ));
     }
 

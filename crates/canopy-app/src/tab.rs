@@ -898,6 +898,10 @@ impl RepoTab {
                         let first = d.files.first().cloned();
                         let oid = d.oid;
                         self.details_error = None;
+                        // Everything about this commit is on disk: no refusal applies to it.
+                        if d.stats_known {
+                            self.downloads_refused = None;
+                        }
                         // A second reply for the same commit (the line counts arriving after the
                         // file list) replaces the first and leaves the open diff alone.
                         self.details = Some(d);
