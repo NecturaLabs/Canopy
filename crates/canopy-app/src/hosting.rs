@@ -365,7 +365,7 @@ fn run(
     // Development and screenshots: talk to a local stand-in (tools/mock-hosting.py). Only a
     // plain loopback address is accepted (no user info, no look-alike host names), so the
     // variable cannot send a token anywhere else.
-    let client = match std::env::var("CANOPY_HOSTING_API_BASE") {
+    let build_client = |token: Option<String>| match std::env::var("CANOPY_HOSTING_API_BASE") {
         Ok(base) if canopy_hosting::is_loopback_base(base.trim()) => {
             Client::with_api_base(&forge, token, base.trim())
         }
@@ -378,14 +378,40 @@ fn run(
         }
         Err(_) => Client::new(&forge, token),
     };
+    let client = build_client(token.clone());
+    // Author pictures have a thread of their own: a slow or black-holed picture host (a request
+    // can take tens of seconds) must not hold up a pull or merge request action queued behind it.
+    let avatar_jobs = {
+        let (jobs, job_rx) = unbounded::<(canopy_core::Oid, String)>();
+        let (client, forge) = (build_client(token), forge.clone());
+        let (events, ctx) = (events.clone(), ctx.clone());
+        let spawned = std::thread::Builder::new()
+            .name(format!("avatars:{}", forge.host))
+            .spawn(move || {
+                while let Ok((oid, email)) = job_rx.recv() {
+                    let result =
+                        crate::avatars::load(&client, &forge, oid, &email, &avatars_enabled);
+                    let _ = events.send(HostEvent::Avatar { oid, email, result });
+                    ctx.request_repaint();
+                }
+            });
+        if let Err(e) = &spawned {
+            tracing::error!("could not start the author-picture thread: {e}");
+        }
+        jobs
+    };
     while let Ok(job) = jobs.recv() {
         let label = job.label(forge.kind);
         tracing::debug!(host = %forge.host, job = %label, "hosting job");
         let s = |e: canopy_hosting::Error| e.to_string();
         match job {
             HostJob::Avatar(oid, email) => {
-                let result = crate::avatars::load(&client, &forge, oid, &email, &avatars_enabled);
-                emit(HostEvent::Avatar { oid, email, result });
+                if let Err(unsent) = avatar_jobs.send((oid, email)) {
+                    // No picture thread: end the request so the tab does not wait for it.
+                    let (oid, email) = unsent.into_inner();
+                    let result = crate::avatars::unavailable(chrono::Utc::now().timestamp());
+                    emit(HostEvent::Avatar { oid, email, result });
+                }
             }
             HostJob::List(filter) => {
                 emit(HostEvent::List(filter, client.list(filter, 100).map_err(s)))

@@ -66,13 +66,6 @@ yet true, then correctness and the features people meet first, then polish. Take
       wrappers.
 - [ ] Symlinks and type changes: show and diff them; never follow links; Windows
       `core.symlinks=false`.
-- [ ] Author pictures, from the review of ADR 0008: a lookup spends one API request per author from
-      the same quota as pull/merge requests (unauthenticated GitHub allows 60 an hour, so scrolling
-      a repository with many authors can leave the request list unable to load; reserve a share or
-      skip lookups when the quota is low); the hosting thread runs a lookup, up to about 40 s on an
-      unreachable host, ahead of a queued pull/merge request action (`avatars.rs`, `CACHE_LOCK`
-      is held across the network call); a tab stops asking after 256 authors in a session
-      (`MAX_PICTURES`, no eviction).
 - [ ] Missing tools: detect git, git-lfs, ssh and signing tools; show install steps per OS
       (Finder-launched macOS apps lack the shell `PATH`).
 - [ ] Settings: every preference in the UI, consent review, search/reset/import/export,
@@ -149,6 +142,9 @@ yet true, then correctness and the features people meet first, then polish. Take
 ## Awaiting in-app verification (owner)
 
 - [ ] Credential and SSH passphrase prompts through Canopy's askpass.
+- [ ] Author pictures on a long history against `tools/mock-hosting.py`: lookups on their own
+      thread (a pull request action never waits for one), the hourly budget (30 anonymous),
+      eviction past 256 authors, and cache files older than 30 days pruned. Unit-tested only.
 - [ ] Ahead/behind counts in tab headers.
 - [ ] Branch delete with a forced delete only when Git refuses.
 - [ ] Local-only badge and Publish; "Open on" links.

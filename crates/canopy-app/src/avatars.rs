@@ -1,25 +1,60 @@
 //! Author pictures cached locally for twelve hours, including failed lookups.
 //! All cache I/O, provider requests and image decoding run on the hosting thread.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::{
-    Mutex,
+    Mutex, Once,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::{Duration, SystemTime};
 
 use canopy_core::Oid;
 use egui::{ColorImage, TextureHandle};
 use serde::{Deserialize, Serialize};
 
+/// Pictures a tab keeps as textures; the least recently shown one makes room for a new author
+/// (its record stays on disk, so it comes back without a request).
 const MAX_PICTURES: usize = 256;
 pub const CACHE_SECS: i64 = 12 * 60 * 60;
+const HOUR_SECS: i64 = 60 * 60;
+/// Provider lookups pictures may take an hour. Unauthenticated GitHub allows 60 API calls an hour
+/// to the whole computer and pull requests need them too, so pictures take half; with a token
+/// the limit is 5000.
+const LOOKUPS_PER_HOUR_ANONYMOUS: u32 = 30;
+const LOOKUPS_PER_HOUR_SIGNED_IN: u32 = 500;
+/// A cache file nobody refreshed for this long belongs to an author not seen for a month.
+const PRUNE_AFTER: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const PIXEL_BYTES: usize = 64 * 64 * 4;
 const MAX_RECORD_BYTES: u64 = 128 * 1024;
-// Tabs may have separate hosting threads. Serialize cache misses so they never fetch an author
-// twice while the first request is still in flight.
+// Tabs may have separate picture threads. Serialize cache misses so they never fetch an author
+// twice while the first request is still in flight. Only picture threads wait on it.
 static CACHE_LOCK: Mutex<()> = Mutex::new(());
+static BUDGET: Mutex<Budget> = Mutex::new(Budget { hour: 0, used: 0 });
+static PRUNED: Once = Once::new();
+
+/// How many provider lookups this hour has already used.
+struct Budget {
+    hour: i64,
+    used: u32,
+}
+
+impl Budget {
+    /// Takes one lookup, or says when the next hour begins.
+    fn take(&mut self, now: i64, limit: u32) -> Result<(), i64> {
+        let hour = now.div_euclid(HOUR_SECS);
+        if hour != self.hour {
+            *self = Budget { hour, used: 0 };
+        }
+        if self.used >= limit {
+            return Err((hour + 1) * HOUR_SECS);
+        }
+        self.used += 1;
+        Ok(())
+    }
+}
 
 #[derive(Default)]
 pub struct Avatars {
@@ -27,11 +62,14 @@ pub struct Avatars {
     pictures: HashMap<String, Picture>,
     pending: Option<(Oid, String)>,
     retry_after: i64,
+    /// Counts uses, to find the least recently shown picture.
+    clock: Cell<u64>,
 }
 
 struct Picture {
     texture: Option<TextureHandle>,
     checked_at: i64,
+    last_used: Cell<u64>,
 }
 
 impl std::fmt::Debug for Avatars {
@@ -55,9 +93,33 @@ impl Avatars {
     }
 
     pub fn get(&self, email: &str) -> Option<&TextureHandle> {
+        if !self.enabled {
+            return None;
+        }
+        let picture = self.pictures.get(email)?;
+        picture.last_used.set(self.tick());
+        picture.texture.as_ref()
+    }
+
+    fn tick(&self) -> u64 {
+        self.clock.set(self.clock.get() + 1);
+        self.clock.get()
+    }
+
+    /// Whether `request` would start a lookup for `email` now; cheap enough to ask for every
+    /// visible row on every frame.
+    pub fn wants_now(&self, email: &str) -> bool {
+        self.wants(email, chrono::Utc::now().timestamp())
+    }
+
+    fn wants(&self, email: &str, now: i64) -> bool {
         self.enabled
-            .then(|| self.pictures.get(email).and_then(|p| p.texture.as_ref()))
-            .flatten()
+            && now >= self.retry_after
+            && self.pending.is_none()
+            && !self
+                .pictures
+                .get(email)
+                .is_some_and(|p| fresh(p.checked_at, now))
     }
 
     pub fn request(&mut self, oid: Oid, email: &str) -> bool {
@@ -65,15 +127,7 @@ impl Avatars {
     }
 
     fn request_at(&mut self, oid: Oid, email: &str, now: i64) -> bool {
-        if !self.enabled
-            || now < self.retry_after
-            || self.pending.is_some()
-            || self
-                .pictures
-                .get(email)
-                .is_some_and(|p| fresh(p.checked_at, now))
-            || (!self.pictures.contains_key(email) && self.pictures.len() >= MAX_PICTURES)
-        {
+        if !self.wants(email, now) {
             return false;
         }
         self.pending = Some((oid, email.to_owned()));
@@ -85,12 +139,24 @@ impl Avatars {
             return;
         }
         self.pending = None;
-        if result.rate_limited {
-            self.retry_after = result.checked_at.saturating_add(CACHE_SECS);
+        if let Some(at) = result.retry_at {
+            self.retry_after = at;
         }
+        if !self.pictures.contains_key(&email) && self.pictures.len() >= MAX_PICTURES {
+            let oldest = self
+                .pictures
+                .iter()
+                .min_by_key(|(_, p)| p.last_used.get())
+                .map(|(email, _)| email.clone());
+            if let Some(oldest) = oldest {
+                self.pictures.remove(&oldest);
+            }
+        }
+        let used = self.tick();
         let entry = self.pictures.entry(email).or_insert(Picture {
             texture: None,
             checked_at: 0,
+            last_used: Cell::new(used),
         });
         entry.checked_at = result.checked_at;
         if let Some(image) = result.image {
@@ -118,7 +184,18 @@ struct Record {
 pub struct Cached {
     pub image: Option<ColorImage>,
     pub checked_at: i64,
-    pub rate_limited: bool,
+    /// Do not ask a provider again before this time (unix seconds): its limit, or the share of
+    /// it pictures may use, is spent.
+    pub retry_at: Option<i64>,
+}
+
+/// The answer for a lookup that could not even be handed to a picture thread.
+pub fn unavailable(now: i64) -> Cached {
+    Cached {
+        image: None,
+        checked_at: 0,
+        retry_at: Some(now + HOUR_SECS),
+    }
 }
 
 fn read_record(path: &Path) -> Option<Record> {
@@ -159,7 +236,9 @@ enum Miss {
     /// Nothing was asked: pictures were switched off, or the tab went to the background.
     Skipped,
     Failed,
-    RateLimited,
+    /// The provider's limit, or the share of it pictures may use, is spent until this time. The
+    /// author is not at fault, so the record is left as it was and stays due.
+    Later(i64),
 }
 
 /// Reads the cache and, only when due and still enabled, asks the provider once.
@@ -170,13 +249,37 @@ pub fn load(
     email: &str,
     enabled: &AtomicBool,
 ) -> Cached {
-    let path = eframe::storage_dir("canopy").map(|p| {
-        p.join("avatars").join(format!(
+    let dir = eframe::storage_dir("canopy").map(|p| p.join("avatars"));
+    if let Some(dir) = &dir {
+        PRUNED.call_once(|| {
+            prune(dir, SystemTime::now(), PRUNE_AFTER);
+        });
+    }
+    let path = dir.map(|dir| {
+        dir.join(format!(
             "{}.json",
             canopy_hosting::avatars::cache_key(forge, email)
         ))
     });
     load_at(path, client, oid, email, enabled)
+}
+
+/// Deletes the cache files nobody has refreshed for `max_age`. Returns how many went.
+fn prune(dir: &Path, now: SystemTime, max_age: Duration) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|e| {
+            e.metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|modified| now.duration_since(modified).ok())
+                .is_some_and(|age| age > max_age)
+        })
+        .filter(|e| std::fs::remove_file(e.path()).is_ok())
+        .count()
 }
 
 fn load_at(
@@ -192,14 +295,26 @@ fn load_at(
     let now = chrono::Utc::now().timestamp();
     let old = path.as_deref().and_then(read_record);
     let due = old.as_ref().is_none_or(|r| !fresh(r.checked_at, now));
-    let (record, rate_limited) = refresh(old, now, || {
+    let (record, retry_at) = refresh(old, now, || {
         if !enabled.load(Ordering::SeqCst) {
             return Err(Miss::Skipped);
         }
+        let limit = if client.has_token() {
+            LOOKUPS_PER_HOUR_SIGNED_IN
+        } else {
+            LOOKUPS_PER_HOUR_ANONYMOUS
+        };
+        BUDGET
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take(now, limit)
+            .map_err(Miss::Later)?;
         let avatar = client
             .author_avatar(&oid.to_string(), email)
             .map_err(|e| match e {
-                canopy_hosting::Error::RateLimited { .. } => Miss::RateLimited,
+                canopy_hosting::Error::RateLimited { reset } => Miss::Later(
+                    reset.map_or(now + HOUR_SECS, |at| at.clamp(now + 60, now + CACHE_SECS)),
+                ),
                 _ => Miss::Failed,
             })?;
         if !enabled.load(Ordering::SeqCst) {
@@ -225,30 +340,32 @@ fn load_at(
             .pixels
             .map(|pixels| ColorImage::from_rgba_premultiplied([64, 64], &pixels)),
         checked_at: record.checked_at,
-        rate_limited,
+        retry_at,
     }
 }
 
-/// The record after one due refresh. A skipped refresh changes nothing, so the author stays due.
+/// The record after one due refresh, and when to ask a provider again if it was out of requests.
+/// A skipped or postponed refresh changes nothing, so the author stays due.
 fn refresh(
     old: Option<Record>,
     now: i64,
     fetch: impl FnOnce() -> Result<Vec<u8>, Miss>,
-) -> (Record, bool) {
+) -> (Record, Option<i64>) {
     if old.as_ref().is_some_and(|r| fresh(r.checked_at, now)) {
-        return (old.unwrap_or_default(), false);
+        return (old.unwrap_or_default(), None);
     }
     let mut record = old.unwrap_or_default();
     match fetch() {
         Ok(pixels) => {
             record.pixels = Some(pixels);
             record.checked_at = now;
-            (record, false)
+            (record, None)
         }
-        Err(Miss::Skipped) => (record, false),
-        Err(miss) => {
+        Err(Miss::Skipped) => (record, None),
+        Err(Miss::Later(at)) => (record, Some(at)),
+        Err(Miss::Failed) => {
             record.checked_at = now;
-            (record, miss == Miss::RateLimited)
+            (record, None)
         }
     }
 }
@@ -334,7 +451,7 @@ mod tests {
             Cached {
                 image: None,
                 checked_at: 100,
-                rate_limited: false,
+                retry_at: None,
             },
         );
         assert!(!pictures.request_at(oid, "a@example.com", 100 + CACHE_SECS - 1));
@@ -361,7 +478,7 @@ mod tests {
             skipped.checked_at, 0,
             "no request was made, so nothing is checked"
         );
-        assert!(skipped.image.is_none() && !skipped.rate_limited);
+        assert!(skipped.image.is_none() && skipped.retry_at.is_none());
         assert!(!path.exists(), "a skipped lookup stores no negative record");
 
         // A stale picture stays due, and visible, until a request really happens.
@@ -376,6 +493,123 @@ mod tests {
         assert_eq!(record.checked_at, 100);
         assert!(record.pixels.is_some());
         assert!(!fresh(record.checked_at, 100 + CACHE_SECS));
+    }
+
+    #[test]
+    fn pictures_leave_half_of_the_anonymous_hourly_quota_to_pull_requests() {
+        const { assert!(LOOKUPS_PER_HOUR_ANONYMOUS <= 30) };
+        let mut budget = Budget { hour: 0, used: 0 };
+        let hour = 5 * HOUR_SECS;
+        for _ in 0..LOOKUPS_PER_HOUR_ANONYMOUS {
+            assert_eq!(budget.take(hour + 10, LOOKUPS_PER_HOUR_ANONYMOUS), Ok(()));
+        }
+        // The next lookup waits for the next hour, and then the budget starts again.
+        assert_eq!(
+            budget.take(hour + 3000, LOOKUPS_PER_HOUR_ANONYMOUS),
+            Err(6 * HOUR_SECS)
+        );
+        assert_eq!(
+            budget.take(6 * HOUR_SECS, LOOKUPS_PER_HOUR_ANONYMOUS),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_postponed_lookup_keeps_the_record_due_and_holds_every_request_back() {
+        let old = Record {
+            checked_at: 100,
+            pixels: Some(vec![9; PIXEL_BYTES]),
+        };
+        let (record, retry_at) = refresh(Some(old), 100 + CACHE_SECS, || Err(Miss::Later(5000)));
+        assert_eq!(retry_at, Some(5000));
+        assert_eq!(record.checked_at, 100, "the author is not marked checked");
+        assert!(record.pixels.is_some());
+
+        let ctx = egui::Context::default();
+        let mut pictures = Avatars::default();
+        pictures.set_enabled(true);
+        let oid = Oid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
+        let now = 1_800_000_000;
+        assert!(pictures.request_at(oid, "a@example.com", now));
+        pictures.finish(
+            &ctx,
+            oid,
+            "a@example.com".into(),
+            Cached {
+                image: None,
+                checked_at: 0,
+                retry_at: Some(now + 5000),
+            },
+        );
+        assert!(!pictures.wants("a@example.com", now + 4999));
+        assert!(pictures.wants("a@example.com", now + 5000));
+    }
+
+    #[test]
+    fn past_the_cap_the_least_recently_shown_picture_makes_room() {
+        let ctx = egui::Context::default();
+        let mut pictures = Avatars::default();
+        pictures.set_enabled(true);
+        let oid = Oid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
+        let load = |pictures: &mut Avatars, email: &str| {
+            assert!(pictures.request_at(oid, email, 100));
+            pictures.finish(
+                &ctx,
+                oid,
+                email.to_owned(),
+                Cached {
+                    image: None,
+                    checked_at: 100,
+                    retry_at: None,
+                },
+            );
+        };
+        for i in 0..MAX_PICTURES {
+            load(&mut pictures, &format!("{i}@example.com"));
+        }
+        // Showing the first author again makes the second the one that has waited longest.
+        pictures.get("0@example.com");
+        load(&mut pictures, "new@example.com");
+        assert_eq!(pictures.pictures.len(), MAX_PICTURES);
+        assert!(pictures.pictures.contains_key("0@example.com"));
+        assert!(pictures.pictures.contains_key("new@example.com"));
+        assert!(!pictures.pictures.contains_key("1@example.com"));
+    }
+
+    #[test]
+    fn rows_ask_for_a_lookup_only_while_one_is_due() {
+        let mut pictures = Avatars::default();
+        assert!(!pictures.wants("a@example.com", 100), "pictures are off");
+        pictures.set_enabled(true);
+        assert!(pictures.wants("a@example.com", 100));
+        let oid = Oid::from_str("0123456789abcdef0123456789abcdef01234567").unwrap();
+        assert!(pictures.request_at(oid, "a@example.com", 100));
+        assert!(
+            !pictures.wants("b@example.com", 100),
+            "one lookup at a time"
+        );
+    }
+
+    #[test]
+    fn cache_files_nobody_refreshed_for_a_month_are_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = SystemTime::now();
+        let age = |name: &str, days: u64| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"{}").unwrap();
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(now - Duration::from_secs(days * 24 * 60 * 60))
+                .unwrap();
+        };
+        age("old.json", 31);
+        age("recent.json", 29);
+        assert_eq!(prune(dir.path(), now, PRUNE_AFTER), 1);
+        assert!(!dir.path().join("old.json").exists());
+        assert!(dir.path().join("recent.json").exists());
+        assert_eq!(prune(&dir.path().join("missing"), now, PRUNE_AFTER), 0);
     }
 
     #[test]

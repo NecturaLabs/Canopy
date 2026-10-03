@@ -159,4 +159,4 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Opt-in, scrubbed crash reports | Unreleased | ? | ? | ? |
 | Screen reader support (AccessKit) | Planned | ? | ? | ? |
 
-Author pictures are fetched after consent when enabled in Privacy, through the repository hosting worker. GitLab-provided Gravatar and Libravatar image URLs need no API keys. Pictures and failures are cached locally for 12 hours across restarts; failed refreshes retain the previous picture.
+Author pictures are fetched after consent when enabled in Privacy, through the repository hosting worker. GitLab-provided Gravatar and Libravatar image URLs need no API keys. Pictures and failures are cached locally for 12 hours across restarts; failed refreshes retain the previous picture. Lookups take at most half of GitHub's anonymous request limit, and cache files unused for 30 days are deleted.

@@ -397,7 +397,10 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             if show_author {
                 // Author.
                 if avatars {
-                    wanted_pictures.push((c.oid, c.author.email.clone()));
+                    // Copied only for an author whose lookup is due, not for every row every frame.
+                    if tab.avatars.wants_now(&c.author.email) {
+                        wanted_pictures.push((c.oid, c.author.email.clone()));
+                    }
                     let center = pos2(author_x + 16.0, cy);
                     if let Some(texture) = tab.avatars.get(&c.author.email) {
                         egui::Image::new(texture)
