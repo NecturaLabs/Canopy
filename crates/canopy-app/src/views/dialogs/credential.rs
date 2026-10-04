@@ -12,10 +12,9 @@ pub(super) fn credential(
 ) -> Outcome {
     let p = palette(ui.ctx());
     let lower = prompt.text.to_lowercase();
+    let passphrase = lower.contains("passphrase");
     let (glyph, color, heading) = match prompt.kind {
-        PromptKind::Secret if lower.contains("passphrase") => {
-            (icon::KEY, p.accent, "SSH key passphrase")
-        }
+        PromptKind::Secret if passphrase => (icon::KEY, p.accent, "Unlock SSH key"),
         PromptKind::Secret => (icon::KEY, p.accent, "Password required"),
         PromptKind::Text => (icon::USER, p.accent, "Sign in"),
         PromptKind::YesNo => (icon::SHIELD_WARNING, p.warning, "Trust this host?"),
@@ -70,6 +69,15 @@ pub(super) fn credential(
     match prompt.kind {
         PromptKind::Secret | PromptKind::Text => {
             let secret = prompt.kind == PromptKind::Secret;
+            ui.label(
+                RichText::new(match (secret, passphrase) {
+                    (true, true) => "Passphrase",
+                    (true, false) => "Password",
+                    (false, _) => "Username",
+                })
+                .size(theme::META_SIZE)
+                .color(p.text_dim),
+            );
             ui.horizontal(|ui| {
                 let width = ui.available_width() - if secret { 40.0 } else { 0.0 };
                 let r = ui.add(
@@ -102,7 +110,14 @@ pub(super) fn credential(
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let ok = !answer.is_empty() || secret;
-                    if widgets::primary_button(ui, "Continue", ok, 130.0).clicked() || (enter && ok)
+                    if widgets::primary_button(
+                        ui,
+                        if passphrase { "Unlock key" } else { "Continue" },
+                        ok,
+                        130.0,
+                    )
+                    .clicked()
+                        || (enter && ok)
                     {
                         outcome = reply(Some(std::mem::take(answer)));
                     }
