@@ -578,13 +578,31 @@ pub fn commit_menu(
         actions.push(Action::Op(Op::Revert(oid)));
     }
     ui.menu_button(format!("{}  Reset current branch here", icon::CLOCK_COUNTER_CLOCKWISE), |ui| {
-        if ui.button("Soft — keep index and working tree").clicked() {
+        let choice = |ui: &mut Ui, name: &str, explanation: &str, danger: bool| {
+            let mut job = egui::text::LayoutJob::default();
+            job.append(
+                name,
+                0.0,
+                egui::TextFormat::simple(
+                    FontId::new(theme::BODY_SIZE, theme::semibold()),
+                    if danger { p.danger } else { p.text },
+                ),
+            );
+            job.append("\n", 0.0, egui::TextFormat::default());
+            job.append(
+                explanation,
+                0.0,
+                egui::TextFormat::simple(FontId::proportional(theme::SMALL_SIZE), p.text_dim),
+            );
+            ui.button(job).clicked()
+        };
+        if choice(ui, "Soft", "Keep index and working tree", false) {
             actions.push(Action::Op(Op::Reset { oid, mode: ResetMode::Soft }));
         }
-        if ui.button("Mixed — keep working tree").clicked() {
+        if choice(ui, "Mixed", "Keep working tree", false) {
             actions.push(Action::Op(Op::Reset { oid, mode: ResetMode::Mixed }));
         }
-        if ui.button(RichText::new("Hard — discard all changes…").color(p.danger)).clicked() {
+        if choice(ui, "Hard reset…", "Discard all uncommitted changes", true) {
             actions.push(Action::Confirm { title: "Hard reset".into(), body: format!("Move the current branch to {} and throw away every uncommitted change? This cannot be undone.", short_id(oid)), confirm: "Reset".into(), danger: true, op: Op::Reset { oid, mode: ResetMode::Hard } });
         }
     });

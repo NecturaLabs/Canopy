@@ -356,6 +356,8 @@ still; reduce motion shows it finished.
 ### Context menu
 
 An opened submenu item uses the same neutral surface as a hovered menu item.
+Reset choices put the mode name in semibold type above a dim description, with destructive
+Hard reset marked in danger colour and confirmed before it runs.
 
 ### Avatar
 
