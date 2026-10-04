@@ -166,6 +166,9 @@ are sized for their optical weight and are not part of the scale.
 The global Body, Button, Small and Heading styles use the typography tokens in `theme.rs`.
 History rows are 30 points tall, diff lines 20 points.
 
+Settings grows with the viewport up to 1120 × 900 logical points, keeping a 24-point outer
+margin and a compact section picker when its navigation sidebar would crowd the content.
+
 ## Spacing
 
 Controls (buttons, text fields, combo boxes, checkboxes) are 26 points high; text fields use

@@ -137,8 +137,8 @@ pub fn show(
     let mut result = SettingsResult::default();
     screen.picker.begin_frame();
     let screen_rect = ctx.content_rect();
-    let width = (screen_rect.width() - theme::XL * 2.0).clamp(0.0, 900.0);
-    let height = (screen_rect.height() - theme::XL * 2.0).clamp(0.0, 640.0);
+    let width = (screen_rect.width() - theme::XL * 2.0).clamp(0.0, theme::SETTINGS_MAX_WIDTH);
+    let height = (screen_rect.height() - theme::XL * 2.0).clamp(0.0, theme::SETTINGS_MAX_HEIGHT);
     let sidebar = width >= 720.0;
     let nav_width = 180.0;
     let modal = egui::Modal::new(egui::Id::new("settings"))

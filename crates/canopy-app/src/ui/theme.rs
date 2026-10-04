@@ -16,6 +16,8 @@ pub const MD: f32 = 12.0;
 pub const LG: f32 = 16.0;
 pub const XL: f32 = 24.0;
 pub const COMPACT_WIDTH: f32 = 1000.0;
+pub const SETTINGS_MAX_WIDTH: f32 = 1120.0;
+pub const SETTINGS_MAX_HEIGHT: f32 = 900.0;
 /// The widest a column of prose and its fields grow, so lines stay readable on wide windows.
 pub const MEASURE: f32 = 920.0;
 // Type scale (points, before interface zoom). Text sizes come only from these; icon glyphs are
