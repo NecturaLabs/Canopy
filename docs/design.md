@@ -264,8 +264,8 @@ in `theme.rs`:
 - Sidebar defaults to 250 points (resizable, 190–460). Below 1000 logical points it moves into
   the toolbar's navigation menu, preserving room for repository content. It stays open for
   section toggles, double-click checkout and context menus.
-- History details sit below the graph, initially 40% of its available height capped to 300–320
-  points where space permits. The resizable pane can shrink to 260 points; its maximum leaves
+- History details sit below the graph, initially 40% of its available height, growing with
+  a tall window. The resizable pane can shrink to 260 points; its maximum leaves
   history controls and two complete rows. Expand opens the details in the content area, with Back
   to history to restore the split. Both controls sit beside the commit summary and remain
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details

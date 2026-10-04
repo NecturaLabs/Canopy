@@ -104,7 +104,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         let detail_max = (h - table_min).min(h * 0.70);
         egui::Panel::bottom("details")
             .resizable(true)
-            .default_size((h * 0.40).clamp(260.0, 320.0).min(detail_max))
+            .default_size((h * 0.40).max(260.0).min(detail_max))
             .min_size(260.0_f32.min(detail_max))
             .max_size(detail_max)
             .frame(
