@@ -598,6 +598,19 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
     flipped
 }
 
+/// Height of the buttons in a list header, so "Stage all" and a menu beside it match.
+pub const COMPACT_H: f32 = 26.0;
+
+/// A bordered button at [`COMPACT_H`] with the standard padding: the same control as a plain
+/// button, but not as shallow as `small_button`.
+pub fn compact_button(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> Response {
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding = vec2(theme::SM, 4.0);
+        ui.add(egui::Button::new(text).min_size(vec2(0.0, COMPACT_H)))
+    })
+    .inner
+}
+
 /// A button for a dangerous action: danger-coloured label on a tinted fill, readable in every
 /// theme.
 pub fn danger_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
@@ -647,19 +660,26 @@ fn primary_button_sized(ui: &mut Ui, text: &str, enabled: bool, size: Vec2) -> R
         enabled && resp.hovered(),
         theme::fade(ui.ctx(), 0.12),
     );
-    let (a, b) = if enabled {
-        (p.button, p.button2)
-    } else {
-        (p.border, p.border)
-    };
     let boost = 1.0 + 0.15 * hover;
-    gradient_rect(
-        ui.painter(),
-        rect,
-        a.gamma_multiply(boost.min(1.2)),
-        b.gamma_multiply(boost.min(1.2)),
-        theme::RADIUS,
-    );
+    if enabled {
+        gradient_rect(
+            ui.painter(),
+            rect,
+            p.button.gamma_multiply(boost.min(1.2)),
+            p.button2.gamma_multiply(boost.min(1.2)),
+            theme::RADIUS,
+        );
+    } else {
+        // Flat and outlined, never the gradient: a disabled button must not read as enabled in
+        // any theme, however close its hue is to `border`.
+        ui.painter().rect(
+            rect,
+            CornerRadius::same(theme::RADIUS),
+            Palette::tint(p.text, 12),
+            Stroke::new(1.0, Palette::tint(p.text, 36)),
+            egui::StrokeKind::Inside,
+        );
+    }
     if hover > 0.0 {
         ui.painter().rect_stroke(
             rect.expand(1.5),
