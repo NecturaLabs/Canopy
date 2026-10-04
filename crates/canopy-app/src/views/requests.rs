@@ -108,7 +108,7 @@ fn empty(
 
 fn state_style(p: &Palette, r: &RequestSummary) -> (&'static str, egui::Color32, &'static str) {
     match (r.state, r.draft) {
-        (RequestState::Open, true) => (icon::GIT_PULL_REQUEST, p.text_dim, "Draft"),
+        (RequestState::Open, true) => (icon::PENCIL_SIMPLE_LINE, p.text_dim, "Draft"),
         (RequestState::Open, false) => (icon::GIT_PULL_REQUEST, p.success, "Open"),
         (RequestState::Merged, _) => (icon::GIT_MERGE, p.accent, "Merged"),
         (RequestState::Closed, _) => (icon::GIT_PULL_REQUEST, p.danger, "Closed"),
@@ -305,7 +305,7 @@ fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Respo
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &info)
     });
     resp.on_hover_text(format!(
-        "{}\n#{} · {}\n{} → {}",
+        "{state} · {}\n#{} · {}\n{} → {}",
         r.title, r.number, r.author, r.source_branch, r.target_branch
     ))
 }

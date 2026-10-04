@@ -267,6 +267,8 @@ in `theme.rs`:
   available width, leaving the rest for the diff or request details. Pane limits follow the
   current viewport. Read-only diff headers share a wrapping row at short heights to keep more
   changed lines visible without reducing text size.
+- Draft requests use a dim pencil icon in the list, distinct from the green open request icon;
+  the full state and branch pair remain available on hover.
 - History hides date, author and SHA columns as space decreases; full metadata remains in
   commit details and row tooltips. Row content is clipped to the table's scroll viewport.
 - History search stays hidden until Ctrl+F or `/` opens it and focuses the field. The same
