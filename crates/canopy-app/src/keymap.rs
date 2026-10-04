@@ -41,6 +41,8 @@ pub enum Command {
     History,
     Changes,
     Requests,
+    ApproveRequest,
+    MergeRequest,
     Down,
     Up,
     PageDown,
@@ -295,6 +297,18 @@ pub const BINDINGS: &[Binding] = &[
     b(S::Anywhere, C::Fetch, &[ctrl_shift(Key::F)], "Fetch"),
     b(S::Anywhere, C::Pull, &[ctrl_shift(Key::L)], "Pull"),
     b(S::Anywhere, C::Push, &[ctrl_shift(Key::P)], "Push"),
+    b(
+        S::Anywhere,
+        C::ApproveRequest,
+        &[ctrl_shift(Key::A)],
+        "Approve the selected request",
+    ),
+    b(
+        S::Anywhere,
+        C::MergeRequest,
+        &[ctrl_shift(Key::M)],
+        "Merge the selected request (asks first)",
+    ),
     b(
         S::Anywhere,
         C::Stash,

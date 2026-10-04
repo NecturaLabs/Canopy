@@ -571,14 +571,19 @@ fn action_bar(
         ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(
-                    !busy,
+                    approve_action(tab, r).is_some(),
                     egui::Button::new(
                         RichText::new(format!("{}  Approve", icon::CHECK)).color(p.success),
                     ),
                 )
+                .on_hover_text(format!(
+                    "Approve this request  ({})",
+                    crate::keymap::hint(crate::keymap::Command::ApproveRequest)
+                ))
                 .clicked()
+                && let Some(action) = approve_action(tab, r)
             {
-                actions.push(Action::Host(HostJob::Approve(r.number)));
+                actions.push(action);
             }
             egui::Frame::new()
                 .fill(p.panel)
@@ -646,6 +651,11 @@ fn action_bar(
                 .color(p.text_faint),
         );
     }
+}
+
+pub(crate) fn approve_action(tab: &RepoTab, request: &RequestSummary) -> Option<Action> {
+    (request.state == RequestState::Open && tab.requests.busy.is_none() && tab.running.is_none())
+        .then(|| Action::Host(HostJob::Approve(request.number)))
 }
 
 /// Shared by the pointer and keyboard paths; both confirm the reviewed head before merging.

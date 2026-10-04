@@ -125,6 +125,35 @@ impl CanopyApp {
             C::History => actions.push(Action::SetView(View::History)),
             C::Changes => actions.push(Action::SetView(View::Changes)),
             C::Requests => actions.push(Action::SetView(View::Requests)),
+            C::ApproveRequest | C::MergeRequest => {
+                if view == Some(View::Requests)
+                    && self.settings.hosting_api
+                    && let Some(tab) = self.tabs.get(self.active)
+                    && let Some((_, forge)) = tab.forge()
+                    && let Some(Ok(list)) = &tab.requests.list
+                    && let Some(request) = list
+                        .iter()
+                        .find(|request| Some(request.number) == tab.requests.selected)
+                {
+                    if command == C::ApproveRequest {
+                        if let Some(action) = crate::views::requests::approve_action(tab, request) {
+                            actions.push(action);
+                        }
+                    } else {
+                        let details = tab
+                            .requests
+                            .details
+                            .as_ref()
+                            .and_then(|details| details.as_ref().ok())
+                            .map(std::sync::Arc::as_ref);
+                        if let Some(dialog) = crate::views::requests::merge_confirmation(
+                            tab, forge.kind, request, details,
+                        ) {
+                            actions.push(Action::OpenDialog(dialog));
+                        }
+                    }
+                }
+            }
             C::Down | C::Up | C::PageDown | C::PageUp | C::First | C::Last => {
                 let delta = match command {
                     C::Down => 1,

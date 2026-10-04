@@ -145,7 +145,26 @@ impl CanopyApp {
                     ),
                     Action::Command(C::Filter),
                 )),
-                View::Requests => {}
+                View::Requests => {
+                    v.push((
+                        e(
+                            icon::CHECK,
+                            "Approve selected request",
+                            "Requests",
+                            Some(C::ApproveRequest),
+                        ),
+                        Action::Command(C::ApproveRequest),
+                    ));
+                    v.push((
+                        e(
+                            icon::GIT_MERGE,
+                            "Merge selected request…",
+                            "Requests",
+                            Some(C::MergeRequest),
+                        ),
+                        Action::Command(C::MergeRequest),
+                    ));
+                }
             }
             v.extend([
                 (

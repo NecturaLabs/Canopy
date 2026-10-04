@@ -77,6 +77,8 @@ Works also while typing.
 | Ctrl+Shift+F | Fetch |
 | Ctrl+Shift+L | Pull |
 | Ctrl+Shift+P | Push |
+| Ctrl+Shift+A | Approve the selected request (Requests view) |
+| Ctrl+Shift+M | Merge the selected request (Requests view; asks first) |
 | Ctrl+Shift+H | Stash changes |
 | Ctrl+Shift+S | Stage all changes |
 | Ctrl+B | Create a branch |
