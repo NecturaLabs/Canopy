@@ -722,28 +722,39 @@ pub fn show(
                         ui.add_space(8.0);
                         ui.label(RichText::new("A fast, beautiful, Linux-first Git client.").color(p.text_dim));
                         ui.label(RichText::new("© 2026 NecturaLabs.").size(theme::META_SIZE).color(p.text_faint));
+                        ui.add_space(14.0);
+                        if widgets::accent_button(ui, &format!("{}  Check for updates", icon::ARROW_CIRCLE_UP), egui::vec2(190.0, 34.0)).clicked() {
+                            outcome = Outcome::Run(vec![Action::CheckUpdates]);
+                        }
                         ui.add_space(10.0);
+                        // Where to read more: quiet text links, so the one action above stays the main one.
+                        let links: [(&str, Outcome); 4] = [
+                            ("What's new", Outcome::Run(vec![Action::WhatsNew])),
+                            ("Releases", Outcome::Run(vec![Action::OpenUrl(crate::updater::RELEASES_PAGE.to_owned())])),
+                            ("Privacy Policy", Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Privacy))])),
+                            ("Terms of Service", Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Terms))])),
+                        ];
+                        ui.spacing_mut().item_spacing.x = theme::MD;
+                        // Centre the row: its width is the labels, their button padding and the gaps.
+                        let font = FontId::proportional(theme::META_SIZE);
+                        let text_width = |t: &str| ui.painter().layout_no_wrap(t.to_owned(), font.clone(), p.accent).size().x;
+                        let row_width: f32 = links.iter().map(|(label, _)| text_width(label) + 2.0 * ui.spacing().button_padding.x).sum::<f32>() + (links.len() - 1) as f32 * (text_width("·") + 2.0 * theme::MD);
                         ui.horizontal(|ui| {
-                            ui.add_space((ui.available_width() - 400.0).max(0.0) / 2.0);
-                            if ui.button(format!("{}  Check for updates", icon::ARROW_CIRCLE_UP)).clicked() {
-                                outcome = Outcome::Run(vec![Action::CheckUpdates]);
-                            }
-                            if ui.button(format!("{}  What's new", icon::SPARKLE)).clicked() {
-                                outcome = Outcome::Run(vec![Action::WhatsNew]);
-                            }
-                            if ui.button(format!("{}  Releases", icon::ARROW_SQUARE_OUT)).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenUrl(crate::updater::RELEASES_PAGE.to_owned())]);
+                            ui.add_space(((ui.available_width() - row_width) / 2.0).max(0.0));
+                            for (i, (label, target)) in links.into_iter().enumerate() {
+                                if i > 0 {
+                                    ui.label(RichText::new("·").color(p.text_faint));
+                                }
+                                if ui.add(egui::Button::new(RichText::new(label).size(theme::META_SIZE).color(p.accent)).frame(false)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                    outcome = target;
+                                }
                             }
                         });
-                        ui.horizontal(|ui| {
-                            ui.add_space((ui.available_width() - 300.0).max(0.0) / 2.0);
-                            if ui.button(format!("{}  Privacy Policy", icon::SHIELD_CHECK)).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Privacy))]);
-                            }
-                            if ui.button(format!("{}  Terms of Service", icon::SCROLL)).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Terms))]);
-                            }
-                            if ui.button("Close").clicked() {
+                    });
+                    ui.add_space(theme::MD);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add_sized([90.0, 34.0], egui::Button::new("Close")).clicked() {
                                 outcome = Outcome::Close;
                             }
                         });
