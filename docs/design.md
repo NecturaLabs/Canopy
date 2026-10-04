@@ -370,7 +370,10 @@ Hard reset marked in danger colour and confirmed before it runs.
 ### Avatar
 
 A circle, 20px in tables and 24px in details, filled with a lane colour chosen by hashing the
-author's email, showing up to two initials in Small SemiBold white. Account pictures fill the same circle, with initials while unavailable or downloads are disabled. History and commit details share a twelve-hour local cache; a failed refresh retains the last picture.
+author's email. At these sizes it shows one larger initial for legibility; larger circles can show
+two. Account pictures fill the same circle, with initials while unavailable or downloads are
+disabled. History and commit details share a twelve-hour local cache; a failed refresh retains
+the last picture.
 
 ### Toast
 

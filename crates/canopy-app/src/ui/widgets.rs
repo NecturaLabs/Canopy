@@ -147,11 +147,17 @@ pub fn paint_avatar(ui: &Ui, center: egui::Pos2, radius: f32, name: &str, email:
     let fill = p.avatar_fill(color);
     painter.circle_filled(center, radius, fill);
     painter.circle_stroke(center, radius, Stroke::new(1.0, Palette::tint(color, 90)));
+    let letters = initials(name);
+    let shown = if radius <= 13.0 {
+        letters.chars().take(1).collect::<String>()
+    } else {
+        letters
+    };
     painter.text(
         center,
         Align2::CENTER_CENTER,
-        initials(name),
-        FontId::new(radius * 0.85, theme::semibold()),
+        shown,
+        FontId::new(radius, theme::semibold()),
         p.ink(color, fill),
     );
 }
