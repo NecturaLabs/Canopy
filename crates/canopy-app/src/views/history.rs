@@ -298,7 +298,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
 
     let total_rows = row_count + usize::from(snap.truncated && filtered.is_none());
     let mut wanted_pictures = Vec::new();
-    area.show_rows(ui, ROW_H, total_rows, |ui, range| {
+    let list = area.show_rows(ui, ROW_H, total_rows, |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for ri in range {
             let Some(ci) = commit_at(ri).filter(|_| ri < row_count) else {
@@ -473,6 +473,8 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             resp.context_menu(|ui| commit_menu(ui, oid, &summary, forge.as_ref(), actions));
         }
     });
+
+    widgets::scroll_fade(ui, &list, p.bg);
 
     for (oid, email) in wanted_pictures {
         tab.request_avatar(oid, &email);
