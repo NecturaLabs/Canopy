@@ -91,10 +91,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
 
 fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let width = ui.available_width();
     egui::Frame::new()
         .fill(p.panel)
-        .inner_margin(egui::Margin::symmetric(14, 8))
+        .inner_margin(egui::Margin::symmetric(theme::LG as i8, theme::SM as i8))
         .show(ui, |ui| {
+            ui.set_min_width((width - theme::LG * 2.0).max(0.0));
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(icon::GIT_DIFF)
