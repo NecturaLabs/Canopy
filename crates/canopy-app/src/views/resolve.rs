@@ -65,7 +65,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             ui.vertical_centered(|ui| {
                 ui.label(
                     RichText::new(icon::CHECK_CIRCLE)
-                        .size(34.0)
+                        .size(theme::ICON_HERO)
                         .color(p.success),
                 );
                 ui.label(
@@ -96,7 +96,11 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
         .inner_margin(egui::Margin::symmetric(14, 8))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(icon::GIT_DIFF).size(16.0).color(p.warning));
+                ui.label(
+                    RichText::new(icon::GIT_DIFF)
+                        .size(theme::ICON_MD)
+                        .color(p.warning),
+                );
                 let (name, dir) = widgets::split_path(&r.path);
                 ui.label(
                     RichText::new(name)
@@ -200,7 +204,7 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
     };
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
-        ui.label(RichText::new(icon::GIT_DIFF).size(34.0).color(p.warning));
+        ui.label(RichText::new(icon::GIT_DIFF).size(theme::ICON_HERO).color(p.warning));
         ui.label(RichText::new(title).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
         if !body.is_empty() {
             ui.label(RichText::new(body).color(p.text_dim));

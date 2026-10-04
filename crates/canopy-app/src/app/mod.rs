@@ -60,6 +60,10 @@ pub const OVERLAYS: &[&str] = &[
     "update-running",
     "trust-folder",
     "diff-options",
+    "settings-integrations",
+    "settings-accounts",
+    "settings-updates",
+    "settings-keyboard",
 ];
 
 /// Options from the command line.
@@ -254,6 +258,19 @@ impl CanopyApp {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
             Some("settings-git") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git))
+            }
+            Some("settings-integrations") => {
+                app.settings_screen =
+                    Some(SettingsScreen::at(settings_screen::Section::Integrations))
+            }
+            Some("settings-accounts") => {
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Accounts))
+            }
+            Some("settings-updates") => {
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates))
+            }
+            Some("settings-keyboard") => {
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard))
             }
             Some("cheatsheet") => app.cheatsheet.open = true,
             Some("palette") => app.palette.open(),

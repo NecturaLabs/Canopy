@@ -215,7 +215,7 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
     let p = palette(ui.ctx());
     let response = ui
         .add(
-            egui::Button::new(RichText::new(glyph).size(15.0).color(p.text_dim))
+            egui::Button::new(RichText::new(glyph).size(theme::ICON_MD).color(p.text_dim))
                 .frame(false)
                 .min_size(vec2(26.0, 26.0)),
         )
@@ -272,7 +272,7 @@ pub fn tool_button(
         rect.center_top() + vec2(0.0, theme::MD),
         Align2::CENTER_CENTER,
         glyph,
-        FontId::proportional(16.0),
+        FontId::proportional(theme::ICON_MD),
         color,
     );
     ui.painter().text(
@@ -328,7 +328,7 @@ pub fn icon_segmented(ui: &mut Ui, selected: usize, options: &[(&str, &str)]) ->
             text: glyph,
             name,
             selected: i == selected,
-            font: FontId::proportional(14.0),
+            font: FontId::proportional(theme::ICON_SM),
         })
         .collect();
     segment_track(ui, &segments, ui.spacing().interact_size.y, theme::SM)

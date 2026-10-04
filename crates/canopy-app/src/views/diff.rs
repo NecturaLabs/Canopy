@@ -1044,7 +1044,11 @@ fn empty(ui: &mut Ui, glyph: &str, title: &str, body: &str) {
     let p = palette(ui.ctx());
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
-        ui.label(RichText::new(glyph).size(34.0).color(p.text_faint));
+        ui.label(
+            RichText::new(glyph)
+                .size(theme::ICON_HERO)
+                .color(p.text_faint),
+        );
         ui.label(RichText::new(title).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
         ui.label(RichText::new(body).color(p.text_dim));
     });

@@ -39,14 +39,14 @@ fn section(
         rect.left_center() + vec2(8.0, 0.0),
         Align2::CENTER_CENTER,
         chevron,
-        FontId::proportional(11.0),
+        FontId::proportional(theme::ICON_XS),
         color,
     );
     ui.painter().text(
         rect.left_center() + vec2(22.0, 0.0),
         Align2::CENTER_CENTER,
         glyph,
-        FontId::proportional(13.0),
+        FontId::proportional(theme::ICON_SM),
         color,
     );
     ui.painter().text(
@@ -111,7 +111,7 @@ fn row(ui: &mut Ui, r: Row<'_>) -> egui::Response {
         egui::pos2(x + 6.0, rect.center().y),
         Align2::CENTER_CENTER,
         r.glyph,
-        FontId::proportional(13.5),
+        FontId::proportional(theme::ICON_SM),
         r.color,
     );
     let mut right = rect.max.x - 10.0;

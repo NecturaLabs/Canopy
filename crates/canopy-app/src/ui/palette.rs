@@ -231,7 +231,7 @@ impl<T: Clone> CommandPalette<T> {
                         ui.horizontal(|ui| {
                             ui.label(
                                 RichText::new(icon::MAGNIFYING_GLASS)
-                                    .size(17.0)
+                                    .size(theme::ICON_MD)
                                     .color(p.accent),
                             );
                             let edit = ui.add(
@@ -315,7 +315,7 @@ impl<T: Clone> CommandPalette<T> {
                                         c + vec2(16.0, 0.0),
                                         Align2::CENTER_CENTER,
                                         e.icon,
-                                        FontId::proportional(16.0),
+                                        FontId::proportional(theme::ICON_MD),
                                         if selected { p.accent } else { p.text_dim },
                                     );
                                     let shortcut_width = ui

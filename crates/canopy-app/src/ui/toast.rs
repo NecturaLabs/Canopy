@@ -103,7 +103,7 @@ impl Toasts {
                         .show(ui, |ui| {
                             ui.set_max_width(380.0);
                             ui.horizontal_top(|ui| {
-                                ui.label(RichText::new(glyph).size(18.0).color(color));
+                                ui.label(RichText::new(glyph).size(theme::ICON_LG).color(color));
                                 ui.vertical(|ui| {
                                     ui.label(
                                         RichText::new(&t.title)

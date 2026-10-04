@@ -218,6 +218,19 @@ for state markers (HEAD, conflict, current branch). Icons inherit `text-dim` and
 hover and `accent` when active. Toolbar buttons pair an icon with a short label; icon-only buttons
 always have a tooltip naming the action and its shortcut.
 
+A glyph beside text takes the text's size. A glyph drawn on its own takes one of the icon sizes
+in `theme.rs`:
+
+| Token | Size | Use |
+|---|---|---|
+| `ICON_XS` | 11.5px | Disclosure chevrons, close crosses on tabs and recent repositories |
+| `ICON_SM` | 14px | Sidebar row glyphs, tab and segmented-control icons |
+| `ICON_MD` | 16px | Buttons, palette rows, settings navigation, request status |
+| `ICON_LG` | 18px | Toasts, account cards, the welcome tip |
+| `ICON_TITLE` | 20px | Beside a dialog's title |
+| `ICON_XL` | 24px | The welcome screen's action cards |
+| `ICON_HERO` | 32px | The centre of an empty or finished state |
+
 ## Layout
 
 ```text
