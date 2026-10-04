@@ -590,10 +590,7 @@ fn composer(
     }
     let staged = snap.status.staged.len();
     let merging = snap.state == canopy_core::RepoState::Merge;
-    let can = (staged > 0 || tab.amend || merging)
-        && !tab.commit_summary.trim().is_empty()
-        && tab.running.is_none()
-        && snap.status.conflicted.is_empty();
+    let can = tab.can_commit();
     let blocker = if can {
         None
     } else {

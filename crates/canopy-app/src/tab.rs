@@ -398,12 +398,21 @@ impl RepoTab {
         commit_limit: usize,
         diff_prefs: DiffPrefs,
     ) -> Self {
+        let worker = Worker::spawn(path.clone(), ctx.clone());
+        worker.send(Job::Refresh(commit_limit));
+        Self::with_worker(path, commit_limit, diff_prefs, worker)
+    }
+
+    pub(crate) fn with_worker(
+        path: PathBuf,
+        commit_limit: usize,
+        diff_prefs: DiffPrefs,
+        worker: Worker,
+    ) -> Self {
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        let worker = Worker::spawn(path.clone(), ctx.clone());
-        worker.send(Job::Refresh(commit_limit));
         Self {
             path,
             identity: None,
@@ -455,6 +464,19 @@ impl RepoTab {
             avatars: Default::default(),
             last_fetch: Instant::now(),
         }
+    }
+
+    /// Whether the composer can submit a commit through any input path.
+    pub fn can_commit(&self) -> bool {
+        self.snap.as_ref().is_some_and(|snap| {
+            (!snap.status.staged.is_empty()
+                || self.amend
+                || snap.state == canopy_core::RepoState::Merge)
+                && !self.commit_summary.trim().is_empty()
+                && self.running.is_none()
+                && snap.status.conflicted.is_empty()
+                && (!self.amend || snap.state == canopy_core::RepoState::Clean)
+        })
     }
 
     /// Queues a mutation.
@@ -892,13 +914,14 @@ impl RepoTab {
                             .snap
                             .as_ref()
                             .is_none_or(|old| old.state != canopy_core::RepoState::Merge);
-                    if entering_merge {
+                    if s.state != canopy_core::RepoState::Clean {
                         self.amend = false;
-                        if self.commit_summary.trim().is_empty()
-                            && self.commit_body.trim().is_empty()
-                        {
-                            self.worker.send(Job::MergeMessage);
-                        }
+                    }
+                    if entering_merge
+                        && self.commit_summary.trim().is_empty()
+                        && self.commit_body.trim().is_empty()
+                    {
+                        self.worker.send(Job::MergeMessage);
                     }
                     self.name = s.name.clone();
                     let head = s.head.oid;
@@ -1037,6 +1060,16 @@ impl RepoTab {
                     }
                 }
                 Event::HeadMessage(m) => {
+                    if !self.amend
+                        || self
+                            .snap
+                            .as_ref()
+                            .is_none_or(|snap| snap.state != canopy_core::RepoState::Clean)
+                        || !self.commit_summary.trim().is_empty()
+                        || !self.commit_body.trim().is_empty()
+                    {
+                        continue;
+                    }
                     let mut parts = m.splitn(2, '\n');
                     self.commit_summary = parts.next().unwrap_or("").trim().to_owned();
                     self.commit_body = parts.next().unwrap_or("").trim().to_owned();
@@ -1271,6 +1304,98 @@ mod tests {
     }
 
     const TWO: &str = "a\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nb\n<<<<<<< ours\n1\n=======\n2\n>>>>>>> theirs\n";
+
+    #[test]
+    fn commit_submission_requires_staged_changes() {
+        let (worker, _, _) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        tab.commit_summary = "Draft".into();
+        assert!(!tab.can_commit());
+    }
+
+    #[test]
+    fn commit_submission_blocks_unresolved_conflicts() {
+        let (worker, _, _) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.snap = Some(Arc::new(RepoSnapshot {
+            state: canopy_core::RepoState::Merge,
+            status: canopy_core::WorkingStatus {
+                conflicted: vec![open_unstaged_file().entry],
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+        tab.commit_summary = "Draft".into();
+        assert!(!tab.can_commit());
+    }
+
+    #[test]
+    fn commit_submission_blocks_running_operations() {
+        let (worker, _, _) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.snap = Some(Arc::new(RepoSnapshot {
+            state: canopy_core::RepoState::Merge,
+            ..Default::default()
+        }));
+        tab.commit_summary = "Draft".into();
+        tab.running = Some("Busy".into());
+        assert!(!tab.can_commit());
+    }
+
+    #[test]
+    fn a_rebase_snapshot_clears_amend() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.amend = true;
+        events
+            .send(Event::Snapshot(Arc::new(RepoSnapshot {
+                state: canopy_core::RepoState::Rebase,
+                ..Default::default()
+            })))
+            .expect("snapshot");
+        tab.poll(&[]);
+        assert!(!tab.amend);
+    }
+
+    #[test]
+    fn an_amend_prefill_after_a_merge_snapshot_preserves_the_draft() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.amend = true;
+        tab.commit_summary = "Merge draft".into();
+        events
+            .send(Event::Snapshot(Arc::new(RepoSnapshot {
+                state: canopy_core::RepoState::Merge,
+                ..Default::default()
+            })))
+            .expect("snapshot");
+        events
+            .send(Event::HeadMessage("Old head message".into()))
+            .expect("message");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "Merge draft");
+    }
+
+    #[test]
+    fn an_amend_prefill_preserves_a_draft_typed_while_loading() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        tab.amend = true;
+        tab.commit_summary = "Typed draft".into();
+        events
+            .send(Event::HeadMessage("Old head message".into()))
+            .expect("message");
+        tab.poll(&[]);
+        assert_eq!(tab.commit_summary, "Typed draft");
+    }
 
     #[test]
     fn reloading_keeps_choices_only_for_unchanged_conflicts() {
