@@ -718,8 +718,7 @@ pub fn show(
                         ui.label(RichText::new(crate::build_info::title_label()).color(p.text_dim));
                         ui.add_space(8.0);
                         ui.label(RichText::new("A fast, beautiful, Linux-first Git client.").color(p.text_dim));
-                        ui.label(RichText::new("© 2026 NecturaLabs. Built with Rust, egui and libgit2.").size(theme::META_SIZE).color(p.text_faint));
-                        ui.label(RichText::new("Fonts: Inter and JetBrains Mono (SIL OFL 1.1). Icons: Phosphor (MIT).").size(theme::META_SIZE).color(p.text_faint));
+                        ui.label(RichText::new("© 2026 NecturaLabs.").size(theme::META_SIZE).color(p.text_faint));
                         if ui.link(RichText::new("Open-source licences").size(theme::META_SIZE)).clicked() {
                             outcome = Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Notices))]);
                         }
