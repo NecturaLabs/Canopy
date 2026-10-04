@@ -397,7 +397,10 @@ pub fn show(
                 Dialog::Merge { target, rebase, mode } => {
                     let current = tab.and_then(|t| t.snap.as_ref()).map(|s| s.head.label()).unwrap_or_default();
                     title(ui, icon::GIT_MERGE, if *rebase { "Rebase" } else { "Merge" });
-                    widgets::segmented(ui, rebase, &[(false, "Merge into current"), (true, "Rebase current onto")]);
+                    // The branch name keeps the two choices from reading as "current" in the abstract.
+                    let shown: String = if current.chars().count() > 20 { current.chars().take(19).chain(['…']).collect() } else { current.clone() };
+                    let (merge_label, rebase_label) = if shown.is_empty() { ("Merge into current".to_owned(), "Rebase current onto".to_owned()) } else { (format!("Merge into {shown}"), format!("Rebase {shown} onto")) };
+                    widgets::segmented(ui, rebase, &[(false, merge_label.as_str()), (true, rebase_label.as_str())]);
                     ui.add_space(8.0);
                     egui::ComboBox::from_id_salt("merge-target").icon(crate::ui::widgets::combo_caret).width(ui.available_width()).selected_text(if target.is_empty() { "Choose a branch…".to_owned() } else { target.clone() }).show_ui(ui, |ui| {
                         // Listed only while the menu is open, not on every frame of the dialog.
