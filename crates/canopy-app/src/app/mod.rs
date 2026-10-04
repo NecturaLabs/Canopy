@@ -65,6 +65,7 @@ pub const OVERLAYS: &[&str] = &[
     "settings-updates",
     "settings-keyboard",
     "about",
+    "toasts",
 ];
 
 /// Options from the command line.
@@ -271,6 +272,20 @@ impl CanopyApp {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates))
             }
             Some("about") => app.dialogs.open(Dialog::About),
+            Some("toasts") => {
+                app.toasts.push(
+                    &cc.egui_ctx,
+                    crate::ui::toast::ToastKind::Error,
+                    "Push failed",
+                    "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
+                );
+                app.toasts.push(
+                    &cc.egui_ctx,
+                    crate::ui::toast::ToastKind::Success,
+                    "Committed",
+                    "docs: add API reference",
+                );
+            }
             Some("settings-keyboard") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard))
             }
