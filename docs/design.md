@@ -392,6 +392,13 @@ on release, so the control stays under the pointer; typing a percentage applies 
 when the field loses focus. A row's label column is always half the width, so controls of different
 rows line up on the right however short their help text is.
 
+A row's help is one sentence; longer explanation sits behind a "More" link and opens beneath the
+row at reading width (560 points). Settings → Keyboard shows one key column of the cheatsheet's
+keycaps with the descriptions on a shared edge. A selected theme card has an accent ring, a halo
+and a tick; hover is a neutral hairline. Cards fill the row in whole columns and reflow with the
+width. Text-field placeholders are italic and faint, and fields in a section share one width.
+Long paths in settings are cut in the middle with the whole path in a tooltip.
+
 Browse opens the native folder chooser on a background thread. The requesting button displays
 “Choosing…” while it is open; the app keeps processing events. A closed requesting field discards
 late results. Cancellation leaves the field unchanged, and a failed chooser allows retry. Clone destination
