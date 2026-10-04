@@ -800,14 +800,13 @@ pub fn glow(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Col
     painter.add(mesh);
 }
 
-/// A section heading in small capitals.
+/// A sentence-case section heading.
 pub fn section_label(ui: &mut Ui, text: &str) {
     let p = palette(ui.ctx());
     ui.label(
-        RichText::new(text.to_uppercase())
-            .font(FontId::new(theme::MICRO_SIZE, theme::semibold()))
-            .color(p.text_faint)
-            .extra_letter_spacing(0.8),
+        RichText::new(text)
+            .font(FontId::new(theme::SMALL_SIZE, theme::semibold()))
+            .color(p.text_dim),
     );
 }
 

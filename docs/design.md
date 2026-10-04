@@ -159,9 +159,11 @@ are sized for their optical weight and are not part of the scale.
 | `BODY_SIZE` | Inter Regular or Medium | 13 | Default text, table rows, branch names |
 | `META_SIZE` | Inter Regular | 12 | Metadata beside a row's main text, setting descriptions |
 | `SMALL_SIZE` | Inter Regular or Medium | 11.5 | Hints, counts, badges, status bar |
-| `MICRO_SIZE` | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Pills and section labels |
+| `MICRO_SIZE` | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Pills, sidebar sections and table headers |
 | `MONO_SIZE` | JetBrains Mono Regular | 12.5 | Diffs, commit message editor, error output |
 | `MONO_SMALL_SIZE` | JetBrains Mono Regular | 11.5 | Short SHAs, key chords, History dates and line counts |
+
+Other section headings use sentence case at SMALL semibold in `text-dim`, without tracking.
 
 The global Body, Button, Small and Heading styles use the typography tokens in `theme.rs`.
 History rows are 30 points tall, diff lines 20 points.
