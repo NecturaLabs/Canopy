@@ -30,6 +30,18 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         loading(ui, tab);
         return;
     }
+    if tab
+        .snap
+        .as_ref()
+        .is_some_and(|snap| snap.commits.is_empty())
+    {
+        tab.history_layout.compact_details = false;
+        tab.history_layout.expanded = false;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(p.bg))
+            .show(ui, |ui| table(ui, tab, settings, actions));
+        return;
+    }
     let h = ui.available_height();
     let compact_table_min = ROW_H * 6.0 + theme::XL + theme::MD;
     let has_state_banner = tab
