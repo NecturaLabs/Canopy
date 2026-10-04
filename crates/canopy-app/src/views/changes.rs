@@ -202,6 +202,9 @@ fn list(
             (icon::PLUS, "Stage")
         };
         let bresp = ui.interact(btn, resp.id.with("act"), Sense::click());
+        bresp.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{tip} {}", f.path))
+        });
         if resp.hovered() || bresp.hovered() || selected {
             ui.painter().rect(
                 btn,

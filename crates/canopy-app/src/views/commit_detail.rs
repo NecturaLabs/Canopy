@@ -423,6 +423,9 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egu
     let p = palette(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), FILE_ROW_H), Sense::hover());
     let resp = ui.interact(rect, id, Sense::click());
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &f.path)
+    });
     let hover = ui
         .ctx()
         .animate_bool_with_time(resp.id, resp.hovered(), 0.1);
