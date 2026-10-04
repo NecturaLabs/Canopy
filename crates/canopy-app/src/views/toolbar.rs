@@ -496,11 +496,10 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                         .layout_no_wrap(
                             format!("{}  Local only", icon::HARD_DRIVES),
                             FontId::proportional(theme::META_SIZE),
-                            p.accent2,
+                            p.text_faint,
                         )
                         .size()
                         .x
-                        + 18.0
                         + theme::SM
                 } else {
                     0.0
@@ -548,21 +547,14 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     actions.push(Action::OpenUrl(f.web_url()));
                 }
                 if show_local {
-                    egui::Frame::new()
-                        .fill(Palette::tint(p.accent2, 30))
-                        .corner_radius(CornerRadius::same(10))
-                        .inner_margin(egui::Margin::symmetric(9, 3))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(format!("{}  Local only", icon::HARD_DRIVES))
-                                    .size(theme::META_SIZE)
-                                    .color(p.accent2),
-                            )
-                        })
-                        .response
-                        .on_hover_text(
-                            "No remote: everything stays on this computer until you publish",
-                        );
+                    ui.label(
+                        RichText::new(format!("{}  Local only", icon::HARD_DRIVES))
+                            .size(theme::META_SIZE)
+                            .color(p.text_faint),
+                    )
+                    .on_hover_text(
+                        "No remote: everything stays on this computer until you publish",
+                    );
                 }
             });
         });

@@ -276,6 +276,8 @@ in `theme.rs`:
   scrollbar. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
+- When there is no remote, the toolbar says "Local only" as dim status text with an explanatory
+  tooltip, rather than styling it as an active control.
 - Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;
   Discard is a ghost that turns `danger` under the pointer and sits apart on the right, and on
   very wide panes the actions stay within 960 px of the left edge. A new or deleted file is always
