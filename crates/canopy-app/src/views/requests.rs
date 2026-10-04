@@ -766,17 +766,18 @@ fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Ac
     ui.add_space(6.0);
     let can = !tab.requests.comment.trim().is_empty() && tab.requests.busy.is_none();
     ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                can,
-                egui::Button::new(format!("{}  Comment", icon::CHAT_CIRCLE_TEXT)),
-            )
-            .clicked()
-        {
+        if widgets::primary_button(ui, "Comment", can, 112.0).clicked() {
             actions.push(Action::Host(HostJob::Comment(
                 number,
                 tab.requests.comment.trim().to_owned(),
             )));
+        }
+        if tab.requests.comment.trim().is_empty() {
+            ui.label(
+                RichText::new("Write a comment to enable")
+                    .size(theme::SMALL_SIZE)
+                    .color(palette(ui.ctx()).text_faint),
+            );
         }
     });
 }

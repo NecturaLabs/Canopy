@@ -269,6 +269,8 @@ in `theme.rs`:
   changed lines visible without reducing text size.
 - Draft requests use a dim pencil icon in the list, distinct from the green open request icon;
   the full state and branch pair remain available on hover.
+- The request conversation ends with a primary Comment action. It stays visibly placed below the
+  editor when empty, with a short explanation of why it is disabled.
 - History hides date, author and SHA columns as space decreases; full metadata remains in
   commit details and row tooltips. Row content is clipped to the table's scroll viewport.
 - History search stays hidden until Ctrl+F or `/` opens it and focuses the field. The same
