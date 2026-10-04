@@ -263,7 +263,8 @@ in `theme.rs`:
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
 - Commit details use a compact author, SHA and date above the changed files. Commit information
-  opens independently of pane expansion and retains its state; its body scrolls while the files
+  starts open, opens independently of pane expansion and retains its state; its body scrolls while
+  the files
   stay reachable.
 - Commit metadata, the Changes file list, and the request list take at most 40% of their
   available width, leaving the rest for the diff or request details. Pane limits follow the

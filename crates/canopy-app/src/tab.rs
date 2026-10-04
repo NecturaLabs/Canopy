@@ -41,7 +41,7 @@ impl Default for HistoryLayout {
         Self {
             expanded: false,
             compact_details: true,
-            information_open: false,
+            information_open: true,
             compact: false,
         }
     }
