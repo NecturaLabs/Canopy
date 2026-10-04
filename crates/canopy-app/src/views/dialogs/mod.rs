@@ -207,6 +207,7 @@ pub fn show(
     picker: &mut crate::ui::folder_picker::FolderPicker,
     clone_running: bool,
     updater: &crate::updater::Updater,
+    git_version: &str,
 ) -> Outcome {
     let p = palette(ctx);
     let mut outcome = Outcome::Keep;
@@ -261,12 +262,16 @@ pub fn show(
                     ui.label("Git stores an author name and email in every new commit. Enter the details you want to use. Canopy will not guess them, and commits already made keep their authors.");
                     ui.add_space(theme::MD);
                     ui.label("Name");
-                    ui.add(egui::TextEdit::singleline(name).desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
+                    ui.add(egui::TextEdit::singleline(name).hint_text("e.g. Ada Lovelace").desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
                     ui.label("Email");
-                    ui.add(egui::TextEdit::singleline(email).desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
+                    ui.add(egui::TextEdit::singleline(email).hint_text("e.g. ada@example.com").desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
                     ui.add_space(theme::XS);
                     ui.label(RichText::new("Saved to your global Git configuration, so every repository without its own identity uses it. You can change it later in Settings → Git.").size(theme::META_SIZE).color(p.text_dim));
                     let ok = !name.trim().is_empty() && !email.trim().is_empty() && !*pending;
+                    if !ok && !*pending {
+                        ui.add_space(theme::XS);
+                        ui.label(RichText::new(if name.trim().is_empty() && email.trim().is_empty() { "Enter a name and an email to save." } else if name.trim().is_empty() { "Enter a name to save." } else { "Enter an email to save." }).size(theme::META_SIZE).color(p.text_faint));
+                    }
                     if primary(ui, "Save globally", ok) {
                         outcome = Outcome::RunKeep(vec![Action::SaveIdentity {
                             repo: None,
@@ -392,7 +397,10 @@ pub fn show(
                 Dialog::Merge { target, rebase, mode } => {
                     let current = tab.and_then(|t| t.snap.as_ref()).map(|s| s.head.label()).unwrap_or_default();
                     title(ui, icon::GIT_MERGE, if *rebase { "Rebase" } else { "Merge" });
-                    widgets::segmented(ui, rebase, &[(false, "Merge into current"), (true, "Rebase current onto")]);
+                    // The branch name keeps the two choices from reading as "current" in the abstract.
+                    let shown: String = if current.chars().count() > 20 { current.chars().take(19).chain(['…']).collect() } else { current.clone() };
+                    let (merge_label, rebase_label) = if shown.is_empty() { ("Merge into current".to_owned(), "Rebase current onto".to_owned()) } else { (format!("Merge into {shown}"), format!("Rebase {shown} onto")) };
+                    widgets::segmented(ui, rebase, &[(false, merge_label.as_str()), (true, rebase_label.as_str())]);
                     ui.add_space(8.0);
                     egui::ComboBox::from_id_salt("merge-target").icon(crate::ui::widgets::combo_caret).width(ui.available_width()).selected_text(if target.is_empty() { "Choose a branch…".to_owned() } else { target.clone() }).show_ui(ui, |ui| {
                         // Listed only while the menu is open, not on every frame of the dialog.
@@ -504,6 +512,14 @@ pub fn show(
                         canopy_core::identity::Scope::Global => "your global Git configuration, which every repository without its own identity uses",
                     };
                     ui.label(RichText::new(format!("This removes user.name and user.email from {target}. Commits already made keep their authors. If the same value is also set in another file, that one stays in use.")).color(p.text_dim));
+                    if let Some(values) = identity_in_scope(tab, *scope) {
+                        ui.add_space(theme::SM);
+                        egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(RichText::new("Removing").size(theme::META_SIZE).color(p.text_dim));
+                            ui.label(RichText::new(values).font(FontId::monospace(theme::MONO_SIZE)).color(p.text));
+                        });
+                    }
                     ui.add_space(16.0);
                     match confirm_buttons(ui, "Clear identity", true) {
                         Some(true) => outcome = Outcome::Run(vec![Action::ClearIdentity { repo: repo.clone(), scope: *scope }]),
@@ -517,23 +533,27 @@ pub fn show(
                     ui.label(RichText::new(format!("{} is a partial clone: some of its files were left on the server. To show them, Canopy has to download them from {remote} with git, and git then follows this repository's own configuration, which can run programs and contact servers.", name(repo))).color(p.text_dim));
                     ui.add_space(theme::SM);
                     ui.label(RichText::new("Trust a folder only if everything in it was made by you or by people you trust. You can remove it again in Settings.").color(p.text_dim));
-                    ui.add_space(16.0);
-                    let wide = |ui: &Ui| egui::vec2(ui.available_width(), 34.0);
-                    if widgets::accent_button(ui, &format!("Trust {}", name(repo)), wide(ui)).clicked() {
-                        outcome = Outcome::Run(vec![Action::TrustFolder(repo.clone())]);
-                    }
                     if let Some(parent) = crate::trust::parent_offer(repo) {
+                        ui.add_space(theme::MD);
+                        ui.separator();
                         ui.add_space(theme::XS);
-                        let size = wide(ui);
-                        if ui.add_sized(size, egui::Button::new(format!("Trust everything in {}", name(&parent)))).on_hover_text(parent.display().to_string()).clicked() {
+                        ui.label(RichText::new(format!("Trusting {} covers every repository inside it, including ones you clone later. Only do that for a folder that is entirely yours.", name(&parent))).size(theme::META_SIZE).color(p.text_faint));
+                        let broader = egui::Button::new(RichText::new(format!("Trust everything in {}", name(&parent))).size(theme::META_SIZE).color(p.warning)).frame(false);
+                        if ui.add(broader).on_hover_text(parent.display().to_string()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             outcome = Outcome::Run(vec![Action::TrustFolder(parent)]);
                         }
                     }
-                    ui.add_space(theme::XS);
-                    let size = wide(ui);
-                    if ui.add_sized(size, egui::Button::new("Not now")).clicked() {
-                        outcome = Outcome::Close;
-                    }
+                    ui.add_space(theme::MD);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if widgets::accent_button(ui, &format!("Trust {}", name(repo)), egui::vec2(130.0, 34.0)).clicked() {
+                                outcome = Outcome::Run(vec![Action::TrustFolder(repo.clone())]);
+                            }
+                            if ui.add_sized([110.0, 34.0], egui::Button::new("Not now")).clicked() {
+                                outcome = Outcome::Close;
+                            }
+                        });
+                    });
                 }
                 Dialog::ConfirmHost { title: t, body, confirm, danger, job } => {
                     let glyph = if *danger { icon::WARNING } else { icon::GIT_MERGE };
@@ -654,7 +674,7 @@ pub fn show(
                             ui.add_space(6.0);
                             for (glyph, text, color) in [
                                 (icon::CHECK, "A report holds the error message, a stack trace, your Canopy version and your operating system.", p.success),
-                                (icon::X, "Canopy does not add your name, tokens, logs or repository files. An error message can name a file or branch.", p.danger),
+                                (icon::SHIELD_CHECK, "Canopy does not add your name, tokens, logs or repository files. An error message can name a file or branch.", p.accent),
                                 (icon::GLOBE_HEMISPHERE_WEST, "Reports are stored in the EU (Germany) by Sentry and deleted after 90 days.", p.accent2),
                             ] {
                                 bullet(ui, glyph, color, text);
@@ -698,31 +718,43 @@ pub fn show(
                         art::show(ui, art::logo(), egui::vec2(64.0, 64.0));
                         ui.label(RichText::new("Canopy").font(FontId::new(theme::DISPLAY_SIZE, theme::semibold())));
                         ui.label(RichText::new(crate::build_info::title_label()).color(p.text_dim));
+                        ui.label(RichText::new(git_version.strip_prefix("git version ").map_or_else(|| git_version.to_owned(), |v| format!("Git {v}"))).size(theme::META_SIZE).color(p.text_faint));
                         ui.add_space(8.0);
                         ui.label(RichText::new("A fast, beautiful, Linux-first Git client.").color(p.text_dim));
                         ui.label(RichText::new("© 2026 NecturaLabs.").size(theme::META_SIZE).color(p.text_faint));
+                        ui.add_space(14.0);
+                        if widgets::accent_button(ui, &format!("{}  Check for updates", icon::ARROW_CIRCLE_UP), egui::vec2(190.0, 34.0)).clicked() {
+                            outcome = Outcome::Run(vec![Action::CheckUpdates]);
+                        }
                         ui.add_space(10.0);
+                        // Where to read more: quiet text links, so the one action above stays the main one.
+                        let links: [(&str, Outcome); 4] = [
+                            ("What's new", Outcome::Run(vec![Action::WhatsNew])),
+                            ("Releases", Outcome::Run(vec![Action::OpenUrl(crate::updater::RELEASES_PAGE.to_owned())])),
+                            ("Privacy Policy", Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Privacy))])),
+                            ("Terms of Service", Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Terms))])),
+                        ];
+                        ui.spacing_mut().item_spacing.x = theme::MD;
+                        // Centre the row: its width is the labels, their button padding and the gaps.
+                        let font = FontId::proportional(theme::META_SIZE);
+                        let text_width = |t: &str| ui.painter().layout_no_wrap(t.to_owned(), font.clone(), p.accent).size().x;
+                        let row_width: f32 = links.iter().map(|(label, _)| text_width(label) + 2.0 * ui.spacing().button_padding.x).sum::<f32>() + (links.len() - 1) as f32 * (text_width("·") + 2.0 * theme::MD);
                         ui.horizontal(|ui| {
-                            ui.add_space((ui.available_width() - 400.0).max(0.0) / 2.0);
-                            if ui.button(format!("{}  Check for updates", icon::ARROW_CIRCLE_UP)).clicked() {
-                                outcome = Outcome::Run(vec![Action::CheckUpdates]);
-                            }
-                            if ui.button(format!("{}  What's new", icon::SPARKLE)).clicked() {
-                                outcome = Outcome::Run(vec![Action::WhatsNew]);
-                            }
-                            if ui.button(format!("{}  Releases", icon::ARROW_SQUARE_OUT)).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenUrl(crate::updater::RELEASES_PAGE.to_owned())]);
+                            ui.add_space(((ui.available_width() - row_width) / 2.0).max(0.0));
+                            for (i, (label, target)) in links.into_iter().enumerate() {
+                                if i > 0 {
+                                    ui.label(RichText::new("·").color(p.text_faint));
+                                }
+                                if ui.add(egui::Button::new(RichText::new(label).size(theme::META_SIZE).color(p.accent)).frame(false)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                    outcome = target;
+                                }
                             }
                         });
-                        ui.horizontal(|ui| {
-                            ui.add_space((ui.available_width() - 300.0).max(0.0) / 2.0);
-                            if ui.button(format!("{}  Privacy Policy", icon::SHIELD_CHECK)).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Privacy))]);
-                            }
-                            if ui.button(format!("{}  Terms of Service", icon::SCROLL)).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Terms))]);
-                            }
-                            if ui.button("Close").clicked() {
+                    });
+                    ui.add_space(theme::MD);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add_sized([90.0, 34.0], egui::Button::new("Close")).clicked() {
                                 outcome = Outcome::Close;
                             }
                         });
@@ -978,6 +1010,7 @@ mod tests {
                         &mut picker,
                         false,
                         &crate::updater::Updater::default(),
+                        "git version 2.55.0",
                     );
                     if pressed {
                         kept = matches!(result, Outcome::RunKeep(_));
@@ -1068,7 +1101,15 @@ mod tests {
                         ..Default::default()
                     },
                     |_| {
-                        show(&ctx, &mut dialog, None, &mut picker, false, &updater);
+                        show(
+                            &ctx,
+                            &mut dialog,
+                            None,
+                            &mut picker,
+                            false,
+                            &updater,
+                            "git version 2.55.0",
+                        );
                     },
                 );
                 output.textures_delta.clear();
@@ -1121,6 +1162,7 @@ mod tests {
                             &mut picker,
                             false,
                             &crate::updater::Updater::default(),
+                            "git version 2.55.0",
                         );
                     },
                 );
@@ -1182,6 +1224,7 @@ mod tests {
                             &mut picker,
                             false,
                             &crate::updater::Updater::default(),
+                            "git version 2.55.0",
                         );
                     },
                 );

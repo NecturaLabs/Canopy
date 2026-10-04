@@ -273,13 +273,35 @@ in `theme.rs`:
   scrollbar. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
+- Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;
+  Discard is a ghost that turns `danger` under the pointer and sits apart on the right, and on
+  very wide panes the actions stay within 960 px of the left edge. A new or deleted file is always
+  one column without the empty line-number column (the layout switch shows dimmed on Unified), and
+  its lines keep the full added/removed tint only in the gutter, with a quiet wash over the code.
+  A line wider than the pane fades out at the edge.
 - The in-progress banner (merge, rebase, cherry-pick) appears above the history table with
   continue and abort buttons.
+- Changes list headers: "Stage all" and "Unstage all" are 26 px tall (`widgets::COMPACT_H`). Discard
+  all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
+  count is neutral, not warning amber, and an empty section is left out while another has content
+  (a conflict hides Unstaged and Staged when they are empty).
+- The disabled primary button is flat with a hairline outline and faint text in every theme, never
+  the gradient. When the commit button is disabled for a reason its label does not give, a line
+  above it says so ("Write a summary to commit", "Resolve the conflicts to commit").
+- The commit composer follows the file lists while both fit the column, under a hairline, and
+  pins to the bottom with the lists scrolling above it only when they would crowd it (about
+  260 points of composer). Row actions (stage, unstage, mark resolved) show on the selected row
+  and under the pointer on any row.
+- A clean working tree gives the main pane its own state: the illustration, "Working tree
+  clean", where the branch stands (up to date, N to push or pull with that button, or local only
+  with Publish…) and the last commit. The file column then shows only "Changes 0" and a quiet
+  composer, "Nothing to commit" and the Amend choice, which expands to the full composer when
+  ticked or when text is typed.
 - Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
   interface zoom up to 160%; dimensions above are logical points after zoom.
 - Below `COMPACT_WIDTH` the view switcher names only the active view; the others keep their icon
   and count. In windows under 600 points tall the history inspector starts at 260 points and the
-  commit composer stops at 240, so the lists keep their rows. Prose and its fields (pull request
+  commit composer stops at 260, so the lists keep their rows. Prose and its fields (pull request
   details) stop at `MEASURE`, 920 points, and the welcome screen centres its content on tall
   windows. Layouts are checked at 900×560, 960×600, 1440×900 and 2560×1440.
 
@@ -350,8 +372,13 @@ appear as "Checkout <branch>" entries.
 Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, bounded by the viewport. Title, body, then right-aligned
 buttons: secondary (outlined) then primary (the `button` gradient, the same widget everywhere,
 with a focus ring). Destructive confirmations use a
-`danger` primary button whose label names the action ("Delete branch", "Discard 3 files"), never
-"OK"; Enter does not confirm a destructive dialog unless the button has focus.
+solid `danger` primary button (`widgets::danger_primary_button`, its text white or black by contrast
+with the theme's `danger`) whose label names the action ("Delete branch", "Discard 3 files"), never
+"OK"; Cancel has the initial focus, so Enter does not confirm a destructive dialog unless the button
+has focus. A choice that is riskier than the main one (trusting a whole folder) is a quiet link in
+`warning` with a line saying what it covers, never a second full-width button. Informational
+destinations (About: What's new, Releases, the legal texts) are text links in `accent`, with one
+primary button for the real action.
 
 ### Git identity
 
@@ -391,6 +418,13 @@ fit together. Zoom shows a percentage preview while dragging and applies
 on release, so the control stays under the pointer; typing a percentage applies on Enter or
 when the field loses focus. A row's label column is always half the width, so controls of different
 rows line up on the right however short their help text is.
+
+A row's help is one sentence; longer explanation sits behind a "More" link and opens beneath the
+row at reading width (560 points). Settings → Keyboard shows one key column of the cheatsheet's
+keycaps with the descriptions on a shared edge. A selected theme card has an accent ring, a halo
+and a tick; hover is a neutral hairline. Cards fill the row in whole columns and reflow with the
+width. Text-field placeholders are italic and faint, and fields in a section share one width.
+Long paths in settings are cut in the middle with the whole path in a tooltip.
 
 Browse opens the native folder chooser on a background thread. The requesting button displays
 “Choosing…” while it is open; the app keeps processing events. A closed requesting field discards

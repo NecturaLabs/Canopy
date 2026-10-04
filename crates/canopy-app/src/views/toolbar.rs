@@ -462,13 +462,20 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                         untracked: true,
                     }));
                 }
-                let stashes = snap.map(|s| s.stashes.len()).unwrap_or(0);
+                let latest = snap.and_then(|s| s.stashes.first());
+                let pop_tip = match latest {
+                    Some(st) => format!(
+                        "Apply \u{201c}{}\u{201d} and remove it from the stash list",
+                        st.message
+                    ),
+                    None => "Apply the latest stash and remove it from the stash list".to_owned(),
+                };
                 if widgets::tool_button(
                     ui,
                     icon::TRAY_ARROW_UP,
                     "Pop",
-                    &tip("Pop the latest stash", Command::PopStash),
-                    stashes > 0 && !busy,
+                    &tip(&pop_tip, Command::PopStash),
+                    latest.is_some() && !busy,
                 )
                 .clicked()
                 {

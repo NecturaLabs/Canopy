@@ -141,20 +141,7 @@ fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
     super::widgets::section_label(ui, section.title());
     ui.add_space(2.0);
     for (b, keys) in items {
-        let key_width: f32 = keys
-            .iter()
-            .map(|key| {
-                ui.painter()
-                    .layout_no_wrap(
-                        key.to_owned(),
-                        FontId::monospace(theme::MONO_SMALL_SIZE),
-                        p.text_dim,
-                    )
-                    .size()
-                    .x
-                    + 18.0
-            })
-            .sum();
+        let key_width = keycaps_width(ui, &keys);
         let description = ui.painter().layout_no_wrap(
             b.description.to_owned(),
             FontId::proportional(theme::BODY_SIZE),
@@ -185,26 +172,57 @@ fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
         // Key caps, right-aligned.
         let mut x = rect.right() - 4.0;
         for chord in keys.iter().rev() {
-            let g = ui.painter().layout_no_wrap(
-                chord.to_owned(),
-                FontId::monospace(theme::MONO_SMALL_SIZE),
-                p.text_dim,
-            );
-            let r = egui::Rect::from_min_max(
-                egui::pos2(x - g.size().x - 12.0, key_y - 10.0),
-                egui::pos2(x, key_y + 10.0),
-            );
-            ui.painter().rect(
-                r,
-                CornerRadius::same(5),
-                p.bg,
-                Stroke::new(1.0, p.border),
-                egui::StrokeKind::Inside,
-            );
-            ui.painter()
-                .galley(r.center() - g.size() / 2.0, g, p.text_dim);
-            x = r.min.x - 6.0;
+            x = paint_keycap(ui, x - keycap_width(ui, chord), key_y, chord) - KEYCAP_GAP;
         }
     }
     ui.add_space(12.0);
+}
+
+/// Space between two key caps.
+pub(crate) const KEYCAP_GAP: f32 = 6.0;
+
+/// The width of one key cap.
+pub(crate) fn keycap_width(ui: &egui::Ui, chord: &str) -> f32 {
+    ui.painter()
+        .layout_no_wrap(
+            chord.to_owned(),
+            FontId::monospace(theme::MONO_SMALL_SIZE),
+            palette(ui.ctx()).text_dim,
+        )
+        .size()
+        .x
+        + 12.0
+}
+
+/// The width of a row of key caps, with the gaps between them.
+pub(crate) fn keycaps_width(ui: &egui::Ui, chords: &[String]) -> f32 {
+    chords
+        .iter()
+        .map(|c| keycap_width(ui, c) + KEYCAP_GAP)
+        .sum()
+}
+
+/// Paints one key cap with its left edge at `left`, centred on `center_y`, and returns its right
+/// edge.
+pub(crate) fn paint_keycap(ui: &egui::Ui, left: f32, center_y: f32, chord: &str) -> f32 {
+    let p = palette(ui.ctx());
+    let g = ui.painter().layout_no_wrap(
+        chord.to_owned(),
+        FontId::monospace(theme::MONO_SMALL_SIZE),
+        p.text_dim,
+    );
+    let r = egui::Rect::from_min_max(
+        egui::pos2(left, center_y - 10.0),
+        egui::pos2(left + g.size().x + 12.0, center_y + 10.0),
+    );
+    ui.painter().rect(
+        r,
+        CornerRadius::same(5),
+        p.bg,
+        Stroke::new(1.0, p.border),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter()
+        .galley(r.center() - g.size() / 2.0, g, p.text_dim);
+    r.max.x
 }

@@ -87,16 +87,17 @@ change when current settings change; Canopy never rewrites existing commits to f
 
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
 |---|---|---|---|---|
-| Unstaged, staged and conflicted lists | Done | Yes | Yes | Yes |
+| Unstaged, staged and conflicted lists (empty ones hidden while another has content) | Done | Yes | Yes | Yes |
+| Clean working tree summary: branch status, Push/Pull/Publish, last commit | Unreleased | ? | ? | ? |
 | Stage, unstage, discard per file and all | Done | Yes | Yes | Yes |
 | Hunk staging, unstaging and discard | Done | Yes | Yes | Yes |
 | Line-level staging | Unreleased | Yes | Yes | Yes |
 | Diff with old and new line numbers | Done | Yes | Yes | Yes |
-| Side-by-side diff | Unreleased | Yes | Yes | No |
+| Side-by-side diff (a new or deleted file stays one column) | Unreleased | Yes | Yes | No |
 | Syntax highlighting in diffs | Unreleased | Yes | Yes | ? |
 | Image diff | Planned | Yes | Yes | ? |
 | Ignore whitespace, context lines setting | Unreleased | Yes | Yes | Yes |
-| Commit composer with summary counter | Done | Yes | Yes | Partial |
+| Commit composer with summary counter; follows the file lists, says why Commit is disabled | Done | Yes | Yes | Partial |
 | Amend | Done | Yes | Yes | Yes |
 | Commit signing (GPG/SSH) | Planned | Yes | Yes | Yes |
 | Commit message templates and linting | Planned | ? | Yes | ? |

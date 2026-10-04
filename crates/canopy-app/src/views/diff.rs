@@ -20,7 +20,12 @@ use crate::ui::widgets;
 use crate::worker::Op;
 
 const LINE_H: f32 = 20.0;
-const HUNK_H: f32 = 32.0;
+const HUNK_H: f32 = 36.0;
+/// Height of the hunk action buttons.
+const HUNK_BUTTON_H: f32 = 26.0;
+/// How far from the left edge the hunk actions may sit, so they stay near the code on very wide
+/// panes.
+const HUNK_ACTIONS_MAX_X: f32 = 960.0;
 /// The id of the diff options popup, which `--overlay diff-options` keeps open for screenshots.
 pub const OPTIONS_POPUP: &str = "diff-options";
 
@@ -212,6 +217,9 @@ struct Ctx<'a> {
     source: &'a DiffSource,
     path: &'a str,
     conflicted: bool,
+    /// Every line is on one side (a new or deleted file): the tint is softened so the whole file
+    /// is not one solid slab of colour.
+    one_sided: bool,
     /// Hunk and line actions are possible (working copy, whitespace shown).
     editable: bool,
     context: u32,
@@ -314,7 +322,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         return;
     }
 
-    let split = tab.split_diff && !sel.conflicted;
+    let (show_old, show_new) = gutters(&d);
+    // A new or deleted file has nothing to set beside its lines: one column, whatever the toggle.
+    let split = tab.split_diff && !sel.conflicted && show_old && show_new;
     if !tab
         .diff_layout
         .as_ref()
@@ -326,13 +336,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         return;
     };
     let num_w = layout.digits as f32 * 7.6 + 12.0;
+    let gutter_w = num_w * (usize::from(show_old) + usize::from(show_new)) as f32;
     let mono = FontId::monospace(theme::MONO_SIZE);
     let char_w = ui.fonts_mut(|f| f.glyph_width(&mono, 'm'));
     let longest = layout.columns as f32;
     let content_w = if split {
         ui.available_width()
     } else {
-        (num_w * 2.0 + 24.0 + longest * char_w + 40.0).max(ui.available_width())
+        (gutter_w + 24.0 + longest * char_w + 40.0).max(ui.available_width())
     };
 
     let highlights = if tab.highlight_diff {
@@ -345,6 +356,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         source: &sel.source,
         path: &sel.entry.path,
         conflicted: sel.conflicted,
+        one_sided: !(show_old && show_new),
         // A whitespace-insensitive diff cannot be applied as a patch.
         editable: !sel.conflicted
             && !matches!(sel.source, DiffSource::Commit(_))
@@ -387,7 +399,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                             cx.spans(h, l),
                             rect,
                             num_w,
-                            (true, true),
+                            (show_old, show_new),
                             picked,
                             (h, l),
                         ) {
@@ -395,7 +407,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         }
                         // Gutter separator, per line so it never crosses a hunk header.
                         ui.painter().vline(
-                            origin.x + num_w * 2.0 + 2.0,
+                            origin.x + gutter_w + 2.0,
                             rect.y_range(),
                             Stroke::new(1.0, p.border),
                         );
@@ -450,34 +462,17 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                 }
             }
-            if split && !d.hunks.is_empty() {
-                // A side that is only filler: say why once, instead of leaving it blank.
-                if let Some((at, text)) = empty_side(&d) {
-                    let shown = viewport.translate(origin.to_vec2());
-                    ui.painter().text(
-                        pos2(
-                            origin.x + content_w * at,
-                            shown.top().max(origin.y)
-                                + shown.height().min(layout.total_height()) / 2.0,
-                        ),
-                        Align2::CENTER_CENTER,
-                        text,
-                        FontId::proportional(theme::SMALL_SIZE),
-                        p.text_faint,
-                    );
-                }
-            }
         });
 }
 
-/// Where a side-by-side diff has a side that is only filler, and what to say there: the horizontal
-/// centre of that side as a fraction of the width, and the note.
-/// Hunks alone cannot tell: without context lines a modified file's hunks can all be insertions.
-fn empty_side(d: &FileDiff) -> Option<(f32, &'static str)> {
-    match d.kind? {
-        ChangeKind::Added | ChangeKind::Untracked => Some((0.25, "New file — nothing before")),
-        ChangeKind::Deleted => Some((0.75, "Deleted — nothing after")),
-        _ => None,
+/// Which line-number columns a diff shows: a new file has no old numbers and a deleted one no new
+/// numbers, so that column is dropped. Hunks alone cannot tell: without context lines a modified
+/// file's hunks can all be insertions.
+fn gutters(d: &FileDiff) -> (bool, bool) {
+    match d.kind {
+        Some(ChangeKind::Added | ChangeKind::Untracked) => (false, true),
+        Some(ChangeKind::Deleted) => (true, false),
+        _ => (true, true),
     }
 }
 
@@ -538,19 +533,11 @@ fn header(
             let mut controls = |ui: &mut Ui| {
                 diff_options(ui, tab, actions);
                 if !sel.conflicted {
-                    layout_toggle(ui, tab.split_diff, actions);
-                }
-                if let Some(lang) = tab
-                    .highlights
-                    .as_ref()
-                    .filter(|_| tab.highlight_diff)
-                    .map(|h| h.language.clone())
-                {
-                    ui.label(
-                        RichText::new(lang)
-                            .size(theme::SMALL_SIZE)
-                            .color(p.text_faint),
-                    );
+                    let one_column = tab
+                        .diff
+                        .as_deref()
+                        .is_some_and(|d| gutters(d) != (true, true));
+                    layout_toggle(ui, tab.split_diff, one_column, actions);
                 }
                 if let Some(d) = &tab.diff {
                     ui.label(
@@ -596,7 +583,7 @@ fn header(
             if single_row {
                 ui.horizontal(|ui| {
                     // The room the controls need, learnt from how they laid out last frame: it
-                    // grows while they wrap and settles on what they use, so a font, language
+                    // grows while they wrap and settles on what they use, so a font
                     // or button change needs no new guess. The numbers are only the first one.
                     let width_id = ui.id().with("diff-controls-width");
                     let controls_width = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(
@@ -646,10 +633,17 @@ fn header(
     );
 }
 
-/// Unified / side-by-side switch.
-fn layout_toggle(ui: &mut Ui, split: bool, actions: &mut Vec<Action>) {
+/// Unified / side-by-side switch. For a new or deleted file, which is always one column, it is
+/// shown off on Unified and the choice is kept for the next modified file.
+fn layout_toggle(ui: &mut Ui, split: bool, one_column: bool, actions: &mut Vec<Action>) {
     let options = [(icon::ROWS, "Unified"), (icon::COLUMNS, "Side by side")];
-    if let Some(i) = widgets::icon_segmented(ui, usize::from(split), &options) {
+    if one_column {
+        ui.add_enabled_ui(false, |ui| {
+            widgets::icon_segmented(ui, 0, &options);
+        })
+        .response
+        .on_hover_text("A new or deleted file has nothing to set beside it, so it is one column");
+    } else if let Some(i) = widgets::icon_segmented(ui, usize::from(split), &options) {
         actions.push(Action::SetSplitDiff(i == 1));
     }
 }
@@ -685,7 +679,19 @@ fn line_cell(
     });
     let painter = ui.painter();
     if let Some(bg) = bg {
-        painter.rect_filled(rect, CornerRadius::ZERO, bg);
+        if cx.one_sided {
+            // The gutter keeps the full tint and the code a quiet wash of it, so a whole new or
+            // deleted file still reads as added or removed without a solid block of colour.
+            let gutter_w = num_w * (usize::from(show_old) + usize::from(show_new)) as f32;
+            painter.rect_filled(rect, CornerRadius::ZERO, bg.gamma_multiply(0.4));
+            painter.rect_filled(
+                Rect::from_min_size(rect.min, vec2(gutter_w, rect.height())),
+                CornerRadius::ZERO,
+                bg,
+            );
+        } else {
+            painter.rect_filled(rect, CornerRadius::ZERO, bg);
+        }
         painter.rect_filled(
             Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
             CornerRadius::ZERO,
@@ -751,12 +757,37 @@ fn line_cell(
         code_job(&line.text, spans, base, &p.syntax, &cx.mono)
     };
     let galley = painter.layout_job(job);
+    let text_right = x + 24.0 + galley.size().x;
     painter.galley(pos2(x + 24.0, cy - galley.size().y / 2.0), galley, base);
+    // A line that runs past the visible edge fades out there, so it reads as continuing (scroll
+    // sideways, or widen the pane) rather than as cut off.
+    let edge = painter.clip_rect().max.x;
+    if text_right > edge + 0.5 {
+        let under = match bg {
+            Some(bg) if cx.one_sided => p.bg.lerp_to_gamma(bg, 0.4),
+            Some(bg) => bg,
+            None => p.bg,
+        };
+        fade_edge(painter, rect.y_range(), edge, under);
+    }
     let resp = resp?;
     if resp.clicked() {
         return Some(ui.input(|i| i.modifiers));
     }
     None
+}
+
+/// Fades from clear to `under` over the last pixels left of `edge`.
+fn fade_edge(painter: &egui::Painter, y: egui::Rangef, edge: f32, under: Color32) {
+    const FADE_W: f32 = 28.0;
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(pos2(edge - FADE_W, y.min), Color32::TRANSPARENT);
+    mesh.colored_vertex(pos2(edge, y.min), under);
+    mesh.colored_vertex(pos2(edge, y.max), under);
+    mesh.colored_vertex(pos2(edge - FADE_W, y.max), Color32::TRANSPARENT);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// A hunk header band with its actions (or the actions for the selected lines in it).
@@ -844,12 +875,12 @@ fn hunk_header(
     let lines_word = if n == 1 { "line" } else { "lines" };
     let buttons: Vec<(Option<HunkAction>, &str, String)> = match (cx.source, n) {
         (DiffSource::Unstaged, 0) => vec![
+            (Some(HunkAction::Stage), icon::PLUS, "Stage hunk".into()),
             (
                 Some(HunkAction::Discard),
                 icon::ARROW_COUNTER_CLOCKWISE,
                 "Discard hunk".into(),
             ),
-            (Some(HunkAction::Stage), icon::PLUS, "Stage hunk".into()),
         ],
         (DiffSource::Staged, 0) => vec![(
             Some(HunkAction::Unstage),
@@ -859,14 +890,14 @@ fn hunk_header(
         (DiffSource::Unstaged, _) => vec![
             (None, icon::X, "Clear".into()),
             (
-                Some(HunkAction::Discard),
-                icon::ARROW_COUNTER_CLOCKWISE,
-                format!("Discard {n} {lines_word}"),
-            ),
-            (
                 Some(HunkAction::Stage),
                 icon::PLUS,
                 format!("Stage {n} {lines_word}"),
+            ),
+            (
+                Some(HunkAction::Discard),
+                icon::ARROW_COUNTER_CLOCKWISE,
+                format!("Discard {n} {lines_word}"),
             ),
         ],
         (DiffSource::Staged, _) => vec![
@@ -879,7 +910,7 @@ fn hunk_header(
         ],
         (DiffSource::Commit(_), _) => Vec::new(),
     };
-    let mut bx = right;
+    let mut bx = right.min(visible_left + HUNK_ACTIONS_MAX_X);
     for (action, glyph, label) in buttons.iter().rev() {
         let text = if viewport.width() < 420.0 {
             glyph.to_string()
@@ -889,11 +920,14 @@ fn hunk_header(
         let g = ui.painter().layout_no_wrap(
             text,
             FontId::new(theme::META_SIZE, theme::medium()),
-            p.text,
+            Color32::PLACEHOLDER,
         );
         let br = Rect::from_min_max(
-            pos2(bx - g.size().x - 16.0, band.min.y + 2.0),
-            pos2(bx, band.max.y - 2.0),
+            pos2(
+                bx - g.size().x - 16.0,
+                band.center().y - HUNK_BUTTON_H / 2.0,
+            ),
+            pos2(bx, band.center().y + HUNK_BUTTON_H / 2.0),
         );
         let resp = ui
             .interact(
@@ -904,24 +938,39 @@ fn hunk_header(
             .on_hover_text(label);
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
         let danger = *action == Some(HunkAction::Discard);
-        let base = match action {
-            Some(HunkAction::Discard) => p.danger,
-            Some(_) => p.accent,
-            None => p.text_faint,
+        let hover = resp.hovered();
+        // Stage is the one filled button, Discard a ghost that only turns red under the pointer,
+        // and the rest are neutral, so the two never read as the same warm pill.
+        let (fill, edge, ink) = match action {
+            Some(HunkAction::Stage) => (
+                Palette::tint(p.success, if hover { 90 } else { 48 }),
+                Palette::tint(p.success, 150),
+                p.text,
+            ),
+            Some(HunkAction::Discard) if hover => (
+                Palette::tint(p.danger, 70),
+                Palette::tint(p.danger, 150),
+                p.danger,
+            ),
+            Some(HunkAction::Discard) => (
+                Color32::TRANSPARENT,
+                Color32::TRANSPARENT,
+                p.text_dim.lerp_to_gamma(p.danger, 0.3),
+            ),
+            _ => (
+                Palette::tint(p.text, if hover { 30 } else { 14 }),
+                Palette::tint(p.text, 60),
+                p.text,
+            ),
         };
-        let fill = Palette::tint(base, if resp.hovered() { 80 } else { 36 });
         ui.painter().rect(
             br,
             CornerRadius::same(theme::RADIUS_SM),
             fill,
-            Stroke::new(1.0, Palette::tint(base, 140)),
+            Stroke::new(1.0, edge),
             egui::StrokeKind::Inside,
         );
-        ui.painter().galley(
-            br.center() - g.size() / 2.0,
-            g,
-            if danger { p.danger } else { p.text },
-        );
+        ui.painter().galley(br.center() - g.size() / 2.0, g, ink);
         if resp.clicked() {
             match action {
                 None => *line_sel = None,
@@ -968,7 +1017,8 @@ fn hunk_header(
                 }
             }
         }
-        bx = br.min.x - 8.0;
+        // Discard sits apart from Stage so a slip toward one never lands on the other.
+        bx = br.min.x - if danger { theme::LG } else { theme::SM };
     }
     let ink = p.accent.lerp_to_gamma(p.text_dim, 0.4);
     let header = widgets::single_line_galley(
@@ -999,41 +1049,72 @@ fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let prefs = &mut tab.diff_prefs;
     let mut changed = false;
+    let lines = if prefs.context == 1 { "line" } else { "lines" };
     let resp = ui
         .add(egui::Button::new(
-            RichText::new(format!("{}  {}", icon::SLIDERS_HORIZONTAL, prefs.context))
-                .size(theme::META_SIZE)
-                .color(p.text_dim),
+            RichText::new(format!(
+                "{}  {} {lines}",
+                icon::SLIDERS_HORIZONTAL,
+                prefs.context
+            ))
+            .size(theme::META_SIZE)
+            .color(p.text_dim),
         ))
         .on_hover_text("Diff options: context lines and whitespace (this repository)");
     egui::Popup::menu(&resp)
         .id(egui::Id::new(OPTIONS_POPUP))
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            ui.set_min_width(230.0);
+            ui.set_width(300.0);
+            ui.add_space(4.0);
             ui.label(
-                RichText::new("Context lines")
-                    .size(theme::META_SIZE)
-                    .color(p.text_dim),
+                RichText::new("Diff options")
+                    .font(FontId::new(theme::BODY_SIZE, theme::semibold())),
             );
+            ui.label(
+                RichText::new("For this repository")
+                    .size(theme::META_SIZE)
+                    .color(p.text_faint),
+            );
+            ui.add_space(theme::MD);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Context lines").color(p.text_dim));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(prefs.context.to_string())
+                            .font(FontId::new(theme::BODY_SIZE, theme::semibold())),
+                    );
+                });
+            });
             changed |= ui
                 .scope(|ui| {
                     widgets::recessed_rail(ui);
-                    ui.add(egui::Slider::new(&mut prefs.context, 0..=25))
+                    ui.spacing_mut().slider_width = ui.available_width();
+                    ui.add(egui::Slider::new(&mut prefs.context, 0..=25).show_value(false))
                 })
                 .inner
                 .changed();
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new("Whitespace")
-                    .size(theme::META_SIZE)
-                    .color(p.text_dim),
+            ui.add_space(theme::MD);
+            ui.label(RichText::new("Whitespace").color(p.text_dim));
+            ui.add_space(2.0);
+            changed |= widgets::segmented(
+                ui,
+                &mut prefs.whitespace,
+                &[
+                    (WhitespaceMode::Show, "Show"),
+                    (WhitespaceMode::IgnoreEol, "Ignore trailing"),
+                    (WhitespaceMode::IgnoreAll, "Ignore all"),
+                ],
             );
-            for mode in WhitespaceMode::ALL {
-                changed |= ui
-                    .radio_value(&mut prefs.whitespace, mode, mode.label())
-                    .changed();
+            if prefs.whitespace != WhitespaceMode::Show {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Hunk staging is off while whitespace is ignored.")
+                        .size(theme::META_SIZE)
+                        .color(p.text_faint),
+                );
             }
+            ui.add_space(4.0);
         });
     if changed {
         actions.push(Action::DiffPrefsChanged);
@@ -1082,33 +1163,24 @@ mod tests {
     }
 
     #[test]
-    fn only_a_new_or_deleted_file_has_an_empty_side() {
-        let hunk = |old_lines, new_lines| Hunk {
-            header: String::new(),
-            old_start: 0,
-            old_lines,
-            new_start: 1,
-            new_lines,
-            lines: Vec::new(),
-        };
-        let diff = |kind, hunks| FileDiff {
+    fn only_a_new_or_deleted_file_drops_a_line_number_column() {
+        let diff = |kind| FileDiff {
             kind: Some(kind),
-            hunks,
+            hunks: vec![Hunk {
+                header: String::new(),
+                old_start: 0,
+                old_lines: 0,
+                new_start: 1,
+                new_lines: 3,
+                lines: Vec::new(),
+            }],
             ..FileDiff::default()
         };
-        assert_eq!(
-            empty_side(&diff(ChangeKind::Added, vec![hunk(0, 3)])).map(|n| n.0),
-            Some(0.25)
-        );
-        assert_eq!(
-            empty_side(&diff(ChangeKind::Deleted, vec![hunk(3, 0)])).map(|n| n.0),
-            Some(0.75)
-        );
+        assert_eq!(gutters(&diff(ChangeKind::Added)), (false, true));
+        assert_eq!(gutters(&diff(ChangeKind::Untracked)), (false, true));
+        assert_eq!(gutters(&diff(ChangeKind::Deleted)), (true, false));
         // Without context lines, a modified file's hunks can all be pure insertions.
-        assert_eq!(
-            empty_side(&diff(ChangeKind::Modified, vec![hunk(0, 2), hunk(0, 1)])),
-            None
-        );
+        assert_eq!(gutters(&diff(ChangeKind::Modified)), (true, true));
     }
 
     #[test]
@@ -1125,6 +1197,7 @@ mod tests {
                 source: &DiffSource::Unstaged,
                 path: "file.rs",
                 conflicted: false,
+                one_sided: false,
                 editable: false,
                 context: 3,
                 highlights: None,

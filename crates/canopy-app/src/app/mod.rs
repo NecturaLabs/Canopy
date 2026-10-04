@@ -760,6 +760,7 @@ impl eframe::App for CanopyApp {
                 &mut self.folder_picker,
                 self.clone.is_some(),
                 &self.updater,
+                &self.git_version,
             ) {
                 Outcome::Keep => {}
                 Outcome::Close => {

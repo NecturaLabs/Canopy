@@ -61,6 +61,17 @@ impl FolderPicker {
 
     /// Shows Browse and returns a selection only to the field that requested it.
     pub fn show(&mut self, ui: &mut Ui, salt: &str, start: &Path) -> Option<PathBuf> {
+        self.show_labelled(ui, salt, start, "Browse…")
+    }
+
+    /// [`Self::show`] with the button's own wording, for where the action is more than browsing.
+    pub fn show_labelled(
+        &mut self,
+        ui: &mut Ui,
+        salt: &str,
+        start: &Path,
+        idle_label: &str,
+    ) -> Option<PathBuf> {
         let id = Id::new(("folder-picker", salt));
         let active = self
             .pending
@@ -87,7 +98,7 @@ impl FolderPicker {
         let label = if self.pending.is_some() && active {
             "Choosing…"
         } else {
-            "Browse…"
+            idle_label
         };
         if ui
             .add_enabled(

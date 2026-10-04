@@ -166,7 +166,7 @@ pub enum ChangeKind {
 }
 
 impl ChangeKind {
-    /// One-letter code as `git status --short` would show it.
+    /// One-letter code, as `git status --short` shows it except `U` for untracked (git's `?`).
     pub fn letter(self) -> &'static str {
         match self {
             Self::Added => "A",
@@ -174,7 +174,7 @@ impl ChangeKind {
             Self::Deleted => "D",
             Self::Renamed => "R",
             Self::Typechange => "T",
-            Self::Untracked => "?",
+            Self::Untracked => "U",
             Self::Conflicted => "!",
         }
     }

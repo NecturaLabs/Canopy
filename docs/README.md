@@ -13,6 +13,7 @@ in a document no longer exists.
 | Why something was decided the way it was | [adr/](adr/README.md) |
 | What Canopy does today, what is planned, how it compares | [features.md](features.md) |
 | Colours, type, spacing, motion, components | [design.md](design.md) |
+| Who Canopy is for, what it is for, its positioning and principles | [../PRODUCT.md](../PRODUCT.md) |
 | Which key does what | [keybindings.md](keybindings.md) (the table itself is `BINDINGS` in `crates/canopy-app/src/keymap.rs`) |
 | How to run the app live, test an update end to end, release, what the checks are | [playbook.md](playbook.md) |
 | Rules that hold for every task, commands, product limits | [../AGENTS.md](../AGENTS.md) |

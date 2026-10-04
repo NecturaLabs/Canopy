@@ -15,6 +15,7 @@ use crate::action::Action;
 use crate::hosting::{self, TokenStore};
 use crate::keymap::{BINDINGS, Section as KeySection};
 use crate::settings::{CloneProtocol, PullMode, Settings, WhitespaceMode};
+use crate::ui::cheatsheet::{KEYCAP_GAP, keycaps_width, paint_keycap};
 use crate::ui::theme::{self, Palette, ThemeId, palette};
 use crate::ui::widgets;
 use crate::ui::widgets::forge_icon;
@@ -331,12 +332,27 @@ fn nav_item(ui: &mut Ui, current: &mut Section, s: Section) {
     }
 }
 
+/// The widest an explanation runs: a comfortable line length, however wide the column.
+const READING_WIDTH: f32 = 560.0;
+
 /// A preference and its controls. Compact columns stack the controls below the help.
 fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
+    row_more(ui, title, help, "", control);
+    row_end(ui);
+}
+
+/// The divider between two rows.
+fn row_end(ui: &mut Ui) {
+    ui.add_space(theme::SM);
+    ui.separator();
+    ui.add_space(theme::SM);
+}
+
+/// A row whose `help` is one sentence. A longer `detail` sits behind a "More" link and, once
+/// opened, runs beneath the row at reading width. The caller ends the row with [`row_end`].
+fn row_more(ui: &mut Ui, title: &str, help: &str, detail: &str, control: impl FnOnce(&mut Ui)) {
     let p = palette(ui.ctx());
-    let width = ui.available_width();
-    let label = |ui: &mut Ui| {
-        ui.label(RichText::new(title).font(FontId::new(theme::BODY_SIZE, theme::medium())));
+    let help_text = |ui: &mut Ui| {
         if !help.is_empty() {
             ui.add(
                 egui::Label::new(
@@ -348,9 +364,52 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
             );
         }
     };
+    row_layout(ui, title, &help_text, detail, control);
+}
+
+/// [`row_more`] with the help drawn by `help`.
+fn row_layout(
+    ui: &mut Ui,
+    title: &str,
+    help: &dyn Fn(&mut Ui),
+    detail: &str,
+    control: impl FnOnce(&mut Ui),
+) {
+    let p = palette(ui.ctx());
+    let width = ui.available_width();
+    let more_id = ui.make_persistent_id(("settings-more", title));
+    let mut open = !detail.is_empty()
+        && ui
+            .ctx()
+            .data(|d| d.get_temp::<bool>(more_id))
+            .unwrap_or(false);
+    let label = |ui: &mut Ui, open: &mut bool| {
+        ui.label(RichText::new(title).font(FontId::new(theme::BODY_SIZE, theme::medium())));
+        help(ui);
+        if !detail.is_empty() {
+            let (glyph, word) = if *open {
+                (icon::CARET_UP, "Less")
+            } else {
+                (icon::CARET_DOWN, "More")
+            };
+            let resp = ui
+                .add(
+                    egui::Label::new(
+                        RichText::new(format!("{word} {glyph}"))
+                            .size(theme::SMALL_SIZE)
+                            .color(p.accent),
+                    )
+                    .sense(Sense::click()),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if resp.clicked() {
+                *open = !*open;
+            }
+        }
+    };
     ui.push_id(title, |ui| {
         if width < 620.0 {
-            label(ui);
+            label(ui, &mut open);
             ui.add_space(theme::XS);
             ui.with_layout(
                 egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
@@ -368,7 +427,7 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
                         // Without this the column is only as wide as its text, and the controls
                         // of rows with short help text sit at different distances from the edge.
                         ui.set_min_width(width * 0.50);
-                        label(ui);
+                        label(ui, &mut open);
                     },
                 );
                 ui.allocate_ui_with_layout(
@@ -382,10 +441,22 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
                 );
             });
         }
+        if open {
+            ui.add_space(theme::XS);
+            ui.scope(|ui| {
+                ui.set_max_width((width - 2.0 * theme::SM).min(READING_WIDTH));
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(detail)
+                            .size(theme::SMALL_SIZE)
+                            .color(p.text_dim),
+                    )
+                    .wrap(),
+                );
+            });
+        }
     });
-    ui.add_space(theme::SM);
-    ui.separator();
-    ui.add_space(theme::SM);
+    ui.ctx().data_mut(|d| d.insert_temp(more_id, open));
 }
 
 fn heading(ui: &mut Ui, text: &str) {
@@ -396,12 +467,22 @@ fn heading(ui: &mut Ui, text: &str) {
 
 fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     heading(ui, "Theme");
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
-        for t in ThemeId::ALL {
-            if theme_card(ui, t, s.theme == t).clicked() {
-                s.theme = t;
-            }
+    // Whole cards per row, stretched to fill it, with a gutter clear of the scroll bar.
+    let gap = 12.0;
+    let usable = ui.available_width() - theme::LG;
+    let columns = (((usable + gap) / (THEME_CARD_MIN + gap)).floor() as usize).max(1);
+    let card_width = ((usable - gap * (columns - 1) as f32) / columns as f32)
+        .clamp(THEME_CARD_MIN - 20.0, THEME_CARD_MAX);
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing = vec2(gap, gap);
+        for themes in ThemeId::ALL.chunks(columns) {
+            ui.horizontal(|ui| {
+                for &t in themes {
+                    if theme_card(ui, t, s.theme == t, card_width).clicked() {
+                        s.theme = t;
+                    }
+                }
+            });
         }
     });
     ui.add_space(16.0);
@@ -483,17 +564,15 @@ fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> egui::
     response
 }
 
+/// The narrowest and widest a theme card is laid out.
+const THEME_CARD_MIN: f32 = 140.0;
+const THEME_CARD_MAX: f32 = 190.0;
+
 /// A theme preview: a miniature of the window drawn from the theme's own palette.
-fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool) -> egui::Response {
+fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> egui::Response {
     let p = palette(ui.ctx());
     let tp = id.palette();
-    let (rect, resp) = ui.allocate_exact_size(
-        vec2(
-            150.0_f32.min((ui.available_width() - theme::MD).max(120.0)),
-            112.0,
-        ),
-        Sense::click(),
-    );
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, 112.0), Sense::click());
     let hover = resp.hovered() || resp.has_focus();
     let painter = ui.painter();
     let mock = egui::Rect::from_min_size(rect.min, vec2(rect.width(), 82.0));
@@ -550,6 +629,16 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool) -> egui::Response {
         vec2(38.0, 10.0),
     );
     widgets::gradient_rect(painter, button, tp.button, tp.button2, 4);
+    // Selected: an accent ring with a halo and a tick. Hover: a neutral, brighter hairline,
+    // so the two are never mistaken for each other.
+    if selected {
+        painter.rect_stroke(
+            mock.expand(3.0),
+            CornerRadius::same(theme::RADIUS + 3),
+            Stroke::new(2.0, Palette::tint(p.accent, 70)),
+            egui::StrokeKind::Outside,
+        );
+    }
     painter.rect_stroke(
         mock,
         CornerRadius::same(theme::RADIUS),
@@ -558,13 +647,24 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool) -> egui::Response {
             if selected {
                 p.accent
             } else if hover {
-                Palette::tint(p.accent, 140)
+                p.control_border
             } else {
                 p.border
             },
         ),
         egui::StrokeKind::Outside,
     );
+    if selected {
+        let badge = egui::pos2(mock.min.x + 19.0, mock.max.y - 15.0);
+        painter.circle_filled(badge, 8.0, p.accent);
+        painter.text(
+            badge,
+            Align2::CENTER_CENTER,
+            icon::CHECK,
+            FontId::proportional(theme::SMALL_SIZE),
+            p.on_button,
+        );
+    }
     let label = if selected {
         format!("{}  {}", icon::CHECK_CIRCLE, id.name())
     } else {
@@ -625,17 +725,68 @@ fn source_label_in(source: Option<&Source>, home: &Path) -> String {
     }
 }
 
-/// What Git would use now for one part of an identity, and why.
-fn in_use(field: &Field) -> String {
+/// What Git would use now for one part of an identity, and why: the value, then where it is
+/// set, cut in the middle to the column with the whole of it in a tooltip.
+fn in_use(ui: &mut Ui, field: &Field) {
+    let p = palette(ui.ctx());
+    let size = theme::SMALL_SIZE;
     if field.value.is_empty() {
-        "Not set.".into()
-    } else {
-        format!(
-            "In use now: {} ({}).",
-            field.value,
-            source_label(field.source.as_ref())
-        )
+        ui.label(RichText::new("Not set.").size(size).color(p.text_dim));
+        return;
     }
+    ui.add(
+        egui::Label::new(
+            RichText::new(format!("In use now: {}", field.value))
+                .size(size)
+                .color(p.text_dim),
+        )
+        .truncate(),
+    );
+    let source = format!("From {}", source_label(field.source.as_ref()));
+    let shown = elide_middle(
+        ui,
+        &source,
+        FontId::proportional(size),
+        ui.available_width(),
+    );
+    let cut = shown != source;
+    let resp = ui.add(egui::Label::new(
+        RichText::new(shown).size(size).color(p.text_faint),
+    ));
+    if cut {
+        resp.on_hover_text(source);
+    }
+}
+
+/// `text` cut in its middle with an ellipsis until it fits in `max_width`.
+fn elide_middle(ui: &Ui, text: &str, font: FontId, max_width: f32) -> String {
+    let width = |t: &str| {
+        ui.painter()
+            .layout_no_wrap(t.to_owned(), font.clone(), egui::Color32::WHITE)
+            .size()
+            .x
+    };
+    if width(text) <= max_width {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let build = |keep: usize| {
+        let head = keep.div_ceil(2);
+        let tail = keep / 2;
+        let start: String = chars[..head].iter().collect();
+        let end: String = chars[chars.len() - tail..].iter().collect();
+        format!("{start}…{end}")
+    };
+    let (mut low, mut high) = (0, chars.len());
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        if width(&build(mid)) <= max_width {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    build(low)
 }
 
 fn identity_group(
@@ -682,22 +833,29 @@ fn identity_group(
     } else {
         ui.label(RichText::new("Reading Git identity…").color(p.text_dim));
     }
-    let current =
-        |pick: fn(&Identity) -> &Field| identity.map(pick).map(in_use).unwrap_or_default();
-    row(ui, "Name", &current(|i| &i.author.name), |ui| {
+    let current = |pick: fn(&Identity) -> &Field| {
+        move |ui: &mut Ui| {
+            if let Some(field) = identity.map(pick) {
+                in_use(ui, field);
+            }
+        }
+    };
+    row_layout(ui, "Name", &current(|i| &i.author.name), "", |ui| {
         ui.add(
             egui::TextEdit::singleline(&mut screen.identity_name)
                 .desired_width(260.0)
                 .margin(theme::FIELD_MARGIN),
         );
     });
-    row(ui, "Email", &current(|i| &i.author.email), |ui| {
+    row_end(ui);
+    row_layout(ui, "Email", &current(|i| &i.author.email), "", |ui| {
         ui.add(
             egui::TextEdit::singleline(&mut screen.identity_email)
                 .desired_width(260.0)
                 .margin(theme::FIELD_MARGIN),
         );
     });
+    row_end(ui);
     if let Some(i) = identity.filter(|i| i.committer != i.author) {
         row(
             ui,
@@ -898,17 +1056,24 @@ fn git(
     }
 }
 
+/// The width of a text field in a settings row.
+const FIELD_WIDTH: f32 = 280.0;
+
 fn integrations(
     ui: &mut Ui,
     s: &mut Settings,
     picker: &mut crate::ui::folder_picker::FolderPicker,
 ) {
+    let p = palette(ui.ctx());
+    // A placeholder is an example, not a value: italic and faint.
+    let hint = |text: &str| RichText::new(text.to_owned()).italics().color(p.text_faint);
     heading(ui, "Cloning");
     row(
         ui,
         "Default clone folder",
         "Where the clone dialog puts new repositories. Empty uses ~/src when it exists, else your home folder.",
         |ui| {
+            let right = ui.cursor().max.x;
             if let Some(dir) = picker.show(
                 ui,
                 "default-clone-folder",
@@ -916,11 +1081,14 @@ fn integrations(
             ) {
                 s.clone_dir = dir.display().to_string();
             }
-            let hint = s.clone_parent();
+            // The button and the field together are as wide as the other fields, so every
+            // field starts at the same edge.
+            let button = right - ui.cursor().max.x;
+            let default = s.clone_parent();
             ui.add(
                 egui::TextEdit::singleline(&mut s.clone_dir)
-                    .hint_text(hint)
-                    .desired_width(200.0)
+                    .hint_text(hint(&default))
+                    .desired_width((FIELD_WIDTH - button).max(80.0))
                     .margin(theme::FIELD_MARGIN),
             );
         },
@@ -945,8 +1113,8 @@ fn integrations(
         |ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut s.gitlab_hosts)
-                    .hint_text("git.example.com, code.corp.io")
-                    .desired_width(240.0)
+                    .hint_text(hint("git.example.com, code.corp.io"))
+                    .desired_width(FIELD_WIDTH)
                     .margin(theme::FIELD_MARGIN),
             );
         },
@@ -967,8 +1135,8 @@ fn integrations(
         |ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut s.terminal)
-                    .hint_text("kitty, alacritty, wezterm start --cwd .")
-                    .desired_width(240.0)
+                    .hint_text(hint("kitty, alacritty, wezterm start --cwd ."))
+                    .desired_width(FIELD_WIDTH)
                     .margin(theme::FIELD_MARGIN),
             );
         },
@@ -980,8 +1148,8 @@ fn integrations(
         |ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut s.editor)
-                    .hint_text("code, zed, gnome-text-editor")
-                    .desired_width(240.0)
+                    .hint_text(hint("code, zed, gnome-text-editor"))
+                    .desired_width(FIELD_WIDTH)
                     .margin(theme::FIELD_MARGIN),
             );
         },
@@ -1162,15 +1330,17 @@ fn privacy(
     use crate::ui::legal::Document;
     let p = palette(ui.ctx());
     heading(ui, "Partial clones");
-    row(
+    row_more(
         ui,
         "Trusted folders",
+        "Canopy downloads a partial clone's missing files on its own only inside these folders.",
         "In a partial clone, opening a commit or a diff downloads the files the clone left on the server. git then follows the repository's own configuration, which can run programs and contact servers, so Canopy does this on its own only for repositories inside these folders. Trust a folder only if everything in it comes from you or from people you trust. Elsewhere you see what is already on disk, with a Trust… button in the status bar.",
         |ui| {
-            if let Some(dir) = picker.show(
+            if let Some(dir) = picker.show_labelled(
                 ui,
                 "trusted-folder",
                 &crate::settings::expand_home(&s.clone_parent()),
+                "Add folder…",
             ) && crate::trust::add(&mut s.trusted_folders, dir)
             {
                 crate::trust::set(&s.trusted_folders);
@@ -1178,6 +1348,7 @@ fn privacy(
             }
         },
     );
+    ui.add_space(theme::XS);
     let mut remove = None;
     for (i, folder) in s.trusted_folders.iter().enumerate() {
         ui.horizontal(|ui| {
@@ -1208,28 +1379,32 @@ fn privacy(
                 .color(p.text_faint),
         );
     }
-    ui.add_space(theme::SM);
+    row_end(ui);
     heading(ui, "Profile pictures");
-    row(
+    row_more(
         ui,
         "Download profile pictures",
-        "Fetch GitHub or GitLab account pictures for visible authors. Sends commit IDs to GitHub or author emails to GitLab. Pictures and failed lookups are cached locally for 12 hours. A failed refresh keeps the previous picture. Turn off to use initials and stop new requests. Also requires Pull and merge requests to be on.",
+        "Fetch GitHub or GitLab account pictures for visible authors.",
+        "Sends commit IDs to GitHub or author emails to GitLab. Pictures and failed lookups are cached locally for 12 hours. A failed refresh keeps the previous picture. Turn off to use initials and stop new requests. Also requires Pull and merge requests to be on.",
         |ui| {
             toggle(ui, &mut s.download_avatars, "Download profile pictures");
         },
     );
+    row_end(ui);
     heading(ui, "Crash reports");
     if crate::crash_reports::available() {
         let before = s.crash_reports;
         let mut on = s.crash_reports == Some(true);
-        row(
+        row_more(
             ui,
             "Send crash reports",
-            "When Canopy crashes, send the error, a stack trace, the Canopy version and your operating system to NecturaLabs, and a short record of each session. Stored by Sentry in the EU and deleted after 90 days. Takes effect immediately.",
+            "When Canopy crashes, send the error and a stack trace to NecturaLabs.",
+            "Also sent: the Canopy version, your operating system and a short record of each session. Stored by Sentry in the EU and deleted after 90 days. Takes effect immediately.",
             |ui| {
                 toggle(ui, &mut on, "Send crash reports");
             },
         );
+        row_end(ui);
         if before != Some(on) && (before.is_some() || on) {
             actions.push(Action::SetCrashReports(on));
         }
@@ -1239,10 +1414,11 @@ fn privacy(
         );
     }
     heading(ui, "Diagnostics");
-    row(
+    row_more(
         ui,
         "Log detail",
-        "Normal records operations, warnings and errors. Detailed adds every git command and API call with its timing: turn it on while you reproduce a problem. The CANOPY_LOG environment variable overrides this.",
+        "Normal records operations, warnings and errors. Detailed adds every git command and API call with its timing.",
+        "Turn Detailed on while you reproduce a problem. The CANOPY_LOG environment variable overrides this.",
         |ui| {
             let before = s.log_level;
             egui::ComboBox::from_id_salt("log-level")
@@ -1258,10 +1434,12 @@ fn privacy(
             }
         },
     );
-    row(
+    row_end(ui);
+    row_more(
         ui,
         "Logs and crash reports",
-        "Kept on this computer, one log per run, and never uploaded. Copy diagnostics puts your versions, this run's log file and its latest warnings on the clipboard, for a bug report.",
+        "Kept on this computer, one log per run, and never uploaded.",
+        "Copy diagnostics puts your versions, this run's log file and its latest warnings on the clipboard, for a bug report.",
         |ui| {
             if ui
                 .button(format!("{}  Open folder", icon::FOLDER_OPEN))
@@ -1277,6 +1455,7 @@ fn privacy(
             }
         },
     );
+    row_end(ui);
     heading(ui, "Documents");
     row(
         ui,
@@ -1409,10 +1588,24 @@ fn keyboard(ui: &mut Ui) {
         );
     });
     ui.add_space(10.0);
+    let listed = |section: KeySection| {
+        BINDINGS
+            .iter()
+            .filter(move |b| b.section == section && crate::keymap::listed_here(b))
+            .map(|b| (b, crate::keymap::all_keys(b.command)))
+    };
+    // One key column for every row, as wide as the widest, so descriptions share an edge.
+    let stacked = ui.available_width() < 520.0;
+    let key_column = KeySection::ALL
+        .into_iter()
+        .flat_map(listed)
+        .map(|(_, keys)| keycaps_width(ui, &keys))
+        .fold(0.0_f32, f32::max)
+        .min(ui.available_width() * 0.45);
     for section in KeySection::ALL {
         heading(ui, section.title());
-        for b in BINDINGS.iter().filter(|b| b.section == section) {
-            if ui.available_width() < 520.0 {
+        for (b, keys) in listed(section) {
+            if stacked {
                 ui.add(
                     egui::Label::new(
                         RichText::new(b.description)
@@ -1421,39 +1614,36 @@ fn keyboard(ui: &mut Ui) {
                     )
                     .wrap(),
                 );
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(b.keys())
-                            .monospace()
-                            .size(theme::SMALL_SIZE)
-                            .color(p.text_dim),
-                    )
-                    .wrap(),
-                );
-                ui.add_space(theme::XS);
+                let (rect, _) =
+                    ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
+                let mut x = rect.min.x;
+                for chord in &keys {
+                    x = paint_keycap(ui, x, rect.center().y, chord) + KEYCAP_GAP;
+                }
             } else {
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        vec2(180.0, ui.spacing().interact_size.y),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label(
-                                RichText::new(b.keys())
-                                    .monospace()
-                                    .size(theme::SMALL_SIZE)
-                                    .color(p.text),
-                            );
-                        },
-                    );
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(b.description)
-                                .size(theme::BODY_SIZE)
-                                .color(p.text_dim),
-                        )
-                        .wrap(),
-                    );
-                });
+                let text_width =
+                    (ui.available_width() - key_column - theme::MD - theme::LG).max(80.0);
+                let galley = ui.painter().layout(
+                    b.description.to_owned(),
+                    FontId::proportional(theme::BODY_SIZE),
+                    p.text,
+                    text_width,
+                );
+                let height = (galley.size().y + theme::SM).max(28.0);
+                let (rect, _) =
+                    ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+                let mut x = rect.min.x + 2.0;
+                for chord in &keys {
+                    x = paint_keycap(ui, x, rect.center().y, chord) + KEYCAP_GAP;
+                }
+                ui.painter().galley(
+                    egui::pos2(
+                        rect.min.x + key_column + theme::LG,
+                        rect.center().y - galley.size().y / 2.0,
+                    ),
+                    galley,
+                    p.text_dim,
+                );
             }
         }
         ui.add_space(8.0);
@@ -1681,6 +1871,30 @@ mod tests {
         );
         assert_eq!(label(&Source::Guessed), "guessed by Git from this computer");
         assert_eq!(source_label_in(None, home), "not set");
+    }
+
+    #[test]
+    fn a_long_path_is_cut_in_the_middle_to_the_width() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let path =
+            "From global: /run/media/nectura/Programming SSD/tmp/canopy-polish/tmpdir/gitconfig";
+        let font = FontId::proportional(theme::SMALL_SIZE);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                assert_eq!(elide_middle(ui, path, font.clone(), 10_000.0), path);
+                let cut = elide_middle(ui, path, font.clone(), 200.0);
+                assert!(cut.contains('…') && cut.starts_with("From") && cut.ends_with("gitconfig"));
+                let width = ui
+                    .painter()
+                    .layout_no_wrap(cut, font.clone(), egui::Color32::WHITE)
+                    .size()
+                    .x;
+                assert!(width <= 200.0, "{width}");
+                assert_eq!(elide_middle(ui, path, font.clone(), 0.0), "…");
+            });
+        });
+        output.textures_delta.clear();
     }
 
     #[test]
