@@ -163,6 +163,9 @@ are sized for their optical weight and are not part of the scale.
 | `MONO_SIZE` | JetBrains Mono Regular | 12.5 | Diffs, commit message editor, error output |
 | `MONO_SMALL_SIZE` | JetBrains Mono Regular | 11.5 | Short SHAs, key chords, History dates and line counts |
 
+The shortcuts sheet keeps whole groups in order and balances its two columns by their estimated
+rendered heights, including stacked descriptions; narrow windows use a single column.
+
 Other section headings use sentence case at SMALL semibold in `text-dim`, without tracking.
 
 The global Body, Button, Small and Heading styles use the typography tokens in `theme.rs`.
