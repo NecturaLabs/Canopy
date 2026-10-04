@@ -720,6 +720,7 @@ pub fn show(
                     title(ui, glyph, doc.title());
                     egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
                         ui.set_max_width(ui.available_width());
+                        ui.style_mut().spacing.scroll.floating = false;
                         egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 180.0).clamp(0.0, 420.0)).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
                     });
 
