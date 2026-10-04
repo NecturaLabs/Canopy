@@ -98,6 +98,9 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Next
 
+- [ ] Crate package metadata: reconcile the legacy `0.2.1-beta.1` workspace version inherited
+      by all three crates with numbered-build releases; document an internal version convention
+      and align local lockfile entries and tool/doc assumptions without per-release version bumps.
 - [ ] Request list check/review badges: bulk or bounded cached status loading through the
       existing host API; show unknown while unavailable, respect its off switch and consent.
 - [ ] Reflog and operation-specific undo: show the recoverable action and its effect before
