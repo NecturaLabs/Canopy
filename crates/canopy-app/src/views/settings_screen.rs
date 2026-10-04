@@ -512,7 +512,19 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             widgets::segmented(
                 ui,
                 &mut s.relative_dates,
-                &[(true, "3 hours ago"), (false, "Sep 21, 2026")],
+                &[(true, "Relative"), (false, "Calendar")],
+            );
+        },
+    );
+    row(
+        ui,
+        "Commit date format",
+        "Calendar dates in History and commit details, including older relative dates. Exact timestamp tooltips always include the author's UTC offset.",
+        |ui| {
+            widgets::segmented(
+                ui,
+                &mut s.iso_dates,
+                &[(false, "Sep 21, 2026"), (true, "2026-09-21")],
             );
         },
     );

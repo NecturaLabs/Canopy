@@ -14,7 +14,12 @@ use crate::ui::{art, widgets};
 use crate::views::diff;
 
 /// Draws the details pane.
-pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
+pub fn show(
+    ui: &mut Ui,
+    tab: &mut RepoTab,
+    settings: &crate::settings::Settings,
+    actions: &mut Vec<Action>,
+) {
     let p = palette(ui.ctx());
     header(ui, tab);
     let Some(d) = tab.details.clone() else {
@@ -64,9 +69,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     actions.push(Action::Copy(d.oid.to_string()));
                 }
                 ui.label(
-                    RichText::new(widgets::absolute_date(d.author.time))
-                        .size(theme::SMALL_SIZE)
-                        .color(p.text_faint),
+                    RichText::new(widgets::absolute_date_format(
+                        d.author.time,
+                        settings.iso_dates,
+                    ))
+                    .size(theme::SMALL_SIZE)
+                    .color(p.text_faint),
                 )
                 .on_hover_text(widgets::full_date(d.author.time, d.author.offset_minutes));
             });
@@ -430,11 +438,8 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egu
         .ctx()
         .animate_bool_with_time(resp.id, resp.hovered(), 0.1);
     if selected {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::same(theme::RADIUS_SM),
-            p.selected(),
-        );
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(theme::RADIUS_SM), p.selected());
     } else if hover > 0.0 {
         ui.painter().rect_filled(
             rect,

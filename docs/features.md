@@ -153,7 +153,7 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Command palette | Done | Yes | Yes | No |
 | Keyboard shortcuts for common operations | Done | Yes | Yes | Yes |
 | Keyboard cheatsheet and vim-style single-key actions | Unreleased | ? | ? | ? |
-| Settings screen (appearance, Git, integrations, accounts, updates, privacy, keyboard) | Unreleased | ? | ? | ? |
+| Settings screen (appearance, Git, integrations, accounts, updates, privacy, keyboard; relative/calendar History dates with English or ISO calendar format) | Unreleased | ? | ? | ? |
 | Compact layouts and 80–160% interface zoom | Unreleased | ? | ? | ? |
 | Native folder chooser without blocking the app | Unreleased | ? | ? | ? |
 | Configurable keybindings | Planned | ? | ? | ? |

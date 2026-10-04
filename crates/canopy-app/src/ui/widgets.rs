@@ -820,6 +820,11 @@ pub fn split_path(path: &str) -> (&str, &str) {
 
 /// A short relative time such as "3 hours ago".
 pub fn relative_time(seconds: i64, now: i64) -> String {
+    relative_time_format(seconds, now, false)
+}
+
+/// Relative time with the chosen calendar format for older dates.
+pub fn relative_time_format(seconds: i64, now: i64, iso: bool) -> String {
     let d = now - seconds;
     let plural = |n: i64, unit: &str| {
         if n == 1 {
@@ -833,16 +838,21 @@ pub fn relative_time(seconds: i64, now: i64) -> String {
         60..=3599 => plural(d / 60, "minute"),
         3600..=86_399 => plural(d / 3600, "hour"),
         86_400..=604_799 => plural(d / 86_400, "day"),
-        _ => absolute_date(seconds),
+        _ => absolute_date_format(seconds, iso),
     }
 }
 
 /// A date such as "Sep 21, 2026".
 pub fn absolute_date(seconds: i64) -> String {
+    absolute_date_format(seconds, false)
+}
+
+/// A local calendar date in ISO or English month format.
+pub fn absolute_date_format(seconds: i64, iso: bool) -> String {
     chrono::DateTime::from_timestamp(seconds, 0)
         .map(|d| {
             d.with_timezone(&chrono::Local)
-                .format("%b %-d, %Y")
+                .format(if iso { "%Y-%m-%d" } else { "%b %-d, %Y" })
                 .to_string()
         })
         .unwrap_or_default()
@@ -856,7 +866,7 @@ pub fn full_date(seconds: i64, offset_minutes: i32) -> String {
     chrono::DateTime::from_timestamp(seconds, 0)
         .map(|d| {
             d.with_timezone(&offset)
-                .format("%a %b %-d %Y, %H:%M (%:z)")
+                .format("%Y-%m-%d %H:%M (%:z)")
                 .to_string()
         })
         .unwrap_or_default()

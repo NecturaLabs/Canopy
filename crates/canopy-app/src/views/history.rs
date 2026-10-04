@@ -95,7 +95,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
             .frame(egui::Frame::new().fill(p.bg))
             .show(ui, |ui| {
                 if (layout.expanded || layout.compact_details) && selected {
-                    commit_detail::show(ui, tab, actions);
+                    commit_detail::show(ui, tab, settings, actions);
                 } else if table(ui, tab, settings, actions) {
                     layout.compact_details = true;
                 }
@@ -112,7 +112,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
                     .fill(p.panel)
                     .stroke(Stroke::new(1.0, p.border)),
             )
-            .show(ui, |ui| commit_detail::show(ui, tab, actions));
+            .show(ui, |ui| commit_detail::show(ui, tab, settings, actions));
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(p.bg))
             .show(ui, |ui| table(ui, tab, settings, actions));
@@ -326,11 +326,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 .animate_bool_with_time(resp.id, resp.hovered(), 0.1);
             let painter = ui.painter();
             if selected {
-                painter.rect_filled(
-                    rect,
-                    CornerRadius::ZERO,
-                    p.selected(),
-                );
+                painter.rect_filled(rect, CornerRadius::ZERO, p.selected());
                 painter.rect_filled(
                     Rect::from_min_size(rect.min, vec2(3.0, ROW_H)),
                     CornerRadius::ZERO,
@@ -434,9 +430,9 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                     pos2(date_x, cy),
                     Align2::LEFT_CENTER,
                     if settings.relative_dates {
-                        widgets::relative_time(c.author.time, now)
+                        widgets::relative_time_format(c.author.time, now, settings.iso_dates)
                     } else {
-                        widgets::absolute_date(c.author.time)
+                        widgets::absolute_date_format(c.author.time, settings.iso_dates)
                     },
                     FontId::monospace(theme::MONO_SMALL_SIZE),
                     p.text_faint,
@@ -464,7 +460,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 short_id(c.oid),
                 c.summary,
                 c.author.name,
-                widgets::relative_time(c.author.time, now)
+                widgets::relative_time_format(c.author.time, now, settings.iso_dates)
             );
             resp.widget_info(|| {
                 egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &info)
