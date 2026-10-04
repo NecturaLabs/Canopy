@@ -650,12 +650,27 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 };
             });
             ui.add_space(4.0);
+            let mut picked: Option<Option<Choice>> = None;
             // Both sides next to each other.
             let w = (ui.available_width() - 12.0) / 2.0;
             ui.horizontal_top(|ui| {
-                for (title, label, lines, color) in [
-                    ("Ours", &region.ours_label, &region.ours, p.accent),
-                    ("Theirs", &region.theirs_label, &region.theirs, p.accent2),
+                for (title, label, lines, color, side, command) in [
+                    (
+                        "Ours",
+                        &region.ours_label,
+                        &region.ours,
+                        p.accent,
+                        Choice::Ours,
+                        crate::keymap::Command::TakeOurs,
+                    ),
+                    (
+                        "Theirs",
+                        &region.theirs_label,
+                        &region.theirs,
+                        p.accent2,
+                        Choice::Theirs,
+                        crate::keymap::Command::TakeTheirs,
+                    ),
                 ] {
                     ui.vertical(|ui| {
                         ui.set_width(w);
@@ -672,6 +687,15 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                                 ui.set_width(ui.available_width());
                                 code_lines(ui, lines, p.text);
                             });
+                        let on = choice.as_ref() == Some(&side);
+                        let label = format!(
+                            "{}Keep this version  ({})",
+                            if on { "✓ " } else { "" },
+                            crate::keymap::hint(command)
+                        );
+                        if widgets::compact_button(ui, label).clicked() {
+                            picked = Some(if on { None } else { Some(side) });
+                        }
                     });
                 }
             });
@@ -693,12 +717,9 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                     });
             }
             ui.add_space(4.0);
-            // Choices.
-            let mut picked: Option<Option<Choice>> = None;
+            // Combined and custom choices.
             ui.horizontal_wrapped(|ui| {
                 let mut options = vec![
-                    (Choice::Ours, "Take ours"),
-                    (Choice::Theirs, "Take theirs"),
                     (Choice::OursThenTheirs, "Both: ours first"),
                     (Choice::TheirsThenOurs, "Both: theirs first"),
                 ];
@@ -707,7 +728,9 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 }
                 for (c, label) in options {
                     let on = choice.as_ref() == Some(&c);
-                    if ui.selectable_label(on, label).clicked() {
+                    if widgets::compact_button(ui, format!("{}{label}", if on { "✓ " } else { "" }))
+                        .clicked()
+                    {
                         picked = Some(if on { None } else { Some(c) });
                     }
                 }
