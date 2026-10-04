@@ -608,7 +608,7 @@ impl eframe::App for CanopyApp {
             });
         if let Some(tab) = self.tabs.get_mut(self.active) {
             egui::Panel::top("actions")
-                .exact_size(theme::XL + theme::LG + theme::XS)
+                .exact_size(theme::ACTION_BAR_HEIGHT)
                 .frame(
                     egui::Frame::new()
                         .fill(p.panel)
@@ -797,7 +797,24 @@ impl eframe::App for CanopyApp {
             crate::ui::widgets::dismiss_underlying_tooltips(&ctx);
         }
         self.cheatsheet.show(&ctx);
-        self.toasts.show(&ctx);
+        for recovery in self.toasts.show(&ctx) {
+            match recovery {
+                crate::ui::toast::Recovery::Pull(path) => {
+                    if let Some(index) = self
+                        .tabs
+                        .iter()
+                        .position(|tab| tab.path == path && tab.running.is_none())
+                    {
+                        actions.push(Action::SwitchTab(index));
+                        actions.push(Action::Pull);
+                    }
+                }
+                crate::ui::toast::Recovery::Accounts => {
+                    self.settings_screen =
+                        Some(SettingsScreen::at(settings_screen::Section::Accounts));
+                }
+            }
+        }
         self.apply(&ctx, actions);
         self.handle_screenshot(&ctx);
     }

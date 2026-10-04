@@ -68,6 +68,11 @@ impl Cheatsheet {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
+                                    if widgets::icon_button(ui, icon::X, "Close shortcuts (Esc)")
+                                        .clicked()
+                                    {
+                                        self.open = false;
+                                    }
                                     ui.label(
                                         RichText::new("Esc to close")
                                             .size(theme::SMALL_SIZE)
@@ -76,7 +81,7 @@ impl Cheatsheet {
                                     let edit = ui.add(
                                         egui::TextEdit::singleline(&mut self.query)
                                             .hint_text(format!(
-                                                "{}  Search shortcuts",
+                                                "{}  Search shortcuts…",
                                                 icon::MAGNIFYING_GLASS
                                             ))
                                             .desired_width(240.0)
@@ -92,7 +97,7 @@ impl Cheatsheet {
                         ui.add_space(4.0);
                         ui.add(egui::Label::new(
                             RichText::new(
-                                "Single keys work when no text field has focus. Super is left to your window manager.",
+                                "Single keys work when no text field has focus. Capital letters mean Shift plus that key. Super is left to your window manager.",
                             )
                             .size(theme::META_SIZE)
                             .color(p.text_dim),
@@ -111,8 +116,16 @@ impl Cheatsheet {
                                     }
                                 } else {
                                     ui.columns(2, |cols| {
+                                        let heights: Vec<f32> = Section::ALL.iter().map(|section| {
+                                            section_height(&cols[0], *section, &q)
+                                        }).collect();
+                                        let total: f32 = heights.iter().sum();
+                                        let split = (1..Section::ALL.len()).min_by(|a, b| {
+                                            let imbalance = |n: usize| (2.0 * heights[..n].iter().sum::<f32>() - total).abs();
+                                            imbalance(*a).total_cmp(&imbalance(*b))
+                                        }).unwrap_or(1);
                                         for (i, section) in Section::ALL.iter().enumerate() {
-                                            rows(&mut cols[usize::from(i >= 1)], *section, &q);
+                                            rows(&mut cols[usize::from(i >= split)], *section, &q);
                                         }
                                     });
                                 }
@@ -123,9 +136,8 @@ impl Cheatsheet {
     }
 }
 
-fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
-    let p = palette(ui.ctx());
-    let items: Vec<_> = BINDINGS
+fn matching(section: Section, query: &str) -> Vec<(&'static keymap::Binding, Vec<String>)> {
+    BINDINGS
         .iter()
         .filter(|b| b.section == section && keymap::listed_here(b))
         .map(|b| (b, keymap::all_keys(b.command)))
@@ -134,7 +146,31 @@ fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
                 || b.description.to_lowercase().contains(query)
                 || keys.iter().any(|k| k.to_lowercase().contains(query))
         })
-        .collect();
+        .collect()
+}
+
+fn section_height(ui: &egui::Ui, section: Section, query: &str) -> f32 {
+    let items = matching(section, query);
+    if items.is_empty() {
+        return 0.0;
+    }
+    let mut height = theme::SMALL_SIZE + theme::LG;
+    for (binding, keys) in items {
+        let description = ui.painter().layout_no_wrap(
+            binding.description.to_owned(),
+            FontId::proportional(theme::BODY_SIZE),
+            palette(ui.ctx()).text,
+        );
+        let stacked =
+            description.size().x + keycaps_width(ui, &keys) + theme::LG > ui.available_width();
+        height += if stacked { 46.0 } else { 24.0 } + ui.spacing().item_spacing.y;
+    }
+    height
+}
+
+pub(crate) fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
+    let p = palette(ui.ctx());
+    let items = matching(section, query);
     if items.is_empty() {
         return;
     }
@@ -172,7 +208,9 @@ fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
         // Key caps, right-aligned.
         let mut x = rect.right() - 4.0;
         for chord in keys.iter().rev() {
-            x = paint_keycap(ui, x - keycap_width(ui, chord), key_y, chord) - KEYCAP_GAP;
+            x -= keycap_width(ui, chord);
+            paint_keycap(ui, x, key_y, chord);
+            x -= KEYCAP_GAP;
         }
     }
     ui.add_space(12.0);
@@ -225,4 +263,49 @@ pub(crate) fn paint_keycap(ui: &egui::Ui, left: f32, center_y: f32, chord: &str)
     ui.painter()
         .galley(r.center() - g.size() / 2.0, g, p.text_dim);
     r.max.x
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alternative_shortcuts_have_separate_keycaps() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let chords = keymap::all_keys(keymap::Command::Palette);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(960.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                rows(ui, Section::Anywhere, "command palette");
+            },
+        );
+        output.textures_delta.clear();
+        let mut caps: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && chords.iter().any(|chord| chord == text.galley.text())
+                {
+                    Some(text.visual_bounding_rect())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(caps.len(), chords.len());
+        caps.sort_by(|a, b| a.min.x.total_cmp(&b.min.x));
+        assert!(
+            caps.windows(2).all(|pair| pair[0].max.x < pair[1].min.x),
+            "alternative shortcut labels overlap: {caps:?}"
+        );
+    }
 }

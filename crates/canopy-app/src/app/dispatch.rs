@@ -160,7 +160,7 @@ impl CanopyApp {
                 }
                 Action::Commit => {
                     let signoff = self.settings.signoff;
-                    if let Some(t) = self.tab() {
+                    if let Some(t) = self.tab().filter(|tab| tab.can_commit()) {
                         let mut message = t.commit_summary.trim().to_owned();
                         if !t.commit_body.trim().is_empty() {
                             message.push_str("\n\n");

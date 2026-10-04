@@ -19,6 +19,15 @@ pub struct Entry {
     pub shortcut: String,
 }
 
+fn category(entry: &Entry) -> Option<&str> {
+    match entry.detail.as_str() {
+        "Requests" | "History" | "Repository" | "Appearance" | "Canopy" | "Help" | "View"
+        | "Branch" | "Stash" | "Changes" | "Remote" | "Remote branch" | "Tab" | "pull request"
+        | "merge request" => Some(&entry.detail),
+        _ => None,
+    }
+}
+
 /// Scores how well `query` matches `text` as a subsequence. Consecutive and word-start matches
 /// score higher. `None` when not all query characters occur in order.
 #[cfg(test)]
@@ -172,7 +181,23 @@ impl<T: Clone> CommandPalette<T> {
             self.ranked = rank(&self.query, &self.haystacks);
             self.ranked_for = Some(self.query.clone());
         }
-        let ranked = self.ranked.clone();
+        let mut ranked = self.ranked.clone();
+        if self.query.is_empty() {
+            let mut groups = Vec::new();
+            for (_, index) in &ranked {
+                let group = category(&self.items[*index].0).unwrap_or("Recent repositories");
+                if !groups.contains(&group) {
+                    groups.push(group);
+                }
+            }
+            ranked.sort_by_key(|(_, index)| {
+                let group = category(&self.items[*index].0).unwrap_or("Recent repositories");
+                groups
+                    .iter()
+                    .position(|candidate| *candidate == group)
+                    .unwrap_or(groups.len())
+            });
+        }
 
         let (up, down, enter, esc) = ctx.input_mut(|i| {
             (
@@ -280,10 +305,19 @@ impl<T: Clone> CommandPalette<T> {
                             .min_scrolled_height(list_h)
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
+                                let mut previous_group = None;
                                 for (row, (_, i)) in ranked.iter().enumerate() {
                                     let Some((e, _)) = self.items.get(*i) else {
                                         continue;
                                     };
+                                    if self.query.is_empty() {
+                                        let group = category(e).unwrap_or("Recent repositories");
+                                        if previous_group != Some(group) {
+                                            ui.add_space(theme::SM);
+                                            widgets::section_label(ui, group);
+                                            previous_group = Some(group);
+                                        }
+                                    }
                                     let selected = row == self.selected;
                                     let (rect, resp) = ui.allocate_exact_size(
                                         vec2(ui.available_width(), 34.0),
@@ -347,7 +381,7 @@ impl<T: Clone> CommandPalette<T> {
                                         FontId::new(theme::LEAD_SIZE, theme::medium()),
                                         p.text,
                                     );
-                                    if !e.detail.is_empty() {
+                                    if !e.detail.is_empty() && category(e).is_none() {
                                         painter.text(
                                             egui::pos2(label.max.x + 10.0, c.y),
                                             Align2::LEFT_CENTER,

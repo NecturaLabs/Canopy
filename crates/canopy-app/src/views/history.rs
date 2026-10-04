@@ -16,7 +16,7 @@ use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
 use crate::ui::widgets::forge_icon;
 use crate::ui::{art, widgets};
-use crate::views::{commit_detail, dialogs::Dialog};
+use crate::views::{commit_detail, dialogs::Dialog, diff};
 use crate::worker::Op;
 
 const ROW_H: f32 = 30.0;
@@ -30,23 +30,29 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         loading(ui, tab);
         return;
     }
-    let h = ui.available_height();
-    let compact_table_min = ROW_H * 2.0 + theme::XL + theme::MD;
-    let has_state_banner = tab
+    widgets::repository_state_banner(ui, tab, actions);
+    if tab
         .snap
         .as_ref()
-        .is_some_and(|snap| snap.state != canopy_core::RepoState::Clean);
-    let table_min = if tab.history_filter_open || has_state_banner {
-        ROW_H * 2.0 + theme::XL * 3.0 + theme::LG
+        .is_some_and(|snap| snap.commits.is_empty())
+    {
+        tab.history_layout.compact_details = false;
+        tab.history_layout.expanded = false;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(p.bg))
+            .show(ui, |ui| table(ui, tab, settings, actions));
+        return;
+    }
+    let h = ui.available_height();
+    let compact_table_min = ROW_H * 6.0 + theme::XL + theme::MD;
+    let table_preferred = if tab.history_filter_open {
+        ROW_H * 6.0 + theme::XL * 3.0 + theme::LG
     } else {
         compact_table_min
     };
-    let compact = h < 300.0
-        + if has_state_banner {
-            table_min
-        } else {
-            compact_table_min
-        };
+    let table_required = table_preferred - ROW_H * 4.0;
+    let compact = h < 260.0 + table_required;
+    let table_min = table_preferred.min((h - 260.0).max(table_required));
     tab.history_layout.compact = compact;
     let mut layout = tab.history_layout;
     let selected = tab.selected_commit.is_some();
@@ -95,16 +101,41 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
             .frame(egui::Frame::new().fill(p.bg))
             .show(ui, |ui| {
                 if (layout.expanded || layout.compact_details) && selected {
-                    commit_detail::show(ui, tab, actions);
+                    commit_detail::show(ui, tab, settings, actions);
                 } else if table(ui, tab, settings, actions) {
                     layout.compact_details = true;
                 }
             });
     } else {
         let detail_max = (h - table_min).min(h * 0.70);
+        let default_height = (h * 0.40).max(260.0).min(detail_max);
+        let default_height = tab.diff.as_ref().map_or(default_height, |d| {
+            diff::inspector_height(d, default_height)
+                .max(260.0)
+                .min(detail_max)
+        });
+        let panel_id = egui::Id::new("details");
+        let automatic_id = panel_id.with("automatic-height");
+        let previous_default = ui.ctx().data(|d| d.get_temp::<f32>(automatic_id));
+        let state = egui::containers::panel::PanelState::load(ui.ctx(), panel_id);
+        let automatic = state.is_none()
+            || state
+                .zip(previous_default)
+                .is_some_and(|(state, previous)| (state.size().y - previous).abs() <= 1.0);
+        if automatic {
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(automatic_id, default_height);
+                if let Some(mut state) = state {
+                    state.outer_rect.min.y = state.outer_rect.max.y - default_height;
+                    data.insert_persisted(panel_id, state);
+                }
+            });
+        } else {
+            ui.ctx().data_mut(|data| data.remove::<f32>(automatic_id));
+        }
         egui::Panel::bottom("details")
             .resizable(true)
-            .default_size((h * 0.40).clamp(260.0, 320.0).min(detail_max))
+            .default_size(default_height)
             .min_size(260.0_f32.min(detail_max))
             .max_size(detail_max)
             .frame(
@@ -112,7 +143,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
                     .fill(p.panel)
                     .stroke(Stroke::new(1.0, p.border)),
             )
-            .show(ui, |ui| commit_detail::show(ui, tab, actions));
+            .show(ui, |ui| commit_detail::show(ui, tab, settings, actions));
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(p.bg))
             .show(ui, |ui| table(ui, tab, settings, actions));
@@ -137,11 +168,7 @@ fn loading(ui: &mut Ui, tab: &RepoTab) {
 
 fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<Action>) -> bool {
     let p = palette(ui.ctx());
-    let state = tab
-        .snap
-        .as_ref()
-        .and_then(|snap| (snap.state != canopy_core::RepoState::Clean).then_some(snap.state));
-    if tab.history_filter_open || state.is_some() {
+    if tab.history_filter_open {
         let mut close_search = false;
         egui::Frame::new()
             .inner_margin(egui::Margin {
@@ -164,7 +191,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                                 let edit = ui.add(
                                     egui::TextEdit::singleline(&mut tab.filter)
                                         .id(id)
-                                        .hint_text("Filter by message, author or SHA")
+                                        .hint_text("Filter by message, author or SHA…")
                                         .frame(egui::Frame::NONE)
                                         .desired_width(
                                             (ui.available_width() - 48.0).clamp(120.0, 340.0),
@@ -176,9 +203,6 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                                 }
                             });
                         close_search = widgets::icon_button(ui, icon::X, "Close search").clicked();
-                    }
-                    if let Some(state) = state {
-                        state_banner(ui, state, actions);
                     }
                 });
             });
@@ -199,12 +223,6 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     let row_count = filtered.map_or(snap.commits.len(), <[usize]>::len);
     // Display row -> commit index.
     let commit_at = |ri: usize| filtered.map_or(Some(ri), |f| f.get(ri).copied());
-    let lanes = tab.snap_index.graph_lanes.clamp(1, MAX_LANES);
-    let graph_w = if show_graph {
-        (f32::from(lanes) * LANE_W + 16.0).min(ui.available_width() * 0.24)
-    } else {
-        0.0
-    };
 
     if snap.commits.is_empty() {
         ui.vertical_centered(|ui| {
@@ -220,24 +238,114 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         return false;
     }
 
-    // Column layout.
-    let full = ui.available_rect_before_wrap();
-    let show_author = full.width() >= 560.0;
-    let show_date = full.width() >= 760.0;
-    let show_sha = full.width() >= 460.0;
-    let sha_w = if show_sha { 74.0 } else { 0.0 };
-    let date_w = if show_date { 112.0 } else { 0.0 };
-    let author_w = if show_author {
-        (full.width() * 0.17).clamp(110.0, 200.0)
+    let now = chrono::Utc::now().timestamp();
+    let mut full = ui.available_rect_before_wrap();
+    full.max.x -= theme::LG;
+    let view_h = (full.height() - 22.0 - ui.spacing().item_spacing.y).max(ROW_H);
+    let scroll_id = ui.make_persistent_id(egui::IdSalt::new("history-rows"));
+    let mut offset =
+        egui::scroll_area::State::load(ui.ctx(), scroll_id).map_or(0.0, |s| s.offset.y);
+    if tab.scroll_to_selected || tab.reveal_selected {
+        let target = tab.selected_commit.and_then(|selected| {
+            (0..row_count).find(|&ri| {
+                commit_at(ri)
+                    .and_then(|ci| snap.commits.get(ci))
+                    .is_some_and(|c| c.oid == selected)
+            })
+        });
+        if let Some(target) = target {
+            let y = target as f32 * ROW_H;
+            if tab.scroll_to_selected || y < offset || y + ROW_H > offset + view_h {
+                offset = (y - view_h / 2.0 + ROW_H).max(0.0);
+            }
+        }
+    }
+    let total_rows = row_count + usize::from(snap.truncated && filtered.is_none());
+    offset = offset.min((total_rows as f32 * ROW_H - view_h).max(0.0));
+    tab.scroll_to_selected = false;
+    tab.reveal_selected = false;
+    let first = (offset / ROW_H).floor() as usize;
+    let last = ((offset + view_h) / ROW_H).ceil() as usize;
+    let date_text = |seconds| {
+        if settings.relative_dates {
+            widgets::relative_time_format(seconds, now, settings.iso_dates)
+        } else {
+            widgets::absolute_date_format(seconds, settings.iso_dates)
+        }
+    };
+    let text_width =
+        |text: String, font: FontId| ui.painter().layout_no_wrap(text, font, p.text).size().x;
+    let mut lanes = 1;
+    let mut desc_w = 150.0_f32;
+    let mut author_w = 70.0_f32;
+    let mut date_w = 50.0_f32;
+    let avatars = settings.show_avatars;
+    let name_x = if avatars { 32.0 } else { 6.0 };
+    for ri in first..last.min(row_count) {
+        let Some(ci) = commit_at(ri) else {
+            continue;
+        };
+        let Some(commit) = snap.commits.get(ci) else {
+            continue;
+        };
+        if let Some(graph) = snap.graph.get(ci) {
+            lanes = lanes.max(graph.width.clamp(1, MAX_LANES));
+        }
+        let refs_w = snap.refs.get(&commit.oid).map_or(0.0, |refs| {
+            refs.iter()
+                .map(|label| widgets::ref_pill_width(ui, label) + 5.0)
+                .sum::<f32>()
+                + 3.0
+        });
+        desc_w = desc_w.max(
+            refs_w
+                + text_width(
+                    commit.summary.clone(),
+                    FontId::new(theme::BODY_SIZE, theme::medium()),
+                )
+                + theme::LG,
+        );
+        author_w = author_w.max(
+            name_x
+                + text_width(
+                    commit.author.name.clone(),
+                    FontId::proportional(theme::META_SIZE),
+                )
+                + theme::LG,
+        );
+        date_w = date_w.max(
+            text_width(
+                date_text(commit.author.time),
+                FontId::monospace(theme::MONO_SMALL_SIZE),
+            ) + theme::LG,
+        );
+    }
+    let graph_w = if show_graph {
+        (f32::from(lanes) * LANE_W + theme::LG).min(full.width() * 0.28)
     } else {
         0.0
     };
-    let avatars = settings.show_avatars;
-    let name_x = if avatars { 32.0 } else { 6.0 };
+    let lane_pitch = ((graph_w - theme::LG) / f32::from(lanes)).clamp(1.0, LANE_W);
+    let show_author = full.width() >= 560.0;
+    let show_date = full.width() >= 760.0;
+    let show_sha = full.width() >= 460.0;
+    author_w = if show_author {
+        author_w.min(220.0).min(full.width() * 0.22)
+    } else {
+        0.0
+    };
+    date_w = if show_date {
+        date_w.min(full.width() * 0.18)
+    } else {
+        0.0
+    };
+    let sha_w = if show_sha { 74.0 } else { 0.0 };
     let desc_x = full.min.x + graph_w + 10.0;
-    let author_x = full.max.x - sha_w - date_w - author_w;
-    let date_x = full.max.x - sha_w - date_w;
-    let sha_x = full.max.x - sha_w;
+    let remaining = (full.width() - graph_w - 10.0 - author_w - date_w - sha_w).max(0.0);
+    desc_w = desc_w.min(remaining);
+    let author_x = desc_x + desc_w;
+    let date_x = author_x + author_w;
+    let sha_x = date_x + date_w;
 
     // Header.
     let (hdr, _) = ui.allocate_exact_size(vec2(full.width(), 22.0), Sense::hover());
@@ -260,45 +368,15 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     ui.painter()
         .hline(full.x_range(), hdr.max.y, Stroke::new(1.0, p.border));
 
-    // Keyboard navigation (keymap: j/k, g/G) moves the selection and asks to reveal it.
-    // Only searched for when asked, not every frame.
-    let scroll_target = if tab.scroll_to_selected || tab.reveal_selected {
-        tab.selected_commit.and_then(|s| {
-            (0..row_count).find(|&ri| {
-                commit_at(ri)
-                    .and_then(|ci| snap.commits.get(ci))
-                    .is_some_and(|c| c.oid == s)
-            })
-        })
-    } else {
-        None
-    };
-
-    let now = chrono::Utc::now().timestamp();
     let mut clicked: Option<Oid> = None;
-    let mut area = egui::ScrollArea::vertical()
+    let area = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .id_salt("history-rows");
-    if let Some(target) = scroll_target {
-        let view_h = ui.available_height();
-        let offset = (target as f32 * ROW_H - view_h / 2.0 + ROW_H).max(0.0);
-        let current =
-            egui::scroll_area::State::load(ui.ctx(), ui.make_persistent_id("history-rows"))
-                .map(|s| s.offset.y);
-        let visible = current.is_some_and(|c| {
-            let y = target as f32 * ROW_H;
-            y >= c && y + ROW_H <= c + view_h - 10.0
-        });
-        if !visible || tab.scroll_to_selected {
-            area = area.vertical_scroll_offset(offset);
-        }
-    }
-    tab.scroll_to_selected = false;
-    tab.reveal_selected = false;
-
-    let total_rows = row_count + usize::from(snap.truncated && filtered.is_none());
+        .id_salt("history-rows")
+        .vertical_scroll_offset(offset);
     let mut wanted_pictures = Vec::new();
-    area.show_rows(ui, ROW_H, total_rows, |ui, range| {
+    let row_spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let list = area.show_rows(ui, ROW_H, total_rows, |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for ri in range {
             let Some(ci) = commit_at(ri).filter(|_| ri < row_count) else {
@@ -326,11 +404,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 .animate_bool_with_time(resp.id, resp.hovered(), 0.1);
             let painter = ui.painter();
             if selected {
-                painter.rect_filled(
-                    rect,
-                    CornerRadius::ZERO,
-                    Palette::tint(p.accent, if p.dark { 46 } else { 30 }),
-                );
+                painter.rect_filled(rect, CornerRadius::ZERO, p.selected());
                 painter.rect_filled(
                     Rect::from_min_size(rect.min, vec2(3.0, ROW_H)),
                     CornerRadius::ZERO,
@@ -351,6 +425,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                     ui,
                     Rect::from_min_size(rect.min + vec2(10.0, 0.0), vec2(graph_w - 10.0, ROW_H)),
                     g,
+                    lane_pitch,
                     is_head,
                     p,
                 );
@@ -385,9 +460,13 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             } else {
                 FontId::proportional(theme::BODY_SIZE)
             };
-            let galley = ui
-                .painter()
-                .layout_no_wrap(c.summary.clone(), font, text_color);
+            let galley = widgets::single_line_galley(
+                ui,
+                c.summary.clone(),
+                font,
+                text_color,
+                (desc_clip.max.x - x).max(0.0),
+            );
             ui.painter().with_clip_rect(desc_clip).galley(
                 pos2(x, cy - galley.size().y / 2.0),
                 galley,
@@ -434,11 +513,11 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                     pos2(date_x, cy),
                     Align2::LEFT_CENTER,
                     if settings.relative_dates {
-                        widgets::relative_time(c.author.time, now)
+                        widgets::relative_time_format(c.author.time, now, settings.iso_dates)
                     } else {
-                        widgets::absolute_date(c.author.time)
+                        widgets::absolute_date_format(c.author.time, settings.iso_dates)
                     },
-                    FontId::proportional(theme::META_SIZE),
+                    FontId::monospace(theme::MONO_SMALL_SIZE),
                     p.text_faint,
                 );
             }
@@ -464,7 +543,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 short_id(c.oid),
                 c.summary,
                 c.author.name,
-                widgets::relative_time(c.author.time, now)
+                widgets::relative_time_format(c.author.time, now, settings.iso_dates)
             );
             resp.widget_info(|| {
                 egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &info)
@@ -477,6 +556,9 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             resp.context_menu(|ui| commit_menu(ui, oid, &summary, forge.as_ref(), actions));
         }
     });
+    ui.spacing_mut().item_spacing.y = row_spacing;
+
+    widgets::scroll_fade(ui, &list, p.bg);
 
     for (oid, email) in wanted_pictures {
         tab.request_avatar(oid, &email);
@@ -486,38 +568,6 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         return true;
     }
     false
-}
-
-fn state_banner(ui: &mut Ui, state: canopy_core::RepoState, actions: &mut Vec<Action>) {
-    let p = palette(ui.ctx());
-    if state.command().is_some() {
-        if ui
-            .button(RichText::new(format!("{}  Abort", icon::X_CIRCLE)).color(p.danger))
-            .clicked()
-        {
-            actions.push(Action::Confirm { title: format!("Abort {}", state.label().to_lowercase()), body: "Return the repository to where it was before the operation started? Resolved conflicts are discarded.".into(), confirm: "Abort".into(), danger: true, op: Op::ContinueOrAbort { state, abort: true } });
-        }
-        if ui
-            .button(RichText::new(format!("{}  Continue", icon::PLAY)).color(p.success))
-            .clicked()
-        {
-            actions.push(Action::Op(Op::ContinueOrAbort {
-                state,
-                abort: false,
-            }));
-        }
-    }
-    egui::Frame::new()
-        .fill(Palette::tint(p.warning, 40))
-        .corner_radius(CornerRadius::same(12))
-        .inner_margin(egui::Margin::symmetric(10, 3))
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new(format!("{}  {} in progress", icon::WARNING, state.label()))
-                    .color(p.warning)
-                    .size(theme::META_SIZE),
-            );
-        });
 }
 
 /// The context menu of a commit row.
@@ -578,13 +628,31 @@ pub fn commit_menu(
         actions.push(Action::Op(Op::Revert(oid)));
     }
     ui.menu_button(format!("{}  Reset current branch here", icon::CLOCK_COUNTER_CLOCKWISE), |ui| {
-        if ui.button("Soft — keep index and working tree").clicked() {
+        let choice = |ui: &mut Ui, name: &str, explanation: &str, danger: bool| {
+            let mut job = egui::text::LayoutJob::default();
+            job.append(
+                name,
+                0.0,
+                egui::TextFormat::simple(
+                    FontId::new(theme::BODY_SIZE, theme::semibold()),
+                    if danger { p.danger } else { p.text },
+                ),
+            );
+            job.append("\n", 0.0, egui::TextFormat::default());
+            job.append(
+                explanation,
+                0.0,
+                egui::TextFormat::simple(FontId::proportional(theme::SMALL_SIZE), p.text_dim),
+            );
+            ui.button(job).clicked()
+        };
+        if choice(ui, "Soft", "Keep index and working tree", false) {
             actions.push(Action::Op(Op::Reset { oid, mode: ResetMode::Soft }));
         }
-        if ui.button("Mixed — keep working tree").clicked() {
+        if choice(ui, "Mixed", "Keep working tree", false) {
             actions.push(Action::Op(Op::Reset { oid, mode: ResetMode::Mixed }));
         }
-        if ui.button(RichText::new("Hard — discard all changes…").color(p.danger)).clicked() {
+        if choice(ui, "Hard reset…", "Discard all uncommitted changes", true) {
             actions.push(Action::Confirm { title: "Hard reset".into(), body: format!("Move the current branch to {} and throw away every uncommitted change? This cannot be undone.", short_id(oid)), confirm: "Reset".into(), danger: true, op: Op::Reset { oid, mode: ResetMode::Hard } });
         }
     });
@@ -600,21 +668,21 @@ pub fn commit_menu(
     }
 }
 
-fn lane_x(rect: Rect, lane: u16) -> f32 {
-    rect.min.x + LANE_W / 2.0 + f32::from(lane) * LANE_W
+fn lane_x(rect: Rect, lane: u16, pitch: f32) -> f32 {
+    rect.min.x + pitch / 2.0 + f32::from(lane) * pitch
 }
 
-fn anchor(rect: Rect, lane: u16, end: LineEnd) -> Pos2 {
+fn anchor(rect: Rect, lane: u16, end: LineEnd, pitch: f32) -> Pos2 {
     let y = match end {
         LineEnd::Top => rect.min.y,
         LineEnd::Mid => rect.center().y,
         LineEnd::Bottom => rect.max.y,
     };
-    pos2(lane_x(rect, lane), y)
+    pos2(lane_x(rect, lane, pitch), y)
 }
 
 /// Paints one row of the graph: edges as straight lines or smooth S-curves, then the node.
-fn paint_graph_row(ui: &Ui, rect: Rect, g: &GraphRow, is_head: bool, p: &Palette) {
+fn paint_graph_row(ui: &Ui, rect: Rect, g: &GraphRow, pitch: f32, is_head: bool, p: &Palette) {
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     let w = 2.0;
     for s in &g.segments {
@@ -622,8 +690,8 @@ fn paint_graph_row(ui: &Ui, rect: Rect, g: &GraphRow, is_head: bool, p: &Palette
             continue;
         }
         let color = p.lane(s.color);
-        let a = anchor(rect, s.from_lane, s.from);
-        let b = anchor(rect, s.to_lane, s.to);
+        let a = anchor(rect, s.from_lane, s.from, pitch);
+        let b = anchor(rect, s.to_lane, s.to, pitch);
         if s.from_lane == s.to_lane {
             painter.line_segment([a, b], Stroke::new(w, color));
         } else {
@@ -640,7 +708,7 @@ fn paint_graph_row(ui: &Ui, rect: Rect, g: &GraphRow, is_head: bool, p: &Palette
     if g.lane >= MAX_LANES {
         return;
     }
-    let c = anchor(rect, g.lane, LineEnd::Mid);
+    let c = anchor(rect, g.lane, LineEnd::Mid, pitch);
     let color = p.lane(g.color);
     if is_head {
         for (r, a) in [(12.0, 18u8), (9.0, 40), (7.5, 70)] {
@@ -888,6 +956,47 @@ mod tests {
     }
 
     #[test]
+    fn truncated_history_can_scroll_to_the_load_more_control() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let (mut tab, _dir) = populated_tab(&ctx);
+        std::sync::Arc::make_mut(tab.snap.as_mut().expect("snapshot")).truncated = true;
+        let mut output = egui::FullOutput::default();
+        for _ in 0..4 {
+            output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(960.0, 200.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        let id = ui.make_persistent_id(egui::IdSalt::new("history-rows"));
+                        let mut scroll =
+                            egui::scroll_area::State::load(&ctx, id).unwrap_or_default();
+                        scroll.offset.y = f32::MAX;
+                        scroll.store(&ctx, id);
+                        table(ui, &mut tab, &Settings::default(), &mut Vec::new());
+                    });
+                },
+            );
+            output.textures_delta.clear();
+        }
+        let control = output.shapes.iter().find(|shape| {
+            matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().contains("Load more commits"))
+        }).expect("load-more control at the end of truncated history");
+        let egui::Shape::Text(text) = &control.shape else {
+            panic!("text control");
+        };
+        assert!(
+            control.clip_rect.contains_rect(text.visual_bounding_rect()),
+            "the load-more control must be completely visible: {:?}, clip {:?}",
+            text.visual_bounding_rect(),
+            control.clip_rect
+        );
+    }
+
+    #[test]
     fn growing_the_window_restores_readable_author_files_and_diff() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
@@ -1070,6 +1179,51 @@ mod tests {
         );
         assert!(visible.iter().any(|text| text == "file.rs"), "{visible:?}");
         assert!(visible.iter().any(|text| text == "Commit 0"), "{visible:?}");
+    }
+
+    #[test]
+    fn a_short_diff_loaded_later_updates_the_automatic_inspector_height() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let (mut tab, _dir) = populated_tab(&ctx);
+        let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
+        diff.hunks[0].lines.truncate(7);
+        tab.diff = None;
+        let size = vec2(2560.0, 1440.0);
+        visible_details(&ctx, &mut tab, size);
+        tab.diff = Some(std::sync::Arc::new(diff));
+        visible_details(&ctx, &mut tab, size);
+        let panel = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("details"))
+            .expect("rendered inspector");
+        assert!(
+            panel.size().y <= 320.0,
+            "a loaded short diff must reclaim the automatic empty pane space: {:?}",
+            panel.size()
+        );
+    }
+
+    #[test]
+    fn manual_inspector_height_survives_a_short_diff() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let (mut tab, _dir) = populated_tab(&ctx);
+        let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
+        diff.hunks[0].lines.truncate(7);
+        tab.diff = None;
+        let size = vec2(2560.0, 1440.0);
+        visible_details(&ctx, &mut tab, size);
+        let panel_id = egui::Id::new("details");
+        let mut panel =
+            egui::containers::panel::PanelState::load(&ctx, panel_id).expect("rendered inspector");
+        panel.outer_rect.min.y = panel.outer_rect.max.y - 480.0;
+        ctx.data_mut(|data| data.insert_persisted(panel_id, panel));
+        tab.diff = Some(std::sync::Arc::new(diff));
+        visible_details(&ctx, &mut tab, size);
+        let panel =
+            egui::containers::panel::PanelState::load(&ctx, panel_id).expect("manual inspector");
+        assert!((panel.size().y - 480.0).abs() <= 1.0, "{:?}", panel.size());
     }
 
     #[test]

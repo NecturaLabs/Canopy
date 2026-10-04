@@ -16,6 +16,8 @@ pub const MD: f32 = 12.0;
 pub const LG: f32 = 16.0;
 pub const XL: f32 = 24.0;
 pub const COMPACT_WIDTH: f32 = 1000.0;
+pub const SETTINGS_MAX_WIDTH: f32 = 1120.0;
+pub const SETTINGS_MAX_HEIGHT: f32 = 900.0;
 /// The widest a column of prose and its fields grow, so lines stay readable on wide windows.
 pub const MEASURE: f32 = 920.0;
 // Type scale (points, before interface zoom). Text sizes come only from these; icon glyphs are
@@ -61,8 +63,21 @@ pub const ICON_XL: f32 = 24.0;
 /// The centre of an empty or finished state.
 pub const ICON_HERO: f32 = 32.0;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
-/// Inner margin of every framed text field, so fields match the 26-point control height.
-pub const FIELD_MARGIN: Margin = Margin::symmetric(8, 5);
+/// Shared control geometry, in logical points before interface zoom.
+pub const CONTROL_HEIGHT: f32 = 30.0;
+pub const COMPACT_CONTROL_HEIGHT: f32 = 28.0;
+pub const PRIMARY_CONTROL_HEIGHT: f32 = 36.0;
+pub const TOOL_HEIGHT: f32 = 40.0;
+/// Includes the horizontal scrollbar and breathing room beneath toolbar captions.
+pub const ACTION_BAR_HEIGHT: f32 = 52.0;
+pub const CONTROL_INSET: f32 = 2.0;
+pub const CHECKBOX_SIZE: f32 = 18.0;
+pub const SWITCH_SIZE: egui::Vec2 = egui::vec2(40.0, 24.0);
+/// Inner margin of every framed text field, matching the standard control height.
+pub const FIELD_MARGIN: Margin = Margin::symmetric(8, 7);
+/// Maximum outer width and raw-output viewport of a notification card.
+pub const TOAST_WIDTH: f32 = 408.0;
+pub const TOAST_DETAILS_HEIGHT: f32 = 140.0;
 
 /// Colours of one theme.
 #[derive(Debug, Clone, Copy)]
@@ -87,6 +102,8 @@ pub struct Palette {
     pub text_faint: Color32,
     /// Brand accent: selection, focus, primary actions.
     pub accent: Color32,
+    /// Strength of the accent wash on a selected row.
+    pub selection_alpha: u8,
     /// Second accent: links, remote refs, gradients.
     pub accent2: Color32,
     pub success: Color32,
@@ -162,6 +179,7 @@ pub const MIDNIGHT: Palette = Palette {
     text_dim: hex(0xA5ADBD),
     text_faint: hex(0x979EAD),
     accent: hex(0x9C71F8),
+    selection_alpha: 46,
     accent2: hex(0x22D3EE),
     success: hex(0x34D399),
     warning: hex(0xFBBF24),
@@ -197,6 +215,7 @@ pub const DAYLIGHT: Palette = Palette {
     text_dim: hex(0x4B5466),
     text_faint: hex(0x586071),
     accent: hex(0x7C3AED),
+    selection_alpha: 30,
     accent2: hex(0x0D6F8A),
     success: hex(0x047555),
     warning: hex(0xA04A08),
@@ -232,6 +251,7 @@ pub const AURORA: Palette = Palette {
     text_dim: hex(0xC2C8D3),
     text_faint: hex(0xB1B8C4),
     accent: hex(0x88C0D0),
+    selection_alpha: 46,
     accent2: hex(0xCAAFC5),
     success: hex(0xA5C08F),
     warning: hex(0xEBCB8B),
@@ -278,6 +298,7 @@ pub const EMBER: Palette = Palette {
     text_dim: hex(0xBCAB9F),
     text_faint: hex(0xAC9D93),
     accent: hex(0xF97316),
+    selection_alpha: 30,
     accent2: hex(0xFACC15),
     success: hex(0x4ADE80),
     warning: hex(0xFBBF24),
@@ -287,7 +308,18 @@ pub const EMBER: Palette = Palette {
     button: hex(0xC2410C),
     button2: hex(0xA16207),
     on_button: hex(0xFFFFFF),
-    lanes: DARK_LANES,
+    lanes: [
+        hex(0xFB923C),
+        hex(0xFACC15),
+        hex(0xFDBA74),
+        hex(0xF472B6),
+        hex(0xA3E635),
+        hex(0x7DD3FC),
+        hex(0xF87171),
+        hex(0xC4B5FD),
+        hex(0x2DD4BF),
+        hex(0xE9C89A),
+    ],
     syntax: Syntax {
         keyword: hex(0xFB923C),
         string: hex(0xA3E635),
@@ -314,6 +346,7 @@ pub const NEON: Palette = Palette {
     text_dim: hex(0xCDBFE6),
     text_faint: hex(0xBBAEDC),
     accent: hex(0x00E5FF),
+    selection_alpha: 46,
     accent2: hex(0xFF7ABD),
     success: hex(0x3DF5A0),
     warning: hex(0xFFD60A),
@@ -361,6 +394,7 @@ pub const FOREST: Palette = Palette {
     text_dim: hex(0xB3C5BB),
     text_faint: hex(0xA7B4AD),
     accent: hex(0xE2B84F),
+    selection_alpha: 46,
     accent2: hex(0x7DD3FC),
     success: hex(0x4ADE80),
     warning: hex(0xFB923C),
@@ -370,7 +404,18 @@ pub const FOREST: Palette = Palette {
     button: hex(0x8A5A00),
     button2: hex(0x166534),
     on_button: hex(0xFFFFFF),
-    lanes: DARK_LANES,
+    lanes: [
+        hex(0xE2B84F),
+        hex(0x7DD3FC),
+        hex(0x6EE7B7),
+        hex(0xC4B5FD),
+        hex(0xD9F99D),
+        hex(0xFDA4AF),
+        hex(0x5EEAD4),
+        hex(0xFBBF24),
+        hex(0x93C5FD),
+        hex(0xF0ABFC),
+    ],
     syntax: Syntax {
         keyword: hex(0x6EE7B7),
         string: hex(0xD9F99D),
@@ -396,6 +441,7 @@ pub const PAPER: Palette = Palette {
     text_dim: hex(0x585044),
     text_faint: hex(0x655B50),
     accent: hex(0xA14A08),
+    selection_alpha: 30,
     accent2: hex(0x0E6E67),
     success: hex(0x166534),
     warning: hex(0x825500),
@@ -443,6 +489,7 @@ pub const CONTRAST: Palette = Palette {
     text_dim: hex(0xE6E6E6),
     text_faint: hex(0xCCCCCC),
     accent: hex(0x4CC2FF),
+    selection_alpha: 46,
     accent2: hex(0xFFE14D),
     success: hex(0x3DFF8A),
     warning: hex(0xFFA62B),
@@ -550,13 +597,33 @@ impl Palette {
     /// The scrim behind modal dialogs, the settings screen, the palette and the cheatsheet: dims
     /// the window enough to separate the layer without hiding where the user was.
     pub fn backdrop(&self) -> Color32 {
-        Color32::from_black_alpha(if self.dark { 140 } else { 60 })
+        Color32::from_black_alpha(if self.dark { 176 } else { 60 })
+    }
+
+    /// A restrained raised-control edge; input boundaries retain `control_border` contrast.
+    pub fn control_edge(&self) -> Color32 {
+        mix(self.border, self.control_border, 0.32)
+    }
+
+    /// Light caught just inside a raised control, never used for its text or focus ring.
+    pub fn control_highlight(&self) -> Color32 {
+        Palette::tint(self.text, if self.dark { 20 } else { 12 })
+    }
+
+    /// Micro-elevation for buttons and selected segments, not a floating-card shadow.
+    pub fn control_shadow(&self) -> Shadow {
+        Shadow {
+            offset: [0, 1],
+            blur: 3,
+            spread: 0,
+            color: Color32::from_black_alpha(if self.dark { 55 } else { 18 }),
+        }
     }
 
     /// Fill of the selected row in lists, the graph, the sidebar, the palette and diffs, and of
     /// egui's selected values. Every text colour stays readable on it (see the contrast test).
     pub fn selected(&self) -> Color32 {
-        Palette::tint(self.accent, if self.dark { 46 } else { 30 })
+        Palette::tint(self.accent, self.selection_alpha)
     }
 
     /// Fill behind warning text: conflict markers in diffs, in-progress banners.
@@ -728,7 +795,7 @@ fn visuals(p: &Palette) -> Visuals {
     v.indent_has_left_vline = false;
 
     let w = &mut v.widgets;
-    let r = CornerRadius::same(RADIUS_SM);
+    let r = CornerRadius::same(RADIUS);
     w.noninteractive.bg_fill = p.panel;
     w.noninteractive.weak_bg_fill = p.panel;
     w.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
@@ -741,12 +808,12 @@ fn visuals(p: &Palette) -> Visuals {
     w.inactive.corner_radius = r;
     w.hovered.bg_fill = p.hover;
     w.hovered.weak_bg_fill = p.hover;
-    w.hovered.bg_stroke = Stroke::new(1.0, Palette::tint(p.accent, 160));
+    w.hovered.bg_stroke = Stroke::new(1.0, p.control_border);
     w.hovered.fg_stroke = Stroke::new(1.5, p.text);
     w.hovered.corner_radius = r;
     w.hovered.expansion = 0.0;
-    w.active.bg_fill = Palette::tint(p.accent, 70);
-    w.active.weak_bg_fill = Palette::tint(p.accent, 70);
+    w.active.bg_fill = p.hover;
+    w.active.weak_bg_fill = p.hover;
     w.active.bg_stroke = Stroke::new(1.0, p.accent);
     w.active.fg_stroke = Stroke::new(1.5, p.text);
     w.active.corner_radius = r;
@@ -796,8 +863,8 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, reduce_motion: bool) {
     ]
     .into();
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    style.spacing.button_padding = egui::vec2(10.0, 5.0);
-    style.spacing.interact_size.y = 26.0;
+    style.spacing.button_padding = egui::vec2(MD, 7.0);
+    style.spacing.interact_size.y = CONTROL_HEIGHT;
     style.spacing.window_margin = Margin::same(18);
     style.spacing.menu_margin = Margin::same(6);
     style.spacing.scroll.bar_width = 8.0;
@@ -935,6 +1002,15 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn shared_controls_have_room_for_text_and_focus() {
+        let ctx = egui::Context::default();
+        apply(&ctx, ThemeId::Midnight, true);
+        let style = ctx.style_of(Theme::Dark);
+        assert_eq!(style.spacing.interact_size.y, 30.0);
+        assert_eq!(FIELD_MARGIN.top + FIELD_MARGIN.bottom, 14);
     }
 
     #[test]

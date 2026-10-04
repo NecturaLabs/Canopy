@@ -22,6 +22,7 @@ use crate::views::dialogs::Dialog;
 /// Draws the view.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    widgets::repository_state_banner(ui, tab, actions);
     let Some((_, forge)) = tab.forge().cloned() else {
         empty(
             ui,
@@ -108,7 +109,7 @@ fn empty(
 
 fn state_style(p: &Palette, r: &RequestSummary) -> (&'static str, egui::Color32, &'static str) {
     match (r.state, r.draft) {
-        (RequestState::Open, true) => (icon::GIT_PULL_REQUEST, p.text_dim, "Draft"),
+        (RequestState::Open, true) => (icon::PENCIL_SIMPLE_LINE, p.text_dim, "Draft"),
         (RequestState::Open, false) => (icon::GIT_PULL_REQUEST, p.success, "Open"),
         (RequestState::Merged, _) => (icon::GIT_MERGE, p.accent, "Merged"),
         (RequestState::Closed, _) => (icon::GIT_PULL_REQUEST, p.danger, "Closed"),
@@ -234,7 +235,7 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Actio
     }
 }
 
-const REQUEST_ROW_H: f32 = 58.0;
+const REQUEST_ROW_H: f32 = 74.0;
 
 fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Response {
     let p = palette(ui.ctx());
@@ -281,12 +282,10 @@ fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Respo
         p.text,
     );
     let meta = format!(
-        "#{}  ·  {}  ·  {}  ·  {} → {}",
+        "#{}  ·  {}  ·  {}",
         r.number,
         r.author,
-        widgets::relative_time(r.updated_at, now),
-        r.source_branch,
-        r.target_branch
+        widgets::relative_time(r.updated_at, now)
     );
     let meta = widgets::single_line_galley(
         ui,
@@ -296,16 +295,61 @@ fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Respo
         clip.width(),
     );
     painter.galley(
-        egui::pos2(clip.min.x, rect.min.y + 40.0 - meta.size().y / 2.0),
+        egui::pos2(clip.min.x, rect.min.y + 37.0 - meta.size().y / 2.0),
         meta,
         p.text_faint,
+    );
+    let target_width = ui
+        .painter()
+        .layout_no_wrap(
+            r.target_branch.clone(),
+            FontId::proportional(theme::SMALL_SIZE),
+            p.text_dim,
+        )
+        .size()
+        .x
+        .min(clip.width() * 0.45);
+    let source = widgets::single_line_galley(
+        ui,
+        r.source_branch.clone(),
+        FontId::proportional(theme::SMALL_SIZE),
+        p.text_dim,
+        (clip.width() - target_width - theme::XL).max(0.0),
+    );
+    let source_width = source.size().x;
+    painter.galley(
+        egui::pos2(clip.min.x, rect.min.y + 56.0 - source.size().y / 2.0),
+        source,
+        p.text_dim,
+    );
+    painter.text(
+        egui::pos2(clip.min.x + source_width + theme::SM, rect.min.y + 56.0),
+        Align2::LEFT_CENTER,
+        "→",
+        FontId::proportional(theme::SMALL_SIZE),
+        p.text_faint,
+    );
+    let target = widgets::single_line_galley(
+        ui,
+        r.target_branch.clone(),
+        FontId::new(theme::SMALL_SIZE, theme::medium()),
+        p.text_dim,
+        target_width,
+    );
+    painter.galley(
+        egui::pos2(
+            clip.min.x + source_width + theme::XL,
+            rect.min.y + 56.0 - target.size().y / 2.0,
+        ),
+        target,
+        p.text_dim,
     );
     let info = format!("{state} request #{} {} by {}", r.number, r.title, r.author);
     resp.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &info)
     });
     resp.on_hover_text(format!(
-        "{}\n#{} · {}\n{} → {}",
+        "{state} · {}\n#{} · {}\n{} → {}",
         r.title, r.number, r.author, r.source_branch, r.target_branch
     ))
 }
@@ -468,96 +512,47 @@ fn action_bar(
     let busy = tab.requests.busy.is_some() || tab.running.is_some();
     ui.horizontal_wrapped(|ui| {
         if ui
-            .add_enabled(
-                !busy,
-                egui::Button::new(format!("{}  Check out", icon::DOWNLOAD_SIMPLE)),
-            )
+            .add_enabled_ui(!busy, |ui| {
+                widgets::secondary_button(
+                    ui,
+                    format!("{}  Check out", icon::DOWNLOAD_SIMPLE),
+                    egui::Vec2::ZERO,
+                )
+            })
+            .inner
             .on_hover_text("Fetch the request's branch and check it out locally")
             .clicked()
         {
             actions.push(Action::CheckoutRequest(r.clone()));
         }
-        if ui
-            .button(format!("{}  Open on {}", forge_icon(kind), kind.name()))
-            .clicked()
+        if widgets::secondary_button(
+            ui,
+            format!("{}  Open on {}", forge_icon(kind), kind.name()),
+            egui::Vec2::ZERO,
+        )
+        .clicked()
         {
             actions.push(Action::OpenUrl(r.web_url.clone()));
         }
         if widgets::icon_button(ui, icon::LINK, "Copy link").clicked() {
             actions.push(Action::Copy(r.web_url.clone()));
         }
-        if r.state == RequestState::Open {
-            ui.separator();
-            if ui
-                .add_enabled(
-                    !busy,
-                    egui::Button::new(
-                        RichText::new(format!("{}  Approve", icon::CHECK)).color(p.success),
-                    ),
-                )
-                .clicked()
-            {
-                actions.push(Action::Host(HostJob::Approve(r.number)));
-            }
-            if ui.available_size_before_wrap().x < 194.0 {
-                ui.end_row();
-            }
-            // Merge: method picker and a confirming second click.
-            let mergeable = d.and_then(|d| d.mergeable).unwrap_or(true) && !r.draft;
-            egui::ComboBox::from_id_salt("merge-method").icon(crate::ui::widgets::combo_caret)
-                .selected_text(tab.requests.merge_method.label())
-                .width(170.0_f32.min(ui.max_rect().width()))
-                .wrap_mode(egui::TextWrapMode::Truncate)
-                .show_ui(ui, |ui| {
-                    for m in MergeMethod::ALL {
-                        ui.selectable_value(&mut tab.requests.merge_method, m, m.label());
-                    }
-                });
-            let head = d.and_then(|d| d.head_sha.clone()).filter(|h| !h.is_empty());
-            let resp = ui.add_enabled(
-                !busy && mergeable && head.is_some(),
-                egui::Button::new(format!("{}  Merge…", icon::GIT_MERGE)),
-            );
-            let resp = if r.draft {
-                resp.on_disabled_hover_text("Drafts cannot be merged")
-            } else if !mergeable {
-                resp.on_disabled_hover_text("This request has conflicts or is blocked")
-            } else if head.is_none() {
-                resp.on_disabled_hover_text("Loading the request…")
-            } else {
-                resp.on_hover_text(format!(
-                    "{} into {}",
-                    tab.requests.merge_method.label(),
-                    r.target_branch
-                ))
-            };
-            if resp.clicked()
-                && let Some(head) = head
-            {
-                let method = tab.requests.merge_method;
-                let short: String = head.chars().take(7).collect();
-                actions.push(Action::OpenDialog(Dialog::ConfirmHost {
-                    title: format!("Merge {} {}{}?", kind.request_abbrev(), kind_sigil(kind), r.number),
-                    body: format!(
-                        "{} \"{}\" ({}) into {} on {}, as reviewed at commit {short}. If anyone pushes to it before the merge runs, {} refuses the merge. This cannot be undone from Canopy.",
-                        method.label(),
-                        r.title,
-                        r.source_branch,
-                        r.target_branch,
-                        kind.name(),
-                        kind.name(),
-                    ),
-                    confirm: "Merge".into(),
-                    danger: false,
-                    job: HostJob::Merge(r.number, method, Some(head)),
-                }));
-            }
-            if ui
-                .add_enabled(!busy, egui::Button::new(format!("{}  Close…", icon::X_CIRCLE)))
-                .clicked()
+        ui.menu_button("More", |ui| {
+            if r.state == RequestState::Open
+                && ui
+                    .add_enabled(
+                        !busy,
+                        egui::Button::new(RichText::new("Close request…").color(p.danger)),
+                    )
+                    .clicked()
             {
                 actions.push(Action::OpenDialog(Dialog::ConfirmHost {
-                    title: format!("Close {} {}{}?", kind.request_abbrev(), kind_sigil(kind), r.number),
+                    title: format!(
+                        "Close {} {}{}?",
+                        kind.request_abbrev(),
+                        kind_sigil(kind),
+                        r.number
+                    ),
                     body: format!(
                         "\"{}\" will be closed without merging. You can reopen it later.",
                         r.title
@@ -566,22 +561,100 @@ fn action_bar(
                     danger: true,
                     job: HostJob::SetOpen(r.number, false),
                 }));
+                ui.close();
+            } else if r.state == RequestState::Closed
+                && ui
+                    .add_enabled(!busy, egui::Button::new("Reopen request"))
+                    .clicked()
+            {
+                actions.push(Action::Host(HostJob::SetOpen(r.number, true)));
+                ui.close();
+            } else if r.state == RequestState::Merged {
+                ui.label("Already merged");
             }
-        } else if r.state == RequestState::Closed
-            && ui
-                .add_enabled(
-                    !busy,
-                    egui::Button::new(format!("{}  Reopen", icon::ARROW_COUNTER_CLOCKWISE)),
-                )
+        });
+    });
+    if r.state == RequestState::Open {
+        ui.add_space(theme::SM);
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled_ui(approve_action(tab, r).is_some(), |ui| {
+                    widgets::secondary_button(
+                        ui,
+                        RichText::new(format!("{}  Approve", icon::CHECK)).color(p.success),
+                        egui::Vec2::ZERO,
+                    )
+                })
+                .inner
+                .on_hover_text(format!(
+                    "Approve this request  ({})",
+                    crate::keymap::hint(crate::keymap::Command::ApproveRequest)
+                ))
                 .clicked()
-        {
-            actions.push(Action::Host(HostJob::SetOpen(r.number, true)));
-        }
-        if let Some(b) = &tab.requests.busy {
+                && let Some(action) = approve_action(tab, r)
+            {
+                actions.push(action);
+            }
+            if ui.available_size_before_wrap().x < 220.0 {
+                ui.end_row();
+            }
+            egui::Frame::new()
+                .fill(p.panel)
+                .stroke(Stroke::new(1.0, p.border))
+                .corner_radius(CornerRadius::same(theme::RADIUS_SM))
+                .inner_margin(egui::Margin::same(theme::XS as i8))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        egui::ComboBox::from_id_salt("merge-method")
+                            .icon(widgets::combo_caret)
+                            .selected_text(tab.requests.merge_method.label())
+                            .width(170.0_f32.min((ui.available_width() - 120.0).max(80.0)))
+                            .wrap_mode(egui::TextWrapMode::Truncate)
+                            .show_ui(ui, |ui| {
+                                for method in MergeMethod::ALL {
+                                    ui.selectable_value(
+                                        &mut tab.requests.merge_method,
+                                        method,
+                                        method.label(),
+                                    );
+                                }
+                            });
+                        let dialog = merge_confirmation(tab, kind, r, d);
+                        let reason = if busy {
+                            "Wait for the current operation"
+                        } else if r.draft {
+                            "Drafts cannot be merged"
+                        } else if d.is_none_or(|details| details.head_sha.is_none()) {
+                            "Loading the request…"
+                        } else {
+                            "This request has conflicts or is blocked"
+                        };
+                        if widgets::primary_button(
+                            ui,
+                            &format!("{}  Merge…", icon::GIT_MERGE),
+                            dialog.is_some(),
+                            110.0,
+                        )
+                        .on_hover_text(if dialog.is_some() {
+                            "Confirm this merge before it runs"
+                        } else {
+                            reason
+                        })
+                        .clicked()
+                            && let Some(dialog) = dialog
+                        {
+                            actions.push(Action::OpenDialog(dialog));
+                        }
+                    });
+                });
+        });
+    }
+    if let Some(b) = &tab.requests.busy {
+        ui.horizontal(|ui| {
             ui.spinner();
             ui.label(RichText::new(b).size(theme::META_SIZE).color(p.accent));
-        }
-    });
+        });
+    }
     if let Some(Some(source)) = tab.requests.token
         && source != TokenSource::Saved
     {
@@ -591,6 +664,74 @@ fn action_bar(
                 .color(p.text_faint),
         );
     }
+}
+
+/// The selected request's details carry the state displayed by its action buttons.
+pub(crate) fn selected_summary(tab: &RepoTab) -> Option<&RequestSummary> {
+    let selected = tab.requests.selected?;
+    tab.requests
+        .details
+        .as_ref()
+        .and_then(|details| details.as_ref().ok())
+        .filter(|details| details.summary.number == selected)
+        .map(|details| &details.summary)
+        .or_else(|| {
+            tab.requests
+                .list
+                .as_ref()?
+                .as_ref()
+                .ok()?
+                .iter()
+                .find(|request| request.number == selected)
+        })
+}
+
+pub(crate) fn approve_action(tab: &RepoTab, request: &RequestSummary) -> Option<Action> {
+    (request.state == RequestState::Open && tab.requests.busy.is_none() && tab.running.is_none())
+        .then(|| Action::Host(HostJob::Approve(request.number)))
+}
+
+/// Shared by the pointer and keyboard paths; both confirm the reviewed head before merging.
+pub(crate) fn merge_confirmation(
+    tab: &RepoTab,
+    kind: ForgeKind,
+    r: &RequestSummary,
+    d: Option<&RequestDetails>,
+) -> Option<Dialog> {
+    if tab.requests.busy.is_some()
+        || tab.running.is_some()
+        || r.state != RequestState::Open
+        || r.draft
+    {
+        return None;
+    }
+    let details = d.filter(|details| details.summary.number == r.number)?;
+    if details.mergeable == Some(false) {
+        return None;
+    }
+    let head = details.head_sha.as_ref().filter(|head| !head.is_empty())?;
+    let short: String = head.chars().take(7).collect();
+    let method = tab.requests.merge_method;
+    Some(Dialog::ConfirmHost {
+        title: format!(
+            "Merge {} {}{}?",
+            kind.request_abbrev(),
+            kind_sigil(kind),
+            r.number
+        ),
+        body: format!(
+            "{} \"{}\" ({}) into {} on {}, as reviewed at commit {short}. If anyone pushes to it before the merge runs, {} refuses the merge. This cannot be undone from Canopy.",
+            method.label(),
+            r.title,
+            r.source_branch,
+            r.target_branch,
+            kind.name(),
+            kind.name()
+        ),
+        confirm: "Merge".into(),
+        danger: false,
+        job: HostJob::Merge(r.number, method, Some(head.clone())),
+    })
 }
 
 fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
@@ -621,6 +762,26 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
         );
         ui.add_space(12.0);
     }
+
+    // Description.
+    egui::Frame::new()
+        .fill(p.panel)
+        .stroke(Stroke::new(1.0, p.border))
+        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .inner_margin(egui::Margin::same(14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            if d.body.trim().is_empty() {
+                ui.label(
+                    RichText::new("No description.")
+                        .italics()
+                        .color(p.text_faint),
+                );
+            } else {
+                crate::ui::notes::markdown(ui, d.body.trim());
+            }
+        });
+    ui.add_space(16.0);
 
     // Checks.
     if !d.checks.is_empty() {
@@ -700,7 +861,7 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
                     _ => (icon::CHAT_CIRCLE, p.text_dim),
                 };
                 ui.label(
-                    RichText::new(format!("{g} {}", r.author))
+                    RichText::new(format!("{g} {}: {}", r.author, r.state))
                         .size(theme::META_SIZE)
                         .color(c),
                 )
@@ -709,26 +870,6 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
         });
         ui.add_space(12.0);
     }
-
-    // Description.
-    egui::Frame::new()
-        .fill(p.panel)
-        .stroke(Stroke::new(1.0, p.border))
-        .corner_radius(CornerRadius::same(theme::RADIUS))
-        .inner_margin(egui::Margin::same(14))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            if d.body.trim().is_empty() {
-                ui.label(
-                    RichText::new("No description.")
-                        .italics()
-                        .color(p.text_faint),
-                );
-            } else {
-                crate::ui::notes::markdown(ui, d.body.trim());
-            }
-        });
-    ui.add_space(16.0);
 
     // Conversation.
     if !d.comments.is_empty() {
@@ -758,7 +899,7 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
 fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Action>) {
     ui.add(
         egui::TextEdit::multiline(&mut tab.requests.comment)
-            .hint_text("Leave a comment (Markdown)")
+            .hint_text("Leave a comment (Markdown)…")
             .desired_rows(3)
             .desired_width(f32::INFINITY)
             .margin(theme::FIELD_MARGIN),
@@ -766,17 +907,172 @@ fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Ac
     ui.add_space(6.0);
     let can = !tab.requests.comment.trim().is_empty() && tab.requests.busy.is_none();
     ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                can,
-                egui::Button::new(format!("{}  Comment", icon::CHAT_CIRCLE_TEXT)),
-            )
-            .clicked()
-        {
+        if widgets::primary_button(ui, "Comment", can, 112.0).clicked() {
             actions.push(Action::Host(HostJob::Comment(
                 number,
                 tab.requests.comment.trim().to_owned(),
             )));
         }
+        if tab.requests.comment.trim().is_empty() {
+            ui.label(
+                RichText::new("Write a comment to enable")
+                    .size(theme::SMALL_SIZE)
+                    .color(palette(ui.ctx()).text_faint),
+            );
+        }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::worker::Worker;
+    use std::sync::Arc;
+
+    fn summary(state: RequestState) -> RequestSummary {
+        RequestSummary {
+            number: 7,
+            title: "Request".into(),
+            author: "Reviewer".into(),
+            state,
+            draft: false,
+            source_branch: "topic".into(),
+            target_branch: "main".into(),
+            from_fork: false,
+            created_at: 0,
+            updated_at: 0,
+            web_url: "https://github.com/example/project/pull/7".into(),
+            labels: vec![],
+        }
+    }
+
+    fn details(state: RequestState) -> RequestDetails {
+        RequestDetails {
+            summary: summary(state),
+            body: String::new(),
+            head_sha: Some("1234567".into()),
+            mergeable: Some(true),
+            commits: None,
+            changed_files: None,
+            additions: None,
+            deletions: None,
+            checks: vec![],
+            reviews: vec![],
+            comments: vec![],
+        }
+    }
+
+    #[test]
+    fn merge_controls_fit_a_narrow_details_pane() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::theme::apply(&ctx, crate::ui::theme::ThemeId::Midnight, true);
+        let (worker, _, _) = Worker::detached();
+        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        let details = details(RequestState::Open);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(196.0, 700.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                action_bar(
+                    ui,
+                    &mut tab,
+                    ForgeKind::GitHub,
+                    &details.summary,
+                    Some(&details),
+                    &mut Vec::new(),
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let merge = output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && text.galley.text().contains("Merge…")
+                {
+                    Some((text.visual_bounding_rect(), shape.clip_rect))
+                } else {
+                    None
+                }
+            })
+            .expect("merge control");
+        assert!(
+            merge.1.contains_rect(merge.0),
+            "merge control {:?} outside {:?}",
+            merge.0,
+            merge.1
+        );
+    }
+
+    #[test]
+    fn refreshed_request_selection_preserves_action_eligibility() {
+        let (worker, _, _) = Worker::detached();
+        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        tab.requests.selected = Some(7);
+        tab.requests.list = Some(Ok(Arc::new(vec![summary(RequestState::Open)])));
+        for state in [
+            RequestState::Open,
+            RequestState::Closed,
+            RequestState::Merged,
+        ] {
+            tab.requests.details = Some(Ok(Arc::new(details(state))));
+            let request = selected_summary(&tab).expect("selected request");
+            assert_eq!(request.state, state);
+            assert_eq!(
+                approve_action(&tab, request).is_some(),
+                state == RequestState::Open
+            );
+            for kind in [ForgeKind::GitHub, ForgeKind::GitLab] {
+                let detail = details(state);
+                assert_eq!(
+                    merge_confirmation(&tab, kind, request, Some(&detail)).is_some(),
+                    state == RequestState::Open
+                );
+            }
+        }
+        let mut other = details(RequestState::Closed);
+        other.summary.number = 8;
+        tab.requests.details = Some(Ok(Arc::new(other)));
+        assert_eq!(
+            selected_summary(&tab).expect("list fallback").state,
+            RequestState::Open
+        );
+        tab.requests.details = Some(Err("offline".into()));
+        assert_eq!(selected_summary(&tab).expect("error fallback").number, 7);
+        tab.requests.selected = Some(99);
+        assert!(selected_summary(&tab).is_none());
+    }
+
+    #[test]
+    fn request_shortcuts_use_the_displayed_state_after_details_refresh() {
+        let (worker, _, _) = Worker::detached();
+        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        tab.requests.selected = Some(7);
+        tab.requests.list = Some(Ok(Arc::new(vec![summary(RequestState::Open)])));
+        tab.requests.details = Some(Ok(Arc::new(details(RequestState::Merged))));
+        let request = selected_summary(&tab).expect("selected request");
+        assert!(approve_action(&tab, request).is_none());
+        assert!(
+            merge_confirmation(
+                &tab,
+                ForgeKind::GitHub,
+                request,
+                tab.requests
+                    .details
+                    .as_ref()
+                    .unwrap()
+                    .as_ref()
+                    .ok()
+                    .map(Arc::as_ref)
+            )
+            .is_none()
+        );
+    }
 }

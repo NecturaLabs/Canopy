@@ -599,7 +599,7 @@ fn welcome_scene() -> Scene {
         items.push(node(320.0, y, r, Ink::Accent, at).alpha(0.86));
     }
     Scene {
-        size: vec2(640.0, 360.0),
+        size: vec2(640.0, 250.0),
         items,
     }
 }

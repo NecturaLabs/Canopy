@@ -48,7 +48,7 @@ in a document no longer exists.
   as a template), [specs/HANDOFF-canopy-2-core-safety.md](specs/HANDOFF-canopy-2-core-safety.md) and
   [specs/HANDOFF-canopy-3-core-workflows.md](specs/HANDOFF-canopy-3-core-workflows.md) (what two
   merged branches added and the app still has to wire up), and
-  [specs/HANDOFF-visual-polish.md](specs/HANDOFF-visual-polish.md) (the visual findings still open). The `memory-hygiene` skill tends them. A
+  [specs/HANDOFF-visual-polish.md](specs/HANDOFF-visual-polish.md) (the visual polish review checkpoint and verification limits). The `memory-hygiene` skill tends them. A
   session never leaves a standing handoff at the repository root: each item goes where it lives.
 - **Generated, do not edit**: `legal/third-party-notices.txt` (`tools/notices.py`) and the images in
   `screenshots/` (`tools/screenshot.sh`, the `screenshot` skill).

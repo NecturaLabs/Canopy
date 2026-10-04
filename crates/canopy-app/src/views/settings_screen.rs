@@ -13,9 +13,8 @@ use canopy_core::identity::{Field, Identity, Scope, Source};
 
 use crate::action::Action;
 use crate::hosting::{self, TokenStore};
-use crate::keymap::{BINDINGS, Section as KeySection};
+use crate::keymap::Section as KeySection;
 use crate::settings::{CloneProtocol, PullMode, Settings, WhitespaceMode};
-use crate::ui::cheatsheet::{KEYCAP_GAP, keycaps_width, paint_keycap};
 use crate::ui::theme::{self, Palette, ThemeId, palette};
 use crate::ui::widgets;
 use crate::ui::widgets::forge_icon;
@@ -137,8 +136,8 @@ pub fn show(
     let mut result = SettingsResult::default();
     screen.picker.begin_frame();
     let screen_rect = ctx.content_rect();
-    let width = (screen_rect.width() - theme::XL * 2.0).clamp(0.0, 900.0);
-    let height = (screen_rect.height() - theme::XL * 2.0).clamp(0.0, 640.0);
+    let width = (screen_rect.width() - theme::XL * 2.0).clamp(0.0, theme::SETTINGS_MAX_WIDTH);
+    let height = (screen_rect.height() - theme::XL * 2.0).clamp(0.0, theme::SETTINGS_MAX_HEIGHT);
     let sidebar = width >= 720.0;
     let nav_width = 180.0;
     let modal = egui::Modal::new(egui::Id::new("settings"))
@@ -246,7 +245,10 @@ pub fn show(
                             egui::ScrollArea::vertical()
                                 .id_salt(("settings-content", screen.section))
                                 .auto_shrink([false, false])
-                                .max_height((height - theme::LG * 2.0 - 26.0 - theme::MD).max(0.0))
+                                .max_height(
+                                    (height - theme::LG * 2.0 - theme::CONTROL_HEIGHT - theme::MD)
+                                        .max(0.0),
+                                )
                                 .show(ui, |ui| {
                                     ui.set_max_width(ui.available_width());
                                     match screen.section {
@@ -411,7 +413,8 @@ fn row_layout(
         if width < 620.0 {
             label(ui, &mut open);
             ui.add_space(theme::XS);
-            ui.with_layout(
+            ui.allocate_ui_with_layout(
+                vec2(width, 0.0),
                 egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
                 |ui| {
                     ui.add_space(theme::SM);
@@ -512,7 +515,19 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             widgets::segmented(
                 ui,
                 &mut s.relative_dates,
-                &[(true, "3 hours ago"), (false, "Sep 21, 2026")],
+                &[(true, "Relative"), (false, "Calendar")],
+            );
+        },
+    );
+    row(
+        ui,
+        "Commit date format",
+        "Calendar dates in History and commit details, including older relative dates. Exact timestamp tooltips always include the author's UTC offset.",
+        |ui| {
+            widgets::segmented(
+                ui,
+                &mut s.iso_dates,
+                &[(false, "Sep 21, 2026"), (true, "2026-09-21")],
             );
         },
     );
@@ -888,30 +903,33 @@ fn identity_group(
     }
     let can_save =
         !screen.identity_name.trim().is_empty() && !screen.identity_email.trim().is_empty();
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(can_save, egui::Button::new("Save identity"))
-            .clicked()
-        {
-            actions.push(Action::SaveIdentity {
-                repo: repo_path.clone(),
-                scope: screen.identity_scope,
-                name: screen.identity_name.clone(),
-                email: screen.identity_email.clone(),
-            });
-        }
-        if ui.button("Clear…").clicked() {
-            actions.push(Action::OpenDialog(Dialog::ConfirmClearIdentity {
-                repo: repo_path.clone(),
-                scope: screen.identity_scope,
-            }));
-        }
-    });
-    ui.add_space(theme::XS);
-    ui.label(
-        RichText::new("Changes apply to future commits only; commits already made keep their authors. An environment variable or an author setting can still override what you save.")
-            .size(theme::SMALL_SIZE)
-            .color(p.text_faint),
+    row(
+        ui,
+        "Apply identity",
+        "Save these fields to Git configuration. Changes apply to future commits only; existing commits keep their authors. Environment variables or author settings may override this identity.",
+        |ui| {
+            if widgets::danger_button(ui, "Clear…", vec2(0.0, 34.0)).clicked() {
+                actions.push(Action::OpenDialog(Dialog::ConfirmClearIdentity {
+                    repo: repo_path.clone(),
+                    scope: screen.identity_scope,
+                }));
+            }
+            if widgets::primary_button(ui, "Save identity", can_save, 128.0)
+                .on_hover_text(if can_save {
+                    "Write this identity to the selected Git configuration."
+                } else {
+                    "Enter both a name and an email before saving."
+                })
+                .clicked()
+            {
+                actions.push(Action::SaveIdentity {
+                    repo: repo_path.clone(),
+                    scope: screen.identity_scope,
+                    name: screen.identity_name.clone(),
+                    email: screen.identity_email.clone(),
+                });
+            }
+        },
     );
 }
 
@@ -1229,7 +1247,7 @@ fn accounts(
             .inner_margin(egui::Margin::same(12))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(forge_icon(kind)).size(theme::ICON_LG).color(p.text));
                     ui.label(RichText::new(&host).font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold())));
                     let saved = tokens.get_for(&forge).is_some();
@@ -1239,7 +1257,7 @@ fn accounts(
                     } else if env {
                         (format!("{}  Using the {} environment variable", icon::CHECK_CIRCLE, if kind == ForgeKind::GitHub { "GH_TOKEN" } else { "GITLAB_TOKEN" }), p.success)
                     } else {
-                        (format!("{}  No saved token (the git credential helper is tried)", icon::CIRCLE_DASHED), p.text_faint)
+                        (format!("{}  No saved token (the git credential helper is tried)", icon::KEY), p.text_faint)
                     };
                     ui.label(RichText::new(status).size(theme::META_SIZE).color(color));
                 });
@@ -1249,7 +1267,7 @@ fn accounts(
                     ui.add(
                         egui::TextEdit::singleline(input)
                             .password(true)
-                            .hint_text("Paste a personal access token")
+                            .hint_text("Paste a personal access token…")
                             .desired_width(280.0)
                             .margin(theme::FIELD_MARGIN),
                     );
@@ -1304,14 +1322,10 @@ fn accounts(
                     ForgeKind::GitHub => "Needs the repo scope (classic token), or Pull requests: read and write plus Contents: read (fine-grained).",
                     ForgeKind::GitLab => "Needs the api scope (read_api is enough to only browse).",
                 };
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(scopes).size(theme::SMALL_SIZE).color(p.text_faint));
-                    // One unit: the link moves to the next line whole rather than leave its icon behind.
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    if ui.link(RichText::new(format!("Create a token {}", icon::ARROW_SQUARE_OUT)).size(theme::SMALL_SIZE)).clicked() {
-                        actions.push(Action::OpenUrl(hosting::token_page(kind, &host)));
-                    }
-                });
+                ui.add(egui::Label::new(RichText::new(scopes).size(theme::SMALL_SIZE).color(p.text_faint)).wrap());
+                if ui.link(RichText::new(format!("Create a token {}", icon::ARROW_SQUARE_OUT)).size(theme::SMALL_SIZE)).clicked() {
+                    actions.push(Action::OpenUrl(hosting::token_page(kind, &host)));
+                }
             });
         ui.add_space(10.0);
     }
@@ -1498,24 +1512,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
         );
         return;
     }
-    row(
-        ui,
-        "Check for updates",
-        "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
-        |ui| {
-            toggle(ui, &mut s.check_updates, "Check for updates");
-        },
-    );
-    row(
-        ui,
-        "Include beta builds",
-        "Also offer beta builds, which are tried out less before they are published.",
-        |ui| {
-            toggle(ui, &mut s.include_prereleases, "Include beta builds");
-        },
-    );
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(
             RichText::new(format!("Canopy {}", crate::build_info::label()))
                 .font(FontId::new(theme::LEAD_SIZE, theme::medium())),
@@ -1537,7 +1534,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
         ui.label(RichText::new(text).size(theme::META_SIZE).color(color));
     });
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui
             .add_enabled(
                 *update != UpdateState::Checking,
@@ -1563,7 +1560,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
     });
     if let Some(v) = s.skipped_version.clone() {
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(
                 RichText::new(format!("Skipping version {v}."))
                     .size(theme::META_SIZE)
@@ -1574,6 +1571,24 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
             }
         });
     }
+    ui.add_space(theme::XL);
+    heading(ui, "Preferences");
+    row(
+        ui,
+        "Check for updates",
+        "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
+        |ui| {
+            toggle(ui, &mut s.check_updates, "Check for updates");
+        },
+    );
+    row(
+        ui,
+        "Include beta builds",
+        "Also offer beta builds, which are tried out less before they are published.",
+        |ui| {
+            toggle(ui, &mut s.include_prereleases, "Include beta builds");
+        },
+    );
 }
 
 fn keyboard(ui: &mut Ui) {
@@ -1588,71 +1603,55 @@ fn keyboard(ui: &mut Ui) {
         );
     });
     ui.add_space(10.0);
-    let listed = |section: KeySection| {
-        BINDINGS
-            .iter()
-            .filter(move |b| b.section == section && crate::keymap::listed_here(b))
-            .map(|b| (b, crate::keymap::all_keys(b.command)))
-    };
-    // One key column for every row, as wide as the widest, so descriptions share an edge.
-    let stacked = ui.available_width() < 520.0;
-    let key_column = KeySection::ALL
-        .into_iter()
-        .flat_map(listed)
-        .map(|(_, keys)| keycaps_width(ui, &keys))
-        .fold(0.0_f32, f32::max)
-        .min(ui.available_width() * 0.45);
     for section in KeySection::ALL {
-        heading(ui, section.title());
-        for (b, keys) in listed(section) {
-            if stacked {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(b.description)
-                            .size(theme::BODY_SIZE)
-                            .color(p.text),
-                    )
-                    .wrap(),
-                );
-                let (rect, _) =
-                    ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
-                let mut x = rect.min.x;
-                for chord in &keys {
-                    x = paint_keycap(ui, x, rect.center().y, chord) + KEYCAP_GAP;
-                }
-            } else {
-                let text_width =
-                    (ui.available_width() - key_column - theme::MD - theme::LG).max(80.0);
-                let galley = ui.painter().layout(
-                    b.description.to_owned(),
-                    FontId::proportional(theme::BODY_SIZE),
-                    p.text,
-                    text_width,
-                );
-                let height = (galley.size().y + theme::SM).max(28.0);
-                let (rect, _) =
-                    ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
-                let mut x = rect.min.x + 2.0;
-                for chord in &keys {
-                    x = paint_keycap(ui, x, rect.center().y, chord) + KEYCAP_GAP;
-                }
-                ui.painter().galley(
-                    egui::pos2(
-                        rect.min.x + key_column + theme::LG,
-                        rect.center().y - galley.size().y / 2.0,
-                    ),
-                    galley,
-                    p.text_dim,
-                );
-            }
-        }
-        ui.add_space(8.0);
+        crate::ui::cheatsheet::rows(ui, section, "");
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_setting_controls_stay_beside_their_help() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let help_bottom = std::cell::Cell::new(0.0);
+        let mut control_top = 0.0;
+        let mut row_bottom = 0.0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(500.0, 800.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    row_layout(
+                        ui,
+                        "Name",
+                        &|ui| {
+                            help_bottom.set(ui.label("Used for future commits").rect.bottom());
+                        },
+                        "",
+                        |ui| {
+                            control_top = ui.button("Save identity").rect.top();
+                        },
+                    );
+                    row_bottom = ui.cursor().top();
+                });
+            },
+        );
+        output.textures_delta.clear();
+        assert!(
+            control_top <= help_bottom.get() + theme::LG,
+            "control top {control_top}, help bottom {}",
+            help_bottom.get()
+        );
+        assert!(row_bottom < 150.0, "row consumed {row_bottom} points");
+    }
 
     #[test]
     fn zoom_changes_only_after_the_drag_ends() {

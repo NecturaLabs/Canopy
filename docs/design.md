@@ -40,7 +40,7 @@ defined. When a token or component changes, update this document in the same cha
 | `danger` | `#F87171` | Removed lines, destructive buttons, error toasts |
 | `added-bg` | `#0F2A21` | Added line background in diffs |
 | `removed-bg` | `#2E1518` | Removed line background in diffs |
-| `button`, `button2` | `#7C3AED`, `#0E7490` | Ends of the primary button's gradient, labelled `on-button` (`#FFFFFF`) |
+| `button`, `button2` | `#7C3AED`, `#0E7490` | Primary fill and companion accent, labelled `on-button` (`#FFFFFF`) |
 
 ### Daylight (light)
 
@@ -62,7 +62,7 @@ defined. When a token or component changes, update this document in the same cha
 | `danger` | `#C72222` | Removed lines, destructive buttons, error toasts |
 | `added-bg` | `#E3F7EC` | Added line background in diffs |
 | `removed-bg` | `#FDE7E7` | Removed line background in diffs |
-| `button`, `button2` | `#7C3AED`, `#0E7490` | Ends of the primary button's gradient, labelled `on-button` (`#FFFFFF`) |
+| `button`, `button2` | `#7C3AED`, `#0E7490` | Primary fill and companion accent, labelled `on-button` (`#FFFFFF`) |
 
 Every theme passes the contrast test in `theme.rs` for every pairing the views draw: `text` 7:1
 and `text-dim` and `text-faint` 4.5:1 on every surface (`bg`, `panel`, `elevated`, `hover`, a
@@ -109,19 +109,23 @@ confused with an added or removed line.
 
 The accent gradient runs from `accent` to `accent-2` (violet to cyan in Midnight). It is used
 sparingly: the active tab indicator, the welcome screen mark and progress bars. The primary
-button uses the `button` pair instead, chosen so its label stays readable on both ends.
+button uses a solid `button` fill, chosen so its `on-button` label stays readable.
 
-Selected rows will all use `Palette::selected()`: `accent` at low opacity over the row background
-(18% in dark themes, 12% in light ones), with an `accent` bar on the left edge (3px in the history
-list, 4px on diff lines). egui's selected values use the same fill. Views still carrying their
+Keep all eight themes. Each earns its place by carrying the graph, selection and status colours
+through the full interface, rather than borrowing Midnight's lanes or changing only the chrome.
+
+Selected rows will all use `Palette::selected()`: `accent` at low opacity over the row background,
+set by `selection_alpha` (18% in most dark themes, 12% in light themes and Ember to keep its orange
+calm). An `accent` bar marks the left edge (3px in the history list, 4px on diff lines). egui's
+selected values use the same fill. Views still carrying their
 own tint move to it in the controls pass.
 
 ### Lane colours
 
 Ten colours, assigned to lines of history in order and reused cyclically. Each theme has its own
-set, each at least 3:1 against the background, a hovered row and a selected row; the dark themes
-Midnight, Ember and Forest share the set below, Daylight uses deeper variants, and Aurora, Neon
-and Paper define their own in `theme.rs`. In light themes, edges are drawn at full opacity and
+set, each at least 3:1 against the background, a hovered row and a selected row; Midnight uses the set below, Daylight uses deeper variants, and the other themes define
+their own in `theme.rs`. Ember leads with orange and gold, Forest with sunlit gold, sky blue and
+mint, and Aurora with arctic blue and muted lilac. In light themes, edges are drawn at full opacity and
 the node fill uses the panel colour.
 
 | Index | Hex | | Index | Hex |
@@ -155,17 +159,32 @@ are sized for their optical weight and are not part of the scale.
 | `BODY_SIZE` | Inter Regular or Medium | 13 | Default text, table rows, branch names |
 | `META_SIZE` | Inter Regular | 12 | Metadata beside a row's main text, setting descriptions |
 | `SMALL_SIZE` | Inter Regular or Medium | 11.5 | Hints, counts, badges, status bar |
-| `MICRO_SIZE` | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Pills and section labels |
+| `MICRO_SIZE` | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Pills, sidebar sections and table headers |
 | `MONO_SIZE` | JetBrains Mono Regular | 12.5 | Diffs, commit message editor, error output |
-| `MONO_SMALL_SIZE` | JetBrains Mono Regular | 11.5 | Short SHAs, key chords |
+| `MONO_SMALL_SIZE` | JetBrains Mono Regular | 11.5 | Short SHAs, key chords, History dates and line counts |
+
+Settings → Keyboard reuses the shortcuts sheet rows and keycaps. Palette entries lead with
+repository and current-view actions before app commands; staging buttons include their keys
+in tooltips.
+
+The shortcuts sheet keeps whole groups in order and balances its two columns by their estimated
+rendered heights, including stacked descriptions; narrow windows use a single column.
+
+Other section headings use sentence case at SMALL semibold in `text-dim`, without tracking.
 
 The global Body, Button, Small and Heading styles use the typography tokens in `theme.rs`.
 History rows are 30 points tall, diff lines 20 points.
 
+Settings grows with the viewport up to 1120 × 900 logical points, keeping a 24-point outer
+margin and a compact section picker when its navigation sidebar would crowd the content.
+
 ## Spacing
 
-Controls (buttons, text fields, combo boxes, checkboxes) are 26 points high; text fields use
-`FIELD_MARGIN` (8 by 5) so they match. A 4px base grid. Tokens: `xs` 4, `sm` 8, `md` 12, `lg` 16, `xl` 24. Panels use `md` inner
+Standard controls use `CONTROL_HEIGHT` (30 points); compact list actions use
+`COMPACT_CONTROL_HEIGHT` (28), primary actions `PRIMARY_CONTROL_HEIGHT` (36), and toolbar
+tools `TOOL_HEIGHT` (40). Text fields use `FIELD_MARGIN` (8 by 7). Passive headings and metadata
+stay dense rather than inheriting button-sized rows; compact commit details retain room for two
+changed files. A 4px base grid. Tokens: `xs` 4, `sm` 8, `md` 12, `lg` 16, `xl` 24. Panels use `md` inner
 padding; dialogs `xl`; rows `sm` horizontally. Related controls are `sm` apart, groups `lg`.
 
 ## Radii
@@ -181,10 +200,15 @@ padding; dialogs `xl`; rows `sm` horizontally. Related controls are `sm` apart, 
 Three levels, by background token plus shadow:
 
 - **Base** (`bg`, `panel`): no shadow; panels are separated by 1px `border` hairlines.
+- **Controls**: primary buttons and selected segments use `Palette::control_shadow()` for a
+  one-point lift, with a restrained inner highlight. Neutral action edges use `control_edge()`;
+  fields and unchecked controls keep the stronger `control-border`. Keyboard focus stays opaque
+  accent, and inherited disabled state suppresses primary fills and active decoration.
 - **Raised** (`elevated`): menus, tooltips, toasts. Shadow offset (0, 4), blur 16, black at 35%
   (Midnight) or 10% (Daylight).
 - **Overlay** (`elevated` over a scrim): dialogs and the palette. Shadow offset (0, 12), blur 32,
-  black at 45% / 14%; the scrim is black at 40% (Midnight) or 20% (Daylight).
+  black at 45% / 14%; the scrim is black at 69% in dark themes or 24% in light themes, so the
+  dialog leads over a busy graph without hiding the repository beneath it.
 
 ## Motion
 
@@ -251,42 +275,79 @@ in `theme.rs`:
 - Sidebar defaults to 250 points (resizable, 190–460). Below 1000 logical points it moves into
   the toolbar's navigation menu, preserving room for repository content. It stays open for
   section toggles, double-click checkout and context menus.
-- History details sit below the graph, initially 40% of its available height capped to 300–320
-  points where space permits. The resizable pane can shrink to 260 points; its maximum leaves
-  history controls and two complete rows. Expand opens the details in the content area, with Back
+- History column widths follow the currently visible rows: graph lane spans, ref pills and
+  messages, author names and formatted dates. Metadata sits after the measured message width
+  instead of at the far window edge. Narrow views omit lower-priority columns; long messages
+  elide, and busy graphs compress their lane spacing. Measurements stay bounded to the viewport.
+- History details sit below the graph, initially 40% of its available height, growing with
+  a tall window. The resizable pane can shrink to 260 points; its maximum leaves
+  history controls and six complete rows. Expand opens the details in the content area, with Back
   to history to restore the split. Both controls sit beside the commit summary and remain
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
 - Commit details use a compact author, SHA and date above the changed files. Commit information
-  opens independently of pane expansion and retains its state; its body scrolls while the files
-  stay reachable.
+  starts open, opens independently of pane expansion and retains its state; its body scrolls while
+  the files
+  stay reachable. The open metadata body reserves room for up to two changed files and their
+  controls. History prefers six visible rows and can retain the split with two rows in a short
+  window. Automatic inspector height adapts when the diff arrives; a manual resize takes precedence.
 - Commit metadata, the Changes file list, and the request list take at most 40% of their
   available width, leaving the rest for the diff or request details. Pane limits follow the
   current viewport. Read-only diff headers share a wrapping row at short heights to keep more
   changed lines visible without reducing text size.
+- Draft requests use a dim pencil icon in the list, distinct from the green open request icon;
+  the full state and branch pair remain available on hover.
+- The request conversation ends with a primary Comment action. It stays visibly placed below the
+  editor when empty, with a short explanation of why it is disabled.
+- Review summaries name each reviewer's state in text as well as showing its icon and colour.
 - History hides date, author and SHA columns as space decreases; full metadata remains in
   commit details and row tooltips. Row content is clipped to the table's scroll viewport.
 - History search stays hidden until Ctrl+F or `/` opens it and focuses the field. The same
   shortcut, Esc or the close button hides it and clears the query. The commit count does not
   occupy the table header; an in-progress operation banner remains visible without search.
-- The action toolbar is 44 points high with 36-point buttons. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has a visible
+- The action toolbar uses `ACTION_BAR_HEIGHT` (52 points), with 40-point tools, body-size captions
+  and room for its horizontal scrollbar. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has a visible
   scrollbar. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
+- When there is no remote, the toolbar says "Local only" as dim status text with an explanatory
+  tooltip, rather than styling it as an active control.
+- On the welcome screen, the status bar says "No repository open" so it remains informative even
+  before the first tab is opened.
+- Welcome action cards explain Open, Clone and Init in two short lines without requiring hover;
+  the shortcut stays in each card's top corner.
+- The welcome illustration's layout bounds end just below its trunk. The stack uses the height
+  saved there to sit nearer the vertical centre at tall window sizes, keeping the title close to
+  the art and reducing the empty space below the actions.
+- SSH host trust uses equal outlined choices, with refusal focused when nothing else has focus.
+  Host/fingerprint lead; raw SSH text is in Details. Copy and published-fingerprint comparison
+  links help users verify the key; parsing never grants trust.
+- Request details separate navigation from review actions. The method picker and primary Merge
+  action form one group; Close is in More. Description precedes expanded checks and reviews.
+- Git identity uses an explicit primary Save action and a danger Clear action in the same row
+  grid as other settings; its description explains the save boundary.
+- The view switcher always includes Requests, disabled with an explanation until a GitHub or
+  GitLab remote is available.
+- Sidebar remote actions (Publish and Add remote) use outlined compact buttons; local-only
+  status is a non-interactive dim label above them.
+- An unborn branch counts as a branch in the sidebar and shows its name with "no commits yet" in
+  both the sidebar and status bar.
 - Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;
   Discard is a ghost that turns `danger` under the pointer and sits apart on the right, and on
   very wide panes the actions stay within 960 px of the left edge. A new or deleted file is always
   one column without the empty line-number column (the layout switch shows dimmed on Unified), and
   its lines keep the full added/removed tint only in the gutter, with a quiet wash over the code.
   A line wider than the pane fades out at the edge.
-- The in-progress banner (merge, rebase, cherry-pick) appears above the history table with
-  continue and abort buttons.
-- Changes list headers: "Stage all" and "Unstage all" are 26 px tall (`widgets::COMPACT_H`). Discard
+- The shared operation banner (merge, rebase, cherry-pick) leads History, Changes and Requests.
+  State and conflict count precede Continue; unresolved conflicts or active work disable it.
+  Abort is separated and confirmed. The merge composer says Conclude merge and starts with
+  Git's pending message when no draft exists.
+- Changes list headers: "Stage all" and "Unstage all" are 28 px tall (`widgets::COMPACT_H`). Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).
 - The disabled primary button is flat with a hairline outline and faint text in every theme, never
-  the gradient. When the commit button is disabled for a reason its label does not give, a line
+  the primary fill. When the commit button is disabled for a reason its label does not give, a line
   above it says so ("Write a summary to commit", "Resolve the conflicts to commit").
 - The commit composer follows the file lists while both fit the column, under a hairline, and
   pins to the bottom with the lists scrolling above it only when they would crowd it (about
@@ -297,6 +358,9 @@ in `theme.rs`:
   with Publish…) and the last commit. The file column then shows only "Changes 0" and a quiet
   composer, "Nothing to commit" and the Amend choice, which expands to the full composer when
   ticked or when text is typed.
+- The clean summary scrolls in a short pane so Publish/Push/Pull and the last commit remain
+  reachable at maximum zoom. The conflict resolver's body can shrink below its normal scroll
+  minimum rather than painting code across its fixed Save footer.
 - Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
   interface zoom up to 160%; dimensions above are logical points after zoom.
 - Below `COMPACT_WIDTH` the view switcher names only the active view; the others keep their icon
@@ -320,15 +384,16 @@ both icons. Pills that do not fit collapse to a `+N` badge with a tooltip.
 `widgets::segmented` (text) and `widgets::icon_segmented` (icons with tooltips) for a choice
 between a few exclusive options: settings choices, the merge dialog's merge or rebase, the clone
 source and protocol, the request state filter and the diff layout. A recessed `bg` track with a
-hairline `border`; the chosen segment is raised (`elevated`, `accent` outline at 60%) with `text`,
+hairline `border`; the chosen segment is raised (`elevated`, restrained edge and micro-shadow),
+with an accent baseline and `text`,
 the others `text-dim` brightening on hover. Each segment is a radio button for assistive
 technology and shows the focus ring.
 
 ### Switch and checkbox
 
-On/off settings use `widgets::switch`: a 36×20 track, `bg` with a `control-border` outline when off
-and the `button` colour when on, with a 14-point thumb that slides (`FAST`). Checkboxes in forms
-use `widgets::checkbox`: a 16-point square, radius 4, filled with `button` and an `on-button` tick
+On/off settings use `widgets::switch`: a 40×24 track, `bg` with a `control-border` outline when off
+and the `button` colour when on, with an 18-point thumb that slides (`FAST`). Checkboxes in forms
+use `widgets::checkbox`: an 18-point square, radius 4, filled with `button` and an `on-button` tick
 when checked. Both carry their name for assistive technology and show the focus ring.
 
 ### Scroll edges
@@ -347,18 +412,28 @@ still; reduce motion shows it finished.
 ### Context menu
 
 An opened submenu item uses the same neutral surface as a hovered menu item.
+Reset choices put the mode name in semibold type above a dim description, with destructive
+Hard reset marked in danger colour and confirmed before it runs.
 
 ### Avatar
 
 A circle, 20px in tables and 24px in details, filled with a lane colour chosen by hashing the
-author's email, showing up to two initials in Small SemiBold white. Account pictures fill the same circle, with initials while unavailable or downloads are disabled. History and commit details share a twelve-hour local cache; a failed refresh retains the last picture.
+displayed identity after case and punctuation are removed. A Git author name and matching host
+handle therefore get the same colour without needing an account lookup. At these sizes it shows
+one larger initial for legibility; larger circles can show two. Account pictures fill the same
+circle, with initials while unavailable or downloads are
+disabled. History and commit details share a twelve-hour local cache; a failed refresh retains
+the last picture.
 
 ### Toast
 
-`elevated` card, `radius`, raised shadow, max width 420px, stacked bottom-right with `sm` gaps. A
-3px left stripe and icon in `success`, `warning`, `danger` or `accent-2` (info). Errors show git's
-stderr in Mono, scrollable, with a copy button, and stay until dismissed; other toasts dismiss
-after 4 seconds, pausing while hovered.
+`elevated` cards share a bounded bottom-right scroll stack, at most 408 points wide, so five
+errors remain reachable even in a compact zoomed window. Newest notices lead the stack. Titles
+truncate without displacing Close. Errors stay until dismissed, offer Close and
+Copy, and keep raw output in a scrollable monospace Details disclosure. Known failures lead
+with a plain explanation. A rejected push offers Pull for its originating repository; account
+failures offer Accounts. Other toasts dismiss on a card click or expire after four seconds.
+The stack retains five notices; arrivals and exits fade without shifting card geometry.
 
 ### Command palette
 
@@ -367,10 +442,18 @@ height stays inside the viewport. A search field at the top, then scrollable res
 the shortcut right-aligned in `text-faint`. Up/Down move, Enter runs, Esc closes. Branch names
 appear as "Checkout <branch>" entries.
 
+Field placeholders end in an ellipsis when they ask the user to act (for example, "Search
+shortcuts…"); example values and field names do not.
+
+The toolbar stays visible for frequent repository actions and status; the palette is the faster
+keyboard path and the home for less frequent actions. Neither hides essential actions available
+through the other. At narrow widths, compact toolbar controls preserve room for repository data
+while their labels and shortcuts remain discoverable in tooltips and the palette.
+
 ### Dialog
 
 Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, bounded by the viewport. Title, body, then right-aligned
-buttons: secondary (outlined) then primary (the `button` gradient, the same widget everywhere,
+buttons: secondary (outlined) then primary (the solid `button` fill, the same widget everywhere,
 with a focus ring). Destructive confirmations use a
 solid `danger` primary button (`widgets::danger_primary_button`, its text white or black by contrast
 with the theme's `danger`) whose label names the action ("Delete branch", "Discard 3 files"), never
@@ -379,6 +462,17 @@ has focus. A choice that is riskier than the main one (trusting a whole folder) 
 `warning` with a line saying what it covers, never a second full-width button. Informational
 destinations (About: What's new, Releases, the legal texts) are text links in `accent`, with one
 primary button for the real action.
+
+The merge dialog explains every merge mode beside its radio choice so they can be compared before
+selection. The sentence below the choices still names the exact branches affected by the selected
+mode.
+
+Action dialogs lead with the effect on the repository and the choice Canopy will pass to Git.
+They do not append a universal command preview: an action may run several Git commands, its
+arguments can depend on repository state at execution time, and a guessed preview would imply a
+guarantee it cannot keep. A future optional command disclosure must use the same redacted argv
+that the operation actually executes. Differences from the user's Git configuration are shown
+with the setting, value and source, as the Git settings work in the backlog requires.
 
 ### Git identity
 
@@ -438,3 +532,6 @@ bodies; short windows pin them at the bottom. Tooltips from underlying content d
 a blocking overlay opens.
 
 Update progress and completion dialogs keep their action buttons in a content-height horizontal row, immediately below the status text, rather than expanding to fill the viewport.
+
+Narrow Settings controls occupy a content-height row below their help. Notification dismiss
+controls also use bounded rows so successive frames cannot grow the notification beyond the viewport.

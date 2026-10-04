@@ -189,7 +189,21 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         ui.add_space(8.0);
 
         // Branches.
-        if section(ui, tab, "branches", "Branches", icon::GIT_BRANCH, snap.branches.len()) {
+        let unborn = snap.head.branch.as_ref().filter(|name| {
+            snap.head.oid.is_none() && !snap.branches.iter().any(|branch| &branch.name == *name)
+        });
+        if section(
+            ui,
+            tab,
+            "branches",
+            "Branches",
+            icon::GIT_BRANCH,
+            snap.branches.len() + usize::from(unborn.is_some()),
+        ) {
+            if let Some(name) = unborn {
+                let label = format!("{name} (no commits yet)");
+                let _ = row(ui, Row { id: ui.id().with("unborn-branch"), glyph: icon::CHECK_CIRCLE, label: &label, indent: 6.0, strong: true, color: p.accent, ahead: 0, behind: 0, hint: Some("Current branch; make the first commit to create it") });
+            }
             virtual_rows(ui, snap.branches.len(), ROW_H, |ui, i| {
                 let b = &snap.branches[i];
                 let color = if b.is_head { p.accent } else { p.text_dim };
@@ -259,11 +273,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         // Remotes.
         if section(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len()) {
             if snap.remotes.is_empty() {
-                let resp = row(ui, Row { id: ui.id().with("local-only"), glyph: icon::HARD_DRIVES, label: "Local only — no remote", indent: 6.0, strong: false, color: p.text_faint, ahead: 0, behind: 0, hint: Some("Everything stays on this computer. Publish to GitHub or GitLab to share it.") });
-                if resp.clicked() {
-                    actions.push(Action::Publish);
-                }
-                if ui.add(egui::Button::new(RichText::new(format!("{}  Publish…", icon::CLOUD_ARROW_UP)).size(theme::META_SIZE).color(p.accent)).frame(false)).clicked() {
+                ui.label(RichText::new(format!("{}  Local only — no remote", icon::HARD_DRIVES)).size(theme::META_SIZE).color(p.text_faint))
+                    .on_hover_text("Everything stays on this computer. Publish to GitHub or GitLab to share it.");
+                if widgets::compact_button(ui, RichText::new(format!("{}  Publish…", icon::CLOUD_ARROW_UP)).color(p.accent)).clicked() {
                     actions.push(Action::Publish);
                 }
             }
@@ -338,7 +350,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     });
                 });
             }
-            if ui.add(egui::Button::new(RichText::new(format!("{}  Add remote", icon::PLUS)).size(theme::META_SIZE).color(p.text_dim)).frame(false)).clicked() {
+            if widgets::compact_button(ui, format!("{}  Add remote…", icon::PLUS)).clicked() {
                 actions.push(Action::AddRemoteDialog);
             }
             ui.add_space(8.0);

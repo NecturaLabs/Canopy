@@ -496,11 +496,10 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                         .layout_no_wrap(
                             format!("{}  Local only", icon::HARD_DRIVES),
                             FontId::proportional(theme::META_SIZE),
-                            p.accent2,
+                            p.text_faint,
                         )
                         .size()
                         .x
-                        + 18.0
                         + theme::SM
                 } else {
                     0.0
@@ -548,21 +547,14 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     actions.push(Action::OpenUrl(f.web_url()));
                 }
                 if show_local {
-                    egui::Frame::new()
-                        .fill(Palette::tint(p.accent2, 30))
-                        .corner_radius(CornerRadius::same(10))
-                        .inner_margin(egui::Margin::symmetric(9, 3))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(format!("{}  Local only", icon::HARD_DRIVES))
-                                    .size(theme::META_SIZE)
-                                    .color(p.accent2),
-                            )
-                        })
-                        .response
-                        .on_hover_text(
-                            "No remote: everything stays on this computer until you publish",
-                        );
+                    ui.label(
+                        RichText::new(format!("{}  Local only", icon::HARD_DRIVES))
+                            .size(theme::META_SIZE)
+                            .color(p.text_faint),
+                    )
+                    .on_hover_text(
+                        "No remote: everything stays on this computer until you publish",
+                    );
                 }
             });
         });
@@ -576,7 +568,7 @@ fn segmented(
     actions: &mut Vec<Action>,
 ) {
     let p = palette(ui.ctx());
-    let mut items = vec![
+    let items = vec![
         (View::History, icon::GRAPH, "History", 0, Command::History),
         (
             View::Changes,
@@ -586,18 +578,18 @@ fn segmented(
             Command::Changes,
         ),
     ];
-    if let Some((kind, n)) = requests {
-        items.push((
-            View::Requests,
-            icon::GIT_PULL_REQUEST,
-            match kind {
-                canopy_core::forge::ForgeKind::GitHub => "Pull requests",
-                canopy_core::forge::ForgeKind::GitLab => "Merge requests",
-            },
-            n,
-            Command::Requests,
-        ));
-    }
+    let (kind, n) = requests.unwrap_or((canopy_core::forge::ForgeKind::GitHub, 0));
+    let mut items = items;
+    items.push((
+        View::Requests,
+        icon::GIT_PULL_REQUEST,
+        match kind {
+            canopy_core::forge::ForgeKind::GitHub => "Pull requests",
+            canopy_core::forge::ForgeKind::GitLab => "Merge requests",
+        },
+        n,
+        Command::Requests,
+    ));
     let compact = ui.ctx().content_rect().width() < theme::COMPACT_WIDTH;
     // Compact: only the active view keeps its name; the others show their glyph and count.
     let caption = |v: View, glyph: &str, label: &str| {
@@ -657,9 +649,20 @@ fn segmented(
         let w = widths[i];
         let r = egui::Rect::from_min_size(outer.min + vec2(x, 3.0), vec2(w, outer.height() - 6.0));
         x += w;
-        let resp = ui.interact(r, egui::Id::new(("seg", i)), Sense::click());
+        let enabled = v != View::Requests || requests.is_some();
+        let resp = ui.interact(
+            r,
+            egui::Id::new(("seg", i)),
+            if enabled {
+                Sense::click()
+            } else {
+                Sense::hover()
+            },
+        );
         let active = v == view;
-        let color = if active {
+        let color = if !enabled {
+            p.text_faint
+        } else if active {
             p.text
         } else if resp.hovered() {
             p.text_dim.lerp_to_gamma(p.text, 0.5)
@@ -699,10 +702,14 @@ fn segmented(
             );
         }
         resp.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, label)
+            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, active, label)
         });
-        let resp = resp.on_hover_text(tip(label, command));
-        if resp.clicked() {
+        let resp = resp.on_hover_text(if enabled {
+            tip(label, command)
+        } else {
+            "Add a GitHub or GitLab remote to view pull or merge requests.".to_owned()
+        });
+        if enabled && resp.clicked() {
             actions.push(Action::SetView(v));
         }
     }

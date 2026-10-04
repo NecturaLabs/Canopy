@@ -26,6 +26,18 @@ const HUNK_BUTTON_H: f32 = 26.0;
 /// How far from the left edge the hunk actions may sit, so they stay near the code on very wide
 /// panes.
 const HUNK_ACTIONS_MAX_X: f32 = 960.0;
+
+/// Bounds the initial inspector height without walking the lines of a large diff.
+pub(super) fn inspector_height(d: &FileDiff, limit: f32) -> f32 {
+    let mut height = theme::XL * 4.0;
+    for hunk in &d.hunks {
+        height += HUNK_H + hunk.lines.len() as f32 * LINE_H;
+        if height >= limit {
+            return limit;
+        }
+    }
+    height.min(limit)
+}
 /// The id of the diff options popup, which `--overlay diff-options` keeps open for screenshots.
 pub const OPTIONS_POPUP: &str = "diff-options";
 
@@ -543,12 +555,12 @@ fn header(
                     ui.label(
                         RichText::new(format!("+{}", d.additions))
                             .color(p.success)
-                            .size(theme::META_SIZE),
+                            .font(FontId::monospace(theme::MONO_SMALL_SIZE)),
                     );
                     ui.label(
                         RichText::new(format!("−{}", d.deletions))
                             .color(p.danger)
-                            .size(theme::META_SIZE),
+                            .font(FontId::monospace(theme::MONO_SMALL_SIZE)),
                     );
                 }
                 let path = sel.entry.path.clone();

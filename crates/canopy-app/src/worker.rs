@@ -257,6 +257,8 @@ pub enum Job {
     Diff(DiffKey),
     /// `HEAD`'s message (to prefill an amend).
     HeadMessage,
+    /// Git's pending merge message, read off the UI thread.
+    MergeMessage,
     /// A commit message for the squash merge of this branch, with git's summary of the squashed
     /// commits (`.git/SQUASH_MSG`) as the body.
     SquashMessage(String),
@@ -306,6 +308,9 @@ pub enum Event {
     /// highlighter threads, so it may arrive after a newer diff; it applies only to this one.
     Highlight(DiffKey, Arc<FileDiff>, Arc<crate::highlight::Highlights>),
     HeadMessage(String),
+    MergeMessage(String),
+    /// A new commit message after a squash, never an amend prefill.
+    SquashMessage(String),
     Conflict {
         path: String,
         kind: Option<canopy_core::ConflictKind>,
@@ -403,6 +408,7 @@ impl Job {
             Job::Details(_) => "details",
             Job::Diff(_) => "diff",
             Job::HeadMessage => "head-message",
+            Job::MergeMessage => "merge-message",
             Job::SquashMessage(_) => "squash-message",
             Job::Conflict(_) => "conflict",
             Job::Op(_) => "operation",
@@ -561,13 +567,28 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         emit(Event::HeadMessage(m));
                     }
                 }
+                Job::MergeMessage => {
+                    match std::fs::read_to_string(repo.git().path().join("MERGE_MSG")) {
+                        Ok(message) => emit(Event::MergeMessage(
+                            message
+                                .lines()
+                                .filter(|line| !line.starts_with('#'))
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        )),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => emit(Event::Failed(format!(
+                            "Could not read the merge message: {error}"
+                        ))),
+                    }
+                }
                 Job::SquashMessage(target) => {
                     let path = repo.git().path().join("SQUASH_MSG");
                     let body = std::fs::read_to_string(path).unwrap_or_default();
                     // Drop git's comment lines; keep the list of squashed commits.
                     let body: Vec<&str> = body.lines().filter(|l| !l.starts_with('#')).collect();
                     let body = body.join("\n");
-                    emit(Event::HeadMessage(format!(
+                    emit(Event::SquashMessage(format!(
                         "Merge {target} (squashed)\n\n{}",
                         body.trim()
                     )));

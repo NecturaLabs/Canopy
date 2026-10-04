@@ -73,6 +73,14 @@ parent. Nothing is trusted by default (ADR 0009).
 | Graph minimap | Planned | No | ? | No |
 | Signature verification badges | Planned | ? | Yes | ? |
 
+Operation state and guarded Continue/Abort actions stay visible in History, Changes and Requests.
+The merge composer names the conclusion and prefills Git's merge message without replacing a draft.
+
+Recovery currently uses explicit actions: History → Revert creates an inverse commit, Reset
+moves a branch with the chosen working-tree effect, and the conflict resolver can undo a choice
+while it is open. There is no universal Undo button: discarded unstaged or untracked content is
+not recoverable from Git's reflog. Operation-specific undo and the reflog view remain planned.
+
 ## Working copy and committing
 
 Git identity can be inspected and changed in Settings → Git: the name and email Git would use for
@@ -146,6 +154,13 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Stash: save (message, untracked), apply, pop, drop | Done | Yes | Yes | Yes |
 | Patches: create and apply | Planned | Yes | ? | Yes |
 
+Requests supports Ctrl+Shift+A to approve and Ctrl+Shift+M to open the merge confirmation,
+with the same state and busy guards as the buttons.
+
+Request list icons show lifecycle and draft state. Branches have a separate line with room
+reserved for the target. Check and review verdicts are loaded for the selected request's details;
+list summaries do not carry those verdicts. Bulk or bounded cached list badges remain planned.
+
 ## Interface
 
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
@@ -153,17 +168,21 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Command palette | Done | Yes | Yes | No |
 | Keyboard shortcuts for common operations | Done | Yes | Yes | Yes |
 | Keyboard cheatsheet and vim-style single-key actions | Unreleased | ? | ? | ? |
-| Settings screen (appearance, Git, integrations, accounts, updates, privacy, keyboard) | Unreleased | ? | ? | ? |
+| Settings screen (appearance, Git, integrations, accounts, updates, privacy, keyboard; relative/calendar History dates with English or ISO calendar format) | Unreleased | ? | ? | ? |
 | Compact layouts and 80–160% interface zoom | Unreleased | ? | ? | ? |
+| Shared raised controls, larger input targets and visible keyboard focus | Unreleased | ? | ? | ? |
 | Native folder chooser without blocking the app | Unreleased | ? | ? | ? |
 | Configurable keybindings | Planned | ? | ? | ? |
 | Dark and light themes (two in v0.1, eight in `main`, one high-contrast) | Done | Yes | Yes | ? |
 | Custom themes | Planned | No | Yes | No |
 | Confirmation for destructive operations | Done | Yes | Yes | Yes |
-| Toast notifications with git's error output | Done | ? | ? | ? |
+| Toast notifications with git's error output and a viewport-bounded overflow stack | Done | ? | ? | ? |
 | Localisation | Planned | ? | ? | Yes |
 | Update check, which can be turned off (nothing is sent before you accept the Terms) | Unreleased | ? | ? | ? |
 | Opt-in, scrubbed crash reports | Unreleased | ? | ? | ? |
 | Screen reader support (AccessKit) | Planned | ? | ? | ? |
 
 Author pictures are fetched after consent when enabled in Privacy, through the repository hosting worker. GitLab-provided Gravatar and Libravatar image URLs need no API keys. Pictures and failures are cached locally for 12 hours across restarts; failed refreshes retain the previous picture. Lookups take at most half of GitHub's anonymous request limit, and cache files unused for 30 days are deleted.
+
+Request review and merge shortcuts use the selected request's refreshed details when available,
+matching the state displayed by the action buttons. Merge controls wrap within narrow panes.

@@ -105,6 +105,8 @@ pub struct Settings {
     pub zoom: f32,
     /// "3 hours ago" rather than "Sep 21, 2026" in the history.
     pub relative_dates: bool,
+    /// ISO calendar dates in History and the commit inspector.
+    pub iso_dates: bool,
     /// Avatars next to authors.
     pub show_avatars: bool,
     /// Fetch account pictures after consent; initials remain when disabled.
@@ -194,6 +196,7 @@ impl Default for Settings {
             theme: ThemeId::Midnight,
             zoom: 1.0,
             relative_dates: true,
+            iso_dates: false,
             show_avatars: true,
             download_avatars: true,
             reduce_motion: false,

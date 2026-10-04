@@ -1,7 +1,7 @@
 //! The conflict resolver, shown in Changes for a conflicted file: every conflict as a card with
 //! our and their side next to each other (and the common ancestor for diff3 files), a choice per
 //! conflict (ours, theirs, both in either order, the ancestor, or a hand edit), the resulting text,
-//! and Save / Save and mark resolved. Files Canopy cannot show line by line (binary, deleted on
+//! and Save progress / Save resolved file. Files Canopy cannot show line by line (binary, deleted on
 //! one side) get a whole-file choice instead.
 
 use std::collections::HashMap;
@@ -26,10 +26,10 @@ const KEEP: usize = 3;
 
 fn choice_label(c: &Choice) -> &'static str {
     match c {
-        Choice::Ours => "Ours",
-        Choice::Theirs => "Theirs",
-        Choice::OursThenTheirs => "Ours, then theirs",
-        Choice::TheirsThenOurs => "Theirs, then ours",
+        Choice::Ours => "Current version",
+        Choice::Theirs => "Incoming version",
+        Choice::OursThenTheirs => "Current, then incoming",
+        Choice::TheirsThenOurs => "Incoming, then current",
         Choice::Base => "Ancestor",
         Choice::Custom(_) => "Edited",
     }
@@ -38,11 +38,18 @@ fn choice_label(c: &Choice) -> &'static str {
 /// Draws the resolver for the selected conflicted file.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let rebasing = tab
+        .snap
+        .as_ref()
+        .is_some_and(|snap| snap.state == canopy_core::RepoState::Rebase);
     let Some(r) = tab.resolver.as_mut() else {
         return;
     };
     let abs = tab.path.join(&r.path);
     header(ui, r, &abs, actions);
+    if rebasing {
+        ui.add(egui::Label::new(RichText::new("During a rebase, Current is the version being rebased onto; Incoming is the commit being replayed.").size(theme::SMALL_SIZE).color(p.text_dim)).wrap());
+    }
     match &r.file {
         None => {
             ui.add_space(30.0);
@@ -91,10 +98,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
 
 fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let width = ui.available_width();
     egui::Frame::new()
         .fill(p.panel)
-        .inner_margin(egui::Margin::symmetric(14, 8))
+        .inner_margin(egui::Margin::symmetric(theme::LG as i8, theme::SM as i8))
         .show(ui, |ui| {
+            ui.set_min_width((width - theme::LG * 2.0).max(0.0));
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(icon::GIT_DIFF)
@@ -165,28 +174,28 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
     let path = r.path.clone();
     let (title, body, ours, theirs) = match (r.kind, error) {
         (Some(ConflictKind::DeletedByThem), _) => (
-            "They deleted this file; you changed it",
-            "Keep your version, or delete the file as they did.",
-            "Keep my version",
+            "The incoming side deleted this file; the current side changed it",
+            "Keep the current version, or accept the incoming deletion.",
+            "Keep current version",
             "Delete the file",
         ),
         (Some(ConflictKind::DeletedByUs), _) => (
-            "You deleted this file; they changed it",
-            "Keep it deleted, or restore their version.",
+            "The current side deleted this file; the incoming side changed it",
+            "Keep it deleted, or restore the incoming version.",
             "Keep it deleted",
-            "Restore their version",
+            "Restore incoming version",
         ),
         (Some(ConflictKind::AddedByUs), _) => (
-            "Only you added this file",
-            "Keep it, or leave it out as they did.",
+            "Only the current side added this file",
+            "Keep the current file, or accept its absence on the incoming side.",
             "Keep it",
             "Leave it out",
         ),
         (Some(ConflictKind::AddedByThem), _) => (
-            "Only they added this file",
-            "Leave it out, or take their file.",
+            "Only the incoming side added this file",
+            "Leave it out, or take the incoming file.",
             "Leave it out",
-            "Take their file",
+            "Take incoming file",
         ),
         (Some(ConflictKind::BothDeleted), _) => (
             "Both sides deleted this file",
@@ -197,10 +206,15 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
         (_, Some(_)) => (
             "Canopy cannot show this file line by line",
             "It is binary, a link, or not UTF-8 text. Choose a whole side, or open it in an editor.",
-            "Use ours",
-            "Use theirs",
+            "Keep current version",
+            "Keep incoming version",
         ),
-        _ => ("Choose a side", "", "Use ours", "Use theirs"),
+        _ => (
+            "Choose a side",
+            "",
+            "Keep current version",
+            "Keep incoming version",
+        ),
     };
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
@@ -241,7 +255,7 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
             ui.vertical(|ui| {
                 use crate::keymap::{Command, hint};
                 let keys = format!(
-                    "{}  {} {} previous/next · {} ours · {} theirs · {} both · {} undo",
+                    "{}  {} {} previous/next · {} current · {} incoming · {} both · {} undo",
                     icon::KEYBOARD,
                     hint(Command::PrevConflict),
                     hint(Command::NextConflict),
@@ -252,20 +266,25 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                 );
                 ui.add(egui::Label::new(RichText::new(keys).size(theme::SMALL_SIZE).color(p.text_faint)).truncate())
                     .on_hover_text("Press ? for every shortcut");
+                ui.label(RichText::new(if done == n {
+                    "All conflicts have a choice. Save the resolved file to stage it."
+                } else {
+                    "Choose a version for each conflict. Save progress keeps markers for unresolved parts."
+                }).size(theme::SMALL_SIZE).color(p.text_dim));
                 ui.horizontal_wrapped(|ui| {
                     let all = done == n;
-                    let mark = widgets::primary_button(ui, "Save and mark resolved", all, 200.0)
-                        .on_disabled_hover_text("Choose a resolution for every conflict first");
+                    let mark = widgets::primary_button(ui, "Save resolved file", all, 180.0)
+                        .on_hover_text(if all { "Write this file and stage it as resolved" } else { "Choose a resolution for every conflict first" });
                     if mark.clicked() {
                         actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: true, expected: file.fingerprint() }));
                     }
-                    if ui.add_enabled(done > 0, egui::Button::new(format!("{}  Save", icon::FLOPPY_DISK)))
+                    if ui.add_enabled(done > 0, egui::Button::new(format!("{}  Save progress", icon::FLOPPY_DISK)))
                         .on_hover_text("Write the chosen resolutions to the file; unresolved conflicts keep their markers")
                         .clicked()
                     {
                         actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: false, expected: file.fingerprint() }));
                     }
-                    if done > 0 && ui.button("Reset").on_hover_text("Clear every choice").clicked() {
+                    if done > 0 && ui.button("Undo all choices").on_hover_text("Clear every choice before saving").clicked() {
                         r.choices.iter_mut().for_each(|c| *c = None);
                         r.editing = None;
                     }
@@ -298,6 +317,10 @@ fn code_height(n: usize, row_h: f32, spacing: f32) -> f32 {
 /// the lines inside the visible area are laid out and painted, so a side with thousands of lines
 /// costs no more than a short one.
 fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
+    code_lines_at(ui, lines, color, None);
+}
+
+fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line: Option<usize>) {
     if lines.is_empty() {
         ui.label(
             RichText::new("(nothing)")
@@ -311,6 +334,17 @@ fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
     let row_h = code_row_height(ui);
     let pitch = row_h + ui.spacing().item_spacing.y;
     let width = ui.available_width();
+    let gutter = first_line.map_or(0.0, |line| {
+        ui.painter()
+            .layout_no_wrap(
+                (line + lines.len()).to_string(),
+                FontId::monospace(theme::MONO_SMALL_SIZE),
+                palette(ui.ctx()).text_faint,
+            )
+            .size()
+            .x
+            + theme::LG
+    });
     let (rect, resp) = ui.allocate_exact_size(
         vec2(
             width,
@@ -331,7 +365,7 @@ fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
         let text = lines[i].replace('\t', "    ");
         let mut job =
             LayoutJob::single_section(text, egui::TextFormat::simple(font.clone(), color));
-        job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+        job.wrap = egui::text::TextWrapping::truncate_at_width((width - gutter).max(0.0));
         let galley = ui.painter().layout_job(job);
         let top = rect.min.y + i as f32 * pitch;
         // Like a truncated label: the whole line on hover when it does not fit.
@@ -341,8 +375,17 @@ fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
         {
             resp.clone().on_hover_text(line.as_str());
         }
+        if let Some(line) = first_line {
+            ui.painter().text(
+                egui::pos2(rect.min.x + gutter - theme::SM, top + row_h / 2.0),
+                egui::Align2::RIGHT_CENTER,
+                (line + i).to_string(),
+                FontId::monospace(theme::MONO_SMALL_SIZE),
+                palette(ui.ctx()).text_faint,
+            );
+        }
         ui.painter()
-            .galley(egui::pos2(rect.min.x, top), galley, color);
+            .galley(egui::pos2(rect.min.x + gutter, top), galley, color);
     }
 }
 
@@ -446,6 +489,7 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
     };
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
+        .min_scrolled_height(0.0)
         .id_salt(("resolve", &r.path))
         .show(ui, |ui| {
             egui::Frame::new()
@@ -461,16 +505,29 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
                     let row_h = code_row_height(ui);
                     let near = ui.clip_rect().expand2(vec2(0.0, OVERSCAN));
                     let mut k = 0;
+                    let mut original_line = 1;
                     for (i, seg) in file.segments.iter().enumerate() {
                         match seg {
                             Segment::Common(lines) => {
                                 // Its own id scope: ids inside must not depend on which cards
                                 // above were drawn this frame.
                                 ui.push_id(("common", i), |ui| {
-                                    common(ui, r, i, lines, i + 1 == file.segments.len());
+                                    common(
+                                        ui,
+                                        r,
+                                        i,
+                                        lines,
+                                        i + 1 == file.segments.len(),
+                                        original_line,
+                                    );
                                 });
+                                original_line += lines.len();
                             }
                             Segment::Conflict(region) => {
+                                original_line += region.ours.len()
+                                    + region.theirs.len()
+                                    + 3
+                                    + region.base.as_ref().map_or(0, |base| base.len() + 1);
                                 let signature = card_signature(r, k, region);
                                 let (blocks, shape) = card_lines(r, k, region);
                                 let known = r.layout.known(i, signature);
@@ -522,7 +579,14 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
 }
 
 /// Unchanged lines between conflicts, long stretches folded.
-fn common(ui: &mut Ui, r: &mut Resolver, i: usize, lines: &[String], last_segment: bool) {
+fn common(
+    ui: &mut Ui,
+    r: &mut Resolver,
+    i: usize,
+    lines: &[String],
+    last_segment: bool,
+    first_line: usize,
+) {
     let p = palette(ui.ctx());
     if lines.len() > FOLD && !r.expanded.contains(&i) {
         let first = if i == 0 { &[][..] } else { &lines[..KEEP] };
@@ -532,7 +596,7 @@ fn common(ui: &mut Ui, r: &mut Resolver, i: usize, lines: &[String], last_segmen
             &lines[lines.len() - KEEP..]
         };
         if !first.is_empty() {
-            code_lines(ui, first, p.text_faint);
+            code_lines_at(ui, first, p.text, Some(first_line));
         }
         let hidden = lines.len() - first.len() - last.len();
         ui.add_space(2.0);
@@ -551,10 +615,15 @@ fn common(ui: &mut Ui, r: &mut Resolver, i: usize, lines: &[String], last_segmen
         }
         ui.add_space(2.0);
         if !last.is_empty() {
-            code_lines(ui, last, p.text_faint);
+            code_lines_at(
+                ui,
+                last,
+                p.text,
+                Some(first_line + lines.len() - last.len()),
+            );
         }
     } else if !lines.is_empty() {
-        code_lines(ui, lines, p.text_faint);
+        code_lines_at(ui, lines, p.text, Some(first_line));
     }
 }
 
@@ -594,19 +663,50 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 };
             });
             ui.add_space(4.0);
+            let mut picked: Option<Option<Choice>> = None;
             // Both sides next to each other.
             let w = (ui.available_width() - 12.0) / 2.0;
             ui.horizontal_top(|ui| {
-                for (title, label, lines, color) in [
-                    ("Ours", &region.ours_label, &region.ours, p.accent),
-                    ("Theirs", &region.theirs_label, &region.theirs, p.accent2),
+                for (title, label, lines, color, side, command) in [
+                    (
+                        "Current version",
+                        &region.ours_label,
+                        &region.ours,
+                        p.accent,
+                        Choice::Ours,
+                        crate::keymap::Command::TakeOurs,
+                    ),
+                    (
+                        "Incoming version",
+                        &region.theirs_label,
+                        &region.theirs,
+                        p.accent2,
+                        Choice::Theirs,
+                        crate::keymap::Command::TakeTheirs,
+                    ),
                 ] {
                     ui.vertical(|ui| {
                         ui.set_width(w);
                         ui.label(
-                            RichText::new(format!("{title} · {label}"))
-                                .size(theme::SMALL_SIZE)
-                                .color(color),
+                            RichText::new(if label.is_empty() || label == "HEAD" {
+                                title.to_owned()
+                            } else {
+                                format!("Version from {label}")
+                            })
+                            .size(theme::SMALL_SIZE)
+                            .color(color),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "Git: {} · {label}",
+                                if side == Choice::Ours {
+                                    "ours"
+                                } else {
+                                    "theirs"
+                                }
+                            ))
+                            .size(theme::SMALL_SIZE)
+                            .color(p.text_faint),
                         );
                         egui::Frame::new()
                             .fill(Palette::tint(color, if p.dark { 22 } else { 16 }))
@@ -616,6 +716,15 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                                 ui.set_width(ui.available_width());
                                 code_lines(ui, lines, p.text);
                             });
+                        let on = choice.as_ref() == Some(&side);
+                        let label = format!(
+                            "{}Keep this version  ({})",
+                            if on { "✓ " } else { "" },
+                            crate::keymap::hint(command)
+                        );
+                        if widgets::compact_button(ui, label).clicked() {
+                            picked = Some(if on { None } else { Some(side) });
+                        }
                     });
                 }
             });
@@ -637,21 +746,20 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                     });
             }
             ui.add_space(4.0);
-            // Choices.
-            let mut picked: Option<Option<Choice>> = None;
+            // Combined and custom choices.
             ui.horizontal_wrapped(|ui| {
                 let mut options = vec![
-                    (Choice::Ours, "Take ours"),
-                    (Choice::Theirs, "Take theirs"),
-                    (Choice::OursThenTheirs, "Both: ours first"),
-                    (Choice::TheirsThenOurs, "Both: theirs first"),
+                    (Choice::OursThenTheirs, "Both: current first"),
+                    (Choice::TheirsThenOurs, "Both: incoming first"),
                 ];
                 if region.base.is_some() {
                     options.push((Choice::Base, "Ancestor"));
                 }
                 for (c, label) in options {
                     let on = choice.as_ref() == Some(&c);
-                    if ui.selectable_label(on, label).clicked() {
+                    if widgets::compact_button(ui, format!("{}{label}", if on { "✓ " } else { "" }))
+                        .clicked()
+                    {
                         picked = Some(if on { None } else { Some(c) });
                     }
                 }
@@ -784,6 +892,59 @@ mod tests {
             egui::CentralPanel::default().show(ui, |ui| body(ui, r));
         })
         .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn compact_resolver_code_never_paints_over_its_footer() {
+        let ctx = context();
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let mut r = Resolver::new("f".into());
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(&text(1, 5)))));
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 200.0));
+        for frame in 0..4 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE)
+                        .show(ui, |ui| {
+                            header(ui, &mut r, std::path::Path::new("f"), &mut Vec::new());
+                            footer(ui, &mut r, &mut Vec::new());
+                            body(ui, &mut r);
+                        });
+                },
+            );
+            output.textures_delta.clear();
+            let footer = egui::containers::panel::PanelState::load(
+                &ctx,
+                egui::Id::new(("resolve-footer", &r.path)),
+            )
+            .expect("resolver footer");
+            if frame >= 2 {
+                assert!(
+                    screen.contains_rect(footer.outer_rect),
+                    "frame {frame}: {:?} outside {screen:?}",
+                    footer.outer_rect
+                );
+                for shape in &output.shapes {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && (text.galley.text().starts_with("common ")
+                            || text.galley.text().starts_with("ours ")
+                            || text.galley.text().starts_with("theirs "))
+                    {
+                        assert!(
+                            shape.clip_rect.max.y <= footer.outer_rect.min.y,
+                            "code clip {:?} enters footer {:?}",
+                            shape.clip_rect,
+                            footer.outer_rect
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

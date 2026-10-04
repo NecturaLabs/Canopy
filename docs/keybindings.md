@@ -35,7 +35,7 @@ Canopy is the app inside, so it uses the Ctrl layer, mirroring Omarchy's Super c
 | 1 … 0, workspace | Ctrl+1 … 9, tab |
 | − / =, resize | Ctrl+− / =, zoom |
 | K, keybindings | ? or Ctrl+/, the cheatsheet |
-| comma, notifications | Ctrl+, settings |
+| comma, notifications | Ctrl+Comma settings |
 
 Rules, each guarded by a test in `keymap.rs`:
 
@@ -45,6 +45,8 @@ Rules, each guarded by a test in `keymap.rs`:
   Omarchy's, and the keys Omarchy owns (F9, Print, media keys) are not used either.
 - **Shift turns a family around:** `p` pull and `P` push, `s` stash and `S` pop, `b` and `B` take
   both, `g` and `G`, Ctrl+Tab and Ctrl+Shift+Tab.
+- Capital letters shown as single-key shortcuts mean Shift plus that letter; `P`, for example,
+  means Shift+P.
 - **Bare keys never fire while a text field has focus.** Only the "Anywhere" chords, which all
   carry Ctrl, or are F5 or Esc, work while typing. Their Git twins are Fork's Ctrl+Shift chords,
   chosen so they never take a text-editing chord (Ctrl+A, C, V, X, Z, Y). Pull and push are the
@@ -67,6 +69,7 @@ Works also while typing.
 | Ctrl+/ | Show keyboard shortcuts |
 | Ctrl+O, also Ctrl+T | Open a repository in a new tab |
 | Ctrl+Shift+N | Clone a repository |
+| Ctrl+Shift+I | Initialize a new repository |
 | Ctrl+W | Close the tab (not while typing) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+1 … Ctrl+9 | Go to tab 1–9 |
@@ -74,12 +77,14 @@ Works also while typing.
 | Ctrl+Shift+F | Fetch |
 | Ctrl+Shift+L | Pull |
 | Ctrl+Shift+P | Push |
+| Ctrl+Shift+A | Approve the selected request (Requests view) |
+| Ctrl+Shift+M | Merge the selected request (Requests view; asks first) |
 | Ctrl+Shift+H | Stash changes |
 | Ctrl+Shift+S | Stage all changes |
 | Ctrl+B | Create a branch |
 | Ctrl+Enter | Commit staged changes |
 | Ctrl+F | Show or hide History search (closing clears the query) |
-| Ctrl+, | Open settings |
+| Ctrl+Comma | Open settings |
 | Ctrl+= (also Ctrl++) / Ctrl+− | Zoom in / out |
 | Ctrl+0 | Reset zoom |
 | Ctrl+Q | Quit Canopy |
@@ -125,10 +130,10 @@ Only when no text field has focus.
 | Keys | Action |
 |---|---|
 | ] / [ | Next / previous conflict |
-| H | Take ours (left) |
-| L | Take theirs (right) |
-| B | Take both, ours first |
-| Shift+B | Take both, theirs first |
+| H | Take Current (left) |
+| L | Take Incoming (right) |
+| B | Take both, Current first |
+| Shift+B | Take both, Incoming first |
 | Shift+A | Take the common ancestor |
 | E | Edit the conflict by hand |
 | Z | Undo the choice for this conflict |

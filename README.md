@@ -21,12 +21,12 @@ graph and command palette of GitKraken, and the breadth of operations of Sourcet
 
 ![Changes view: staged and unstaged files, hunk staging and the commit composer](docs/screenshots/changes.png)
 
-![Welcome screen with recent repositories](docs/screenshots/welcome.png)
+![Welcome screen with Open, Clone and Init actions](docs/screenshots/welcome.png)
 
 ![History view in the light "Daylight" theme](docs/screenshots/history-light.png)
 
 Screenshots are rendered by Canopy itself from the deterministic fixture repository
-(`tools/mkfixture.sh` and `tools/screenshot.sh`).
+(`tools/mkfixture.sh` and `tools/screenshot.sh`), at 1440×900 and 100% interface zoom.
 
 ## Features
 

@@ -415,6 +415,17 @@ pub fn show(
                         ui.label(RichText::new("How").size(theme::META_SIZE).color(p.text_dim));
                         for m in canopy_core::MergeMode::ALL {
                             ui.radio_value(mode, m, m.label());
+                            let explanation = match m {
+                                canopy_core::MergeMode::Default => "Otherwise creates a merge commit.",
+                                canopy_core::MergeMode::NoFastForward => "Keeps the branch join visible in history.",
+                                canopy_core::MergeMode::FastForwardOnly => "Stops without changes if the branches diverged.",
+                                canopy_core::MergeMode::Squash => "Leaves one combined change to review and commit.",
+                            };
+                            ui.label(
+                                RichText::new(explanation)
+                                    .size(theme::SMALL_SIZE)
+                                    .color(p.text_dim),
+                            );
                         }
                         ui.add_space(6.0);
                     }
@@ -472,9 +483,9 @@ pub fn show(
                         }
                     });
                     ui.add_space(10.0);
-                    field(ui, "Title", &mut request.title, "What this change does", true);
+                    field(ui, "Title", &mut request.title, "What this change does…", true);
                     ui.label(RichText::new("Description").size(theme::META_SIZE).color(p.text_dim));
-                    let r = ui.add(egui::TextEdit::multiline(&mut request.body).desired_rows(6).desired_width(f32::INFINITY).hint_text("Why, how it was tested, anything reviewers should know (Markdown)").margin(theme::FIELD_MARGIN));
+                    let r = ui.add(egui::TextEdit::multiline(&mut request.body).desired_rows(6).desired_width(f32::INFINITY).hint_text("Why, how it was tested, anything reviewers should know (Markdown)…").margin(theme::FIELD_MARGIN));
                     remember_multiline(ui, r.id);
                     ui.add_space(6.0);
                     widgets::checkbox(ui, &mut request.draft, "Create as draft");
@@ -709,6 +720,7 @@ pub fn show(
                     title(ui, glyph, doc.title());
                     egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
                         ui.set_max_width(ui.available_width());
+                        ui.style_mut().spacing.scroll.floating = false;
                         egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 180.0).clamp(0.0, 420.0)).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
                     });
 

@@ -26,7 +26,16 @@ pub fn show(
         if let Some(tab) = tab {
             if let Some(s) = &tab.snap {
                 ui.label(small(
-                    format!("{}  {}", icon::GIT_BRANCH, s.head.label()),
+                    format!(
+                        "{}  {}{}",
+                        icon::GIT_BRANCH,
+                        s.head.label(),
+                        if s.head.branch.is_some() && s.head.oid.is_none() {
+                            " (no commits yet)"
+                        } else {
+                            ""
+                        }
+                    ),
                     p.text_dim,
                 ));
                 if let Some(b) = s.current_branch() {
@@ -113,6 +122,11 @@ pub fn show(
                     }));
                 }
             }
+        } else {
+            ui.label(small(
+                format!("{}  No repository open", icon::FOLDER_OPEN),
+                p.text_dim,
+            ));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(10.0);

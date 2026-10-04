@@ -37,13 +37,17 @@ pub(super) fn confirm_buttons(ui: &mut Ui, confirm: &str, danger: bool) -> Optio
             .color(p.text_faint),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let size = egui::vec2(120.0, 34.0);
+            let size = egui::vec2(120.0, theme::PRIMARY_CONTROL_HEIGHT);
             let yes = if danger {
                 widgets::danger_primary_button(ui, confirm, size)
             } else {
                 widgets::accent_button(ui, confirm, size)
             };
-            let no = ui.add_sized([90.0, 34.0], egui::Button::new("Cancel"));
+            let no = widgets::secondary_button(
+                ui,
+                "Cancel",
+                egui::vec2(90.0, theme::PRIMARY_CONTROL_HEIGHT),
+            );
             if ui.memory(|m| m.focused().is_none()) {
                 if danger {
                     no.request_focus()

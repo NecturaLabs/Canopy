@@ -14,7 +14,12 @@ use crate::ui::{art, widgets};
 use crate::views::diff;
 
 /// Draws the details pane.
-pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
+pub fn show(
+    ui: &mut Ui,
+    tab: &mut RepoTab,
+    settings: &crate::settings::Settings,
+    actions: &mut Vec<Action>,
+) {
     let p = palette(ui.ctx());
     header(ui, tab);
     let Some(d) = tab.details.clone() else {
@@ -50,7 +55,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         )
         .show(ui, |ui| {
             ui.spacing_mut().scroll = theme::solid_scroll();
-            ui.spacing_mut().item_spacing.y = theme::XS;
+            ui.spacing_mut().item_spacing.y = if tab.history_layout.compact {
+                theme::CONTROL_INSET
+            } else {
+                theme::XS
+            };
+            // Keep passive metadata dense without reducing explicit icon/button targets.
+            ui.spacing_mut().interact_size.y = theme::XL;
+            ui.spacing_mut().button_padding.y = theme::XS;
             author(ui, &d, tab);
             ui.horizontal_wrapped(|ui| {
                 ui.label(
@@ -64,28 +76,37 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     actions.push(Action::Copy(d.oid.to_string()));
                 }
                 ui.label(
-                    RichText::new(widgets::absolute_date(d.author.time))
-                        .size(theme::SMALL_SIZE)
-                        .color(p.text_faint),
+                    RichText::new(widgets::absolute_date_format(
+                        d.author.time,
+                        settings.iso_dates,
+                    ))
+                    .size(theme::SMALL_SIZE)
+                    .color(p.text_faint),
                 )
                 .on_hover_text(widgets::full_date(d.author.time, d.author.offset_minutes));
             });
-            let files_min = FILE_ROW_H * 2.0 + theme::XL + theme::SM;
             let glyph = if tab.history_layout.information_open {
                 icon::CARET_DOWN
             } else {
                 icon::CARET_RIGHT
             };
             if ui
-                .add(egui::Button::new(format!("{glyph}  Commit information")).frame(false))
+                .add(
+                    egui::Button::new(format!("{glyph}  Commit information"))
+                        .frame(false)
+                        .min_size(vec2(0.0, theme::COMPACT_CONTROL_HEIGHT)),
+                )
                 .clicked()
             {
                 tab.history_layout.information_open = !tab.history_layout.information_open;
             }
             if tab.history_layout.information_open {
+                let files_min = FILE_ROW_H * d.files.len().min(2) as f32
+                    + ui.spacing().interact_size.y * 2.0
+                    + theme::XS * 3.0;
                 egui::ScrollArea::vertical()
                     .id_salt("commit-metadata")
-                    .max_height((ui.available_height() - files_min).max(theme::XL))
+                    .max_height((ui.available_height() - files_min).max(0.0))
                     .min_scrolled_height(0.0)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
@@ -296,12 +317,12 @@ fn file_stats(ui: &mut Ui, d: &CommitDetails) {
             ui.label(
                 RichText::new(format!("+{adds}"))
                     .color(p.success)
-                    .size(theme::META_SIZE),
+                    .font(FontId::monospace(theme::MONO_SMALL_SIZE)),
             );
             ui.label(
                 RichText::new(format!("−{dels}"))
                     .color(p.danger)
-                    .size(theme::META_SIZE),
+                    .font(FontId::monospace(theme::MONO_SMALL_SIZE)),
             );
         } else {
             // A partial clone that has not downloaded the file contents.
@@ -430,11 +451,8 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egu
         .ctx()
         .animate_bool_with_time(resp.id, resp.hovered(), 0.1);
     if selected {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::same(theme::RADIUS_SM),
-            Palette::tint(p.accent, if p.dark { 50 } else { 32 }),
-        );
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(theme::RADIUS_SM), p.selected());
     } else if hover > 0.0 {
         ui.painter().rect_filled(
             rect,
@@ -461,14 +479,14 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egu
             egui::pos2(right, rect.center().y),
             Align2::RIGHT_CENTER,
             format!("−{}", f.deletions),
-            FontId::proportional(theme::SMALL_SIZE),
+            FontId::monospace(theme::MONO_SMALL_SIZE),
             p.danger,
         );
         let ag = ui.painter().text(
             egui::pos2(dg.min.x - 6.0, rect.center().y),
             Align2::RIGHT_CENTER,
             format!("+{}", f.additions),
-            FontId::proportional(theme::SMALL_SIZE),
+            FontId::monospace(theme::MONO_SMALL_SIZE),
             p.success,
         );
         right = ag.min.x - 8.0;
