@@ -49,7 +49,6 @@ pub const OVERLAYS: &[&str] = &[
     "consent",
     "crash-consent",
     "legal",
-    "licences",
     "credential",
     "host-key",
     "merge",
@@ -64,6 +63,8 @@ pub const OVERLAYS: &[&str] = &[
     "settings-accounts",
     "settings-updates",
     "settings-keyboard",
+    "about",
+    "toasts",
 ];
 
 /// Options from the command line.
@@ -269,6 +270,21 @@ impl CanopyApp {
             Some("settings-updates") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates))
             }
+            Some("about") => app.dialogs.open(Dialog::About),
+            Some("toasts") => {
+                app.toasts.push(
+                    &cc.egui_ctx,
+                    crate::ui::toast::ToastKind::Error,
+                    "Push failed",
+                    "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
+                );
+                app.toasts.push(
+                    &cc.egui_ctx,
+                    crate::ui::toast::ToastKind::Success,
+                    "Committed",
+                    "docs: add API reference",
+                );
+            }
             Some("settings-keyboard") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard))
             }
@@ -301,9 +317,6 @@ impl CanopyApp {
                 app.dialogs.open(Dialog::credential(crate::askpass::Prompt::preview(
                     "The authenticity of host 'github.com (140.82.121.4)' can't be established.\nED25519 key fingerprint is SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU.\nThis key is not known by any other names.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ",
                 )))
-            }
-            Some("licences") => {
-                app.dialogs.open(Dialog::Legal(crate::ui::legal::Document::Notices))
             }
             Some("merge") => {
                 app.dialogs.open(Dialog::Merge {
