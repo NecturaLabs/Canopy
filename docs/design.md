@@ -309,6 +309,9 @@ in `theme.rs`:
 - The welcome illustration's layout bounds end just below its trunk. The stack uses the height
   saved there to sit nearer the vertical centre at tall window sizes, keeping the title close to
   the art and reducing the empty space below the actions.
+- SSH host trust uses equal outlined choices, with refusal focused when nothing else has focus.
+  Host/fingerprint lead; raw SSH text is in Details. Copy and published-fingerprint comparison
+  links help users verify the key; parsing never grants trust.
 - Request details separate navigation from review actions. The method picker and primary Merge
   action form one group; Close is in More. Description precedes expanded checks and reviews.
 - Git identity uses an explicit primary Save action and a danger Clear action in the same row

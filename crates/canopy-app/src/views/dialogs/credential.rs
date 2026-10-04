@@ -33,32 +33,99 @@ pub(super) fn credential(
     } else {
         "Git asks:"
     };
-    ui.label(
-        RichText::new(asker)
-            .size(theme::META_SIZE)
-            .color(p.text_dim),
-    );
-    ui.add_space(4.0);
-    egui::Frame::new()
-        .fill(p.panel)
-        .stroke(egui::Stroke::new(1.0, p.border))
-        .corner_radius(egui::CornerRadius::same(theme::RADIUS))
-        .inner_margin(egui::Margin::same(10))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            egui::ScrollArea::vertical()
-                .max_height(180.0)
-                .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(&prompt.text)
-                                .font(FontId::monospace(theme::MONO_SIZE))
-                                .color(p.text),
-                        )
-                        .wrap(),
-                    );
-                });
-        });
+    if prompt.kind == PromptKind::YesNo {
+        let host = if lower.contains("authenticity of host") {
+            prompt
+                .text
+                .split('\'')
+                .nth(1)
+                .and_then(|host| host.split_whitespace().next())
+        } else {
+            None
+        };
+        let fingerprint = prompt
+            .text
+            .split_whitespace()
+            .find(|word| word.starts_with("SHA256:") || word.starts_with("MD5:"))
+            .map(|word| word.trim_end_matches('.'));
+        if let Some(host) = host {
+            ui.label(
+                RichText::new(host).font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold())),
+            );
+        }
+        if let Some(fingerprint) = fingerprint {
+            ui.label(
+                RichText::new("SSH host fingerprint")
+                    .size(theme::META_SIZE)
+                    .color(p.text_dim),
+            );
+            ui.add(
+                egui::Label::new(
+                    RichText::new(fingerprint).font(FontId::monospace(theme::MONO_SIZE)),
+                )
+                .wrap(),
+            );
+            if ui
+                .button(format!("{}  Copy fingerprint", icon::COPY))
+                .clicked()
+            {
+                ui.ctx().copy_text(fingerprint.to_owned());
+            }
+        }
+        let published = match host {
+            Some("github.com") => Some((
+                "Compare with GitHub's fingerprints",
+                "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints",
+            )),
+            Some("gitlab.com") => Some((
+                "Compare with GitLab.com's fingerprints",
+                "https://docs.gitlab.com/user/gitlab_com/#ssh-host-keys-fingerprints",
+            )),
+            _ => None,
+        };
+        if let Some((label, url)) = published {
+            ui.hyperlink_to(label, url);
+        }
+        egui::CollapsingHeader::new("SSH details")
+            .default_open(fingerprint.is_none())
+            .show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&prompt.text)
+                            .font(FontId::monospace(theme::MONO_SMALL_SIZE))
+                            .color(p.text_dim),
+                    )
+                    .wrap(),
+                );
+            });
+    } else {
+        ui.label(
+            RichText::new(asker)
+                .size(theme::META_SIZE)
+                .color(p.text_dim),
+        );
+        ui.add_space(4.0);
+        egui::Frame::new()
+            .fill(p.panel)
+            .stroke(egui::Stroke::new(1.0, p.border))
+            .corner_radius(egui::CornerRadius::same(theme::RADIUS))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&prompt.text)
+                                    .font(FontId::monospace(theme::MONO_SIZE))
+                                    .color(p.text),
+                            )
+                            .wrap(),
+                        );
+                    });
+            });
+    }
     ui.add_space(12.0);
     let escape = ui.input(|i| i.key_pressed(Key::Escape));
     let mut outcome = Outcome::Keep;
@@ -143,10 +210,21 @@ pub(super) fn credential(
             };
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::accent_button(ui, yes, egui::vec2(130.0, 34.0)).clicked() {
+                    let accept = if prompt.kind == PromptKind::YesNo {
+                        ui.add_sized([130.0, 34.0], egui::Button::new(yes))
+                    } else {
+                        widgets::accent_button(ui, yes, egui::vec2(130.0, 34.0))
+                    };
+                    if accept.clicked() {
                         outcome = reply(Some(yes_answer.to_owned()));
                     }
-                    if ui.add_sized([110.0, 34.0], egui::Button::new(no)).clicked() || escape {
+                    let reject = ui.add_sized([130.0, 34.0], egui::Button::new(no));
+                    if prompt.kind == PromptKind::YesNo
+                        && ui.memory(|memory| memory.focused().is_none())
+                    {
+                        reject.request_focus();
+                    }
+                    if reject.clicked() || escape {
                         prompt.decline();
                         outcome = Outcome::Close;
                     }
