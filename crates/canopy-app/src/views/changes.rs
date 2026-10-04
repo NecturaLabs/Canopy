@@ -439,23 +439,37 @@ fn list(
         });
         let id = ui.id().with(("change", which as u8, &f.path));
         let resp = commit_detail::file_row(ui, f, selected, id);
-        // Hover action button on the right.
-        let btn = egui::Rect::from_center_size(
-            resp.rect.right_center() - vec2(18.0, 0.0),
-            vec2(24.0, 22.0),
-        );
+        // Hover action button on the right. A conflicted file's is a labelled "Resolve conflicts",
+        // shown only under the pointer: a bare check would read as "already done".
         let (glyph, tip) = if which == List::Staged {
             (icon::MINUS, "Unstage")
         } else if conflicted {
-            (icon::CHECK, "Mark resolved")
+            (icon::GIT_DIFF, "Resolve conflicts…")
         } else {
             (icon::PLUS, "Stage")
+        };
+        let label = conflicted.then(|| {
+            ui.painter().layout_no_wrap(
+                tip.to_owned(),
+                FontId::new(theme::SMALL_SIZE, theme::medium()),
+                p.text,
+            )
+        });
+        let btn = match &label {
+            Some(g) => egui::Rect::from_center_size(
+                resp.rect.right_center() - vec2(8.0 + (g.size().x + 16.0) / 2.0, 0.0),
+                vec2(g.size().x + 16.0, 22.0),
+            ),
+            None => egui::Rect::from_center_size(
+                resp.rect.right_center() - vec2(18.0, 0.0),
+                vec2(24.0, 22.0),
+            ),
         };
         let bresp = ui.interact(btn, resp.id.with("act"), Sense::click());
         bresp.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{tip} {}", f.path))
         });
-        if resp.hovered() || bresp.hovered() || selected {
+        if resp.hovered() || bresp.hovered() || (selected && !conflicted) {
             ui.painter().rect(
                 btn,
                 CornerRadius::same(theme::RADIUS_SM),
@@ -467,13 +481,21 @@ fn list(
                 Stroke::new(1.0, p.border),
                 egui::StrokeKind::Inside,
             );
-            ui.painter().text(
-                btn.center(),
-                Align2::CENTER_CENTER,
-                glyph,
-                FontId::proportional(theme::BODY_SIZE),
-                p.text,
-            );
+            match label {
+                Some(g) => {
+                    ui.painter()
+                        .galley(btn.center() - g.size() / 2.0, g, p.text);
+                }
+                None => {
+                    ui.painter().text(
+                        btn.center(),
+                        Align2::CENTER_CENTER,
+                        glyph,
+                        FontId::proportional(theme::BODY_SIZE),
+                        p.text,
+                    );
+                }
+            }
         }
         let toggle = || {
             if which == List::Staged {
@@ -483,10 +505,18 @@ fn list(
             }
         };
         if bresp.on_hover_text(tip).clicked() || resp.double_clicked() {
-            actions.push(Action::Op(toggle()));
+            if conflicted {
+                tab.select_file(FileSelection {
+                    source: source.clone(),
+                    entry: f.clone(),
+                    conflicted,
+                });
+            } else {
+                actions.push(Action::Op(toggle()));
+            }
         } else if resp.clicked() {
             tab.select_file(FileSelection {
-                source,
+                source: source.clone(),
                 entry: f.clone(),
                 conflicted,
             });
@@ -495,7 +525,15 @@ fn list(
         resp.context_menu(|ui| {
             ui.set_min_width(200.0);
             if ui.button(format!("{}  {}", glyph, tip)).clicked() {
-                actions.push(Action::Op(toggle()));
+                if conflicted {
+                    tab.select_file(FileSelection {
+                        source: source.clone(),
+                        entry: f.clone(),
+                        conflicted,
+                    });
+                } else {
+                    actions.push(Action::Op(toggle()));
+                }
             }
             if which == List::Unstaged
                 && ui
