@@ -44,6 +44,22 @@ pub const HERO_SIZE: f32 = 38.0;
 pub const MONO_SIZE: f32 = 12.5;
 /// Short identifiers and key chords beside proportional text.
 pub const MONO_SMALL_SIZE: f32 = 11.5;
+
+// Icon sizes, for Phosphor glyphs drawn on their own (beside text, a glyph takes the text's size).
+/// Disclosure chevrons and the close crosses of tabs and recent repositories.
+pub const ICON_XS: f32 = 11.5;
+/// Row glyphs in the sidebar, tab and segmented-control icons.
+pub const ICON_SM: f32 = 14.0;
+/// Glyphs on buttons, in palette rows, settings navigation and request status.
+pub const ICON_MD: f32 = 16.0;
+/// Toasts, account cards and the welcome tip.
+pub const ICON_LG: f32 = 18.0;
+/// Beside a dialog's title.
+pub const ICON_TITLE: f32 = 20.0;
+/// The welcome screen's action cards.
+pub const ICON_XL: f32 = 24.0;
+/// The centre of an empty or finished state.
+pub const ICON_HERO: f32 = 32.0;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
 /// Inner margin of every framed text field, so fields match the 26-point control height.
 pub const FIELD_MARGIN: Margin = Margin::symmetric(8, 5);

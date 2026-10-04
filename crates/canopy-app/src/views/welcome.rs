@@ -146,7 +146,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                             r.left_center() + vec2(22.0, 0.0),
                             Align2::CENTER_CENTER,
                             icon::GIT_BRANCH,
-                            FontId::proportional(17.0),
+                            FontId::proportional(theme::ICON_MD),
                             p.accent.lerp_to_gamma(p.accent2, hover),
                         );
                         let text_width = (r.width() - theme::XL * 3.0).max(0.0);
@@ -183,7 +183,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                                 x.center(),
                                 Align2::CENTER_CENTER,
                                 icon::X,
-                                FontId::proportional(12.0),
+                                FontId::proportional(theme::ICON_XS),
                                 if xr.hovered() { p.danger } else { p.text_faint },
                             );
                         }
@@ -232,7 +232,7 @@ fn intro(ui: &mut Ui, width: f32, actions: &mut Vec<Action>) {
                 .show(ui, |ui| {
                     ui.set_width(width - 28.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(icon::LIGHTBULB).size(18.0).color(p.accent));
+                        ui.label(RichText::new(icon::LIGHTBULB).size(theme::ICON_LG).color(p.accent));
                         ui.label(
                             RichText::new("Canopy is keyboard-first")
                                 .font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold())),
@@ -282,7 +282,7 @@ fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) ->
         r.left_top() + vec2(18.0, 28.0),
         Align2::LEFT_CENTER,
         glyph,
-        FontId::proportional(24.0),
+        FontId::proportional(theme::ICON_XL),
         p.accent.lerp_to_gamma(p.accent2, hover),
     );
     ui.painter().text(

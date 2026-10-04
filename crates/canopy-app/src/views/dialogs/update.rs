@@ -20,7 +20,7 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
     let mut outcome = Outcome::Keep;
     let title = |ui: &mut Ui, glyph: &str, text: &str| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(glyph).size(20.0).color(p.accent));
+            ui.label(RichText::new(glyph).size(theme::ICON_TITLE).color(p.accent));
             ui.label(RichText::new(text).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
         });
         ui.add_space(12.0);

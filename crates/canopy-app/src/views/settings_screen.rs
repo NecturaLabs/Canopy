@@ -313,7 +313,7 @@ fn nav_item(ui: &mut Ui, current: &mut Section, s: Section) {
         rect.left_center() + vec2(14.0, 0.0),
         Align2::CENTER_CENTER,
         glyph,
-        FontId::proportional(15.0),
+        FontId::proportional(theme::ICON_MD),
         if selected { p.accent } else { p.text_dim },
     );
     ui.painter().text(
@@ -1062,7 +1062,7 @@ fn accounts(
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(forge_icon(kind)).size(18.0).color(p.text));
+                    ui.label(RichText::new(forge_icon(kind)).size(theme::ICON_LG).color(p.text));
                     ui.label(RichText::new(&host).font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold())));
                     let saved = tokens.get_for(&forge).is_some();
                     let env = canopy_hosting::token_from_env_for(kind, &forge.host, &settings.gitlab_host_list()).is_some();

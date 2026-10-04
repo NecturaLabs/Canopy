@@ -60,7 +60,7 @@ impl Cheatsheet {
                         ui.set_width(width);
                         let content_top = ui.cursor().min.y;
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new(icon::KEYBOARD).size(20.0).color(p.accent));
+                            ui.label(RichText::new(icon::KEYBOARD).size(theme::ICON_TITLE).color(p.accent));
                             ui.label(
                                 RichText::new("Keyboard shortcuts")
                                     .font(FontId::new(theme::TITLE_SIZE, theme::semibold())),

@@ -250,7 +250,7 @@ pub fn show(
             };
             let title = |ui: &mut Ui, glyph: &str, text: &str| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(glyph).size(20.0).color(p.accent));
+                    ui.label(RichText::new(glyph).size(theme::ICON_TITLE).color(p.accent));
                     ui.label(RichText::new(text).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
                 });
                 ui.add_space(12.0);
@@ -481,7 +481,7 @@ pub fn show(
                 Dialog::Confirm { title: t, body, confirm, danger, op } => {
                     let glyph = if *danger { icon::WARNING } else { icon::QUESTION };
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(glyph).size(20.0).color(if *danger { p.danger } else { p.accent }));
+                        ui.label(RichText::new(glyph).size(theme::ICON_TITLE).color(if *danger { p.danger } else { p.accent }));
                         ui.label(RichText::new(t.as_str()).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
                     });
                     ui.add_space(10.0);
@@ -495,7 +495,7 @@ pub fn show(
                 }
                 Dialog::ConfirmClearIdentity { repo, scope } => {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(icon::WARNING).size(20.0).color(p.danger));
+                        ui.label(RichText::new(icon::WARNING).size(theme::ICON_TITLE).color(p.danger));
                         ui.label(RichText::new("Clear Git identity?").font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
                     });
                     ui.add_space(10.0);
@@ -538,7 +538,7 @@ pub fn show(
                 Dialog::ConfirmHost { title: t, body, confirm, danger, job } => {
                     let glyph = if *danger { icon::WARNING } else { icon::GIT_MERGE };
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(glyph).size(20.0).color(if *danger { p.danger } else { p.accent }));
+                        ui.label(RichText::new(glyph).size(theme::ICON_TITLE).color(if *danger { p.danger } else { p.accent }));
                         ui.label(RichText::new(t.as_str()).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
                     });
                     ui.add_space(10.0);
@@ -576,7 +576,7 @@ pub fn show(
                 }
                 Dialog::Crash(report) => {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(icon::FIRST_AID_KIT).size(20.0).color(p.warning));
+                        ui.label(RichText::new(icon::FIRST_AID_KIT).size(theme::ICON_TITLE).color(p.warning));
                         ui.label(RichText::new("Canopy closed unexpectedly").font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
                     });
                     ui.add_space(10.0);

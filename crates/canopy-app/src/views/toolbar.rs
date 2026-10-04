@@ -115,7 +115,7 @@ pub fn tabs(
                             rect.left_center() + vec2(14.0, 0.0),
                             Align2::CENTER_CENTER,
                             glyph,
-                            FontId::proportional(14.0),
+                            FontId::proportional(theme::ICON_SM),
                             if selected { p.accent } else { p.text_faint },
                         );
                         let name_w = galley.size().x;
@@ -147,7 +147,7 @@ pub fn tabs(
                                 close.center(),
                                 Align2::CENTER_CENTER,
                                 icon::X,
-                                FontId::proportional(11.0),
+                                FontId::proportional(theme::ICON_XS),
                                 p.text_dim,
                             );
                         }

@@ -204,7 +204,7 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Actio
             ui.vertical_centered(|ui| {
                 ui.label(
                     RichText::new(icon::CHECK_CIRCLE)
-                        .size(30.0)
+                        .size(theme::ICON_HERO)
                         .color(p.success),
                 );
                 ui.label(
@@ -260,7 +260,7 @@ fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Respo
         rect.left_top() + vec2(18.0, 18.0),
         Align2::CENTER_CENTER,
         glyph,
-        FontId::proportional(16.0),
+        FontId::proportional(theme::ICON_MD),
         color,
     );
     let clip = egui::Rect::from_min_max(
