@@ -256,7 +256,7 @@ impl CanopyApp {
         self.poll_identity(ctx);
         for tab in &mut self.tabs {
             for n in tab.poll(&self.gitlab_hosts) {
-                self.toasts.push(
+                self.toasts.push_for(
                     ctx,
                     if n.ok {
                         ToastKind::Success
@@ -265,6 +265,7 @@ impl CanopyApp {
                     },
                     n.title,
                     n.body,
+                    Some(tab.path.clone()),
                 );
             }
             // Taken after the poll that set it, so the dialog shows in this frame.

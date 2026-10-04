@@ -3,7 +3,10 @@
 use egui::{Align2, CornerRadius, FontId, Id, Order, RichText, Stroke, vec2};
 use egui_phosphor::regular as icon;
 
+use std::path::PathBuf;
+
 use super::theme::{self, Palette, palette};
+use super::widgets;
 
 /// Severity of a toast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +17,50 @@ pub enum ToastKind {
 }
 
 #[derive(Debug, Clone)]
+pub enum Recovery {
+    Pull(PathBuf),
+    Accounts,
+}
+
+fn error_help(
+    title: &str,
+    body: &str,
+    repo: Option<&PathBuf>,
+) -> Option<(&'static str, Option<Recovery>)> {
+    let lower = body.to_lowercase();
+    if title.to_lowercase().contains("push")
+        && (lower.contains("fetch first") || lower.contains("non-fast-forward"))
+    {
+        Some((
+            "The remote has commits you do not have yet. Pull and resolve any conflicts before pushing again.",
+            repo.cloned().map(Recovery::Pull),
+        ))
+    } else if lower.contains("authentication failed")
+        || lower.contains("http basic: access denied")
+        || lower.contains("bad credentials")
+    {
+        Some((
+            "The host did not accept your credentials. Check your account access and try again.",
+            Some(Recovery::Accounts),
+        ))
+    } else if lower.contains("could not resolve host")
+        || lower.contains("could not resolve hostname")
+    {
+        Some((
+            "The host could not be reached. Check your connection and the remote address, then try again.",
+            None,
+        ))
+    } else if lower.contains("permission denied (publickey)") {
+        Some((
+            "SSH did not accept your key. Check the key's access to this repository, then try again.",
+            None,
+        ))
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Toast {
     id: u64,
     kind: ToastKind,
@@ -21,6 +68,8 @@ struct Toast {
     body: String,
     born: f64,
     ttl: f64,
+    help: Option<&'static str>,
+    recovery: Option<Recovery>,
 }
 
 /// The stack of live toasts.
@@ -39,24 +88,41 @@ impl Toasts {
         title: impl Into<String>,
         body: impl Into<String>,
     ) {
-        let ttl = match kind {
-            ToastKind::Error => 9.0,
-            _ => 4.0,
+        self.push_for(ctx, kind, title, body, None);
+    }
+
+    /// A repository notice keeps its recovery action attached to that repository.
+    pub fn push_for(
+        &mut self,
+        ctx: &egui::Context,
+        kind: ToastKind,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        repo: Option<PathBuf>,
+    ) {
+        let ttl = if kind == ToastKind::Error {
+            f64::INFINITY
+        } else {
+            4.0
         };
         self.next += 1;
-        let body: String = body.into();
-        let body = if body.len() > 600 {
-            format!("{}…", &body[..body.floor_char_boundary(600)])
+        let title = title.into();
+        let body = body.into();
+        let (help, recovery) = if kind == ToastKind::Error {
+            error_help(&title, &body, repo.as_ref())
+                .map_or((None, None), |(help, recovery)| (Some(help), recovery))
         } else {
-            body
+            (None, None)
         };
         self.items.push(Toast {
             id: self.next,
             kind,
-            title: title.into(),
+            title,
             body,
             born: ctx.input(|i| i.time),
             ttl,
+            help,
+            recovery,
         });
         if self.items.len() > 5 {
             self.items.remove(0);
@@ -65,20 +131,31 @@ impl Toasts {
     }
 
     /// Draws the toasts and expires old ones.
-    pub fn show(&mut self, ctx: &egui::Context) {
+    pub fn show(&mut self, ctx: &egui::Context) -> Vec<Recovery> {
         let now = ctx.input(|i| i.time);
         self.items.retain(|t| now - t.born < t.ttl);
         if self.items.is_empty() {
-            return;
+            return Vec::new();
         }
+        let mut actions = Vec::new();
         let p = palette(ctx);
         let screen = ctx.content_rect();
         let mut y = screen.max.y - 40.0;
         let mut dismiss = None;
         for t in self.items.iter().rev() {
             let age = now - t.born;
-            let enter = ((age / 0.25).min(1.0)) as f32;
-            let leave = (((t.ttl - age) / 0.35).clamp(0.0, 1.0)) as f32;
+            let enter_time = f64::from(theme::fade(ctx, 0.25));
+            let leave_time = f64::from(theme::fade(ctx, 0.35));
+            let enter = if enter_time > 0.0 {
+                (age / enter_time).min(1.0) as f32
+            } else {
+                1.0
+            };
+            let leave = if leave_time > 0.0 {
+                ((t.ttl - age) / leave_time).clamp(0.0, 1.0) as f32
+            } else {
+                1.0
+            };
             let ease = 1.0 - (1.0 - enter).powi(3);
             let alpha = ease.min(leave);
             let (glyph, color) = match t.kind {
@@ -101,28 +178,91 @@ impl Toasts {
                         .shadow(ctx.global_style().visuals.popup_shadow)
                         .inner_margin(egui::Margin::symmetric(14, 10))
                         .show(ui, |ui| {
-                            ui.set_max_width(380.0);
+                            ui.set_width(
+                                (380.0_f32).min((screen.width() - theme::XL * 3.0).max(0.0)),
+                            );
                             ui.horizontal_top(|ui| {
                                 ui.label(RichText::new(glyph).size(theme::ICON_LG).color(color));
-                                ui.vertical(|ui| {
-                                    ui.label(
+                                ui.add(
+                                    egui::Label::new(
                                         RichText::new(&t.title)
                                             .font(FontId::new(theme::LEAD_SIZE, theme::semibold()))
                                             .color(p.text),
-                                    );
-                                    if !t.body.is_empty() {
-                                        ui.label(
-                                            RichText::new(&t.body)
-                                                .size(theme::META_SIZE)
-                                                .color(p.text_dim),
-                                        );
-                                    }
-                                });
+                                    )
+                                    .wrap(),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if widgets::icon_button(ui, icon::X, "Dismiss notification")
+                                            .clicked()
+                                        {
+                                            dismiss = Some(t.id);
+                                        }
+                                    },
+                                );
                             });
+                            if t.kind == ToastKind::Error {
+                                if let Some(help) = t.help {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(help)
+                                                .size(theme::META_SIZE)
+                                                .color(p.text),
+                                        )
+                                        .wrap(),
+                                    );
+                                }
+                                if let Some(recovery) = &t.recovery {
+                                    let label = match recovery {
+                                        Recovery::Pull(_) => "Pull",
+                                        Recovery::Accounts => "Open Accounts",
+                                    };
+                                    if widgets::compact_button(ui, label).clicked() {
+                                        actions.push(recovery.clone());
+                                        dismiss = Some(t.id);
+                                    }
+                                }
+                                egui::CollapsingHeader::new("Details").id_salt(t.id).show(
+                                    ui,
+                                    |ui| {
+                                        egui::ScrollArea::vertical().max_height(140.0).show(
+                                            ui,
+                                            |ui| {
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        RichText::new(&t.body)
+                                                            .font(FontId::monospace(
+                                                                theme::MONO_SMALL_SIZE,
+                                                            ))
+                                                            .color(p.text_dim),
+                                                    )
+                                                    .wrap(),
+                                                );
+                                            },
+                                        );
+                                        if ui
+                                            .button(format!("{}  Copy output", icon::COPY))
+                                            .clicked()
+                                        {
+                                            ctx.copy_text(t.body.clone());
+                                        }
+                                    },
+                                );
+                            } else if !t.body.is_empty() {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&t.body)
+                                            .size(theme::META_SIZE)
+                                            .color(p.text_dim),
+                                    )
+                                    .wrap(),
+                                );
+                            }
                         });
                 })
                 .response;
-            if resp.clicked() {
+            if t.kind != ToastKind::Error && resp.clicked() {
                 dismiss = Some(t.id);
             }
             y -= resp.rect.height() + 10.0;
@@ -131,6 +271,13 @@ impl Toasts {
             self.items.retain(|t| t.id != id);
         }
         let _ = vec2(0.0, 0.0);
-        ctx.request_repaint();
+        if self
+            .items
+            .iter()
+            .any(|toast| toast.kind != ToastKind::Error || now - toast.born < 0.25)
+        {
+            ctx.request_repaint();
+        }
+        actions
     }
 }

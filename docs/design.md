@@ -411,10 +411,11 @@ the last picture.
 
 ### Toast
 
-`elevated` card, `radius`, raised shadow, max width 420px, stacked bottom-right with `sm` gaps. A
-3px left stripe and icon in `success`, `warning`, `danger` or `accent-2` (info). Errors show git's
-stderr in Mono, scrollable, with a copy button, and stay until dismissed; other toasts dismiss
-after 4 seconds, pausing while hovered.
+`elevated` cards share a 380-point content width (bounded by the viewport), bottom-right until
+the planned notification center replaces them. Errors stay until dismissed, offer Close and
+Copy, and keep raw output in a scrollable monospace Details disclosure. Known failures lead
+with a plain explanation. A rejected push offers Pull for its originating repository; account
+failures offer Accounts. Other toasts expire after four seconds. The stack retains five notices.
 
 ### Command palette
 
