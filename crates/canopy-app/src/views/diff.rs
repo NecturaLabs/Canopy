@@ -21,6 +21,8 @@ use crate::worker::Op;
 
 const LINE_H: f32 = 20.0;
 const HUNK_H: f32 = 32.0;
+/// The id of the diff options popup, which `--overlay diff-options` keeps open for screenshots.
+pub const OPTIONS_POPUP: &str = "diff-options";
 
 /// One row of the diff as laid out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1005,6 +1007,7 @@ fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         ))
         .on_hover_text("Diff options: context lines and whitespace (this repository)");
     egui::Popup::menu(&resp)
+        .id(egui::Id::new(OPTIONS_POPUP))
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.set_min_width(230.0);
