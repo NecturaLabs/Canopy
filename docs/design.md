@@ -370,8 +370,10 @@ Hard reset marked in danger colour and confirmed before it runs.
 ### Avatar
 
 A circle, 20px in tables and 24px in details, filled with a lane colour chosen by hashing the
-author's email. At these sizes it shows one larger initial for legibility; larger circles can show
-two. Account pictures fill the same circle, with initials while unavailable or downloads are
+displayed identity after case and punctuation are removed. A Git author name and matching host
+handle therefore get the same colour without needing an account lookup. At these sizes it shows
+one larger initial for legibility; larger circles can show two. Account pictures fill the same
+circle, with initials while unavailable or downloads are
 disabled. History and commit details share a twelve-hour local cache; a failed refresh retains
 the last picture.
 

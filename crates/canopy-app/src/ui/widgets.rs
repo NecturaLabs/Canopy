@@ -117,10 +117,15 @@ fn paint_ref_pill_with_palette(
     size.x
 }
 
-/// A stable colour for a person, from their e-mail address.
-pub fn person_color(p: &Palette, email: &str) -> Color32 {
+/// A stable colour for a displayed identity, shared by names and matching host handles.
+pub fn person_color(p: &Palette, identity: &str) -> Color32 {
     let mut h: u32 = 2166136261;
-    for b in email.to_lowercase().bytes() {
+    let key: String = identity
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    for b in key.bytes() {
         h = (h ^ u32::from(b)).wrapping_mul(16777619);
     }
     p.lanes[(h as usize) % p.lanes.len()]
@@ -142,7 +147,7 @@ pub fn initials(name: &str) -> String {
 /// Paints a round avatar with initials centred on `center`.
 pub fn paint_avatar(ui: &Ui, center: egui::Pos2, radius: f32, name: &str, email: &str) {
     let p = palette(ui.ctx());
-    let color = person_color(p, email);
+    let color = person_color(p, if name.trim().is_empty() { email } else { name });
     let painter = ui.painter();
     let fill = p.avatar_fill(color);
     painter.circle_filled(center, radius, fill);
