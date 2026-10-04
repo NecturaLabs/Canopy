@@ -539,18 +539,6 @@ fn header(
                         .is_some_and(|d| gutters(d) != (true, true));
                     layout_toggle(ui, tab.split_diff, one_column, actions);
                 }
-                if let Some(lang) = tab
-                    .highlights
-                    .as_ref()
-                    .filter(|_| tab.highlight_diff)
-                    .map(|h| h.language.clone())
-                {
-                    ui.label(
-                        RichText::new(lang)
-                            .size(theme::SMALL_SIZE)
-                            .color(p.text_faint),
-                    );
-                }
                 if let Some(d) = &tab.diff {
                     ui.label(
                         RichText::new(format!("+{}", d.additions))
@@ -595,7 +583,7 @@ fn header(
             if single_row {
                 ui.horizontal(|ui| {
                     // The room the controls need, learnt from how they laid out last frame: it
-                    // grows while they wrap and settles on what they use, so a font, language
+                    // grows while they wrap and settles on what they use, so a font
                     // or button change needs no new guess. The numbers are only the first one.
                     let width_id = ui.id().with("diff-controls-width");
                     let controls_width = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(
