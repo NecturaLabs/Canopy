@@ -23,6 +23,8 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] App icon: an update made by build 192 or older drops the scalable SVG it registered from the
       receipt but leaves the copy in `~/.local/share/icons/hicolor/scalable/apps`; nothing removes
       it now (`selfupdate.rs` `integrate` and `install.sh` remove only a copy the receipt lists).
+      Both check that the copy is a plain file and then remove it: a process of the same user
+      could swap in a symlink between the two, which would then be removed (never its target).
 - [ ] Installer follow-ups from the security review (`install.sh` is fixed; `install.ps1` could not
       be tested here and is untouched, and nothing in CI runs it): bring `install.ps1` to parity
       (an upgrade must move only the installer's own entries aside, around lines 495 and 649; an

@@ -132,6 +132,10 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                             .map(|n| n.to_string_lossy().into_owned())
                             .unwrap_or_default();
                         let (r, resp) = ui.allocate_exact_size(vec2(total, 46.0), Sense::click());
+                        resp.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name)
+                        });
+                        let forget = format!("Forget {name}");
                         let hover = ui
                             .ctx()
                             .animate_bool_with_time(resp.id, resp.hovered(), 0.12);
@@ -178,6 +182,9 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                             vec2(22.0, 22.0),
                         );
                         let xr = ui.interact(x, resp.id.with("forget"), Sense::click());
+                        xr.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &forget)
+                        });
                         if resp.hovered() || xr.hovered() {
                             ui.painter().text(
                                 x.center(),
@@ -259,6 +266,7 @@ fn intro(ui: &mut Ui, width: f32, actions: &mut Vec<Action>) {
 fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) -> bool {
     let p = palette(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(w, 110.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
     let hover = ui
         .ctx()
         .animate_bool_with_time(resp.id, resp.hovered(), 0.15);

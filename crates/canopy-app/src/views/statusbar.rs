@@ -99,6 +99,13 @@ pub fn show(
                         "This partial clone needs files from {remote}. Canopy downloads them \
                          only for repositories in a trusted folder. Click to choose."
                     ));
+                resp.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        "Downloads off, trust this folder",
+                    )
+                });
                 if resp.clicked() {
                     actions.push(Action::OpenDialog(Dialog::TrustFolder {
                         repo: tab.path.clone(),
@@ -133,6 +140,13 @@ pub fn show(
                     .response
                     .interact(egui::Sense::click())
                     .on_hover_text("Close Canopy and start the updated build");
+                resp.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        "Restart to finish updating",
+                    )
+                });
                 if resp.clicked() {
                     actions.push(Action::RestartInto(exe.clone()));
                 }
@@ -151,6 +165,13 @@ pub fn show(
                     .response
                     .interact(egui::Sense::click())
                     .on_hover_text("See what's new and download it");
+                resp.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        format!("Canopy {v} is available"),
+                    )
+                });
                 let version = v.to_string();
                 let page = a.page();
                 resp.context_menu(|ui| {

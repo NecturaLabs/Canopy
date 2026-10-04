@@ -289,6 +289,14 @@ impl<T: Clone> CommandPalette<T> {
                                         vec2(ui.available_width(), 34.0),
                                         Sense::click(),
                                     );
+                                    resp.widget_info(|| {
+                                        egui::WidgetInfo::selected(
+                                            egui::WidgetType::SelectableLabel,
+                                            true,
+                                            selected,
+                                            &e.label,
+                                        )
+                                    });
                                     if resp.hovered()
                                         && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO)
                                     {

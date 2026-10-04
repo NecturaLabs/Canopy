@@ -596,6 +596,37 @@ fn the_scalable_icon_earlier_builds_registered_is_removed() {
     assert!(notes.is_empty(), "{notes:?}");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_scalable_icon_that_cannot_be_removed_stays_registered() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tmp");
+    let root = tmp.path().join("root");
+    let svg = tmp
+        .path()
+        .join("data/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg");
+    folder(&root, &[("bin/canopy", "new")]);
+    write(&svg, "old svg");
+    let apps = svg.parent().expect("parent").to_owned();
+    fs::set_permissions(&apps, fs::Permissions::from_mode(0o555)).expect("chmod");
+    let old = parse_receipt(&format!(
+        "icon={}|{}\n",
+        svg.display(),
+        root.join("share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg")
+            .display(),
+    ));
+
+    let mut notes = Vec::new();
+    integrate(&root, 413, &old, &mut notes);
+    fs::set_permissions(&apps, fs::Permissions::from_mode(0o755)).expect("chmod back");
+
+    if exists(&svg) {
+        let receipt = parse_receipt(&read(&root.join(RECEIPT)));
+        assert_eq!(receipt.icons, old.icons, "kept, to be tried again");
+        assert_eq!(notes.len(), 1, "{notes:?}");
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The whole update, against a local server
 

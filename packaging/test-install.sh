@@ -291,11 +291,18 @@ linux_flow() {
     printf 'icon=%s|%s\n' "$svg" "$opt/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg" >>"$opt/.canopy-install"
     mkdir -p "$(dirname "$svg")"
     echo "old svg" >"$svg"
+    # One registered while XDG_DATA_HOME pointed elsewhere.
+    svg_a=$home/data-a/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg
+    mkdir -p "$(dirname "$svg_a")"
+    echo "old svg" >"$svg_a"
+    printf 'icon=%s|%s\n' "$svg_a" "$opt/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg" >>"$opt/.canopy-install"
     run_status
     check "install exits 0" [ "$status" = 0 ]
     check "old scalable icon removed" [ ! -e "$svg" ]
-    check "and dropped from the receipt" [ -z "$(grep -F "$svg" "$opt/.canopy-install")" ]
+    check "old scalable icon removed where it was registered" [ ! -e "$svg_a" ]
+    check "and dropped from the receipt" [ -z "$(grep -F "scalable" "$opt/.canopy-install")" ]
     rmdir "$(dirname "$svg")" "$(dirname "$(dirname "$svg")")"
+    rm -rf "$home/data-a"
 
     echo "== reinstall (idempotent)"
     before=$(cd "$home" && find . | sort)
@@ -553,6 +560,11 @@ linux_flow() {
     rm -rf "$home2"
 
     echo "== uninstall with the installed uninstall.sh"
+    # As an earlier build left it: a scalable SVG inside the install and its registered copy.
+    mkdir -p "$opt/share/icons/hicolor/scalable/apps" "$(dirname "$svg")"
+    echo "old svg" >"$opt/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg"
+    echo "old svg" >"$svg"
+    printf 'icon=%s|%s\n' "$svg" "$opt/share/icons/hicolor/scalable/apps/io.necturalabs.Canopy.svg" >>"$opt/.canopy-install"
     mkdir -p "$home/.local/share/canopy" "$home/.config/canopy"
     echo '{"canopy-settings-v1":"(theme:Dark)"}' >"$home/.local/share/canopy/app.ron"
     run_raw "$SH" "$opt/uninstall.sh"

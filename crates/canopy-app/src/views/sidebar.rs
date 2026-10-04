@@ -25,6 +25,14 @@ fn section(
     let p = palette(ui.ctx());
     let open = !tab.collapsed.contains(key);
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::CollapsingHeader,
+            true,
+            open,
+            format!("{title}, {count}"),
+        )
+    });
     let chevron = if open {
         icon::CARET_DOWN
     } else {
@@ -90,6 +98,7 @@ fn row(ui: &mut Ui, r: Row<'_>) -> egui::Response {
     let p = palette(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
     let resp = ui.interact(rect, r.id, Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, r.label));
     let hover = ui
         .ctx()
         .animate_bool_with_time(resp.id, resp.hovered(), 0.1);
@@ -401,4 +410,49 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         }
         ui.add_space(16.0);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The AccessKit labels of everything one frame of `add` shows.
+    fn spoken(add: impl FnMut(&mut Ui)) -> Vec<String> {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        let mut add = add;
+        let mut out = ctx.run_ui(Default::default(), |ui| add(ui));
+        out.textures_delta.clear();
+        out.platform_output
+            .accesskit_update
+            .map(|u| {
+                u.nodes
+                    .iter()
+                    .filter_map(|(_, n)| n.label().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_row_is_announced_by_its_label() {
+        let labels = spoken(|ui| {
+            row(
+                ui,
+                Row {
+                    id: egui::Id::new("row"),
+                    glyph: icon::GIT_BRANCH,
+                    label: "feature/auth",
+                    indent: 0.0,
+                    strong: false,
+                    color: egui::Color32::WHITE,
+                    ahead: 0,
+                    behind: 0,
+                    hint: None,
+                },
+            );
+        });
+        assert!(labels.iter().any(|l| l == "feature/auth"), "{labels:?}");
+    }
 }
