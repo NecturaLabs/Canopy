@@ -1232,7 +1232,7 @@ fn accounts(
             .inner_margin(egui::Margin::same(12))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(forge_icon(kind)).size(theme::ICON_LG).color(p.text));
                     ui.label(RichText::new(&host).font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold())));
                     let saved = tokens.get_for(&forge).is_some();
@@ -1242,7 +1242,7 @@ fn accounts(
                     } else if env {
                         (format!("{}  Using the {} environment variable", icon::CHECK_CIRCLE, if kind == ForgeKind::GitHub { "GH_TOKEN" } else { "GITLAB_TOKEN" }), p.success)
                     } else {
-                        (format!("{}  No saved token (the git credential helper is tried)", icon::CIRCLE_DASHED), p.text_faint)
+                        (format!("{}  No saved token (the git credential helper is tried)", icon::KEY), p.text_faint)
                     };
                     ui.label(RichText::new(status).size(theme::META_SIZE).color(color));
                 });
@@ -1307,14 +1307,10 @@ fn accounts(
                     ForgeKind::GitHub => "Needs the repo scope (classic token), or Pull requests: read and write plus Contents: read (fine-grained).",
                     ForgeKind::GitLab => "Needs the api scope (read_api is enough to only browse).",
                 };
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(scopes).size(theme::SMALL_SIZE).color(p.text_faint));
-                    // One unit: the link moves to the next line whole rather than leave its icon behind.
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    if ui.link(RichText::new(format!("Create a token {}", icon::ARROW_SQUARE_OUT)).size(theme::SMALL_SIZE)).clicked() {
-                        actions.push(Action::OpenUrl(hosting::token_page(kind, &host)));
-                    }
-                });
+                ui.add(egui::Label::new(RichText::new(scopes).size(theme::SMALL_SIZE).color(p.text_faint)).wrap());
+                if ui.link(RichText::new(format!("Create a token {}", icon::ARROW_SQUARE_OUT)).size(theme::SMALL_SIZE)).clicked() {
+                    actions.push(Action::OpenUrl(hosting::token_page(kind, &host)));
+                }
             });
         ui.add_space(10.0);
     }
