@@ -999,41 +999,72 @@ fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let prefs = &mut tab.diff_prefs;
     let mut changed = false;
+    let lines = if prefs.context == 1 { "line" } else { "lines" };
     let resp = ui
         .add(egui::Button::new(
-            RichText::new(format!("{}  {}", icon::SLIDERS_HORIZONTAL, prefs.context))
-                .size(theme::META_SIZE)
-                .color(p.text_dim),
+            RichText::new(format!(
+                "{}  {} {lines}",
+                icon::SLIDERS_HORIZONTAL,
+                prefs.context
+            ))
+            .size(theme::META_SIZE)
+            .color(p.text_dim),
         ))
         .on_hover_text("Diff options: context lines and whitespace (this repository)");
     egui::Popup::menu(&resp)
         .id(egui::Id::new(OPTIONS_POPUP))
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            ui.set_min_width(230.0);
+            ui.set_width(300.0);
+            ui.add_space(4.0);
             ui.label(
-                RichText::new("Context lines")
-                    .size(theme::META_SIZE)
-                    .color(p.text_dim),
+                RichText::new("Diff options")
+                    .font(FontId::new(theme::BODY_SIZE, theme::semibold())),
             );
+            ui.label(
+                RichText::new("For this repository")
+                    .size(theme::META_SIZE)
+                    .color(p.text_faint),
+            );
+            ui.add_space(theme::MD);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Context lines").color(p.text_dim));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(prefs.context.to_string())
+                            .font(FontId::new(theme::BODY_SIZE, theme::semibold())),
+                    );
+                });
+            });
             changed |= ui
                 .scope(|ui| {
                     widgets::recessed_rail(ui);
-                    ui.add(egui::Slider::new(&mut prefs.context, 0..=25))
+                    ui.spacing_mut().slider_width = ui.available_width();
+                    ui.add(egui::Slider::new(&mut prefs.context, 0..=25).show_value(false))
                 })
                 .inner
                 .changed();
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new("Whitespace")
-                    .size(theme::META_SIZE)
-                    .color(p.text_dim),
+            ui.add_space(theme::MD);
+            ui.label(RichText::new("Whitespace").color(p.text_dim));
+            ui.add_space(2.0);
+            changed |= widgets::segmented(
+                ui,
+                &mut prefs.whitespace,
+                &[
+                    (WhitespaceMode::Show, "Show"),
+                    (WhitespaceMode::IgnoreEol, "Ignore trailing"),
+                    (WhitespaceMode::IgnoreAll, "Ignore all"),
+                ],
             );
-            for mode in WhitespaceMode::ALL {
-                changed |= ui
-                    .radio_value(&mut prefs.whitespace, mode, mode.label())
-                    .changed();
+            if prefs.whitespace != WhitespaceMode::Show {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Hunk staging is off while whitespace is ignored.")
+                        .size(theme::META_SIZE)
+                        .color(p.text_faint),
+                );
             }
+            ui.add_space(4.0);
         });
     if changed {
         actions.push(Action::DiffPrefsChanged);
