@@ -123,9 +123,9 @@ own tint move to it in the controls pass.
 ### Lane colours
 
 Ten colours, assigned to lines of history in order and reused cyclically. Each theme has its own
-set, each at least 3:1 against the background, a hovered row and a selected row; the dark themes
-Midnight, Ember and Forest share the set below, Daylight uses deeper variants, and Aurora, Neon
-and Paper define their own in `theme.rs`. In light themes, edges are drawn at full opacity and
+set, each at least 3:1 against the background, a hovered row and a selected row; Midnight uses the set below, Daylight uses deeper variants, and the other themes define
+their own in `theme.rs`. Ember leads with orange and gold, Forest with sunlit gold, sky blue and
+mint, and Aurora with arctic blue and muted lilac. In light themes, edges are drawn at full opacity and
 the node fill uses the panel colour.
 
 | Index | Hex | | Index | Hex |
