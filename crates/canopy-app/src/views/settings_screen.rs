@@ -1501,24 +1501,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
         );
         return;
     }
-    row(
-        ui,
-        "Check for updates",
-        "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
-        |ui| {
-            toggle(ui, &mut s.check_updates, "Check for updates");
-        },
-    );
-    row(
-        ui,
-        "Include beta builds",
-        "Also offer beta builds, which are tried out less before they are published.",
-        |ui| {
-            toggle(ui, &mut s.include_prereleases, "Include beta builds");
-        },
-    );
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(
             RichText::new(format!("Canopy {}", crate::build_info::label()))
                 .font(FontId::new(theme::LEAD_SIZE, theme::medium())),
@@ -1540,7 +1523,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
         ui.label(RichText::new(text).size(theme::META_SIZE).color(color));
     });
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui
             .add_enabled(
                 *update != UpdateState::Checking,
@@ -1566,7 +1549,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
     });
     if let Some(v) = s.skipped_version.clone() {
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(
                 RichText::new(format!("Skipping version {v}."))
                     .size(theme::META_SIZE)
@@ -1577,6 +1560,24 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
             }
         });
     }
+    ui.add_space(theme::XL);
+    heading(ui, "Preferences");
+    row(
+        ui,
+        "Check for updates",
+        "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
+        |ui| {
+            toggle(ui, &mut s.check_updates, "Check for updates");
+        },
+    );
+    row(
+        ui,
+        "Include beta builds",
+        "Also offer beta builds, which are tried out less before they are published.",
+        |ui| {
+            toggle(ui, &mut s.include_prereleases, "Include beta builds");
+        },
+    );
 }
 
 fn keyboard(ui: &mut Ui) {
