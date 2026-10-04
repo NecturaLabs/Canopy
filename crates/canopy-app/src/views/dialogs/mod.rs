@@ -533,23 +533,27 @@ pub fn show(
                     ui.label(RichText::new(format!("{} is a partial clone: some of its files were left on the server. To show them, Canopy has to download them from {remote} with git, and git then follows this repository's own configuration, which can run programs and contact servers.", name(repo))).color(p.text_dim));
                     ui.add_space(theme::SM);
                     ui.label(RichText::new("Trust a folder only if everything in it was made by you or by people you trust. You can remove it again in Settings.").color(p.text_dim));
-                    ui.add_space(16.0);
-                    let wide = |ui: &Ui| egui::vec2(ui.available_width(), 34.0);
-                    if widgets::accent_button(ui, &format!("Trust {}", name(repo)), wide(ui)).clicked() {
-                        outcome = Outcome::Run(vec![Action::TrustFolder(repo.clone())]);
-                    }
                     if let Some(parent) = crate::trust::parent_offer(repo) {
+                        ui.add_space(theme::MD);
+                        ui.separator();
                         ui.add_space(theme::XS);
-                        let size = wide(ui);
-                        if ui.add_sized(size, egui::Button::new(format!("Trust everything in {}", name(&parent)))).on_hover_text(parent.display().to_string()).clicked() {
+                        ui.label(RichText::new(format!("Trusting {} covers every repository inside it, including ones you clone later. Only do that for a folder that is entirely yours.", name(&parent))).size(theme::META_SIZE).color(p.text_faint));
+                        let broader = egui::Button::new(RichText::new(format!("Trust everything in {}", name(&parent))).size(theme::META_SIZE).color(p.warning)).frame(false);
+                        if ui.add(broader).on_hover_text(parent.display().to_string()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             outcome = Outcome::Run(vec![Action::TrustFolder(parent)]);
                         }
                     }
-                    ui.add_space(theme::XS);
-                    let size = wide(ui);
-                    if ui.add_sized(size, egui::Button::new("Not now")).clicked() {
-                        outcome = Outcome::Close;
-                    }
+                    ui.add_space(theme::MD);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if widgets::accent_button(ui, &format!("Trust {}", name(repo)), egui::vec2(130.0, 34.0)).clicked() {
+                                outcome = Outcome::Run(vec![Action::TrustFolder(repo.clone())]);
+                            }
+                            if ui.add_sized([110.0, 34.0], egui::Button::new("Not now")).clicked() {
+                                outcome = Outcome::Close;
+                            }
+                        });
+                    });
                 }
                 Dialog::ConfirmHost { title: t, body, confirm, danger, job } => {
                     let glyph = if *danger { icon::WARNING } else { icon::GIT_MERGE };
