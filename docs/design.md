@@ -285,11 +285,14 @@ in `theme.rs`:
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).
+- The disabled primary button is flat with a hairline outline and faint text in every theme, never
+  the gradient. When the commit button is disabled for a reason its label does not give, a line
+  above it says so ("Write a summary to commit", "Resolve the conflicts to commit").
 - Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
   interface zoom up to 160%; dimensions above are logical points after zoom.
 - Below `COMPACT_WIDTH` the view switcher names only the active view; the others keep their icon
   and count. In windows under 600 points tall the history inspector starts at 260 points and the
-  commit composer stops at 240, so the lists keep their rows. Prose and its fields (pull request
+  commit composer stops at 260, so the lists keep their rows. Prose and its fields (pull request
   details) stop at `MEASURE`, 920 points, and the welcome screen centres its content on tall
   windows. Layouts are checked at 900×560, 960×600, 1440×900 and 2560×1440.
 

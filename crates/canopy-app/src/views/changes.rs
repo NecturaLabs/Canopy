@@ -66,7 +66,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             let composer_height = (ui.available_height() * 0.60).max(60.0);
             // Short windows show a two-row description (`composer_fields`), so the composer
             // needs less room and the file lists keep it.
-            let cap = if ui.ctx().content_rect().height() < 600.0 { 240.0 } else { 280.0 };
+            let cap = if ui.ctx().content_rect().height() < 600.0 { 260.0 } else { 300.0 };
             egui::Panel::bottom("composer")
                 .default_size(composer_height.min(cap))
                 .min_size(composer_height.min(cap.min(250.0)))
@@ -324,6 +324,16 @@ fn composer(
         && !tab.commit_summary.trim().is_empty()
         && tab.running.is_none()
         && snap.status.conflicted.is_empty();
+    let blocker = if can {
+        None
+    } else {
+        commit_blocker(
+            !snap.status.conflicted.is_empty(),
+            tab.running.is_some(),
+            staged > 0 || tab.amend,
+            tab.commit_summary.trim().is_empty(),
+        )
+    };
     let branch = snap.head.label();
     let label = if tab.amend {
         format!("Amend {branch}")
@@ -359,6 +369,14 @@ fn composer(
                         actions.push(Action::IdentitySettings);
                     }
                 });
+                ui.add_space(theme::XS);
+            }
+            if let Some(reason) = blocker {
+                ui.label(
+                    RichText::new(reason)
+                        .size(theme::SMALL_SIZE)
+                        .color(p.text_dim),
+                );
                 ui.add_space(theme::XS);
             }
             if widgets::primary_button(ui, &label, can, ui.available_width())
@@ -442,6 +460,25 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     ui.add_space(8.0);
 }
 
+/// Why the commit button is disabled, when its label does not already say ("Stage files to
+/// commit" is its own reason).
+fn commit_blocker(
+    conflicted: bool,
+    running: bool,
+    has_content: bool,
+    summary_empty: bool,
+) -> Option<&'static str> {
+    if conflicted {
+        Some("Resolve the conflicts to commit")
+    } else if running {
+        Some("Another operation is still running")
+    } else if has_content && summary_empty {
+        Some("Write a summary to commit")
+    } else {
+        None
+    }
+}
+
 /// The line above the commit button when Git's identity needs attention.
 fn identity_notice(identity: Option<&Identity>, read_failed: bool) -> Option<&'static str> {
     identity
@@ -512,6 +549,27 @@ mod tests {
             visible_lists(&st),
             (true, false, false),
             "a conflict hides the empties"
+        );
+    }
+
+    #[test]
+    fn a_disabled_commit_button_says_why() {
+        assert_eq!(
+            commit_blocker(true, false, true, false),
+            Some("Resolve the conflicts to commit")
+        );
+        assert_eq!(
+            commit_blocker(false, true, true, false),
+            Some("Another operation is still running")
+        );
+        assert_eq!(
+            commit_blocker(false, false, true, true),
+            Some("Write a summary to commit")
+        );
+        assert_eq!(
+            commit_blocker(false, false, false, true),
+            None,
+            "the label asks for staged files"
         );
     }
 

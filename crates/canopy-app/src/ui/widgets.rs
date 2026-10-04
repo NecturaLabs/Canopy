@@ -660,19 +660,26 @@ fn primary_button_sized(ui: &mut Ui, text: &str, enabled: bool, size: Vec2) -> R
         enabled && resp.hovered(),
         theme::fade(ui.ctx(), 0.12),
     );
-    let (a, b) = if enabled {
-        (p.button, p.button2)
-    } else {
-        (p.border, p.border)
-    };
     let boost = 1.0 + 0.15 * hover;
-    gradient_rect(
-        ui.painter(),
-        rect,
-        a.gamma_multiply(boost.min(1.2)),
-        b.gamma_multiply(boost.min(1.2)),
-        theme::RADIUS,
-    );
+    if enabled {
+        gradient_rect(
+            ui.painter(),
+            rect,
+            p.button.gamma_multiply(boost.min(1.2)),
+            p.button2.gamma_multiply(boost.min(1.2)),
+            theme::RADIUS,
+        );
+    } else {
+        // Flat and outlined, never the gradient: a disabled button must not read as enabled in
+        // any theme, however close its hue is to `border`.
+        ui.painter().rect(
+            rect,
+            CornerRadius::same(theme::RADIUS),
+            Palette::tint(p.text, 12),
+            Stroke::new(1.0, Palette::tint(p.text, 36)),
+            egui::StrokeKind::Inside,
+        );
+    }
     if hover > 0.0 {
         ui.painter().rect_stroke(
             rect.expand(1.5),
