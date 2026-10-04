@@ -266,7 +266,7 @@ in `theme.rs`:
   section toggles, double-click checkout and context menus.
 - History details sit below the graph, initially 40% of its available height, growing with
   a tall window. The resizable pane can shrink to 260 points; its maximum leaves
-  history controls and two complete rows. Expand opens the details in the content area, with Back
+  history controls and six complete rows. Expand opens the details in the content area, with Back
   to history to restore the split. Both controls sit beside the commit summary and remain
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.

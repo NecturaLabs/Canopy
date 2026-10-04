@@ -31,13 +31,13 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         return;
     }
     let h = ui.available_height();
-    let compact_table_min = ROW_H * 2.0 + theme::XL + theme::MD;
+    let compact_table_min = ROW_H * 6.0 + theme::XL + theme::MD;
     let has_state_banner = tab
         .snap
         .as_ref()
         .is_some_and(|snap| snap.state != canopy_core::RepoState::Clean);
     let table_min = if tab.history_filter_open || has_state_banner {
-        ROW_H * 2.0 + theme::XL * 3.0 + theme::LG
+        ROW_H * 6.0 + theme::XL * 3.0 + theme::LG
     } else {
         compact_table_min
     };
