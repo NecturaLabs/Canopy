@@ -273,11 +273,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         // Remotes.
         if section(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len()) {
             if snap.remotes.is_empty() {
-                let resp = row(ui, Row { id: ui.id().with("local-only"), glyph: icon::HARD_DRIVES, label: "Local only — no remote", indent: 6.0, strong: false, color: p.text_faint, ahead: 0, behind: 0, hint: Some("Everything stays on this computer. Publish to GitHub or GitLab to share it.") });
-                if resp.clicked() {
-                    actions.push(Action::Publish);
-                }
-                if ui.add(egui::Button::new(RichText::new(format!("{}  Publish…", icon::CLOUD_ARROW_UP)).size(theme::META_SIZE).color(p.accent)).frame(false)).clicked() {
+                ui.label(RichText::new(format!("{}  Local only — no remote", icon::HARD_DRIVES)).size(theme::META_SIZE).color(p.text_faint))
+                    .on_hover_text("Everything stays on this computer. Publish to GitHub or GitLab to share it.");
+                if widgets::compact_button(ui, RichText::new(format!("{}  Publish…", icon::CLOUD_ARROW_UP)).color(p.accent)).clicked() {
                     actions.push(Action::Publish);
                 }
             }
@@ -352,7 +350,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     });
                 });
             }
-            if ui.add(egui::Button::new(RichText::new(format!("{}  Add remote", icon::PLUS)).size(theme::META_SIZE).color(p.text_dim)).frame(false)).clicked() {
+            if widgets::compact_button(ui, format!("{}  Add remote…", icon::PLUS)).clicked() {
                 actions.push(Action::AddRemoteDialog);
             }
             ui.add_space(8.0);
