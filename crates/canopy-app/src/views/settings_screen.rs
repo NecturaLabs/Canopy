@@ -410,7 +410,8 @@ fn row_layout(
         if width < 620.0 {
             label(ui, &mut open);
             ui.add_space(theme::XS);
-            ui.with_layout(
+            ui.allocate_ui_with_layout(
+                vec2(width, 0.0),
                 egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true),
                 |ui| {
                     ui.add_space(theme::SM);
@@ -1607,6 +1608,47 @@ fn keyboard(ui: &mut Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_setting_controls_stay_beside_their_help() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let help_bottom = std::cell::Cell::new(0.0);
+        let mut control_top = 0.0;
+        let mut row_bottom = 0.0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(500.0, 800.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    row_layout(
+                        ui,
+                        "Name",
+                        &|ui| {
+                            help_bottom.set(ui.label("Used for future commits").rect.bottom());
+                        },
+                        "",
+                        |ui| {
+                            control_top = ui.button("Save identity").rect.top();
+                        },
+                    );
+                    row_bottom = ui.cursor().top();
+                });
+            },
+        );
+        output.textures_delta.clear();
+        assert!(
+            control_top <= help_bottom.get() + theme::LG,
+            "control top {control_top}, help bottom {}",
+            help_bottom.get()
+        );
+        assert!(row_bottom < 150.0, "row consumed {row_bottom} points");
+    }
 
     #[test]
     fn zoom_changes_only_after_the_drag_ends() {

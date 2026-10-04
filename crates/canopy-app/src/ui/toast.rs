@@ -191,7 +191,8 @@ impl Toasts {
                                     )
                                     .wrap(),
                                 );
-                                ui.with_layout(
+                                ui.allocate_ui_with_layout(
+                                    vec2(ui.available_width(), 26.0),
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
                                         if widgets::icon_button(ui, icon::X, "Dismiss notification")
@@ -279,5 +280,52 @@ impl Toasts {
             ctx.request_repaint();
         }
         actions
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notification_stack_fits_the_viewport() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let mut toasts = Toasts::default();
+        toasts.push(&ctx, ToastKind::Error, "Push failed", "fetch first");
+        toasts.push(&ctx, ToastKind::Success, "Committed", "Update README");
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1024.0, 640.0));
+        for frame in 0..20 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    time: Some(0.4 + frame as f64 * 0.01),
+                    ..Default::default()
+                },
+                |_| {
+                    toasts.show(&ctx);
+                },
+            );
+            output.textures_delta.clear();
+            let error = ctx
+                .memory(|memory| memory.area_rect(Id::new(("toast", 1_u64))))
+                .expect("error notice");
+            let success = ctx
+                .memory(|memory| memory.area_rect(Id::new(("toast", 2_u64))))
+                .expect("success notice");
+            assert!(
+                screen.contains_rect(error),
+                "frame {frame}: error notice {error:?}"
+            );
+            assert!(
+                screen.contains_rect(success),
+                "frame {frame}: success notice {success:?}"
+            );
+            assert!(
+                !error.intersects(success),
+                "frame {frame}: notifications overlap"
+            );
+        }
     }
 }
