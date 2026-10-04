@@ -79,6 +79,19 @@ pub fn ref_color(p: &Palette, kind: RefKind, lane: Color32) -> Color32 {
     }
 }
 
+/// The untruncated width of a ref pill, for content-based table sizing.
+pub fn ref_pill_width(ui: &Ui, label: &RefLabel) -> f32 {
+    ui.painter()
+        .layout_no_wrap(
+            format!("{} {}", ref_icon(label.kind), label.name),
+            FontId::new(theme::SMALL_SIZE, theme::medium()),
+            Color32::PLACEHOLDER,
+        )
+        .size()
+        .x
+        + 14.0
+}
+
 /// Paints a ref pill with its left edge at `x`, vertically centred on `cy`. Returns its width.
 pub fn paint_ref_pill(ui: &Ui, x: f32, cy: f32, label: &RefLabel, lane: Color32) -> f32 {
     paint_ref_pill_with_palette(ui, x, cy, label, lane, palette(ui.ctx()))

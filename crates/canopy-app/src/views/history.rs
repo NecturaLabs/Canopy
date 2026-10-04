@@ -199,12 +199,6 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     let row_count = filtered.map_or(snap.commits.len(), <[usize]>::len);
     // Display row -> commit index.
     let commit_at = |ri: usize| filtered.map_or(Some(ri), |f| f.get(ri).copied());
-    let lanes = tab.snap_index.graph_lanes.clamp(1, MAX_LANES);
-    let graph_w = if show_graph {
-        (f32::from(lanes) * LANE_W + 16.0).min(ui.available_width() * 0.24)
-    } else {
-        0.0
-    };
 
     if snap.commits.is_empty() {
         ui.vertical_centered(|ui| {
@@ -220,24 +214,115 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         return false;
     }
 
-    // Column layout.
-    let full = ui.available_rect_before_wrap();
-    let show_author = full.width() >= 560.0;
-    let show_date = full.width() >= 760.0;
-    let show_sha = full.width() >= 460.0;
-    let sha_w = if show_sha { 74.0 } else { 0.0 };
-    let date_w = if show_date { 112.0 } else { 0.0 };
-    let author_w = if show_author {
-        (full.width() * 0.17).clamp(110.0, 200.0)
+    let now = chrono::Utc::now().timestamp();
+    let mut full = ui.available_rect_before_wrap();
+    full.max.x -= theme::LG;
+    let view_h = (full.height() - 22.0).max(ROW_H);
+    let scroll_id = ui.make_persistent_id("history-rows");
+    let mut offset =
+        egui::scroll_area::State::load(ui.ctx(), scroll_id).map_or(0.0, |s| s.offset.y);
+    if tab.scroll_to_selected || tab.reveal_selected {
+        let target = tab.selected_commit.and_then(|selected| {
+            (0..row_count).find(|&ri| {
+                commit_at(ri)
+                    .and_then(|ci| snap.commits.get(ci))
+                    .is_some_and(|c| c.oid == selected)
+            })
+        });
+        if let Some(target) = target {
+            let y = target as f32 * ROW_H;
+            if tab.scroll_to_selected || y < offset || y + ROW_H > offset + view_h {
+                offset = (y - view_h / 2.0 + ROW_H).max(0.0);
+            }
+        }
+    }
+    offset = offset.min((row_count as f32 * ROW_H - view_h).max(0.0));
+    tab.scroll_to_selected = false;
+    tab.reveal_selected = false;
+    let first = (offset / ROW_H).floor() as usize;
+    let last = ((offset + view_h) / ROW_H).ceil() as usize;
+    let date_text = |seconds| {
+        if settings.relative_dates {
+            widgets::relative_time_format(seconds, now, settings.iso_dates)
+        } else {
+            widgets::absolute_date_format(seconds, settings.iso_dates)
+        }
+    };
+    let text_width =
+        |text: String, font: FontId| ui.painter().layout_no_wrap(text, font, p.text).size().x;
+    let mut lanes = 1;
+    let mut desc_w = 150.0_f32;
+    let mut author_w = 70.0_f32;
+    let mut date_w = 50.0_f32;
+    let avatars = settings.show_avatars;
+    let name_x = if avatars { 32.0 } else { 6.0 };
+    for ri in first..last.min(row_count) {
+        let Some(ci) = commit_at(ri) else {
+            continue;
+        };
+        let Some(commit) = snap.commits.get(ci) else {
+            continue;
+        };
+        if let Some(graph) = snap.graph.get(ci) {
+            lanes = lanes.max(graph.width.clamp(1, MAX_LANES));
+        }
+        let refs_w = snap.refs.get(&commit.oid).map_or(0.0, |refs| {
+            refs.iter()
+                .map(|label| widgets::ref_pill_width(ui, label) + 5.0)
+                .sum::<f32>()
+                + 3.0
+        });
+        desc_w = desc_w.max(
+            refs_w
+                + text_width(
+                    commit.summary.clone(),
+                    FontId::new(theme::BODY_SIZE, theme::medium()),
+                )
+                + theme::LG,
+        );
+        author_w = author_w.max(
+            name_x
+                + text_width(
+                    commit.author.name.clone(),
+                    FontId::proportional(theme::META_SIZE),
+                )
+                + theme::LG,
+        );
+        date_w = date_w.max(
+            text_width(
+                date_text(commit.author.time),
+                FontId::monospace(theme::MONO_SMALL_SIZE),
+            ) + theme::LG,
+        );
+    }
+    let graph_w = if show_graph {
+        (f32::from(lanes) * LANE_W + theme::LG).min(full.width() * 0.28)
     } else {
         0.0
     };
-    let avatars = settings.show_avatars;
-    let name_x = if avatars { 32.0 } else { 6.0 };
+    let lane_pitch = ((graph_w - theme::LG) / f32::from(lanes))
+        .min(LANE_W)
+        .max(1.0);
+    let show_author = full.width() >= 560.0;
+    let show_date = full.width() >= 760.0;
+    let show_sha = full.width() >= 460.0;
+    author_w = if show_author {
+        author_w.min(220.0).min(full.width() * 0.22)
+    } else {
+        0.0
+    };
+    date_w = if show_date {
+        date_w.min(full.width() * 0.18)
+    } else {
+        0.0
+    };
+    let sha_w = if show_sha { 74.0 } else { 0.0 };
     let desc_x = full.min.x + graph_w + 10.0;
-    let author_x = full.max.x - sha_w - date_w - author_w;
-    let date_x = full.max.x - sha_w - date_w;
-    let sha_x = full.max.x - sha_w;
+    let remaining = (full.width() - graph_w - 10.0 - author_w - date_w - sha_w).max(0.0);
+    desc_w = desc_w.min(remaining);
+    let author_x = desc_x + desc_w;
+    let date_x = author_x + author_w;
+    let sha_x = date_x + date_w;
 
     // Header.
     let (hdr, _) = ui.allocate_exact_size(vec2(full.width(), 22.0), Sense::hover());
@@ -260,42 +345,11 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     ui.painter()
         .hline(full.x_range(), hdr.max.y, Stroke::new(1.0, p.border));
 
-    // Keyboard navigation (keymap: j/k, g/G) moves the selection and asks to reveal it.
-    // Only searched for when asked, not every frame.
-    let scroll_target = if tab.scroll_to_selected || tab.reveal_selected {
-        tab.selected_commit.and_then(|s| {
-            (0..row_count).find(|&ri| {
-                commit_at(ri)
-                    .and_then(|ci| snap.commits.get(ci))
-                    .is_some_and(|c| c.oid == s)
-            })
-        })
-    } else {
-        None
-    };
-
-    let now = chrono::Utc::now().timestamp();
     let mut clicked: Option<Oid> = None;
-    let mut area = egui::ScrollArea::vertical()
+    let area = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .id_salt("history-rows");
-    if let Some(target) = scroll_target {
-        let view_h = ui.available_height();
-        let offset = (target as f32 * ROW_H - view_h / 2.0 + ROW_H).max(0.0);
-        let current =
-            egui::scroll_area::State::load(ui.ctx(), ui.make_persistent_id("history-rows"))
-                .map(|s| s.offset.y);
-        let visible = current.is_some_and(|c| {
-            let y = target as f32 * ROW_H;
-            y >= c && y + ROW_H <= c + view_h - 10.0
-        });
-        if !visible || tab.scroll_to_selected {
-            area = area.vertical_scroll_offset(offset);
-        }
-    }
-    tab.scroll_to_selected = false;
-    tab.reveal_selected = false;
-
+        .id_salt("history-rows")
+        .vertical_scroll_offset(offset);
     let total_rows = row_count + usize::from(snap.truncated && filtered.is_none());
     let mut wanted_pictures = Vec::new();
     let list = area.show_rows(ui, ROW_H, total_rows, |ui, range| {
@@ -347,6 +401,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                     ui,
                     Rect::from_min_size(rect.min + vec2(10.0, 0.0), vec2(graph_w - 10.0, ROW_H)),
                     g,
+                    lane_pitch,
                     is_head,
                     p,
                 );
@@ -381,9 +436,13 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             } else {
                 FontId::proportional(theme::BODY_SIZE)
             };
-            let galley = ui
-                .painter()
-                .layout_no_wrap(c.summary.clone(), font, text_color);
+            let galley = widgets::single_line_galley(
+                ui,
+                c.summary.clone(),
+                font,
+                text_color,
+                (desc_clip.max.x - x).max(0.0),
+            );
             ui.painter().with_clip_rect(desc_clip).galley(
                 pos2(x, cy - galley.size().y / 2.0),
                 galley,
@@ -616,21 +675,21 @@ pub fn commit_menu(
     }
 }
 
-fn lane_x(rect: Rect, lane: u16) -> f32 {
-    rect.min.x + LANE_W / 2.0 + f32::from(lane) * LANE_W
+fn lane_x(rect: Rect, lane: u16, pitch: f32) -> f32 {
+    rect.min.x + pitch / 2.0 + f32::from(lane) * pitch
 }
 
-fn anchor(rect: Rect, lane: u16, end: LineEnd) -> Pos2 {
+fn anchor(rect: Rect, lane: u16, end: LineEnd, pitch: f32) -> Pos2 {
     let y = match end {
         LineEnd::Top => rect.min.y,
         LineEnd::Mid => rect.center().y,
         LineEnd::Bottom => rect.max.y,
     };
-    pos2(lane_x(rect, lane), y)
+    pos2(lane_x(rect, lane, pitch), y)
 }
 
 /// Paints one row of the graph: edges as straight lines or smooth S-curves, then the node.
-fn paint_graph_row(ui: &Ui, rect: Rect, g: &GraphRow, is_head: bool, p: &Palette) {
+fn paint_graph_row(ui: &Ui, rect: Rect, g: &GraphRow, pitch: f32, is_head: bool, p: &Palette) {
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     let w = 2.0;
     for s in &g.segments {
@@ -638,8 +697,8 @@ fn paint_graph_row(ui: &Ui, rect: Rect, g: &GraphRow, is_head: bool, p: &Palette
             continue;
         }
         let color = p.lane(s.color);
-        let a = anchor(rect, s.from_lane, s.from);
-        let b = anchor(rect, s.to_lane, s.to);
+        let a = anchor(rect, s.from_lane, s.from, pitch);
+        let b = anchor(rect, s.to_lane, s.to, pitch);
         if s.from_lane == s.to_lane {
             painter.line_segment([a, b], Stroke::new(w, color));
         } else {
@@ -656,7 +715,7 @@ fn paint_graph_row(ui: &Ui, rect: Rect, g: &GraphRow, is_head: bool, p: &Palette
     if g.lane >= MAX_LANES {
         return;
     }
-    let c = anchor(rect, g.lane, LineEnd::Mid);
+    let c = anchor(rect, g.lane, LineEnd::Mid, pitch);
     let color = p.lane(g.color);
     if is_head {
         for (r, a) in [(12.0, 18u8), (9.0, 40), (7.5, 70)] {

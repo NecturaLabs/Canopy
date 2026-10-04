@@ -264,6 +264,10 @@ in `theme.rs`:
 - Sidebar defaults to 250 points (resizable, 190–460). Below 1000 logical points it moves into
   the toolbar's navigation menu, preserving room for repository content. It stays open for
   section toggles, double-click checkout and context menus.
+- History column widths follow the currently visible rows: graph lane spans, ref pills and
+  messages, author names and formatted dates. Metadata sits after the measured message width
+  instead of at the far window edge. Narrow views omit lower-priority columns; long messages
+  elide, and busy graphs compress their lane spacing. Measurements stay bounded to the viewport.
 - History details sit below the graph, initially 40% of its available height, growing with
   a tall window. The resizable pane can shrink to 260 points; its maximum leaves
   history controls and six complete rows. Expand opens the details in the content area, with Back
