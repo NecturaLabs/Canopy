@@ -6,6 +6,9 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Now
 
+- [ ] Request content updates: thoroughly investigate stale pull/merge request content in the
+      app across GitHub and GitLab; trace refreshes, caching, selection/tab changes, responses
+      arriving out of order, and edits/actions; compare displayed content with host API data.
 - [ ] Partial clones: remember a failed download until Retry (no retry on every refresh); a fetch
       timeout; a Retry for failed diffs; a "not downloaded" marker per file; offer to convert a
       `LegacyPartialClone`, behind a confirmation.
