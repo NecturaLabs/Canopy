@@ -20,7 +20,12 @@ use crate::ui::widgets;
 use crate::worker::Op;
 
 const LINE_H: f32 = 20.0;
-const HUNK_H: f32 = 32.0;
+const HUNK_H: f32 = 36.0;
+/// Height of the hunk action buttons.
+const HUNK_BUTTON_H: f32 = 26.0;
+/// How far from the left edge the hunk actions may sit, so they stay near the code on very wide
+/// panes.
+const HUNK_ACTIONS_MAX_X: f32 = 960.0;
 /// The id of the diff options popup, which `--overlay diff-options` keeps open for screenshots.
 pub const OPTIONS_POPUP: &str = "diff-options";
 
@@ -857,12 +862,12 @@ fn hunk_header(
     let lines_word = if n == 1 { "line" } else { "lines" };
     let buttons: Vec<(Option<HunkAction>, &str, String)> = match (cx.source, n) {
         (DiffSource::Unstaged, 0) => vec![
+            (Some(HunkAction::Stage), icon::PLUS, "Stage hunk".into()),
             (
                 Some(HunkAction::Discard),
                 icon::ARROW_COUNTER_CLOCKWISE,
                 "Discard hunk".into(),
             ),
-            (Some(HunkAction::Stage), icon::PLUS, "Stage hunk".into()),
         ],
         (DiffSource::Staged, 0) => vec![(
             Some(HunkAction::Unstage),
@@ -872,14 +877,14 @@ fn hunk_header(
         (DiffSource::Unstaged, _) => vec![
             (None, icon::X, "Clear".into()),
             (
-                Some(HunkAction::Discard),
-                icon::ARROW_COUNTER_CLOCKWISE,
-                format!("Discard {n} {lines_word}"),
-            ),
-            (
                 Some(HunkAction::Stage),
                 icon::PLUS,
                 format!("Stage {n} {lines_word}"),
+            ),
+            (
+                Some(HunkAction::Discard),
+                icon::ARROW_COUNTER_CLOCKWISE,
+                format!("Discard {n} {lines_word}"),
             ),
         ],
         (DiffSource::Staged, _) => vec![
@@ -892,7 +897,7 @@ fn hunk_header(
         ],
         (DiffSource::Commit(_), _) => Vec::new(),
     };
-    let mut bx = right;
+    let mut bx = right.min(visible_left + HUNK_ACTIONS_MAX_X);
     for (action, glyph, label) in buttons.iter().rev() {
         let text = if viewport.width() < 420.0 {
             glyph.to_string()
@@ -902,11 +907,14 @@ fn hunk_header(
         let g = ui.painter().layout_no_wrap(
             text,
             FontId::new(theme::META_SIZE, theme::medium()),
-            p.text,
+            Color32::PLACEHOLDER,
         );
         let br = Rect::from_min_max(
-            pos2(bx - g.size().x - 16.0, band.min.y + 2.0),
-            pos2(bx, band.max.y - 2.0),
+            pos2(
+                bx - g.size().x - 16.0,
+                band.center().y - HUNK_BUTTON_H / 2.0,
+            ),
+            pos2(bx, band.center().y + HUNK_BUTTON_H / 2.0),
         );
         let resp = ui
             .interact(
@@ -917,24 +925,39 @@ fn hunk_header(
             .on_hover_text(label);
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
         let danger = *action == Some(HunkAction::Discard);
-        let base = match action {
-            Some(HunkAction::Discard) => p.danger,
-            Some(_) => p.accent,
-            None => p.text_faint,
+        let hover = resp.hovered();
+        // Stage is the one filled button, Discard a ghost that only turns red under the pointer,
+        // and the rest are neutral, so the two never read as the same warm pill.
+        let (fill, edge, ink) = match action {
+            Some(HunkAction::Stage) => (
+                Palette::tint(p.success, if hover { 90 } else { 48 }),
+                Palette::tint(p.success, 150),
+                p.text,
+            ),
+            Some(HunkAction::Discard) if hover => (
+                Palette::tint(p.danger, 70),
+                Palette::tint(p.danger, 150),
+                p.danger,
+            ),
+            Some(HunkAction::Discard) => (
+                Color32::TRANSPARENT,
+                Color32::TRANSPARENT,
+                p.text_dim.lerp_to_gamma(p.danger, 0.3),
+            ),
+            _ => (
+                Palette::tint(p.text, if hover { 30 } else { 14 }),
+                Palette::tint(p.text, 60),
+                p.text,
+            ),
         };
-        let fill = Palette::tint(base, if resp.hovered() { 80 } else { 36 });
         ui.painter().rect(
             br,
             CornerRadius::same(theme::RADIUS_SM),
             fill,
-            Stroke::new(1.0, Palette::tint(base, 140)),
+            Stroke::new(1.0, edge),
             egui::StrokeKind::Inside,
         );
-        ui.painter().galley(
-            br.center() - g.size() / 2.0,
-            g,
-            if danger { p.danger } else { p.text },
-        );
+        ui.painter().galley(br.center() - g.size() / 2.0, g, ink);
         if resp.clicked() {
             match action {
                 None => *line_sel = None,
@@ -981,7 +1004,8 @@ fn hunk_header(
                 }
             }
         }
-        bx = br.min.x - 8.0;
+        // Discard sits apart from Stage so a slip toward one never lands on the other.
+        bx = br.min.x - if danger { theme::LG } else { theme::SM };
     }
     let ink = p.accent.lerp_to_gamma(p.text_dim, 0.4);
     let header = widgets::single_line_galley(
