@@ -98,7 +98,8 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Next
 
-- [ ] Reflog and undo.
+- [ ] Reflog and operation-specific undo: show the recoverable action and its effect before
+      applying it; never imply discarded unstaged or untracked content can be restored.
 - [ ] Interactive rebase editor.
 - [ ] Repositories of connected accounts: list the repositories of the GitHub or GitLab account a
       token belongs to (own, organisations, optionally starred; searchable, paged, with the
