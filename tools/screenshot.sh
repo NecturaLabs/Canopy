@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
-#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|licences|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard]
+#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|licences|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|about]
 #                            [--size WxH] [--zoom 0.8..1.6]
 #
 # <repo> may be "-" to render the welcome screen with no repository open.

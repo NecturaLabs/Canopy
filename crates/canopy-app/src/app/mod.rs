@@ -64,6 +64,7 @@ pub const OVERLAYS: &[&str] = &[
     "settings-accounts",
     "settings-updates",
     "settings-keyboard",
+    "about",
 ];
 
 /// Options from the command line.
@@ -269,6 +270,7 @@ impl CanopyApp {
             Some("settings-updates") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates))
             }
+            Some("about") => app.dialogs.open(Dialog::About),
             Some("settings-keyboard") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard))
             }
