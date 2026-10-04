@@ -888,30 +888,33 @@ fn identity_group(
     }
     let can_save =
         !screen.identity_name.trim().is_empty() && !screen.identity_email.trim().is_empty();
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(can_save, egui::Button::new("Save identity"))
-            .clicked()
-        {
-            actions.push(Action::SaveIdentity {
-                repo: repo_path.clone(),
-                scope: screen.identity_scope,
-                name: screen.identity_name.clone(),
-                email: screen.identity_email.clone(),
-            });
-        }
-        if ui.button("Clear…").clicked() {
-            actions.push(Action::OpenDialog(Dialog::ConfirmClearIdentity {
-                repo: repo_path.clone(),
-                scope: screen.identity_scope,
-            }));
-        }
-    });
-    ui.add_space(theme::XS);
-    ui.label(
-        RichText::new("Changes apply to future commits only; commits already made keep their authors. An environment variable or an author setting can still override what you save.")
-            .size(theme::SMALL_SIZE)
-            .color(p.text_faint),
+    row(
+        ui,
+        "Apply identity",
+        "Save these fields to Git configuration. Changes apply to future commits only; existing commits keep their authors. Environment variables or author settings may override this identity.",
+        |ui| {
+            if widgets::danger_button(ui, "Clear…", vec2(0.0, 34.0)).clicked() {
+                actions.push(Action::OpenDialog(Dialog::ConfirmClearIdentity {
+                    repo: repo_path.clone(),
+                    scope: screen.identity_scope,
+                }));
+            }
+            if widgets::primary_button(ui, "Save identity", can_save, 128.0)
+                .on_hover_text(if can_save {
+                    "Write this identity to the selected Git configuration."
+                } else {
+                    "Enter both a name and an email before saving."
+                })
+                .clicked()
+            {
+                actions.push(Action::SaveIdentity {
+                    repo: repo_path.clone(),
+                    scope: screen.identity_scope,
+                    name: screen.identity_name.clone(),
+                    email: screen.identity_email.clone(),
+                });
+            }
+        },
     );
 }
 
