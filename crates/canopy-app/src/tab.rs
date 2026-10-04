@@ -887,6 +887,19 @@ impl RepoTab {
         while let Ok(ev) = self.worker.events.try_recv() {
             match ev {
                 Event::Snapshot(s) => {
+                    let entering_merge = s.state == canopy_core::RepoState::Merge
+                        && self
+                            .snap
+                            .as_ref()
+                            .is_none_or(|old| old.state != canopy_core::RepoState::Merge);
+                    if entering_merge {
+                        self.amend = false;
+                        if self.commit_summary.trim().is_empty()
+                            && self.commit_body.trim().is_empty()
+                        {
+                            self.worker.send(Job::MergeMessage);
+                        }
+                    }
                     self.name = s.name.clone();
                     let head = s.head.oid;
                     let had = self.snap.is_some();
@@ -1007,6 +1020,20 @@ impl RepoTab {
                 Event::Conflict { path, kind, file } => {
                     if let Some(r) = self.resolver.as_mut().filter(|r| r.path == path) {
                         r.reload(kind, file);
+                    }
+                }
+                Event::MergeMessage(message) => {
+                    if self
+                        .snap
+                        .as_ref()
+                        .is_some_and(|snap| snap.state == canopy_core::RepoState::Merge)
+                        && !self.amend
+                        && self.commit_summary.trim().is_empty()
+                        && self.commit_body.trim().is_empty()
+                    {
+                        let mut parts = message.splitn(2, '\n');
+                        self.commit_summary = parts.next().unwrap_or_default().trim().to_owned();
+                        self.commit_body = parts.next().unwrap_or_default().trim().to_owned();
                     }
                 }
                 Event::HeadMessage(m) => {

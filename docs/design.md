@@ -328,8 +328,10 @@ in `theme.rs`:
   one column without the empty line-number column (the layout switch shows dimmed on Unified), and
   its lines keep the full added/removed tint only in the gutter, with a quiet wash over the code.
   A line wider than the pane fades out at the edge.
-- The in-progress banner (merge, rebase, cherry-pick) appears above the history table with
-  continue and abort buttons.
+- The shared operation banner (merge, rebase, cherry-pick) leads History, Changes and Requests.
+  State and conflict count precede Continue; unresolved conflicts or active work disable it.
+  Abort is separated and confirmed. The merge composer says Conclude merge and starts with
+  Git's pending message when no draft exists.
 - Changes list headers: "Stage all" and "Unstage all" are 26 px tall (`widgets::COMPACT_H`). Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content

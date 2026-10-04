@@ -30,6 +30,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         loading(ui, tab);
         return;
     }
+    widgets::repository_state_banner(ui, tab, actions);
     if tab
         .snap
         .as_ref()
@@ -44,21 +45,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
     }
     let h = ui.available_height();
     let compact_table_min = ROW_H * 6.0 + theme::XL + theme::MD;
-    let has_state_banner = tab
-        .snap
-        .as_ref()
-        .is_some_and(|snap| snap.state != canopy_core::RepoState::Clean);
-    let table_min = if tab.history_filter_open || has_state_banner {
+    let table_min = if tab.history_filter_open {
         ROW_H * 6.0 + theme::XL * 3.0 + theme::LG
     } else {
         compact_table_min
     };
-    let compact = h < 300.0
-        + if has_state_banner {
-            table_min
-        } else {
-            compact_table_min
-        };
+    let compact = h < 300.0 + table_min;
     tab.history_layout.compact = compact;
     let mut layout = tab.history_layout;
     let selected = tab.selected_commit.is_some();
@@ -149,11 +141,7 @@ fn loading(ui: &mut Ui, tab: &RepoTab) {
 
 fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<Action>) -> bool {
     let p = palette(ui.ctx());
-    let state = tab
-        .snap
-        .as_ref()
-        .and_then(|snap| (snap.state != canopy_core::RepoState::Clean).then_some(snap.state));
-    if tab.history_filter_open || state.is_some() {
+    if tab.history_filter_open {
         let mut close_search = false;
         egui::Frame::new()
             .inner_margin(egui::Margin {
@@ -188,9 +176,6 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                                 }
                             });
                         close_search = widgets::icon_button(ui, icon::X, "Close search").clicked();
-                    }
-                    if let Some(state) = state {
-                        state_banner(ui, state, actions);
                     }
                 });
             });
@@ -555,38 +540,6 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         return true;
     }
     false
-}
-
-fn state_banner(ui: &mut Ui, state: canopy_core::RepoState, actions: &mut Vec<Action>) {
-    let p = palette(ui.ctx());
-    if state.command().is_some() {
-        if ui
-            .button(RichText::new(format!("{}  Abort", icon::X_CIRCLE)).color(p.danger))
-            .clicked()
-        {
-            actions.push(Action::Confirm { title: format!("Abort {}", state.label().to_lowercase()), body: "Return the repository to where it was before the operation started? Resolved conflicts are discarded.".into(), confirm: "Abort".into(), danger: true, op: Op::ContinueOrAbort { state, abort: true } });
-        }
-        if ui
-            .button(RichText::new(format!("{}  Continue", icon::PLAY)).color(p.success))
-            .clicked()
-        {
-            actions.push(Action::Op(Op::ContinueOrAbort {
-                state,
-                abort: false,
-            }));
-        }
-    }
-    egui::Frame::new()
-        .fill(Palette::tint(p.warning, 40))
-        .corner_radius(CornerRadius::same(12))
-        .inner_margin(egui::Margin::symmetric(10, 3))
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new(format!("{}  {} in progress", icon::WARNING, state.label()))
-                    .color(p.warning)
-                    .size(theme::META_SIZE),
-            );
-        });
 }
 
 /// The context menu of a commit row.

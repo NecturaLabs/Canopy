@@ -73,6 +73,9 @@ parent. Nothing is trusted by default (ADR 0009).
 | Graph minimap | Planned | No | ? | No |
 | Signature verification badges | Planned | ? | Yes | ? |
 
+Operation state and guarded Continue/Abort actions stay visible in History, Changes and Requests.
+The merge composer names the conclusion and prefills Git's merge message without replacing a draft.
+
 Recovery currently uses explicit actions: History → Revert creates an inverse commit, Reset
 moves a branch with the chosen working-tree effect, and the conflict resolver can undo a choice
 while it is open. There is no universal Undo button: discarded unstaged or untracked content is

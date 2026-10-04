@@ -22,6 +22,7 @@ use crate::views::dialogs::Dialog;
 /// Draws the view.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    widgets::repository_state_banner(ui, tab, actions);
     let Some((_, forge)) = tab.forge().cloned() else {
         empty(
             ui,

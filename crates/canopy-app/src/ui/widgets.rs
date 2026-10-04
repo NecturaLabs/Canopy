@@ -813,6 +813,42 @@ pub fn glow(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Col
     painter.add(mesh);
 }
 
+/// Repository operation state stays visible in every work view.
+pub fn repository_state_banner(
+    ui: &mut Ui,
+    tab: &crate::tab::RepoTab,
+    actions: &mut Vec<crate::action::Action>,
+) {
+    let Some(snap) = &tab.snap else {
+        return;
+    };
+    if snap.state == canopy_core::RepoState::Clean {
+        return;
+    }
+    let p = palette(ui.ctx());
+    let state = snap.state;
+    let conflicts = snap.status.conflicted.len();
+    let busy = tab.running.is_some();
+    egui::Panel::top("repository-operation-state")
+        .frame(egui::Frame::new().fill(Palette::tint(p.warning, if p.dark { 28 } else { 18 })).inner_margin(egui::Margin::symmetric(theme::LG as i8, theme::SM as i8)))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(format!("{}  {} in progress on {}", icon::WARNING, state.label(), snap.head.label())).color(p.warning).strong());
+                ui.label(RichText::new(if conflicts > 0 { format!("{conflicts} conflict{} left", if conflicts == 1 { "" } else { "s" }) } else { "No conflicts left".to_owned() }).size(theme::META_SIZE).color(p.text_dim));
+                if let Some(command) = state.command() {
+                    let can_continue = conflicts == 0 && !busy;
+                    if primary_button(ui, "Continue", can_continue, 110.0).on_hover_text(if busy { "Wait for the current operation" } else if conflicts > 0 { "Resolve and stage every conflicted file first" } else { "Continue this operation using the staged resolutions" }).clicked() {
+                        actions.push(crate::action::Action::Op(crate::worker::Op::ContinueOrAbort { state, abort: false }));
+                    }
+                    ui.add_space(theme::LG);
+                    if ui.add_enabled(!busy, egui::Button::new(RichText::new(format!("Abort {command}…")).color(p.danger))).clicked() {
+                        actions.push(crate::action::Action::Confirm { title: format!("Abort {command}"), body: "Return the repository to where it was before the operation started? Resolved conflicts are discarded.".into(), confirm: "Abort".into(), danger: true, op: crate::worker::Op::ContinueOrAbort { state, abort: true } });
+                    }
+                }
+            });
+        });
+}
+
 /// A sentence-case section heading.
 pub fn section_label(ui: &mut Ui, text: &str) {
     let p = palette(ui.ctx());

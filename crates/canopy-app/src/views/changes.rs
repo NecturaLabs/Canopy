@@ -27,6 +27,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         ui.centered_and_justified(|ui| ui.spinner());
         return;
     };
+    widgets::repository_state_banner(ui, tab, actions);
     // Default selection: the first changed file.
     if tab
         .file
@@ -588,7 +589,8 @@ fn composer(
         return;
     }
     let staged = snap.status.staged.len();
-    let can = (staged > 0 || tab.amend)
+    let merging = snap.state == canopy_core::RepoState::Merge;
+    let can = (staged > 0 || tab.amend || merging)
         && !tab.commit_summary.trim().is_empty()
         && tab.running.is_none()
         && snap.status.conflicted.is_empty();
@@ -598,12 +600,14 @@ fn composer(
         commit_blocker(
             !snap.status.conflicted.is_empty(),
             tab.running.is_some(),
-            staged > 0 || tab.amend,
+            staged > 0 || tab.amend || merging,
             tab.commit_summary.trim().is_empty(),
         )
     };
     let branch = snap.head.label();
-    let label = if tab.amend {
+    let label = if merging {
+        format!("Conclude merge on {branch}")
+    } else if tab.amend {
         format!("Amend {branch}")
     } else if staged > 0 {
         format!(
@@ -678,7 +682,8 @@ fn composer(
 /// A clean tree with nothing typed: the composer shrinks to a line and the Amend choice, so an
 /// empty form and a disabled button do not compete with the rest of the view.
 fn composer_is_quiet(tab: &RepoTab, snap: &canopy_core::RepoSnapshot) -> bool {
-    snap.status.is_clean()
+    snap.state == canopy_core::RepoState::Clean
+        && snap.status.is_clean()
         && !tab.amend
         && tab.commit_summary.is_empty()
         && tab.commit_body.is_empty()
@@ -763,8 +768,14 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         let was = tab.amend;
-        widgets::checkbox(ui, &mut tab.amend, "Amend last commit")
-            .on_hover_text("Replace the last commit with the staged changes and this message");
+        let clean = tab
+            .snap
+            .as_ref()
+            .is_some_and(|snap| snap.state == canopy_core::RepoState::Clean);
+        ui.add_enabled_ui(clean, |ui| {
+            widgets::checkbox(ui, &mut tab.amend, "Amend last commit")
+                .on_hover_text("Replace the last commit with the staged changes and this message")
+        });
         if tab.amend && !was && tab.commit_summary.is_empty() {
             actions.push(Action::PrefillAmend);
         }
