@@ -658,12 +658,14 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
             continue;
         }
         if !src.is_file() {
-            // Earlier builds also registered a scalable SVG; this one ships none.
+            // Earlier builds also registered a scalable SVG; this one ships none. One that cannot
+            // be removed stays in the receipt, to be tried again.
             if dst.ends_with(format!("hicolor/scalable/apps/{APP_ID}.svg"))
                 && dst.symlink_metadata().is_ok_and(|m| m.is_file())
                 && fs::remove_file(dst).is_err()
             {
                 notes.push(format!("could not remove {}", dst.display()));
+                lines.push(format!("icon={}|{}", dst.display(), src.display()));
             }
             continue;
         }

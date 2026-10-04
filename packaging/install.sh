@@ -827,17 +827,25 @@ integrate_linux() {
             warn "could not write $entry"
         fi
     fi
-    for rel in "256x256/apps/$APP_ID.png" "scalable/apps/$APP_ID.svg"; do
+    # Earlier builds also shipped a scalable SVG: remove each copy the old receipt lists, wherever
+    # it was registered. One that cannot be removed stays in the receipt, to be tried again.
+    if [ -f "$receipt" ]; then
+        grep '^icon=' "$receipt" | grep -F "/icons/hicolor/scalable/apps/$APP_ID.svg|" |
+            while IFS= read -r line; do
+                pair=${line#icon=}
+                dst=${pair%%|*}
+                src=${pair#*|}
+                icon_entry_ok "$dst" "$src" || continue
+                if [ -f "$dst" ] && [ ! -L "$dst" ] && ! rm -f -- "$dst" 2>/dev/null; then
+                    warn "could not remove $dst"
+                    printf 'icon=%s|%s\n' "$dst" "$src" >>"$tmp_receipt"
+                fi
+            done
+    fi
+    for rel in "256x256/apps/$APP_ID.png"; do
         src=$ROOT/share/icons/hicolor/$rel
+        [ -f "$src" ] || continue
         dst=$DATA_HOME/icons/hicolor/$rel
-        if [ ! -f "$src" ]; then
-            # Earlier builds also shipped a scalable SVG; remove the copy this installer made.
-            if [ "$rel" = "scalable/apps/$APP_ID.svg" ] && [ -f "$dst" ] && [ ! -L "$dst" ] &&
-                grep -qxF "icon=$dst|$src" "$receipt" 2>/dev/null; then
-                rm -f -- "$dst"
-            fi
-            continue
-        fi
         if [ -L "$dst" ]; then
             warn "$dst is a symlink, not this installer's icon; left it alone"
             continue

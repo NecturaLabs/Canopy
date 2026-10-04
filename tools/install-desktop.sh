@@ -59,7 +59,9 @@ install -Dm644 "$root/packaging/linux/$APP_ID.metainfo.xml" "$data/metainfo/$APP
 for size in 64 256 512; do
   install -Dm644 "$root/assets/icon-$size.png" "$icons/${size}x${size}/apps/$APP_ID.png"
 done
-rm -f "$icons/scalable/apps/$APP_ID.svg"
+# The scalable SVG earlier versions installed; a symlink or anything else there is not ours.
+legacy="$icons/scalable/apps/$APP_ID.svg"
+if [[ -f $legacy && ! -L $legacy ]]; then rm -f -- "$legacy"; fi
 refresh_caches
 
 echo "Installed Canopy to $bin_dir/canopy"
