@@ -130,10 +130,7 @@ impl CanopyApp {
                     && self.settings.hosting_api
                     && let Some(tab) = self.tabs.get(self.active)
                     && let Some((_, forge)) = tab.forge()
-                    && let Some(Ok(list)) = &tab.requests.list
-                    && let Some(request) = list
-                        .iter()
-                        .find(|request| Some(request.number) == tab.requests.selected)
+                    && let Some(request) = crate::views::requests::selected_summary(tab)
                 {
                     if command == C::ApproveRequest {
                         if let Some(action) = crate::views::requests::approve_action(tab, request) {

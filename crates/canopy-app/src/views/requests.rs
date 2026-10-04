@@ -586,13 +586,16 @@ fn action_bar(
             {
                 actions.push(action);
             }
+            if ui.available_size_before_wrap().x < 220.0 {
+                ui.end_row();
+            }
             egui::Frame::new()
                 .fill(p.panel)
                 .stroke(Stroke::new(1.0, p.border))
                 .corner_radius(CornerRadius::same(theme::RADIUS_SM))
                 .inner_margin(egui::Margin::same(theme::XS as i8))
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         egui::ComboBox::from_id_salt("merge-method")
                             .icon(widgets::combo_caret)
                             .selected_text(tab.requests.merge_method.label())
@@ -652,6 +655,26 @@ fn action_bar(
                 .color(p.text_faint),
         );
     }
+}
+
+/// The selected request's details carry the state displayed by its action buttons.
+pub(crate) fn selected_summary(tab: &RepoTab) -> Option<&RequestSummary> {
+    let selected = tab.requests.selected?;
+    tab.requests
+        .details
+        .as_ref()
+        .and_then(|details| details.as_ref().ok())
+        .filter(|details| details.summary.number == selected)
+        .map(|details| &details.summary)
+        .or_else(|| {
+            tab.requests
+                .list
+                .as_ref()?
+                .as_ref()
+                .ok()?
+                .iter()
+                .find(|request| request.number == selected)
+        })
 }
 
 pub(crate) fn approve_action(tab: &RepoTab, request: &RequestSummary) -> Option<Action> {
@@ -889,4 +912,119 @@ fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Ac
             );
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::worker::Worker;
+    use std::sync::Arc;
+
+    fn summary(state: RequestState) -> RequestSummary {
+        RequestSummary {
+            number: 7,
+            title: "Request".into(),
+            author: "Reviewer".into(),
+            state,
+            draft: false,
+            source_branch: "topic".into(),
+            target_branch: "main".into(),
+            from_fork: false,
+            created_at: 0,
+            updated_at: 0,
+            web_url: "https://github.com/example/project/pull/7".into(),
+            labels: vec![],
+        }
+    }
+
+    fn details(state: RequestState) -> RequestDetails {
+        RequestDetails {
+            summary: summary(state),
+            body: String::new(),
+            head_sha: Some("1234567".into()),
+            mergeable: Some(true),
+            commits: None,
+            changed_files: None,
+            additions: None,
+            deletions: None,
+            checks: vec![],
+            reviews: vec![],
+            comments: vec![],
+        }
+    }
+
+    #[test]
+    fn merge_controls_fit_a_narrow_details_pane() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::theme::apply(&ctx, crate::ui::theme::ThemeId::Midnight, true);
+        let (worker, _, _) = Worker::detached();
+        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        let details = details(RequestState::Open);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(196.0, 700.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                action_bar(
+                    ui,
+                    &mut tab,
+                    ForgeKind::GitHub,
+                    &details.summary,
+                    Some(&details),
+                    &mut Vec::new(),
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let merge = output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && text.galley.text().contains("Merge…")
+                {
+                    Some((text.visual_bounding_rect(), shape.clip_rect))
+                } else {
+                    None
+                }
+            })
+            .expect("merge control");
+        assert!(
+            merge.1.contains_rect(merge.0),
+            "merge control {:?} outside {:?}",
+            merge.0,
+            merge.1
+        );
+    }
+
+    #[test]
+    fn request_shortcuts_use_the_displayed_state_after_details_refresh() {
+        let (worker, _, _) = Worker::detached();
+        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        tab.requests.selected = Some(7);
+        tab.requests.list = Some(Ok(Arc::new(vec![summary(RequestState::Open)])));
+        tab.requests.details = Some(Ok(Arc::new(details(RequestState::Merged))));
+        let request = selected_summary(&tab).expect("selected request");
+        assert!(approve_action(&tab, request).is_none());
+        assert!(
+            merge_confirmation(
+                &tab,
+                ForgeKind::GitHub,
+                request,
+                tab.requests
+                    .details
+                    .as_ref()
+                    .unwrap()
+                    .as_ref()
+                    .ok()
+                    .map(Arc::as_ref)
+            )
+            .is_none()
+        );
+    }
 }
