@@ -356,6 +356,21 @@ pub fn combo_caret(ui: &Ui, rect: egui::Rect, visuals: &egui::style::WidgetVisua
     );
 }
 
+/// The caret of every `CollapsingHeader` (`icon`), matching the app's other expanders.
+pub fn collapse_caret(ui: &mut Ui, openness: f32, response: &Response) {
+    ui.painter().text(
+        response.rect.center(),
+        Align2::CENTER_CENTER,
+        if openness > 0.5 {
+            icon::CARET_DOWN
+        } else {
+            icon::CARET_RIGHT
+        },
+        FontId::proportional(theme::BODY_SIZE),
+        ui.style().interact(response).fg_stroke.color,
+    );
+}
+
 /// Paints the track and its segments; returns the index of a segment clicked while not selected.
 fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -> Option<usize> {
     let p = palette(ui.ctx());

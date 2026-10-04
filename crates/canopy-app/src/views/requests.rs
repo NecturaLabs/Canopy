@@ -659,6 +659,7 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
                 .strong(),
         )
         .id_salt("checks")
+        .icon(crate::ui::widgets::collapse_caret)
         .default_open(failed > 0)
         .show(ui, |ui| {
             for c in &d.checks {
