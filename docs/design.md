@@ -288,6 +288,15 @@ in `theme.rs`:
 - The disabled primary button is flat with a hairline outline and faint text in every theme, never
   the gradient. When the commit button is disabled for a reason its label does not give, a line
   above it says so ("Write a summary to commit", "Resolve the conflicts to commit").
+- The commit composer follows the file lists while both fit the column, under a hairline, and
+  pins to the bottom with the lists scrolling above it only when they would crowd it (about
+  260 points of composer). Row actions (stage, unstage, mark resolved) show on the selected row
+  and under the pointer on any row.
+- A clean working tree gives the main pane its own state: the illustration, "Working tree
+  clean", where the branch stands (up to date, N to push or pull with that button, or local only
+  with Publish…) and the last commit. The file column then shows only "Changes 0" and a quiet
+  composer, "Nothing to commit" and the Amend choice, which expands to the full composer when
+  ticked or when text is typed.
 - Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
   interface zoom up to 160%; dimensions above are logical points after zoom.
 - Below `COMPACT_WIDTH` the view switcher names only the active view; the others keep their icon
