@@ -472,9 +472,9 @@ pub fn show(
                         }
                     });
                     ui.add_space(10.0);
-                    field(ui, "Title", &mut request.title, "What this change does", true);
+                    field(ui, "Title", &mut request.title, "What this change does…", true);
                     ui.label(RichText::new("Description").size(theme::META_SIZE).color(p.text_dim));
-                    let r = ui.add(egui::TextEdit::multiline(&mut request.body).desired_rows(6).desired_width(f32::INFINITY).hint_text("Why, how it was tested, anything reviewers should know (Markdown)").margin(theme::FIELD_MARGIN));
+                    let r = ui.add(egui::TextEdit::multiline(&mut request.body).desired_rows(6).desired_width(f32::INFINITY).hint_text("Why, how it was tested, anything reviewers should know (Markdown)…").margin(theme::FIELD_MARGIN));
                     remember_multiline(ui, r.id);
                     ui.add_space(6.0);
                     widgets::checkbox(ui, &mut request.draft, "Create as draft");

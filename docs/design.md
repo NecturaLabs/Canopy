@@ -370,6 +370,9 @@ height stays inside the viewport. A search field at the top, then scrollable res
 the shortcut right-aligned in `text-faint`. Up/Down move, Enter runs, Esc closes. Branch names
 appear as "Checkout <branch>" entries.
 
+Field placeholders end in an ellipsis when they ask the user to act (for example, "Search
+shortcuts…"); example values and field names do not.
+
 The toolbar stays visible for frequent repository actions and status; the palette is the faster
 keyboard path and the home for less frequent actions. Neither hides essential actions available
 through the other. At narrow widths, compact toolbar controls preserve room for repository data

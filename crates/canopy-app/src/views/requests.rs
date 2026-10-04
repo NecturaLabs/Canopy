@@ -758,7 +758,7 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
 fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Action>) {
     ui.add(
         egui::TextEdit::multiline(&mut tab.requests.comment)
-            .hint_text("Leave a comment (Markdown)")
+            .hint_text("Leave a comment (Markdown)…")
             .desired_rows(3)
             .desired_width(f32::INFINITY)
             .margin(theme::FIELD_MARGIN),

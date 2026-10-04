@@ -1249,7 +1249,7 @@ fn accounts(
                     ui.add(
                         egui::TextEdit::singleline(input)
                             .password(true)
-                            .hint_text("Paste a personal access token")
+                            .hint_text("Paste a personal access token…")
                             .desired_width(280.0)
                             .margin(theme::FIELD_MARGIN),
                     );

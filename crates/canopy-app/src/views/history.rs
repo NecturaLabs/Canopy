@@ -164,7 +164,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                                 let edit = ui.add(
                                     egui::TextEdit::singleline(&mut tab.filter)
                                         .id(id)
-                                        .hint_text("Filter by message, author or SHA")
+                                        .hint_text("Filter by message, author or SHA…")
                                         .frame(egui::Frame::NONE)
                                         .desired_width(
                                             (ui.available_width() - 48.0).clamp(120.0, 340.0),

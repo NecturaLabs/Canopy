@@ -76,7 +76,7 @@ impl Cheatsheet {
                                     let edit = ui.add(
                                         egui::TextEdit::singleline(&mut self.query)
                                             .hint_text(format!(
-                                                "{}  Search shortcuts",
+                                                "{}  Search shortcuts…",
                                                 icon::MAGNIFYING_GLASS
                                             ))
                                             .desired_width(240.0)
