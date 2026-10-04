@@ -189,7 +189,21 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         ui.add_space(8.0);
 
         // Branches.
-        if section(ui, tab, "branches", "Branches", icon::GIT_BRANCH, snap.branches.len()) {
+        let unborn = snap.head.branch.as_ref().filter(|name| {
+            snap.head.oid.is_none() && !snap.branches.iter().any(|branch| &branch.name == *name)
+        });
+        if section(
+            ui,
+            tab,
+            "branches",
+            "Branches",
+            icon::GIT_BRANCH,
+            snap.branches.len() + usize::from(unborn.is_some()),
+        ) {
+            if let Some(name) = unborn {
+                let label = format!("{name} (no commits yet)");
+                let _ = row(ui, Row { id: ui.id().with("unborn-branch"), glyph: icon::CHECK_CIRCLE, label: &label, indent: 6.0, strong: true, color: p.accent, ahead: 0, behind: 0, hint: Some("Current branch; make the first commit to create it") });
+            }
             virtual_rows(ui, snap.branches.len(), ROW_H, |ui, i| {
                 let b = &snap.branches[i];
                 let color = if b.is_head { p.accent } else { p.text_dim };

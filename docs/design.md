@@ -287,6 +287,8 @@ in `theme.rs`:
   tooltip, rather than styling it as an active control.
 - On the welcome screen, the status bar says "No repository open" so it remains informative even
   before the first tab is opened.
+- An unborn branch counts as a branch in the sidebar and shows its name with "no commits yet" in
+  both the sidebar and status bar.
 - Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;
   Discard is a ghost that turns `danger` under the pointer and sits apart on the right, and on
   very wide panes the actions stay within 960 px of the left edge. A new or deleted file is always
