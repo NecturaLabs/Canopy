@@ -207,6 +207,7 @@ pub fn show(
     picker: &mut crate::ui::folder_picker::FolderPicker,
     clone_running: bool,
     updater: &crate::updater::Updater,
+    git_version: &str,
 ) -> Outcome {
     let p = palette(ctx);
     let mut outcome = Outcome::Keep;
@@ -698,6 +699,7 @@ pub fn show(
                         art::show(ui, art::logo(), egui::vec2(64.0, 64.0));
                         ui.label(RichText::new("Canopy").font(FontId::new(theme::DISPLAY_SIZE, theme::semibold())));
                         ui.label(RichText::new(crate::build_info::title_label()).color(p.text_dim));
+                        ui.label(RichText::new(git_version.strip_prefix("git version ").map_or_else(|| git_version.to_owned(), |v| format!("Git {v}"))).size(theme::META_SIZE).color(p.text_faint));
                         ui.add_space(8.0);
                         ui.label(RichText::new("A fast, beautiful, Linux-first Git client.").color(p.text_dim));
                         ui.label(RichText::new("© 2026 NecturaLabs.").size(theme::META_SIZE).color(p.text_faint));

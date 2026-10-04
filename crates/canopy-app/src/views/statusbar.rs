@@ -195,7 +195,11 @@ pub fn show(
                     actions.push(Action::ShowUpdate);
                 }
             }
-            ui.label(small(git_version.to_owned(), p.text_faint));
+            // The version itself is in About; here only its absence, which breaks every change.
+            if !git_version.starts_with("git version") {
+                ui.label(small(format!("{}  {git_version}", icon::WARNING), p.danger))
+                    .on_hover_text("Install git and make sure it is on PATH");
+            }
         });
     });
 }
