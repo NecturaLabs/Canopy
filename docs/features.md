@@ -151,6 +151,10 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Stash: save (message, untracked), apply, pop, drop | Done | Yes | Yes | Yes |
 | Patches: create and apply | Planned | Yes | ? | Yes |
 
+Request list icons show lifecycle and draft state. Branches have a separate line with room
+reserved for the target. Check and review verdicts are loaded for the selected request's details;
+list summaries do not carry those verdicts. Bulk or bounded cached list badges remain planned.
+
 ## Interface
 
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |

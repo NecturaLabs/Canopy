@@ -98,6 +98,8 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Next
 
+- [ ] Request list check/review badges: bulk or bounded cached status loading through the
+      existing host API; show unknown while unavailable, respect its off switch and consent.
 - [ ] Reflog and operation-specific undo: show the recoverable action and its effect before
       applying it; never imply discarded unstaged or untracked content can be restored.
 - [ ] Interactive rebase editor.
