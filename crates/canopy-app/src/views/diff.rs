@@ -314,7 +314,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         return;
     }
 
-    let split = tab.split_diff && !sel.conflicted;
+    let (show_old, show_new) = gutters(&d);
+    // A new or deleted file has nothing to set beside its lines: one column, whatever the toggle.
+    let split = tab.split_diff && !sel.conflicted && show_old && show_new;
     if !tab
         .diff_layout
         .as_ref()
@@ -326,13 +328,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         return;
     };
     let num_w = layout.digits as f32 * 7.6 + 12.0;
+    let gutter_w = num_w * (usize::from(show_old) + usize::from(show_new)) as f32;
     let mono = FontId::monospace(theme::MONO_SIZE);
     let char_w = ui.fonts_mut(|f| f.glyph_width(&mono, 'm'));
     let longest = layout.columns as f32;
     let content_w = if split {
         ui.available_width()
     } else {
-        (num_w * 2.0 + 24.0 + longest * char_w + 40.0).max(ui.available_width())
+        (gutter_w + 24.0 + longest * char_w + 40.0).max(ui.available_width())
     };
 
     let highlights = if tab.highlight_diff {
@@ -387,7 +390,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                             cx.spans(h, l),
                             rect,
                             num_w,
-                            (true, true),
+                            (show_old, show_new),
                             picked,
                             (h, l),
                         ) {
@@ -395,7 +398,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         }
                         // Gutter separator, per line so it never crosses a hunk header.
                         ui.painter().vline(
-                            origin.x + num_w * 2.0 + 2.0,
+                            origin.x + gutter_w + 2.0,
                             rect.y_range(),
                             Stroke::new(1.0, p.border),
                         );
@@ -450,34 +453,17 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                 }
             }
-            if split && !d.hunks.is_empty() {
-                // A side that is only filler: say why once, instead of leaving it blank.
-                if let Some((at, text)) = empty_side(&d) {
-                    let shown = viewport.translate(origin.to_vec2());
-                    ui.painter().text(
-                        pos2(
-                            origin.x + content_w * at,
-                            shown.top().max(origin.y)
-                                + shown.height().min(layout.total_height()) / 2.0,
-                        ),
-                        Align2::CENTER_CENTER,
-                        text,
-                        FontId::proportional(theme::SMALL_SIZE),
-                        p.text_faint,
-                    );
-                }
-            }
         });
 }
 
-/// Where a side-by-side diff has a side that is only filler, and what to say there: the horizontal
-/// centre of that side as a fraction of the width, and the note.
-/// Hunks alone cannot tell: without context lines a modified file's hunks can all be insertions.
-fn empty_side(d: &FileDiff) -> Option<(f32, &'static str)> {
-    match d.kind? {
-        ChangeKind::Added | ChangeKind::Untracked => Some((0.25, "New file — nothing before")),
-        ChangeKind::Deleted => Some((0.75, "Deleted — nothing after")),
-        _ => None,
+/// Which line-number columns a diff shows: a new file has no old numbers and a deleted one no new
+/// numbers, so that column is dropped. Hunks alone cannot tell: without context lines a modified
+/// file's hunks can all be insertions.
+fn gutters(d: &FileDiff) -> (bool, bool) {
+    match d.kind {
+        Some(ChangeKind::Added | ChangeKind::Untracked) => (false, true),
+        Some(ChangeKind::Deleted) => (true, false),
+        _ => (true, true),
     }
 }
 
@@ -538,7 +524,11 @@ fn header(
             let mut controls = |ui: &mut Ui| {
                 diff_options(ui, tab, actions);
                 if !sel.conflicted {
-                    layout_toggle(ui, tab.split_diff, actions);
+                    let one_column = tab
+                        .diff
+                        .as_deref()
+                        .is_some_and(|d| gutters(d) != (true, true));
+                    layout_toggle(ui, tab.split_diff, one_column, actions);
                 }
                 if let Some(lang) = tab
                     .highlights
@@ -646,10 +636,17 @@ fn header(
     );
 }
 
-/// Unified / side-by-side switch.
-fn layout_toggle(ui: &mut Ui, split: bool, actions: &mut Vec<Action>) {
+/// Unified / side-by-side switch. For a new or deleted file, which is always one column, it is
+/// shown off on Unified and the choice is kept for the next modified file.
+fn layout_toggle(ui: &mut Ui, split: bool, one_column: bool, actions: &mut Vec<Action>) {
     let options = [(icon::ROWS, "Unified"), (icon::COLUMNS, "Side by side")];
-    if let Some(i) = widgets::icon_segmented(ui, usize::from(split), &options) {
+    if one_column {
+        ui.add_enabled_ui(false, |ui| {
+            widgets::icon_segmented(ui, 0, &options);
+        })
+        .response
+        .on_hover_text("A new or deleted file has nothing to set beside it, so it is one column");
+    } else if let Some(i) = widgets::icon_segmented(ui, usize::from(split), &options) {
         actions.push(Action::SetSplitDiff(i == 1));
     }
 }
@@ -1113,33 +1110,24 @@ mod tests {
     }
 
     #[test]
-    fn only_a_new_or_deleted_file_has_an_empty_side() {
-        let hunk = |old_lines, new_lines| Hunk {
-            header: String::new(),
-            old_start: 0,
-            old_lines,
-            new_start: 1,
-            new_lines,
-            lines: Vec::new(),
-        };
-        let diff = |kind, hunks| FileDiff {
+    fn only_a_new_or_deleted_file_drops_a_line_number_column() {
+        let diff = |kind| FileDiff {
             kind: Some(kind),
-            hunks,
+            hunks: vec![Hunk {
+                header: String::new(),
+                old_start: 0,
+                old_lines: 0,
+                new_start: 1,
+                new_lines: 3,
+                lines: Vec::new(),
+            }],
             ..FileDiff::default()
         };
-        assert_eq!(
-            empty_side(&diff(ChangeKind::Added, vec![hunk(0, 3)])).map(|n| n.0),
-            Some(0.25)
-        );
-        assert_eq!(
-            empty_side(&diff(ChangeKind::Deleted, vec![hunk(3, 0)])).map(|n| n.0),
-            Some(0.75)
-        );
+        assert_eq!(gutters(&diff(ChangeKind::Added)), (false, true));
+        assert_eq!(gutters(&diff(ChangeKind::Untracked)), (false, true));
+        assert_eq!(gutters(&diff(ChangeKind::Deleted)), (true, false));
         // Without context lines, a modified file's hunks can all be pure insertions.
-        assert_eq!(
-            empty_side(&diff(ChangeKind::Modified, vec![hunk(0, 2), hunk(0, 1)])),
-            None
-        );
+        assert_eq!(gutters(&diff(ChangeKind::Modified)), (true, true));
     }
 
     #[test]
