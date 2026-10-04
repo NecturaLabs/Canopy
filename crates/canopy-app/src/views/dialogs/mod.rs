@@ -980,6 +980,7 @@ mod tests {
                         &mut picker,
                         false,
                         &crate::updater::Updater::default(),
+                        "git version 2.55.0",
                     );
                     if pressed {
                         kept = matches!(result, Outcome::RunKeep(_));
@@ -1070,7 +1071,7 @@ mod tests {
                         ..Default::default()
                     },
                     |_| {
-                        show(&ctx, &mut dialog, None, &mut picker, false, &updater);
+                        show(&ctx, &mut dialog, None, &mut picker, false, &updater, "git version 2.55.0");
                     },
                 );
                 output.textures_delta.clear();
@@ -1123,6 +1124,7 @@ mod tests {
                             &mut picker,
                             false,
                             &crate::updater::Updater::default(),
+                            "git version 2.55.0",
                         );
                     },
                 );
@@ -1184,6 +1186,7 @@ mod tests {
                             &mut picker,
                             false,
                             &crate::updater::Updater::default(),
+                            "git version 2.55.0",
                         );
                     },
                 );
