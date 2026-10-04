@@ -415,6 +415,17 @@ pub fn show(
                         ui.label(RichText::new("How").size(theme::META_SIZE).color(p.text_dim));
                         for m in canopy_core::MergeMode::ALL {
                             ui.radio_value(mode, m, m.label());
+                            let explanation = match m {
+                                canopy_core::MergeMode::Default => "Otherwise creates a merge commit.",
+                                canopy_core::MergeMode::NoFastForward => "Keeps the branch join visible in history.",
+                                canopy_core::MergeMode::FastForwardOnly => "Stops without changes if the branches diverged.",
+                                canopy_core::MergeMode::Squash => "Leaves one combined change to review and commit.",
+                            };
+                            ui.label(
+                                RichText::new(explanation)
+                                    .size(theme::SMALL_SIZE)
+                                    .color(p.text_dim),
+                            );
                         }
                         ui.add_space(6.0);
                     }

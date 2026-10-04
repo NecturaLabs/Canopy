@@ -407,6 +407,10 @@ has focus. A choice that is riskier than the main one (trusting a whole folder) 
 destinations (About: What's new, Releases, the legal texts) are text links in `accent`, with one
 primary button for the real action.
 
+The merge dialog explains every merge mode beside its radio choice so they can be compared before
+selection. The sentence below the choices still names the exact branches affected by the selected
+mode.
+
 Action dialogs lead with the effect on the repository and the choice Canopy will pass to Git.
 They do not append a universal command preview: an action may run several Git commands, its
 arguments can depend on repository state at execution time, and a guessed preview would imply a
