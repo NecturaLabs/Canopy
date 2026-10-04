@@ -842,27 +842,22 @@ integrate_linux() {
                 fi
             done
     fi
-    for rel in "256x256/apps/$APP_ID.png"; do
-        src=$ROOT/share/icons/hicolor/$rel
-        [ -f "$src" ] || continue
-        dst=$DATA_HOME/icons/hicolor/$rel
-        if [ -L "$dst" ]; then
-            warn "$dst is a symlink, not this installer's icon; left it alone"
-            continue
+    src=$ROOT/share/icons/hicolor/256x256/apps/$APP_ID.png
+    dst=$DATA_HOME/icons/hicolor/256x256/apps/$APP_ID.png
+    if [ ! -f "$src" ]; then
+        :
+    elif [ -L "$dst" ]; then
+        warn "$dst is a symlink, not this installer's icon; left it alone"
+    elif [ -e "$dst" ] && ! grep -qxF "icon=$dst|$src" "$receipt" 2>/dev/null; then
+        # Someone else's copy; an identical one shows the same icon and needs no warning.
+        if [ ! -f "$dst" ] || ! cmp -s -- "$dst" "$src"; then
+            warn "$dst was not installed by this installer; left it alone"
         fi
-        if [ -e "$dst" ] && ! grep -qxF "icon=$dst|$src" "$receipt" 2>/dev/null; then
-            # Someone else's copy; an identical one shows the same icon and needs no warning.
-            if [ ! -f "$dst" ] || ! cmp -s -- "$dst" "$src"; then
-                warn "$dst was not installed by this installer; left it alone"
-            fi
-            continue
-        fi
-        if mkdir -p "$(dirname "$dst")" && put_file "$src" "$dst"; then
-            printf 'icon=%s|%s\n' "$dst" "$src" >>"$tmp_receipt"
-        else
-            warn "could not write $dst"
-        fi
-    done
+    elif mkdir -p "$(dirname "$dst")" && put_file "$src" "$dst"; then
+        printf 'icon=%s|%s\n' "$dst" "$src" >>"$tmp_receipt"
+    else
+        warn "could not write $dst"
+    fi
     link_command "$ROOT/bin/canopy" "$tmp_receipt"
     mv -f -- "$tmp_receipt" "$receipt"
     refresh_desktop_caches
