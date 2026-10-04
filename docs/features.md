@@ -92,7 +92,7 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Hunk staging, unstaging and discard | Done | Yes | Yes | Yes |
 | Line-level staging | Unreleased | Yes | Yes | Yes |
 | Diff with old and new line numbers | Done | Yes | Yes | Yes |
-| Side-by-side diff | Unreleased | Yes | Yes | No |
+| Side-by-side diff (a new or deleted file stays one column) | Unreleased | Yes | Yes | No |
 | Syntax highlighting in diffs | Unreleased | Yes | Yes | ? |
 | Image diff | Planned | Yes | Yes | ? |
 | Ignore whitespace, context lines setting | Unreleased | Yes | Yes | Yes |

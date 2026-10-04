@@ -273,6 +273,12 @@ in `theme.rs`:
   scrollbar. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
+- Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;
+  Discard is a ghost that turns `danger` under the pointer and sits apart on the right, and on
+  very wide panes the actions stay within 960 px of the left edge. A new or deleted file is always
+  one column without the empty line-number column (the layout switch shows dimmed on Unified), and
+  its lines keep the full added/removed tint only in the gutter, with a quiet wash over the code.
+  A line wider than the pane fades out at the edge.
 - The in-progress banner (merge, rebase, cherry-pick) appears above the history table with
   continue and abort buttons.
 - Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
