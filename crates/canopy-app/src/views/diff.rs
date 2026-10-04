@@ -212,6 +212,9 @@ struct Ctx<'a> {
     source: &'a DiffSource,
     path: &'a str,
     conflicted: bool,
+    /// Every line is on one side (a new or deleted file): the tint is softened so the whole file
+    /// is not one solid slab of colour.
+    one_sided: bool,
     /// Hunk and line actions are possible (working copy, whitespace shown).
     editable: bool,
     context: u32,
@@ -348,6 +351,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         source: &sel.source,
         path: &sel.entry.path,
         conflicted: sel.conflicted,
+        one_sided: !(show_old && show_new),
         // A whitespace-insensitive diff cannot be applied as a patch.
         editable: !sel.conflicted
             && !matches!(sel.source, DiffSource::Commit(_))
@@ -682,7 +686,19 @@ fn line_cell(
     });
     let painter = ui.painter();
     if let Some(bg) = bg {
-        painter.rect_filled(rect, CornerRadius::ZERO, bg);
+        if cx.one_sided {
+            // The gutter keeps the full tint and the code a quiet wash of it, so a whole new or
+            // deleted file still reads as added or removed without a solid block of colour.
+            let gutter_w = num_w * (usize::from(show_old) + usize::from(show_new)) as f32;
+            painter.rect_filled(rect, CornerRadius::ZERO, bg.gamma_multiply(0.4));
+            painter.rect_filled(
+                Rect::from_min_size(rect.min, vec2(gutter_w, rect.height())),
+                CornerRadius::ZERO,
+                bg,
+            );
+        } else {
+            painter.rect_filled(rect, CornerRadius::ZERO, bg);
+        }
         painter.rect_filled(
             Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
             CornerRadius::ZERO,
@@ -1144,6 +1160,7 @@ mod tests {
                 source: &DiffSource::Unstaged,
                 path: "file.rs",
                 conflicted: false,
+                one_sided: false,
                 editable: false,
                 context: 3,
                 highlights: None,
