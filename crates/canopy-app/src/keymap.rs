@@ -485,24 +485,29 @@ pub const BINDINGS: &[Binding] = &[
         &[symbol(Key::OpenBracket)],
         "Previous conflict",
     ),
-    b(S::Resolve, C::TakeOurs, &[bare(Key::H)], "Take ours (left)"),
+    b(
+        S::Resolve,
+        C::TakeOurs,
+        &[bare(Key::H)],
+        "Take current version (left)",
+    ),
     b(
         S::Resolve,
         C::TakeTheirs,
         &[bare(Key::L)],
-        "Take theirs (right)",
+        "Take incoming version (right)",
     ),
     b(
         S::Resolve,
         C::TakeBoth,
         &[bare(Key::B)],
-        "Take both, ours first",
+        "Take both, current first",
     ),
     b(
         S::Resolve,
         C::TakeBothTheirsFirst,
         &[shifted(Key::B)],
-        "Take both, theirs first",
+        "Take both, incoming first",
     ),
     b(
         S::Resolve,

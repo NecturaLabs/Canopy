@@ -208,7 +208,9 @@ pub(crate) fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
         // Key caps, right-aligned.
         let mut x = rect.right() - 4.0;
         for chord in keys.iter().rev() {
-            x = paint_keycap(ui, x - keycap_width(ui, chord), key_y, chord) - KEYCAP_GAP;
+            x -= keycap_width(ui, chord);
+            paint_keycap(ui, x, key_y, chord);
+            x -= KEYCAP_GAP;
         }
     }
     ui.add_space(12.0);
@@ -261,4 +263,49 @@ pub(crate) fn paint_keycap(ui: &egui::Ui, left: f32, center_y: f32, chord: &str)
     ui.painter()
         .galley(r.center() - g.size() / 2.0, g, p.text_dim);
     r.max.x
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alternative_shortcuts_have_separate_keycaps() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let chords = keymap::all_keys(keymap::Command::Palette);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(960.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                rows(ui, Section::Anywhere, "command palette");
+            },
+        );
+        output.textures_delta.clear();
+        let mut caps: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && chords.iter().any(|chord| chord == text.galley.text())
+                {
+                    Some(text.visual_bounding_rect())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(caps.len(), chords.len());
+        caps.sort_by(|a, b| a.min.x.total_cmp(&b.min.x));
+        assert!(
+            caps.windows(2).all(|pair| pair[0].max.x < pair[1].min.x),
+            "alternative shortcut labels overlap: {caps:?}"
+        );
+    }
 }

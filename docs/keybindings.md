@@ -130,10 +130,10 @@ Only when no text field has focus.
 | Keys | Action |
 |---|---|
 | ] / [ | Next / previous conflict |
-| H | Take ours (left) |
-| L | Take theirs (right) |
-| B | Take both, ours first |
-| Shift+B | Take both, theirs first |
+| H | Take Current (left) |
+| L | Take Incoming (right) |
+| B | Take both, Current first |
+| Shift+B | Take both, Incoming first |
 | Shift+A | Take the common ancestor |
 | E | Edit the conflict by hand |
 | Z | Undo the choice for this conflict |
