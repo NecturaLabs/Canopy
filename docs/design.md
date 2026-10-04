@@ -180,8 +180,11 @@ margin and a compact section picker when its navigation sidebar would crowd the 
 
 ## Spacing
 
-Controls (buttons, text fields, combo boxes, checkboxes) are 26 points high; text fields use
-`FIELD_MARGIN` (8 by 5) so they match. A 4px base grid. Tokens: `xs` 4, `sm` 8, `md` 12, `lg` 16, `xl` 24. Panels use `md` inner
+Standard controls use `CONTROL_HEIGHT` (30 points); compact list actions use
+`COMPACT_CONTROL_HEIGHT` (28), primary actions `PRIMARY_CONTROL_HEIGHT` (36), and toolbar
+tools `TOOL_HEIGHT` (40). Text fields use `FIELD_MARGIN` (8 by 7). Passive headings and metadata
+stay dense rather than inheriting button-sized rows; compact commit details retain room for two
+changed files. A 4px base grid. Tokens: `xs` 4, `sm` 8, `md` 12, `lg` 16, `xl` 24. Panels use `md` inner
 padding; dialogs `xl`; rows `sm` horizontally. Related controls are `sm` apart, groups `lg`.
 
 ## Radii
@@ -197,6 +200,10 @@ padding; dialogs `xl`; rows `sm` horizontally. Related controls are `sm` apart, 
 Three levels, by background token plus shadow:
 
 - **Base** (`bg`, `panel`): no shadow; panels are separated by 1px `border` hairlines.
+- **Controls**: primary buttons and selected segments use `Palette::control_shadow()` for a
+  one-point lift, with a restrained inner highlight. Neutral action edges use `control_edge()`;
+  fields and unchecked controls keep the stronger `control-border`. Keyboard focus stays opaque
+  accent, and inherited disabled state suppresses primary fills and active decoration.
 - **Raised** (`elevated`): menus, tooltips, toasts. Shadow offset (0, 4), blur 16, black at 35%
   (Midnight) or 10% (Daylight).
 - **Overlay** (`elevated` over a scrim): dialogs and the palette. Shadow offset (0, 12), blur 32,
@@ -298,7 +305,8 @@ in `theme.rs`:
 - History search stays hidden until Ctrl+F or `/` opens it and focuses the field. The same
   shortcut, Esc or the close button hides it and clears the query. The commit count does not
   occupy the table header; an in-progress operation banner remains visible without search.
-- The action toolbar is 44 points high with 40-point buttons and body-size captions. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has a visible
+- The action toolbar uses `ACTION_BAR_HEIGHT` (52 points), with 40-point tools, body-size captions
+  and room for its horizontal scrollbar. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has a visible
   scrollbar. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
@@ -334,7 +342,7 @@ in `theme.rs`:
   State and conflict count precede Continue; unresolved conflicts or active work disable it.
   Abort is separated and confirmed. The merge composer says Conclude merge and starts with
   Git's pending message when no draft exists.
-- Changes list headers: "Stage all" and "Unstage all" are 26 px tall (`widgets::COMPACT_H`). Discard
+- Changes list headers: "Stage all" and "Unstage all" are 28 px tall (`widgets::COMPACT_H`). Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).
@@ -350,6 +358,9 @@ in `theme.rs`:
   with Publish…) and the last commit. The file column then shows only "Changes 0" and a quiet
   composer, "Nothing to commit" and the Amend choice, which expands to the full composer when
   ticked or when text is typed.
+- The clean summary scrolls in a short pane so Publish/Push/Pull and the last commit remain
+  reachable at maximum zoom. The conflict resolver's body can shrink below its normal scroll
+  minimum rather than painting code across its fixed Save footer.
 - Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
   interface zoom up to 160%; dimensions above are logical points after zoom.
 - Below `COMPACT_WIDTH` the view switcher names only the active view; the others keep their icon
@@ -373,15 +384,16 @@ both icons. Pills that do not fit collapse to a `+N` badge with a tooltip.
 `widgets::segmented` (text) and `widgets::icon_segmented` (icons with tooltips) for a choice
 between a few exclusive options: settings choices, the merge dialog's merge or rebase, the clone
 source and protocol, the request state filter and the diff layout. A recessed `bg` track with a
-hairline `border`; the chosen segment is raised (`elevated`, `accent` outline at 60%) with `text`,
+hairline `border`; the chosen segment is raised (`elevated`, restrained edge and micro-shadow),
+with an accent baseline and `text`,
 the others `text-dim` brightening on hover. Each segment is a radio button for assistive
 technology and shows the focus ring.
 
 ### Switch and checkbox
 
-On/off settings use `widgets::switch`: a 36×20 track, `bg` with a `control-border` outline when off
-and the `button` colour when on, with a 14-point thumb that slides (`FAST`). Checkboxes in forms
-use `widgets::checkbox`: a 16-point square, radius 4, filled with `button` and an `on-button` tick
+On/off settings use `widgets::switch`: a 40×24 track, `bg` with a `control-border` outline when off
+and the `button` colour when on, with an 18-point thumb that slides (`FAST`). Checkboxes in forms
+use `widgets::checkbox`: an 18-point square, radius 4, filled with `button` and an `on-button` tick
 when checked. Both carry their name for assistive technology and show the focus ring.
 
 ### Scroll edges
@@ -415,11 +427,13 @@ the last picture.
 
 ### Toast
 
-`elevated` cards share a 380-point content width (bounded by the viewport), bottom-right until
-the planned notification center replaces them. Errors stay until dismissed, offer Close and
+`elevated` cards share a bounded bottom-right scroll stack, at most 408 points wide, so five
+errors remain reachable even in a compact zoomed window. Newest notices lead the stack. Titles
+truncate without displacing Close. Errors stay until dismissed, offer Close and
 Copy, and keep raw output in a scrollable monospace Details disclosure. Known failures lead
 with a plain explanation. A rejected push offers Pull for its originating repository; account
-failures offer Accounts. Other toasts expire after four seconds. The stack retains five notices.
+failures offer Accounts. Other toasts dismiss on a card click or expire after four seconds.
+The stack retains five notices; arrivals and exits fade without shifting card geometry.
 
 ### Command palette
 

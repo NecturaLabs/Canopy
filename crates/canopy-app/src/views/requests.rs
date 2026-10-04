@@ -512,18 +512,25 @@ fn action_bar(
     let busy = tab.requests.busy.is_some() || tab.running.is_some();
     ui.horizontal_wrapped(|ui| {
         if ui
-            .add_enabled(
-                !busy,
-                egui::Button::new(format!("{}  Check out", icon::DOWNLOAD_SIMPLE)),
-            )
+            .add_enabled_ui(!busy, |ui| {
+                widgets::secondary_button(
+                    ui,
+                    format!("{}  Check out", icon::DOWNLOAD_SIMPLE),
+                    egui::Vec2::ZERO,
+                )
+            })
+            .inner
             .on_hover_text("Fetch the request's branch and check it out locally")
             .clicked()
         {
             actions.push(Action::CheckoutRequest(r.clone()));
         }
-        if ui
-            .button(format!("{}  Open on {}", forge_icon(kind), kind.name()))
-            .clicked()
+        if widgets::secondary_button(
+            ui,
+            format!("{}  Open on {}", forge_icon(kind), kind.name()),
+            egui::Vec2::ZERO,
+        )
+        .clicked()
         {
             actions.push(Action::OpenUrl(r.web_url.clone()));
         }
@@ -571,12 +578,14 @@ fn action_bar(
         ui.add_space(theme::SM);
         ui.horizontal_wrapped(|ui| {
             if ui
-                .add_enabled(
-                    approve_action(tab, r).is_some(),
-                    egui::Button::new(
+                .add_enabled_ui(approve_action(tab, r).is_some(), |ui| {
+                    widgets::secondary_button(
+                        ui,
                         RichText::new(format!("{}  Approve", icon::CHECK)).color(p.success),
-                    ),
-                )
+                        egui::Vec2::ZERO,
+                    )
+                })
+                .inner
                 .on_hover_text(format!(
                     "Approve this request  ({})",
                     crate::keymap::hint(crate::keymap::Command::ApproveRequest)
@@ -1000,6 +1009,45 @@ mod tests {
             merge.0,
             merge.1
         );
+    }
+
+    #[test]
+    fn refreshed_request_selection_preserves_action_eligibility() {
+        let (worker, _, _) = Worker::detached();
+        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        tab.requests.selected = Some(7);
+        tab.requests.list = Some(Ok(Arc::new(vec![summary(RequestState::Open)])));
+        for state in [
+            RequestState::Open,
+            RequestState::Closed,
+            RequestState::Merged,
+        ] {
+            tab.requests.details = Some(Ok(Arc::new(details(state))));
+            let request = selected_summary(&tab).expect("selected request");
+            assert_eq!(request.state, state);
+            assert_eq!(
+                approve_action(&tab, request).is_some(),
+                state == RequestState::Open
+            );
+            for kind in [ForgeKind::GitHub, ForgeKind::GitLab] {
+                let detail = details(state);
+                assert_eq!(
+                    merge_confirmation(&tab, kind, request, Some(&detail)).is_some(),
+                    state == RequestState::Open
+                );
+            }
+        }
+        let mut other = details(RequestState::Closed);
+        other.summary.number = 8;
+        tab.requests.details = Some(Ok(Arc::new(other)));
+        assert_eq!(
+            selected_summary(&tab).expect("list fallback").state,
+            RequestState::Open
+        );
+        tab.requests.details = Some(Err("offline".into()));
+        assert_eq!(selected_summary(&tab).expect("error fallback").number, 7);
+        tab.requests.selected = Some(99);
+        assert!(selected_summary(&tab).is_none());
     }
 
     #[test]

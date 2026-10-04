@@ -489,6 +489,7 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
     };
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
+        .min_scrolled_height(0.0)
         .id_salt(("resolve", &r.path))
         .show(ui, |ui| {
             egui::Frame::new()
@@ -891,6 +892,59 @@ mod tests {
             egui::CentralPanel::default().show(ui, |ui| body(ui, r));
         })
         .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn compact_resolver_code_never_paints_over_its_footer() {
+        let ctx = context();
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let mut r = Resolver::new("f".into());
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(&text(1, 5)))));
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 200.0));
+        for frame in 0..4 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE)
+                        .show(ui, |ui| {
+                            header(ui, &mut r, std::path::Path::new("f"), &mut Vec::new());
+                            footer(ui, &mut r, &mut Vec::new());
+                            body(ui, &mut r);
+                        });
+                },
+            );
+            output.textures_delta.clear();
+            let footer = egui::containers::panel::PanelState::load(
+                &ctx,
+                egui::Id::new(("resolve-footer", &r.path)),
+            )
+            .expect("resolver footer");
+            if frame >= 2 {
+                assert!(
+                    screen.contains_rect(footer.outer_rect),
+                    "frame {frame}: {:?} outside {screen:?}",
+                    footer.outer_rect
+                );
+                for shape in &output.shapes {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && (text.galley.text().starts_with("common ")
+                            || text.galley.text().starts_with("ours ")
+                            || text.galley.text().starts_with("theirs "))
+                    {
+                        assert!(
+                            shape.clip_rect.max.y <= footer.outer_rect.min.y,
+                            "code clip {:?} enters footer {:?}",
+                            shape.clip_rect,
+                            footer.outer_rect
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

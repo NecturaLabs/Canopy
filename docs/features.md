@@ -170,12 +170,13 @@ list summaries do not carry those verdicts. Bulk or bounded cached list badges r
 | Keyboard cheatsheet and vim-style single-key actions | Unreleased | ? | ? | ? |
 | Settings screen (appearance, Git, integrations, accounts, updates, privacy, keyboard; relative/calendar History dates with English or ISO calendar format) | Unreleased | ? | ? | ? |
 | Compact layouts and 80–160% interface zoom | Unreleased | ? | ? | ? |
+| Shared raised controls, larger input targets and visible keyboard focus | Unreleased | ? | ? | ? |
 | Native folder chooser without blocking the app | Unreleased | ? | ? | ? |
 | Configurable keybindings | Planned | ? | ? | ? |
 | Dark and light themes (two in v0.1, eight in `main`, one high-contrast) | Done | Yes | Yes | ? |
 | Custom themes | Planned | No | Yes | No |
 | Confirmation for destructive operations | Done | Yes | Yes | Yes |
-| Toast notifications with git's error output | Done | ? | ? | ? |
+| Toast notifications with git's error output and a viewport-bounded overflow stack | Done | ? | ? | ? |
 | Localisation | Planned | ? | ? | Yes |
 | Update check, which can be turned off (nothing is sent before you accept the Terms) | Unreleased | ? | ? | ? |
 | Opt-in, scrubbed crash reports | Unreleased | ? | ? | ? |

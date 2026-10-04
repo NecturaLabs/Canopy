@@ -245,7 +245,10 @@ pub fn show(
                             egui::ScrollArea::vertical()
                                 .id_salt(("settings-content", screen.section))
                                 .auto_shrink([false, false])
-                                .max_height((height - theme::LG * 2.0 - 26.0 - theme::MD).max(0.0))
+                                .max_height(
+                                    (height - theme::LG * 2.0 - theme::CONTROL_HEIGHT - theme::MD)
+                                        .max(0.0),
+                                )
                                 .show(ui, |ui| {
                                     ui.set_max_width(ui.available_width());
                                     match screen.section {

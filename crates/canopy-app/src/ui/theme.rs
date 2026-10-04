@@ -63,8 +63,21 @@ pub const ICON_XL: f32 = 24.0;
 /// The centre of an empty or finished state.
 pub const ICON_HERO: f32 = 32.0;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
-/// Inner margin of every framed text field, so fields match the 26-point control height.
-pub const FIELD_MARGIN: Margin = Margin::symmetric(8, 5);
+/// Shared control geometry, in logical points before interface zoom.
+pub const CONTROL_HEIGHT: f32 = 30.0;
+pub const COMPACT_CONTROL_HEIGHT: f32 = 28.0;
+pub const PRIMARY_CONTROL_HEIGHT: f32 = 36.0;
+pub const TOOL_HEIGHT: f32 = 40.0;
+/// Includes the horizontal scrollbar and breathing room beneath toolbar captions.
+pub const ACTION_BAR_HEIGHT: f32 = 52.0;
+pub const CONTROL_INSET: f32 = 2.0;
+pub const CHECKBOX_SIZE: f32 = 18.0;
+pub const SWITCH_SIZE: egui::Vec2 = egui::vec2(40.0, 24.0);
+/// Inner margin of every framed text field, matching the standard control height.
+pub const FIELD_MARGIN: Margin = Margin::symmetric(8, 7);
+/// Maximum outer width and raw-output viewport of a notification card.
+pub const TOAST_WIDTH: f32 = 408.0;
+pub const TOAST_DETAILS_HEIGHT: f32 = 140.0;
 
 /// Colours of one theme.
 #[derive(Debug, Clone, Copy)]
@@ -587,6 +600,26 @@ impl Palette {
         Color32::from_black_alpha(if self.dark { 176 } else { 60 })
     }
 
+    /// A restrained raised-control edge; input boundaries retain `control_border` contrast.
+    pub fn control_edge(&self) -> Color32 {
+        mix(self.border, self.control_border, 0.32)
+    }
+
+    /// Light caught just inside a raised control, never used for its text or focus ring.
+    pub fn control_highlight(&self) -> Color32 {
+        Palette::tint(self.text, if self.dark { 20 } else { 12 })
+    }
+
+    /// Micro-elevation for buttons and selected segments, not a floating-card shadow.
+    pub fn control_shadow(&self) -> Shadow {
+        Shadow {
+            offset: [0, 1],
+            blur: 3,
+            spread: 0,
+            color: Color32::from_black_alpha(if self.dark { 55 } else { 18 }),
+        }
+    }
+
     /// Fill of the selected row in lists, the graph, the sidebar, the palette and diffs, and of
     /// egui's selected values. Every text colour stays readable on it (see the contrast test).
     pub fn selected(&self) -> Color32 {
@@ -762,7 +795,7 @@ fn visuals(p: &Palette) -> Visuals {
     v.indent_has_left_vline = false;
 
     let w = &mut v.widgets;
-    let r = CornerRadius::same(RADIUS_SM);
+    let r = CornerRadius::same(RADIUS);
     w.noninteractive.bg_fill = p.panel;
     w.noninteractive.weak_bg_fill = p.panel;
     w.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
@@ -775,12 +808,12 @@ fn visuals(p: &Palette) -> Visuals {
     w.inactive.corner_radius = r;
     w.hovered.bg_fill = p.hover;
     w.hovered.weak_bg_fill = p.hover;
-    w.hovered.bg_stroke = Stroke::new(1.0, Palette::tint(p.accent, 160));
+    w.hovered.bg_stroke = Stroke::new(1.0, p.control_border);
     w.hovered.fg_stroke = Stroke::new(1.5, p.text);
     w.hovered.corner_radius = r;
     w.hovered.expansion = 0.0;
-    w.active.bg_fill = Palette::tint(p.accent, 70);
-    w.active.weak_bg_fill = Palette::tint(p.accent, 70);
+    w.active.bg_fill = p.hover;
+    w.active.weak_bg_fill = p.hover;
     w.active.bg_stroke = Stroke::new(1.0, p.accent);
     w.active.fg_stroke = Stroke::new(1.5, p.text);
     w.active.corner_radius = r;
@@ -830,8 +863,8 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, reduce_motion: bool) {
     ]
     .into();
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    style.spacing.button_padding = egui::vec2(10.0, 5.0);
-    style.spacing.interact_size.y = 26.0;
+    style.spacing.button_padding = egui::vec2(MD, 7.0);
+    style.spacing.interact_size.y = CONTROL_HEIGHT;
     style.spacing.window_margin = Margin::same(18);
     style.spacing.menu_margin = Margin::same(6);
     style.spacing.scroll.bar_width = 8.0;
@@ -969,6 +1002,15 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn shared_controls_have_room_for_text_and_focus() {
+        let ctx = egui::Context::default();
+        apply(&ctx, ThemeId::Midnight, true);
+        let style = ctx.style_of(Theme::Dark);
+        assert_eq!(style.spacing.interact_size.y, 30.0);
+        assert_eq!(FIELD_MARGIN.top + FIELD_MARGIN.bottom, 14);
     }
 
     #[test]

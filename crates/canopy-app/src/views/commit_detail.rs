@@ -55,7 +55,14 @@ pub fn show(
         )
         .show(ui, |ui| {
             ui.spacing_mut().scroll = theme::solid_scroll();
-            ui.spacing_mut().item_spacing.y = theme::XS;
+            ui.spacing_mut().item_spacing.y = if tab.history_layout.compact {
+                theme::CONTROL_INSET
+            } else {
+                theme::XS
+            };
+            // Keep passive metadata dense without reducing explicit icon/button targets.
+            ui.spacing_mut().interact_size.y = theme::XL;
+            ui.spacing_mut().button_padding.y = theme::XS;
             author(ui, &d, tab);
             ui.horizontal_wrapped(|ui| {
                 ui.label(
@@ -84,7 +91,11 @@ pub fn show(
                 icon::CARET_RIGHT
             };
             if ui
-                .add(egui::Button::new(format!("{glyph}  Commit information")).frame(false))
+                .add(
+                    egui::Button::new(format!("{glyph}  Commit information"))
+                        .frame(false)
+                        .min_size(vec2(0.0, theme::COMPACT_CONTROL_HEIGHT)),
+                )
                 .clicked()
             {
                 tab.history_layout.information_open = !tab.history_layout.information_open;

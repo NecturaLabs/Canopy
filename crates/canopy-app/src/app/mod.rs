@@ -608,7 +608,7 @@ impl eframe::App for CanopyApp {
             });
         if let Some(tab) = self.tabs.get_mut(self.active) {
             egui::Panel::top("actions")
-                .exact_size(theme::XL + theme::LG + theme::XS)
+                .exact_size(theme::ACTION_BAR_HEIGHT)
                 .frame(
                     egui::Frame::new()
                         .fill(p.panel)

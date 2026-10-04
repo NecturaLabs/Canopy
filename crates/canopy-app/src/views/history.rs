@@ -1204,6 +1204,29 @@ mod tests {
     }
 
     #[test]
+    fn manual_inspector_height_survives_a_short_diff() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let (mut tab, _dir) = populated_tab(&ctx);
+        let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
+        diff.hunks[0].lines.truncate(7);
+        tab.diff = None;
+        let size = vec2(2560.0, 1440.0);
+        visible_details(&ctx, &mut tab, size);
+        let panel_id = egui::Id::new("details");
+        let mut panel =
+            egui::containers::panel::PanelState::load(&ctx, panel_id).expect("rendered inspector");
+        panel.outer_rect.min.y = panel.outer_rect.max.y - 480.0;
+        ctx.data_mut(|data| data.insert_persisted(panel_id, panel));
+        tab.diff = Some(std::sync::Arc::new(diff));
+        visible_details(&ctx, &mut tab, size);
+        let panel =
+            egui::containers::panel::PanelState::load(&ctx, panel_id).expect("manual inspector");
+        assert!((panel.size().y - 480.0).abs() <= 1.0, "{:?}", panel.size());
+    }
+
+    #[test]
     fn a_short_commit_diff_does_not_leave_a_large_empty_bottom() {
         for size in [vec2(1440.0, 900.0), vec2(2560.0, 1440.0)] {
             let ctx = egui::Context::default();

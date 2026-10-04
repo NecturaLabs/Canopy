@@ -191,7 +191,11 @@ fn lists(
 ) {
     let p = palette(ui.ctx());
     let spacing = ui.spacing().item_spacing.y;
+    let row_height = ui.spacing().interact_size.y;
     ui.spacing_mut().item_spacing.y = 0.0;
+    // Passive list headings and placeholders need no button-sized minimum row.
+    // Actual actions keep their explicit compact-control target size.
+    ui.spacing_mut().interact_size.y = theme::XL;
     let st = &snap.status;
     if let Some(u) = &snap.status_unavailable {
         // A partial clone that lacks the tree of HEAD: the list is empty because
@@ -242,6 +246,7 @@ fn lists(
         }
     }
     ui.spacing_mut().item_spacing.y = spacing;
+    ui.spacing_mut().interact_size.y = row_height;
 }
 
 /// The main pane of a clean working tree: the illustration and where the branch stands, with
@@ -265,93 +270,99 @@ fn clean_home(
         .and_then(|oid| snap.commits.iter().find(|c| c.oid == oid));
     let width = ui.available_width().min(420.0);
     let top = ((ui.available_height() - 380.0) / 2.0).max(24.0);
-    ui.vertical_centered(|ui| {
-        ui.add_space(top);
-        art::show(ui, art::empty_clean(), vec2(200.0, 150.0));
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new("Working tree clean")
-                .font(FontId::new(theme::HEADLINE_SIZE, theme::semibold())),
-        );
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new(format!(
-                "Nothing to commit on {}. Edit some files and they show up here.",
-                snap.head.label()
-            ))
-            .color(p.text_dim)
-            .size(theme::META_SIZE),
-        );
-        ui.add_space(theme::LG);
-        let (status, next) = match (branch, snap.remotes.is_empty()) {
-            (_, true) => (
-                format!("{}  Local only, no remote", icon::HARD_DRIVES),
-                Some(("Publish…", Action::Publish)),
-            ),
-            (Some(b), false) if b.upstream.is_some() => {
-                let upstream = b.upstream.as_deref().unwrap_or_default();
-                match (b.ahead, b.behind) {
-                    (0, 0) => (
-                        format!("{}  Up to date with {upstream}", icon::CHECK_CIRCLE),
-                        None,
+    egui::ScrollArea::vertical()
+        .id_salt("clean-summary")
+        .min_scrolled_height(0.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(top);
+                art::show(ui, art::empty_clean(), vec2(200.0, 150.0));
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("Working tree clean")
+                        .font(FontId::new(theme::HEADLINE_SIZE, theme::semibold())),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Nothing to commit on {}. Edit some files and they show up here.",
+                        snap.head.label()
+                    ))
+                    .color(p.text_dim)
+                    .size(theme::META_SIZE),
+                );
+                ui.add_space(theme::LG);
+                let (status, next) = match (branch, snap.remotes.is_empty()) {
+                    (_, true) => (
+                        format!("{}  Local only, no remote", icon::HARD_DRIVES),
+                        Some(("Publish…", Action::Publish)),
                     ),
-                    (a, 0) => (
-                        format!(
-                            "{}  {a} commit{} to push to {upstream}",
-                            icon::ARROW_FAT_LINE_UP,
-                            if a == 1 { "" } else { "s" }
-                        ),
+                    (Some(b), false) if b.upstream.is_some() => {
+                        let upstream = b.upstream.as_deref().unwrap_or_default();
+                        match (b.ahead, b.behind) {
+                            (0, 0) => (
+                                format!("{}  Up to date with {upstream}", icon::CHECK_CIRCLE),
+                                None,
+                            ),
+                            (a, 0) => (
+                                format!(
+                                    "{}  {a} commit{} to push to {upstream}",
+                                    icon::ARROW_FAT_LINE_UP,
+                                    if a == 1 { "" } else { "s" }
+                                ),
+                                Some(("Push", Action::Push)),
+                            ),
+                            (0, n) => (
+                                format!(
+                                    "{}  {n} commit{} to pull from {upstream}",
+                                    icon::ARROW_FAT_LINE_DOWN,
+                                    if n == 1 { "" } else { "s" }
+                                ),
+                                Some(("Pull", Action::Pull)),
+                            ),
+                            (a, n) => (
+                                format!("{}  {a} ahead, {n} behind {upstream}", icon::GIT_DIFF),
+                                Some(("Pull", Action::Pull)),
+                            ),
+                        }
+                    }
+                    (Some(_), false) => (
+                        format!("{}  Not pushed yet", icon::CLOUD_ARROW_UP),
                         Some(("Push", Action::Push)),
                     ),
-                    (0, n) => (
-                        format!(
-                            "{}  {n} commit{} to pull from {upstream}",
-                            icon::ARROW_FAT_LINE_DOWN,
-                            if n == 1 { "" } else { "s" }
-                        ),
-                        Some(("Pull", Action::Pull)),
-                    ),
-                    (a, n) => (
-                        format!("{}  {a} ahead, {n} behind {upstream}", icon::GIT_DIFF),
-                        Some(("Pull", Action::Pull)),
-                    ),
+                    (None, false) => (format!("{}  {}", icon::GIT_BRANCH, snap.head.label()), None),
+                };
+                ui.label(RichText::new(status).size(theme::BODY_SIZE).color(p.text));
+                if let Some((label, action)) = next {
+                    ui.add_space(theme::SM);
+                    if widgets::primary_button(ui, label, !busy, 160.0_f32.min(width)).clicked() {
+                        actions.push(action);
+                    }
                 }
-            }
-            (Some(_), false) => (
-                format!("{}  Not pushed yet", icon::CLOUD_ARROW_UP),
-                Some(("Push", Action::Push)),
-            ),
-            (None, false) => (format!("{}  {}", icon::GIT_BRANCH, snap.head.label()), None),
-        };
-        ui.label(RichText::new(status).size(theme::BODY_SIZE).color(p.text));
-        if let Some((label, action)) = next {
-            ui.add_space(theme::SM);
-            if widgets::primary_button(ui, label, !busy, 160.0_f32.min(width)).clicked() {
-                actions.push(action);
-            }
-        }
-        if let Some(c) = last {
-            ui.add_space(theme::LG);
-            let now = chrono::Utc::now().timestamp();
-            ui.label(
-                RichText::new(format!(
-                    "Last commit {}  ·  {}",
-                    canopy_core::short_id(c.oid),
-                    widgets::relative_time(c.author.time, now)
-                ))
-                .size(theme::SMALL_SIZE)
-                .color(p.text_faint),
-            );
-            ui.add(
-                egui::Label::new(
-                    RichText::new(&c.summary)
-                        .size(theme::META_SIZE)
-                        .color(p.text_dim),
-                )
-                .truncate(),
-            );
-        }
-    });
+                if let Some(c) = last {
+                    ui.add_space(theme::LG);
+                    let now = chrono::Utc::now().timestamp();
+                    ui.label(
+                        RichText::new(format!(
+                            "Last commit {}  ·  {}",
+                            canopy_core::short_id(c.oid),
+                            widgets::relative_time(c.author.time, now)
+                        ))
+                        .size(theme::SMALL_SIZE)
+                        .color(p.text_faint),
+                    );
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&c.summary)
+                                .size(theme::META_SIZE)
+                                .color(p.text_dim),
+                        )
+                        .truncate(),
+                    );
+                }
+            });
+        });
 }
 
 /// Which of the conflicted, unstaged and staged sections to draw. An empty section is left out
@@ -948,6 +959,56 @@ mod tests {
             );
             painted_texts(&ctx, &mut tab, Some(egui::pos2(5.0, 595.0)));
         }
+    }
+
+    #[test]
+    fn compact_clean_summary_keeps_publish_reachable_by_scrolling() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        let snap = canopy_core::RepoSnapshot::default();
+        let mut publish_visible = false;
+        for frame in 0..40 {
+            let mut events = vec![egui::Event::PointerMoved(egui::pos2(180.0, 100.0))];
+            if frame > 5 {
+                events.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(0.0, -30.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: Default::default(),
+                });
+            }
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(360.0, 200.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE)
+                        .show(ui, |ui| {
+                            clean_home(ui, &tab, &snap, &mut Vec::new());
+                        });
+                },
+            );
+            output.textures_delta.clear();
+            publish_visible |= output.shapes.iter().any(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Publish…" => {
+                    shape.clip_rect.contains_rect(text.visual_bounding_rect())
+                }
+                _ => false,
+            });
+        }
+        assert!(
+            publish_visible,
+            "the clean-state primary action must remain reachable in a short pane"
+        );
     }
 
     #[test]

@@ -244,9 +244,17 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
         .add(
             egui::Button::new(RichText::new(glyph).size(theme::ICON_MD).color(p.text_dim))
                 .frame(false)
-                .min_size(vec2(26.0, 26.0)),
+                .min_size(Vec2::splat(theme::CONTROL_HEIGHT)),
         )
         .on_hover_text(tooltip);
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            response.rect,
+            CornerRadius::same(theme::RADIUS),
+            Stroke::new(1.5, p.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
@@ -262,13 +270,14 @@ pub fn tool_button(
     enabled: bool,
 ) -> Response {
     let p = palette(ui.ctx());
+    let enabled = enabled && ui.is_enabled();
     let size = vec2(
         if ui.ctx().content_rect().width() < theme::COMPACT_WIDTH {
             48.0
         } else {
             58.0
         },
-        theme::XL + theme::LG,
+        theme::TOOL_HEIGHT,
     );
     let (rect, resp) = ui.allocate_exact_size(
         size,
@@ -278,9 +287,11 @@ pub fn tool_button(
             Sense::hover()
         },
     );
-    let hover = ui
-        .ctx()
-        .animate_bool_with_time(resp.id, enabled && resp.hovered(), 0.12);
+    let hover = ui.ctx().animate_bool_with_time(
+        resp.id,
+        enabled && resp.hovered(),
+        theme::fade(ui.ctx(), 0.12),
+    );
     if hover > 0.0 {
         ui.painter().rect_filled(
             rect,
@@ -421,7 +432,8 @@ fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -
             )
         })
         .collect();
-    let inset = 2.0;
+    let enabled = ui.is_enabled();
+    let inset = theme::CONTROL_INSET;
     let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + 2.0 * pad).collect();
     let (outer, _) = ui.allocate_exact_size(
         vec2(widths.iter().sum::<f32>() + 2.0 * inset, height),
@@ -453,18 +465,30 @@ fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -
         let selected = chosen.map_or(segment.selected, |c| c == i);
         let hover = ui.ctx().animate_bool_with_time(
             resp.id,
-            resp.hovered() && !selected,
+            enabled && resp.hovered() && !selected,
             super::motion::time(super::motion::FAST),
         );
         let radius = CornerRadius::same(theme::RADIUS_SM - 1);
         if selected {
+            if enabled {
+                ui.painter().add(p.control_shadow().as_shape(rect, radius));
+            }
             ui.painter().rect(
                 rect,
                 radius,
                 p.elevated,
-                Stroke::new(1.0, Palette::tint(p.accent, 150)),
+                Stroke::new(1.0, p.control_edge()),
                 egui::StrokeKind::Inside,
             );
+            if enabled {
+                ui.painter().line_segment(
+                    [
+                        pos2(rect.left() + theme::SM, rect.bottom() - inset),
+                        pos2(rect.right() - theme::SM, rect.bottom() - inset),
+                    ],
+                    Stroke::new(1.5, p.accent),
+                );
+            }
         } else if hover > 0.0 {
             ui.painter().rect_filled(
                 rect,
@@ -472,7 +496,9 @@ fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -
                 Palette::tint(p.text, (hover * if p.dark { 12.0 } else { 14.0 }) as u8),
             );
         }
-        let color = if selected {
+        let color = if !enabled {
+            p.text_faint
+        } else if selected {
             p.text
         } else {
             p.text_dim.lerp_to_gamma(p.text, hover)
@@ -489,21 +515,20 @@ fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -
         }
         let name = segment.name.to_owned();
         resp.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, &name)
+            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, selected, &name)
         });
     }
     chosen
 }
 
-/// A square checkbox with its label. egui's own draws a 14-point box with the 6-point control
-/// radius, which reads as a radio button.
+/// A square checkbox with its label, distinct from radio options and switches.
 pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> Response {
     let p = palette(ui.ctx());
-    let box_size = 16.0;
+    let box_size = theme::CHECKBOX_SIZE;
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
         FontId::new(theme::BODY_SIZE, egui::FontFamily::Proportional),
-        p.text,
+        Color32::PLACEHOLDER,
     );
     let size = vec2(
         box_size + theme::SM + galley.size().x,
@@ -582,7 +607,8 @@ pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> Response {
 /// row). Returns whether it was flipped.
 pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
     let p = palette(ui.ctx());
-    let size = vec2(36.0, 20.0);
+    let enabled = ui.is_enabled();
+    let size = theme::SWITCH_SIZE;
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let flipped = resp.clicked();
     if flipped {
@@ -591,8 +617,8 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
     let t = ui
         .ctx()
         .animate_bool_with_time(resp.id, *on, super::motion::time(super::motion::FAST));
-    let hovered = resp.hovered();
-    let radius = CornerRadius::same(10);
+    let hovered = enabled && resp.hovered();
+    let radius = CornerRadius::same(theme::RADIUS_LG);
     let off_fill = if hovered { p.hover } else { p.bg };
     let fill = off_fill.lerp_to_gamma(p.button, t);
     let stroke = p.control_border.lerp_to_gamma(p.button, t);
@@ -603,9 +629,15 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
         Stroke::new(1.0, stroke),
         egui::StrokeKind::Inside,
     );
-    let r = 7.0;
+    let r = (size.y - 2.0 * theme::CONTROL_INSET - 2.0) / 2.0;
     let cx = egui::lerp((rect.left() + 3.0 + r)..=(rect.right() - 3.0 - r), t);
-    let thumb = p.text_dim.lerp_to_gamma(p.on_button, t);
+    let thumb = if enabled {
+        p.text_dim.lerp_to_gamma(p.on_button, t)
+    } else {
+        p.text_faint
+    };
+    ui.painter()
+        .circle_filled(pos2(cx, rect.center().y + 1.0), r, p.control_shadow().color);
     ui.painter()
         .circle_filled(pos2(cx, rect.center().y), r, thumb);
     if resp.has_focus() {
@@ -618,21 +650,50 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
     }
     let name = label.to_owned();
     let state = *on;
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, state, &name));
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state, &name)
+    });
     flipped
 }
 
 /// Height of the buttons in a list header, so "Stage all" and a menu beside it match.
-pub const COMPACT_H: f32 = 26.0;
+pub const COMPACT_H: f32 = theme::COMPACT_CONTROL_HEIGHT;
 
 /// A bordered button at [`COMPACT_H`] with the standard padding: the same control as a plain
 /// button, but not as shallow as `small_button`.
 pub fn compact_button(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> Response {
     ui.scope(|ui| {
         ui.spacing_mut().button_padding = vec2(theme::SM, 4.0);
-        ui.add(egui::Button::new(text).min_size(vec2(0.0, COMPACT_H)))
+        ui.spacing_mut().interact_size.y = COMPACT_H;
+        secondary_button(ui, text, vec2(0.0, COMPACT_H))
     })
     .inner
+}
+
+/// Neutral action with a quiet surface edge; accent is reserved for keyboard focus.
+pub fn secondary_button(
+    ui: &mut Ui,
+    text: impl Into<egui::WidgetText>,
+    min_size: Vec2,
+) -> Response {
+    let p = palette(ui.ctx());
+    let response = ui
+        .scope(|ui| {
+            ui.style_mut().override_font_id = Some(FontId::new(theme::BODY_SIZE, theme::medium()));
+            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0, p.control_edge());
+            ui.add(egui::Button::new(text).min_size(min_size))
+        })
+        .inner;
+    if ui.is_enabled() && response.rect.width() > 2.0 * f32::from(theme::RADIUS) {
+        ui.painter().line_segment(
+            [
+                response.rect.left_top() + vec2(f32::from(theme::RADIUS), 1.0),
+                response.rect.right_top() + vec2(-f32::from(theme::RADIUS), 1.0),
+            ],
+            Stroke::new(1.0, p.control_highlight()),
+        );
+    }
+    response
 }
 
 /// A button for a dangerous action: danger-coloured label on a tinted fill, readable in every
@@ -666,11 +727,17 @@ fn primary_font() -> FontId {
 
 /// The primary call to action: a solid theme-coloured button.
 pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Response {
-    primary_button_sized(ui, text, enabled, vec2(width, 34.0))
+    primary_button_sized(
+        ui,
+        text,
+        enabled,
+        vec2(width, theme::PRIMARY_CONTROL_HEIGHT),
+    )
 }
 
 fn primary_button_sized(ui: &mut Ui, text: &str, enabled: bool, size: Vec2) -> Response {
     let p = palette(ui.ctx());
+    let enabled = enabled && ui.is_enabled();
     let (rect, resp) = ui.allocate_exact_size(
         size,
         if enabled {
@@ -684,12 +751,24 @@ fn primary_button_sized(ui: &mut Ui, text: &str, enabled: bool, size: Vec2) -> R
         enabled && resp.hovered(),
         theme::fade(ui.ctx(), 0.12),
     );
-    let boost = 1.0 + 0.15 * hover;
     if enabled {
-        ui.painter().rect_filled(
+        let radius = CornerRadius::same(theme::RADIUS);
+        if !resp.is_pointer_button_down_on() {
+            ui.painter().add(p.control_shadow().as_shape(rect, radius));
+        }
+        ui.painter().rect(
             rect,
-            CornerRadius::same(theme::RADIUS),
-            p.button.gamma_multiply(boost.min(1.2)),
+            radius,
+            p.button,
+            Stroke::new(1.0, Palette::tint(p.on_button, (30.0 + 30.0 * hover) as u8)),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().line_segment(
+            [
+                rect.left_top() + vec2(f32::from(theme::RADIUS), 1.0),
+                rect.right_top() + vec2(-f32::from(theme::RADIUS), 1.0),
+            ],
+            Stroke::new(1.0, Palette::tint(p.on_button, 35)),
         );
     } else {
         // Quiet and outlined: a disabled button must not read as enabled in
@@ -702,14 +781,7 @@ fn primary_button_sized(ui: &mut Ui, text: &str, enabled: bool, size: Vec2) -> R
             egui::StrokeKind::Inside,
         );
     }
-    if hover > 0.0 {
-        ui.painter().rect_stroke(
-            rect.expand(1.5),
-            CornerRadius::same(theme::RADIUS + 1),
-            Stroke::new(2.0, Palette::tint(p.accent, (hover * 90.0) as u8)),
-            egui::StrokeKind::Outside,
-        );
-    }
+
     if resp.has_focus() {
         ui.painter().rect_stroke(
             rect.expand(2.0),
@@ -956,6 +1028,60 @@ mod tests {
     use super::*;
 
     #[test]
+    fn controls_keep_keyboard_activation_and_disabled_guards() {
+        for kind in 0..4 {
+            for enabled in [false, true] {
+                let ctx = egui::Context::default();
+                crate::ui::fonts::install(&ctx);
+                theme::apply(&ctx, theme::ThemeId::Midnight, true);
+                let mut checked = false;
+                let mut activated = false;
+                let mut focused = false;
+                for frame in 0..5 {
+                    let events = if frame == 2 {
+                        vec![egui::Event::Key {
+                            key: egui::Key::Space,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: Default::default(),
+                        }]
+                    } else {
+                        Vec::new()
+                    };
+                    ctx.run_ui(
+                        egui::RawInput {
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            ui.add_enabled_ui(enabled, |ui| {
+                                let response = match kind {
+                                    0 => checkbox(ui, &mut checked, "Checkbox"),
+                                    1 => primary_button(ui, "Primary", true, 120.0),
+                                    2 => tool_button(ui, icon::CHECK, "Tool", "Tool action", true),
+                                    _ => icon_button(ui, icon::CHECK, "Icon action"),
+                                };
+                                if frame == 0 && enabled {
+                                    response.request_focus();
+                                }
+                                activated |= response.clicked();
+                                focused |= response.has_focus();
+                            });
+                        },
+                    )
+                    .drop_without_applying_deltas();
+                }
+                assert_eq!(activated, enabled, "control {kind}, enabled {enabled}");
+                assert_eq!(focused, enabled, "control {kind}, enabled {enabled}");
+                if kind == 0 {
+                    assert_eq!(checked, enabled);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn blocking_overlay_hides_underlying_tooltips_and_keeps_its_own() {
         let ctx = egui::Context::default();
         for frame in 0..3 {
@@ -1004,6 +1130,41 @@ mod tests {
                 !text.contains(&"Underlying tooltip"),
                 "background tooltip painted above overlay"
             );
+        }
+    }
+
+    #[test]
+    fn disabled_primary_controls_do_not_use_the_enabled_fill() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        for frame in 0..3 {
+            let mut button_rect = egui::Rect::NOTHING;
+            let output = ctx.run_ui(Default::default(), |ui| {
+                ui.add_enabled_ui(false, |ui| {
+                    button_rect = primary_button(ui, "Commit", true, 120.0).rect;
+                });
+            });
+            if frame == 2 {
+                let rectangle = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Rect(rect) if rect.rect == button_rect => Some(rect),
+                        _ => None,
+                    })
+                    .expect("painted disabled primary");
+                assert!(
+                    rectangle.stroke.width > 0.0,
+                    "disabled primaries are quiet outlined controls, not a dimmed brand fill"
+                );
+                // egui further fades a disabled container's painter. Its effective alpha
+                // may be below the quiet fill's 12, but a dimmed solid primary is much higher.
+                assert!(
+                    rectangle.fill.a() <= 12,
+                    "a disabled container must use the quiet fill, never the enabled solid primary fill"
+                );
+            }
+            output.drop_without_applying_deltas();
         }
     }
 
