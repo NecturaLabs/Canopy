@@ -35,7 +35,7 @@ Canopy is the app inside, so it uses the Ctrl layer, mirroring Omarchy's Super c
 | 1 … 0, workspace | Ctrl+1 … 9, tab |
 | − / =, resize | Ctrl+− / =, zoom |
 | K, keybindings | ? or Ctrl+/, the cheatsheet |
-| comma, notifications | Ctrl+, settings |
+| comma, notifications | Ctrl+Comma settings |
 
 Rules, each guarded by a test in `keymap.rs`:
 
@@ -79,7 +79,7 @@ Works also while typing.
 | Ctrl+B | Create a branch |
 | Ctrl+Enter | Commit staged changes |
 | Ctrl+F | Show or hide History search (closing clears the query) |
-| Ctrl+, | Open settings |
+| Ctrl+Comma | Open settings |
 | Ctrl+= (also Ctrl++) / Ctrl+− | Zoom in / out |
 | Ctrl+0 | Reset zoom |
 | Ctrl+Q | Quit Canopy |

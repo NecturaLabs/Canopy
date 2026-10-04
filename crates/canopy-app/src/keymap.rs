@@ -559,7 +559,7 @@ fn key_name(key: Key) -> &'static str {
         Key::OpenBracket => "[",
         Key::CloseBracket => "]",
         Key::Questionmark => "?",
-        Key::Comma => ",",
+        Key::Comma => "Comma",
         Key::Equals => "=",
         Key::Plus => "+",
         Key::Minus => "−",
