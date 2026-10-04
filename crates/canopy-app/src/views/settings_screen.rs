@@ -1138,6 +1138,8 @@ fn accounts(
                 };
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(scopes).size(theme::SMALL_SIZE).color(p.text_faint));
+                    // One unit: the link moves to the next line whole rather than leave its icon behind.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     if ui.link(RichText::new(format!("Create a token {}", icon::ARROW_SQUARE_OUT)).size(theme::SMALL_SIZE)).clicked() {
                         actions.push(Action::OpenUrl(hosting::token_page(kind, &host)));
                     }
@@ -1397,11 +1399,15 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
 
 fn keyboard(ui: &mut Ui) {
     let p = palette(ui.ctx());
-    ui.label(
-        RichText::new(format!("Press ? (or {}) anywhere for this list as an overlay. Single keys work when no text field has focus; Super is never used.", crate::keymap::hint(crate::keymap::Command::Cheatsheet).split(" · ").next().unwrap_or_default()))
-            .size(theme::META_SIZE)
-            .color(p.text_dim),
-    );
+    ui.scope(|ui| {
+        // Clear of the scrollbar, which floats over the list's right edge.
+        ui.set_max_width(ui.available_width() - theme::MD);
+        ui.label(
+            RichText::new(format!("Press ? (or {}) anywhere for this list as an overlay. Single keys work when no text field has focus; Super is never used.", crate::keymap::hint(crate::keymap::Command::Cheatsheet).split(" · ").next().unwrap_or_default()))
+                .size(theme::META_SIZE)
+                .color(p.text_dim),
+        );
+    });
     ui.add_space(10.0);
     for section in KeySection::ALL {
         heading(ui, section.title());
