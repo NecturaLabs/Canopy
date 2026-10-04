@@ -739,11 +739,16 @@ fn visuals(p: &Palette) -> Visuals {
     v
 }
 
+/// The shortest a scrollbar's handle gets, so a long document's handle is still easy to see and
+/// to grab (egui's default is 12).
+const SCROLL_HANDLE_MIN: f32 = 32.0;
+
 /// Solid scrollbars use foreground ink so they remain visible on raised light surfaces.
 pub fn solid_scroll() -> egui::style::ScrollStyle {
     egui::style::ScrollStyle {
         foreground_color: true,
         bar_width: SM,
+        handle_min_length: SCROLL_HANDLE_MIN,
         ..egui::style::ScrollStyle::solid()
     }
 }
@@ -781,6 +786,7 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, reduce_motion: bool) {
     style.spacing.menu_margin = Margin::same(6);
     style.spacing.scroll.bar_width = 8.0;
     style.spacing.scroll.floating = true;
+    style.spacing.scroll.handle_min_length = SCROLL_HANDLE_MIN;
     style.interaction.selectable_labels = false;
     style.animation_time = super::motion::time(super::motion::BASE);
     ctx.set_style_of(theme, style);

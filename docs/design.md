@@ -300,7 +300,8 @@ when checked. Both carry their name for assistive technology and show the focus 
 
 Lists that scroll inside a fixed area (the command palette, the cheatsheet) fade their top and
 bottom 12 points into the surface, at 85% strength, where more content lies beyond, so a cut row reads
-as "more" (`widgets::scroll_fade`). The palette's list also shows whole rows only.
+as "more" (`widgets::scroll_fade`). The palette's list also shows whole rows only. A scrollbar's handle
+is never shorter than 32 points, so a long document's stays easy to see and grab.
 
 ### Illustrations
 
