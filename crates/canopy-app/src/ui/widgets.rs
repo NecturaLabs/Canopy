@@ -244,7 +244,7 @@ pub fn tool_button(
         } else {
             58.0
         },
-        theme::XL + theme::MD,
+        theme::XL + theme::LG,
     );
     let (rect, resp) = ui.allocate_exact_size(
         size,
@@ -282,7 +282,7 @@ pub fn tool_button(
         rect.center_bottom() - vec2(0.0, theme::SM),
         Align2::CENTER_CENTER,
         label,
-        FontId::new(theme::SMALL_SIZE, theme::medium()),
+        FontId::new(theme::BODY_SIZE, theme::medium()),
         color,
     );
     if resp.has_focus() {

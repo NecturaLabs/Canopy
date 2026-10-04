@@ -278,7 +278,7 @@ in `theme.rs`:
 - History search stays hidden until Ctrl+F or `/` opens it and focuses the field. The same
   shortcut, Esc or the close button hides it and clears the query. The commit count does not
   occupy the table header; an in-progress operation banner remains visible without search.
-- The action toolbar is 44 points high with 36-point buttons. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has a visible
+- The action toolbar is 44 points high with 40-point buttons and body-size captions. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has a visible
   scrollbar. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
