@@ -161,7 +161,7 @@ are sized for their optical weight and are not part of the scale.
 | `SMALL_SIZE` | Inter Regular or Medium | 11.5 | Hints, counts, badges, status bar |
 | `MICRO_SIZE` | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Pills and section labels |
 | `MONO_SIZE` | JetBrains Mono Regular | 12.5 | Diffs, commit message editor, error output |
-| `MONO_SMALL_SIZE` | JetBrains Mono Regular | 11.5 | Short SHAs, key chords |
+| `MONO_SMALL_SIZE` | JetBrains Mono Regular | 11.5 | Short SHAs, key chords, History dates and line counts |
 
 The global Body, Button, Small and Heading styles use the typography tokens in `theme.rs`.
 History rows are 30 points tall, diff lines 20 points.

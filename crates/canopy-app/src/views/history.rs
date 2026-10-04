@@ -438,7 +438,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                     } else {
                         widgets::absolute_date(c.author.time)
                     },
-                    FontId::proportional(theme::META_SIZE),
+                    FontId::monospace(theme::MONO_SMALL_SIZE),
                     p.text_faint,
                 );
             }

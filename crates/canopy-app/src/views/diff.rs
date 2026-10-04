@@ -543,12 +543,12 @@ fn header(
                     ui.label(
                         RichText::new(format!("+{}", d.additions))
                             .color(p.success)
-                            .size(theme::META_SIZE),
+                            .font(FontId::monospace(theme::MONO_SMALL_SIZE)),
                     );
                     ui.label(
                         RichText::new(format!("−{}", d.deletions))
                             .color(p.danger)
-                            .size(theme::META_SIZE),
+                            .font(FontId::monospace(theme::MONO_SMALL_SIZE)),
                     );
                 }
                 let path = sel.entry.path.clone();

@@ -296,12 +296,12 @@ fn file_stats(ui: &mut Ui, d: &CommitDetails) {
             ui.label(
                 RichText::new(format!("+{adds}"))
                     .color(p.success)
-                    .size(theme::META_SIZE),
+                    .font(FontId::monospace(theme::MONO_SMALL_SIZE)),
             );
             ui.label(
                 RichText::new(format!("−{dels}"))
                     .color(p.danger)
-                    .size(theme::META_SIZE),
+                    .font(FontId::monospace(theme::MONO_SMALL_SIZE)),
             );
         } else {
             // A partial clone that has not downloaded the file contents.
@@ -461,14 +461,14 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egu
             egui::pos2(right, rect.center().y),
             Align2::RIGHT_CENTER,
             format!("−{}", f.deletions),
-            FontId::proportional(theme::SMALL_SIZE),
+            FontId::monospace(theme::MONO_SMALL_SIZE),
             p.danger,
         );
         let ag = ui.painter().text(
             egui::pos2(dg.min.x - 6.0, rect.center().y),
             Align2::RIGHT_CENTER,
             format!("+{}", f.additions),
-            FontId::proportional(theme::SMALL_SIZE),
+            FontId::monospace(theme::MONO_SMALL_SIZE),
             p.success,
         );
         right = ag.min.x - 8.0;
