@@ -262,12 +262,16 @@ pub fn show(
                     ui.label("Git stores an author name and email in every new commit. Enter the details you want to use. Canopy will not guess them, and commits already made keep their authors.");
                     ui.add_space(theme::MD);
                     ui.label("Name");
-                    ui.add(egui::TextEdit::singleline(name).desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
+                    ui.add(egui::TextEdit::singleline(name).hint_text("e.g. Ada Lovelace").desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
                     ui.label("Email");
-                    ui.add(egui::TextEdit::singleline(email).desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
+                    ui.add(egui::TextEdit::singleline(email).hint_text("e.g. ada@example.com").desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
                     ui.add_space(theme::XS);
                     ui.label(RichText::new("Saved to your global Git configuration, so every repository without its own identity uses it. You can change it later in Settings → Git.").size(theme::META_SIZE).color(p.text_dim));
                     let ok = !name.trim().is_empty() && !email.trim().is_empty() && !*pending;
+                    if !ok && !*pending {
+                        ui.add_space(theme::XS);
+                        ui.label(RichText::new(if name.trim().is_empty() && email.trim().is_empty() { "Enter a name and an email to save." } else if name.trim().is_empty() { "Enter a name to save." } else { "Enter an email to save." }).size(theme::META_SIZE).color(p.text_faint));
+                    }
                     if primary(ui, "Save globally", ok) {
                         outcome = Outcome::RunKeep(vec![Action::SaveIdentity {
                             repo: None,
