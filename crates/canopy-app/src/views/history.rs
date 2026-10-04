@@ -16,7 +16,7 @@ use crate::tab::RepoTab;
 use crate::ui::theme::{self, Palette, palette};
 use crate::ui::widgets::forge_icon;
 use crate::ui::{art, widgets};
-use crate::views::{commit_detail, dialogs::Dialog};
+use crate::views::{commit_detail, dialogs::Dialog, diff};
 use crate::worker::Op;
 
 const ROW_H: f32 = 30.0;
@@ -45,12 +45,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
     }
     let h = ui.available_height();
     let compact_table_min = ROW_H * 6.0 + theme::XL + theme::MD;
-    let table_min = if tab.history_filter_open {
+    let table_preferred = if tab.history_filter_open {
         ROW_H * 6.0 + theme::XL * 3.0 + theme::LG
     } else {
         compact_table_min
     };
-    let compact = h < 300.0 + table_min;
+    let table_required = table_preferred - ROW_H * 4.0;
+    let compact = h < 260.0 + table_required;
+    let table_min = table_preferred.min((h - 260.0).max(table_required));
     tab.history_layout.compact = compact;
     let mut layout = tab.history_layout;
     let selected = tab.selected_commit.is_some();
@@ -106,9 +108,34 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
             });
     } else {
         let detail_max = (h - table_min).min(h * 0.70);
+        let default_height = (h * 0.40).max(260.0).min(detail_max);
+        let default_height = tab.diff.as_ref().map_or(default_height, |d| {
+            diff::inspector_height(d, default_height)
+                .max(260.0)
+                .min(detail_max)
+        });
+        let panel_id = egui::Id::new("details");
+        let automatic_id = panel_id.with("automatic-height");
+        let previous_default = ui.ctx().data(|d| d.get_temp::<f32>(automatic_id));
+        let state = egui::containers::panel::PanelState::load(ui.ctx(), panel_id);
+        let automatic = state.is_none()
+            || state
+                .zip(previous_default)
+                .is_some_and(|(state, previous)| (state.size().y - previous).abs() <= 1.0);
+        if automatic {
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(automatic_id, default_height);
+                if let Some(mut state) = state {
+                    state.outer_rect.min.y = state.outer_rect.max.y - default_height;
+                    data.insert_persisted(panel_id, state);
+                }
+            });
+        } else {
+            ui.ctx().data_mut(|data| data.remove::<f32>(automatic_id));
+        }
         egui::Panel::bottom("details")
             .resizable(true)
-            .default_size((h * 0.40).max(260.0).min(detail_max))
+            .default_size(default_height)
             .min_size(260.0_f32.min(detail_max))
             .max_size(detail_max)
             .frame(
@@ -214,8 +241,8 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     let now = chrono::Utc::now().timestamp();
     let mut full = ui.available_rect_before_wrap();
     full.max.x -= theme::LG;
-    let view_h = (full.height() - 22.0).max(ROW_H);
-    let scroll_id = ui.make_persistent_id("history-rows");
+    let view_h = (full.height() - 22.0 - ui.spacing().item_spacing.y).max(ROW_H);
+    let scroll_id = ui.make_persistent_id(egui::IdSalt::new("history-rows"));
     let mut offset =
         egui::scroll_area::State::load(ui.ctx(), scroll_id).map_or(0.0, |s| s.offset.y);
     if tab.scroll_to_selected || tab.reveal_selected {
@@ -233,7 +260,8 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             }
         }
     }
-    offset = offset.min((row_count as f32 * ROW_H - view_h).max(0.0));
+    let total_rows = row_count + usize::from(snap.truncated && filtered.is_none());
+    offset = offset.min((total_rows as f32 * ROW_H - view_h).max(0.0));
     tab.scroll_to_selected = false;
     tab.reveal_selected = false;
     let first = (offset / ROW_H).floor() as usize;
@@ -297,9 +325,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     } else {
         0.0
     };
-    let lane_pitch = ((graph_w - theme::LG) / f32::from(lanes))
-        .min(LANE_W)
-        .max(1.0);
+    let lane_pitch = ((graph_w - theme::LG) / f32::from(lanes)).clamp(1.0, LANE_W);
     let show_author = full.width() >= 560.0;
     let show_date = full.width() >= 760.0;
     let show_sha = full.width() >= 460.0;
@@ -347,8 +373,9 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         .auto_shrink([false, false])
         .id_salt("history-rows")
         .vertical_scroll_offset(offset);
-    let total_rows = row_count + usize::from(snap.truncated && filtered.is_none());
     let mut wanted_pictures = Vec::new();
+    let row_spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 0.0;
     let list = area.show_rows(ui, ROW_H, total_rows, |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for ri in range {
@@ -529,6 +556,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             resp.context_menu(|ui| commit_menu(ui, oid, &summary, forge.as_ref(), actions));
         }
     });
+    ui.spacing_mut().item_spacing.y = row_spacing;
 
     widgets::scroll_fade(ui, &list, p.bg);
 
@@ -928,6 +956,47 @@ mod tests {
     }
 
     #[test]
+    fn truncated_history_can_scroll_to_the_load_more_control() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let (mut tab, _dir) = populated_tab(&ctx);
+        std::sync::Arc::make_mut(tab.snap.as_mut().expect("snapshot")).truncated = true;
+        let mut output = egui::FullOutput::default();
+        for _ in 0..4 {
+            output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(960.0, 200.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        let id = ui.make_persistent_id(egui::IdSalt::new("history-rows"));
+                        let mut scroll =
+                            egui::scroll_area::State::load(&ctx, id).unwrap_or_default();
+                        scroll.offset.y = f32::MAX;
+                        scroll.store(&ctx, id);
+                        table(ui, &mut tab, &Settings::default(), &mut Vec::new());
+                    });
+                },
+            );
+            output.textures_delta.clear();
+        }
+        let control = output.shapes.iter().find(|shape| {
+            matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text().contains("Load more commits"))
+        }).expect("load-more control at the end of truncated history");
+        let egui::Shape::Text(text) = &control.shape else {
+            panic!("text control");
+        };
+        assert!(
+            control.clip_rect.contains_rect(text.visual_bounding_rect()),
+            "the load-more control must be completely visible: {:?}, clip {:?}",
+            text.visual_bounding_rect(),
+            control.clip_rect
+        );
+    }
+
+    #[test]
     fn growing_the_window_restores_readable_author_files_and_diff() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
@@ -1110,6 +1179,28 @@ mod tests {
         );
         assert!(visible.iter().any(|text| text == "file.rs"), "{visible:?}");
         assert!(visible.iter().any(|text| text == "Commit 0"), "{visible:?}");
+    }
+
+    #[test]
+    fn a_short_diff_loaded_later_updates_the_automatic_inspector_height() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        let (mut tab, _dir) = populated_tab(&ctx);
+        let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
+        diff.hunks[0].lines.truncate(7);
+        tab.diff = None;
+        let size = vec2(2560.0, 1440.0);
+        visible_details(&ctx, &mut tab, size);
+        tab.diff = Some(std::sync::Arc::new(diff));
+        visible_details(&ctx, &mut tab, size);
+        let panel = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("details"))
+            .expect("rendered inspector");
+        assert!(
+            panel.size().y <= 320.0,
+            "a loaded short diff must reclaim the automatic empty pane space: {:?}",
+            panel.size()
+        );
     }
 
     #[test]

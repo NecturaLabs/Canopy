@@ -78,7 +78,6 @@ pub fn show(
                 )
                 .on_hover_text(widgets::full_date(d.author.time, d.author.offset_minutes));
             });
-            let files_min = FILE_ROW_H * 2.0 + theme::XL + theme::SM;
             let glyph = if tab.history_layout.information_open {
                 icon::CARET_DOWN
             } else {
@@ -91,9 +90,12 @@ pub fn show(
                 tab.history_layout.information_open = !tab.history_layout.information_open;
             }
             if tab.history_layout.information_open {
+                let files_min = FILE_ROW_H * d.files.len().min(2) as f32
+                    + ui.spacing().interact_size.y * 2.0
+                    + theme::XS * 3.0;
                 egui::ScrollArea::vertical()
                     .id_salt("commit-metadata")
-                    .max_height((ui.available_height() - files_min).max(theme::XL))
+                    .max_height((ui.available_height() - files_min).max(0.0))
                     .min_scrolled_height(0.0)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
