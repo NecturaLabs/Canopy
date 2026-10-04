@@ -305,6 +305,10 @@ fn code_height(n: usize, row_h: f32, spacing: f32) -> f32 {
 /// the lines inside the visible area are laid out and painted, so a side with thousands of lines
 /// costs no more than a short one.
 fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
+    code_lines_at(ui, lines, color, None);
+}
+
+fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line: Option<usize>) {
     if lines.is_empty() {
         ui.label(
             RichText::new("(nothing)")
@@ -318,6 +322,17 @@ fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
     let row_h = code_row_height(ui);
     let pitch = row_h + ui.spacing().item_spacing.y;
     let width = ui.available_width();
+    let gutter = first_line.map_or(0.0, |line| {
+        ui.painter()
+            .layout_no_wrap(
+                (line + lines.len()).to_string(),
+                FontId::monospace(theme::MONO_SMALL_SIZE),
+                palette(ui.ctx()).text_faint,
+            )
+            .size()
+            .x
+            + theme::LG
+    });
     let (rect, resp) = ui.allocate_exact_size(
         vec2(
             width,
@@ -338,7 +353,7 @@ fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
         let text = lines[i].replace('\t', "    ");
         let mut job =
             LayoutJob::single_section(text, egui::TextFormat::simple(font.clone(), color));
-        job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+        job.wrap = egui::text::TextWrapping::truncate_at_width((width - gutter).max(0.0));
         let galley = ui.painter().layout_job(job);
         let top = rect.min.y + i as f32 * pitch;
         // Like a truncated label: the whole line on hover when it does not fit.
@@ -348,8 +363,17 @@ fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
         {
             resp.clone().on_hover_text(line.as_str());
         }
+        if let Some(line) = first_line {
+            ui.painter().text(
+                egui::pos2(rect.min.x + gutter - theme::SM, top + row_h / 2.0),
+                egui::Align2::RIGHT_CENTER,
+                (line + i).to_string(),
+                FontId::monospace(theme::MONO_SMALL_SIZE),
+                palette(ui.ctx()).text_faint,
+            );
+        }
         ui.painter()
-            .galley(egui::pos2(rect.min.x, top), galley, color);
+            .galley(egui::pos2(rect.min.x + gutter, top), galley, color);
     }
 }
 
@@ -468,16 +492,29 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
                     let row_h = code_row_height(ui);
                     let near = ui.clip_rect().expand2(vec2(0.0, OVERSCAN));
                     let mut k = 0;
+                    let mut original_line = 1;
                     for (i, seg) in file.segments.iter().enumerate() {
                         match seg {
                             Segment::Common(lines) => {
                                 // Its own id scope: ids inside must not depend on which cards
                                 // above were drawn this frame.
                                 ui.push_id(("common", i), |ui| {
-                                    common(ui, r, i, lines, i + 1 == file.segments.len());
+                                    common(
+                                        ui,
+                                        r,
+                                        i,
+                                        lines,
+                                        i + 1 == file.segments.len(),
+                                        original_line,
+                                    );
                                 });
+                                original_line += lines.len();
                             }
                             Segment::Conflict(region) => {
+                                original_line += region.ours.len()
+                                    + region.theirs.len()
+                                    + 3
+                                    + region.base.as_ref().map_or(0, |base| base.len() + 1);
                                 let signature = card_signature(r, k, region);
                                 let (blocks, shape) = card_lines(r, k, region);
                                 let known = r.layout.known(i, signature);
@@ -529,7 +566,14 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
 }
 
 /// Unchanged lines between conflicts, long stretches folded.
-fn common(ui: &mut Ui, r: &mut Resolver, i: usize, lines: &[String], last_segment: bool) {
+fn common(
+    ui: &mut Ui,
+    r: &mut Resolver,
+    i: usize,
+    lines: &[String],
+    last_segment: bool,
+    first_line: usize,
+) {
     let p = palette(ui.ctx());
     if lines.len() > FOLD && !r.expanded.contains(&i) {
         let first = if i == 0 { &[][..] } else { &lines[..KEEP] };
@@ -539,7 +583,7 @@ fn common(ui: &mut Ui, r: &mut Resolver, i: usize, lines: &[String], last_segmen
             &lines[lines.len() - KEEP..]
         };
         if !first.is_empty() {
-            code_lines(ui, first, p.text_faint);
+            code_lines_at(ui, first, p.text, Some(first_line));
         }
         let hidden = lines.len() - first.len() - last.len();
         ui.add_space(2.0);
@@ -558,10 +602,15 @@ fn common(ui: &mut Ui, r: &mut Resolver, i: usize, lines: &[String], last_segmen
         }
         ui.add_space(2.0);
         if !last.is_empty() {
-            code_lines(ui, last, p.text_faint);
+            code_lines_at(
+                ui,
+                last,
+                p.text,
+                Some(first_line + lines.len() - last.len()),
+            );
         }
     } else if !lines.is_empty() {
-        code_lines(ui, lines, p.text_faint);
+        code_lines_at(ui, lines, p.text, Some(first_line));
     }
 }
 
