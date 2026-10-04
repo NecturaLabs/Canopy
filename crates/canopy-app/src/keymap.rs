@@ -19,6 +19,7 @@ pub enum Command {
     Quit,
     Open,
     Clone,
+    Init,
     CloseTab,
     NextTab,
     PrevTab,
@@ -261,6 +262,12 @@ pub const BINDINGS: &[Binding] = &[
         C::Clone,
         &[ctrl_shift(Key::N)],
         "Clone a repository",
+    ),
+    b(
+        S::Anywhere,
+        C::Init,
+        &[ctrl_shift(Key::I)],
+        "Initialize a new repository",
     ),
     b(
         S::Anywhere,

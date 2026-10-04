@@ -103,7 +103,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                             icon::PLANT,
                             "Init",
                             "Start a new repository",
-                            "",
+                            &hint(Command::Init),
                             card_w,
                         ) {
                             actions.push(Action::OpenDialog(Dialog::Init {

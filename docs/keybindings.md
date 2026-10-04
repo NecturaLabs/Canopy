@@ -67,6 +67,7 @@ Works also while typing.
 | Ctrl+/ | Show keyboard shortcuts |
 | Ctrl+O, also Ctrl+T | Open a repository in a new tab |
 | Ctrl+Shift+N | Clone a repository |
+| Ctrl+Shift+I | Initialize a new repository |
 | Ctrl+W | Close the tab (not while typing) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
 | Ctrl+1 … Ctrl+9 | Go to tab 1–9 |

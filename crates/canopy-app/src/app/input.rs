@@ -69,6 +69,9 @@ impl CanopyApp {
             }
             C::Open => actions.push(Action::OpenDialog(Dialog::open())),
             C::Clone => actions.push(Action::OpenDialog(Dialog::clone_default(&self.settings))),
+            C::Init => actions.push(Action::OpenDialog(Dialog::Init {
+                path: String::new(),
+            })),
             C::Settings => actions.push(Action::Settings),
             C::ZoomIn | C::ZoomOut | C::ZoomReset => {
                 self.settings.zoom = match command {
