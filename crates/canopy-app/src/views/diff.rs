@@ -1014,7 +1014,11 @@ fn diff_options(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     .color(p.text_dim),
             );
             changed |= ui
-                .add(egui::Slider::new(&mut prefs.context, 0..=25))
+                .scope(|ui| {
+                    widgets::recessed_rail(ui);
+                    ui.add(egui::Slider::new(&mut prefs.context, 0..=25))
+                })
+                .inner
                 .changed();
             ui.add_space(6.0);
             ui.label(

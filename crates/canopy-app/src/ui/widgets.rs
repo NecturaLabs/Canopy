@@ -371,6 +371,16 @@ pub fn collapse_caret(ui: &mut Ui, openness: f32, response: &Response) {
     );
 }
 
+/// egui paints a slider's rail in the inactive widget fill, which is often the surface behind it:
+/// recess it like the segmented control's track so the whole range shows, and fill the chosen
+/// part with the accent rather than the pale selection tint.
+pub fn recessed_rail(ui: &mut Ui) {
+    let p = palette(ui.ctx());
+    let v = ui.visuals_mut();
+    v.widgets.inactive.bg_fill = if p.dark { p.bg } else { p.border };
+    v.selection.bg_fill = p.accent;
+}
+
 /// Paints the track and its segments; returns the index of a segment clicked while not selected.
 fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -> Option<usize> {
     let p = palette(ui.ctx());
