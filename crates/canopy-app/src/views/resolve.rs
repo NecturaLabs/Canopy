@@ -26,10 +26,10 @@ const KEEP: usize = 3;
 
 fn choice_label(c: &Choice) -> &'static str {
     match c {
-        Choice::Ours => "Ours",
-        Choice::Theirs => "Theirs",
-        Choice::OursThenTheirs => "Ours, then theirs",
-        Choice::TheirsThenOurs => "Theirs, then ours",
+        Choice::Ours => "Current version",
+        Choice::Theirs => "Incoming version",
+        Choice::OursThenTheirs => "Current, then incoming",
+        Choice::TheirsThenOurs => "Incoming, then current",
         Choice::Base => "Ancestor",
         Choice::Custom(_) => "Edited",
     }
@@ -38,11 +38,18 @@ fn choice_label(c: &Choice) -> &'static str {
 /// Draws the resolver for the selected conflicted file.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let rebasing = tab
+        .snap
+        .as_ref()
+        .is_some_and(|snap| snap.state == canopy_core::RepoState::Rebase);
     let Some(r) = tab.resolver.as_mut() else {
         return;
     };
     let abs = tab.path.join(&r.path);
     header(ui, r, &abs, actions);
+    if rebasing {
+        ui.add(egui::Label::new(RichText::new("During a rebase, Current is the version being rebased onto; Incoming is the commit being replayed.").size(theme::SMALL_SIZE).color(p.text_dim)).wrap());
+    }
     match &r.file {
         None => {
             ui.add_space(30.0);
@@ -167,28 +174,28 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
     let path = r.path.clone();
     let (title, body, ours, theirs) = match (r.kind, error) {
         (Some(ConflictKind::DeletedByThem), _) => (
-            "They deleted this file; you changed it",
-            "Keep your version, or delete the file as they did.",
-            "Keep my version",
+            "The incoming side deleted this file; the current side changed it",
+            "Keep the current version, or accept the incoming deletion.",
+            "Keep current version",
             "Delete the file",
         ),
         (Some(ConflictKind::DeletedByUs), _) => (
-            "You deleted this file; they changed it",
-            "Keep it deleted, or restore their version.",
+            "The current side deleted this file; the incoming side changed it",
+            "Keep it deleted, or restore the incoming version.",
             "Keep it deleted",
-            "Restore their version",
+            "Restore incoming version",
         ),
         (Some(ConflictKind::AddedByUs), _) => (
-            "Only you added this file",
-            "Keep it, or leave it out as they did.",
+            "Only the current side added this file",
+            "Keep the current file, or accept its absence on the incoming side.",
             "Keep it",
             "Leave it out",
         ),
         (Some(ConflictKind::AddedByThem), _) => (
-            "Only they added this file",
-            "Leave it out, or take their file.",
+            "Only the incoming side added this file",
+            "Leave it out, or take the incoming file.",
             "Leave it out",
-            "Take their file",
+            "Take incoming file",
         ),
         (Some(ConflictKind::BothDeleted), _) => (
             "Both sides deleted this file",
@@ -199,10 +206,15 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
         (_, Some(_)) => (
             "Canopy cannot show this file line by line",
             "It is binary, a link, or not UTF-8 text. Choose a whole side, or open it in an editor.",
-            "Use ours",
-            "Use theirs",
+            "Keep current version",
+            "Keep incoming version",
         ),
-        _ => ("Choose a side", "", "Use ours", "Use theirs"),
+        _ => (
+            "Choose a side",
+            "",
+            "Keep current version",
+            "Keep incoming version",
+        ),
     };
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
@@ -243,7 +255,7 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
             ui.vertical(|ui| {
                 use crate::keymap::{Command, hint};
                 let keys = format!(
-                    "{}  {} {} previous/next · {} ours · {} theirs · {} both · {} undo",
+                    "{}  {} {} previous/next · {} current · {} incoming · {} both · {} undo",
                     icon::KEYBOARD,
                     hint(Command::PrevConflict),
                     hint(Command::NextConflict),
@@ -656,7 +668,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
             ui.horizontal_top(|ui| {
                 for (title, label, lines, color, side, command) in [
                     (
-                        "Ours",
+                        "Current version",
                         &region.ours_label,
                         &region.ours,
                         p.accent,
@@ -664,7 +676,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                         crate::keymap::Command::TakeOurs,
                     ),
                     (
-                        "Theirs",
+                        "Incoming version",
                         &region.theirs_label,
                         &region.theirs,
                         p.accent2,
@@ -675,9 +687,25 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                     ui.vertical(|ui| {
                         ui.set_width(w);
                         ui.label(
-                            RichText::new(format!("{title} · {label}"))
-                                .size(theme::SMALL_SIZE)
-                                .color(color),
+                            RichText::new(if label.is_empty() || label == "HEAD" {
+                                title.to_owned()
+                            } else {
+                                format!("Version from {label}")
+                            })
+                            .size(theme::SMALL_SIZE)
+                            .color(color),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "Git: {} · {label}",
+                                if side == Choice::Ours {
+                                    "ours"
+                                } else {
+                                    "theirs"
+                                }
+                            ))
+                            .size(theme::SMALL_SIZE)
+                            .color(p.text_faint),
                         );
                         egui::Frame::new()
                             .fill(Palette::tint(color, if p.dark { 22 } else { 16 }))
@@ -720,8 +748,8 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
             // Combined and custom choices.
             ui.horizontal_wrapped(|ui| {
                 let mut options = vec![
-                    (Choice::OursThenTheirs, "Both: ours first"),
-                    (Choice::TheirsThenOurs, "Both: theirs first"),
+                    (Choice::OursThenTheirs, "Both: current first"),
+                    (Choice::TheirsThenOurs, "Both: incoming first"),
                 ];
                 if region.base.is_some() {
                     options.push((Choice::Base, "Ancestor"));
