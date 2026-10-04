@@ -281,6 +281,10 @@ in `theme.rs`:
   A line wider than the pane fades out at the edge.
 - The in-progress banner (merge, rebase, cherry-pick) appears above the history table with
   continue and abort buttons.
+- Changes list headers: "Stage all" and "Unstage all" are 26 px tall (`widgets::COMPACT_H`). Discard
+  all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
+  count is neutral, not warning amber, and an empty section is left out while another has content
+  (a conflict hides Unstaged and Staged when they are empty).
 - Minimum window size is 900×560 desktop units (`app::update_window_minimum`); interface zoom does not increase it. Compact layouts are checked at 960×600 and at
   interface zoom up to 160%; dimensions above are logical points after zoom.
 - Below `COMPACT_WIDTH` the view switcher names only the active view; the others keep their icon

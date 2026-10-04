@@ -598,6 +598,19 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
     flipped
 }
 
+/// Height of the buttons in a list header, so "Stage all" and a menu beside it match.
+pub const COMPACT_H: f32 = 26.0;
+
+/// A bordered button at [`COMPACT_H`] with the standard padding: the same control as a plain
+/// button, but not as shallow as `small_button`.
+pub fn compact_button(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> Response {
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding = vec2(theme::SM, 4.0);
+        ui.add(egui::Button::new(text).min_size(vec2(0.0, COMPACT_H)))
+    })
+    .inner
+}
+
 /// A button for a dangerous action: danger-coloured label on a tinted fill, readable in every
 /// theme.
 pub fn danger_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {

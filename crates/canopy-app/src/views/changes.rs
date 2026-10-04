@@ -105,13 +105,18 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         });
                         return;
                     }
-                    if !st.conflicted.is_empty() {
+                    let (conflicts, unstaged, staged) = visible_lists(st);
+                    if conflicts {
                         list(ui, tab, List::Conflicted, &st.conflicted, actions);
                         ui.add_space(10.0);
                     }
-                    list(ui, tab, List::Unstaged, &st.unstaged, actions);
-                    ui.add_space(10.0);
-                    list(ui, tab, List::Staged, &st.staged, actions);
+                    if unstaged {
+                        list(ui, tab, List::Unstaged, &st.unstaged, actions);
+                        ui.add_space(10.0);
+                    }
+                    if staged {
+                        list(ui, tab, List::Staged, &st.staged, actions);
+                    }
                 });
             });
         });
@@ -124,6 +129,16 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 diff::show(ui, tab, actions);
             }
         });
+}
+
+/// Which of the conflicted, unstaged and staged sections to draw. An empty section is left out
+/// while another has content (a merge with every file conflicted has no use for "Unstaged 0");
+/// with nothing to show, or only an empty staging area, it stays so the column is never blank.
+fn visible_lists(st: &canopy_core::WorkingStatus) -> (bool, bool, bool) {
+    let conflicts = !st.conflicted.is_empty();
+    let unstaged = !st.unstaged.is_empty() || (!conflicts && st.staged.is_empty());
+    let staged = !st.staged.is_empty() || (!conflicts && !st.unstaged.is_empty());
+    (conflicts, unstaged, staged)
 }
 
 fn list(
@@ -143,18 +158,31 @@ fn list(
     ui.horizontal(|ui| {
         ui.add_space(6.0);
         widgets::section_label(ui, title);
-        widgets::count_badge(ui, files.len(), color);
+        // An empty list is not news: its count stays neutral instead of taking the section colour.
+        widgets::count_badge(ui, files.len(), if files.is_empty() { p.text_faint } else { color });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| match which {
             List::Unstaged if !files.is_empty() => {
-                if ui.small_button(if compact { icon::PLUS.to_owned() } else { format!("{}  Stage all", icon::PLUS) }).on_hover_text("Stage all files").clicked() {
+                if widgets::compact_button(ui, if compact { icon::PLUS.to_owned() } else { format!("{}  Stage all", icon::PLUS) }).on_hover_text("Stage all files").clicked() {
                     actions.push(Action::Op(Op::StageAll));
                 }
-                if ui.small_button(RichText::new(icon::ARROW_COUNTER_CLOCKWISE).color(p.danger)).on_hover_text("Discard all unstaged changes").clicked() {
-                    actions.push(Action::Confirm { title: "Discard all changes".into(), body: format!("Throw away every unstaged change in {} files, including untracked files? This cannot be undone.", files.len()), confirm: "Discard all".into(), danger: true, op: Op::Discard(files.to_vec()) });
-                }
+                // Discarding everything lives in an overflow menu, a gap away from Stage.
+                ui.add_space(theme::MD);
+                ui.scope(|ui| {
+                    ui.spacing_mut().button_padding = vec2(theme::SM, 4.0);
+                    ui.spacing_mut().interact_size.y = widgets::COMPACT_H;
+                    ui.menu_button(RichText::new(icon::DOTS_THREE).size(theme::ICON_MD), |ui| {
+                        ui.set_min_width(200.0);
+                        if ui.button(RichText::new(format!("{}  Discard all changes…", icon::ARROW_COUNTER_CLOCKWISE)).color(p.danger)).clicked() {
+                            actions.push(Action::Confirm { title: "Discard all changes".into(), body: format!("Throw away every unstaged change in {} files, including untracked files? This cannot be undone.", files.len()), confirm: "Discard all".into(), danger: true, op: Op::Discard(files.to_vec()) });
+                            ui.close();
+                        }
+                    })
+                    .response
+                    .on_hover_text("More actions");
+                });
             }
             List::Staged if !files.is_empty()
-                && ui.small_button(if compact { icon::MINUS.to_owned() } else { format!("{}  Unstage all", icon::MINUS) }).on_hover_text("Unstage all files").clicked() => {
+                && widgets::compact_button(ui, if compact { icon::MINUS.to_owned() } else { format!("{}  Unstage all", icon::MINUS) }).on_hover_text("Unstage all files").clicked() => {
                     actions.push(Action::Op(Op::UnstageAll));
                 }
             _ => {}
@@ -441,6 +469,50 @@ mod tests {
             author: person.clone(),
             committer: person,
         }
+    }
+
+    fn entry(path: &str) -> FileEntry {
+        FileEntry {
+            path: path.into(),
+            old_path: None,
+            kind: canopy_core::ChangeKind::Modified,
+            additions: 1,
+            deletions: 0,
+            lfs: false,
+            old_mode: None,
+            new_mode: None,
+        }
+    }
+
+    #[test]
+    fn empty_sections_are_left_out_while_another_has_content() {
+        let mut st = canopy_core::WorkingStatus::default();
+        assert_eq!(
+            visible_lists(&st),
+            (false, true, false),
+            "nothing: one empty list stays"
+        );
+        st.unstaged = vec![entry("a")];
+        assert_eq!(
+            visible_lists(&st),
+            (false, true, true),
+            "unstaged only: staged says so"
+        );
+        st.staged = vec![entry("b")];
+        assert_eq!(visible_lists(&st), (false, true, true));
+        st.unstaged.clear();
+        assert_eq!(
+            visible_lists(&st),
+            (false, false, true),
+            "staged only: no Unstaged 0"
+        );
+        st.conflicted = vec![entry("c")];
+        st.staged.clear();
+        assert_eq!(
+            visible_lists(&st),
+            (true, false, false),
+            "a conflict hides the empties"
+        );
     }
 
     #[test]
