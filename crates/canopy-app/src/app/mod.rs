@@ -59,6 +59,7 @@ pub const OVERLAYS: &[&str] = &[
     "update-installed",
     "update-running",
     "trust-folder",
+    "diff-options",
 ];
 
 /// Options from the command line.
@@ -208,6 +209,8 @@ impl CanopyApp {
                 ready_since: None,
                 requested: false,
                 started: 0.0,
+                popup: (launch.overlay.as_deref() == Some("diff-options"))
+                    .then(|| egui::Id::new(crate::views::diff::OPTIONS_POPUP)),
             }),
             initial_view: launch.view,
             clone: None,

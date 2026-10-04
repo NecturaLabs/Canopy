@@ -45,8 +45,8 @@ OPTIONS:
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
                               palette, consent, crash-consent, legal, licences,
                               credential, host-key, merge, identity, settings-git or
-                              clear-identity, update-installed, update-running or
-                              trust-folder
+                              clear-identity, update-installed, update-running,
+                              trust-folder or diff-options
         --size <WxH>          Initial window size [default: 1440x900]
         --zoom <FACTOR>       Initial interface zoom, from 0.8 to 1.6
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit

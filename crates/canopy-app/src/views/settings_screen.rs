@@ -456,7 +456,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
 fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> egui::Response {
     let mut preview = draft.unwrap_or(s.zoom);
     ui.spacing_mut().slider_width = 140.0;
-    recessed_rail(ui);
+    widgets::recessed_rail(ui);
     let response = ui.add(
         egui::Slider::new(&mut preview, 0.8..=1.6)
             .step_by(0.05)
@@ -481,16 +481,6 @@ fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> egui::
         *draft = None;
     }
     response
-}
-
-/// egui paints a slider's rail in the inactive widget fill, which is the settings surface itself:
-/// recess it like the segmented control's track so the whole range shows, and fill the chosen
-/// part with the accent rather than the pale selection tint.
-fn recessed_rail(ui: &mut Ui) {
-    let p = palette(ui.ctx());
-    let v = ui.visuals_mut();
-    v.widgets.inactive.bg_fill = if p.dark { p.bg } else { p.border };
-    v.selection.bg_fill = p.accent;
 }
 
 /// A theme preview: a miniature of the window drawn from the theme's own palette.
@@ -872,7 +862,7 @@ fn git(
         "Context lines",
         "Unchanged lines shown around each change. Each repository can override this from the diff header.",
         |ui| {
-            recessed_rail(ui);
+            widgets::recessed_rail(ui);
             ui.add(egui::Slider::new(&mut s.diff.context, 0..=25));
         },
     );

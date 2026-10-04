@@ -9,6 +9,8 @@ pub(super) struct Screenshot {
     pub(super) ready_since: Option<f64>,
     pub(super) requested: bool,
     pub(super) started: f64,
+    /// A popup kept open for the picture: popups close when a frame does not show them.
+    pub(super) popup: Option<egui::Id>,
 }
 
 impl CanopyApp {
@@ -35,6 +37,9 @@ impl CanopyApp {
                     && !t.avatars.pending()
             });
         if ready {
+            if let Some(id) = shot.popup {
+                egui::Popup::open_id(ctx, id);
+            }
             shot.ready_frames += 1;
             shot.ready_since.get_or_insert(now);
         } else {

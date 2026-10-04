@@ -356,6 +356,31 @@ pub fn combo_caret(ui: &Ui, rect: egui::Rect, visuals: &egui::style::WidgetVisua
     );
 }
 
+/// The caret of every `CollapsingHeader` (`icon`), matching the app's other expanders.
+pub fn collapse_caret(ui: &mut Ui, openness: f32, response: &Response) {
+    ui.painter().text(
+        response.rect.center(),
+        Align2::CENTER_CENTER,
+        if openness > 0.5 {
+            icon::CARET_DOWN
+        } else {
+            icon::CARET_RIGHT
+        },
+        FontId::proportional(theme::BODY_SIZE),
+        ui.style().interact(response).fg_stroke.color,
+    );
+}
+
+/// egui paints a slider's rail in the inactive widget fill, which is often the surface behind it:
+/// recess it like the segmented control's track so the whole range shows, and fill the chosen
+/// part with the accent rather than the pale selection tint.
+pub fn recessed_rail(ui: &mut Ui) {
+    let p = palette(ui.ctx());
+    let v = ui.visuals_mut();
+    v.widgets.inactive.bg_fill = if p.dark { p.bg } else { p.border };
+    v.selection.bg_fill = p.accent;
+}
+
 /// Paints the track and its segments; returns the index of a segment clicked while not selected.
 fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -> Option<usize> {
     let p = palette(ui.ctx());
