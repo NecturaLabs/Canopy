@@ -187,7 +187,8 @@ Three levels, by background token plus shadow:
 - **Raised** (`elevated`): menus, tooltips, toasts. Shadow offset (0, 4), blur 16, black at 35%
   (Midnight) or 10% (Daylight).
 - **Overlay** (`elevated` over a scrim): dialogs and the palette. Shadow offset (0, 12), blur 32,
-  black at 45% / 14%; the scrim is black at 40% (Midnight) or 20% (Daylight).
+  black at 45% / 14%; the scrim is black at 69% in dark themes or 24% in light themes, so the
+  dialog leads over a busy graph without hiding the repository beneath it.
 
 ## Motion
 

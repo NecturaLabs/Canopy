@@ -550,7 +550,7 @@ impl Palette {
     /// The scrim behind modal dialogs, the settings screen, the palette and the cheatsheet: dims
     /// the window enough to separate the layer without hiding where the user was.
     pub fn backdrop(&self) -> Color32 {
-        Color32::from_black_alpha(if self.dark { 140 } else { 60 })
+        Color32::from_black_alpha(if self.dark { 176 } else { 60 })
     }
 
     /// Fill of the selected row in lists, the graph, the sidebar, the palette and diffs, and of
