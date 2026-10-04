@@ -168,7 +168,7 @@ fn section_height(ui: &egui::Ui, section: Section, query: &str) -> f32 {
     height
 }
 
-fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
+pub(crate) fn rows(ui: &mut egui::Ui, section: Section, query: &str) {
     let p = palette(ui.ctx());
     let items = matching(section, query);
     if items.is_empty() {

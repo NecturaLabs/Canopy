@@ -384,7 +384,7 @@ fn list(
         widgets::count_badge(ui, files.len(), if files.is_empty() { p.text_faint } else { color });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| match which {
             List::Unstaged if !files.is_empty() => {
-                if widgets::compact_button(ui, if compact { icon::PLUS.to_owned() } else { format!("{}  Stage all", icon::PLUS) }).on_hover_text("Stage all files").clicked() {
+                if widgets::compact_button(ui, if compact { icon::PLUS.to_owned() } else { format!("{}  Stage all", icon::PLUS) }).on_hover_text(format!("Stage all files  ({})", crate::keymap::hint(crate::keymap::Command::StageAll))).clicked() {
                     actions.push(Action::Op(Op::StageAll));
                 }
                 // Discarding everything lives in an overflow menu, a gap away from Stage.
@@ -404,7 +404,7 @@ fn list(
                 });
             }
             List::Staged if !files.is_empty()
-                && widgets::compact_button(ui, if compact { icon::MINUS.to_owned() } else { format!("{}  Unstage all", icon::MINUS) }).on_hover_text("Unstage all files").clicked() => {
+                && widgets::compact_button(ui, if compact { icon::MINUS.to_owned() } else { format!("{}  Unstage all", icon::MINUS) }).on_hover_text(format!("Unstage all files  ({})", crate::keymap::hint(crate::keymap::Command::UnstageAll))).clicked() => {
                     actions.push(Action::Op(Op::UnstageAll));
                 }
             _ => {}

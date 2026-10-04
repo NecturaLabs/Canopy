@@ -45,7 +45,12 @@ impl CanopyApp {
                 Action::OpenDialog(Dialog::clone_default(&self.settings)),
             ),
             (
-                e(icon::PLANT, "Init new repository…", "Repository", Some(C::Init)),
+                e(
+                    icon::PLANT,
+                    "Init new repository…",
+                    "Repository",
+                    Some(C::Init),
+                ),
                 Action::OpenDialog(Dialog::Init {
                     path: String::new(),
                 }),
@@ -117,8 +122,31 @@ impl CanopyApp {
                 Action::SetTheme(t),
             ));
         }
+        let app_entries = v;
+        let mut v = Vec::new();
         if let Some(tab) = self.tabs.get(self.active) {
             let local_only = tab.is_local_only();
+            match tab.view {
+                View::Changes => v.push((
+                    e(
+                        icon::PENCIL_SIMPLE_LINE,
+                        "Write commit message",
+                        "Changes",
+                        Some(C::FocusCommit),
+                    ),
+                    Action::Command(C::FocusCommit),
+                )),
+                View::History => v.push((
+                    e(
+                        icon::FUNNEL_SIMPLE,
+                        "Filter history",
+                        "History",
+                        Some(C::Filter),
+                    ),
+                    Action::Command(C::Filter),
+                )),
+                View::Requests => {}
+            }
             v.extend([
                 (
                     e(icon::GRAPH, "Show history", "View", Some(C::History)),
@@ -386,6 +414,7 @@ impl CanopyApp {
                 Action::OpenRepo(r.clone()),
             ));
         }
+        v.extend(app_entries);
         v
     }
 }

@@ -13,9 +13,8 @@ use canopy_core::identity::{Field, Identity, Scope, Source};
 
 use crate::action::Action;
 use crate::hosting::{self, TokenStore};
-use crate::keymap::{BINDINGS, Section as KeySection};
+use crate::keymap::Section as KeySection;
 use crate::settings::{CloneProtocol, PullMode, Settings, WhitespaceMode};
-use crate::ui::cheatsheet::{KEYCAP_GAP, keycaps_width, paint_keycap};
 use crate::ui::theme::{self, Palette, ThemeId, palette};
 use crate::ui::widgets;
 use crate::ui::widgets::forge_icon;
@@ -1600,65 +1599,8 @@ fn keyboard(ui: &mut Ui) {
         );
     });
     ui.add_space(10.0);
-    let listed = |section: KeySection| {
-        BINDINGS
-            .iter()
-            .filter(move |b| b.section == section && crate::keymap::listed_here(b))
-            .map(|b| (b, crate::keymap::all_keys(b.command)))
-    };
-    // One key column for every row, as wide as the widest, so descriptions share an edge.
-    let stacked = ui.available_width() < 520.0;
-    let key_column = KeySection::ALL
-        .into_iter()
-        .flat_map(listed)
-        .map(|(_, keys)| keycaps_width(ui, &keys))
-        .fold(0.0_f32, f32::max)
-        .min(ui.available_width() * 0.45);
     for section in KeySection::ALL {
-        heading(ui, section.title());
-        for (b, keys) in listed(section) {
-            if stacked {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(b.description)
-                            .size(theme::BODY_SIZE)
-                            .color(p.text),
-                    )
-                    .wrap(),
-                );
-                let (rect, _) =
-                    ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
-                let mut x = rect.min.x;
-                for chord in &keys {
-                    x = paint_keycap(ui, x, rect.center().y, chord) + KEYCAP_GAP;
-                }
-            } else {
-                let text_width =
-                    (ui.available_width() - key_column - theme::MD - theme::LG).max(80.0);
-                let galley = ui.painter().layout(
-                    b.description.to_owned(),
-                    FontId::proportional(theme::BODY_SIZE),
-                    p.text,
-                    text_width,
-                );
-                let height = (galley.size().y + theme::SM).max(28.0);
-                let (rect, _) =
-                    ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
-                let mut x = rect.min.x + 2.0;
-                for chord in &keys {
-                    x = paint_keycap(ui, x, rect.center().y, chord) + KEYCAP_GAP;
-                }
-                ui.painter().galley(
-                    egui::pos2(
-                        rect.min.x + key_column + theme::LG,
-                        rect.center().y - galley.size().y / 2.0,
-                    ),
-                    galley,
-                    p.text_dim,
-                );
-            }
-        }
-        ui.add_space(8.0);
+        crate::ui::cheatsheet::rows(ui, section, "");
     }
 }
 

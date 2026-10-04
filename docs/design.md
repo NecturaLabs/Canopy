@@ -163,6 +163,10 @@ are sized for their optical weight and are not part of the scale.
 | `MONO_SIZE` | JetBrains Mono Regular | 12.5 | Diffs, commit message editor, error output |
 | `MONO_SMALL_SIZE` | JetBrains Mono Regular | 11.5 | Short SHAs, key chords, History dates and line counts |
 
+Settings → Keyboard reuses the shortcuts sheet rows and keycaps. Palette entries lead with
+repository and current-view actions before app commands; staging buttons include their keys
+in tooltips.
+
 The shortcuts sheet keeps whole groups in order and balances its two columns by their estimated
 rendered heights, including stacked descriptions; narrow windows use a single column.
 

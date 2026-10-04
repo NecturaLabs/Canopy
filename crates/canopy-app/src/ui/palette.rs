@@ -21,10 +21,9 @@ pub struct Entry {
 
 fn category(entry: &Entry) -> Option<&str> {
     match entry.detail.as_str() {
-        "Repository" | "Appearance" | "Canopy" | "Help" | "View" | "Branch" | "Stash"
-        | "Changes" | "Remote" | "Remote branch" | "Tab" | "pull request" | "merge request" => {
-            Some(&entry.detail)
-        }
+        "History" | "Repository" | "Appearance" | "Canopy" | "Help" | "View" | "Branch"
+        | "Stash" | "Changes" | "Remote" | "Remote branch" | "Tab" | "pull request"
+        | "merge request" => Some(&entry.detail),
         _ => None,
     }
 }
