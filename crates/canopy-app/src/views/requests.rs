@@ -234,7 +234,7 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Actio
     }
 }
 
-const REQUEST_ROW_H: f32 = 58.0;
+const REQUEST_ROW_H: f32 = 74.0;
 
 fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Response {
     let p = palette(ui.ctx());
@@ -281,12 +281,10 @@ fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Respo
         p.text,
     );
     let meta = format!(
-        "#{}  ·  {}  ·  {}  ·  {} → {}",
+        "#{}  ·  {}  ·  {}",
         r.number,
         r.author,
-        widgets::relative_time(r.updated_at, now),
-        r.source_branch,
-        r.target_branch
+        widgets::relative_time(r.updated_at, now)
     );
     let meta = widgets::single_line_galley(
         ui,
@@ -296,9 +294,54 @@ fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Respo
         clip.width(),
     );
     painter.galley(
-        egui::pos2(clip.min.x, rect.min.y + 40.0 - meta.size().y / 2.0),
+        egui::pos2(clip.min.x, rect.min.y + 37.0 - meta.size().y / 2.0),
         meta,
         p.text_faint,
+    );
+    let target_width = ui
+        .painter()
+        .layout_no_wrap(
+            r.target_branch.clone(),
+            FontId::proportional(theme::SMALL_SIZE),
+            p.text_dim,
+        )
+        .size()
+        .x
+        .min(clip.width() * 0.45);
+    let source = widgets::single_line_galley(
+        ui,
+        r.source_branch.clone(),
+        FontId::proportional(theme::SMALL_SIZE),
+        p.text_dim,
+        (clip.width() - target_width - theme::XL).max(0.0),
+    );
+    let source_width = source.size().x;
+    painter.galley(
+        egui::pos2(clip.min.x, rect.min.y + 56.0 - source.size().y / 2.0),
+        source,
+        p.text_dim,
+    );
+    painter.text(
+        egui::pos2(clip.min.x + source_width + theme::SM, rect.min.y + 56.0),
+        Align2::LEFT_CENTER,
+        "→",
+        FontId::proportional(theme::SMALL_SIZE),
+        p.text_faint,
+    );
+    let target = widgets::single_line_galley(
+        ui,
+        r.target_branch.clone(),
+        FontId::new(theme::SMALL_SIZE, theme::medium()),
+        p.text_dim,
+        target_width,
+    );
+    painter.galley(
+        egui::pos2(
+            clip.min.x + source_width + theme::XL,
+            rect.min.y + 56.0 - target.size().y / 2.0,
+        ),
+        target,
+        p.text_dim,
     );
     let info = format!("{state} request #{} {} by {}", r.number, r.title, r.author);
     resp.widget_info(|| {
