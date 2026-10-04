@@ -309,6 +309,8 @@ pub enum Event {
     Highlight(DiffKey, Arc<FileDiff>, Arc<crate::highlight::Highlights>),
     HeadMessage(String),
     MergeMessage(String),
+    /// A new commit message after a squash, never an amend prefill.
+    SquashMessage(String),
     Conflict {
         path: String,
         kind: Option<canopy_core::ConflictKind>,
@@ -586,7 +588,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     // Drop git's comment lines; keep the list of squashed commits.
                     let body: Vec<&str> = body.lines().filter(|l| !l.starts_with('#')).collect();
                     let body = body.join("\n");
-                    emit(Event::HeadMessage(format!(
+                    emit(Event::SquashMessage(format!(
                         "Merge {target} (squashed)\n\n{}",
                         body.trim()
                     )));

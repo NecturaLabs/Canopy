@@ -1074,6 +1074,20 @@ impl RepoTab {
                     self.commit_summary = parts.next().unwrap_or("").trim().to_owned();
                     self.commit_body = parts.next().unwrap_or("").trim().to_owned();
                 }
+                Event::SquashMessage(message) => {
+                    if !self.amend
+                        && self
+                            .snap
+                            .as_ref()
+                            .is_some_and(|snap| snap.state == canopy_core::RepoState::Clean)
+                        && self.commit_summary.trim().is_empty()
+                        && self.commit_body.trim().is_empty()
+                    {
+                        let mut parts = message.splitn(2, '\n');
+                        self.commit_summary = parts.next().unwrap_or_default().trim().to_owned();
+                        self.commit_body = parts.next().unwrap_or_default().trim().to_owned();
+                    }
+                }
                 Event::OpStarted(label) => {
                     self.running = Some(label);
                     self.progress = None;
@@ -1105,6 +1119,7 @@ impl RepoTab {
                             if let OpKind::Squash(target) = &kind {
                                 // Nothing is committed yet: prefill the message and show the
                                 // staged result for review.
+                                self.amend = false;
                                 self.worker.send(Job::SquashMessage(target.clone()));
                                 self.view = View::Changes;
                             }
@@ -1306,6 +1321,26 @@ mod tests {
     const TWO: &str = "a\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nb\n<<<<<<< ours\n1\n=======\n2\n>>>>>>> theirs\n";
 
     #[test]
+    fn squash_message_prefills_a_normal_commit() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let repo = git2::Repository::init(dir.path())?;
+        std::fs::write(repo.path().join("SQUASH_MSG"), "Squashed commit body\n")?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        tab.worker.send(Job::SquashMessage("topic".into()));
+        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        while tab.commit_summary.is_empty() && Instant::now() < deadline {
+            tab.poll(&[]);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!tab.amend, "a squash is a new commit, not an amend");
+        assert_eq!(tab.commit_summary, "Merge topic (squashed)");
+        assert_eq!(tab.commit_body, "Squashed commit body");
+        Ok(())
+    }
+
+    #[test]
     fn commit_submission_requires_staged_changes() {
         let (worker, _, _) = Worker::detached();
         let mut tab =
@@ -1313,6 +1348,84 @@ mod tests {
         tab.snap = Some(Arc::new(RepoSnapshot::default()));
         tab.commit_summary = "Draft".into();
         assert!(!tab.can_commit());
+    }
+
+    #[test]
+    fn completing_a_squash_turns_off_amend() {
+        let (worker, events, jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        tab.amend = true;
+        events
+            .send(Event::OpFinished {
+                label: "Squashing topic".into(),
+                kind: OpKind::Squash("topic".into()),
+                announce: false,
+                result: Ok(String::new()),
+            })
+            .expect("squash completion");
+        tab.poll(&[]);
+        assert!(!tab.amend, "squashed changes must make a new commit");
+        assert_eq!(tab.view, View::Changes);
+        assert!(matches!(jobs.try_recv(), Ok(Job::SquashMessage(target)) if target == "topic"));
+    }
+
+    #[test]
+    fn squash_prefill_preserves_drafts_and_rejects_ineligible_states() {
+        for (state, amend, summary, body) in [
+            (canopy_core::RepoState::Clean, false, "Typed summary", ""),
+            (canopy_core::RepoState::Clean, false, "", "Typed body"),
+            (canopy_core::RepoState::Clean, true, "", ""),
+            (canopy_core::RepoState::Merge, false, "", ""),
+            (canopy_core::RepoState::Rebase, false, "", ""),
+        ] {
+            let (worker, events, _jobs) = Worker::detached();
+            let mut tab =
+                RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+            tab.snap = Some(Arc::new(RepoSnapshot {
+                state,
+                ..Default::default()
+            }));
+            tab.amend = amend;
+            tab.commit_summary = summary.into();
+            tab.commit_body = body.into();
+            events
+                .send(Event::SquashMessage("Squash summary\n\nSquash body".into()))
+                .expect("squash message");
+            tab.poll(&[]);
+            assert_eq!(tab.commit_summary, summary, "{state:?}, amend {amend}");
+            assert_eq!(tab.commit_body, body, "{state:?}, amend {amend}");
+        }
+    }
+
+    #[test]
+    fn a_late_amend_message_cannot_replace_a_squash_message() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        tab.snap = Some(Arc::new(RepoSnapshot::default()));
+        tab.amend = true;
+        events
+            .send(Event::OpFinished {
+                label: "Squashing topic".into(),
+                kind: OpKind::Squash("topic".into()),
+                announce: false,
+                result: Ok(String::new()),
+            })
+            .expect("squash completion");
+        events
+            .send(Event::HeadMessage("Old head".into()))
+            .expect("late amend message");
+        events
+            .send(Event::SquashMessage(
+                "Merge topic (squashed)\n\nBody".into(),
+            ))
+            .expect("squash message");
+        tab.poll(&[]);
+        assert!(!tab.amend);
+        assert_eq!(tab.commit_summary, "Merge topic (squashed)");
+        assert_eq!(tab.commit_body, "Body");
     }
 
     #[test]

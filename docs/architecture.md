@@ -336,3 +336,5 @@ Commit submission uses `RepoTab::can_commit` for both the composer and keyboard 
 including staged changes, summary, busy state, conflicts and amend eligibility. Non-clean
 repository snapshots clear Amend; late HEAD-message responses fill only an empty, still-active
 amend draft in a clean repository.
+Squash messages use a separate event, fill only an empty normal-commit draft, and never enable
+Amend; successful squash operations clear Amend before opening Changes.
