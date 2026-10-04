@@ -111,6 +111,9 @@ The accent gradient runs from `accent` to `accent-2` (violet to cyan in Midnight
 sparingly: the active tab indicator, the welcome screen mark and progress bars. The primary
 button uses the `button` pair instead, chosen so its label stays readable on both ends.
 
+Keep all eight themes. Each earns its place by carrying the graph, selection and status colours
+through the full interface, rather than borrowing Midnight's lanes or changing only the chrome.
+
 Selected rows will all use `Palette::selected()`: `accent` at low opacity over the row background
 (18% in dark themes, 12% in light ones), with an `accent` bar on the left edge (3px in the history
 list, 4px on diff lines). egui's selected values use the same fill. Views still carrying their
@@ -366,6 +369,11 @@ Placed near the top of the window, up to 620 points wide, `radius-lg`, overlay e
 height stays inside the viewport. A search field at the top, then scrollable results: icon, command name with matched characters in `accent`, and
 the shortcut right-aligned in `text-faint`. Up/Down move, Enter runs, Esc closes. Branch names
 appear as "Checkout <branch>" entries.
+
+The toolbar stays visible for frequent repository actions and status; the palette is the faster
+keyboard path and the home for less frequent actions. Neither hides essential actions available
+through the other. At narrow widths, compact toolbar controls preserve room for repository data
+while their labels and shortcuts remain discoverable in tooltips and the palette.
 
 ### Dialog
 
