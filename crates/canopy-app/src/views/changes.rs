@@ -357,22 +357,25 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     );
     ui.horizontal(|ui| {
         widgets::section_label(ui, "Commit");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let n = tab.commit_summary.chars().count();
-            let color = if n > 72 {
-                p.danger
-            } else if n > 50 {
-                p.warning
-            } else {
-                p.text_faint
-            };
-            ui.label(
-                RichText::new(format!("{n}/72"))
-                    .size(theme::SMALL_SIZE)
-                    .color(color),
-            )
-            .on_hover_text("Keep the summary under 50 characters; 72 at most.");
-        });
+        let n = tab.commit_summary.chars().count();
+        // Counted from the first character: an empty field has nothing to measure.
+        if n > 0 {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let color = if n > 72 {
+                    p.danger
+                } else if n > 50 {
+                    p.warning
+                } else {
+                    p.text_faint
+                };
+                ui.label(
+                    RichText::new(format!("{n}/72"))
+                        .size(theme::SMALL_SIZE)
+                        .color(color),
+                )
+                .on_hover_text("Keep the summary under 50 characters; 72 at most.");
+            });
+        }
     });
     ui.add_space(4.0);
     let summary = ui.add(
