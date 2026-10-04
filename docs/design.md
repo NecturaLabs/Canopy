@@ -293,6 +293,8 @@ in `theme.rs`:
 - The welcome illustration's layout bounds end just below its trunk. The stack uses the height
   saved there to sit nearer the vertical centre at tall window sizes, keeping the title close to
   the art and reducing the empty space below the actions.
+- The view switcher always includes Requests, disabled with an explanation until a GitHub or
+  GitLab remote is available.
 - Sidebar remote actions (Publish and Add remote) use outlined compact buttons; local-only
   status is a non-interactive dim label above them.
 - An unborn branch counts as a branch in the sidebar and shows its name with "no commits yet" in
