@@ -288,6 +288,8 @@ in `theme.rs`:
   tooltip, rather than styling it as an active control.
 - On the welcome screen, the status bar says "No repository open" so it remains informative even
   before the first tab is opened.
+- Welcome action cards explain Open, Clone and Init in two short lines without requiring hover;
+  the shortcut stays in each card's top corner.
 - An unborn branch counts as a branch in the sidebar and shows its name with "no commits yet" in
   both the sidebar and status bar.
 - Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;

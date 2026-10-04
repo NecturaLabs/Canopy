@@ -74,7 +74,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                 let total = (ui.available_width() - theme::XL * 2.0).min(594.0);
                 let card_w = (total - theme::MD * 2.0) / 3.0;
                 ui.allocate_ui_with_layout(
-                    vec2(total, 110.0),
+                    vec2(total, 122.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.spacing_mut().item_spacing.x = 12.0;
@@ -82,7 +82,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                             ui,
                             icon::FOLDER_OPEN,
                             "Open",
-                            "A repository on disk",
+                            "Choose a Git folder on this computer",
                             &hint(Command::Open),
                             card_w,
                         ) {
@@ -92,7 +92,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                             ui,
                             icon::CLOUD_ARROW_DOWN,
                             "Clone",
-                            "GitHub, GitLab or any URL",
+                            "Copy a repository from a remote URL",
                             &hint(Command::Clone),
                             card_w,
                         ) {
@@ -102,7 +102,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                             ui,
                             icon::PLANT,
                             "Init",
-                            "Start a new repository",
+                            "Create a Git repository in a folder",
                             &hint(Command::Init),
                             card_w,
                         ) {
@@ -265,7 +265,7 @@ fn intro(ui: &mut Ui, width: f32, actions: &mut Vec<Action>) {
 
 fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) -> bool {
     let p = palette(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(w, 110.0), Sense::click());
+    let (r, resp) = ui.allocate_exact_size(vec2(w, 122.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
     let hover = ui
         .ctx()
@@ -300,15 +300,16 @@ fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) ->
         FontId::new(theme::TITLE_SIZE, theme::semibold()),
         p.text,
     );
-    let subtitle = widgets::single_line_galley(
-        ui,
+    let mut subtitle_job = egui::text::LayoutJob::simple(
         sub.to_owned(),
         FontId::proportional(theme::SMALL_SIZE),
         p.text_dim,
         (r.width() - theme::LG * 2.0).max(0.0),
     );
+    subtitle_job.wrap.max_rows = 2;
+    let subtitle = ui.painter().layout_job(subtitle_job);
     ui.painter().galley(
-        r.left_top() + vec2(theme::LG, 84.0 - subtitle.size().y / 2.0),
+        r.left_top() + vec2(theme::LG, 82.0),
         subtitle,
         p.text_dim,
     );
