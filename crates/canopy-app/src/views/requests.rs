@@ -700,7 +700,7 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
                     _ => (icon::CHAT_CIRCLE, p.text_dim),
                 };
                 ui.label(
-                    RichText::new(format!("{g} {}", r.author))
+                    RichText::new(format!("{g} {}: {}", r.author, r.state))
                         .size(theme::META_SIZE)
                         .color(c),
                 )
