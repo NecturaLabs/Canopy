@@ -757,12 +757,37 @@ fn line_cell(
         code_job(&line.text, spans, base, &p.syntax, &cx.mono)
     };
     let galley = painter.layout_job(job);
+    let text_right = x + 24.0 + galley.size().x;
     painter.galley(pos2(x + 24.0, cy - galley.size().y / 2.0), galley, base);
+    // A line that runs past the visible edge fades out there, so it reads as continuing (scroll
+    // sideways, or widen the pane) rather than as cut off.
+    let edge = painter.clip_rect().max.x;
+    if text_right > edge + 0.5 {
+        let under = match bg {
+            Some(bg) if cx.one_sided => p.bg.lerp_to_gamma(bg, 0.4),
+            Some(bg) => bg,
+            None => p.bg,
+        };
+        fade_edge(painter, rect.y_range(), edge, under);
+    }
     let resp = resp?;
     if resp.clicked() {
         return Some(ui.input(|i| i.modifiers));
     }
     None
+}
+
+/// Fades from clear to `under` over the last pixels left of `edge`.
+fn fade_edge(painter: &egui::Painter, y: egui::Rangef, edge: f32, under: Color32) {
+    const FADE_W: f32 = 28.0;
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(pos2(edge - FADE_W, y.min), Color32::TRANSPARENT);
+    mesh.colored_vertex(pos2(edge, y.min), under);
+    mesh.colored_vertex(pos2(edge, y.max), under);
+    mesh.colored_vertex(pos2(edge - FADE_W, y.max), Color32::TRANSPARENT);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// A hunk header band with its actions (or the actions for the selected lines in it).
