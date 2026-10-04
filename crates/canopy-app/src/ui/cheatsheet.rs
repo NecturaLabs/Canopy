@@ -97,7 +97,7 @@ impl Cheatsheet {
                         ui.add_space(4.0);
                         ui.add(egui::Label::new(
                             RichText::new(
-                                "Single keys work when no text field has focus. Super is left to your window manager.",
+                                "Single keys work when no text field has focus. Capital letters mean Shift plus that key. Super is left to your window manager.",
                             )
                             .size(theme::META_SIZE)
                             .color(p.text_dim),
