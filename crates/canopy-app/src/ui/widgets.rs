@@ -842,6 +842,28 @@ pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
     }
 }
 
+/// The destructive call to action: a solid `danger` button whose label names what it destroys.
+/// Its text is whichever of white and black reads better on the theme's `danger`.
+pub fn danger_primary_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
+    let p = palette(ui.ctx());
+    let luminance = {
+        let c = egui::Rgba::from(p.danger);
+        0.2126 * c.r() + 0.7152 * c.g() + 0.0722 * c.b()
+    };
+    // Contrast against white is 1.05 / (L + 0.05), against black (L + 0.05) / 0.05.
+    let ink = if 1.05 / (luminance + 0.05) >= (luminance + 0.05) / 0.05 {
+        Color32::WHITE
+    } else {
+        Color32::BLACK
+    };
+    ui.add(
+        egui::Button::new(RichText::new(text).color(ink).font(primary_font()))
+            .fill(p.danger)
+            .stroke(Stroke::NONE)
+            .min_size(min_size),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1007,26 +1029,4 @@ mod tests {
             }
         }
     }
-}
-
-/// The destructive call to action: a solid `danger` button whose label names what it destroys.
-/// Its text is whichever of white and black reads better on the theme's `danger`.
-pub fn danger_primary_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
-    let p = palette(ui.ctx());
-    let luminance = {
-        let c = egui::Rgba::from(p.danger);
-        0.2126 * c.r() + 0.7152 * c.g() + 0.0722 * c.b()
-    };
-    // Contrast against white is 1.05 / (L + 0.05), against black (L + 0.05) / 0.05.
-    let ink = if 1.05 / (luminance + 0.05) >= (luminance + 0.05) / 0.05 {
-        Color32::WHITE
-    } else {
-        Color32::BLACK
-    };
-    ui.add(
-        egui::Button::new(RichText::new(text).color(ink).font(primary_font()))
-            .fill(p.danger)
-            .stroke(Stroke::NONE)
-            .min_size(min_size),
-    )
 }
