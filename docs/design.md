@@ -281,7 +281,9 @@ in `theme.rs`:
 - Commit details use a compact author, SHA and date above the changed files. Commit information
   starts open, opens independently of pane expansion and retains its state; its body scrolls while
   the files
-  stay reachable.
+  stay reachable. The open metadata body reserves room for up to two changed files and their
+  controls. History prefers six visible rows and can retain the split with two rows in a short
+  window. Automatic inspector height adapts when the diff arrives; a manual resize takes precedence.
 - Commit metadata, the Changes file list, and the request list take at most 40% of their
   available width, leaving the rest for the diff or request details. Pane limits follow the
   current viewport. Read-only diff headers share a wrapping row at short heights to keep more
@@ -516,3 +518,6 @@ bodies; short windows pin them at the bottom. Tooltips from underlying content d
 a blocking overlay opens.
 
 Update progress and completion dialogs keep their action buttons in a content-height horizontal row, immediately below the status text, rather than expanding to fill the viewport.
+
+Narrow Settings controls occupy a content-height row below their help. Notification dismiss
+controls also use bounded rows so successive frames cannot grow the notification beyond the viewport.

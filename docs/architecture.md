@@ -331,3 +331,8 @@ Canopy-specific folders.
   over a synthetic huge repository and prints the CPU time per frame.
 - `tools/mkfixture.sh <dir> big` creates a 5000-commit repository with regular merges for
   checking layout and scrolling.
+
+Commit submission uses `RepoTab::can_commit` for both the composer and keyboard dispatch,
+including staged changes, summary, busy state, conflicts and amend eligibility. Non-clean
+repository snapshots clear Amend; late HEAD-message responses fill only an empty, still-active
+amend draft in a clean repository.
