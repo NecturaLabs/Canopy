@@ -356,8 +356,13 @@ appear as "Checkout <branch>" entries.
 Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, bounded by the viewport. Title, body, then right-aligned
 buttons: secondary (outlined) then primary (the `button` gradient, the same widget everywhere,
 with a focus ring). Destructive confirmations use a
-`danger` primary button whose label names the action ("Delete branch", "Discard 3 files"), never
-"OK"; Enter does not confirm a destructive dialog unless the button has focus.
+solid `danger` primary button (`widgets::danger_primary_button`, its text white or black by contrast
+with the theme's `danger`) whose label names the action ("Delete branch", "Discard 3 files"), never
+"OK"; Cancel has the initial focus, so Enter does not confirm a destructive dialog unless the button
+has focus. A choice that is riskier than the main one (trusting a whole folder) is a quiet link in
+`warning` with a line saying what it covers, never a second full-width button. Informational
+destinations (About: What's new, Releases, the legal texts) are text links in `accent`, with one
+primary button for the real action.
 
 ### Git identity
 
