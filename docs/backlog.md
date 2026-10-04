@@ -42,7 +42,8 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] Notification center: one place where Canopy reports what the user should know beyond a
       transient toast (a git setting Canopy overrode, failed background jobs, warnings, update
       and security notices): a persistent, dismissable list with unread count, severity, source
-      and timestamp, actions such as "Open setting", kept across restarts; toasts link to it.
+      and timestamp, actions such as "Open setting", kept across restarts. Replace bottom-right
+      toast notifications with this center; let users choose notification kinds in Settings.
 - [ ] Pull strategy: the app is the authority. The chosen strategy is always passed to git, so
       the menu never says Merge while git rebases. The user's setting, read through `git config`
       in git's order (`branch.<name>.rebase`, then `pull.rebase`, `pull.ff`), becomes the menu's
@@ -64,6 +65,8 @@ yet true, then correctness and the features people meet first, then polish. Take
       (Finder-launched macOS apps lack the shell `PATH`).
 - [ ] Settings: every preference in the UI, consent review, search/reset/import/export,
       remappable keybindings.
+- [ ] Repository configuration: change the remote URL or repository, rename the repository tab,
+      and choose its icon.
 - [ ] Git LFS UI: indicator, pointer-only state, diffs, pull/fetch, track/untrack, locks, prompt
       when `git-lfs` is missing (the status fix needs `sha2`: owner's call).
 - [ ] Feature-branch workflows UI: git-flow dialogs, branch folders by prefix, merged and
@@ -84,6 +87,10 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] Design, in order: colour tokens everywhere, typography and controls
       (`docs/specs/ui-spec.md`), motion (reduce-motion setting), responsive 960×600 to 4K, polish
       and a design review.
+- [ ] Motion: smooth real-time animations as repository activity changes the UI, respecting
+      the reduce-motion setting.
+- [ ] Operation feedback: animate button icons during operations and their completion,
+      respecting the reduce-motion setting.
 - [ ] Docs: a CONTRIBUTING review.
 - [ ] `tests/safety.rs` non-UTF-8 folder test: when the filesystem refuses the name (NTFS under
       `TMPDIR`), fail with a message naming that cause instead of an `unwrap` panic.
@@ -117,6 +124,8 @@ yet true, then correctness and the features people meet first, then polish. Take
       host provides it (check runs are already read for requests).
 - [ ] Signature badges (GPG and SSH).
 - [ ] Worktrees.
+- [ ] Stale worktree and branch cleanup: configurable inactivity period, preview candidates and
+      confirm removal; protect uncommitted work and branches with unmerged commits.
 - [ ] Commit templates and message linting.
 - [ ] Image diff.
 - [ ] Drag and drop branches to merge or rebase.
