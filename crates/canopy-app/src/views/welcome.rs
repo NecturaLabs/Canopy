@@ -49,7 +49,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
             let top = if rect.height() < 400.0 {
                 theme::XS
             } else {
-                ((rect.height() - last) * 0.42).max((rect.height() * 0.04).max(theme::LG))
+                ((rect.height() - last) * 0.55).max((rect.height() * 0.04).max(theme::LG))
             };
             let start = ui.cursor().top();
             ui.vertical_centered(|ui| {
@@ -57,7 +57,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                 let art_w = (rect.width() * 0.5)
                     .min(rect.height() * if rect.height() < 400.0 { 0.30 } else { 0.50 })
                     .clamp(120.0, 520.0);
-                art::show(ui, art::welcome(), vec2(art_w, art_w * 9.0 / 16.0));
+                art::show(ui, art::welcome(), vec2(art_w, art_w * 25.0 / 64.0));
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new("Canopy")

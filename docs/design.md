@@ -290,6 +290,9 @@ in `theme.rs`:
   before the first tab is opened.
 - Welcome action cards explain Open, Clone and Init in two short lines without requiring hover;
   the shortcut stays in each card's top corner.
+- The welcome illustration's layout bounds end just below its trunk. The stack uses the height
+  saved there to sit nearer the vertical centre at tall window sizes, keeping the title close to
+  the art and reducing the empty space below the actions.
 - An unborn branch counts as a branch in the sidebar and shows its name with "no commits yet" in
   both the sidebar and status bar.
 - Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;
