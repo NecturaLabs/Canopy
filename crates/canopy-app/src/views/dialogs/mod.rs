@@ -505,6 +505,14 @@ pub fn show(
                         canopy_core::identity::Scope::Global => "your global Git configuration, which every repository without its own identity uses",
                     };
                     ui.label(RichText::new(format!("This removes user.name and user.email from {target}. Commits already made keep their authors. If the same value is also set in another file, that one stays in use.")).color(p.text_dim));
+                    if let Some(values) = identity_in_scope(tab, *scope) {
+                        ui.add_space(theme::SM);
+                        egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(RichText::new("Removing").size(theme::META_SIZE).color(p.text_dim));
+                            ui.label(RichText::new(values).font(FontId::monospace(theme::MONO_SIZE)).color(p.text));
+                        });
+                    }
                     ui.add_space(16.0);
                     match confirm_buttons(ui, "Clear identity", true) {
                         Some(true) => outcome = Outcome::Run(vec![Action::ClearIdentity { repo: repo.clone(), scope: *scope }]),
@@ -1071,7 +1079,15 @@ mod tests {
                         ..Default::default()
                     },
                     |_| {
-                        show(&ctx, &mut dialog, None, &mut picker, false, &updater, "git version 2.55.0");
+                        show(
+                            &ctx,
+                            &mut dialog,
+                            None,
+                            &mut picker,
+                            false,
+                            &updater,
+                            "git version 2.55.0",
+                        );
                     },
                 );
                 output.textures_delta.clear();

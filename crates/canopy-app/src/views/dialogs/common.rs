@@ -20,16 +20,16 @@ pub(super) fn valid_ref_name(name: &str) -> bool {
             .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c))
 }
 
-/// Cancel and confirm buttons with keyboard hints. The safe choice has the initial focus: Cancel
-/// when the action destroys something, otherwise the action, so Enter does what is least
-/// surprising. `Some(true)` confirms, `Some(false)` cancels.
+/// Cancel and confirm buttons with a keyboard hint. The safe choice has the initial focus: Cancel
+/// when the action destroys something (a solid danger button), otherwise the action, so Enter does
+/// what is least surprising. `Some(true)` confirms, `Some(false)` cancels.
 pub(super) fn confirm_buttons(ui: &mut Ui, confirm: &str, danger: bool) -> Option<bool> {
     let p = palette(ui.ctx());
     let mut answer = None;
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(if danger {
-                "Enter cancels · Esc closes"
+                "Esc cancels"
             } else {
                 "Enter confirms · Esc cancels"
             })
@@ -39,7 +39,7 @@ pub(super) fn confirm_buttons(ui: &mut Ui, confirm: &str, danger: bool) -> Optio
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let size = egui::vec2(120.0, 34.0);
             let yes = if danger {
-                widgets::danger_button(ui, confirm, size)
+                widgets::danger_primary_button(ui, confirm, size)
             } else {
                 widgets::accent_button(ui, confirm, size)
             };
@@ -161,4 +161,32 @@ pub(super) fn document_actions(ui: &mut Ui, dialog: &Dialog) -> Outcome {
         );
     });
     outcome
+}
+
+/// The name and email that `scope`'s configuration file sets for the author, as the active
+/// repository reports them, for a dialog that is about to remove them. `None` when the repository
+/// has not read them or they come from elsewhere.
+pub(super) fn identity_in_scope(
+    tab: Option<&RepoTab>,
+    scope: canopy_core::identity::Scope,
+) -> Option<String> {
+    use canopy_core::identity::{Scope, Source};
+    let wanted = match scope {
+        Scope::Local => "local",
+        Scope::Global => "global",
+    };
+    let author = &tab?.identity.as_ref()?.author;
+    fn set_here<'a>(field: &'a canopy_core::identity::Field, wanted: &str) -> Option<&'a str> {
+        matches!(&field.source, Some(Source::Config { scope, .. }) if scope == wanted)
+            .then(|| field.value.trim())
+            .filter(|v| !v.is_empty())
+    }
+    match (
+        set_here(&author.name, wanted),
+        set_here(&author.email, wanted),
+    ) {
+        (Some(name), Some(email)) => Some(format!("{name} <{email}>")),
+        (Some(value), None) | (None, Some(value)) => Some(value.to_owned()),
+        (None, None) => None,
+    }
 }
