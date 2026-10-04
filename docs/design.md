@@ -380,6 +380,13 @@ has focus. A choice that is riskier than the main one (trusting a whole folder) 
 destinations (About: What's new, Releases, the legal texts) are text links in `accent`, with one
 primary button for the real action.
 
+Action dialogs lead with the effect on the repository and the choice Canopy will pass to Git.
+They do not append a universal command preview: an action may run several Git commands, its
+arguments can depend on repository state at execution time, and a guessed preview would imply a
+guarantee it cannot keep. A future optional command disclosure must use the same redacted argv
+that the operation actually executes. Differences from the user's Git configuration are shown
+with the setting, value and source, as the Git settings work in the backlog requires.
+
 ### Git identity
 
 Settings → Git starts with an "Identity for future commits" group built from the ordinary settings
