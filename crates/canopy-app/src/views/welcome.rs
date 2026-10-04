@@ -308,11 +308,8 @@ fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) ->
     );
     subtitle_job.wrap.max_rows = 2;
     let subtitle = ui.painter().layout_job(subtitle_job);
-    ui.painter().galley(
-        r.left_top() + vec2(theme::LG, 82.0),
-        subtitle,
-        p.text_dim,
-    );
+    ui.painter()
+        .galley(r.left_top() + vec2(theme::LG, 82.0), subtitle, p.text_dim);
     let name = title.to_owned();
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
     if !keys.is_empty() {
