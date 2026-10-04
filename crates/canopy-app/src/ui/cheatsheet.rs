@@ -68,6 +68,11 @@ impl Cheatsheet {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
+                                    if widgets::icon_button(ui, icon::X, "Close shortcuts (Esc)")
+                                        .clicked()
+                                    {
+                                        self.open = false;
+                                    }
                                     ui.label(
                                         RichText::new("Esc to close")
                                             .size(theme::SMALL_SIZE)
