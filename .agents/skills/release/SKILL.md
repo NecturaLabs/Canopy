@@ -65,15 +65,20 @@ next build is released as stable.
 
 ## Procedure
 
-1. Dry run, which reports the version and changes nothing:
+1. Dry run, which reports the build number and changes nothing:
 
    ```sh
    gh workflow run create-release.yml --ref main -f channel=stable -f dry-run=true
    ```
 
-   Read the "Next build" notice in the run (`gh run watch`).
-2. After the user confirms that build, run it for real (`-f dry-run=false`; `-f channel=beta` for
-   the beta channel; `-f force=true` only to release without a releasable commit).
+   Find the run with `gh run list --workflow create-release.yml --limit 1`, wait for it with
+   `gh run watch <id>`, then read its annotations with `gh run view <id>`: "Next build: <n>", or
+   "Nothing to release". A run that ends green with "Nothing to release" made no build.
+2. After the user confirms that build and channel, run it for real (`-f dry-run=false`;
+   `-f channel=beta` for the beta channel; `-f force=true` only to release without a releasable
+   commit). A request that already names the channel ("make a beta pre-release") is that
+   confirmation once the dry run's number has been shown. The run takes several minutes: watch it
+   with `gh run watch <id> --exit-status`.
 3. The workflow then tags `build-<number>` and calls Release, which:
    - checks that the tag is `build-<n>` on a commit of `main` with `n` commits behind it, and
      writes the release notes;
@@ -92,7 +97,8 @@ next build is released as stable.
      (`crates/canopy-app/build.rs`), so `canopy --version` prints `canopy build <n> (<hash>)`;
    - packages `canopy-build-<number>-<target>.tar.gz` (Linux, macOS) or `.zip` (Windows):
      `README.md`, `LICENSE`, `legal/` (the Privacy Policy, Terms of Service and third-party
-     notices) and the program: on Linux the binary, desktop entry, AppStream metainfo and icons;
+     notices) and the program: on Linux the binary, desktop entry, AppStream metainfo and the PNG icon
+     (`io.necturalabs.Canopy.png`, from `assets/icon-256.png`);
      on macOS an ad-hoc signed `Canopy.app` (from `packaging/macos/Info.plist`, `.icns` made from
      `assets/icon-512.png`); on Windows `canopy.exe`;
    - publishes the GitHub release `build-<number>` with those archives, `install.sh`,
@@ -106,16 +112,23 @@ next build is released as stable.
 
 ## Verify
 
-- `gh run list --workflow create-release.yml` and `--workflow release.yml` succeeded, including
-  `Publish to the update feed` (it must not have warned that the token is missing).
+- The Create release run succeeded (`gh run view <id>`). Release runs inside it as a reusable
+  workflow, so its jobs appear there as "Build and publish / …", not under
+  `gh run list --workflow release.yml` (that lists only manual reruns). Every job is green except
+  possibly an experimental build, and `Publish to the update feed` did not warn that the token is
+  missing.
+- `git fetch --tags` locally; the tag `build-<number>` is on the commit you meant to release.
 - `gh release view build-<number>` lists one archive per target built (two for Linux, two for macOS,
   one for Windows, for the platforms that were on; one fewer for each experimental build that
   failed: check why), `install.sh`, `install.ps1` and `SHA256SUMS`; the notes match
-  `tools/release.py notes build-<number>`.
+  `tools/release.py notes build-<number>`; `gh release view build-<number> --json isPrerelease`
+  is `true` for a beta and `false` for a stable release.
 - If Linux was built, download its archive: `sha256sum -c` against `SHA256SUMS`,
-  `./canopy --version` prints `canopy build <number> (<hash>)`, and the archive holds the desktop entry, metainfo, icons and `legal/`.
-- The manifest on the channel names `<number>` as its `version` and the platform URLs resolve (`raw.githubusercontent.com`
-  `/NecturaLabs/app-updates/main/canopy/latest.json`).
+  `./canopy --version` prints `canopy build <number> (<hash>)`, and the archive holds the desktop
+  entry, metainfo, `io.necturalabs.Canopy.png` and `legal/`.
+- The manifest on the channel names `<number>` as its `version` and the platform URLs resolve
+  (`https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/latest.json`, or
+  `beta.json` for a beta).
 - For a stable release, `canopy/install.sh` and `canopy/install.ps1` on app-updates' `main` match
   `packaging/` at the tag, and the one-liner installs build `<number>` in a throwaway account or VM:
   `curl -fsSL https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.sh | sh`
