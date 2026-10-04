@@ -685,29 +685,11 @@ pub fn show(
                     let glyph = match doc {
                         Document::Privacy => icon::SHIELD_CHECK,
                         Document::Terms => icon::SCROLL,
-                        Document::Notices => icon::BOOK_OPEN,
                     };
-                    if *doc == Document::Notices {
-                        // Licence texts are laid out for 80 columns.
-                        ui.set_width((ctx.content_rect().width() - theme::XL * 4.0).clamp(0.0, 660.0));
-                    }
                     title(ui, glyph, doc.title());
                     egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
                         ui.set_max_width(ui.available_width());
-                        if *doc == Document::Notices {
-                            // Thousands of lines: lay out only the visible ones.
-                            let font = FontId::monospace(theme::MONO_SMALL_SIZE);
-                            let row = ui.fonts_mut(|f| f.row_height(&font));
-                            static LINES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
-                            let lines = LINES.get_or_init(|| crate::ui::legal::NOTICES.lines().collect());
-                            egui::ScrollArea::both().max_height((ctx.content_rect().height() - 180.0).clamp(0.0, 420.0)).auto_shrink([false, true]).show_rows(ui, row, lines.len(), |ui, range| {
-                                for line in &lines[range] {
-                                    ui.add(egui::Label::new(RichText::new(*line).font(font.clone()).color(p.text_dim)).extend());
-                                }
-                            });
-                        } else {
-                            egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 180.0).clamp(0.0, 420.0)).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
-                        }
+                        egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 180.0).clamp(0.0, 420.0)).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
                     });
 
                 }
@@ -719,9 +701,6 @@ pub fn show(
                         ui.add_space(8.0);
                         ui.label(RichText::new("A fast, beautiful, Linux-first Git client.").color(p.text_dim));
                         ui.label(RichText::new("© 2026 NecturaLabs.").size(theme::META_SIZE).color(p.text_faint));
-                        if ui.link(RichText::new("Open-source licences").size(theme::META_SIZE)).clicked() {
-                            outcome = Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Notices))]);
-                        }
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
                             ui.add_space((ui.available_width() - 400.0).max(0.0) / 2.0);

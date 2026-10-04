@@ -43,7 +43,7 @@ OPTIONS:
         --view <VIEW>         Initial view: history, changes or requests
         --split               Show diffs side by side
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
-                              palette, consent, crash-consent, legal, licences,
+                              palette, consent, crash-consent, legal,
                               credential, host-key, merge, identity, settings-git or
                               clear-identity, update-installed, update-running,
                               trust-folder, diff-options, settings-integrations,

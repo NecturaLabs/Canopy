@@ -49,7 +49,6 @@ pub const OVERLAYS: &[&str] = &[
     "consent",
     "crash-consent",
     "legal",
-    "licences",
     "credential",
     "host-key",
     "merge",
@@ -318,9 +317,6 @@ impl CanopyApp {
                 app.dialogs.open(Dialog::credential(crate::askpass::Prompt::preview(
                     "The authenticity of host 'github.com (140.82.121.4)' can't be established.\nED25519 key fingerprint is SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU.\nThis key is not known by any other names.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ",
                 )))
-            }
-            Some("licences") => {
-                app.dialogs.open(Dialog::Legal(crate::ui::legal::Document::Notices))
             }
             Some("merge") => {
                 app.dialogs.open(Dialog::Merge {
