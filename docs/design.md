@@ -114,9 +114,10 @@ button uses the `button` pair instead, chosen so its label stays readable on bot
 Keep all eight themes. Each earns its place by carrying the graph, selection and status colours
 through the full interface, rather than borrowing Midnight's lanes or changing only the chrome.
 
-Selected rows will all use `Palette::selected()`: `accent` at low opacity over the row background
-(18% in dark themes, 12% in light ones), with an `accent` bar on the left edge (3px in the history
-list, 4px on diff lines). egui's selected values use the same fill. Views still carrying their
+Selected rows will all use `Palette::selected()`: `accent` at low opacity over the row background,
+set by `selection_alpha` (18% in most dark themes, 12% in light themes and Ember to keep its orange
+calm). An `accent` bar marks the left edge (3px in the history list, 4px on diff lines). egui's
+selected values use the same fill. Views still carrying their
 own tint move to it in the controls pass.
 
 ### Lane colours

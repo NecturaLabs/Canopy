@@ -329,7 +329,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 painter.rect_filled(
                     rect,
                     CornerRadius::ZERO,
-                    Palette::tint(p.accent, if p.dark { 46 } else { 30 }),
+                    p.selected(),
                 );
                 painter.rect_filled(
                     Rect::from_min_size(rect.min, vec2(3.0, ROW_H)),

@@ -87,6 +87,8 @@ pub struct Palette {
     pub text_faint: Color32,
     /// Brand accent: selection, focus, primary actions.
     pub accent: Color32,
+    /// Strength of the accent wash on a selected row.
+    pub selection_alpha: u8,
     /// Second accent: links, remote refs, gradients.
     pub accent2: Color32,
     pub success: Color32,
@@ -162,6 +164,7 @@ pub const MIDNIGHT: Palette = Palette {
     text_dim: hex(0xA5ADBD),
     text_faint: hex(0x979EAD),
     accent: hex(0x9C71F8),
+    selection_alpha: 46,
     accent2: hex(0x22D3EE),
     success: hex(0x34D399),
     warning: hex(0xFBBF24),
@@ -197,6 +200,7 @@ pub const DAYLIGHT: Palette = Palette {
     text_dim: hex(0x4B5466),
     text_faint: hex(0x586071),
     accent: hex(0x7C3AED),
+    selection_alpha: 30,
     accent2: hex(0x0D6F8A),
     success: hex(0x047555),
     warning: hex(0xA04A08),
@@ -232,6 +236,7 @@ pub const AURORA: Palette = Palette {
     text_dim: hex(0xC2C8D3),
     text_faint: hex(0xB1B8C4),
     accent: hex(0x88C0D0),
+    selection_alpha: 46,
     accent2: hex(0xCAAFC5),
     success: hex(0xA5C08F),
     warning: hex(0xEBCB8B),
@@ -278,6 +283,7 @@ pub const EMBER: Palette = Palette {
     text_dim: hex(0xBCAB9F),
     text_faint: hex(0xAC9D93),
     accent: hex(0xF97316),
+    selection_alpha: 30,
     accent2: hex(0xFACC15),
     success: hex(0x4ADE80),
     warning: hex(0xFBBF24),
@@ -314,6 +320,7 @@ pub const NEON: Palette = Palette {
     text_dim: hex(0xCDBFE6),
     text_faint: hex(0xBBAEDC),
     accent: hex(0x00E5FF),
+    selection_alpha: 46,
     accent2: hex(0xFF7ABD),
     success: hex(0x3DF5A0),
     warning: hex(0xFFD60A),
@@ -361,6 +368,7 @@ pub const FOREST: Palette = Palette {
     text_dim: hex(0xB3C5BB),
     text_faint: hex(0xA7B4AD),
     accent: hex(0xE2B84F),
+    selection_alpha: 46,
     accent2: hex(0x7DD3FC),
     success: hex(0x4ADE80),
     warning: hex(0xFB923C),
@@ -396,6 +404,7 @@ pub const PAPER: Palette = Palette {
     text_dim: hex(0x585044),
     text_faint: hex(0x655B50),
     accent: hex(0xA14A08),
+    selection_alpha: 30,
     accent2: hex(0x0E6E67),
     success: hex(0x166534),
     warning: hex(0x825500),
@@ -443,6 +452,7 @@ pub const CONTRAST: Palette = Palette {
     text_dim: hex(0xE6E6E6),
     text_faint: hex(0xCCCCCC),
     accent: hex(0x4CC2FF),
+    selection_alpha: 46,
     accent2: hex(0xFFE14D),
     success: hex(0x3DFF8A),
     warning: hex(0xFFA62B),
@@ -556,7 +566,7 @@ impl Palette {
     /// Fill of the selected row in lists, the graph, the sidebar, the palette and diffs, and of
     /// egui's selected values. Every text colour stays readable on it (see the contrast test).
     pub fn selected(&self) -> Color32 {
-        Palette::tint(self.accent, if self.dark { 46 } else { 30 })
+        Palette::tint(self.accent, self.selection_alpha)
     }
 
     /// Fill behind warning text: conflict markers in diffs, in-progress banners.

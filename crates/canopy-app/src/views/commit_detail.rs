@@ -433,7 +433,7 @@ pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egu
         ui.painter().rect_filled(
             rect,
             CornerRadius::same(theme::RADIUS_SM),
-            Palette::tint(p.accent, if p.dark { 50 } else { 32 }),
+            p.selected(),
         );
     } else if hover > 0.0 {
         ui.painter().rect_filled(
