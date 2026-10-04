@@ -309,6 +309,8 @@ in `theme.rs`:
 - The welcome illustration's layout bounds end just below its trunk. The stack uses the height
   saved there to sit nearer the vertical centre at tall window sizes, keeping the title close to
   the art and reducing the empty space below the actions.
+- Request details separate navigation from review actions. The method picker and primary Merge
+  action form one group; Close is in More. Description precedes expanded checks and reviews.
 - Git identity uses an explicit primary Save action and a danger Clear action in the same row
   grid as other settings; its description explains the save boundary.
 - The view switcher always includes Requests, disabled with an explanation until a GitHub or

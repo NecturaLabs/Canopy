@@ -529,8 +529,46 @@ fn action_bar(
         if widgets::icon_button(ui, icon::LINK, "Copy link").clicked() {
             actions.push(Action::Copy(r.web_url.clone()));
         }
-        if r.state == RequestState::Open {
-            ui.separator();
+        ui.menu_button("More", |ui| {
+            if r.state == RequestState::Open
+                && ui
+                    .add_enabled(
+                        !busy,
+                        egui::Button::new(RichText::new("Close request…").color(p.danger)),
+                    )
+                    .clicked()
+            {
+                actions.push(Action::OpenDialog(Dialog::ConfirmHost {
+                    title: format!(
+                        "Close {} {}{}?",
+                        kind.request_abbrev(),
+                        kind_sigil(kind),
+                        r.number
+                    ),
+                    body: format!(
+                        "\"{}\" will be closed without merging. You can reopen it later.",
+                        r.title
+                    ),
+                    confirm: "Close".into(),
+                    danger: true,
+                    job: HostJob::SetOpen(r.number, false),
+                }));
+                ui.close();
+            } else if r.state == RequestState::Closed
+                && ui
+                    .add_enabled(!busy, egui::Button::new("Reopen request"))
+                    .clicked()
+            {
+                actions.push(Action::Host(HostJob::SetOpen(r.number, true)));
+                ui.close();
+            } else if r.state == RequestState::Merged {
+                ui.label("Already merged");
+            }
+        });
+    });
+    if r.state == RequestState::Open {
+        ui.add_space(theme::SM);
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(
                     !busy,
@@ -542,89 +580,63 @@ fn action_bar(
             {
                 actions.push(Action::Host(HostJob::Approve(r.number)));
             }
-            if ui.available_size_before_wrap().x < 194.0 {
-                ui.end_row();
-            }
-            // Merge: method picker and a confirming second click.
-            let mergeable = d.and_then(|d| d.mergeable).unwrap_or(true) && !r.draft;
-            egui::ComboBox::from_id_salt("merge-method").icon(crate::ui::widgets::combo_caret)
-                .selected_text(tab.requests.merge_method.label())
-                .width(170.0_f32.min(ui.max_rect().width()))
-                .wrap_mode(egui::TextWrapMode::Truncate)
-                .show_ui(ui, |ui| {
-                    for m in MergeMethod::ALL {
-                        ui.selectable_value(&mut tab.requests.merge_method, m, m.label());
-                    }
+            egui::Frame::new()
+                .fill(p.panel)
+                .stroke(Stroke::new(1.0, p.border))
+                .corner_radius(CornerRadius::same(theme::RADIUS_SM))
+                .inner_margin(egui::Margin::same(theme::XS as i8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        egui::ComboBox::from_id_salt("merge-method")
+                            .icon(widgets::combo_caret)
+                            .selected_text(tab.requests.merge_method.label())
+                            .width(170.0_f32.min((ui.available_width() - 120.0).max(80.0)))
+                            .wrap_mode(egui::TextWrapMode::Truncate)
+                            .show_ui(ui, |ui| {
+                                for method in MergeMethod::ALL {
+                                    ui.selectable_value(
+                                        &mut tab.requests.merge_method,
+                                        method,
+                                        method.label(),
+                                    );
+                                }
+                            });
+                        let dialog = merge_confirmation(tab, kind, r, d);
+                        let reason = if busy {
+                            "Wait for the current operation"
+                        } else if r.draft {
+                            "Drafts cannot be merged"
+                        } else if d.is_none_or(|details| details.head_sha.is_none()) {
+                            "Loading the request…"
+                        } else {
+                            "This request has conflicts or is blocked"
+                        };
+                        if widgets::primary_button(
+                            ui,
+                            &format!("{}  Merge…", icon::GIT_MERGE),
+                            dialog.is_some(),
+                            110.0,
+                        )
+                        .on_hover_text(if dialog.is_some() {
+                            "Confirm this merge before it runs"
+                        } else {
+                            reason
+                        })
+                        .clicked()
+                            && let Some(dialog) = dialog
+                        {
+                            actions.push(Action::OpenDialog(dialog));
+                        }
+                    });
                 });
-            let head = d.and_then(|d| d.head_sha.clone()).filter(|h| !h.is_empty());
-            let resp = ui.add_enabled(
-                !busy && mergeable && head.is_some(),
-                egui::Button::new(format!("{}  Merge…", icon::GIT_MERGE)),
-            );
-            let resp = if r.draft {
-                resp.on_disabled_hover_text("Drafts cannot be merged")
-            } else if !mergeable {
-                resp.on_disabled_hover_text("This request has conflicts or is blocked")
-            } else if head.is_none() {
-                resp.on_disabled_hover_text("Loading the request…")
-            } else {
-                resp.on_hover_text(format!(
-                    "{} into {}",
-                    tab.requests.merge_method.label(),
-                    r.target_branch
-                ))
-            };
-            if resp.clicked()
-                && let Some(head) = head
-            {
-                let method = tab.requests.merge_method;
-                let short: String = head.chars().take(7).collect();
-                actions.push(Action::OpenDialog(Dialog::ConfirmHost {
-                    title: format!("Merge {} {}{}?", kind.request_abbrev(), kind_sigil(kind), r.number),
-                    body: format!(
-                        "{} \"{}\" ({}) into {} on {}, as reviewed at commit {short}. If anyone pushes to it before the merge runs, {} refuses the merge. This cannot be undone from Canopy.",
-                        method.label(),
-                        r.title,
-                        r.source_branch,
-                        r.target_branch,
-                        kind.name(),
-                        kind.name(),
-                    ),
-                    confirm: "Merge".into(),
-                    danger: false,
-                    job: HostJob::Merge(r.number, method, Some(head)),
-                }));
-            }
-            if ui
-                .add_enabled(!busy, egui::Button::new(format!("{}  Close…", icon::X_CIRCLE)))
-                .clicked()
-            {
-                actions.push(Action::OpenDialog(Dialog::ConfirmHost {
-                    title: format!("Close {} {}{}?", kind.request_abbrev(), kind_sigil(kind), r.number),
-                    body: format!(
-                        "\"{}\" will be closed without merging. You can reopen it later.",
-                        r.title
-                    ),
-                    confirm: "Close".into(),
-                    danger: true,
-                    job: HostJob::SetOpen(r.number, false),
-                }));
-            }
-        } else if r.state == RequestState::Closed
-            && ui
-                .add_enabled(
-                    !busy,
-                    egui::Button::new(format!("{}  Reopen", icon::ARROW_COUNTER_CLOCKWISE)),
-                )
-                .clicked()
-        {
-            actions.push(Action::Host(HostJob::SetOpen(r.number, true)));
-        }
-        if let Some(b) = &tab.requests.busy {
+        });
+    }
+    if let Some(b) = &tab.requests.busy {
+        ui.horizontal(|ui| {
             ui.spinner();
             ui.label(RichText::new(b).size(theme::META_SIZE).color(p.accent));
-        }
-    });
+        });
+    }
     if let Some(Some(source)) = tab.requests.token
         && source != TokenSource::Saved
     {
@@ -634,6 +646,49 @@ fn action_bar(
                 .color(p.text_faint),
         );
     }
+}
+
+/// Shared by the pointer and keyboard paths; both confirm the reviewed head before merging.
+pub(crate) fn merge_confirmation(
+    tab: &RepoTab,
+    kind: ForgeKind,
+    r: &RequestSummary,
+    d: Option<&RequestDetails>,
+) -> Option<Dialog> {
+    if tab.requests.busy.is_some()
+        || tab.running.is_some()
+        || r.state != RequestState::Open
+        || r.draft
+    {
+        return None;
+    }
+    let details = d.filter(|details| details.summary.number == r.number)?;
+    if details.mergeable == Some(false) {
+        return None;
+    }
+    let head = details.head_sha.as_ref().filter(|head| !head.is_empty())?;
+    let short: String = head.chars().take(7).collect();
+    let method = tab.requests.merge_method;
+    Some(Dialog::ConfirmHost {
+        title: format!(
+            "Merge {} {}{}?",
+            kind.request_abbrev(),
+            kind_sigil(kind),
+            r.number
+        ),
+        body: format!(
+            "{} \"{}\" ({}) into {} on {}, as reviewed at commit {short}. If anyone pushes to it before the merge runs, {} refuses the merge. This cannot be undone from Canopy.",
+            method.label(),
+            r.title,
+            r.source_branch,
+            r.target_branch,
+            kind.name(),
+            kind.name()
+        ),
+        confirm: "Merge".into(),
+        danger: false,
+        job: HostJob::Merge(r.number, method, Some(head.clone())),
+    })
 }
 
 fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
@@ -664,6 +719,26 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
         );
         ui.add_space(12.0);
     }
+
+    // Description.
+    egui::Frame::new()
+        .fill(p.panel)
+        .stroke(Stroke::new(1.0, p.border))
+        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .inner_margin(egui::Margin::same(14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            if d.body.trim().is_empty() {
+                ui.label(
+                    RichText::new("No description.")
+                        .italics()
+                        .color(p.text_faint),
+                );
+            } else {
+                crate::ui::notes::markdown(ui, d.body.trim());
+            }
+        });
+    ui.add_space(16.0);
 
     // Checks.
     if !d.checks.is_empty() {
@@ -752,26 +827,6 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
         });
         ui.add_space(12.0);
     }
-
-    // Description.
-    egui::Frame::new()
-        .fill(p.panel)
-        .stroke(Stroke::new(1.0, p.border))
-        .corner_radius(CornerRadius::same(theme::RADIUS))
-        .inner_margin(egui::Margin::same(14))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            if d.body.trim().is_empty() {
-                ui.label(
-                    RichText::new("No description.")
-                        .italics()
-                        .color(p.text_faint),
-                );
-            } else {
-                crate::ui::notes::markdown(ui, d.body.trim());
-            }
-        });
-    ui.add_space(16.0);
 
     // Conversation.
     if !d.comments.is_empty() {
