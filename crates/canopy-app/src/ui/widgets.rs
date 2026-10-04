@@ -634,7 +634,7 @@ pub fn danger_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
     )
 }
 
-/// The primary call to action sized to its label, at least `min_size`: the same gradient button as
+/// The primary call to action sized to its label, at least `min_size`: the same solid button as
 /// [`primary_button`], for confirmations whose width follows their text.
 pub fn accent_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
     let label = ui
@@ -651,7 +651,7 @@ fn primary_font() -> FontId {
     FontId::new(theme::LEAD_SIZE, theme::semibold())
 }
 
-/// The primary call to action: a gradient button.
+/// The primary call to action: a solid theme-coloured button.
 pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Response {
     primary_button_sized(ui, text, enabled, vec2(width, 34.0))
 }
@@ -673,15 +673,13 @@ fn primary_button_sized(ui: &mut Ui, text: &str, enabled: bool, size: Vec2) -> R
     );
     let boost = 1.0 + 0.15 * hover;
     if enabled {
-        gradient_rect(
-            ui.painter(),
+        ui.painter().rect_filled(
             rect,
+            CornerRadius::same(theme::RADIUS),
             p.button.gamma_multiply(boost.min(1.2)),
-            p.button2.gamma_multiply(boost.min(1.2)),
-            theme::RADIUS,
         );
     } else {
-        // Flat and outlined, never the gradient: a disabled button must not read as enabled in
+        // Quiet and outlined: a disabled button must not read as enabled in
         // any theme, however close its hue is to `border`.
         ui.painter().rect(
             rect,

@@ -40,7 +40,7 @@ defined. When a token or component changes, update this document in the same cha
 | `danger` | `#F87171` | Removed lines, destructive buttons, error toasts |
 | `added-bg` | `#0F2A21` | Added line background in diffs |
 | `removed-bg` | `#2E1518` | Removed line background in diffs |
-| `button`, `button2` | `#7C3AED`, `#0E7490` | Ends of the primary button's gradient, labelled `on-button` (`#FFFFFF`) |
+| `button`, `button2` | `#7C3AED`, `#0E7490` | Primary fill and companion accent, labelled `on-button` (`#FFFFFF`) |
 
 ### Daylight (light)
 
@@ -62,7 +62,7 @@ defined. When a token or component changes, update this document in the same cha
 | `danger` | `#C72222` | Removed lines, destructive buttons, error toasts |
 | `added-bg` | `#E3F7EC` | Added line background in diffs |
 | `removed-bg` | `#FDE7E7` | Removed line background in diffs |
-| `button`, `button2` | `#7C3AED`, `#0E7490` | Ends of the primary button's gradient, labelled `on-button` (`#FFFFFF`) |
+| `button`, `button2` | `#7C3AED`, `#0E7490` | Primary fill and companion accent, labelled `on-button` (`#FFFFFF`) |
 
 Every theme passes the contrast test in `theme.rs` for every pairing the views draw: `text` 7:1
 and `text-dim` and `text-faint` 4.5:1 on every surface (`bg`, `panel`, `elevated`, `hover`, a
@@ -109,7 +109,7 @@ confused with an added or removed line.
 
 The accent gradient runs from `accent` to `accent-2` (violet to cyan in Midnight). It is used
 sparingly: the active tab indicator, the welcome screen mark and progress bars. The primary
-button uses the `button` pair instead, chosen so its label stays readable on both ends.
+button uses a solid `button` fill, chosen so its `on-button` label stays readable.
 
 Keep all eight themes. Each earns its place by carrying the graph, selection and status colours
 through the full interface, rather than borrowing Midnight's lanes or changing only the chrome.
@@ -317,7 +317,7 @@ in `theme.rs`:
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).
 - The disabled primary button is flat with a hairline outline and faint text in every theme, never
-  the gradient. When the commit button is disabled for a reason its label does not give, a line
+  the primary fill. When the commit button is disabled for a reason its label does not give, a line
   above it says so ("Write a summary to commit", "Resolve the conflicts to commit").
 - The commit composer follows the file lists while both fit the column, under a hairline, and
   pins to the bottom with the lists scrolling above it only when they would crowd it (about
@@ -416,7 +416,7 @@ while their labels and shortcuts remain discoverable in tooltips and the palette
 ### Dialog
 
 Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, bounded by the viewport. Title, body, then right-aligned
-buttons: secondary (outlined) then primary (the `button` gradient, the same widget everywhere,
+buttons: secondary (outlined) then primary (the solid `button` fill, the same widget everywhere,
 with a focus ring). Destructive confirmations use a
 solid `danger` primary button (`widgets::danger_primary_button`, its text white or black by contrast
 with the theme's `danger`) whose label names the action ("Delete branch", "Discard 3 files"), never
