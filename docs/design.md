@@ -285,6 +285,8 @@ in `theme.rs`:
   panes.
 - When there is no remote, the toolbar says "Local only" as dim status text with an explanatory
   tooltip, rather than styling it as an active control.
+- On the welcome screen, the status bar says "No repository open" so it remains informative even
+  before the first tab is opened.
 - Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;
   Discard is a ghost that turns `danger` under the pointer and sits apart on the right, and on
   very wide panes the actions stay within 960 px of the left edge. A new or deleted file is always
