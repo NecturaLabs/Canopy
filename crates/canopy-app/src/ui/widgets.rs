@@ -187,7 +187,10 @@ pub fn change_badge(ui: &mut Ui, kind: ChangeKind) -> Response {
         FontId::new(theme::SMALL_SIZE, theme::semibold()),
         p.ink(color, fill),
     );
-    resp.on_hover_text(kind.label())
+    resp.on_hover_text(match kind {
+        ChangeKind::Untracked => "Untracked: a new file Git does not track yet",
+        _ => kind.label(),
+    })
 }
 
 /// A rounded count badge.
