@@ -1,7 +1,7 @@
 //! The conflict resolver, shown in Changes for a conflicted file: every conflict as a card with
 //! our and their side next to each other (and the common ancestor for diff3 files), a choice per
 //! conflict (ours, theirs, both in either order, the ancestor, or a hand edit), the resulting text,
-//! and Save / Save and mark resolved. Files Canopy cannot show line by line (binary, deleted on
+//! and Save progress / Save resolved file. Files Canopy cannot show line by line (binary, deleted on
 //! one side) get a whole-file choice instead.
 
 use std::collections::HashMap;
@@ -254,20 +254,25 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                 );
                 ui.add(egui::Label::new(RichText::new(keys).size(theme::SMALL_SIZE).color(p.text_faint)).truncate())
                     .on_hover_text("Press ? for every shortcut");
+                ui.label(RichText::new(if done == n {
+                    "All conflicts have a choice. Save the resolved file to stage it."
+                } else {
+                    "Choose a version for each conflict. Save progress keeps markers for unresolved parts."
+                }).size(theme::SMALL_SIZE).color(p.text_dim));
                 ui.horizontal_wrapped(|ui| {
                     let all = done == n;
-                    let mark = widgets::primary_button(ui, "Save and mark resolved", all, 200.0)
-                        .on_disabled_hover_text("Choose a resolution for every conflict first");
+                    let mark = widgets::primary_button(ui, "Save resolved file", all, 180.0)
+                        .on_hover_text(if all { "Write this file and stage it as resolved" } else { "Choose a resolution for every conflict first" });
                     if mark.clicked() {
                         actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: true, expected: file.fingerprint() }));
                     }
-                    if ui.add_enabled(done > 0, egui::Button::new(format!("{}  Save", icon::FLOPPY_DISK)))
+                    if ui.add_enabled(done > 0, egui::Button::new(format!("{}  Save progress", icon::FLOPPY_DISK)))
                         .on_hover_text("Write the chosen resolutions to the file; unresolved conflicts keep their markers")
                         .clicked()
                     {
                         actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: false, expected: file.fingerprint() }));
                     }
-                    if done > 0 && ui.button("Reset").on_hover_text("Clear every choice").clicked() {
+                    if done > 0 && ui.button("Undo all choices").on_hover_text("Clear every choice before saving").clicked() {
                         r.choices.iter_mut().for_each(|c| *c = None);
                         r.editing = None;
                     }
