@@ -59,29 +59,30 @@ impl egui::cache::ComputerMut<&str, std::sync::Arc<Vec<String>>> for Blocks {
 /// Renders a little Markdown. The parsed blocks are cached while the text stays on screen.
 pub fn markdown(ui: &mut Ui, text: &str) {
     let p = palette(ui.ctx());
-    let parsed = ui.memory_mut(|m| {
-        m.caches
+    let m = theme::metrics();
+    let parsed = ui.memory_mut(|mem| {
+        mem.caches
             .cache::<egui::cache::FrameCache<std::sync::Arc<Vec<String>>, Blocks>>()
             .get(text)
             .clone()
     });
+    let paragraph = |text: String| RichText::new(text).size(m.body_size).color(p.text_dim);
     for block in parsed.iter() {
         let trimmed = block.trim_start();
         if let Some(h) = trimmed
             .strip_prefix("### ")
             .or_else(|| trimmed.strip_prefix("## "))
         {
-            ui.add_space(6.0);
+            ui.add_space(theme::XS);
             ui.label(
                 RichText::new(h.trim())
-                    .font(FontId::new(theme::BODY_SIZE, theme::semibold()))
+                    .font(FontId::new(m.body_size, theme::semibold()))
                     .color(p.text),
             );
-            ui.add_space(2.0);
         } else if let Some(h) = trimmed.strip_prefix("# ") {
             ui.label(
                 RichText::new(h.trim())
-                    .font(FontId::new(theme::TITLE_SIZE, theme::semibold()))
+                    .font(FontId::new(m.title_size, theme::semibold()))
                     .color(p.text),
             );
         } else if let Some(item) = trimmed
@@ -89,15 +90,13 @@ pub fn markdown(ui: &mut Ui, text: &str) {
             .or_else(|| trimmed.strip_prefix("* "))
         {
             ui.horizontal_top(|ui| {
-                ui.add_space(4.0);
-                ui.label(RichText::new("•").color(p.accent));
-                ui.add(
-                    egui::Label::new(RichText::new(clean_inline(item)).color(p.text_dim)).wrap(),
-                );
+                ui.add_space(theme::XS);
+                ui.label(RichText::new("•").size(m.body_size).color(p.accent));
+                ui.add(egui::Label::new(paragraph(clean_inline(item))).wrap());
             });
         } else {
-            ui.add(egui::Label::new(RichText::new(clean_inline(trimmed)).color(p.text_dim)).wrap());
-            ui.add_space(4.0);
+            ui.add(egui::Label::new(paragraph(clean_inline(trimmed))).wrap());
+            ui.add_space(theme::XS);
         }
     }
 }

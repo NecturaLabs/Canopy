@@ -3,10 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use crossbeam_channel::{Receiver, TryRecvError, bounded};
-use egui::{Id, Ui};
+use egui::{FontId, Id, RichText, Ui};
 use egui_phosphor::regular as icon;
 
-use super::theme::palette;
+use super::kit::Button;
+use super::theme::{self, palette};
 
 #[derive(Debug, Default)]
 pub struct FolderPicker {
@@ -95,16 +96,14 @@ impl FolderPicker {
                 Err(TryRecvError::Empty) => {}
             }
         }
-        let label = if self.pending.is_some() && active {
-            "Choosing…"
-        } else {
-            idle_label
-        };
-        if ui
-            .add_enabled(
-                self.pending.is_none(),
-                egui::Button::new(format!("{}  {label}", icon::FOLDER)),
-            )
+        let choosing = self.pending.is_some() && active;
+        let label = if choosing { "Choosing…" } else { idle_label };
+        if Button::new(label)
+            .secondary()
+            .icon(icon::FOLDER)
+            .enabled(self.pending.is_none())
+            .id_salt(id)
+            .show(ui)
             .clicked()
         {
             let start = start.to_path_buf();
@@ -115,7 +114,13 @@ impl FolderPicker {
         if let Some((target, error)) = &self.error
             && *target == id
         {
-            ui.label(egui::RichText::new(error).color(palette(ui.ctx()).danger));
+            let p = palette(ui.ctx());
+            let m = theme::metrics();
+            ui.label(
+                RichText::new(format!("{}  {error}", icon::WARNING_CIRCLE))
+                    .font(FontId::proportional(m.meta_size))
+                    .color(p.danger),
+            );
         }
         selected
     }

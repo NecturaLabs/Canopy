@@ -72,12 +72,10 @@ pub const ICON_TITLE: f32 = 20.0;
 pub const ICON_HERO: f32 = 32.0;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
 /// Shared control geometry, in logical points before interface zoom.
-pub const CONTROL_HEIGHT: f32 = 30.0;
 pub const COMPACT_CONTROL_HEIGHT: f32 = 28.0;
 pub const PRIMARY_CONTROL_HEIGHT: f32 = 36.0;
 pub const CONTROL_INSET: f32 = 2.0;
 pub const CHECKBOX_SIZE: f32 = 18.0;
-pub const SWITCH_SIZE: egui::Vec2 = egui::vec2(40.0, 24.0);
 /// Inner margin of every framed text field, matching the standard control height.
 pub const FIELD_MARGIN: Margin = Margin::symmetric(8, 7);
 /// Tallest raw-output viewport of a notification card.
@@ -2219,11 +2217,6 @@ impl Palette {
     /// Primary fill, top end (`Surfaces::primary`).
     pub fn button(&self) -> Color32 {
         self.s().primary.top
-    }
-
-    /// Primary fill, bottom end.
-    pub fn button2(&self) -> Color32 {
-        self.s().primary.bottom
     }
 
     /// Label on the primary fill (`on_accent`).
