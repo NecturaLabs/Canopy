@@ -543,7 +543,12 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 0.0;
                     let width = ui.available_width();
-                    if r.layout.width != width {
+                    #[expect(
+                        clippy::float_cmp,
+                        reason = "the cached heights belong to this exact width"
+                    )]
+                    let resized = r.layout.width != width;
+                    if resized {
                         r.layout.width = width;
                         r.layout.heights.clear();
                     }

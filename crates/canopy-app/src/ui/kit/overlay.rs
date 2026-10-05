@@ -1597,6 +1597,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the ring width is the exact token value, not a computed one"
+    )]
     fn floating_surfaces_have_shadow_fill_and_ring() {
         let ctx = context();
         let out = run(&ctx, Vec::new(), |ui| {

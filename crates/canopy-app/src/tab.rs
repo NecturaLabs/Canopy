@@ -263,6 +263,10 @@ pub struct Requests {
     pub comment: String,
     pub merge_method: MergeMethod,
     /// Where the token came from; `None` while unknown, `Some(None)` without a token.
+    #[expect(
+        clippy::option_option,
+        reason = "not yet known, known to be absent, or known, as the doc comment says"
+    )]
     pub token: Option<Option<TokenSource>>,
     /// When the list was last loaded.
     pub loaded_at: Option<Instant>,

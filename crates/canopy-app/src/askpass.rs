@@ -382,6 +382,11 @@ fn looks_like_client(port: Option<&str>, token: Option<&str>, arg: &std::ffi::Os
 
 /// Runs as the credential prompt: asks the app, prints the answer and returns the exit code
 /// (0 answered, 1 cancelled or failed).
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "git and ssh read the answer from standard output and show standard error"
+)]
 pub fn run_client() -> i32 {
     let prompt = std::env::args().nth(1).unwrap_or_default();
     let port = std::env::var(PORT_ENV).ok().and_then(|p| p.parse().ok());

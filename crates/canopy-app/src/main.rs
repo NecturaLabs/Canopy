@@ -72,6 +72,11 @@ FILES:
     clippy::map_err_ignore,
     reason = "the option's own message says what a valid value is"
 )]
+#[expect(
+    clippy::print_stdout,
+    clippy::exit,
+    reason = "--help and --version print to the terminal and quit before any window opens"
+)]
 fn parse_args() -> Result<(Launch, [f32; 2]), String> {
     let mut launch = Launch::default();
     let mut size = [1440.0, 900.0];
@@ -241,6 +246,10 @@ fn main() -> anyhow::Result<()> {
     logging::init(logging::LogLevel::Normal);
     canopy_hosting::set_build(build_info::NUMBER);
 
+    #[expect(
+        clippy::print_stderr,
+        reason = "a bad command line is reported on the terminal that gave it, before any window"
+    )]
     let (launch, size) = match parse_args() {
         Ok(v) => v,
         Err(e) => {

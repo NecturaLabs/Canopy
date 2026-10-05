@@ -2083,7 +2083,7 @@ impl Palette {
     }
 
     /// Fill of an initials avatar in colour `c` (24%).
-    pub fn avatar_fill(&self, c: Color32) -> Color32 {
+    pub const fn avatar_fill(c: Color32) -> Color32 {
         Self::tint(c, 61)
     }
 
@@ -3729,7 +3729,7 @@ mod tests {
                     let mut fills = vec![
                         Palette::pill_fill(c, false),
                         Palette::pill_fill(c, true),
-                        p.avatar_fill(c),
+                        Palette::avatar_fill(c),
                         Palette::badge_fill(c),
                         Palette::change_fill(c),
                     ];

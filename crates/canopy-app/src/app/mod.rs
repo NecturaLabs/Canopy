@@ -958,6 +958,10 @@ impl eframe::App for CanopyApp {
         self.handle_screenshot(&ctx);
     }
 
+    #[expect(
+        clippy::print_stdout,
+        reason = "tools/glass-check.py reads the glass soak report from standard output"
+    )]
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         crate::ui::kit::glass::destroy(gl);
         if let Some(soak) = &self.glass_soak {
@@ -1008,14 +1012,12 @@ fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
         .show(ui, |ui| {
             let card = ui.max_rect();
             let radius = crate::ui::kit::paint::pane(ui.painter(), card, p, s.pane, 1.0);
-            if radius == egui::CornerRadius::ZERO {
-                content(ui);
-            } else {
+            if radius != egui::CornerRadius::ZERO {
                 // Content stays inside the rounded card.
                 let clip = card.shrink(f32::from(radius.nw) * 0.3);
                 ui.set_clip_rect(clip.intersect(ui.clip_rect()));
-                content(ui);
             }
+            content(ui);
         });
 }
 

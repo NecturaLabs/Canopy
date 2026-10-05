@@ -105,8 +105,8 @@ pub fn initial(person: &Person) -> String {
 pub fn colors(p: &Palette, person: &Person) -> (Color32, Color32) {
     let c = widgets::person_color(p, person.identity());
     let s = p.s();
-    let fill = theme::over(p.avatar_fill(c), s.pane);
-    let letter = p.ink(theme::mix(c, p.text, 0.22), p.avatar_fill(c));
+    let fill = theme::over(Palette::avatar_fill(c), s.pane);
+    let letter = p.ink(theme::mix(c, p.text, 0.22), Palette::avatar_fill(c));
     (fill, letter)
 }
 

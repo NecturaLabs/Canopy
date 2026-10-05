@@ -61,6 +61,10 @@ pub struct ToastCard<'a> {
     body_strong: bool,
     actions: Vec<(&'a str, Option<&'a str>)>,
     details: Option<&'a str>,
+    #[expect(
+        clippy::option_option,
+        reason = "no bar, an indeterminate bar or a fraction, as `progress` takes them"
+    )]
     progress: Option<Option<f32>>,
     dismiss: Dismiss,
     clickable: bool,

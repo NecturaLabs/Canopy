@@ -716,7 +716,7 @@ fn release_archive() -> Vec<u8> {
 
 /// An installed Canopy (build 412) the way the installer leaves it, with its registered copies.
 struct Installed412 {
-    _tmp: tempfile::TempDir,
+    tmp: tempfile::TempDir,
     root: PathBuf,
     entry: PathBuf,
     png: PathBuf,
@@ -764,7 +764,7 @@ fn installed() -> Installed412 {
         ),
     );
     Installed412 {
-        _tmp: tmp,
+        tmp,
         root,
         entry,
         png,
@@ -1020,11 +1020,11 @@ fn a_binary_in_an_install_folder_with_its_receipt_is_managed() {
         }
     );
     // No receipt, a receipt for another folder, a binary outside bin/: all "other".
-    let elsewhere = old._tmp.path().join("other/bin/canopy");
+    let elsewhere = old.tmp.path().join("other/bin/canopy");
     write(&elsewhere, "x");
     assert_eq!(detect_from(&elsewhere), Install::Other);
     write(
-        &old._tmp.path().join("other").join(RECEIPT),
+        &old.tmp.path().join("other").join(RECEIPT),
         &format!("root={}\n", old.root.display()),
     );
     assert_eq!(
@@ -1032,7 +1032,7 @@ fn a_binary_in_an_install_folder_with_its_receipt_is_managed() {
         Install::Other,
         "the receipt names another folder"
     );
-    let loose = old._tmp.path().join("loose/canopy");
+    let loose = old.tmp.path().join("loose/canopy");
     write(&loose, "x");
     assert_eq!(detect_from(&loose), Install::Other);
     assert_eq!(

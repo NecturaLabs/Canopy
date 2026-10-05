@@ -744,17 +744,13 @@ impl ToolButton {
             )
         });
         let badge_w = badge.as_ref().map_or(0.0, |b| b.size().x + 3.0);
-        let (size, height) = if stacked {
-            let h = t.tool_height;
-            let w = (caption.size().x.max(glyph.size().x + badge_w) + 2.0 * t.tool_pad)
-                .max(t.tool_min_width);
-            (vec2(w, h), h)
+        let width = if stacked {
+            (caption.size().x.max(glyph.size().x + badge_w) + 2.0 * t.tool_pad)
+                .max(t.tool_min_width)
         } else {
-            let h = t.tool_height;
-            let w = glyph.size().x + badge_w + gap + caption.size().x + 2.0 * t.tool_pad;
-            (vec2(w, h), h)
+            glyph.size().x + badge_w + gap + caption.size().x + 2.0 * t.tool_pad
         };
-        let size = vec2(size.x.max(self.min_width), height);
+        let size = vec2(width.max(self.min_width), t.tool_height);
         let sense = if enabled {
             Sense::click()
         } else {

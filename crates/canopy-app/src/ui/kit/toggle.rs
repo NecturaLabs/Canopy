@@ -1163,6 +1163,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the box is painted at exactly the token's side length"
+    )]
     fn checked_fill_follows_the_style() {
         for style in theme::Style::ALL {
             let ctx = testkit::ctx_with(theme::ThemeId::Daylight, style, theme::Density::Dense);

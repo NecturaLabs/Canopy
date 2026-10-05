@@ -890,6 +890,10 @@ impl InsetBox {
         Self
     }
 
+    #[expect(
+        clippy::unused_self,
+        reason = "`InsetBox::new().show(ui, ..)` reads like every other kit builder"
+    )]
     pub fn show<R>(self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> KitResponse<R> {
         let s = theme::surfaces(ui.ctx());
         let m = theme::metrics();
