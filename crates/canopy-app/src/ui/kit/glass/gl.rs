@@ -22,8 +22,10 @@
 //!   passes with their length. No pointer or size reaches OpenGL from outside this module.
 //! - **Objects belong to the context that made them.** They are created here, used only while the
 //!   painter's context is the one they were made in (`Arc::ptr_eq` against the context this module
-//!   keeps alive), and deleted once. A name that went stale with a lost context makes OpenGL
-//!   report an error, which turns the blur off; it is never undefined behaviour.
+//!   keeps alive), and deleted once. After a lost context the blur turns off as soon as OpenGL
+//!   reports an error and makes no further calls. eframe does not ask for a robust context, so
+//!   what a driver does with calls made before that report is its own; Canopy makes none it would
+//!   not make on a live context.
 //! - **Sizes are checked before use.** Regions, viewports and textures come from
 //!   `super::plan`, `super::grow` and `super::level_sizes`, which keep them between 1 pixel and
 //!   the driver's texture limit (capped at 4096) and inside the window.
