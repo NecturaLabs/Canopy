@@ -282,6 +282,10 @@ fn prune(dir: &Path, now: SystemTime, max_age: Duration) -> usize {
         .count()
 }
 
+#[expect(
+    clippy::map_err_ignore,
+    reason = "a failed picture is cached as a miss; why it failed is not kept"
+)]
 fn load_at(
     path: Option<std::path::PathBuf>,
     client: &canopy_hosting::Client,

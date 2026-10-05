@@ -41,6 +41,10 @@ impl std::fmt::Debug for Avatar {
 
 impl Avatar {
     /// Downloads this picture without credentials or redirects, on a background thread.
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "kept as it was; docs/backlog.md has the entry to carry the transport's message"
+    )]
     pub fn download(&self) -> Result<Vec<u8>> {
         let mut config = ureq::Agent::config_builder()
             .http_status_as_error(false)

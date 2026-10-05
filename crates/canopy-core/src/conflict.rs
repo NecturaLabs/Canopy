@@ -517,6 +517,10 @@ impl Repo {
     /// Reads the working copy of `path` and splits it at its conflict markers. Fails with
     /// [`Error::Invalid`] for a file that is missing, a symbolic link, binary (contains a NUL
     /// byte) or not UTF-8, which can only be resolved by choosing a whole side.
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "the message names the file and what to do; the decoding error adds nothing"
+    )]
     pub fn conflict_file(&self, path: &str) -> Result<ConflictFile> {
         let full = text_file(self.workdir(), path)?;
         match std::fs::symlink_metadata(&full) {

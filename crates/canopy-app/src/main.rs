@@ -68,6 +68,10 @@ FILES:
     Logs (one JSON-lines file per run) and crash reports are kept in Canopy's data folder
     (~/.local/share/canopy on Linux) and never leave your computer.";
 
+#[expect(
+    clippy::map_err_ignore,
+    reason = "the option's own message says what a valid value is"
+)]
 fn parse_args() -> Result<(Launch, [f32; 2]), String> {
     let mut launch = Launch::default();
     let mut size = [1440.0, 900.0];

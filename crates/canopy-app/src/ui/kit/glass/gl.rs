@@ -354,6 +354,10 @@ impl Current<'_> {
 
     // --------------------------------------------------------------------------- objects
 
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "a blur failure is reported as a fixed Reason code, not the driver's text"
+    )]
     fn create_shader(self, kind: u32) -> Result<glow::Shader, Reason> {
         // SAFETY: the context is current; `kind` is VERTEX_SHADER or FRAGMENT_SHADER.
         let shader = unsafe { self.0.create_shader(kind) }.map_err(|_| Reason::Compile)?;
@@ -383,6 +387,10 @@ impl Current<'_> {
         deleted();
     }
 
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "a blur failure is reported as a fixed Reason code, not the driver's text"
+    )]
     fn create_program(self) -> Result<glow::Program, Reason> {
         // SAFETY: the context is current.
         let program = unsafe { self.0.create_program() }.map_err(|_| Reason::Link)?;
@@ -428,6 +436,10 @@ impl Current<'_> {
         unsafe { self.0.get_uniform_location(program, name) }
     }
 
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "a blur failure is reported as a fixed Reason code, not the driver's text"
+    )]
     fn create_vertex_array(self) -> Result<glow::VertexArray, Reason> {
         // SAFETY: the context is current (OpenGL 3.0 or ES 3.0, where vertex arrays are core).
         let vao = unsafe { self.0.create_vertex_array() }.map_err(|_| Reason::Internal)?;
@@ -441,6 +453,10 @@ impl Current<'_> {
         deleted();
     }
 
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "a blur failure is reported as a fixed Reason code, not the driver's text"
+    )]
     fn create_texture(self) -> Result<glow::Texture, Reason> {
         // SAFETY: the context is current.
         let texture = unsafe { self.0.create_texture() }.map_err(|_| Reason::Framebuffer)?;
@@ -482,6 +498,10 @@ impl Current<'_> {
         }
     }
 
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "a blur failure is reported as a fixed Reason code, not the driver's text"
+    )]
     fn create_framebuffer(self) -> Result<glow::Framebuffer, Reason> {
         // SAFETY: the context is current.
         let fbo = unsafe { self.0.create_framebuffer() }.map_err(|_| Reason::Framebuffer)?;

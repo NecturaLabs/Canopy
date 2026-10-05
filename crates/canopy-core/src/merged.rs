@@ -53,6 +53,10 @@ impl Repo {
     /// its upstream is gone, then, when `squash` is set and git is 2.38 or later, whether merging
     /// it would leave the base's tree unchanged. The squash check runs `git merge-tree` once per
     /// remaining branch, so run this off the UI thread. Branches come sorted by name.
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "kept as it was; docs/backlog.md has the entry to carry libgit2's message"
+    )]
     pub fn merged_branches(&self, base: &str, squash: bool) -> Result<Vec<MergedBranch>> {
         if base.starts_with('-') {
             return Err(Error::invalid(format!("'{base}' is not a valid base.")));

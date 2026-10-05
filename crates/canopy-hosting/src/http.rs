@@ -131,6 +131,10 @@ impl Http {
     }
 
     /// Profile lookup: no redirects, bounded JSON, and no author email in logs.
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "kept as it was; docs/backlog.md has the entry to carry the transport's message"
+    )]
     pub(crate) fn avatar_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let mut response = self
             .headers(self.agent.get(format!("{}{}", self.base, path)))
