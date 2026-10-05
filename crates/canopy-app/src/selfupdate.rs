@@ -515,7 +515,7 @@ fn swap_in(
                 previous,
                 &[],
                 &moved_aside,
-                format!("could not move {} aside: {e}", entry.display()),
+                &format!("could not move {} aside: {e}", entry.display()),
             ));
         }
         moved_aside.push(name.to_owned());
@@ -532,7 +532,7 @@ fn swap_in(
                 previous,
                 &moved_in,
                 &moved_aside,
-                format!("could not move {} into place: {e}", entry.display()),
+                &format!("could not move {} into place: {e}", entry.display()),
             ));
         }
         moved_in.push(name.to_owned());
@@ -547,7 +547,7 @@ fn rollback(
     previous: &Path,
     moved_in: &[std::ffi::OsString],
     moved_aside: &[std::ffi::OsString],
-    why: String,
+    why: &str,
 ) -> String {
     let mut ok = true;
     for name in moved_in {

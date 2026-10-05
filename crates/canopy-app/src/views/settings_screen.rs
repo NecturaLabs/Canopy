@@ -159,7 +159,7 @@ pub fn show(
     screen: &mut SettingsScreen,
     settings: &mut Settings,
     tokens: &mut TokenStore,
-    data: SettingsData<'_>,
+    data: &SettingsData<'_>,
     actions: &mut Vec<Action>,
 ) -> SettingsResult {
     let p = palette(ctx);
@@ -1031,7 +1031,7 @@ fn in_use(ui: &mut Ui, field: &Field) {
     let shown = elide_middle(
         ui,
         &source,
-        FontId::proportional(size),
+        &FontId::proportional(size),
         ui.available_width(),
     );
     let cut = shown != source;
@@ -1044,7 +1044,7 @@ fn in_use(ui: &mut Ui, field: &Field) {
 }
 
 /// `text` cut in its middle with an ellipsis until it fits in `max_width`.
-fn elide_middle(ui: &Ui, text: &str, font: FontId, max_width: f32) -> String {
+fn elide_middle(ui: &Ui, text: &str, font: &FontId, max_width: f32) -> String {
     let width = |t: &str| {
         ui.painter()
             .layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE)
@@ -1716,7 +1716,7 @@ fn privacy(
                 "trusted-folder",
                 &crate::settings::expand_home(&s.clone_parent()),
                 "Add folder…",
-            ) && crate::trust::add(&mut s.trusted_folders, dir)
+            ) && crate::trust::add(&mut s.trusted_folders, &dir)
             {
                 crate::trust::set(&s.trusted_folders);
                 ui.ctx().request_repaint();
@@ -2143,7 +2143,7 @@ mod tests {
     fn settings_fit_a_compact_zoomed_window() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
         let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(562.5, 350.0));
         let mut settings = Settings::default();
         let mut tokens = TokenStore::default();
@@ -2161,7 +2161,7 @@ mod tests {
                             &mut screen,
                             &mut settings,
                             &mut tokens,
-                            SettingsData {
+                            &SettingsData {
                                 forges: &[],
                                 update: &UpdateState::Idle,
                                 identity: IdentityView {
@@ -2261,8 +2261,8 @@ mod tests {
         let font = FontId::proportional(theme::metrics().small_size);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                assert_eq!(elide_middle(ui, path, font.clone(), 10_000.0), path);
-                let cut = elide_middle(ui, path, font.clone(), 200.0);
+                assert_eq!(elide_middle(ui, path, &font.clone(), 10_000.0), path);
+                let cut = elide_middle(ui, path, &font.clone(), 200.0);
                 assert!(cut.contains('…') && cut.starts_with("From") && cut.ends_with("gitconfig"));
                 let width = ui
                     .painter()
@@ -2270,7 +2270,7 @@ mod tests {
                     .size()
                     .x;
                 assert!(width <= 200.0, "{width}");
-                assert_eq!(elide_middle(ui, path, font.clone(), 0.0), "…");
+                assert_eq!(elide_middle(ui, path, &font.clone(), 0.0), "…");
             });
         });
         output.textures_delta.clear();

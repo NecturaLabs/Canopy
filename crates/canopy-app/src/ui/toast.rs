@@ -103,7 +103,7 @@ impl Toasts {
         kind: ToastKind,
         title: impl Into<String>,
         body: impl Into<String>,
-        repo: Option<PathBuf>,
+        repo: Option<&PathBuf>,
     ) {
         let ttl = if kind == ToastKind::Error {
             f64::INFINITY
@@ -114,7 +114,7 @@ impl Toasts {
         let title = title.into();
         let body = body.into();
         let (help, recovery) = if kind == ToastKind::Error {
-            error_help(&title, &body, repo.as_ref())
+            error_help(&title, &body, repo)
                 .map_or((None, None), |(help, recovery)| (Some(help), recovery))
         } else {
             (None, None)
@@ -240,7 +240,7 @@ mod tests {
     fn five_error_notifications_fit_and_remain_reachable_at_max_zoom() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut toasts = Toasts::default();
         for index in 1..=5 {
             toasts.push(
@@ -345,7 +345,7 @@ mod tests {
     fn clicking_a_success_notification_dismisses_it() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut toasts = Toasts::default();
         toasts.push(&ctx, ToastKind::Success, "Committed", "Finished safely");
         let mut pointer = egui::Pos2::ZERO;
@@ -397,7 +397,7 @@ mod tests {
     fn expanded_notification_details_survive_a_new_arrival() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut toasts = Toasts::default();
         toasts.push(&ctx, ToastKind::Error, "Original error", "Original output");
         let mut pointer = egui::Pos2::ZERO;
@@ -456,7 +456,7 @@ mod tests {
     fn notification_stack_fits_the_viewport() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut toasts = Toasts::default();
         toasts.push(&ctx, ToastKind::Error, "Push failed", "fetch first");
         toasts.push(&ctx, ToastKind::Success, "Committed", "Update README");

@@ -495,7 +495,7 @@ impl CanopyApp {
         let look = self.look();
         let wanted = (self.settings.theme, look);
         if self.applied != Some(wanted) {
-            theme::apply(ctx, self.settings.theme, &look);
+            theme::apply(ctx, self.settings.theme, look);
             self.applied = Some(wanted);
         }
     }
@@ -850,7 +850,7 @@ impl eframe::App for CanopyApp {
                 screen,
                 &mut self.settings,
                 &mut self.tokens,
-                settings_screen::SettingsData {
+                &settings_screen::SettingsData {
                     forges: &forges,
                     update: &self.updater.state,
                     identity: settings_screen::IdentityView {

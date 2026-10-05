@@ -353,7 +353,7 @@ pub struct Worker {
 
 impl Worker {
     /// Starts the thread (and a file watcher) for the repository at `path`.
-    pub fn spawn(path: PathBuf, ctx: egui::Context) -> Self {
+    pub fn spawn(path: PathBuf, ctx: &egui::Context) -> Self {
         let (jobs, job_rx) = unbounded::<Job>();
         let (ev_tx, events) = unbounded::<Event>();
         let thread_ctx = ctx.clone();
@@ -416,6 +416,10 @@ impl Job {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the thread owns its channels and context; dropping them on exit tells the other side"
+)]
 fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Context) {
     // Every event this thread logs carries the repository.
     let _repo = tracing::info_span!("repo", path = %path.display()).entered();
@@ -1316,7 +1320,7 @@ mod read_tests {
     fn an_untrusted_partial_clone_downloads_nothing_and_says_why() {
         // Blobless: the file list is offline, the line counts would need a download.
         let (_root, _src, copy, _oldest, middle) = partial_clone("--filter=blob:none");
-        let worker = Worker::spawn(copy, egui::Context::default());
+        let worker = Worker::spawn(copy, &egui::Context::default());
         worker.send(Job::Details(middle));
         let events = events_until(&worker, |e| matches!(e, Event::DownloadsRefused { .. }));
         assert!(
@@ -1333,7 +1337,7 @@ mod read_tests {
 
         // Treeless: even the file list needs a download, so the read fails and explains.
         let (_root, _src, copy, oldest, _) = partial_clone("--filter=tree:0");
-        let worker = Worker::spawn(copy, egui::Context::default());
+        let worker = Worker::spawn(copy, &egui::Context::default());
         worker.send(Job::Details(oldest));
         let events = events_until(&worker, |e| matches!(e, Event::DetailsFailed { .. }));
         let Some(Event::DetailsFailed {
@@ -1361,7 +1365,7 @@ mod read_tests {
     #[test]
     fn details_in_a_blobless_clone_show_the_file_list_first_and_the_counts_after_downloading() {
         let (_root, _src, copy, _oldest, middle) = trusted_partial_clone("--filter=blob:none");
-        let worker = Worker::spawn(copy, egui::Context::default());
+        let worker = Worker::spawn(copy, &egui::Context::default());
 
         // The blobs of this commit are not local: the list comes first, offline, and the line
         // counts follow once downloaded, with a progress line around the download.
@@ -1394,7 +1398,7 @@ mod read_tests {
     #[test]
     fn a_failed_download_of_details_is_reported_with_its_oid_and_can_be_retried() {
         let (root, src, copy, oldest, _) = trusted_partial_clone("--filter=tree:0");
-        let worker = Worker::spawn(copy, egui::Context::default());
+        let worker = Worker::spawn(copy, &egui::Context::default());
         let moved = root.path().join("src-moved");
         std::fs::rename(&src, &moved).expect("hide the remote");
 

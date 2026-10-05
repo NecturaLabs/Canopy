@@ -3326,7 +3326,7 @@ pub fn with_look<R>(style: Style, density: Density, f: impl FnOnce() -> R) -> R 
 
 /// Makes `id` the active theme with `look`'s style, density, glass and motion, and installs the
 /// matching egui style on `ctx`.
-pub fn apply(ctx: &egui::Context, id: ThemeId, look: &Appearance) {
+pub fn apply(ctx: &egui::Context, id: ThemeId, look: Appearance) {
     look_set(id, look.style, look.density, look.glass);
     super::motion::set_reduced(look.reduce_motion);
     let p = id.palette();
@@ -3913,7 +3913,7 @@ mod tests {
                     glass: false,
                     reduce_motion: true,
                 };
-                apply(&ctx, ThemeId::Midnight, &look);
+                apply(&ctx, ThemeId::Midnight, look);
                 let m = metrics_for(density, style);
                 let s = ctx.style_of(Theme::Dark);
                 assert_eq!(

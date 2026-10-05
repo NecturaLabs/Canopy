@@ -1080,7 +1080,7 @@ mod tests {
     fn merge_controls_fit_a_narrow_details_pane() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (worker, _, _) = Worker::detached();
         let mut tab = RepoTab::with_worker(
             "fixture".into(),

@@ -280,7 +280,7 @@ mod tests {
     fn alternative_shortcuts_have_separate_keycaps() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let chords = keymap::all_keys(keymap::Command::Palette);
         let mut output = ctx.run_ui(
             egui::RawInput {

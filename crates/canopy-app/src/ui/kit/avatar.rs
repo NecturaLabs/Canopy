@@ -464,7 +464,7 @@ mod tests {
     fn ctx() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
     }
 
@@ -506,7 +506,7 @@ mod tests {
             theme::apply(
                 &ctx,
                 theme::ThemeId::Midnight,
-                &theme::Appearance {
+                theme::Appearance {
                     density,
                     ..theme::Appearance::STILL
                 },

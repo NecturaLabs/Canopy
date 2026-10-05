@@ -405,7 +405,7 @@ impl RepoTab {
         commit_limit: usize,
         diff_prefs: DiffPrefs,
     ) -> Self {
-        let worker = Worker::spawn(path.clone(), ctx.clone());
+        let worker = Worker::spawn(path.clone(), ctx);
         worker.send(Job::Refresh(commit_limit));
         Self::with_worker(path, commit_limit, diff_prefs, worker)
     }
@@ -2246,7 +2246,7 @@ mod perf {
         crate::ui::theme::apply(
             &ctx,
             crate::ui::theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
+            crate::ui::theme::Appearance::STILL,
         );
         let settings = crate::settings::Settings::default();
         let dir = tempfile::tempdir().expect("tempdir");

@@ -337,19 +337,19 @@ impl Current<'_> {
         unsafe { self.0.draw_arrays(glow::TRIANGLES, 0, 3) }
     }
 
-    fn uniform_2(self, at: &glow::UniformLocation, [x, y]: [f32; 2]) {
+    fn uniform_2(self, at: glow::UniformLocation, [x, y]: [f32; 2]) {
         // SAFETY: the context is current; `at` belongs to the program in use.
-        unsafe { self.0.uniform_2_f32(Some(at), x, y) }
+        unsafe { self.0.uniform_2_f32(Some(&at), x, y) }
     }
 
-    fn uniform_1(self, at: &glow::UniformLocation, v: f32) {
+    fn uniform_1(self, at: glow::UniformLocation, v: f32) {
         // SAFETY: the context is current; `at` belongs to the program in use.
-        unsafe { self.0.uniform_1_f32(Some(at), v) }
+        unsafe { self.0.uniform_1_f32(Some(&at), v) }
     }
 
-    fn uniform_4(self, at: &glow::UniformLocation, [x, y, z, w]: [f32; 4]) {
+    fn uniform_4(self, at: glow::UniformLocation, [x, y, z, w]: [f32; 4]) {
         // SAFETY: the context is current; `at` belongs to the program in use.
-        unsafe { self.0.uniform_4_f32(Some(at), x, y, z, w) }
+        unsafe { self.0.uniform_4_f32(Some(&at), x, y, z, w) }
     }
 
     // --------------------------------------------------------------------------- objects
@@ -695,6 +695,10 @@ impl Drop for Building<'_> {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "taking the level means it cannot be used once its objects are deleted"
+)]
 fn delete_level(cur: Current<'_>, level: Level) {
     cur.delete_framebuffer(level.fbo);
     cur.delete_texture(level.texture);
@@ -964,10 +968,10 @@ impl GlassGl {
             cur.bind_both(Some(dst.fbo));
             cur.viewport([0, 0, dst_used[0], dst_used[1]]);
             cur.bind_texture(Some(src.texture));
-            cur.uniform_2(&p.texel, texel(src));
-            cur.uniform_2(&p.src_size, size(used_at(from)?));
-            cur.uniform_2(&p.dst_size, size(dst_used));
-            cur.uniform_1(&p.offset, blur.offset);
+            cur.uniform_2(p.texel, texel(src));
+            cur.uniform_2(p.src_size, size(used_at(from)?));
+            cur.uniform_2(p.dst_size, size(dst_used));
+            cur.uniform_1(p.offset, blur.offset);
             cur.draw_triangle();
             Ok(())
         };
@@ -999,12 +1003,12 @@ impl GlassGl {
         ]);
         cur.use_program(Some(c.program));
         cur.bind_texture(Some(level(0)?.texture));
-        cur.uniform_2(&c.texel, texel(level(0)?));
-        cur.uniform_2(&c.src_size, size(used_at(0)?));
-        cur.uniform_4(&c.region, [r.x as f32, r.y as f32, r.w as f32, r.h as f32]);
-        cur.uniform_4(&c.rect, plan.rect);
-        cur.uniform_4(&c.radii, plan.radii);
-        cur.uniform_4(&c.look, look.uniform());
+        cur.uniform_2(c.texel, texel(level(0)?));
+        cur.uniform_2(c.src_size, size(used_at(0)?));
+        cur.uniform_4(c.region, [r.x as f32, r.y as f32, r.w as f32, r.h as f32]);
+        cur.uniform_4(c.rect, plan.rect);
+        cur.uniform_4(c.radii, plan.radii);
+        cur.uniform_4(c.look, look.uniform());
         cur.draw_triangle();
         Ok(())
     }

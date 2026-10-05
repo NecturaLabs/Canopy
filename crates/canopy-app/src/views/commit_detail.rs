@@ -637,7 +637,7 @@ mod tests {
         theme::apply(
             &ctx,
             ThemeId::Midnight,
-            &Appearance {
+            Appearance {
                 density,
                 ..Appearance::STILL
             },

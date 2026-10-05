@@ -125,8 +125,8 @@ pub fn install_gate() {
 /// root is refused, whether spelled `/`, `C:\` or `/a/../..`. This is a reading of the path,
 /// without touching the repository's disk (it runs on the UI thread); core resolves links when it
 /// checks, and a link that leads to a root trusts nothing there.
-pub fn add(list: &mut Vec<PathBuf>, folder: PathBuf) -> bool {
-    let Ok(folder) = std::path::absolute(&folder) else {
+pub fn add(list: &mut Vec<PathBuf>, folder: &PathBuf) -> bool {
+    let Ok(folder) = std::path::absolute(folder) else {
         return false;
     };
     if is_root(&folder) || list.contains(&folder) {
@@ -155,21 +155,21 @@ mod tests {
     #[test]
     fn folders_are_added_once_and_a_root_is_refused() {
         let mut list = Vec::new();
-        assert!(add(&mut list, PathBuf::from("/home/ada/src")));
-        assert!(!add(&mut list, PathBuf::from("/home/ada/src")));
-        assert!(!add(&mut list, PathBuf::from("/")));
+        assert!(add(&mut list, &PathBuf::from("/home/ada/src")));
+        assert!(!add(&mut list, &PathBuf::from("/home/ada/src")));
+        assert!(!add(&mut list, &PathBuf::from("/")));
         assert_eq!(list, [PathBuf::from("/home/ada/src")]);
     }
 
     #[test]
     fn a_relative_folder_is_kept_as_an_absolute_one() {
         let mut list = Vec::new();
-        assert!(add(&mut list, PathBuf::from("repo")));
+        assert!(add(&mut list, &PathBuf::from("repo")));
         assert!(list.iter().all(|folder| folder.is_absolute()));
         assert!(list[0].ends_with("repo"));
         let kept = list[0].clone();
-        assert!(!add(&mut list, kept), "already there");
-        assert!(!add(&mut list, PathBuf::new()), "nothing to trust");
+        assert!(!add(&mut list, &kept), "already there");
+        assert!(!add(&mut list, &PathBuf::new()), "nothing to trust");
     }
 
     #[test]
@@ -216,10 +216,10 @@ mod tests {
     #[test]
     fn a_path_that_reads_as_the_root_is_refused_like_the_root() {
         let mut list = Vec::new();
-        assert!(!add(&mut list, PathBuf::from("/..")));
-        assert!(!add(&mut list, PathBuf::from("/a/../..")));
-        assert!(!add(&mut list, PathBuf::from("/./")));
+        assert!(!add(&mut list, &PathBuf::from("/..")));
+        assert!(!add(&mut list, &PathBuf::from("/a/../..")));
+        assert!(!add(&mut list, &PathBuf::from("/./")));
         assert!(list.is_empty(), "{list:?}");
-        assert!(add(&mut list, PathBuf::from("/a/../b")));
+        assert!(add(&mut list, &PathBuf::from("/a/../b")));
     }
 }

@@ -226,7 +226,7 @@ impl CanopyApp {
                 }
                 Action::TrustFolder(folder) => {
                     let shown = folder.display().to_string();
-                    if crate::trust::add(&mut self.settings.trusted_folders, folder) {
+                    if crate::trust::add(&mut self.settings.trusted_folders, &folder) {
                         crate::trust::set(&self.settings.trusted_folders);
                         self.toasts
                             .push(ctx, ToastKind::Success, "Folder trusted", shown);
@@ -279,7 +279,7 @@ impl CanopyApp {
                     self.settings.skipped_version = Some(v);
                     self.updater.state = UpdateState::UpToDate;
                 }
-                Action::CreateRequest { source } => self.create_request(ctx, source),
+                Action::CreateRequest { source } => self.create_request(ctx, &source),
                 Action::Host(job) => {
                     if let Some(t) = self.tab() {
                         let kind = t.host.as_ref().map(|h| h.forge.kind);

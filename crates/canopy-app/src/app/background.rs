@@ -265,7 +265,7 @@ impl CanopyApp {
                     },
                     n.title,
                     n.body,
-                    Some(tab.path.clone()),
+                    Some(&tab.path.clone()),
                 );
             }
             // Taken after the poll that set it, so the dialog shows in this frame.

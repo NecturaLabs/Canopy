@@ -13,7 +13,7 @@ pub fn ctx_with(theme_id: ThemeId, style: Style, density: Density) -> Context {
     theme::apply(
         &ctx,
         theme_id,
-        &Appearance {
+        Appearance {
             style,
             density,
             ..Appearance::STILL

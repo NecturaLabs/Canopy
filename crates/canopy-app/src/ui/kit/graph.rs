@@ -44,7 +44,7 @@ impl Lanes {
     }
 
     /// The centre x of `lane` in a column whose left edge is `left`.
-    pub fn x(&self, left: f32, lane: u16) -> f32 {
+    pub fn x(self, left: f32, lane: u16) -> f32 {
         left + self.x0 + f32::from(lane) * self.pitch
     }
 }
@@ -86,7 +86,7 @@ impl Marks {
     }
 }
 
-fn anchor(rect: Rect, lanes: &Lanes, lane: u16, end: LineEnd) -> Pos2 {
+fn anchor(rect: Rect, lanes: Lanes, lane: u16, end: LineEnd) -> Pos2 {
     let y = match end {
         LineEnd::Top => rect.top(),
         LineEnd::Mid => rect.center().y,
@@ -121,12 +121,12 @@ fn dashed(painter: &Painter, a: Pos2, b: Pos2, stroke: Stroke) {
 
 /// The `graph_node_r` circle's centre on `rect`'s row for the node's lane, snapped to device
 /// pixels so prerasterised discs stay crisp.
-pub fn node_center(painter: &Painter, rect: Rect, lanes: &Lanes, lane: u16) -> Pos2 {
+pub fn node_center(painter: &Painter, rect: Rect, lanes: Lanes, lane: u16) -> Pos2 {
     anchor(rect, lanes, lane, LineEnd::Mid).round_to_pixel_center(painter.pixels_per_point())
 }
 
 /// Paints one row of the graph: its edges, then its node.
-pub fn paint_row(painter: &Painter, rect: Rect, lanes: &Lanes, row: &GraphRow, marks: &Marks) {
+pub fn paint_row(painter: &Painter, rect: Rect, lanes: Lanes, row: &GraphRow, marks: Marks) {
     let p = theme::palette(painter.ctx());
     let m = theme::metrics();
     let painter = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
@@ -165,9 +165,9 @@ pub fn paint_row(painter: &Painter, rect: Rect, lanes: &Lanes, row: &GraphRow, m
 fn paint_node(
     painter: &Painter,
     rect: Rect,
-    lanes: &Lanes,
+    lanes: Lanes,
     row: &GraphRow,
-    marks: &Marks,
+    marks: Marks,
     p: &Palette,
 ) {
     let m = theme::metrics();
@@ -291,7 +291,7 @@ pub(crate) fn gallery(ui: &mut egui::Ui) {
                             below_wip: i == 1,
                             ..Marks::new(ground)
                         };
-                        paint_row(ui.painter(), rect, &lanes, row, &marks);
+                        paint_row(ui.painter(), rect, lanes, row, marks);
                         let label = match i {
                             0 => "Uncommitted changes".to_owned(),
                             1 => "HEAD: merge".to_owned(),
@@ -322,7 +322,7 @@ mod tests {
     fn ctx() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
     }
 
@@ -363,7 +363,7 @@ mod tests {
         let ctx = ctx();
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             let rect = Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(76.0, 28.0));
-            paint_row(ui.painter(), rect, &Lanes::new(1), row, &marks);
+            paint_row(ui.painter(), rect, Lanes::new(1), row, marks);
         });
         out.textures_delta.clear();
         out.shapes

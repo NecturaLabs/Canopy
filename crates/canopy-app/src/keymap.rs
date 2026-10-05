@@ -595,7 +595,7 @@ fn key_name(key: Key) -> &'static str {
 
 impl Chord {
     /// Human-readable form, e.g. `Ctrl+Shift+F` or `G` for Shift+G.
-    pub fn label(&self) -> String {
+    pub fn label(self) -> String {
         let mut s = String::new();
         if self.ctrl {
             s.push_str(mod_label());
@@ -619,7 +619,7 @@ impl Chord {
         s
     }
 
-    fn matches(&self, key: Key, m: &Modifiers) -> bool {
+    fn matches(self, key: Key, m: Modifiers) -> bool {
         if key != self.key {
             return false;
         }
@@ -652,6 +652,7 @@ impl Binding {
         }
         self.chords
             .iter()
+            .copied()
             .map(Chord::label)
             .collect::<Vec<_>>()
             .join("  ·  ")
@@ -667,7 +668,7 @@ pub fn hint(command: Command) -> String {
             .find(|b| b.command == command && b.section.is_bare() == bare)
             .and_then(|b| {
                 if b.keys_label.is_empty() {
-                    b.chords.first().map(Chord::label)
+                    b.chords.first().copied().map(Chord::label)
                 } else {
                     Some(
                         b.keys_label
@@ -757,7 +758,7 @@ pub fn dispatch(ctx: &egui::Context, active: impl Fn(&Binding, &Chord) -> bool) 
                 let Some(index) = binding
                     .chords
                     .iter()
-                    .position(|c| c.matches(*key, modifiers))
+                    .position(|c| c.matches(*key, *modifiers))
                 else {
                     continue;
                 };
@@ -869,11 +870,7 @@ mod tests {
                     command: c.ctrl,
                     ..Modifiers::NONE
                 };
-                assert!(
-                    !c.matches(c.key, &held),
-                    "{} fires with Alt held",
-                    c.label()
-                );
+                assert!(!c.matches(c.key, held), "{} fires with Alt held", c.label());
             }
         }
     }
@@ -895,7 +892,7 @@ mod tests {
         for (key, held) in owned {
             for b in BINDINGS {
                 assert!(
-                    !b.chords.iter().any(|c| c.matches(key, &held)),
+                    !b.chords.iter().any(|c| c.matches(key, held)),
                     "{key:?} with {held:?} would fire {:?}",
                     b.command
                 );
@@ -931,15 +928,15 @@ mod tests {
     #[test]
     fn matching_respects_shift() {
         let m = Modifiers::NONE;
-        assert!(bare(Key::G).matches(Key::G, &m));
-        assert!(!shifted(Key::G).matches(Key::G, &m));
-        assert!(shifted(Key::G).matches(Key::G, &Modifiers::SHIFT));
-        assert!(symbol(Key::Questionmark).matches(Key::Questionmark, &Modifiers::SHIFT));
-        assert!(!bare(Key::G).matches(Key::G, &Modifiers::ALT));
-        assert!(ctrl(Key::K).matches(Key::K, &Modifiers::COMMAND));
+        assert!(bare(Key::G).matches(Key::G, m));
+        assert!(!shifted(Key::G).matches(Key::G, m));
+        assert!(shifted(Key::G).matches(Key::G, Modifiers::SHIFT));
+        assert!(symbol(Key::Questionmark).matches(Key::Questionmark, Modifiers::SHIFT));
+        assert!(!bare(Key::G).matches(Key::G, Modifiers::ALT));
+        assert!(ctrl(Key::K).matches(Key::K, Modifiers::COMMAND));
         // `[` typed with AltGr (German, Nordic layouts) is still `[`.
-        assert!(symbol(Key::OpenBracket).matches(Key::OpenBracket, &Modifiers::ALT));
-        assert!(!symbol(Key::OpenBracket).matches(Key::OpenBracket, &Modifiers::COMMAND));
+        assert!(symbol(Key::OpenBracket).matches(Key::OpenBracket, Modifiers::ALT));
+        assert!(!symbol(Key::OpenBracket).matches(Key::OpenBracket, Modifiers::COMMAND));
     }
 
     #[test]
@@ -947,15 +944,15 @@ mod tests {
         let alt = Modifiers::ALT;
         let ctrl_alt = Modifiers::ALT | Modifiers::COMMAND;
         // Alt alone types the character on every platform.
-        assert!(symbol(Key::Plus).matches(Key::Plus, &alt));
-        assert!(!ctrl_symbol(Key::Plus).matches(Key::Plus, &alt));
+        assert!(symbol(Key::Plus).matches(Key::Plus, alt));
+        assert!(!ctrl_symbol(Key::Plus).matches(Key::Plus, alt));
         // Ctrl+Alt is AltGr on Windows only; elsewhere it is a Ctrl press.
         assert_eq!(
-            symbol(Key::Plus).matches(Key::Plus, &ctrl_alt),
+            symbol(Key::Plus).matches(Key::Plus, ctrl_alt),
             cfg!(windows)
         );
         assert_eq!(
-            ctrl_symbol(Key::Plus).matches(Key::Plus, &ctrl_alt),
+            ctrl_symbol(Key::Plus).matches(Key::Plus, ctrl_alt),
             !cfg!(windows)
         );
     }

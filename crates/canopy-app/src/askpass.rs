@@ -274,6 +274,10 @@ fn hung_up(stream: &TcpStream) -> bool {
 
 /// Handles one connection: checks the token, hands the prompt to the UI and waits for the
 /// answer, or until the asking process goes away.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "owning the stream closes the connection when the answer is sent"
+)]
 fn serve(
     stream: TcpStream,
     token: &str,

@@ -345,6 +345,10 @@ impl Drop for HostWorker {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the thread owns its channels and context; dropping them on exit tells the other side"
+)]
 fn run(
     forge: Forge,
     saved: Option<String>,

@@ -1070,10 +1070,10 @@ mod tests {
 
     use super::*;
 
-    fn identity(name: &str, email: &str, source: Option<Source>, usable: bool) -> Identity {
+    fn identity(name: &str, email: &str, source: Option<&Source>, usable: bool) -> Identity {
         let field = |value: &str| Field {
             value: value.into(),
-            source: source.clone(),
+            source: source.cloned(),
         };
         let person = Person {
             name: field(name),
@@ -1173,7 +1173,7 @@ mod tests {
     fn every_row_offers_its_action_under_the_pointer() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
         let mut tab = RepoTab::new(
             dir.path().into(),
@@ -1233,7 +1233,7 @@ mod tests {
     fn compact_clean_summary_keeps_publish_reachable_by_scrolling() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (worker, _, _) = crate::worker::Worker::detached();
         let tab = RepoTab::with_worker(
             "fixture".into(),
@@ -1285,7 +1285,7 @@ mod tests {
     fn the_composer_follows_a_short_list_and_pins_below_a_long_one() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
         let mut tab = RepoTab::new(
             dir.path().into(),
@@ -1343,7 +1343,7 @@ mod tests {
             scope: "global".into(),
             origin: "file:/home/ada/.gitconfig".into(),
         });
-        let good = identity("Ada Lovelace", "ada@example.com", configured.clone(), true);
+        let good = identity("Ada Lovelace", "ada@example.com", configured.as_ref(), true);
         assert_eq!(identity_notice(Some(&good), false), None);
         assert_eq!(
             identity_notice(None, false),
@@ -1351,12 +1351,12 @@ mod tests {
             "still reading: no warning yet"
         );
 
-        let placeholder = identity("t", "t@t", configured, true);
+        let placeholder = identity("t", "t@t", configured.as_ref(), true);
         assert_eq!(
             identity_notice(Some(&placeholder), false),
             Some("This identity looks like a placeholder.")
         );
-        let guessed = identity("ada", "ada@host.example", Some(Source::Guessed), true);
+        let guessed = identity("ada", "ada@host.example", Some(&Source::Guessed), true);
         assert_eq!(
             identity_notice(Some(&guessed), false),
             Some("Git guessed part of this identity from the computer.")
@@ -1376,7 +1376,7 @@ mod tests {
     fn wrapped_identity_notice_does_not_overlap_commit_fields() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
         let mut tab = RepoTab::new(
             dir.path().into(),
@@ -1443,7 +1443,7 @@ mod tests {
         for size in [vec2(600.0, 375.0), vec2(960.0, 600.0), vec2(1440.0, 900.0)] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
-            theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
             let dir = tempfile::tempdir().expect("temporary tab");
             let mut tab = RepoTab::new(
                 dir.path().into(),

@@ -1370,7 +1370,7 @@ mod tests {
                 theme::apply(
                     &ctx,
                     theme::ThemeId::Midnight,
-                    &theme::Appearance {
+                    theme::Appearance {
                         style,
                         density,
                         ..theme::Appearance::STILL
@@ -1393,14 +1393,14 @@ mod tests {
                 assert_eq!(heights[5], m.control);
             }
         }
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
     }
 
     #[test]
     fn disabled_and_loading_buttons_ignore_clicks() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         for (enabled, loading, expect) in [
             (true, false, true),
             (false, false, false),
@@ -1445,7 +1445,7 @@ mod tests {
     fn disabled_buttons_paint_at_the_disabled_opacity() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let p = theme::palette(&ctx);
         let fills = |enabled: bool| {
             let shapes = frame(&ctx, Vec::new(), |ui| {

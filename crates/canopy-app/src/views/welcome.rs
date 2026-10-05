@@ -335,7 +335,7 @@ mod tests {
     fn quick_action_text_fits_a_minimum_zoomed_window() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut card_rect = egui::Rect::NOTHING;
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             card_rect = card(
@@ -365,11 +365,7 @@ mod tests {
     fn the_ambient_glow_stops_repainting_once_it_has_settled() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &theme::Appearance::default(),
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::default());
         let mut input = egui::RawInput::default();
         let mut repaint = std::time::Duration::ZERO;
         for frame in 0..40 {

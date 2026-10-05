@@ -200,7 +200,7 @@ mod tests {
             for enabled in [false, true] {
                 let ctx = egui::Context::default();
                 crate::ui::fonts::install(&ctx);
-                theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+                theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
                 let mut checked = false;
                 let mut activated = false;
                 let mut focused = false;
@@ -309,7 +309,7 @@ mod tests {
     fn disabled_primary_controls_do_not_use_the_enabled_fill() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         for frame in 0..3 {
             let mut button_rect = egui::Rect::NOTHING;
             let output = ctx.run_ui(egui::RawInput::default(), |ui| {

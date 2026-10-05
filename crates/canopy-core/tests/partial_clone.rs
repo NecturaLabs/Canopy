@@ -253,7 +253,7 @@ fn assert_history_matches_cli(fx: &Fixture, repo: &Repo, missing: MissingObjects
     }
 }
 
-fn assert_not_downloaded(err: Error, remote: Option<&str>, attempted: bool) {
+fn assert_not_downloaded(err: &Error, remote: Option<&str>, attempted: bool) {
     match &err {
         Error::NotDownloaded { remote: r, reason } => {
             assert_eq!(r.as_deref(), remote, "{err}");
@@ -357,7 +357,7 @@ fn blobless_clone_fail_mode_stays_offline() {
             Fail,
         )
         .expect_err("old blobs are missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
     assert_eq!(missing(&dir), before, "Fail must not download anything");
 }
 
@@ -541,7 +541,7 @@ fn treeless_clone_downloads_trees_then_blobs_and_matches_cli() {
     let err = repo
         .commit_details(fx.commits[0], Fail)
         .expect_err("old trees are missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
 
     assert_history_matches_cli(&fx, &repo, Download);
     assert_history_matches_cli(&fx, &repo, Fail);
@@ -570,7 +570,7 @@ fn no_checkout_clone_staged_diff_downloads_head_blob() {
             Fail,
         )
         .expect_err("HEAD blob is missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
     let d = repo
         .file_diff(
             &DiffSource::Staged,
@@ -682,7 +682,7 @@ fn unstaged_diff_against_missing_index_blob_downloads_it() {
             Fail,
         )
         .expect_err("index blob is missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
     let d = repo
         .file_diff(
             &DiffSource::Unstaged,
@@ -708,7 +708,7 @@ fn hunk_staging_stays_offline_and_works_once_the_diff_was_downloaded() {
     let err = repo
         .apply_hunk(HunkAction::Stage, "a.txt", 0, (1, 3, 1, 3), 3)
         .expect_err("index blob is missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
 
     let d = repo
         .file_diff(
@@ -798,7 +798,7 @@ fn unreachable_remote_reports_git_error_and_recovers() {
         panic!("expected NotDownloaded with a reason, got {err:?}");
     };
     assert!(!reason.is_empty(), "the error gives no reason");
-    assert_not_downloaded(err, Some("origin"), true);
+    assert_not_downloaded(&err, Some("origin"), true);
     assert!(fs::read_dir(dir.join(".git")).is_ok(), "repository intact");
 
     fs::rename(&moved, &fx.src).expect("restore the remote");
@@ -834,11 +834,11 @@ fn removed_promisor_remote_cannot_download() {
             Fail,
         )
         .expect_err("no remote");
-    assert_not_downloaded(err, None, false);
+    assert_not_downloaded(&err, None, false);
     let err = repo
         .commit_details(fx.commits[1], Download)
         .expect_err("no remote");
-    assert_not_downloaded(err, None, true);
+    assert_not_downloaded(&err, None, true);
 }
 
 #[test]
@@ -1052,7 +1052,7 @@ fn treeless_soft_reset_never_reports_head_as_unborn() {
     let err = repo
         .status(Fail)
         .expect_err("status alone reports the missing tree");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
     let err = repo
         .file_diff(
             &DiffSource::Staged,
@@ -1063,7 +1063,7 @@ fn treeless_soft_reset_never_reports_head_as_unborn() {
             Fail,
         )
         .expect_err("HEAD tree is missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
     assert_eq!(missing(&dir), before, "Fail must not download anything");
 
     let status = repo.status(Download).expect("downloads the HEAD tree");

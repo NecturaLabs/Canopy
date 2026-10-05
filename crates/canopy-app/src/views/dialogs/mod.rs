@@ -1593,7 +1593,7 @@ mod tests {
         crate::ui::theme::apply(
             &ctx,
             crate::ui::theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
+            crate::ui::theme::Appearance::STILL,
         );
         let mut dialog = Dialog::clone_default(&Settings::default());
         if let Dialog::Clone { builder, .. } = &mut dialog {
@@ -1669,7 +1669,7 @@ mod tests {
             crate::ui::theme::apply(
                 &ctx,
                 crate::ui::theme::ThemeId::Daylight,
-                &crate::ui::theme::Appearance::STILL,
+                crate::ui::theme::Appearance::STILL,
             );
             let mut dialog = Dialog::Consent {
                 step,

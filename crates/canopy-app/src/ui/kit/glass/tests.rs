@@ -21,7 +21,7 @@ fn setup(ctx: &egui::Context, theme: ThemeId, glass: bool, backend: Backend) {
     theme::apply(
         ctx,
         theme,
-        &Appearance {
+        Appearance {
             glass,
             ..Appearance::STILL
         },

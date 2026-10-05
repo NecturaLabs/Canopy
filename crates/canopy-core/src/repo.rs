@@ -517,10 +517,11 @@ impl Repo {
             let Some(kind) = diff::delta_kind(delta.status()) else {
                 continue;
             };
-            let path = diff::path_of(delta.new_file()).or_else(|| diff::path_of(delta.old_file()));
+            let path =
+                diff::path_of(&delta.new_file()).or_else(|| diff::path_of(&delta.old_file()));
             let Some(path) = path else { continue };
             let old_path = (kind == ChangeKind::Renamed)
-                .then(|| diff::path_of(delta.old_file()))
+                .then(|| diff::path_of(&delta.old_file()))
                 .flatten();
             let (additions, deletions) = if full {
                 match git2::Patch::from_diff(&d, idx)? {
