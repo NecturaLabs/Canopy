@@ -552,31 +552,27 @@ pub fn file_row_height() -> f32 {
 /// [`ListRow`] (selection is the wash, with no side bar). `id` identifies the row across frames
 /// (for hover and its context menu). Lists of these are [`file_row_height`] apart.
 pub fn file_list_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egui::Response {
-    file_list_row_inner(ui, f, selected, id, None)
+    file_list_row_inner(ui, f, selected, id, 0.0, None)
 }
 
 /// [`file_list_row`] with actions revealed at its right end while it is hovered, selected or
-/// focused: `actions` adds `IconButton::size(Size::Sm)`s right to left.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the changes list calls it once its migration lands"
-    )
-)]
+/// focused: `actions` adds them right to left (`IconButton::size(Size::Sm)`s, or a labelled
+/// `Button::size(Size::Sm)`), and the row keeps `actions_width` for them
+/// ([`icon_actions_width`] for icon buttons).
 pub fn file_list_row_with<'a>(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
     id: egui::Id,
+    actions_width: f32,
     actions: impl FnOnce(&mut Ui) + 'a,
 ) -> egui::Response {
-    file_list_row_inner(ui, f, selected, id, Some(Box::new(actions)))
+    file_list_row_inner(ui, f, selected, id, actions_width, Some(Box::new(actions)))
 }
 
-/// Room the row keeps at its right end for revealed actions: two small icon buttons, as
-/// `ListRow::actions` reserves.
-fn row_actions_width() -> f32 {
+/// Room a file row keeps at its right end for two small icon buttons, as `ListRow::actions`
+/// reserves.
+pub fn icon_actions_width() -> f32 {
     (theme::metrics().control_sm + 2.0) * 2.0
 }
 
@@ -588,6 +584,7 @@ fn file_list_row_inner(
     f: &FileEntry,
     selected: bool,
     id: egui::Id,
+    actions_width: f32,
     actions: Option<RowActions<'_>>,
 ) -> egui::Response {
     let p = palette(ui.ctx());
@@ -598,7 +595,7 @@ fn file_list_row_inner(
     let name_font = FontId::new(m.body_size, theme::medium());
     let dir_font = FontId::proportional(m.meta_size);
     let reserve = if actions.is_some() {
-        row_actions_width()
+        actions_width
     } else {
         0.0
     };
@@ -787,7 +784,8 @@ mod tests {
         let mut nodes = Vec::new();
         for _ in 0..2 {
             nodes = spoken(&ctx, |ui| {
-                file_list_row_with(ui, &f, true, egui::Id::new("row"), |ui| {
+                let width = super::icon_actions_width();
+                file_list_row_with(ui, &f, true, egui::Id::new("row"), width, |ui| {
                     IconButton::new(icon::PLUS, "Stage file")
                         .size(Size::Sm)
                         .show(ui);

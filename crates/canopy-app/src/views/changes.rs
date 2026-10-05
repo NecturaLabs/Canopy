@@ -1,9 +1,6 @@
 //! The staging area: conflicted, unstaged and staged files, the commit composer and the diff.
 
-use egui::text::{LayoutJob, TextFormat};
-use egui::{
-    Align, FontFamily, FontId, Layout, Rect, Response, RichText, Ui, UiBuilder, pos2, vec2,
-};
+use egui::{Align, FontId, Layout, Rect, Response, RichText, Ui, UiBuilder, pos2, vec2};
 use egui_phosphor::regular as icon;
 
 use canopy_core::identity::Identity;
@@ -12,14 +9,14 @@ use canopy_core::{DiffSource, FileEntry};
 use crate::action::Action;
 use crate::keymap::Command;
 use crate::tab::{FileSelection, RepoTab};
-use crate::ui::kit::chip::{ChangeBadge, CountBadge, DiffStat};
+use crate::ui::kit::chip::CountBadge;
 use crate::ui::kit::field::{TextArea, TextField};
 use crate::ui::kit::progress::Spinner;
-use crate::ui::kit::row::{ListRow, RowCtx, RowKind, SectionHeader, caps_galley};
+use crate::ui::kit::row::{RowKind, SectionHeader, caps_galley};
 use crate::ui::kit::toggle::Checkbox;
-use crate::ui::kit::{Button, IconButton, Size, Tone, anim, menu, paint};
+use crate::ui::kit::{Button, IconButton, Size, Tone, menu, paint};
 use crate::ui::theme::{self, palette};
-use crate::ui::{art, motion, widgets};
+use crate::ui::{art, widgets};
 use crate::views::{commit_detail, diff, resolve, state_banner};
 use crate::worker::Op;
 
@@ -529,9 +526,8 @@ fn list(
         let selected = tab.file.as_ref().is_some_and(|s| {
             s.entry.path == f.path && s.source == source && s.conflicted == conflicted
         });
-        // The row's action, revealed under the pointer. A conflicted file's is a labelled
-        // "Resolve conflicts…", shown only under the pointer: a bare check would read as
-        // "already done". The selected row keeps its Stage or Unstage button.
+        // The row's action, revealed under the pointer and on the selected row. A conflicted
+        // file's is a labelled "Resolve conflicts…": a bare icon would read as "already done".
         let (glyph, tip) = if which == List::Staged {
             (icon::MINUS, "Unstage")
         } else if conflicted {
@@ -543,7 +539,6 @@ fn list(
             glyph,
             tip,
             labelled: conflicted,
-            pinned: selected && !conflicted,
         };
         let (resp, acted) = file_row(ui, f, selected, ("change", which as u8, &f.path), action);
         let toggle = || {
@@ -631,13 +626,11 @@ struct RowAction {
     tip: &'static str,
     /// A Ghost button with the label instead of an icon button.
     labelled: bool,
-    /// Shown without the pointer too (the selected row).
-    pinned: bool,
 }
 
-/// A changed file: its status badge, name, folder and line counts, and `action` revealed left of
-/// the counts while the row is hovered (or pinned). Returns the row and whether the action was
-/// clicked.
+/// A changed file on the shared file-row path ([`commit_detail::file_list_row_with`]): its
+/// status badge, name, folder and line counts, and `action` revealed at its right end while the
+/// row is hovered, selected or focused. Returns the row and whether the action was clicked.
 fn file_row(
     ui: &mut Ui,
     f: &FileEntry,
@@ -645,110 +638,53 @@ fn file_row(
     id_salt: impl std::hash::Hash + std::fmt::Debug,
     action: RowAction,
 ) -> (Response, bool) {
-    let ctx = ui.ctx().clone();
-    let p = palette(&ctx);
-    let m = theme::metrics();
-    let height = RowKind::File.height();
-    // The row lands at the cursor, full width (as `ListRow` allocates it).
-    let ahead = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), height));
-    let hovered = ui.rect_contains_pointer(ahead);
-    let mut state: Option<RowCtx> = None;
-    let row = ListRow::new(id_salt)
-        .kind(RowKind::File)
-        .selected(selected)
-        .show_with(ui, |rc, _| state = Some(*rc));
-    row.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &f.path)
-    });
-    let reveal = anim::ease_bool(
-        &ctx,
-        row.id.with("file-row-action"),
-        hovered || action.pinned,
-        motion::FAST,
-        motion::FAST,
-    );
-    let mut acted = false;
-    if let Some(rc) = state {
-        let cy = rc.rect.center().y;
-        let badge_rect =
-            Rect::from_center_size(pos2(rc.content.left() + 8.5, cy), vec2(17.0, 17.0));
-        let mut badge = ui.new_child(UiBuilder::new().max_rect(badge_rect));
-        ChangeBadge::new(f.kind).show(&mut badge);
-        let mut end = ui.new_child(
-            UiBuilder::new()
-                .max_rect(Rect::from_min_max(
-                    pos2(badge_rect.right(), rc.rect.top()),
-                    pos2(rc.content.right(), rc.rect.bottom()),
-                ))
-                .layout(Layout::right_to_left(Align::Center)),
-        );
-        end.spacing_mut().item_spacing.x = theme::SM;
-        if f.additions + f.deletions > 0 {
-            DiffStat::new(f.additions, f.deletions).show(&mut end);
-        }
-        if reveal > 0.0 {
-            end.scope(|ui| {
-                ui.multiply_opacity(reveal);
-                let r = if action.labelled {
-                    Button::new(action.tip)
-                        .ghost()
-                        .size(Size::Sm)
-                        .id_salt(("file-row-action", &f.path))
-                        .show(ui)
-                } else {
-                    IconButton::new(action.glyph, action.tip)
-                        .size(Size::Sm)
-                        .id_salt(("file-row-action", &f.path))
-                        .show(ui)
-                };
-                r.widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
-                        true,
-                        format!("{} {}", action.tip, f.path),
-                    )
-                });
-                acted = r.clicked();
-            });
-        }
-        let right = end.min_rect().left() - theme::SM;
-        let left = badge_rect.right() + theme::SM;
-        if right > left {
-            let painter = ui.painter().with_clip_rect(
-                Rect::from_x_y_ranges(left..=right, rc.rect.y_range()).intersect(ui.clip_rect()),
-            );
-            let (name, dir) = widgets::split_path(&f.path);
-            let name = painter.layout_no_wrap(
-                name.to_owned(),
-                FontId::new(m.body_size, theme::medium()),
-                rc.text,
-            );
-            let name_w = name.size().x;
-            painter.galley(pos2(left, cy - name.size().y / 2.0), name, rc.text);
-            if !dir.is_empty() {
-                let mut job = LayoutJob::default();
-                job.append(
-                    dir,
-                    0.0,
-                    TextFormat::simple(
-                        FontId::new(m.meta_size, FontFamily::Proportional),
-                        p.text_faint,
-                    ),
-                );
-                let dir = painter.layout_job(job);
-                painter.galley(
-                    pos2(left + name_w + theme::SM, cy - dir.size().y / 2.0),
-                    dir,
-                    p.text_faint,
-                );
-            }
-        }
-    }
-    let tip = match &f.old_path {
-        Some(old) => format!("{} → {}", old, f.path),
-        None => f.path.clone(),
+    let id = ui.id().with(id_salt);
+    let width = if action.labelled {
+        labelled_action_width(ui, action.tip)
+    } else {
+        commit_detail::icon_actions_width()
     };
-    (row.on_hover_text(tip), acted)
+    let mut acted = false;
+    let row = commit_detail::file_list_row_with(ui, f, selected, id, width, |ui| {
+        let salt = ("file-row-action", &f.path);
+        let r = if action.labelled {
+            Button::new(action.tip)
+                .ghost()
+                .size(Size::Sm)
+                .id_salt(salt)
+                .show(ui)
+        } else {
+            IconButton::new(action.glyph, action.tip)
+                .size(Size::Sm)
+                .id_salt(salt)
+                .show(ui)
+        };
+        r.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("{} {}", action.tip, f.path),
+            )
+        });
+        acted = r.clicked();
+    });
+    (row, acted)
+}
+
+/// Room a labelled Ghost `Size::Sm` action takes at a row's end: its text, the button's side
+/// padding and a gap before the line counts.
+fn labelled_action_width(ui: &Ui, label: &str) -> f32 {
+    let m = theme::metrics();
+    let text = ui
+        .painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            FontId::new(m.body_size, theme::medium()),
+            egui::Color32::PLACEHOLDER,
+        )
+        .size()
+        .x;
+    text + 2.0 * m.button_pad_x_sm + theme::XS
 }
 
 /// The commit composer. `follows` is true when it sits under the file lists in their scroll
