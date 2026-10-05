@@ -77,7 +77,6 @@ pub const ICON_HERO: f32 = 32.0;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
 /// Shared control geometry, in logical points before interface zoom.
 pub const CONTROL_HEIGHT: f32 = 30.0;
-pub const COMPACT_CONTROL_HEIGHT: f32 = 28.0;
 pub const PRIMARY_CONTROL_HEIGHT: f32 = 36.0;
 pub const CONTROL_INSET: f32 = 2.0;
 pub const CHECKBOX_SIZE: f32 = 18.0;
