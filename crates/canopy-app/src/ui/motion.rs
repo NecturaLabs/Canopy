@@ -24,22 +24,34 @@ pub const BASE: f32 = 0.15;
 /// Dialog and popover entrance transform.
 pub const SLOW: f32 = 0.22;
 /// Toast slide-in.
-#[expect(dead_code, reason = "used by the component phase")]
 pub const TOAST_IN: f32 = 0.28;
 /// Exits: a fade and a small reverse transform.
-#[expect(dead_code, reason = "used by the component phase")]
 pub const EXIT_POPUP: f32 = 0.10;
-#[expect(dead_code, reason = "used by the component phase")]
 pub const EXIT_DIALOG: f32 = 0.12;
-#[expect(dead_code, reason = "used by the component phase")]
 pub const EXIT_TOAST: f32 = 0.16;
 /// A tooltip's first delay, and the window after one closes in which the next shows at once.
 pub const TOOLTIP_DELAY: f32 = 0.45;
 pub const TOOLTIP_SKIP: f32 = 0.30;
 /// Spinners and skeletons appear only after this long and then stay at least `LOADING_MIN`.
 pub const LOADING_DELAY: f32 = 0.15;
-#[expect(dead_code, reason = "used by the component phase")]
 pub const LOADING_MIN: f32 = 0.40;
+/// The second of two toasts arriving together enters this much later.
+pub const TOAST_STAGGER: f32 = 0.09;
+/// Tooltip exit fade.
+pub const TOOLTIP_OUT: f32 = 0.06;
+/// A submenu opens after the pointer rests on its item this long.
+pub const SUBMENU_DELAY: f32 = 0.10;
+/// A determinate progress fill easing towards a larger value.
+pub const PROGRESS_FILL: f32 = 0.18;
+/// Loops (they run while visible and stop with reduced motion): one indeterminate sweep, one sweep
+/// of the line under search inputs and its wait before the first, one spinner turn, one skeleton
+/// pulse, and the reduced-motion spinner's pulse.
+pub const INDETERMINATE_PERIOD: f32 = 1.35;
+pub const LINE_PERIOD: f32 = 1.5;
+pub const LINE_DELAY: f32 = 1.0;
+pub const SPIN_PERIOD: f32 = 0.8;
+pub const SKELETON_PERIOD: f32 = 1.2;
+pub const PULSE_PERIOD: f32 = 1.0;
 
 /// A CSS-style cubic Bézier timing curve from (0, 0) to (1, 1).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -85,7 +97,6 @@ pub const EASE_OUT: Bezier = Bezier {
     y2: 1.0,
 };
 /// Indeterminate progress.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by the component phase"))]
 pub const EASE_IN_OUT: Bezier = Bezier {
     x1: 0.45,
     y1: 0.05,
@@ -100,7 +111,8 @@ pub const SPRING_SOFT: Bezier = Bezier {
     x2: 0.64,
     y2: 1.0,
 };
-/// About 10% overshoot: the checkbox tick and radio dot.
+/// About 10% overshoot (concept 1's `--spring`): the checkbox tick and radio dot, and the
+/// entrance transform of menus, popovers, dialogs, tooltips and toasts.
 pub const SPRING_CURVE: Bezier = Bezier {
     x1: 0.34,
     y1: 1.56,

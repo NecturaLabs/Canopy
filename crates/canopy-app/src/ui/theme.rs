@@ -84,8 +84,7 @@ pub const CHECKBOX_SIZE: f32 = 18.0;
 pub const SWITCH_SIZE: egui::Vec2 = egui::vec2(40.0, 24.0);
 /// Inner margin of every framed text field, matching the standard control height.
 pub const FIELD_MARGIN: Margin = Margin::symmetric(8, 7);
-/// Maximum outer width and raw-output viewport of a notification card.
-pub const TOAST_WIDTH: f32 = 408.0;
+/// Tallest raw-output viewport of a notification card.
 pub const TOAST_DETAILS_HEIGHT: f32 = 140.0;
 
 /// Two ends of a vertical fill, top first. Standard surfaces are flat (`top == bottom`) and paint

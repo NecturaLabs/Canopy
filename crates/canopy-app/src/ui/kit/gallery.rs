@@ -12,7 +12,7 @@ use egui::{
     Ui, Vec2, pos2, vec2,
 };
 
-use super::{ButtonKind, ForceState, button, paint};
+use super::{ButtonKind, ForceState, button, menu, overlay, paint, progress};
 use crate::ui::theme::{self, Elevation, Fill, Palette, Style};
 
 /// A gallery section: its title and the function that draws its components.
@@ -26,6 +26,9 @@ pub const SECTIONS: &[Section] = &[
     ("Toggles", super::toggle::gallery),
     ("Segmented and tabs", super::choice::gallery),
     ("Slider", super::range::gallery),
+    ("Progress", progress::gallery),
+    ("Menus", menu::gallery),
+    ("Overlays", overlay::gallery),
 ];
 
 const MAX_WIDTH: f32 = 1360.0;
