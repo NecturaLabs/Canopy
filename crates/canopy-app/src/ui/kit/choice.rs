@@ -188,6 +188,13 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
     /// Shows the control; the response is the group's and reports `changed` when the choice
     /// moved.
     pub fn show(self, ui: &mut Ui) -> Response {
+        struct Seg {
+            icon: Option<Arc<Galley>>,
+            text: Option<Arc<Galley>>,
+            badge: Option<Arc<Galley>>,
+            width: f32,
+        }
+
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
         let style = theme::style();
@@ -205,12 +212,6 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
             m.segment_pad - 3.0
         };
 
-        struct Seg {
-            icon: Option<Arc<Galley>>,
-            text: Option<Arc<Galley>>,
-            badge: Option<Arc<Galley>>,
-            width: f32,
-        }
         let segs: Vec<Seg> = self
             .options
             .iter()
@@ -506,6 +507,13 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
     /// Shows the tabs. The response is the tab list's (`changed` when the active tab moved); the
     /// value is the tab whose close button was pressed, if any.
     pub fn show(self, ui: &mut Ui) -> KitResponse<Option<T>> {
+        struct Tab {
+            icon: Option<Arc<Galley>>,
+            text: Arc<Galley>,
+            count: Option<Arc<Galley>>,
+            width: f32,
+        }
+
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
         let s = theme::surfaces(&ctx);
@@ -522,12 +530,6 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
             TAB_PAD_LEFT
         };
 
-        struct Tab {
-            icon: Option<Arc<Galley>>,
-            text: Arc<Galley>,
-            count: Option<Arc<Galley>>,
-            width: f32,
-        }
         let tabs: Vec<Tab> = self
             .options
             .iter()

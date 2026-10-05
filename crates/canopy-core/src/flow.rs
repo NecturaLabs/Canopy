@@ -1,6 +1,7 @@
-//! git-flow without the `git flow` program: the AVH configuration keys (`gitflow.branch.*`,
-//! `gitflow.prefix.*`) and the start and finish steps for feature, bugfix, release and hotfix
-//! branches, run as plain `git` commands.
+//! git-flow without the `git flow` program.
+//!
+//! The AVH configuration keys (`gitflow.branch.*`, `gitflow.prefix.*`) and the start and finish
+//! steps for feature, bugfix, release and hotfix branches, run as plain `git` commands.
 //!
 //! Finishing checks every merge it will make with `git merge-tree --write-tree` (Git 2.38 or
 //! later) before it changes anything, and refuses when one would conflict, so a finish never stops

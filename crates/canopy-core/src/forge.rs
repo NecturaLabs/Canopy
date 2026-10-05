@@ -116,9 +116,11 @@ fn normalise_path(kind: ForgeKind, raw: &str) -> Option<String> {
     ok.then(|| segments.join("/"))
 }
 
-/// Normalises a user-entered host: drops surrounding whitespace, a scheme, credentials, a path
-/// and a port, and lower-cases the rest. Returns `None` when nothing valid remains (including
-/// IPv6 literals and names with characters outside `a-z 0-9 . -`).
+/// Normalises a user-entered host.
+///
+/// Drops surrounding whitespace, a scheme, credentials, a path and a port, and lower-cases the
+/// rest. Returns `None` when nothing valid remains (including IPv6 literals and names with
+/// characters outside `a-z 0-9 . -`).
 ///
 /// `"HTTPS://user@GitLab.Corp:8443/x"` becomes `gitlab.corp`, the same host [`Forge::parse`]
 /// stores, so the result can be compared with [`Forge::host`].
@@ -360,9 +362,11 @@ impl Forge {
     }
 }
 
-/// Builds a clone URL for `project` (`owner/repo`, or `group/sub/repo` on GitLab) on `host`
-/// (the provider's public host when `None` or empty). Surrounding slashes and a trailing `.git`
-/// in `project` are tolerated. Returns `None` when the host or the project path is invalid.
+/// Builds a clone URL for `project` (`owner/repo`, or `group/sub/repo` on GitLab) on `host` (the
+/// provider's public host when `None` or empty).
+///
+/// Surrounding slashes and a trailing `.git` in `project` are tolerated. Returns `None` when the
+/// host or the project path is invalid.
 pub fn clone_url(kind: ForgeKind, host: Option<&str>, project: &str, ssh: bool) -> Option<String> {
     let host = match host.map(str::trim).filter(|h| !h.is_empty()) {
         Some(h) => canonical_host(&normalise_host(h)?).to_owned(),

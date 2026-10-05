@@ -489,6 +489,8 @@ mod tests {
 
     #[test]
     fn cards_announce_errors_as_alerts_and_the_rest_as_status() {
+        use egui::accesskit::{Live, Role};
+
         let ctx = context();
         ctx.enable_accesskit();
         let out = run(&ctx, Vec::new(), |ui| {
@@ -507,7 +509,6 @@ mod tests {
                 .find(|(_, n)| n.label() == Some(label))
                 .map(|(_, n)| (n.role(), n.live()))
         };
-        use egui::accesskit::{Live, Role};
         assert_eq!(
             role("Push failed"),
             Some((Role::Alert, Some(Live::Assertive)))

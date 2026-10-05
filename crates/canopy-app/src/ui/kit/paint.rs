@@ -67,11 +67,12 @@ fn shrink_radius(r: CornerRadius, by: f32) -> CornerRadius {
 
 /// A 1 x 32 ramp from `top` to `bottom`, uploaded once per pair of colours and reused.
 fn ramp(ctx: &Context, top: Color32, bottom: Color32) -> TextureHandle {
+    const N: usize = 32;
+
     let id = Id::new(("canopy-kit-ramp", top, bottom));
     if let Some(t) = ctx.data(|d| d.get_temp::<TextureHandle>(id)) {
         return t;
     }
-    const N: usize = 32;
     let pixels = (0..N)
         .map(|i| top.lerp_to_gamma(bottom, i as f32 / (N - 1) as f32))
         .collect();

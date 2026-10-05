@@ -39,9 +39,10 @@ fn askpass_slot() -> &'static RwLock<Option<Askpass>> {
     SLOT.get_or_init(|| RwLock::new(None))
 }
 
-/// Registers the credential prompt used by every later [`command`], process-wide; `None` turns
-/// it off. A `GIT_ASKPASS`, `SSH_ASKPASS` or `SSH_ASKPASS_REQUIRE` the user already set in the
-/// environment wins over it; the extra `env` pairs are always set.
+/// Registers the credential prompt used by every later [`command`], process-wide.
+///
+/// `None` turns it off. A `GIT_ASKPASS`, `SSH_ASKPASS` or `SSH_ASKPASS_REQUIRE` the user already
+/// set in the environment wins over it; the extra `env` pairs are always set.
 pub fn set_askpass(askpass: Option<Askpass>) {
     let mut slot = askpass_slot()
         .write()
@@ -434,8 +435,9 @@ pub(crate) fn run_answer(
 }
 
 /// Runs a long command (clone, fetch, pull, push) and reports each progress line from standard
-/// error to `progress` as it arrives. Returns standard error's last lines on success, which is
-/// where git puts its summary.
+/// error to `progress` as it arrives.
+///
+/// Returns standard error's last lines on success, which is where git puts its summary.
 pub fn run_streaming(
     workdir: Option<&Path>,
     args: &[&str],

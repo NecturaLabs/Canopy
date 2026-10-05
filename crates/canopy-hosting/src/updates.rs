@@ -1,6 +1,8 @@
-//! Canopy's own update feed: a small JSON manifest in the public `NecturaLabs/app-updates`
-//! repository, fetched anonymously over HTTPS. Nothing about the user is sent (no identifiers,
-//! no query string); the request carries only `User-Agent: Canopy/<version>`.
+//! Canopy's own update feed.
+//!
+//! A small JSON manifest in the public `NecturaLabs/app-updates` repository, fetched anonymously
+//! over HTTPS. Nothing about the user is sent (no identifiers, no query string); the request
+//! carries only `User-Agent: Canopy/<version>`.
 //!
 //! Manifest format (`canopy/latest.json` for stable builds, `canopy/beta.json` for beta builds).
 //! `version` is the build number, `git rev-list --count` of the build's commit on `main`:

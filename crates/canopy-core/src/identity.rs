@@ -132,9 +132,11 @@ fn git_write(workdir: Option<&Path>, args: &[&str]) -> Result<cli::Output> {
     cli::output_within(command(workdir), args, WRITE_LIMIT)
 }
 
-/// Change Git's `user.*` settings. Git chooses the target global file itself. Environment and
-/// `author.*`/`committer.*` overrides may still take precedence, which the next read reveals.
-/// If the email cannot be written after the name was, the name is put back.
+/// Change Git's `user.*` settings.
+///
+/// Git chooses the target global file itself. Environment and `author.*`/`committer.*` overrides
+/// may still take precedence, which the next read reveals. If the email cannot be written after the
+/// name was, the name is put back.
 pub fn set(workdir: Option<&Path>, scope: Scope, name: &str, email: &str) -> Result<()> {
     if scope == Scope::Local && workdir.is_none() {
         return Err(Error::invalid(

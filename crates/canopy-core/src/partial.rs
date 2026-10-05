@@ -48,9 +48,11 @@ pub(crate) fn is_missing_object(e: &git2::Error) -> bool {
     e.code() == ErrorCode::NotFound && e.class() == ErrorClass::Odb
 }
 
-/// The promisor remotes, in the order git tries them: every `remote.<name>.promisor = true` in
-/// configuration order, then the one `extensions.partialClone` names (git moves it to the end,
-/// `promisor_remote_init` in `promisor-remote.c`).
+/// The promisor remotes, in the order git tries them.
+///
+/// Every `remote.<name>.promisor = true` in configuration order, then the one
+/// `extensions.partialClone` names (git moves it to the end, `promisor_remote_init` in
+/// `promisor-remote.c`).
 pub fn promisor_remotes(repo: &Repository) -> Vec<String> {
     let Ok(config) = repo.config().and_then(|mut c| c.snapshot()) else {
         return Vec::new();
@@ -147,8 +149,9 @@ type DownloadGate = fn(common_dir: &Path, workdir: Option<&Path>) -> bool;
 
 static DOWNLOAD_GATE: std::sync::OnceLock<DownloadGate> = std::sync::OnceLock::new();
 
-/// Installs the rule every download passes at the very point where `git fetch` would start, so
-/// that no read path can reach a fetch around it, however many remotes or rounds one read takes.
+/// Installs the rule every download passes at the very point where `git fetch` would start, so that
+/// no read path can reach a fetch around it, however many remotes or rounds one read takes.
+///
 /// Only the application knows what the user trusts. Until a rule is installed downloads are not
 /// restricted; the first call wins.
 pub fn set_download_gate(gate: DownloadGate) {

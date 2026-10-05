@@ -152,16 +152,18 @@ pub(super) fn identity_in_scope(
     scope: canopy_core::identity::Scope,
 ) -> Option<String> {
     use canopy_core::identity::{Scope, Source};
-    let wanted = match scope {
-        Scope::Local => "local",
-        Scope::Global => "global",
-    };
-    let author = &tab?.identity.as_ref()?.author;
+
     fn set_here<'a>(field: &'a canopy_core::identity::Field, wanted: &str) -> Option<&'a str> {
         matches!(&field.source, Some(Source::Config { scope, .. }) if scope == wanted)
             .then(|| field.value.trim())
             .filter(|v| !v.is_empty())
     }
+
+    let wanted = match scope {
+        Scope::Local => "local",
+        Scope::Global => "global",
+    };
+    let author = &tab?.identity.as_ref()?.author;
     match (
         set_here(&author.name, wanted),
         set_here(&author.email, wanted),

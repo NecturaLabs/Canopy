@@ -18,13 +18,14 @@ impl CanopyApp {
     }
 
     pub(super) fn palette_entries(&self) -> Vec<(Entry, Action)> {
+        use Command as C;
+
         let e = |icon: &'static str, label: &str, detail: &str, cmd: Option<Command>| Entry {
             icon,
             label: label.to_owned(),
             detail: detail.to_owned(),
             shortcut: cmd.map(keymap::hint).unwrap_or_default(),
         };
-        use Command as C;
         let mut v = vec![
             (
                 e(

@@ -273,6 +273,9 @@ mod tests {
 
     #[test]
     fn gitlab_host_variable_trusts_one_more_host() {
+        const BARE_HOST: &[(&str, &str)] = &[("GL_TOKEN", "gl2"), ("GITLAB_HOST", "git.corp")];
+        const GH_HOST: &[(&str, &str)] = &[("GH_TOKEN", "gh"), ("GITLAB_HOST", "git.corp")];
+        const BAD_HOST: &[(&str, &str)] = &[("GITLAB_TOKEN", "gl"), ("GITLAB_HOST", "  ")];
         const WITH_HOST: &[(&str, &str)] = &[
             ("GITLAB_TOKEN", "gl"),
             ("GITLAB_HOST", "https://GitLab.Example.org:8443/"),
@@ -291,19 +294,16 @@ mod tests {
                 "{host}"
             );
         }
-        const BARE_HOST: &[(&str, &str)] = &[("GL_TOKEN", "gl2"), ("GITLAB_HOST", "git.corp")];
         assert_eq!(
             env_token_for(ForgeKind::GitLab, "git.corp", none, env(BARE_HOST)).as_deref(),
             Some("gl2")
         );
         // GITLAB_HOST does not make a GitHub token flow anywhere.
-        const GH_HOST: &[(&str, &str)] = &[("GH_TOKEN", "gh"), ("GITLAB_HOST", "git.corp")];
         assert_eq!(
             env_token_for(ForgeKind::GitHub, "git.corp", none, env(GH_HOST)),
             None
         );
         // An unparsable GITLAB_HOST trusts nothing.
-        const BAD_HOST: &[(&str, &str)] = &[("GITLAB_TOKEN", "gl"), ("GITLAB_HOST", "  ")];
         assert_eq!(
             env_token_for(ForgeKind::GitLab, "gitlab.example.org", none, env(BAD_HOST)),
             None

@@ -432,13 +432,14 @@ pub(crate) fn gallery(ui: &mut Ui) {
 
 /// A small generated picture for the gallery (no network, no files): a diagonal two-tone square.
 fn placeholder_picture(ctx: &egui::Context) -> TextureId {
+    const N: usize = 32;
+
     let id = Id::new("kit-gallery-avatar-picture");
     if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
         return t.id();
     }
     let p = theme::palette(ctx);
     let (a, b) = (p.lanes[0], p.lanes[3]);
-    const N: usize = 32;
     let pixels = (0..N * N)
         .map(|i| {
             let (x, y) = (i % N, i / N);

@@ -992,6 +992,8 @@ mod tests {
 
     #[test]
     fn items_report_menu_roles() {
+        use egui::accesskit::Role;
+
         let ctx = context_();
         ctx.enable_accesskit();
         let out = run(&ctx, Vec::new(), |ui| {
@@ -1010,7 +1012,6 @@ mod tests {
                 .find(|(_, n)| n.label() == Some(label))
                 .map(|(_, n)| n.role())
         };
-        use egui::accesskit::Role;
         assert_eq!(role("New tag…"), Some(Role::MenuItem));
         assert_eq!(role("By name"), Some(Role::MenuItemCheckBox));
         assert!(

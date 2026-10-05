@@ -562,7 +562,7 @@ pub(crate) fn chord_keys(command: Command) -> Vec<String> {
     split_chord(chord)
 }
 
-/// "Ctrl+Shift+F" as ["Ctrl", "Shift", "F"]; a "+" key stays a key ("Ctrl++").
+/// `Ctrl+Shift+F` as `["Ctrl", "Shift", "F"]`; a `+` key stays a key (`Ctrl++`).
 pub(crate) fn split_chord(chord: &str) -> Vec<String> {
     let mut keys = Vec::new();
     let mut rest = chord;

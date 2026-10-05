@@ -688,6 +688,13 @@ fn view_tabs(
     requests: Option<(canopy_core::forge::ForgeKind, usize)>,
     actions: &mut Vec<Action>,
 ) {
+    struct Laid {
+        glyph: Arc<egui::Galley>,
+        text: Option<Arc<egui::Galley>>,
+        badge: Option<Badge>,
+        width: f32,
+    }
+
     let ctx = ui.ctx().clone();
     let p = palette(&ctx);
     let style = theme::style();
@@ -728,12 +735,6 @@ fn view_tabs(
     let font = FontId::new(m.body_size, theme::medium());
     let seg_h = m.control - 2.0;
     let inset = m.segment_track_pad + paint::SEAM;
-    struct Laid {
-        glyph: Arc<egui::Galley>,
-        text: Option<Arc<egui::Galley>>,
-        badge: Option<Badge>,
-        width: f32,
-    }
     let laid: Vec<Laid> = items
         .iter()
         .map(|it| {
