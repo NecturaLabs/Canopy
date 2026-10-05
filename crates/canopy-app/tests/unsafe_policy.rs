@@ -498,6 +498,36 @@ fn the_workspace_denies_unsafe_code() {
     assert!(checked >= 3, "checked {checked} crates");
 }
 
+/// The manifest's `deny` holds only if no build configuration lifts it: cargo config, CI and the
+/// tools that build releases must not pass `-A unsafe_code` or cap lints.
+#[test]
+fn no_build_configuration_lifts_the_unsafe_lint() {
+    let mut files = vec![
+        root().join(".cargo/config"),
+        root().join(".cargo/config.toml"),
+    ];
+    for dir in [".github/workflows", ".github/actions/setup-rust", "tools"] {
+        if let Ok(entries) = std::fs::read_dir(root().join(dir)) {
+            files.extend(entries.flatten().map(|e| e.path()));
+        }
+    }
+    let mut read = 0;
+    for file in files.iter().filter(|f| f.is_file()) {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        read += 1;
+        for needle in ["unsafe_code", "cap-lints"] {
+            assert!(
+                !text.contains(needle),
+                "{} mentions {needle}",
+                relative(file)
+            );
+        }
+    }
+    assert!(read >= 5, "read {read} build files");
+}
+
 #[test]
 fn comments_and_strings_are_not_code() {
     let src = r###"

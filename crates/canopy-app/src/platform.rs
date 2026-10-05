@@ -502,6 +502,9 @@ mod tests {
         assert!(!web_address("C:\\Windows\\evil.cmd"));
         assert!(!web_address("javascript:alert(1)"));
         assert!(!web_address("vscode://open?x"));
+        assert!(!web_address(" https://github.com/o/r"));
+        assert!(!web_address("ssh://git@github.com/o/r.git"));
+        assert!(!web_address("https://github.com/\u{7f}"));
         assert!(!web_address("--help"));
         assert!(!web_address("https://a\nb"));
     }
