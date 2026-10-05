@@ -3,7 +3,7 @@
 //! `canopy/beta.json`), compares its build number with this build's and, when newer, offers the
 //! release notes and the download for this platform. It never downloads or installs anything by
 //! itself and sends nothing about the user. Installing is a separate step the user asks for in
-//! the update dialog (`Updater::install`, which runs `selfupdate.rs`).
+//! the update dialog (`Updater::install`, which runs `selfupdate/mod.rs`).
 
 use crossbeam_channel::{Receiver, unbounded};
 
