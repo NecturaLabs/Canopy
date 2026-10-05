@@ -5,10 +5,7 @@
 use std::sync::Arc;
 
 use egui::text::LayoutJob;
-use egui::{
-    Align, Align2, Color32, FontId, Galley, Layout, Painter, Response, RichText, Ui, UiBuilder,
-    pos2, vec2,
-};
+use egui::{Align, Align2, Color32, FontId, Galley, Layout, Painter, Response, RichText, Ui, pos2};
 use egui_phosphor::regular as icon;
 
 use canopy_core::RefKind;
@@ -27,15 +24,16 @@ use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::{Badge, RefPill};
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::TextArea;
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{Disclosure, ListRow, RowKind, SectionHeader};
 use crate::ui::kit::select::Select;
-use crate::ui::kit::surface::{Banner, EmptyAction, EmptyState, InsetBox};
+use crate::ui::kit::surface::{EmptyAction, EmptyState, InsetBox};
 use crate::ui::kit::{self, Button, IconButton, Size, Tone};
 use crate::ui::theme::{self, Style, palette};
 use crate::ui::widgets::{self, forge_icon};
-use crate::views::commit_detail;
 use crate::views::dialogs::Dialog;
+use crate::views::{commit_detail, state_banner};
 
 /// Why an action waits.
 const WAIT: &str = "Wait for the current operation";
@@ -44,14 +42,16 @@ const BRANCH_PILL_MAX: f32 = 240.0;
 
 /// Draws the view.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec<Action>) {
-    operation_banner(ui, tab, actions);
+    state_banner::show(ui, tab, actions);
     let Some((_, forge)) = tab.forge().cloned() else {
+        let local = tab.snap.as_ref().is_some_and(|s| s.remotes.is_empty());
+        let (body, button) = no_forge(local);
         empty(
             ui,
             art::local_only(),
             "No GitHub or GitLab remote",
-            "Pull and merge requests appear here for repositories hosted on GitHub or GitLab.",
-            None,
+            body,
+            Some(button),
             actions,
         );
         return;
@@ -104,96 +104,6 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec
         .show(ui, |ui| detail(ui, tab, kind, actions));
 }
 
-/// The merge, rebase, cherry-pick or revert in progress, with Continue and Abort.
-fn operation_banner(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
-    let Some(snap) = &tab.snap else {
-        return;
-    };
-    if snap.state == canopy_core::RepoState::Clean {
-        return;
-    }
-    let m = theme::metrics();
-    let state = snap.state;
-    let conflicts = snap.status.conflicted.len();
-    let busy = tab.running.is_some();
-    egui::Panel::top("repository-operation-state")
-        .frame(egui::Frame::NONE)
-        .show(ui, |ui| {
-            let left = if conflicts > 0 {
-                format!(
-                    "{conflicts} conflict{} left",
-                    if conflicts == 1 { "" } else { "s" }
-                )
-            } else {
-                "No conflicts left".to_owned()
-            };
-            let banner = Banner::new(
-                Tone::Warning,
-                format!("{} in progress on {}", state.label(), snap.head.label()),
-            )
-            .body(left)
-            .show(ui);
-            let Some(command) = state.command() else {
-                return;
-            };
-            let rect = banner.response.rect;
-            if rect.height() <= 0.0 {
-                return;
-            }
-            // The banner grows in from its top edge: its content sits on the bottom.
-            let full = egui::Rect::from_min_size(
-                pos2(rect.left(), rect.bottom() - m.pane_header_height),
-                vec2(rect.width(), m.pane_header_height),
-            );
-            let mut child = ui.new_child(
-                UiBuilder::new()
-                    .max_rect(full.shrink2(vec2(theme::SM, 0.0)))
-                    .layout(Layout::right_to_left(Align::Center)),
-            );
-            child.set_clip_rect(rect.intersect(ui.clip_rect()));
-            if Button::new(format!("Abort {command}…"))
-                .ghost()
-                .size(Size::Sm)
-                .icon(icon::X_CIRCLE)
-                .icon_tone(Tone::Danger)
-                .enabled(!busy)
-                .disabled_reason(WAIT)
-                .id_salt("operation-abort")
-                .show(&mut child)
-                .clicked()
-            {
-                actions.push(Action::Confirm {
-                    title: format!("Abort {command}"),
-                    body: "Return the repository to where it was before the operation started? Resolved conflicts are discarded.".into(),
-                    confirm: "Abort".into(),
-                    danger: true,
-                    op: crate::worker::Op::ContinueOrAbort { state, abort: true },
-                });
-            }
-            let can_continue = conflicts == 0 && !busy;
-            if Button::new("Continue")
-                .ghost()
-                .size(Size::Sm)
-                .icon(icon::ARROW_RIGHT)
-                .enabled(can_continue)
-                .tooltip("Continue this operation using the staged resolutions")
-                .disabled_reason(if busy {
-                    WAIT
-                } else {
-                    "Resolve and stage every conflicted file first"
-                })
-                .id_salt("operation-continue")
-                .show(&mut child)
-                .clicked()
-            {
-                actions.push(Action::Op(crate::worker::Op::ContinueOrAbort {
-                    state,
-                    abort: false,
-                }));
-            }
-        });
-}
-
 fn cap(s: &str) -> String {
     let mut c = s.chars();
     c.next()
@@ -220,6 +130,23 @@ fn empty(
         && let Some((_, action)) = button
     {
         actions.push(action);
+    }
+}
+
+/// What the requests view says, and offers, for a repository with no GitHub or GitLab remote:
+/// with no remote at all, publishing it; otherwise, adding a GitHub or GitLab remote.
+fn no_forge(local: bool) -> (&'static str, (String, Action)) {
+    // The empty state shows two lines of body text: keep each sentence inside them.
+    if local {
+        (
+            "Publish it to GitHub or GitLab to work with its pull and merge requests here.",
+            ("Publish…".to_owned(), Action::Publish),
+        )
+    } else {
+        (
+            "Add a GitHub or GitLab remote to see its pull and merge requests here.",
+            ("Add remote…".to_owned(), Action::AddRemoteDialog),
+        )
     }
 }
 
@@ -926,7 +853,8 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64, actions: &mut Vec<Action>) {
                     };
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(g).size(m.icon_md).color(col))
-                            .on_hover_text(word);
+                            .kit_tooltip(word)
+                            .show();
                         match &c.url {
                             Some(u) => {
                                 if LinkButton::new(&c.name).external(true).show(ui).clicked() {
@@ -959,7 +887,8 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64, actions: &mut Vec<Action>) {
                         .size(m.meta_size)
                         .color(c),
                 )
-                .on_hover_text(&r.state);
+                .kit_tooltip(&r.state)
+                .show();
             }
         });
         ui.add_space(theme::MD);
@@ -1042,8 +971,21 @@ fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Ac
 
 #[cfg(test)]
 mod tests {
+    use egui::vec2;
+
     use super::*;
     use crate::worker::Worker;
+
+    /// qa-a F13: the empty state without a forge offers the way out, not only an explanation.
+    #[test]
+    fn without_a_forge_the_view_offers_publish_or_add_remote() {
+        let (_, (label, action)) = no_forge(true);
+        assert_eq!(label, "Publish…");
+        assert!(matches!(action, Action::Publish));
+        let (_, (label, action)) = no_forge(false);
+        assert_eq!(label, "Add remote…");
+        assert!(matches!(action, Action::AddRemoteDialog));
+    }
 
     fn summary(state: RequestState) -> RequestSummary {
         RequestSummary {

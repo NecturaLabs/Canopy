@@ -25,6 +25,7 @@ use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::TextField;
 use crate::ui::kit::overlay;
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::paint;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::range::Slider;
@@ -1041,7 +1042,7 @@ fn in_use(ui: &mut Ui, field: &Field) {
         RichText::new(shown).size(size).color(p.text_faint),
     ));
     if cut {
-        resp.on_hover_text(source);
+        resp.kit_tooltip(source).show();
     }
 }
 
@@ -1384,9 +1385,12 @@ fn commit_page(ui: &mut Ui, s: &mut Settings) {
         reason = "the range's ends are the whole numbers 200 and 50 000"
     )]
     let (lo, hi) = (*COMMIT_PAGE.start() as usize, *COMMIT_PAGE.end() as usize);
+    // The steppers stand a gap away from the field and as tall as it, like the other rows'
+    // controls, rather than pressed against it.
+    ui.spacing_mut().item_spacing.x = theme::SM;
     // Right to left: +, the field, −.
     if IconButton::new(icon::PLUS, "More commits per page")
-        .size(Size::Sm)
+        .size(Size::Md)
         .enabled(s.commit_page < hi)
         .id_salt("commit-page-more")
         .show(ui)
@@ -1420,7 +1424,7 @@ fn commit_page(ui: &mut Ui, s: &mut Settings) {
         s.commit_page = page;
     }
     if IconButton::new(icon::MINUS, "Fewer commits per page")
-        .size(Size::Sm)
+        .size(Size::Md)
         .enabled(s.commit_page > lo)
         .id_salt("commit-page-fewer")
         .show(ui)
@@ -1761,7 +1765,8 @@ fn privacy(
                 )
                 .truncate(),
             )
-            .on_hover_text(folder.display().to_string());
+            .kit_tooltip(folder.display().to_string())
+            .show();
         });
     }
     if let Some(i) = remove {

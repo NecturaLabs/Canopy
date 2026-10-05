@@ -270,10 +270,13 @@ in the density's metrics:
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
 - Commit details use a compact author, SHA and date above the changed files. Commit information
-  starts open, opens independently of pane expansion and retains its state; its body scrolls while
-  the files
-  stay reachable. The open metadata body reserves room for up to two changed files and their
-  controls. History prefers six visible rows and can retain the split with two rows in a short
+  starts open, opens independently of pane expansion and retains its state, by one rule in every
+  density: its body shows whenever its first whole line fits under room reserved for up to two
+  changed files and the "N files changed" line; otherwise the block waits shut, with a tooltip
+  saying how to make room. The body sits flush with the author row, takes its natural height up
+  to that room and scrolls past it behind a faded edge, never cutting a line through its glyphs.
+  It repeats the commit summary only when the pane header cannot show it whole (or, in a compact
+  window, has no header). History prefers six visible rows and can retain the split with two rows in a short
   window. Automatic inspector height adapts when the diff arrives; a manual resize takes precedence.
 - Commit metadata, the Changes file list, and the request list take at most 40% of their
   available width, leaving the rest for the diff or request details. Pane limits follow the
@@ -319,10 +322,13 @@ in the density's metrics:
 - Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;
   Discard is a ghost that turns `danger` under the pointer and sits apart on the right, and on
   very wide panes the actions stay within 960 px of the left edge. A new or deleted file is always
-  one column without the empty line-number column (the layout switch shows dimmed on Unified), and
+  one column without the empty line-number column (the layout switch shows disabled on Unified,
+  its tooltip saying why), and
   its lines keep the full added/removed tint only in the gutter, with a quiet wash over the code.
   A line wider than the pane fades out at the edge.
-- The shared operation banner (merge, rebase, cherry-pick) leads History, Changes and Requests.
+- The shared operation banner (merge, rebase, cherry-pick) leads History, Changes and Requests,
+  drawn the same way in all three (`views/state_banner.rs`): the kit warning `Banner` with
+  Continue and Abort as ghost buttons at its right end.
   State and conflict count precede Continue; unresolved conflicts or active work disable it.
   Abort is separated and confirmed. The merge composer says Conclude merge and starts with
   Git's pending message when no draft exists.
@@ -336,7 +342,18 @@ in the density's metrics:
 - The commit composer follows the file lists while both fit the column, under a hairline, and
   pins to the bottom with the lists scrolling above it only when they would crowd it (about
   260 points of composer). Row actions (stage, unstage, mark resolved) show on the selected row
-  and under the pointer on any row.
+  and under the pointer on any row. Changes and commit details draw file rows the same way
+  (`commit_detail::file_list_row_with`); a conflicted file's action is a labelled ghost
+  "Resolve conflicts…".
+- What the composer ships: its commit button is one Primary action (`kit::Button`), not the
+  design spec's Commit / Commit and push `SplitButton`, and Amend last commit is a plain
+  `Checkbox` with no indeterminate state. Both kit components exist; the composer does not use
+  them yet.
+- Conflict cards: the two "Keep this version" buttons are the card's main choices (Secondary);
+  "Both: current first", "Both: incoming first", "Ancestor" and "Edit" are Ghost until chosen. A
+  chosen option shows a check. The resolver footer's "Save resolved file" is the one Primary.
+- Without a GitHub or GitLab remote, Requests offers Publish… (no remote at all) or Add remote…
+  (remotes elsewhere) under its empty-state illustration.
 - A clean working tree gives the main pane its own state: the illustration, "Working tree
   clean", where the branch stands (up to date, N to push or pull with that button, or local only
   with Publish…) and the last commit. The file column then shows only "Changes 0" and a quiet

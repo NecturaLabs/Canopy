@@ -1,12 +1,11 @@
 //! Small reusable widgets drawn with the design tokens.
 
-use egui::{Color32, FontId, Response, RichText, Ui};
+use egui::{Color32, FontId, Ui};
 use egui_phosphor::regular as icon;
 
 use canopy_core::ChangeKind;
 
-use super::kit;
-use super::theme::{self, Palette, palette};
+use super::theme::Palette;
 
 /// A painted one-line label that ends in an ellipsis instead of cutting through a glyph.
 pub fn single_line_galley(
@@ -75,51 +74,6 @@ pub fn change_style(p: &Palette, kind: ChangeKind) -> Color32 {
         ChangeKind::Deleted | ChangeKind::Conflicted => p.danger,
         ChangeKind::Renamed => p.accent2,
     }
-}
-
-/// The primary call to action, at least `width` wide.
-pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Response {
-    kit::Button::new(text)
-        .primary()
-        .enabled(enabled)
-        .min_width(width)
-        .show(ui)
-}
-
-/// Repository operation state stays visible in every work view.
-pub fn repository_state_banner(
-    ui: &mut Ui,
-    tab: &crate::tab::RepoTab,
-    actions: &mut Vec<crate::action::Action>,
-) {
-    let Some(snap) = &tab.snap else {
-        return;
-    };
-    if snap.state == canopy_core::RepoState::Clean {
-        return;
-    }
-    let p = palette(ui.ctx());
-    let state = snap.state;
-    let conflicts = snap.status.conflicted.len();
-    let busy = tab.running.is_some();
-    egui::Panel::top("repository-operation-state")
-        .frame(egui::Frame::new().fill(Palette::tint(p.warning, if p.dark { 28 } else { 18 })).inner_margin(egui::Margin::symmetric(crate::ui::points_i8(theme::LG), crate::ui::points_i8(theme::SM))))
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(format!("{}  {} in progress on {}", icon::WARNING, state.label(), snap.head.label())).color(p.warning).strong());
-                ui.label(RichText::new(if conflicts > 0 { format!("{conflicts} conflict{} left", if conflicts == 1 { "" } else { "s" }) } else { "No conflicts left".to_owned() }).size(theme::metrics().meta_size).color(p.text_dim));
-                if let Some(command) = state.command() {
-                    let can_continue = conflicts == 0 && !busy;
-                    if primary_button(ui, "Continue", can_continue, 110.0).on_hover_text(if busy { "Wait for the current operation" } else if conflicts > 0 { "Resolve and stage every conflicted file first" } else { "Continue this operation using the staged resolutions" }).clicked() {
-                        actions.push(crate::action::Action::Op(crate::worker::Op::ContinueOrAbort { state, abort: false }));
-                    }
-                    ui.add_space(theme::LG);
-                    if ui.add_enabled(!busy, egui::Button::new(RichText::new(format!("Abort {command}…")).color(p.danger))).clicked() {
-                        actions.push(crate::action::Action::Confirm { title: format!("Abort {command}"), body: "Return the repository to where it was before the operation started? Resolved conflicts are discarded.".into(), confirm: "Abort".into(), danger: true, op: crate::worker::Op::ContinueOrAbort { state, abort: true } });
-                    }
-                }
-            });
-        });
 }
 
 /// Splits a path into (file name, parent directory).
@@ -193,6 +147,8 @@ pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::kit;
+    use crate::ui::theme::{self, palette};
 
     #[test]
     fn controls_keep_keyboard_activation_and_disabled_guards() {
@@ -226,7 +182,10 @@ mod tests {
                                 let response = match kind {
                                     0 => kit::toggle::Checkbox::new(&mut checked, "Checkbox")
                                         .show(ui),
-                                    1 => primary_button(ui, "Primary", true, 120.0),
+                                    1 => kit::Button::new("Primary")
+                                        .primary()
+                                        .min_width(120.0)
+                                        .show(ui),
                                     2 => kit::ToolButton::new(icon::CHECK, "Tool")
                                         .tooltip("Tool action")
                                         .show(ui),
@@ -314,7 +273,11 @@ mod tests {
             let mut button_rect = egui::Rect::NOTHING;
             let output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 ui.add_enabled_ui(false, |ui| {
-                    button_rect = primary_button(ui, "Commit", true, 120.0).rect;
+                    button_rect = kit::Button::new("Commit")
+                        .primary()
+                        .min_width(120.0)
+                        .show(ui)
+                        .rect;
                 });
             });
             if frame == 2 {

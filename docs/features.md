@@ -157,6 +157,9 @@ change when current settings change; Canopy never rewrites existing commits to f
 Requests supports Ctrl+Shift+A to approve and Ctrl+Shift+M to open the merge confirmation,
 with the same state and busy guards as the buttons.
 
+Without a GitHub or GitLab remote, the requests view offers Publish… for a repository with no
+remote and Add remote… for one whose remotes are elsewhere.
+
 Request list icons show lifecycle and draft state. Branches have a separate line with room
 reserved for the target. Check and review verdicts are loaded for the selected request's details;
 list summaries do not carry those verdicts. Bulk or bounded cached list badges remain planned.

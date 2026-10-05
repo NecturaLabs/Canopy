@@ -7,6 +7,7 @@ use crate::action::Action;
 use crate::keymap::Command;
 use crate::tab::RepoTab;
 use crate::ui::kit::chip::Badge;
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{ListRow, RowKind, SectionHeader, TreeRow};
 use crate::ui::kit::{Button, Size, Tone, menu, paint};
@@ -228,7 +229,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 ui.horizontal(|ui| {
                     ui.add_space(theme::MD);
                     ui.label(RichText::new(format!("{}  Local only — no remote", icon::HARD_DRIVES)).size(m.meta_size).color(p.text_faint))
-                        .on_hover_text("Everything stays on this computer. Publish to GitHub or GitLab to share it.");
+                        .kit_tooltip("Everything stays on this computer. Publish to GitHub or GitLab to share it.").show();
                 });
                 ui.add_space(theme::XS);
                 if Button::new("Publish…").icon(icon::CLOUD_ARROW_UP).size(Size::Sm).show(ui).clicked() {
@@ -254,7 +255,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     tab.collapsed.insert(key.clone());
                 }
                 let resp = match r.url.as_deref() {
-                    Some(url) => shown.response.on_hover_text(url),
+                    Some(url) => shown.response.kit_tooltip(url).show(),
                     None => shown.response,
                 };
                 let rname = r.name.clone();
@@ -286,7 +287,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         .label(b.branch.clone())
                         .show(ui)
                         .response
-                        .on_hover_text("Double-click to check out");
+                        .kit_tooltip("Double-click to check out").show();
                     if resp.clicked()
                         && let Some(t) = b.target {
                             actions.push(Action::Reveal(t));

@@ -6,6 +6,7 @@ use egui_phosphor::regular as icon;
 use crate::action::Action;
 use crate::tab::RepoTab;
 use crate::ui::kit::chip::Chip;
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::{Size, Tone, menu};
 use crate::ui::theme::{self, palette};
@@ -75,7 +76,8 @@ pub fn show(
                                 format!("{}  local only", icon::HARD_DRIVES),
                                 p.text_faint,
                             ))
-                            .on_hover_text("This repository has no remote");
+                            .kit_tooltip("This repository has no remote")
+                            .show();
                         }
                         None => {
                             ui.label(small(
@@ -192,7 +194,8 @@ pub fn show(
             // The version itself is in About; here only its absence, which breaks every change.
             if !git_version.starts_with("git version") {
                 ui.label(small(format!("{}  {git_version}", icon::WARNING), p.danger))
-                    .on_hover_text("Install git and make sure it is on PATH");
+                    .kit_tooltip("Install git and make sure it is on PATH")
+                    .show();
             }
         });
     });

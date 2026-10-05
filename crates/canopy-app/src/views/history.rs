@@ -18,6 +18,7 @@ use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::SearchField;
 use crate::ui::kit::graph::{self, Lanes, Marks};
 use crate::ui::kit::menu::{self, Menu};
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{ListRow, RowKind, caps_galley};
 use crate::ui::kit::surface::{EmptyState, HeaderKind, PaneHeader};
@@ -25,7 +26,7 @@ use crate::ui::kit::{Button, IconButton, paint};
 use crate::ui::theme::{self, palette};
 use crate::ui::widgets::forge_icon;
 use crate::ui::{art, widgets};
-use crate::views::{commit_detail, dialogs::Dialog, diff};
+use crate::views::{commit_detail, dialogs::Dialog, diff, state_banner};
 use crate::worker::Op;
 
 /// Lanes past this many are clipped off the graph column.
@@ -57,7 +58,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         loading(ui, tab);
         return;
     }
-    widgets::repository_state_banner(ui, tab, actions);
+    state_banner::show(ui, tab, actions);
     if tab
         .snap
         .as_ref()
@@ -128,7 +129,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
                     });
                     row.add_space(theme::SM);
                     row.add(egui::Label::new(RichText::new(summary).color(p.text_dim)).truncate())
-                        .on_hover_text(summary);
+                        .kit_tooltip(summary)
+                        .show();
                 }
             });
     }

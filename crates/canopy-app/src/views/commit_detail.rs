@@ -15,8 +15,9 @@ use crate::tab::{DetailsError, FileSelection, RepoTab};
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
 use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::{ChangeBadge, DiffStat};
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
-use crate::ui::kit::row::{Disclosure, ListRow, RowKind};
+use crate::ui::kit::row::{ListRow, RowKind, TreeRow, tree_children};
 use crate::ui::kit::{Button, IconButton, Size, paint};
 use crate::ui::theme::{self, Style, palette};
 use crate::ui::{art, widgets};
@@ -32,7 +33,7 @@ pub fn show(
     let p = palette(ui.ctx());
     let s = p.s();
     let m = theme::metrics();
-    header(ui, tab);
+    let headed = header(ui, tab);
     let Some(d) = tab.details.clone() else {
         // A failed load stays on screen with its reason, so selecting the same commit again is
         // not the only way out.
@@ -83,7 +84,8 @@ pub fn show(
                         .font(FontId::new(m.sha_size, egui::FontFamily::Monospace))
                         .color(p.accent),
                 )
-                .on_hover_text(d.oid.to_string());
+                .kit_tooltip(d.oid.to_string())
+                .show();
                 if IconButton::new(icon::COPY, "Copy SHA")
                     .size(Size::Xs)
                     .shortcut(Command::CopySha)
@@ -100,50 +102,65 @@ pub fn show(
                     .size(m.meta_size)
                     .color(p.text_dim),
                 )
-                .on_hover_text(widgets::full_date(d.author.time, d.author.offset_minutes));
+                .kit_tooltip(widgets::full_date(d.author.time, d.author.offset_minutes))
+                .show();
             });
+            // Up to two whole file rows, the "N files changed" line above them (as tall as it
+            // was last frame) and the gaps between them.
+            let stats_key = ui.id().with("commit-file-stats-height");
+            let stats_h = ui
+                .data(|data| data.get_temp::<f32>(stats_key))
+                .unwrap_or(ui.spacing().interact_size.y);
             let files_min = file_row_height() * crate::ui::count_f32(d.files.len().min(2))
-                + ui.spacing().interact_size.y * 2.0
-                + theme::XS * 3.0;
-            // Measured here: the disclosure's body has no height limit of its own.
-            let info_room =
-                (ui.available_height() - files_min - RowKind::List.height() - theme::XS * 2.0)
-                    .max(0.0);
-            // Without room for a line of it the block stays shut: the changed files come first.
-            let roomy = info_room >= theme::XL;
-            let mut open = tab.history_layout.information_open && roomy;
-            let was_open = open;
-            Disclosure::new("commit-information", "Commit information", &mut open).show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("commit-metadata")
-                    .max_height(info_room)
-                    .min_scrolled_height(0.0)
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
-                        message(ui, &d);
-                        ui.add_space(theme::XS);
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(&d.author.email)
-                                    .size(m.small_size)
-                                    .color(p.text_dim),
-                            )
-                            .wrap(),
-                        );
-                        metadata(ui, &d, actions);
-                    });
+                + stats_h
+                + theme::XS * 2.0
+                + ui.spacing().item_spacing.y * 3.0;
+            // What is left for the body under the disclosure row, less the body's padding and
+            // the gaps around it.
+            let info_room = (ui.available_height()
+                - files_min
+                - RowKind::List.height()
+                - theme::XS * 2.0
+                - ui.spacing().item_spacing.y * 2.0)
+                .max(0.0);
+            let mut open = tab.history_layout.information_open;
+            // The pane header already shows a summary that fits it; the block then starts with
+            // the rest of the message.
+            let summary = !headed;
+            let first_line = if summary {
+                FontId::new(m.headline_size, theme::semibold())
+            } else {
+                FontId::proportional(m.meta_size)
+            };
+            let first_line = ui.fonts_mut(|f| f.row_height(&first_line));
+            information(ui, &mut open, info_room, first_line, |ui| {
+                if message(ui, &d, summary) {
+                    ui.add_space(theme::XS);
+                }
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&d.author.email)
+                            .size(m.small_size)
+                            .color(p.text_dim),
+                    )
+                    .wrap(),
+                );
+                metadata(ui, &d, actions);
             });
-            if open != was_open {
-                tab.history_layout.information_open = open;
+            tab.history_layout.information_open = open;
+            ui.add_space(theme::XS);
+            let measured = file_stats(ui, &d);
+            if (measured - stats_h).abs() > 0.5 {
+                ui.data_mut(|data| data.insert_temp(stats_key, measured));
+                ui.ctx().request_repaint();
             }
             ui.add_space(theme::XS);
-            file_stats(ui, &d);
-            ui.add_space(theme::XS);
-            egui::ScrollArea::vertical()
+            let list = egui::ScrollArea::vertical()
                 .id_salt("commit-file-list")
                 .min_scrolled_height(0.0)
                 .auto_shrink([false, false])
                 .show(ui, |ui| files(ui, &d, tab));
+            paint::scroll_fade(ui, &list, s.pane);
         });
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(s.pane))
@@ -151,10 +168,11 @@ pub fn show(
 }
 
 /// Pane navigation belongs to the commit, including when its files have not loaded: the commit's
-/// summary and the Expand / Back to history button on one header row.
-fn header(ui: &mut Ui, tab: &mut RepoTab) {
+/// summary and the Expand / Back to history button on one header row. Returns whether it showed
+/// the whole summary (false in a compact window, which has no header, or when it was cut).
+fn header(ui: &mut Ui, tab: &mut RepoTab) -> bool {
     if tab.history_layout.compact {
-        return;
+        return false;
     }
     let p = palette(ui.ctx());
     let m = theme::metrics();
@@ -162,6 +180,7 @@ fn header(ui: &mut Ui, tab: &mut RepoTab) {
         .exact_size(m.pane_header_height)
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
+            let font = FontId::new(m.body_size, theme::semibold());
             let row = ui.max_rect();
             paint_header_strip(ui, row);
             let inner = Rect::from_min_max(
@@ -198,21 +217,22 @@ fn header(ui: &mut Ui, tab: &mut RepoTab) {
             let summary = tab.details.as_ref().map_or("Commit details", |d| {
                 d.message.lines().next().unwrap_or("").trim()
             });
+            let whole = ui
+                .fonts_mut(|f| f.layout_no_wrap(summary.to_owned(), font.clone(), p.text))
+                .size()
+                .x
+                <= summary_rect.width();
             summary_ui
-                .add(
-                    egui::Label::new(
-                        RichText::new(summary)
-                            .font(FontId::new(m.body_size, theme::semibold()))
-                            .color(p.text),
-                    )
-                    .truncate(),
-                )
-                .on_hover_text(summary);
+                .add(egui::Label::new(RichText::new(summary).font(font).color(p.text)).truncate())
+                .kit_tooltip(summary)
+                .show();
             if toggle.clicked() {
                 tab.history_layout.expanded = !tab.history_layout.expanded;
                 tab.history_layout.compact_details = true;
             }
-        });
+            whole && tab.details.is_some()
+        })
+        .inner
 }
 
 /// Left and right insets of the detail header's content (concept 1's `.dh`).
@@ -237,24 +257,83 @@ pub(super) fn paint_header_strip(ui: &Ui, rect: Rect) {
     );
 }
 
-fn message(ui: &mut Ui, d: &CommitDetails) {
+/// The "Commit information" disclosure, one rule in every density: it keeps the user's choice
+/// (open by default) and shows its body whenever `room` (what the changed files' reserved rows
+/// leave) holds the body's `first_line`. The body sits flush with the author row, takes its
+/// natural height up to that room and scrolls past it behind a faded edge, so no line is cut
+/// through its glyphs. Without that room it stays shut and its tooltip says how to make room.
+fn information(
+    ui: &mut Ui,
+    open: &mut bool,
+    room: f32,
+    first_line: f32,
+    body: impl FnOnce(&mut Ui),
+) {
+    const LABEL: &str = "Commit information";
+    let s = palette(ui.ctx()).s();
+    let id = ui.id().with("commit-information");
+    let fits = room >= first_line;
+    let mut shown = *open && fits;
+    let row = TreeRow::new("commit-information", 0)
+        .kind(RowKind::List)
+        .label(LABEL)
+        .toggle_on_click(true)
+        .enabled(fits)
+        .open(&mut shown)
+        .show(ui)
+        .response;
+    if fits {
+        *open = shown;
+    }
+    // A disclosure is a collapsing header, not an item of a tree.
+    row.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::CollapsingHeader, fits, LABEL));
+    ui.ctx().accesskit_node_builder(row.id, |n| {
+        n.clear_selected();
+        n.set_expanded(shown);
+    });
+    if !fits {
+        row.kit_tooltip("No room for it under the changed files")
+            .detail("Make the details pane taller, or choose Expand")
+            .show();
+    }
+    tree_children(ui, id, shown, 0, |ui| {
+        ui.add_space(theme::XS);
+        let out = egui::ScrollArea::vertical()
+            .id_salt("commit-metadata")
+            .max_height(room)
+            .min_scrolled_height(0.0)
+            .auto_shrink([false, true])
+            .show(ui, body);
+        paint::scroll_fade(ui, &out, s.pane);
+        ui.add_space(theme::XS);
+    });
+}
+
+/// The commit message: its summary as a headline when `summary` (the pane header does not show
+/// it whole), then the rest of the message. Returns whether it drew anything.
+fn message(ui: &mut Ui, d: &CommitDetails, summary: bool) -> bool {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let mut lines = d.message.trim().splitn(2, '\n');
-    let summary = lines.next().unwrap_or("").trim();
+    let head = lines.next().unwrap_or("").trim();
     let body = lines.next().unwrap_or("").trim();
-    ui.add(
-        egui::Label::new(
-            RichText::new(summary)
-                .font(FontId::new(m.headline_size, theme::semibold()))
-                .color(p.text),
-        )
-        .wrap(),
-    );
+    if summary {
+        ui.add(
+            egui::Label::new(
+                RichText::new(head)
+                    .font(FontId::new(m.headline_size, theme::semibold()))
+                    .color(p.text),
+            )
+            .wrap(),
+        );
+    }
     if !body.is_empty() {
-        ui.add_space(theme::XS);
+        if summary {
+            ui.add_space(theme::XS);
+        }
         ui.add(egui::Label::new(RichText::new(body).color(p.text_dim).size(m.meta_size)).wrap());
     }
+    summary || !body.is_empty()
 }
 
 fn author(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
@@ -278,7 +357,8 @@ fn author(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
             )
             .truncate(),
         )
-        .on_hover_text(format!("{} <{}>", d.author.name, d.author.email));
+        .kit_tooltip(format!("{} <{}>", d.author.name, d.author.email))
+        .show();
     });
 }
 
@@ -317,7 +397,8 @@ fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
                 if LinkButton::new(short_id(*parent))
                     .text_size(m.meta_size)
                     .show(ui)
-                    .on_hover_text(format!("Show commit {parent}"))
+                    .kit_tooltip(format!("Show commit {parent}"))
+                    .show()
                     .clicked()
                 {
                     actions.push(Action::Reveal(*parent));
@@ -327,39 +408,48 @@ fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
     }
 }
 
-fn file_stats(ui: &mut Ui, d: &CommitDetails) {
+/// The "N files changed" line and its line counts; returns the height it took.
+fn file_stats(ui: &mut Ui, d: &CommitDetails) -> f32 {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let (adds, dels) = d
         .files
         .iter()
         .fold((0, 0), |(a, r), f| (a + f.additions, r + f.deletions));
-    ui.horizontal_wrapped(|ui| {
-        ui.label(
-            RichText::new(format!(
-                "{} file{} changed",
-                d.files.len(),
-                if d.files.len() == 1 { "" } else { "s" }
-            ))
-            .size(m.meta_size)
-            .color(p.text_dim),
-        );
-        if d.stats_known {
-            DiffStat::new(adds, dels).show(ui);
-        } else {
-            // A partial clone that has not downloaded the file contents.
+    ui.scope(|ui| {
+        // As tall as its text: the height of a control would only push the files down.
+        ui.spacing_mut().interact_size.y = 0.0;
+        ui.horizontal_wrapped(|ui| {
             ui.label(
-                RichText::new("line counts not downloaded")
-                    .color(p.text_faint)
-                    .size(m.small_size),
-            )
-            .on_hover_text(
-                "This is a partial clone: the line counts and renamed files \
+                RichText::new(format!(
+                    "{} file{} changed",
+                    d.files.len(),
+                    if d.files.len() == 1 { "" } else { "s" }
+                ))
+                .size(m.meta_size)
+                .color(p.text_dim),
+            );
+            if d.stats_known {
+                DiffStat::new(adds, dels).show(ui);
+            } else {
+                // A partial clone that has not downloaded the file contents.
+                ui.label(
+                    RichText::new("line counts not downloaded")
+                        .color(p.text_faint)
+                        .size(m.small_size),
+                )
+                .kit_tooltip(
+                    "This is a partial clone: the line counts and renamed files \
                  need file contents that were not downloaded. Open a file \
                  to download it.",
-            );
-        }
-    });
+                )
+                .show();
+            }
+        })
+    })
+    .response
+    .rect
+    .height()
 }
 
 fn files(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
@@ -468,31 +558,27 @@ pub fn file_row_height() -> f32 {
 /// [`ListRow`] (selection is the wash, with no side bar). `id` identifies the row across frames
 /// (for hover and its context menu). Lists of these are [`file_row_height`] apart.
 pub fn file_list_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egui::Response {
-    file_list_row_inner(ui, f, selected, id, None)
+    file_list_row_inner(ui, f, selected, id, 0.0, None)
 }
 
 /// [`file_list_row`] with actions revealed at its right end while it is hovered, selected or
-/// focused: `actions` adds `IconButton::size(Size::Sm)`s right to left.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the changes list calls it once its migration lands"
-    )
-)]
+/// focused: `actions` adds them right to left (`IconButton::size(Size::Sm)`s, or a labelled
+/// `Button::size(Size::Sm)`), and the row keeps `actions_width` for them
+/// ([`icon_actions_width`] for icon buttons).
 pub fn file_list_row_with<'a>(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
     id: egui::Id,
+    actions_width: f32,
     actions: impl FnOnce(&mut Ui) + 'a,
 ) -> egui::Response {
-    file_list_row_inner(ui, f, selected, id, Some(Box::new(actions)))
+    file_list_row_inner(ui, f, selected, id, actions_width, Some(Box::new(actions)))
 }
 
-/// Room the row keeps at its right end for revealed actions: two small icon buttons, as
-/// `ListRow::actions` reserves.
-fn row_actions_width() -> f32 {
+/// Room a file row keeps at its right end for two small icon buttons, as `ListRow::actions`
+/// reserves.
+pub fn icon_actions_width() -> f32 {
     (theme::metrics().control_sm + 2.0) * 2.0
 }
 
@@ -504,6 +590,7 @@ fn file_list_row_inner(
     f: &FileEntry,
     selected: bool,
     id: egui::Id,
+    actions_width: f32,
     actions: Option<RowActions<'_>>,
 ) -> egui::Response {
     let p = palette(ui.ctx());
@@ -514,7 +601,7 @@ fn file_list_row_inner(
     let name_font = FontId::new(m.body_size, theme::medium());
     let dir_font = FontId::proportional(m.meta_size);
     let reserve = if actions.is_some() {
-        row_actions_width()
+        actions_width
     } else {
         0.0
     };
@@ -703,7 +790,8 @@ mod tests {
         let mut nodes = Vec::new();
         for _ in 0..2 {
             nodes = spoken(&ctx, |ui| {
-                file_list_row_with(ui, &f, true, egui::Id::new("row"), |ui| {
+                let width = super::icon_actions_width();
+                file_list_row_with(ui, &f, true, egui::Id::new("row"), width, |ui| {
                     IconButton::new(icon::PLUS, "Stage file")
                         .size(Size::Sm)
                         .show(ui);
@@ -715,6 +803,58 @@ mod tests {
             "the action is shown on a selected row: {nodes:?}"
         );
         assert!(nodes.iter().any(|(l, _)| l == "src/views/history.rs"));
+    }
+
+    /// One frame-settled draw of the commit information block with `room` to spare: the body's
+    /// rectangle (None while shut), the column's left edge, the height used and the user's
+    /// choice afterwards.
+    fn information_at(ctx: &egui::Context, room: f32) -> (Option<egui::Rect>, f32, f32, bool) {
+        let mut body = None;
+        let mut column = 0.0;
+        let mut used = 0.0;
+        let mut open = true;
+        for _ in 0..3 {
+            body = None;
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                column = ui.max_rect().left();
+                let line = ui.text_style_height(&egui::TextStyle::Body);
+                super::information(ui, &mut open, room, line, |ui| {
+                    body = Some(ui.label("fix(retry): tune defaults").rect);
+                });
+                used = ui.min_rect().height();
+            });
+            out.textures_delta.clear();
+        }
+        (body, column, used, open)
+    }
+
+    /// qa-a F1/F15, qa-b F2: one rule in every density. With room for its first line the block
+    /// is open, shows that line whole and starts at the column's edge, not under the disclosure
+    /// label; without it the block stays shut, the changed files keep their rows, and the user's
+    /// choice is kept for a taller pane.
+    #[test]
+    fn commit_information_follows_one_rule_flush_with_the_column() {
+        for density in [Density::Comfortable, Density::Dense] {
+            let ctx = ctx(density);
+            let (body, column, used, _) = information_at(&ctx, 80.0);
+            let body = body.unwrap_or_else(|| panic!("{density:?}: open with room for a line"));
+            assert!(
+                (body.left() - column).abs() < 0.5,
+                "{density:?}: body at {} against the column at {column}",
+                body.left()
+            );
+            assert!(
+                used >= super::RowKind::List.height() + body.height(),
+                "{density:?}: the row and a whole first line show, got {used}"
+            );
+            let (body, _, used, open) = information_at(&ctx, 0.0);
+            assert!(body.is_none(), "{density:?}: no room, no body");
+            assert!(
+                used <= super::RowKind::List.height() + 0.5,
+                "{density:?}: only the row, got {used}"
+            );
+            assert!(open, "{density:?}: the choice survives a short pane");
+        }
     }
 
     #[test]

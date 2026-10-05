@@ -16,6 +16,7 @@ use crate::action::Action;
 use crate::tab::{RepoTab, Resolver};
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::field::CodeArea;
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::surface::{Card, InsetBox};
 use crate::ui::kit::toggle::Switch;
@@ -291,7 +292,7 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                     hint(Command::ClearChoice),
                 );
                 ui.add(egui::Label::new(RichText::new(keys).size(m.small_size).color(p.text_faint)).truncate())
-                    .on_hover_text("Press ? for every shortcut");
+                    .kit_tooltip("Press ? for every shortcut").show();
                 ui.label(RichText::new(if done == n {
                     "All conflicts have a choice. Save the resolved file to stage it."
                 } else {
@@ -421,7 +422,7 @@ fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line
             && hover.is_some_and(|h| (top..top + row_h).contains(&h.y))
             && let Some(line) = lines.get(i)
         {
-            resp.clone().on_hover_text(line.as_str());
+            resp.clone().kit_tooltip(line.as_str()).show();
         }
         if let Some(line) = first_line {
             ui.painter().text(
@@ -678,10 +679,22 @@ fn common(
 }
 
 /// The button that picks (or, when it is already picked, clears) one choice: a check in front of
-/// the chosen one.
-fn choice_button(label: &str, on: bool, salt: impl std::hash::Hash + std::fmt::Debug) -> Button {
+/// the chosen one. The two sides are the main choices (Secondary); the others are `quiet`
+/// (Ghost) until chosen, so a card reads as "keep one side" first.
+fn choice_button(
+    label: &str,
+    on: bool,
+    quiet: bool,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+) -> Button {
     let b = Button::new(label).size(Size::Sm).id_salt(salt);
-    if on { b.icon(icon::CHECK) } else { b }
+    if on {
+        b.icon(icon::CHECK)
+    } else if quiet {
+        b.ghost()
+    } else {
+        b
+    }
 }
 
 fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegion) {
@@ -766,7 +779,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                             code_lines(ui, lines, p.text);
                         });
                         let on = choice.as_ref() == Some(&side);
-                        if choice_button("Keep this version", on, ("keep", title))
+                        if choice_button("Keep this version", on, false, ("keep", title))
                             .tooltip("Keep this version")
                             .shortcut(command)
                             .show_shortcut(true)
@@ -803,7 +816,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 }
                 for (c, label) in options {
                     let on = choice.as_ref() == Some(&c);
-                    if choice_button(label, on, ("combine", label))
+                    if choice_button(label, on, true, ("combine", label))
                         .show(ui)
                         .clicked()
                     {
@@ -812,8 +825,9 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 }
                 let editing = r.editing.as_ref().is_some_and(|(i, _)| *i == k);
                 let custom = matches!(choice, Some(Choice::Custom(_)));
-                let edit = Button::new("Edit")
-                    .size(Size::Sm)
+                let edit = Button::new("Edit").size(Size::Sm);
+                let edit = if custom { edit } else { edit.ghost() };
+                let edit = edit
                     .icon(if custom {
                         icon::CHECK
                     } else {
