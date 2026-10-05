@@ -125,6 +125,13 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                         .ok_or("--motion takes system, reduced or full")?,
                 );
             }
+            "--glass-soak" if cfg!(debug_assertions) => {
+                launch.glass_soak = Some(
+                    next_text(&mut args, "--glass-soak needs a number of frames")?
+                        .parse()
+                        .map_err(|_| "--glass-soak takes a whole number of frames")?,
+                );
+            }
             "--gallery-page" => {
                 launch.gallery_page = next_text(&mut args, "--gallery-page needs a number")?
                     .parse()
@@ -247,7 +254,7 @@ fn main() -> anyhow::Result<()> {
     }
     let options = eframe::NativeOptions {
         viewport,
-        persist_window: launch.screenshot.is_none(),
+        persist_window: launch.screenshot.is_none() && launch.glass_soak.is_none(),
         ..Default::default()
     };
     let result = eframe::run_native(

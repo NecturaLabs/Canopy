@@ -109,7 +109,9 @@ thread.
 | `ui/kit/anim.rs` | Eased booleans and values, springs, entrances, sliding rectangles and the press scale; all instant with reduced motion. |
 | `ui/kit/paint.rs` | Shadows, gradient fills, highlights, recesses, focus rings, pixel-snapped seams, Deeper panes and deck, spinners and scroll fades. |
 | `ui/kit/button.rs` | `Button` (primary, secondary, ghost, danger), `IconButton`, `ToolButton`, `LinkButton`, `SplitButton`: the reference component. |
-| `ui/kit/glass.rs` | The safe facade for translucent floating layers; opaque until the backdrop blur is built. |
+| `ui/kit/glass/mod.rs` | Translucent surfaces: decides which floating layers get the backdrop blur (the setting, the theme, the driver, at most four a frame), plans each in validated window pixels, queries the system's reduce-transparency answer off the UI thread, and falls back to the opaque overlay. |
+| `ui/kit/glass/gl.rs` | The blur's OpenGL renderer, an `egui_glow` paint callback: copies the region behind a layer, dual-Kawase blurs it, clamps its luminance and composites it inside the layer. The only `unsafe` code in Canopy (ADR 0010). |
+| `ui/kit/glass/shaders.rs` | The blur's GLSL and the dialect chosen for the context (OpenGL 3.0+, OpenGL ES 3.0+). |
 | `ui/kit/gallery.rs` | The component gallery (`--overlay gallery`) with a section per kit module, plus token, elevation, style and motion strips. |
 | `ui/kit/avatar.rs`, `ui/kit/chip.rs`, `ui/kit/choice.rs`, `ui/kit/field.rs`, `ui/kit/graph.rs`, `ui/kit/menu.rs`, `ui/kit/overlay.rs`, `ui/kit/progress.rs`, `ui/kit/range.rs`, `ui/kit/row.rs`, `ui/kit/select.rs`, `ui/kit/split.rs`, `ui/kit/surface.rs`, `ui/kit/toast.rs`, `ui/kit/toggle.rs` | Placeholders for the remaining components (avatars, chips, choices, fields, the graph row, menus, overlays, progress, sliders, rows, selects, split handles, surfaces, toast painting, toggles), filled module by module. |
 | `ui/fonts.rs` | Registers the bundled Inter, JetBrains Mono and Phosphor fonts. |
@@ -295,7 +297,8 @@ Canopy-specific folders.
 - The worker converts errors into `Event` errors; the UI shows them as toasts and logs them
   with `tracing`. Nothing in the app panics on a Git error.
 - `unwrap()` and `expect()` are not used outside tests (clippy `unwrap_used` is enabled) and
-  `unsafe` is forbidden.
+  `unsafe` is denied everywhere except the backdrop blur's OpenGL calls in `ui/kit/glass/gl.rs`
+  (ADR 0010; `crates/canopy-app/tests/unsafe_policy.rs` enforces it).
 
 ## Testing strategy
 

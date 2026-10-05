@@ -19,7 +19,10 @@ use crate::ui::theme::{self, Elevation, Fill, Palette, Style};
 pub type Section = (&'static str, fn(&mut Ui));
 
 /// The sections, in the spec's order (design spec 9). Component modules append theirs here.
-pub const SECTIONS: &[Section] = &[("Buttons", button::gallery)];
+pub const SECTIONS: &[Section] = &[
+    ("Buttons", button::gallery),
+    ("Translucent surfaces", super::glass::gallery),
+];
 
 const MAX_WIDTH: f32 = 1360.0;
 

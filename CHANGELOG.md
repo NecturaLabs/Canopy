@@ -16,6 +16,9 @@ commits since the previous build.
   gradient controls), Density (Comfortable, or Dense with 24-point rows and a one-row toolbar) and
   Motion (match the system, reduced or full), which replaces the Reduce motion switch; an earlier
   "reduce motion" choice carries over as Reduced.
+- Translucent surfaces in Settings → Appearance: the command palette blurs what is behind it.
+  Off by default; unavailable with the Contrast theme, when the system asks for reduced
+  transparency, or when the graphics driver cannot do it.
 - Git identity in Settings shows the effective author and its source for the open repository, and
   lets you save or clear repository or global Git configuration. A warning in Changes links to it
   when Git cannot use the identity, guessed it, or it looks like a placeholder. First launch asks
