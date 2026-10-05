@@ -10,13 +10,19 @@
 //! read, or a symbolic link, fails the scan instead of being skipped.
 //!
 //! Code that reaches the compiler from outside those files is rejected, so it cannot hide from
-//! the scan: `include!` is refused anywhere (`gl.rs` included), and `#[path = "..."]` must name a
+//! the scan: `include!` is refused anywhere (`gl.rs` included), as is naming it in a path or a
+//! `use` so that it could be called under another name, and `#[path = "..."]` must name a
 //! `.rs` file inside the crate as a plain string literal. That also covers a build script's
 //! output: generated Rust in `OUT_DIR` can only be compiled through `include!` or `#[path]`, and
 //! both are refused. `include_str!` and `include_bytes!` yield data, never code; one that names a
 //! `.rs` file fails anyway. Behind all of this the compiler's own `unsafe_code = "deny"` rejects
 //! unsafe code in any file, scanned or not, unless a suppression reaches it, and a suppression in
 //! a scanned file is exactly what these tests report.
+//!
+//! What this does not cover: unsafe code inside dependencies, including what a dependency's macro
+//! expands to in our files (crossbeam's `select!` in `worker.rs` expands to `unsafe` blocks; the
+//! compiler treats macro output from another crate as that crate's code). That is third-party
+//! code, chosen and reviewed as a dependency (`deny.toml`, `vendor/`), not unsafe code we write.
 
 use std::path::{Path, PathBuf};
 
@@ -328,6 +334,24 @@ fn attribute_bodies(code: &[char]) -> Vec<std::ops::Range<usize>> {
     bodies
 }
 
+/// Whether the word `include` at `start` names the macro without calling it: as a path segment
+/// (`std::include`) or in a `use` declaration (`use core::{include as i}`), so that it can be
+/// called under another name.
+fn names_the_macro(code: &[char], start: usize) -> bool {
+    let before: String = code[..start].iter().collect();
+    let before = before.trim_end();
+    if before.ends_with("::") {
+        return true;
+    }
+    if !(before.ends_with('{') || before.ends_with(',')) {
+        return false;
+    }
+    let statement = before.rsplit(';').next().unwrap_or(before);
+    statement
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|word| word == "use")
+}
+
 /// How `src` pulls in code from places the scan does not read: `include!`, a `#[path]` that is not
 /// a plain string literal naming a `.rs` file inside the crate, and `include_str!` or
 /// `include_bytes!` of a `.rs` file. Each entry is a 1-based line and a reason.
@@ -355,7 +379,7 @@ fn code_from_outside(src: &str) -> Vec<(usize, String)> {
         let after = skip_space(&code, at);
         let is_macro = code.get(after) == Some(&'!');
         match word.as_str() {
-            "include" if is_macro => found.push((
+            "include" if is_macro || names_the_macro(&code, start) => found.push((
                 line_of(start),
                 "`include!` compiles code the scan cannot read".to_owned(),
             )),
@@ -517,15 +541,59 @@ fn no_build_configuration_lifts_the_unsafe_lint() {
             continue;
         };
         read += 1;
-        for needle in ["unsafe_code", "cap-lints"] {
-            assert!(
-                !text.contains(needle),
-                "{} mentions {needle}",
-                relative(file)
-            );
-        }
+        assert_eq!(
+            lint_lifts(&text),
+            Vec::<String>::new(),
+            "{} lifts the unsafe_code lint",
+            relative(file)
+        );
     }
     assert!(read >= 5, "read {read} build files");
+}
+
+/// Every place in `text` (a config file, workflow or script) that would lift the `unsafe_code`
+/// deny: an `-A`/`-W`/`--allow`/`--warn`/`--force-warn` naming the lint, or lint capping. The
+/// command line spells lint names with `-` or `_` alike.
+fn lint_lifts(text: &str) -> Vec<String> {
+    let text = text.replace('-', "_");
+    let mut found = Vec::new();
+    if text.contains("cap_lints") {
+        found.push("cap-lints".to_owned());
+    }
+    let pieces: Vec<&str> = text.split("unsafe_code").collect();
+    for piece in &pieces[..pieces.len() - 1] {
+        let before = piece.trim_end_matches([' ', '=', '"', '\'', ',', '\t']);
+        if let Some(flag) = ["_A", "_W", "__allow", "__warn", "__force_warn"]
+            .iter()
+            .find(|flag| before.ends_with(*flag))
+        {
+            found.push(format!("{} unsafe-code", flag.replace('_', "-")));
+        }
+    }
+    found
+}
+
+#[test]
+fn lint_lifting_flags_are_found_in_any_spelling() {
+    for lifted in [
+        "RUSTFLAGS=\"-A unsafe_code\"",
+        "RUSTFLAGS='-A unsafe-code' cargo build",
+        "rustflags = [\"-A\", \"unsafe_code\"]",
+        "cargo rustc -- -Aunsafe-code",
+        "rustflags = [\"--allow=unsafe-code\"]",
+        "RUSTFLAGS=\"-W unsafe_code\"",
+        "RUSTFLAGS=\"--force-warn unsafe-code\"",
+        "RUSTFLAGS=\"--cap-lints warn\"",
+    ] {
+        assert_ne!(lint_lifts(lifted), Vec::<String>::new(), "{lifted}");
+    }
+    for fine in [
+        "# the unsafe-code policy (only gl.rs may contain unsafe code)",
+        "cargo test -p canopy-app --test unsafe_policy",
+        "RUSTFLAGS=\"-D warnings\"",
+    ] {
+        assert_eq!(lint_lifts(fine), Vec::<String>::new(), "{fine}");
+    }
 }
 
 #[test]
@@ -659,6 +727,11 @@ fn code_from_outside_the_scanned_files_is_rejected() {
         "macro_rules! m { ($p:literal) => { #[path = $p] mod x; }; }",
         r#"const S: &str = include_str!("lib.rs");"#,
         r#"const S: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/x.rs"));"#,
+        // The macro under another name is still the macro.
+        r#"use std::include as inc; inc!("x.rs");"#,
+        "use core::{include as i};",
+        "use std::{self, include};",
+        r#"fn f() { use std::{include as i}; i!("x.rs"); }"#,
     ];
     for src in rejected {
         let found = code_from_outside(src);
