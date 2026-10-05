@@ -21,7 +21,8 @@ step "cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets --locked -- -D warnings
 
 # Unsafe code only in the backdrop blur's OpenGL module: clippy denies it elsewhere, and this
-# also fails on unsafe code or an allow for it in any other file (comments and strings aside).
+# also fails on unsafe code or an allow for it in any other file (comments and strings aside), on
+# `include!` or a `#[path]` that hides code from that scan, and on unreadable directories.
 step "unsafe policy (only crates/canopy-app/src/ui/kit/glass/gl.rs)"
 cargo test -p canopy-app --locked --test unsafe_policy
 
