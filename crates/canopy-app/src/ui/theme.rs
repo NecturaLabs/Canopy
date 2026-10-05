@@ -2211,14 +2211,6 @@ impl Palette {
         self.s().border
     }
 
-    pub fn added_bg(&self) -> Color32 {
-        self.s().added_bg
-    }
-
-    pub fn removed_bg(&self) -> Color32 {
-        self.s().removed_bg
-    }
-
     /// Primary fill, top end (`Surfaces::primary`).
     pub fn button(&self) -> Color32 {
         self.s().primary.top
