@@ -398,7 +398,6 @@ pub(crate) fn missing_head_tree(repo: &Repository) -> Option<Oid> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
 

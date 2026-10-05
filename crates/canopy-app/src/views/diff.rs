@@ -701,7 +701,10 @@ fn layout_toggle(
 }
 
 /// Paints one line (or one side of a pair). Returns the click modifiers when the user picked it.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a cell needs its line, spans, rectangle, gutter, sides, selection and id"
+)]
 fn line_cell(
     ui: &mut Ui,
     cx: &Ctx<'_>,
@@ -844,7 +847,10 @@ fn fade_edge(painter: &egui::Painter, y: egui::Rangef, edge: f32, under: Color32
 }
 
 /// A hunk header band with its actions (or the actions for the selected lines in it).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the band needs its hunk, geometry, viewport, line selection and actions"
+)]
 fn hunk_header(
     ui: &mut Ui,
     cx: &Ctx<'_>,

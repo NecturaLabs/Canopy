@@ -2,7 +2,10 @@
 //! repositories. Where Canopy runs a sequence of git commands, the same sequence run with the git
 //! CLI in a twin repository is the oracle.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)] // Test helpers may panic: that is a failed test.
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside #[test] functions may panic too: that is a failed test"
+)]
 
 use std::fs;
 use std::path::Path;

@@ -187,7 +187,6 @@ pub(crate) fn write_atomic(dest: &Path, content: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
 

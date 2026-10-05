@@ -1,7 +1,10 @@
 //! End-to-end tests of the GitHub and GitLab clients against a canned local HTTP server.
 //! Nothing here touches the network: the server listens on 127.0.0.1 and answers from a table.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)] // Test helpers may panic: that is a failed test.
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside #[test] functions may panic too: that is a failed test"
+)]
 
 use canopy_core::forge::{Forge, ForgeKind};
 use canopy_hosting::{

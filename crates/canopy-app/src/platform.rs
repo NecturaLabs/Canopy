@@ -105,7 +105,13 @@ fn split_command(configured: &str) -> Option<(String, Vec<String>)> {
 }
 
 /// Whether the desktop's default handler might run `file` instead of showing it.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "linux", test)),
+    expect(
+        dead_code,
+        reason = "only Linux opens files with the desktop's handler"
+    )
+)]
 fn launchable(file: &Path) -> bool {
     let ext = file
         .extension()
@@ -357,7 +363,10 @@ fn output_within(mut cmd: Command, timeout: Duration) -> Option<String> {
 }
 
 /// `(<uint32 1>,)` from the portal: 1 asks for reduced motion.
-#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "linux", test)),
+    expect(dead_code, reason = "a Linux answer")
+)]
 fn parse_portal(out: &str) -> Option<bool> {
     let value = out
         .trim()
@@ -373,7 +382,10 @@ fn parse_portal(out: &str) -> Option<bool> {
 }
 
 /// `true` or `false` for `enable-animations`; disabled animations mean reduced motion.
-#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "linux", test)),
+    expect(dead_code, reason = "a Linux answer")
+)]
 fn parse_gsettings(out: &str) -> Option<bool> {
     match out.trim() {
         "true" => Some(false),
@@ -383,7 +395,10 @@ fn parse_gsettings(out: &str) -> Option<bool> {
 }
 
 /// `1` or `0` from `defaults read`.
-#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "macos", test)),
+    expect(dead_code, reason = "a macOS answer")
+)]
 fn parse_defaults(out: &str) -> Option<bool> {
     match out.trim() {
         "1" => Some(true),
@@ -393,7 +408,10 @@ fn parse_defaults(out: &str) -> Option<bool> {
 }
 
 /// `True` or `False` for client-area animation; animations off mean reduced motion.
-#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "windows", test)),
+    expect(dead_code, reason = "a Windows answer")
+)]
 fn parse_windows(out: &str) -> Option<bool> {
     match out.trim().to_ascii_lowercase().as_str() {
         "true" => Some(false),
@@ -403,7 +421,10 @@ fn parse_windows(out: &str) -> Option<bool> {
 }
 
 /// The value of `name` in `reg query` output: `    EnableTransparency    REG_DWORD    0x1`.
-#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "windows", test)),
+    expect(dead_code, reason = "a Windows answer")
+)]
 fn parse_reg_dword(out: &str, name: &str) -> Option<u32> {
     out.lines().find_map(|line| {
         let mut words = line.split_whitespace();

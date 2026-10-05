@@ -651,102 +651,109 @@ fn paint_line_numbers(
 
 // ----------------------------------------------------------------------------------- builders
 
+/// The setters every field shares, as an `impl` block for `$field`.
 macro_rules! common_setters {
-    () => {
-        /// A label above the field (also its accessible name).
-        #[allow(
-            dead_code,
-            reason = "shared by the four fields; not every field uses each yet"
+    ($field:ident) => {
+        #[expect(
+            clippy::allow_attributes,
+            reason = "a setter is dead for some fields and used by others, which `expect` cannot say"
         )]
-        pub fn label(mut self, text: impl Into<String>) -> Self {
-            self.core.label = Some(text.into());
-            self
-        }
-        /// The accessible name when no label is shown.
-        #[allow(
-            dead_code,
-            reason = "shared by the four fields; not every field uses each yet"
-        )]
-        pub fn name(mut self, text: impl Into<String>) -> Self {
-            self.core.name = Some(text.into());
-            self
-        }
-        #[allow(
-            dead_code,
-            reason = "shared by the four fields; not every field uses each yet"
-        )]
-        pub fn placeholder(mut self, text: impl Into<String>) -> Self {
-            self.core.placeholder = text.into();
-            self
-        }
-        /// A hint below the field (hidden while there is an error).
-        #[allow(
-            dead_code,
-            reason = "shared by the four fields; not every field uses each yet"
-        )]
-        pub fn helper(mut self, text: impl Into<String>) -> Self {
-            self.core.helper = Some(text.into());
-            self
-        }
-        /// An error below the field with a danger border and halo. Set it on blur or submit,
-        /// never on each keystroke.
-        #[allow(
-            dead_code,
-            reason = "shared by the four fields; not every field uses each yet"
-        )]
-        pub fn error(mut self, text: Option<&str>) -> Self {
-            self.core.error = text.map(str::to_owned);
-            self
-        }
-        /// Text that can be selected and copied but not changed (`text_dim`, no caret).
-        #[allow(
-            dead_code,
-            reason = "shared by the four fields; not every field uses each yet"
-        )]
-        pub fn read_only(mut self, read_only: bool) -> Self {
-            self.core.read_only = read_only;
-            self
-        }
-        #[allow(
-            dead_code,
-            reason = "shared by the four fields; not every field uses each yet"
-        )]
-        pub fn enabled(mut self, enabled: bool) -> Self {
-            self.core.enabled = enabled;
-            self
-        }
-        #[allow(
-            dead_code,
-            reason = "shared by the four fields; not every field uses each yet"
-        )]
-        pub fn tooltip(mut self, text: impl Into<String>) -> Self {
-            self.core.tooltip = Some(text.into());
-            self
-        }
-        #[allow(
-            dead_code,
-            reason = "shared by the four fields; not every field uses each yet"
-        )]
-        pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
-            self.core.disabled_reason = Some(text.into());
-            self
-        }
-        /// Field width; the available width by default.
-        #[allow(
-            dead_code,
-            reason = "shared by the four fields; not every field uses each yet"
-        )]
-        pub fn width(mut self, width: f32) -> Self {
-            self.core.width = Some(width);
-            self
-        }
-        #[allow(
-            dead_code,
-            reason = "shared by the four fields; not every field uses each yet"
-        )]
-        pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
-            self.core.id_salt = Some(Id::new(salt));
-            self
+        impl $field<'_> {
+            /// A label above the field (also its accessible name).
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn label(mut self, text: impl Into<String>) -> Self {
+                self.core.label = Some(text.into());
+                self
+            }
+            /// The accessible name when no label is shown.
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn name(mut self, text: impl Into<String>) -> Self {
+                self.core.name = Some(text.into());
+                self
+            }
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn placeholder(mut self, text: impl Into<String>) -> Self {
+                self.core.placeholder = text.into();
+                self
+            }
+            /// A hint below the field (hidden while there is an error).
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn helper(mut self, text: impl Into<String>) -> Self {
+                self.core.helper = Some(text.into());
+                self
+            }
+            /// An error below the field with a danger border and halo. Set it on blur or submit,
+            /// never on each keystroke.
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn error(mut self, text: Option<&str>) -> Self {
+                self.core.error = text.map(str::to_owned);
+                self
+            }
+            /// Text that can be selected and copied but not changed (`text_dim`, no caret).
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn read_only(mut self, read_only: bool) -> Self {
+                self.core.read_only = read_only;
+                self
+            }
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn enabled(mut self, enabled: bool) -> Self {
+                self.core.enabled = enabled;
+                self
+            }
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn tooltip(mut self, text: impl Into<String>) -> Self {
+                self.core.tooltip = Some(text.into());
+                self
+            }
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
+                self.core.disabled_reason = Some(text.into());
+                self
+            }
+            /// Field width; the available width by default.
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn width(mut self, width: f32) -> Self {
+                self.core.width = Some(width);
+                self
+            }
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+                self.core.id_salt = Some(Id::new(salt));
+                self
+            }
         }
     };
 }
@@ -764,7 +771,6 @@ impl<'t> TextField<'t> {
             core: Core::new(text, Kind::Line),
         }
     }
-    common_setters!();
     /// A leading Phosphor glyph in `text_faint`.
     pub fn icon(mut self, glyph: &str) -> Self {
         self.core.icon = Some(glyph.to_owned());
@@ -799,6 +805,8 @@ impl<'t> TextField<'t> {
     }
 }
 
+common_setters!(TextField);
+
 impl Widget for TextField<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         self.show(ui)
@@ -819,7 +827,6 @@ impl<'t> SearchField<'t> {
             core: Core::new(text, Kind::Search),
         }
     }
-    common_setters!();
     /// Busy (results are loading): a spinner in the trailing slot after `LOADING_DELAY`.
     pub fn loading(mut self, loading: bool) -> Self {
         self.core.loading = loading;
@@ -843,6 +850,8 @@ impl<'t> SearchField<'t> {
     }
 }
 
+common_setters!(SearchField);
+
 impl Widget for SearchField<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         self.show(ui)
@@ -863,7 +872,6 @@ impl<'t> TextArea<'t> {
             core: Core::new(text, Kind::Area { rows: 3..=12 }),
         }
     }
-    common_setters!();
     /// The rows it shows when empty, and the most it grows to (3 to 12 by default).
     pub fn rows(mut self, rows: RangeInclusive<usize>) -> Self {
         self.core.kind = Kind::Area { rows };
@@ -885,6 +893,8 @@ impl<'t> TextArea<'t> {
     }
 }
 
+common_setters!(TextArea);
+
 /// A [`TextArea`] for code: monospace, Tab inserts a tab, optional line numbers (the conflict
 /// hand-edit box).
 #[derive(Debug)]
@@ -905,7 +915,6 @@ impl<'t> CodeArea<'t> {
             ),
         }
     }
-    common_setters!();
     pub fn rows(mut self, rows: RangeInclusive<usize>) -> Self {
         if let Kind::Code { line_numbers, .. } = self.core.kind {
             self.core.kind = Kind::Code { rows, line_numbers };
@@ -931,6 +940,8 @@ impl<'t> CodeArea<'t> {
         KitResponse { response, value }
     }
 }
+
+common_setters!(CodeArea);
 
 // ------------------------------------------------------------------------------------- gallery
 
