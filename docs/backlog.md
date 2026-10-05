@@ -104,6 +104,12 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Next
 
+- [ ] Errors that drop their cause (found by `clippy::map_err_ignore`): the merged-branches base
+      lookup (`merged.rs`) says "does not exist" for any libgit2 failure, and the hosting picture
+      and profile lookups (`canopy-hosting` `avatars.rs`, `http.rs` `avatar_json`) replace the
+      transport's error with a fixed message; carry the libgit2 or ureq message where it helps.
+- [ ] `canopy_hosting::token_from_env` is deprecated (it ignores the host and can hand a token to
+      the wrong server) and nothing calls it; remove it and its re-export.
 - [ ] Crate package metadata: reconcile the legacy `0.2.1-beta.1` workspace version inherited
       by all three crates with numbered-build releases; document an internal version convention
       and align local lockfile entries and tool/doc assumptions without per-release version bumps.
