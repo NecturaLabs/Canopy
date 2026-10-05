@@ -175,6 +175,73 @@ impl ForceState {
     };
 }
 
+/// The contrast a disabled label keeps on its control and the surface under it.
+const DISABLED_TEXT_CONTRAST: f64 = 3.2;
+
+/// Labels and icons of disabled controls. A disabled control's surfaces (fill, ring, track) paint
+/// at `DISABLED_ALPHA` with no elevation, but its text stays opaque in this colour, so it reads
+/// as unavailable without becoming illegible: `text_faint` moved towards the pane as far as it
+/// goes while it still reads at 3.2:1 on every surface a control sits on, and on the dimmed
+/// control fills over them. Cached per theme and style.
+pub(crate) fn disabled_text(p: &Palette, style: theme::Style) -> Color32 {
+    thread_local! {
+        static CACHE: std::cell::RefCell<std::collections::HashMap<(&'static str, theme::Style), Color32>> =
+            std::cell::RefCell::default();
+    }
+    if let Some(c) = CACHE.with(|m| m.borrow().get(&(p.name, style)).copied()) {
+        return c;
+    }
+    let s = p.surfaces(style);
+    let dim = |c: Color32| c.gamma_multiply(theme::DISABLED_ALPHA);
+    let grounds: Vec<Color32> = [s.pane, s.panel, s.elevated, s.overlay, s.field]
+        .into_iter()
+        .flat_map(|g| {
+            [
+                g,
+                theme::over(dim(s.raised.top), g),
+                theme::over(dim(s.raised.bottom), g),
+                theme::over(dim(s.track), g),
+                theme::over(dim(s.thumb.top), g),
+                theme::over(dim(s.switch_off), g),
+            ]
+        })
+        .collect();
+    let readable = |c: Color32| {
+        grounds
+            .iter()
+            .all(|g| theme::contrast(c, *g) >= DISABLED_TEXT_CONTRAST)
+    };
+    let step = |i: u8| f32::from(i) / 20.0;
+    let c = if readable(p.text_faint) {
+        (0..=20)
+            .map(|i| theme::mix(p.text_faint, s.pane, step(i)))
+            .take_while(|c| readable(*c))
+            .last()
+            .unwrap_or(p.text_faint)
+    } else {
+        (0..=20)
+            .map(|i| theme::mix(p.text_faint, p.text, step(i)))
+            .find(|c| readable(*c))
+            .unwrap_or(p.text)
+    };
+    CACHE.with(|m| m.borrow_mut().insert((p.name, style), c));
+    c
+}
+
+/// The painter a control draws its labels and icons with: `ui`'s, with egui's own disabled fade
+/// taken back off when the `Ui` itself is disabled, so a disabled label paints in
+/// [`disabled_text`] at full strength either way.
+pub(crate) fn content_painter(ui: &egui::Ui) -> egui::Painter {
+    let mut painter = ui.painter().clone();
+    if !ui.is_enabled() {
+        let fade = ui.visuals().disabled_alpha();
+        if fade > 0.0 {
+            painter.set_opacity((painter.opacity() / fade).min(1.0));
+        }
+    }
+    painter
+}
+
 /// Whether keyboard focus should be drawn: true after a key press, false again after the pointer
 /// presses or moves (CSS `:focus-visible`). Text fields show focus whatever this says.
 pub fn focus_visible(ctx: &egui::Context) -> bool {
@@ -254,6 +321,120 @@ impl Interact {
             press: anim::ease_bool(ctx, id.with("kit-press"), held, 0.0, super::motion::FAST),
             held,
             focus: anim::ease_bool(ctx, id.with("kit-focus"), focused, super::motion::FAST, 0.0),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::Ui;
+    use egui_phosphor::regular as icon;
+
+    use super::testkit;
+    use super::theme::{self, Density, Style, ThemeId};
+    use super::{chip, choice, field, range, row, select, toggle};
+
+    #[test]
+    fn disabled_text_reads_on_every_control_surface() {
+        for id in ThemeId::ALL {
+            let p = id.palette();
+            for style in Style::ALL {
+                let s = p.surfaces(style);
+                let c = super::disabled_text(p, style);
+                for g in [s.pane, s.panel, s.elevated, s.overlay, s.field] {
+                    let dimmed = theme::over(s.raised.top.gamma_multiply(theme::DISABLED_ALPHA), g);
+                    for ground in [g, dimmed] {
+                        let k = theme::contrast(c, ground);
+                        assert!(k >= 3.0, "{id:?} {style:?}: {k:.2}:1 on {ground:?}");
+                    }
+                }
+                assert!(
+                    theme::contrast(c, s.pane) < theme::contrast(p.text_dim, s.pane),
+                    "{id:?} {style:?}: a disabled label must read dimmer than an enabled one"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_controls_keep_a_readable_label_in_every_theme() {
+        type Show = fn(&mut Ui);
+        let controls: [(&str, Show); 11] = [
+            ("slider", |ui| {
+                range::Slider::new(&mut 3.0_f32, 0.0..=10.0)
+                    .label("Context lines")
+                    .header(true)
+                    .enabled(false)
+                    .show(ui);
+            }),
+            ("underline tabs", |ui| {
+                let _ = choice::UnderlineTabs::new(&mut 0_u8, &[(0, "Privacy"), (1, "Terms")])
+                    .enabled(false)
+                    .show(ui);
+            }),
+            ("segmented", |ui| {
+                let mut v = 0_u8;
+                choice::Segmented::new(&mut v, &[(0, "Unified"), (1, "Side by side")])
+                    .enabled(false)
+                    .show(ui);
+            }),
+            ("checkbox", |ui| {
+                toggle::Checkbox::new(&mut true, "Amend last commit")
+                    .enabled(false)
+                    .show(ui);
+            }),
+            ("radio", |ui| {
+                toggle::Radio::new(true, "Fast-forward")
+                    .enabled(false)
+                    .show(ui);
+            }),
+            ("switch", |ui| {
+                toggle::Switch::new(&mut true, "Prune on fetch")
+                    .enabled(false)
+                    .show(ui);
+            }),
+            ("select", |ui| {
+                let mut v = 0_u8;
+                select::Select::new(&mut v, &[(0, "Every 5 minutes")])
+                    .enabled(false)
+                    .show(ui);
+            }),
+            ("list row", |ui| {
+                row::ListRow::new("disabled-row")
+                    .icon(icon::FILE_TEXT)
+                    .label("Disabled")
+                    .detail("src/ui")
+                    .trailing("+4")
+                    .enabled(false)
+                    .show(ui);
+            }),
+            ("tree row", |ui| {
+                let _ = row::TreeRow::new("disabled-tree", 0)
+                    .icon(icon::GIT_BRANCH)
+                    .label("main")
+                    .enabled(false)
+                    .show(ui);
+            }),
+            ("chip", |ui| {
+                chip::Chip::new("Both modified").enabled(false).show(ui);
+            }),
+            ("text field", |ui| {
+                field::TextField::new(&mut "ada@example.com".to_owned())
+                    .label("Email")
+                    .enabled(false)
+                    .show(ui);
+            }),
+        ];
+        for id in ThemeId::ALL {
+            for style in Style::ALL {
+                let ctx = testkit::ctx_with(id, style, Density::Comfortable);
+                let s = id.palette().surfaces(style);
+                let grounds = [s.pane, s.panel, s.overlay];
+                for (name, show) in controls {
+                    let w = testkit::weakest_label(&ctx, &grounds, show);
+                    assert!(w >= 3.0, "{id:?} {style:?} disabled {name}: {w:.2}:1");
+                }
+            }
         }
     }
 }

@@ -7,7 +7,6 @@
 //! optional. Text fields always show focus, whatever the input modality.
 
 use std::ops::RangeInclusive;
-use std::sync::Arc;
 
 use egui::accesskit::Invalid;
 use egui::{
@@ -18,6 +17,7 @@ use egui::{
 use egui_phosphor::regular as icon;
 
 use super::button::{spinner_due, tooltip_text, with_tooltip};
+use super::chip::Keycap;
 use super::toggle::{component_id, gallery_caption, remembered};
 use super::{ForceState, IconButton, KitResponse, Size, anim, paint};
 use crate::keymap::{self, Command};
@@ -43,11 +43,10 @@ const AREA_PAD_Y: f32 = 8.0;
 /// The summary counter turns `warning` past 50 characters and `danger` past 72.
 const COUNTER_WARN: usize = 51;
 const COUNTER_DANGER: usize = 73;
-/// Deeper's search recess is a little lighter than the field's (spec 2.3: 64 vs 71 dark, 15 vs 18
-/// light).
-const SEARCH_RECESS: (u8, u8) = (64, 15);
-/// The keycap hint in an empty search field (concept `.k-key`).
-const KEYCAP_PAD: f32 = 5.0;
+/// The column guide shows once a line comes this close to it.
+const GUIDE_REACH: f32 = 24.0;
+/// Width of the fade where a single-line field clips its text.
+const TEXT_FADE: f32 = 18.0;
 /// Line-number gutter of a code area: padding either side of the numbers.
 const GUTTER_PAD: f32 = 8.0;
 
@@ -92,7 +91,9 @@ struct Core<'t> {
     counter: bool,
     guide: Option<usize>,
     shortcut: Option<Command>,
+    borderless: bool,
     id_salt: Option<Id>,
+    id: Option<Id>,
     force: Option<ForceState>,
 }
 
@@ -118,7 +119,9 @@ impl<'t> Core<'t> {
             counter: false,
             guide: None,
             shortcut: None,
+            borderless: false,
             id_salt: None,
+            id: None,
             force: None,
         }
     }
@@ -126,11 +129,12 @@ impl<'t> Core<'t> {
     /// Shows the field; returns the edit's response and whether Ctrl+Enter submitted it.
     fn show(self, ui: &mut Ui) -> (Response, bool) {
         let enabled = self.enabled && ui.is_enabled();
-        let id = component_id(ui, "kit-field", self.id_salt);
+        let id = self
+            .id
+            .unwrap_or_else(|| component_id(ui, "kit-field", self.id_salt));
         ui.scope(|ui| {
-            if !enabled {
-                ui.disable();
-            }
+            // A disabled field is not `Ui::disable`d (that fades its text past reading): its
+            // surfaces dim and its text paints in `disabled_text`, and the edit stops taking input.
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.with_layout(Layout::top_down(Align::Min), |ui| {
                 self.show_inner(ui, id, enabled)
@@ -151,14 +155,21 @@ impl<'t> Core<'t> {
             .unwrap_or_else(|| ui.available_width())
             .max(m.control * 2.0);
 
+        let ink = super::content_painter(ui);
+        let off = super::disabled_text(p, style);
+        let (label_color, faint, text_dim) = if enabled {
+            (p.text_dim, p.text_faint, p.text_dim)
+        } else {
+            (off, off, off)
+        };
         let label_id = self.label.as_ref().map(|text| {
-            let g = ui.painter().layout_no_wrap(
+            let g = ink.layout_no_wrap(
                 text.clone(),
                 FontId::new(LABEL_SIZE, theme::medium()),
-                p.text_dim,
+                label_color,
             );
             let (rect, _) = ui.allocate_exact_size(vec2(width, g.size().y), Sense::hover());
-            ui.painter().galley(rect.min, g, p.text_dim);
+            ink.galley(rect.min, g, label_color);
             let r = ui.interact(rect, id.with("label"), Sense::hover());
             r.widget_info(|| WidgetInfo::labeled(WidgetType::Label, enabled, text));
             ui.add_space(m.field_label_gap);
@@ -190,20 +201,14 @@ impl<'t> Core<'t> {
         };
         let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
         let radius = CornerRadius::same(m.radius);
-        let painter = ui.painter().clone();
-        painter.rect_filled(rect, radius, s.field);
-        let material = p.material(style, Elevation::Field);
-        if material.recess > 0 {
-            let recess = if self.kind == Kind::Search {
-                if p.dark {
-                    SEARCH_RECESS.0
-                } else {
-                    SEARCH_RECESS.1
-                }
-            } else {
-                material.recess
-            };
-            paint::recess(&painter, rect, radius, p.shadow, recess);
+        let painter = super::button::disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+        let bare = self.borderless;
+        if !bare {
+            painter.rect_filled(rect, radius, s.field);
+            let material = p.material(style, Elevation::Field);
+            if material.recess > 0 {
+                paint::recess(&painter, rect, radius, p.shadow, material.recess);
+            }
         }
 
         // The slots either side of the text.
@@ -257,12 +262,7 @@ impl<'t> Core<'t> {
             .map(|c| {
                 // The bare key when there is one (concept 1 shows `/`), else the chord.
                 let hint = keymap::hint(c);
-                let key = hint.rsplit(" · ").next().unwrap_or_default().to_owned();
-                ui.painter().layout_no_wrap(
-                    key,
-                    FontId::new(m.chord_size, FontFamily::Monospace),
-                    p.text_dim,
-                )
+                Keycap::new(hint.rsplit(" · ").next().unwrap_or_default())
             });
         let clear_side = Size::Xs.height();
         let mut right = if self.kind == Kind::Search {
@@ -271,9 +271,9 @@ impl<'t> Core<'t> {
             m.field_pad_x
         };
         if self.kind == Kind::Search {
-            let cap = keycap.as_ref().map_or(0.0, |g| {
-                (g.size().x + 2.0 * KEYCAP_PAD).max(m.keycap_height)
-            });
+            let cap = keycap
+                .as_ref()
+                .map_or(0.0, |k| k.measure_on(ui.painter()).x);
             right += cap.max(clear_side) + ICON_GAP;
         }
         if let Some((g, _)) = &counter {
@@ -297,11 +297,20 @@ impl<'t> Core<'t> {
         );
         {
             let v = child.visuals_mut();
-            v.weak_text_color = Some(p.text_faint);
+            v.weak_text_color = Some(faint);
             v.selection.bg_fill = p.selected();
         }
+        if !enabled {
+            child.set_opacity(ink.opacity());
+        }
         let interactive = enabled && !self.read_only;
-        let text_color = if self.read_only { p.text_dim } else { p.text };
+        let text_color = if !enabled {
+            off
+        } else if self.read_only {
+            p.text_dim
+        } else {
+            p.text
+        };
         let margin = Margin {
             left: crate::ui::points_i8(left.round()),
             right: crate::ui::points_i8(right.round()),
@@ -309,7 +318,7 @@ impl<'t> Core<'t> {
             bottom: crate::ui::points_i8(pad_y),
         };
         let multiline = self.kind.multiline();
-        let edit_id = id.with("kit-edit");
+        let edit_id = edit_id(id);
         let mut edit = if multiline {
             TextEdit::multiline(self.text)
         } else {
@@ -404,6 +413,7 @@ impl<'t> Core<'t> {
         } else {
             None
         };
+        let halo = halo.filter(|_| !bare);
         if let Some((color, alpha, t)) = halo {
             let w = HALO * t;
             painter.rect_stroke(
@@ -413,21 +423,23 @@ impl<'t> Core<'t> {
                 StrokeKind::Middle,
             );
         }
-        painter.rect_stroke(
-            rect,
-            radius,
-            Stroke::new(paint::SEAM, border),
-            StrokeKind::Inside,
-        );
+        if !bare {
+            painter.rect_stroke(
+                rect,
+                radius,
+                Stroke::new(paint::SEAM, border),
+                StrokeKind::Inside,
+            );
+        }
 
         if let Some(glyph) = icon_glyph {
-            let g = painter.layout_no_wrap(glyph, FontId::proportional(m.icon_md), p.text_faint);
+            let g = ink.layout_no_wrap(glyph, FontId::proportional(m.icon_md), faint);
             let y = if multiline {
                 rect.top() + pad_y + (line_h - g.size().y) / 2.0
             } else {
                 rect.center().y - g.size().y / 2.0
             };
-            painter.galley(pos2(rect.left() + m.field_pad_x, y), g, p.text_faint);
+            ink.galley(pos2(rect.left() + m.field_pad_x, y), g, faint);
         }
         if let Some(gutter) = gutter {
             paint_line_numbers(&painter, rect, gutter, &galley, galley_pos, &font, p);
@@ -439,14 +451,48 @@ impl<'t> Core<'t> {
                     .x
             });
             let x = rect.left() + left + w;
-            if x < rect.right() - right {
+            // A writing aid, not a fixture: it shows while the field is being written in, or
+            // once a line reaches it, so an idle description has no stray rule in it.
+            let reached = galley
+                .rows
+                .iter()
+                .any(|r| galley_pos.x + r.rect().right() >= x - GUIDE_REACH);
+            let shown = if reached { 1.0 } else { focus_t };
+            if x < rect.right() - right && shown > 0.0 {
                 let dashes = egui::Shape::dashed_line(
                     &[pos2(x, rect.top() + 2.0), pos2(x, rect.bottom() - 2.0)],
-                    Stroke::new(paint::SEAM, s.border),
+                    Stroke::new(paint::SEAM, s.border.gamma_multiply(shown)),
                     1.0,
                     2.0,
                 );
                 painter.extend(dashes);
+            }
+        }
+        if !multiline && !bare {
+            // Text that runs past the field fades out at the clipped edge instead of being cut
+            // through a glyph (the summary field's counter sits right after it).
+            let inner = egui::Rangef::new(rect.left() + left, rect.right() - right);
+            let ends = egui::Rangef::new(galley_pos.x, galley_pos.x + galley.size().x);
+            let band = egui::Rangef::new(rect.top() + paint::SEAM, rect.bottom() - paint::SEAM);
+            if ends.max > inner.max + 0.5 {
+                edge_fade(
+                    &painter,
+                    inner.max - TEXT_FADE,
+                    inner.max,
+                    band,
+                    s.field,
+                    false,
+                );
+            }
+            if ends.min < inner.min - 0.5 {
+                edge_fade(
+                    &painter,
+                    inner.min,
+                    inner.min + TEXT_FADE,
+                    band,
+                    s.field,
+                    true,
+                );
             }
         }
 
@@ -468,13 +514,10 @@ impl<'t> Core<'t> {
                 Some(_) => f32::from(u8::from(filled)),
                 None => anim::ease(&ctx, id.with("kit-search-clear"), filled, motion::FAST),
             };
-            if let Some(g) = &keycap {
-                let w = (g.size().x + 2.0 * KEYCAP_PAD).max(m.keycap_height);
-                let cap = Rect::from_min_size(
-                    pos2(x - w, cy - m.keycap_height / 2.0),
-                    vec2(w, m.keycap_height),
-                );
-                paint_keycap(&painter, cap, g, p);
+            if let Some(k) = &keycap {
+                let size = k.measure_on(&painter);
+                let cap = Rect::from_min_size(pos2(x - size.x, cy - size.y / 2.0), size);
+                k.paint_on(&painter, cap);
                 x = cap.left() - ICON_GAP;
             } else if reveal > 0.0 && interactive {
                 let at = Rect::from_min_size(
@@ -525,7 +568,8 @@ impl<'t> Core<'t> {
             x -= m.icon_md + ICON_GAP;
         }
         if let Some((g, color)) = counter {
-            painter.galley(pos2(x - g.size().x, cy - g.size().y / 2.0), g, color);
+            let color = if enabled { color } else { off };
+            ink.galley(pos2(x - g.size().x, cy - g.size().y / 2.0), g, color);
         }
 
         // Helper or error below.
@@ -534,10 +578,14 @@ impl<'t> Core<'t> {
             .or(self.helper.as_deref().map(|h| (h, false)));
         if let Some((text, is_error)) = message {
             ui.add_space(MESSAGE_GAP);
-            let color = if is_error { p.danger } else { p.text_dim };
+            let color = if is_error && enabled {
+                p.danger
+            } else {
+                text_dim
+            };
             let mut job_x = 0.0;
             let icon_g = is_error.then(|| {
-                painter.layout_no_wrap(
+                ink.layout_no_wrap(
                     icon::WARNING_CIRCLE.to_owned(),
                     FontId::proportional(MESSAGE_ICON),
                     color,
@@ -546,7 +594,7 @@ impl<'t> Core<'t> {
             if let Some(g) = &icon_g {
                 job_x = g.size().x + MESSAGE_GAP;
             }
-            let g = painter.layout(
+            let g = ink.layout(
                 text.to_owned(),
                 FontId::new(LABEL_SIZE, FontFamily::Proportional),
                 color,
@@ -555,13 +603,13 @@ impl<'t> Core<'t> {
             let (row, _) = ui.allocate_exact_size(vec2(width, g.size().y), Sense::hover());
             if let Some(ig) = icon_g {
                 let first_row = g.rows.first().map_or(g.size().y, |r| r.rect().height());
-                painter.galley(
+                ink.galley(
                     pos2(row.left(), row.top() + (first_row - ig.size().y) / 2.0),
                     ig,
                     color,
                 );
             }
-            painter.galley(pos2(row.left() + job_x, row.top()), g, color);
+            ink.galley(pos2(row.left() + job_x, row.top()), g, color);
         }
 
         if let Some(label_id) = label_id {
@@ -598,23 +646,29 @@ impl<'t> Core<'t> {
     }
 }
 
-/// A keycap: `keycap` fill, `edge` ring and a 1 px bottom line, the chord in `text_dim` mono.
-fn paint_keycap(painter: &egui::Painter, rect: Rect, chord: &Arc<Galley>, p: &Palette) {
-    let s = theme::surfaces(painter.ctx());
-    let m = theme::metrics();
-    let radius = CornerRadius::same(m.keycap_radius);
-    paint::fill(painter, rect, radius, s.keycap);
-    paint::rim(painter, rect, radius, s.edge);
-    painter.hline(
-        egui::Rangef::new(rect.left() + 2.0, rect.right() - 2.0),
-        rect.bottom() - 1.0,
-        Stroke::new(1.0 / painter.pixels_per_point(), s.keycap_edge),
-    );
-    painter.galley(
-        rect.center() - chord.size() / 2.0,
-        Arc::clone(chord),
-        p.text_dim,
-    );
+/// A horizontal fade over `x`, from clear to `color` (or `color` to clear when `leading`), over
+/// the rows `y`.
+fn edge_fade(
+    painter: &egui::Painter,
+    from: f32,
+    to: f32,
+    y: egui::Rangef,
+    color: Color32,
+    leading: bool,
+) {
+    let (a, b) = if leading {
+        (color, Color32::TRANSPARENT)
+    } else {
+        (Color32::TRANSPARENT, color)
+    };
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(pos2(from, y.min), a);
+    mesh.colored_vertex(pos2(to, y.min), b);
+    mesh.colored_vertex(pos2(to, y.max), b);
+    mesh.colored_vertex(pos2(from, y.max), a);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// Line numbers in the code area's gutter (`gutter` wide), one per logical line, right-aligned
@@ -755,8 +809,24 @@ macro_rules! common_setters {
                 self.core.id_salt = Some(Id::new(salt));
                 self
             }
+            /// The field's own id, set by the caller (not derived from the parent `Ui`), so
+            /// code elsewhere can focus it: request focus on [`edit_id`]`(id)`.
+            #[allow(
+                dead_code,
+                reason = "shared by the four fields; not every field uses each yet"
+            )]
+            pub fn id(mut self, id: Id) -> Self {
+                self.core.id = Some(id);
+                self
+            }
         }
     };
+}
+
+/// The id of the text edit inside a field whose id was set with `.id(id)`: what
+/// `Memory::request_focus` takes to put the caret in it.
+pub fn edit_id(id: Id) -> Id {
+    id.with("kit-edit")
 }
 
 /// A one-line text input: `TextField::new(&mut name).label("Name").show(ui)`.
@@ -831,6 +901,12 @@ impl<'t> SearchField<'t> {
     /// Busy (results are loading): a spinner in the trailing slot after `LOADING_DELAY`.
     pub fn loading(mut self, loading: bool) -> Self {
         self.core.loading = loading;
+        self
+    }
+    /// No fill, border or halo: the field is part of the surface around it (the command
+    /// palette's input over its seam).
+    pub fn borderless(mut self, borderless: bool) -> Self {
+        self.core.borderless = borderless;
         self
     }
     /// The command that focuses this field; its chord shows as a keycap while the field is empty.
@@ -1044,7 +1120,16 @@ pub(crate) fn gallery(ui: &mut Ui) {
     });
     gallery_caption(
         ui,
-        "Summary counter at 50 and 73 characters; description with the guide",
+        "Search, borderless (part of the surface around it, as in the command palette)",
+    );
+    SearchField::new(&mut String::new())
+        .placeholder("Type a command or search…")
+        .borderless(true)
+        .id(Id::new("gallery-search-bare"))
+        .show(ui);
+    gallery_caption(
+        ui,
+        "Summary counter at 50 and 73 characters (the overflow fades); description, idle",
     );
     cols(ui, &mut |ui, i| {
         let text = if i == 0 { 50 } else { 73 };
@@ -1068,6 +1153,20 @@ pub(crate) fn gallery(ui: &mut Ui) {
                 .show(ui);
         },
     );
+    gallery_caption(
+        ui,
+        "Description with a line past column 72: the guide shows",
+    );
+    TextArea::new(
+        &mut "Retry with backoff: the mobile clients drop the first request after a resume, so the \
+              fetch now waits and tries again."
+            .to_owned(),
+    )
+    .rows(3..=12)
+    .guide(72)
+    .name("Description, long")
+    .id_salt("g-area-long")
+    .show(ui);
     gallery_caption(ui, "Code area with line numbers (live), focused");
     cols(ui, &mut |ui, i| {
         if i == 0 {
@@ -1246,6 +1345,105 @@ mod tests {
             find(&nodes, "Resolved text").map(|n| n.role),
             Some(Role::MultilineTextInput)
         );
+    }
+
+    /// The dashes a frame painted (the column guide is the only dashed line a text area draws).
+    fn dashes(shapes: &[egui::epaint::ClippedShape]) -> usize {
+        shapes
+            .iter()
+            .filter(|c| matches!(c.shape, egui::Shape::LineSegment { .. }))
+            .count()
+    }
+
+    #[test]
+    fn the_column_guide_shows_only_while_writing_or_when_a_line_reaches_it() {
+        let ctx = testkit::ctx();
+        let mut short = "Explain why".to_owned();
+        let shapes = frame(&ctx, Vec::new(), |ui| {
+            TextArea::new(&mut short).guide(72).show(ui);
+        });
+        assert_eq!(
+            dashes(&shapes),
+            0,
+            "an idle short description shows no guide"
+        );
+        let mut long = "x".repeat(90);
+        let shapes = frame(&ctx, Vec::new(), |ui| {
+            ui.set_width(2000.0);
+            TextArea::new(&mut long).guide(72).show(ui);
+        });
+        assert!(
+            dashes(&shapes) > 0,
+            "a line past the column shows the guide"
+        );
+        let mut focused = "Explain why".to_owned();
+        let shapes = frame(&ctx, Vec::new(), |ui| {
+            TextArea::new(&mut focused)
+                .guide(72)
+                .show_forced(ui, ForceState::FOCUS);
+        });
+        assert!(dashes(&shapes) > 0, "writing shows the guide");
+    }
+
+    #[test]
+    fn text_that_runs_past_a_field_fades_out_before_its_counter() {
+        let ctx = testkit::ctx();
+        let field = theme::palette(&ctx).standard.field;
+        let fades = |text: &str| {
+            let mut text = text.to_owned();
+            let shapes = frame(&ctx, Vec::new(), |ui| {
+                ui.set_width(300.0);
+                TextField::new(&mut text).counter(true).show(ui);
+            });
+            shapes
+                .iter()
+                .filter(|c| match &c.shape {
+                    egui::Shape::Mesh(m) => m.vertices.iter().any(|v| v.color == field),
+                    _ => false,
+                })
+                .count()
+        };
+        assert_eq!(fades("feat: short"), 0, "text that fits is not faded");
+        assert_eq!(fades(&"x".repeat(80)), 1, "overflowing text fades");
+    }
+
+    #[test]
+    fn a_field_with_a_caller_set_id_can_be_focused_from_elsewhere() {
+        let ctx = testkit::ctx();
+        let id = Id::new("history-filter");
+        let mut text = String::new();
+        let mut focused = false;
+        for i in 0..3 {
+            if i == 1 {
+                ctx.memory_mut(|m| m.request_focus(edit_id(id)));
+            }
+            frame(&ctx, Vec::new(), |ui| {
+                // Nested in a scope, so an id derived from the parent `Ui` would differ.
+                ui.scope(|ui| {
+                    focused = SearchField::new(&mut text).id(id).show(ui).has_focus();
+                });
+            });
+        }
+        assert!(focused);
+    }
+
+    #[test]
+    fn a_borderless_search_paints_no_field_or_border() {
+        let ctx = testkit::ctx();
+        let s = theme::palette(&ctx).standard;
+        let painted = |bare: bool| {
+            let shapes = frame(&ctx, Vec::new(), |ui| {
+                SearchField::new(&mut String::new())
+                    .borderless(bare)
+                    .show(ui);
+            });
+            shapes.iter().any(|c| match &c.shape {
+                egui::Shape::Rect(r) => r.fill == s.field || r.stroke.width > 0.0,
+                _ => false,
+            })
+        };
+        assert!(painted(false));
+        assert!(!painted(true));
     }
 
     #[test]

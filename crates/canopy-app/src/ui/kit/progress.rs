@@ -25,6 +25,9 @@ const MIN_STARTED: f32 = 0.02;
 const LINE_SHARE: f32 = 0.5;
 /// Skeleton bar widths, cycling.
 const SKELETON_WIDTHS: [f32; 3] = [0.40, 0.62, 0.78];
+/// A skeleton bar is the `pressed` overlay laid this many times over its ground at rest and at
+/// the top of its pulse.
+const SKELETON_LAYERS: (i32, i32) = (2, 3);
 /// The label reduced motion adds to an indeterminate bar.
 pub const WORKING: &str = "Working…";
 
@@ -243,7 +246,7 @@ impl Progress {
                     Align2::LEFT_TOP,
                     l,
                     label_font,
-                    p.text,
+                    p.text_dim,
                 );
             }
             if let Some(v) = &value_text {
@@ -516,12 +519,25 @@ pub(crate) fn paint_spinner(
 
 // ------------------------------------------------------------------------------------ Skeleton
 
+/// The translucent `c` (premultiplied) laid `n` times over itself, as one colour: its colour
+/// and alpha both scale by `(1 - (1 - a)^n) / a`.
+fn layered(c: Color32, n: i32) -> Color32 {
+    let a = f32::from(c.a()) / 255.0;
+    if a <= 0.0 {
+        return c;
+    }
+    c.gamma_multiply((1.0 - (1.0 - a).powi(n)) / a)
+}
+
 /// Placeholder rows while a list first loads (never on refreshes). `Skeleton::rows(6).show(ui)`.
+/// The rows appear after `LOADING_DELAY` of being shown (at once with reduced motion), so a quick
+/// load never flashes them.
 #[derive(Debug)]
 #[must_use = "call .show(ui) or ui.add(..)"]
 pub struct Skeleton {
     rows: usize,
     row_height: Option<f32>,
+    id_salt: Option<Id>,
     force: Option<ForceState>,
 }
 
@@ -530,8 +546,13 @@ impl Skeleton {
         Self {
             rows,
             row_height: None,
+            id_salt: None,
             force: None,
         }
+    }
+    pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        self.id_salt = Some(Id::new(salt));
+        self
     }
     /// The real row height of the list it stands in for (default `row_height`).
     pub fn row_height(mut self, height: f32) -> Self {
@@ -553,10 +574,44 @@ impl Skeleton {
         }
     }
 
-    /// The bar fill at loop phase `t` (0: `hover_strong`, 0.5: `pressed`; `None`, reduced
-    /// motion: half way between).
+    /// The bar fill at loop phase `t`: the `pressed` overlay laid twice over the ground at rest
+    /// and three times at the top of the pulse (`None`, reduced motion: half way). Translucent,
+    /// so a bar reads alike on pane and chrome, dark or light (about 1.3 to 1.6:1); one layer
+    /// of the hover overlays, as before, faded into dark grounds.
     pub fn fill_at(p: &Palette, t: Option<f32>) -> Color32 {
-        p.hover_strong().lerp_to_gamma(p.pressed(), Self::pulse(t))
+        let (rest, strong) = SKELETON_LAYERS;
+        layered(p.pressed(), rest).lerp_to_gamma(layered(p.pressed(), strong), Self::pulse(t))
+    }
+
+    /// Whether the rows are due: shown for `LOADING_DELAY` without a break (a skeleton not
+    /// painted last pass starts its wait again).
+    fn due(ctx: &egui::Context, id: Id) -> bool {
+        #[derive(Clone, Copy)]
+        struct Wait {
+            since: f64,
+            pass: u64,
+        }
+        let now = ctx.input(|i| i.time);
+        let pass = ctx.cumulative_pass_nr();
+        let delay = motion::time(motion::LOADING_DELAY);
+        let since = ctx.data_mut(|d| {
+            let w = d.get_temp_mut_or_insert_with(id.with("kit-skeleton-wait"), || Wait {
+                since: now,
+                pass,
+            });
+            if w.pass + 1 < pass {
+                w.since = now;
+            }
+            w.pass = pass;
+            w.since
+        });
+        let waited = crate::ui::to_f32(now - since);
+        if waited < delay {
+            ctx.request_repaint_after(Duration::from_secs_f32(delay - waited));
+            false
+        } else {
+            true
+        }
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
@@ -569,7 +624,9 @@ impl Skeleton {
             vec2(width, row_h * crate::ui::count_f32(self.rows)),
             Sense::hover(),
         );
-        if ui.is_rect_visible(rect) {
+        let id = self.id_salt.map_or(response.id, |s| ui.id().with(s));
+        let due = self.force.is_some() || Self::due(&ctx, id);
+        if due && ui.is_rect_visible(rect) {
             let t = match self.force.and_then(|f| f.progress) {
                 Some(t) => Some(t),
                 None if motion::reduced() => None,
@@ -708,9 +765,10 @@ pub(crate) fn gallery(ui: &mut Ui) {
         );
     });
     small(ui, "Skeleton rows (rest, midpoint, strong)");
-    for t in [0.0, 0.25, 0.5] {
+    for (i, t) in [0.0, 0.25, 0.5].into_iter().enumerate() {
         Skeleton::rows(2)
             .row_height(m.history_row_height)
+            .id_salt(("g-skeleton", i))
             .show_forced(
                 ui,
                 ForceState {
@@ -842,10 +900,87 @@ mod tests {
     }
 
     #[test]
-    fn skeleton_pulses_between_hover_strong_and_pressed() {
+    fn the_progress_label_is_dim_and_its_value_strong() {
+        let ctx = context();
+        let p = theme::palette(&ctx);
+        let out = frame(&ctx, 0.0, |ui| {
+            Progress::new(0.5)
+                .label("Receiving objects")
+                .value_text("12 of 340")
+                .show(ui);
+        });
+        let color = |text: &str| {
+            out.shapes.iter().find_map(|c| match &c.shape {
+                Shape::Text(t) if t.galley.text() == text => Some(t.fallback_color),
+                _ => None,
+            })
+        };
+        assert_eq!(color("Receiving objects"), Some(p.text_dim));
+        assert_eq!(color("12 of 340"), Some(p.text));
+    }
+
+    #[test]
+    fn skeleton_pulses_between_two_and_three_pressed_layers() {
         let p = theme::ThemeId::Daylight.palette();
-        assert_eq!(Skeleton::fill_at(p, Some(0.0)), p.hover_strong());
-        assert_eq!(Skeleton::fill_at(p, Some(0.5)), p.pressed());
+        assert_eq!(Skeleton::fill_at(p, Some(0.0)), layered(p.pressed(), 2));
+        assert_eq!(Skeleton::fill_at(p, Some(0.5)), layered(p.pressed(), 3));
+        assert_eq!(layered(p.pressed(), 1), p.pressed());
+        let g = p.standard.pane;
+        let twice = theme::over(p.pressed(), theme::over(p.pressed(), g));
+        let once = theme::over(layered(p.pressed(), 2), g);
+        for (a, b) in [
+            (twice.r(), once.r()),
+            (twice.g(), once.g()),
+            (twice.b(), once.b()),
+        ] {
+            assert!(a.abs_diff(b) <= 1, "{twice:?} vs {once:?}");
+        }
+    }
+
+    #[test]
+    fn skeleton_rows_can_be_seen_on_every_ground() {
+        for id in theme::ThemeId::ALL {
+            let p = id.palette();
+            for style in theme::Style::ALL {
+                let s = p.surfaces(style);
+                theme::with_look(style, theme::Density::Comfortable, || {
+                    // Reduced motion holds the midpoint: it must read as well as the pulse.
+                    for t in [Some(0.0), None] {
+                        let fill = Skeleton::fill_at(p, t);
+                        for g in [s.pane, s.panel] {
+                            let k = theme::contrast(theme::over(fill, g), g);
+                            assert!(k >= 1.25, "{id:?} {style:?} {t:?}: {k:.2}:1");
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn skeleton_rows_wait_for_the_loading_delay() {
+        let ctx = egui::Context::default();
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            theme::Appearance {
+                reduce_motion: false,
+                ..theme::Appearance::STILL
+            },
+        );
+        let bars = |time: f64| {
+            let out = frame(&ctx, time, |ui| {
+                Skeleton::rows(3).id_salt("wait").show(ui);
+            });
+            out.shapes
+                .iter()
+                .filter(|c| matches!(c.shape, Shape::Rect(_)))
+                .count()
+        };
+        assert_eq!(bars(0.0), 0, "nothing before LOADING_DELAY");
+        assert_eq!(bars(0.1), 0);
+        assert_eq!(bars(0.2), 3, "the rows after it");
+        motion::set_reduced(true);
     }
 
     #[test]

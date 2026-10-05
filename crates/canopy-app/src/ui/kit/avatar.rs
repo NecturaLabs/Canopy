@@ -146,7 +146,7 @@ pub fn paint(
             center,
             Align2::CENTER_CENTER,
             initial(person),
-            FontId::new((diameter * 0.55).round(), theme::semibold()),
+            initial_font(diameter),
             letter,
         );
     }
@@ -164,6 +164,15 @@ pub fn paint(
 
 /// Width of the ring an avatar wears over the graph or in a stack.
 const RING: f32 = 1.5;
+/// The share of an avatar the next one in a stack covers, at most.
+const STACK_OVERLAP: f32 = 0.3;
+/// The clear space between a stacked initial and the next avatar's ring.
+const STACK_CLEAR: f32 = 1.0;
+
+/// The initial's font in an avatar of `diameter`.
+fn initial_font(diameter: f32) -> FontId {
+    FontId::new((diameter * 0.55).round(), theme::semibold())
+}
 
 // ------------------------------------------------------------------------------------- Avatar
 
@@ -243,8 +252,9 @@ impl Widget for Avatar {
 
 // -------------------------------------------------------------------------------- AvatarStack
 
-/// Overlapping avatars of several people (30% overlap), at most three and a `+N` badge; the
-/// tooltip lists everyone.
+/// Overlapping avatars of several people (up to 30% overlap, less where an initial would be cut:
+/// each initial keeps `STACK_CLEAR` from the next avatar's ring), at most three and a `+N` badge;
+/// the tooltip lists everyone.
 #[derive(Debug)]
 #[must_use = "call .show(ui) or ui.add(..)"]
 pub struct AvatarStack {
@@ -287,11 +297,34 @@ impl AvatarStack {
         (shown, self.people.len() - shown)
     }
 
+    /// How far apart the avatars' centres are: `STACK_OVERLAP` of a diameter covered, or less, so
+    /// the widest initial among the covered avatars ends `STACK_CLEAR` before the next ring.
+    fn step(&self, ui: &Ui, shown: usize) -> f32 {
+        let d = self.size.diameter();
+        let font = initial_font(d);
+        let widest = self.people[..shown.saturating_sub(1)]
+            .iter()
+            .filter(|p| p.picture.is_none())
+            .map(|p| {
+                ui.painter()
+                    .layout_no_wrap(initial(p), font.clone(), Color32::PLACEHOLDER)
+                    .rect
+                    .width()
+            })
+            .fold(0.0, f32::max);
+        let clear = if widest > 0.0 {
+            d / 2.0 + widest / 2.0 + STACK_CLEAR + RING
+        } else {
+            0.0
+        };
+        (d * (1.0 - STACK_OVERLAP)).max(clear).min(d + RING)
+    }
+
     pub fn show(self, ui: &mut Ui) -> Response {
         let ground = self.ground.unwrap_or(theme::surfaces(ui.ctx()).pane);
         let d = self.size.diameter();
-        let step = d * 0.7;
         let (shown, hidden) = self.split();
+        let step = self.step(ui, shown);
         let avatars_w = if shown == 0 {
             0.0
         } else {
@@ -556,6 +589,43 @@ mod tests {
         assert_eq!(AvatarStack::new(people.clone()).split(), (3, 2));
         assert_eq!(AvatarStack::new(people[..2].to_vec()).split(), (2, 0));
         assert_eq!(AvatarStack::new(people).max(1).split(), (1, 4));
+    }
+
+    #[test]
+    fn a_stacked_initial_stays_clear_of_the_next_avatar() {
+        use crate::ui::kit::testkit;
+        let people = vec![
+            Person::new("Maya Chen", ""),
+            Person::new("Wendy Moss", ""),
+            Person::new("Mo", ""),
+        ];
+        for density in Density::ALL {
+            let ctx = testkit::ctx_with(theme::ThemeId::Midnight, theme::Style::Standard, density);
+            for size in AvatarSize::ALL {
+                let shapes = testkit::frame(&ctx, Vec::new(), |ui| {
+                    AvatarStack::new(people.clone()).size(size).show(ui);
+                });
+                let r = size.diameter() / 2.0;
+                let rings: Vec<f32> = shapes
+                    .iter()
+                    .filter_map(|c| match &c.shape {
+                        egui::Shape::Circle(k) if k.radius > r => Some(k.center.x - k.radius),
+                        _ => None,
+                    })
+                    .collect();
+                let (_, inks) = testkit::painted_colors(&shapes);
+                assert_eq!((rings.len(), inks.len()), (3, 3), "{density:?} {size:?}");
+                for i in 0..2 {
+                    let right = inks[i].0.right();
+                    assert!(
+                        right <= rings[i + 1],
+                        "{density:?} {size:?}: initial {i} ends at {right:.1}, \
+                         the next ring starts at {:.1}",
+                        rings[i + 1]
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -70,6 +70,7 @@ pub struct Select<'a, T: PartialEq + Clone> {
     tooltip: Option<String>,
     disabled_reason: Option<String>,
     id_salt: Option<Id>,
+    id: Option<Id>,
     force: Option<ForceState>,
 }
 
@@ -88,6 +89,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             tooltip: None,
             disabled_reason: None,
             id_salt: None,
+            id: None,
             force: None,
         }
     }
@@ -136,6 +138,12 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
         self.id_salt = Some(Id::new(salt));
         self
     }
+    /// The select's own id, set by the caller (not derived from the parent `Ui`), so code
+    /// elsewhere can focus its trigger ([`trigger_id`]) or open its list.
+    pub fn id(mut self, id: Id) -> Self {
+        self.id = Some(id);
+        self
+    }
     /// `open` shows the list (statically, at its final position); `hover` with `open` highlights
     /// the first option that is not chosen.
     pub(crate) fn show_forced(mut self, ui: &mut Ui, force: ForceState) -> Response {
@@ -152,7 +160,9 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
         let s = p.surfaces(style);
         let m = theme::metrics();
         let enabled = self.enabled && ui.is_enabled();
-        let id = component_id(ui, "kit-select", self.id_salt);
+        let id = self
+            .id
+            .unwrap_or_else(|| component_id(ui, "kit-select", self.id_salt));
         let popup_id = id.with("kit-select-list");
         let state_id = id.with("kit-select-state");
         let width = self.width.unwrap_or_else(|| ui.available_width());
@@ -165,7 +175,12 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 p.text_dim,
             );
             let (rect, _) = ui.allocate_exact_size(vec2(width, g.size().y), Sense::hover());
-            disabled_painter(ui, enabled, theme::DISABLED_ALPHA).galley(rect.min, g, p.text_dim);
+            if enabled {
+                ui.painter().galley(rect.min, g, p.text_dim);
+            } else {
+                let color = super::disabled_text(p, style);
+                super::content_painter(ui).galley(rect.min, g, color);
+            }
             ui.add_space(m.field_label_gap);
         }
 
@@ -174,7 +189,13 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
         } else {
             Sense::hover()
         };
-        let (rect, mut trigger) = ui.allocate_exact_size(vec2(width, self.size.height()), sense);
+        let size = vec2(width, self.size.height());
+        let (rect, mut trigger) = if self.id.is_some() {
+            let rect = ui.allocate_space(size).1;
+            (rect, ui.interact(rect, trigger_id(id), sense))
+        } else {
+            ui.allocate_exact_size(size, sense)
+        };
         let force = self.force;
         // A forced list shows only while its trigger is on screen (egui would push it into view).
         let forced_open = force.is_some_and(|f| f.open) && ui.is_rect_visible(rect);
@@ -304,16 +325,22 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 ist.press,
             );
             let ring = s.raised_edge.lerp_to_gamma(p.focus, open_t);
-            paint::surface(
-                &painter,
-                rect,
-                radius,
-                p,
-                style,
-                Elevation::Control,
-                body,
-                Some(ring),
-            );
+            if enabled {
+                paint::surface(
+                    &painter,
+                    rect,
+                    radius,
+                    p,
+                    style,
+                    Elevation::Control,
+                    body,
+                    Some(ring),
+                );
+            } else {
+                // Disabled like a button: dimmed and flat, the text readable.
+                paint::fill(&painter, rect, radius, body);
+                paint::rim(&painter, rect, radius, ring);
+            }
             if ist.focus > 0.0 {
                 paint::focus_ring(
                     &painter,
@@ -323,6 +350,12 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                     Color32::TRANSPARENT,
                 );
             }
+            let (painter, faint, text_color) = if enabled {
+                (painter, p.text_faint, p.text)
+            } else {
+                let c = super::disabled_text(p, style);
+                (super::content_painter(ui), c, c)
+            };
             let caret_x = rect.right() - PAD_RIGHT - m.icon_md / 2.0;
             if self.loading {
                 paint::spinner(
@@ -330,24 +363,24 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                     pos2(caret_x, rect.center().y),
                     m.icon_md * 0.33,
                     1.6,
-                    p.text_faint,
+                    faint,
                 );
             } else {
                 let g = painter.layout_no_wrap(
                     icon::CARET_DOWN.to_owned(),
                     FontId::proportional(m.icon_md),
-                    p.text_faint,
+                    faint,
                 );
                 let pos = pos2(caret_x, rect.center().y) - g.size() / 2.0;
                 let angle = std::f32::consts::PI * open_t;
                 painter.add(
-                    TextShape::new(pos, g, p.text_faint)
+                    TextShape::new(pos, g, faint)
                         .with_angle_and_anchor(angle, Align2::CENTER_CENTER),
                 );
             }
             let (text, color) = match chosen {
-                Some(i) => (self.options[i].1.to_owned(), p.text),
-                None => (self.placeholder.clone(), p.text_faint),
+                Some(i) => (self.options[i].1.to_owned(), text_color),
+                None => (self.placeholder.clone(), faint),
             };
             let max = (caret_x - m.icon_md / 2.0 - GAP - rect.left() - PAD_LEFT).max(0.0);
             let mut job = egui::text::LayoutJob::simple_singleline(
@@ -565,6 +598,11 @@ fn blend(a: Fill, b: Fill, t: f32) -> Fill {
     }
 }
 
+/// The trigger of a select whose id was set with `.id(id)`: what `Memory::request_focus` takes.
+pub fn trigger_id(id: Id) -> Id {
+    id.with("kit-select-trigger")
+}
+
 // ------------------------------------------------------------------------------------- gallery
 
 const STRATEGIES: [(u8, &str); 3] = [
@@ -616,7 +654,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
         Select::new(&mut 1_u8, &STRATEGIES)
             .width(w)
             .size(Size::Sm)
-            .id_salt("g-sel6")
+            .id(Id::new("gallery-select-small"))
             .show(ui);
     });
     ui.add_space(theme::SM);
@@ -640,6 +678,25 @@ pub(crate) fn gallery(ui: &mut Ui) {
 mod tests {
     use super::super::testkit::{self, frame, key, spoken};
     use super::*;
+
+    #[test]
+    fn a_select_with_a_caller_set_id_can_be_focused_from_elsewhere() {
+        let ctx = testkit::ctx();
+        let id = Id::new("pull-strategy");
+        let mut v = 0_u8;
+        let mut focused = false;
+        for i in 0..3 {
+            if i == 1 {
+                ctx.memory_mut(|m| m.request_focus(trigger_id(id)));
+            }
+            frame(&ctx, Vec::new(), |ui| {
+                ui.scope(|ui| {
+                    focused = Select::new(&mut v, &STRATEGIES).id(id).show(ui).has_focus();
+                });
+            });
+        }
+        assert!(focused);
+    }
 
     fn show(ui: &mut Ui, v: &mut u8) -> Response {
         Select::new(v, &STRATEGIES)

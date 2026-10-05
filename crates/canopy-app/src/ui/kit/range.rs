@@ -5,24 +5,20 @@ use std::ops::RangeInclusive;
 use std::sync::Arc;
 
 use egui::emath::Numeric;
-use egui::epaint::RectShape;
 use egui::{
-    Color32, CornerRadius, FontFamily, FontId, Id, Key, LayerId, Order, Rect, Response, Sense,
-    Stroke, StrokeKind, Ui, Vec2, Widget, WidgetInfo, pos2, vec2,
+    Color32, CornerRadius, FontFamily, FontId, Id, Key, LayerId, Order, Rect, Response, Sense, Ui,
+    Vec2, Widget, WidgetInfo, pos2, vec2,
 };
 
 use super::button::{disabled_painter, tooltip_text, with_tooltip};
 use super::toggle::{claim_arrows, gallery_caption, gallery_row, remembered};
 use super::{ForceState, Interact, paint};
 use crate::ui::motion;
-use crate::ui::theme::{self, Palette};
+use crate::ui::theme::{self, Elevation, Palette};
 
 /// The thumb's scale under the pointer or while dragged, reached on `SPRING_CURVE` over 0.2 s.
 const THUMB_GROW: f32 = 1.12;
 const THUMB_GROW_TIME: f32 = 0.2;
-/// The thumb's 1 pt ring (black at 18%) and its (1, 3, 0, 35%) shadow.
-const THUMB_RING_ALPHA: u8 = 46;
-const THUMB_SHADOW: (f32, f32, u8) = (1.0, 3.0, 89);
 /// Space between the value bubble and the thumb.
 const BUBBLE_GAP: f32 = 8.0;
 
@@ -173,12 +169,19 @@ impl<'a, T: Numeric> Slider<'a, T> {
         if let Some((label, value)) = &header {
             let h = label.size().y.max(value.size().y);
             let (row, _) = ui.allocate_exact_size(vec2(width, h), Sense::hover());
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
-            painter.galley(row.left_top(), Arc::clone(label), p.text);
+            let (painter, color) = if enabled {
+                (ui.painter().clone(), p.text)
+            } else {
+                (
+                    super::content_painter(ui),
+                    super::disabled_text(p, theme::style()),
+                )
+            };
+            painter.galley(row.left_top(), Arc::clone(label), color);
             painter.galley(
                 pos2(row.right() - value.size().x, row.top()),
                 Arc::clone(value),
-                p.text,
+                color,
             );
         }
         let sense = if enabled {
@@ -275,21 +278,17 @@ impl<'a, T: Numeric> Slider<'a, T> {
             }
             let thumb_r = r * (1.0 + (THUMB_GROW - 1.0) * grow);
             let thumb = Rect::from_center_size(pos2(x, cy), Vec2::splat(thumb_r * 2.0));
-            let (dy, blur, alpha) = THUMB_SHADOW;
-            painter.add(
-                RectShape::filled(
-                    thumb.translate(vec2(0.0, dy)),
-                    full,
-                    Palette::tint(Color32::BLACK, alpha),
-                )
-                .with_blur_width(blur),
-            );
-            paint::fill(&painter, thumb, full, s.knob);
-            painter.rect_stroke(
+            // The same white knob as the switch: its material (contact shadow, and in light
+            // themes the knob ring that keeps it apart from a pale rail).
+            paint::surface(
+                &painter,
                 thumb,
                 full,
-                Stroke::new(paint::SEAM, Palette::tint(Color32::BLACK, THUMB_RING_ALPHA)),
-                StrokeKind::Outside,
+                p,
+                theme::style(),
+                Elevation::Knob,
+                s.knob,
+                s.knob_edge,
             );
             if st.focus > 0.0 {
                 paint::focus_ring(
@@ -361,7 +360,7 @@ fn bubble(ui: &Ui, id: Id, thumb: Rect, text: &str, p: &Palette) {
         radius,
         p,
         theme::style(),
-        theme::Elevation::Floating,
+        Elevation::Floating,
         s.tooltip,
         Some(p.floating_ring(s)),
     );

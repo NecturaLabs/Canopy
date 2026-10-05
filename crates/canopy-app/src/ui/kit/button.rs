@@ -355,8 +355,26 @@ impl Button {
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
             let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let ink_painter = if enabled {
+                painter.clone()
+            } else {
+                super::content_painter(ui)
+            };
             let radius = CornerRadius::same(m.radius);
             let (fill, ring, level, label, focus) = match self.kind {
+                // Disabled: no accent or danger fill (a dimmed one reads as a muddy, half-lit
+                // button), the neutral raised surface with its ring, dimmed and flat, and a label
+                // that stays readable.
+                ButtonKind::Primary | ButtonKind::Danger | ButtonKind::Secondary if !enabled => (
+                    Some(s.raised),
+                    Some(s.raised_edge),
+                    None,
+                    super::disabled_text(p, style),
+                    p.focus,
+                ),
+                ButtonKind::Ghost if !enabled => {
+                    (None, None, None, super::disabled_text(p, style), p.focus)
+                }
                 ButtonKind::Primary => (
                     Some(blend(
                         blend(s.primary, s.primary_hover, st.hover),
@@ -407,7 +425,12 @@ impl Button {
                 (Some(f), Some(level)) => {
                     paint::surface(&painter, rect, radius, p, style, level, f, ring);
                 }
-                (Some(f), None) => paint::fill(&painter, rect, radius, f),
+                (Some(f), None) => {
+                    paint::fill(&painter, rect, radius, f);
+                    if let Some(ring) = ring {
+                        paint::rim(&painter, rect, radius, ring);
+                    }
+                }
                 _ => {}
             }
             if st.focus > 0.0 {
@@ -419,13 +442,17 @@ impl Button {
                     Color32::TRANSPARENT,
                 );
             }
+            let painter = ink_painter;
             let scale = anim::press_scale(&ctx, response.id, st.held, 0.97);
             let mut shapes = Vec::new();
             let mut x = rect.center().x - content / 2.0;
             let cy = rect.center().y;
             if let Some(w) = icon_w {
                 let spinning = spinner_due(&ctx, response.id, self.loading);
-                let icon_color = self.icon_tone.map_or(label, |t| t.color(p));
+                let icon_color = match self.icon_tone {
+                    Some(t) if enabled => t.color(p),
+                    _ => label,
+                };
                 if spinning {
                     let center = pos2(x + w / 2.0, cy);
                     paint::spinner(&painter, center, m.icon_md * 0.38, 1.6, icon_color);
@@ -446,10 +473,16 @@ impl Button {
             x += text.size().x;
             if let Some(c) = &chord {
                 x += theme::SM;
+                // A disabled label is already as faint as it may get.
+                let hint = if enabled {
+                    label.gamma_multiply(0.4)
+                } else {
+                    label
+                };
                 shapes.push(Shape::galley(
                     pos2(x, cy - c.size().y / 2.0),
                     Arc::clone(c),
-                    label.gamma_multiply(0.4),
+                    hint,
                 ));
                 x += c.size().x;
             }
@@ -591,15 +624,22 @@ impl IconButton {
                     Color32::TRANSPARENT,
                 );
             }
-            let rest = if self.active {
+            let rest = if !enabled {
+                super::disabled_text(p, theme::style())
+            } else if self.active {
                 p.accent
             } else {
                 self.tone.map_or(p.text_dim, |t| t.color(p))
             };
-            let color = if self.active || self.tone.is_some() {
+            let color = if !enabled || self.active || self.tone.is_some() {
                 rest
             } else {
                 rest.lerp_to_gamma(p.text, st.hover.max(st.press))
+            };
+            let painter = if enabled {
+                painter
+            } else {
+                super::content_painter(ui)
             };
             let scale = anim::press_scale(&ctx, response.id, st.held, 0.94);
             let g = painter.layout_no_wrap(self.glyph, FontId::proportional(glyph_size), color);
@@ -790,8 +830,16 @@ impl ToolButton {
             if st.focus > 0.0 {
                 paint::inset_ring(&painter, rect, radius, p.focus.gamma_multiply(st.focus));
             }
-            let text_color = p.text_dim.lerp_to_gamma(p.text, lit);
-            let icon_color = if self.toggled { p.accent } else { text_color };
+            let (painter, text_color) = if enabled {
+                (painter, p.text_dim.lerp_to_gamma(p.text, lit))
+            } else {
+                (super::content_painter(ui), super::disabled_text(p, style))
+            };
+            let icon_color = if self.toggled && enabled {
+                p.accent
+            } else {
+                text_color
+            };
             let scale = anim::press_scale(&ctx, response.id, st.held, 0.96);
             let mut shapes = Vec::new();
             let (icon_pos, caption_pos) = if stacked {
@@ -826,7 +874,8 @@ impl ToolButton {
                     icon_pos.x + glyph.size().x + 3.0,
                     icon_pos.y + glyph.size().y / 2.0 - b.size().y / 2.0,
                 );
-                shapes.push(Shape::galley(at, Arc::clone(b), p.accent));
+                let badge_color = if enabled { p.accent } else { text_color };
+                shapes.push(Shape::galley(at, Arc::clone(b), badge_color));
             }
             shapes.push(Shape::galley(caption_pos, caption, text_color));
             paint_scaled(&painter, shapes, rect.center(), scale);
@@ -1064,11 +1113,23 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                 Elevation::Primary,
             ),
         };
+        let (rest, hover, pressed, on) = if enabled {
+            (rest, hover, pressed, on)
+        } else {
+            // Disabled like a Button: the neutral raised surface, dimmed and flat.
+            let label = super::disabled_text(p, style);
+            (s.raised, s.raised, s.raised, label)
+        };
         if ui.is_rect_visible(rect) {
             let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
             let radius = CornerRadius::same(m.radius);
-            let ring = (self.kind != ButtonKind::Primary).then_some(s.raised_edge);
-            paint::surface(&painter, rect, radius, p, style, level, rest, ring);
+            let ring = (!enabled || self.kind != ButtonKind::Primary).then_some(s.raised_edge);
+            if enabled {
+                paint::surface(&painter, rect, radius, p, style, level, rest, ring);
+            } else {
+                paint::fill(&painter, rect, radius, rest);
+                paint::rim(&painter, rect, radius, s.raised_edge);
+            }
             for (half, st, corners) in [
                 (
                     main_rect,
@@ -1109,6 +1170,11 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                 }
             }
             let seam = Palette::tint(on, 64);
+            let painter = if enabled {
+                painter
+            } else {
+                super::content_painter(ui)
+            };
             painter.vline(
                 caret_rect.left(),
                 egui::Rangef::new(rect.top() + 5.0, rect.bottom() - 5.0),
@@ -1438,14 +1504,56 @@ mod tests {
     }
 
     #[test]
-    fn disabled_buttons_paint_at_the_disabled_opacity() {
+    fn disabled_buttons_keep_a_readable_label_in_every_theme() {
+        for id in theme::ThemeId::ALL {
+            for style in Style::ALL {
+                let ctx = super::super::testkit::ctx_with(id, style, theme::Density::Comfortable);
+                let s = id.palette().surfaces(style);
+                let grounds = [s.pane, s.panel, s.overlay];
+                let off = |w: f64, what: &str| {
+                    assert!(w >= 3.0, "{id:?} {style:?} disabled {what}: {w:.2}:1");
+                };
+                for kind in ButtonKind::ALL {
+                    let w =
+                        super::super::testkit::weakest_label(&ctx, &grounds, move |ui: &mut Ui| {
+                            Button::new("Commit")
+                                .kind(kind)
+                                .icon(icon::CHECK)
+                                .enabled(false)
+                                .show(ui);
+                        });
+                    off(w, kind.label());
+                }
+                let w = super::super::testkit::weakest_label(&ctx, &grounds, |ui: &mut Ui| {
+                    IconButton::new(icon::GEAR, "Settings")
+                        .enabled(false)
+                        .show(ui);
+                });
+                off(w, "icon button");
+                let w = super::super::testkit::weakest_label(&ctx, &grounds, |ui: &mut Ui| {
+                    ToolButton::new(icon::TAG, "Tag").enabled(false).show(ui);
+                });
+                off(w, "tool button");
+                let w = super::super::testkit::weakest_label(&ctx, &grounds, |ui: &mut Ui| {
+                    let mut v = 0_u8;
+                    SplitButton::new(&mut v, &[(0, "Commit"), (1, "Commit and push")])
+                        .enabled(false)
+                        .show(ui);
+                });
+                off(w, "split button");
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_filled_buttons_dim_to_the_neutral_surface() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let p = theme::palette(&ctx);
-        let fills = |enabled: bool| {
+        let fills = |kind: ButtonKind, enabled: bool| {
             let shapes = frame(&ctx, Vec::new(), |ui| {
-                Button::new("Commit").primary().enabled(enabled).show(ui);
+                Button::new("Commit").kind(kind).enabled(enabled).show(ui);
             });
             shapes
                 .iter()
@@ -1455,9 +1563,22 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         };
-        assert!(fills(true).contains(&p.standard.primary.top));
-        let dim = fills(false);
-        let expected = p.standard.primary.top.gamma_multiply(theme::DISABLED_ALPHA);
-        assert!(dim.contains(&expected), "{dim:?}");
+        assert!(fills(ButtonKind::Primary, true).contains(&p.standard.primary.top));
+        let dimmed = p.standard.raised.top.gamma_multiply(theme::DISABLED_ALPHA);
+        for kind in [
+            ButtonKind::Primary,
+            ButtonKind::Danger,
+            ButtonKind::Secondary,
+        ] {
+            let dim = fills(kind, false);
+            assert!(dim.contains(&dimmed), "{kind:?}: {dim:?}");
+            for accent in [p.standard.primary.top, p.standard.danger_solid.top] {
+                let muddy = accent.gamma_multiply(theme::DISABLED_ALPHA);
+                assert!(
+                    !dim.contains(&muddy),
+                    "{kind:?} keeps a dimmed accent: {dim:?}"
+                );
+            }
+        }
     }
 }

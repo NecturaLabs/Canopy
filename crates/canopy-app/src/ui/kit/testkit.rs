@@ -2,7 +2,7 @@
 //! pointer events, and the AccessKit nodes a frame produced.
 
 use egui::accesskit::{Node, Role, Toggled};
-use egui::{Context, Event, Key, Modifiers, PointerButton, Pos2, RawInput, Ui};
+use egui::{Color32, Context, Event, Key, Modifiers, PointerButton, Pos2, RawInput, Shape, Ui};
 
 use crate::ui::theme::{self, Appearance, Density, Style, ThemeId};
 
@@ -42,6 +42,55 @@ pub fn frame(
     );
     out.textures_delta.clear();
     out.shapes
+}
+
+/// Painted colours and where they are.
+pub type Found = Vec<(egui::Rect, Color32)>;
+
+/// What `shapes` painted, flattened and in paint order: the flat fills of unblurred rects and the
+/// text, each with where it is and its colour with the painter's opacity applied (premultiplied,
+/// ready for `theme::over`). Gradient fills (a textured rect) are left out: their colours live in
+/// the texture.
+pub fn painted_colors(shapes: &[egui::epaint::ClippedShape]) -> (Found, Found) {
+    fn walk(shape: &Shape, fills: &mut Found, inks: &mut Found) {
+        match shape {
+            Shape::Vec(v) => v.iter().for_each(|s| walk(s, fills, inks)),
+            Shape::Rect(r) if r.blur_width == 0.0 && r.fill.a() > 0 && r.brush.is_none() => {
+                fills.push((r.rect, r.fill));
+            }
+            Shape::Text(t) => inks.push((
+                t.visual_bounding_rect(),
+                t.override_text_color
+                    .unwrap_or(t.fallback_color)
+                    .gamma_multiply(t.opacity_factor),
+            )),
+            _ => {}
+        }
+    }
+    let (mut fills, mut inks) = (Vec::new(), Vec::new());
+    for c in shapes {
+        walk(&c.shape, &mut fills, &mut inks);
+    }
+    (fills, inks)
+}
+
+/// The weakest contrast of any text `f` paints, over the flat fills painted under it, on each of
+/// `grounds`.
+pub fn weakest_label(ctx: &Context, grounds: &[Color32], f: impl FnMut(&mut Ui)) -> f64 {
+    let shapes = frame(ctx, Vec::new(), f);
+    let (fills, inks) = painted_colors(&shapes);
+    assert!(!inks.is_empty(), "nothing was written");
+    let mut weakest = f64::INFINITY;
+    for g in grounds {
+        for (at, ink) in &inks {
+            let under = fills
+                .iter()
+                .filter(|(r, _)| r.contains(at.center()))
+                .fold(*g, |acc, (_, fill)| theme::over(*fill, acc));
+            weakest = weakest.min(theme::contrast(theme::over(*ink, under), under));
+        }
+    }
+    weakest
 }
 
 /// A key press and its release.

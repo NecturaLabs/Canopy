@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{
-    Align2, Color32, CornerRadius, FontFamily, FontId, Galley, Id, Painter, Rect, Response, Sense,
-    Shape, Stroke, StrokeKind, Ui, Vec2, Widget, WidgetInfo, WidgetType, pos2, vec2,
+    Align2, Color32, CornerRadius, FontFamily, FontId, Galley, Id, Painter, Pos2, Rect, Response,
+    Sense, Shape, Stroke, StrokeKind, Ui, Vec2, Widget, WidgetInfo, WidgetType, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -222,19 +222,27 @@ impl ChangeBadge {
         (fill, p.ink(c, fill))
     }
 
+    /// The badge's side (it is square).
+    pub const SIDE: f32 = 17.0;
+
+    /// Paints the badge in `rect` (`SIDE` square) with any painter (a list row's own painter).
+    pub fn paint(self, painter: &Painter, rect: Rect) {
+        let p = theme::palette(painter.ctx());
+        let (fill, ink) = self.colors(p);
+        painter.rect_filled(rect, CornerRadius::same(4), fill);
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            self.kind.letter(),
+            FontId::new(10.0, FontFamily::Monospace),
+            ink,
+        );
+    }
+
     pub fn show(self, ui: &mut Ui) -> Response {
-        let p = theme::palette(ui.ctx());
-        let (rect, response) = ui.allocate_exact_size(Vec2::splat(17.0), Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(Self::SIDE), Sense::hover());
         if ui.is_rect_visible(rect) {
-            let (fill, ink) = self.colors(p);
-            ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
-            ui.painter().text(
-                rect.center(),
-                Align2::CENTER_CENTER,
-                self.kind.letter(),
-                FontId::new(10.0, FontFamily::Monospace),
-                ink,
-            );
+            self.paint(ui.painter(), rect);
         }
         let tip = match self.kind {
             ChangeKind::Untracked => "Untracked: a new file Git does not track yet",
@@ -551,28 +559,38 @@ impl Keycap {
         }
     }
 
-    fn galley(&self, ui: &Ui) -> Arc<Galley> {
+    fn galley(&self, painter: &Painter) -> Arc<Galley> {
         let m = theme::metrics();
-        layout(
-            ui,
+        painter.layout_no_wrap(
             self.label.clone(),
             FontId::new(m.chord_size, FontFamily::Monospace),
+            Color32::PLACEHOLDER,
         )
     }
 
     pub fn measure(&self, ui: &Ui) -> Vec2 {
+        self.measure_on(ui.painter())
+    }
+
+    /// [`Keycap::measure`] for code that holds a painter rather than a `Ui`.
+    pub fn measure_on(&self, painter: &Painter) -> Vec2 {
         let m = theme::metrics();
-        let g = self.galley(ui);
+        let g = self.galley(painter);
         vec2((g.size().x + 10.0).max(m.keycap_height), m.keycap_height)
     }
 
     /// Paints the cap in `rect` (sized by [`Keycap::measure`]).
     pub fn paint(&self, ui: &Ui, rect: Rect) {
-        let p = theme::palette(ui.ctx());
+        self.paint_on(ui.painter(), rect);
+    }
+
+    /// [`Keycap::paint`] with a painter: the search field's hint, the palette's rows, anything
+    /// painted inside another component.
+    pub fn paint_on(&self, painter: &Painter, rect: Rect) {
+        let p = theme::palette(painter.ctx());
         let style = theme::style();
         let s = p.surfaces(style);
         let m = theme::metrics();
-        let painter = ui.painter();
         let radius = CornerRadius::same(m.keycap_radius);
         paint::fill(painter, rect, radius, s.keycap);
         // The inner bottom line sits inside the 1 pt ring.
@@ -584,7 +602,7 @@ impl Keycap {
             s.keycap_edge,
         );
         paint::rim(painter, rect, radius, s.edge);
-        let g = self.galley(ui);
+        let g = self.galley(painter);
         painter.galley(rect.center() - g.size() / 2.0, g, p.text_dim);
     }
 
@@ -820,9 +838,8 @@ impl DiffStat {
         self
     }
 
-    pub fn show(self, ui: &mut Ui) -> Response {
-        let p = theme::palette(ui.ctx());
-        let s = theme::surfaces(ui.ctx());
+    fn counts(self, painter: &Painter) -> Arc<Galley> {
+        let p = theme::palette(painter.ctx());
         let font = FontId::new(theme::metrics().sha_size, FontFamily::Monospace);
         let mut job = LayoutJob::default();
         let fmt = |c: Color32| TextFormat::simple(font.clone(), c);
@@ -832,43 +849,65 @@ impl DiffStat {
             6.0,
             fmt(p.danger.gamma_multiply(0.85)),
         );
-        let g = ui.painter().layout_job(job);
+        painter.layout_job(job)
+    }
+
+    /// The size the counts (and bar) take.
+    pub fn size(self, painter: &Painter) -> Vec2 {
+        let g = self.counts(painter);
         let bar_w = if self.bar {
             6.0 + 5.0 * 6.0 + 4.0 * 2.0
         } else {
             0.0
         };
-        let (rect, response) =
-            ui.allocate_exact_size(vec2(g.size().x + bar_w, g.size().y), Sense::hover());
-        if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
-            painter.galley(rect.left_top(), Arc::clone(&g), p.text);
-            if self.bar {
-                let (green, red, _) = blocks(self.added, self.removed);
-                let mut x = rect.left() + g.size().x + 6.0;
-                for i in 0..5 {
-                    let c = if i < green {
-                        p.success
-                    } else if i < green + red {
-                        p.danger
-                    } else {
-                        s.switch_off
-                    };
-                    let b =
-                        Rect::from_center_size(pos2(x + 3.0, rect.center().y), Vec2::splat(6.0));
-                    painter.rect_filled(b, CornerRadius::same(2), c);
-                    x += 8.0;
-                }
+        vec2(g.size().x + bar_w, g.size().y)
+    }
+
+    /// Paints the counts (and bar) with their top left at `at`, with any painter (a list row's
+    /// own painter); returns the rect painted.
+    pub fn paint(self, painter: &Painter, at: Pos2) -> Rect {
+        let p = theme::palette(painter.ctx());
+        let s = theme::surfaces(painter.ctx());
+        let g = self.counts(painter);
+        let rect = Rect::from_min_size(at, self.size(painter));
+        painter.galley(rect.left_top(), Arc::clone(&g), p.text);
+        if self.bar {
+            let (green, red, _) = blocks(self.added, self.removed);
+            let mut x = rect.left() + g.size().x + 6.0;
+            for i in 0..5 {
+                let c = if i < green {
+                    p.success
+                } else if i < green + red {
+                    p.danger
+                } else {
+                    s.switch_off
+                };
+                let b = Rect::from_center_size(pos2(x + 3.0, rect.center().y), Vec2::splat(6.0));
+                painter.rect_filled(b, CornerRadius::same(2), c);
+                x += 8.0;
             }
         }
-        let spoken = format!(
+        rect
+    }
+
+    /// What a screen reader says for it.
+    pub fn spoken(self) -> String {
+        format!(
             "{} addition{}, {} deletion{}",
             self.added,
             if self.added == 1 { "" } else { "s" },
             self.removed,
             if self.removed == 1 { "" } else { "s" }
-        );
-        label_response(response, &spoken, None)
+        )
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let size = self.size(ui.painter());
+        let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+        if ui.is_rect_visible(rect) {
+            self.paint(ui.painter(), rect.left_top());
+        }
+        label_response(response, &self.spoken(), None)
     }
 }
 
@@ -911,6 +950,7 @@ pub fn blocks(added: usize, removed: usize) -> (usize, usize, usize) {
 #[must_use = "call .show(ui) or ui.add(..)"]
 pub struct Chip {
     text: String,
+    spoken: Option<String>,
     icon: Option<String>,
     tone: Tone,
     enabled: bool,
@@ -924,6 +964,7 @@ impl Chip {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            spoken: None,
             icon: None,
             tone: Tone::Neutral,
             enabled: true,
@@ -939,6 +980,11 @@ impl Chip {
     }
     pub fn tone(mut self, tone: Tone) -> Self {
         self.tone = tone;
+        self
+    }
+    /// What a screen reader says when the painted text is terse ("3 behind" for "↓3").
+    pub fn spoken(mut self, name: impl Into<String>) -> Self {
+        self.spoken = Some(name.into());
         self
     }
     pub fn enabled(mut self, enabled: bool) -> Self {
@@ -1026,10 +1072,15 @@ impl Chip {
                     Color32::TRANSPARENT,
                 );
             }
-            let ink = if self.tone == Tone::Neutral {
-                ink.lerp_to_gamma(p.text, st.hover.max(st.press))
+            let (painter, ink) = if !enabled {
+                (
+                    super::content_painter(ui),
+                    super::disabled_text(p, theme::style()),
+                )
+            } else if self.tone == Tone::Neutral {
+                (painter, ink.lerp_to_gamma(p.text, st.hover.max(st.press)))
             } else {
-                ink
+                (painter, ink)
             };
             let mut x = rect.left() + theme::SM;
             let mut shapes: Vec<Shape> = Vec::new();
@@ -1048,7 +1099,8 @@ impl Chip {
             ));
             painter.extend(shapes);
         }
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &self.text));
+        let name = self.spoken.as_deref().unwrap_or(&self.text);
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, name));
         let tip = if enabled {
             self.tooltip
         } else {
@@ -1192,6 +1244,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
     row(ui, &mut |ui| {
         Chip::new("4 changed")
             .icon(icon::PENCIL_SIMPLE)
+            .spoken("4 files changed")
             .id_salt("gc0")
             .show(ui);
         Chip::new("Downloads off · Trust…")
@@ -1242,6 +1295,53 @@ mod tests {
             |ui| f(ui),
         );
         out.textures_delta.clear();
+    }
+
+    /// Texts a frame painted.
+    fn texts(shapes: &[egui::epaint::ClippedShape]) -> Vec<String> {
+        shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                Shape::Text(t) => Some(t.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn painter_level_paints_match_what_the_widgets_draw() {
+        let ctx = ctx();
+        let at = pos2(20.0, 20.0);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.painter().clone();
+            let cap = Keycap::new("Ctrl");
+            let size = cap.measure_on(&painter);
+            assert_eq!(size, cap.measure(ui));
+            cap.paint_on(&painter, Rect::from_min_size(at, size));
+            ChangeBadge::new(ChangeKind::Modified).paint(
+                &painter,
+                Rect::from_min_size(at, Vec2::splat(ChangeBadge::SIDE)),
+            );
+            let stat = DiffStat::new(12, 3).bar(true);
+            let rect = stat.paint(&painter, at);
+            assert_eq!(rect.size(), stat.size(&painter));
+            assert_eq!(stat.spoken(), "12 additions, 3 deletions");
+        });
+        out.textures_delta.clear();
+        let painted = texts(&out.shapes);
+        for t in ["Ctrl", "M", "+12−3"] {
+            assert!(painted.iter().any(|p| p == t), "{t} in {painted:?}");
+        }
+    }
+
+    #[test]
+    fn a_chip_can_speak_a_fuller_name_than_it_shows() {
+        let ctx = ctx();
+        let nodes = super::super::testkit::spoken(&ctx, |ui| {
+            Chip::new("↓3").spoken("3 commits behind").show(ui);
+        });
+        assert!(super::super::testkit::find(&nodes, "3 commits behind").is_some());
+        assert!(super::super::testkit::find(&nodes, "↓3").is_none());
     }
 
     #[test]
