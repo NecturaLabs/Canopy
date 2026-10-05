@@ -12,9 +12,6 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-/// Rows, selection, menu-item highlight, palette filtering, keyboard-opened menus.
-#[expect(dead_code, reason = "used by the component phase")]
-pub const INSTANT: f32 = 0.0;
 /// Hover-in, press release, focus ring in, icon opacity, colour crossfades.
 pub const FAST: f32 = 0.08;
 /// Hover-out.
@@ -106,14 +103,6 @@ pub const EASE_IN_OUT: Bezier = Bezier {
     y1: 0.05,
     x2: 0.55,
     y2: 0.95,
-};
-/// About 3% overshoot: dialog and popover scale.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by the component phase"))]
-pub const SPRING_SOFT: Bezier = Bezier {
-    x1: 0.34,
-    y1: 1.35,
-    x2: 0.64,
-    y2: 1.0,
 };
 /// About 10% overshoot (concept 1's `--spring`): the checkbox tick and radio dot, and the
 /// entrance transform of menus, popovers, dialogs, tooltips and toasts.
@@ -285,22 +274,18 @@ mod tests {
 
     #[test]
     fn bezier_matches_its_ends_and_shape() {
-        for b in [EASE_OUT, EASE_IN_OUT, SPRING_SOFT, SPRING_CURVE] {
+        for b in [EASE_OUT, EASE_IN_OUT, SPRING_CURVE] {
             assert_eq!(b.at(0.0), 0.0);
             assert_eq!(b.at(1.0), 1.0);
         }
         // Ease-out is past halfway early; ease-in-out is symmetric about the middle.
         assert!(EASE_OUT.at(0.3) > 0.6, "{}", EASE_OUT.at(0.3));
         assert!((EASE_IN_OUT.at(0.5) - 0.5).abs() < 0.01);
-        // The springy curves overshoot 1 before settling.
+        // The springy curve overshoots 1 before settling.
         let peak = (1..100)
             .map(|i| SPRING_CURVE.at(crate::ui::int_f32(i) / 100.0))
             .fold(0.0_f32, f32::max);
         assert!(peak > 1.05 && peak < 1.15, "{peak}");
-        let soft = (1..100)
-            .map(|i| SPRING_SOFT.at(crate::ui::int_f32(i) / 100.0))
-            .fold(0.0_f32, f32::max);
-        assert!(soft > 1.01 && soft < peak, "{soft}");
     }
 
     #[test]

@@ -782,11 +782,8 @@ impl<'a> Popover<'a> {
         self.open = Some(open);
         self
     }
-    /// Shows it with forced states (`OPEN` keeps it open; the gallery and tests only).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the kit's own tests force it open")
-    )]
+    /// Shows it with forced states (`OPEN` keeps it open; the kit's tests only).
+    #[cfg(test)]
     pub(crate) fn force(mut self, force: ForceState) -> Self {
         self.force = Some(force);
         self
@@ -887,14 +884,12 @@ pub(crate) fn popup_origin(rect: Rect, anchor: Rect) -> (Pos2, Vec2) {
 
 // ---------------------------------------------------------------------------------- dialog
 
-/// A dialog's width: confirmations, forms, or wide content (spec 2.5).
+/// A dialog's width: confirmations or forms (spec 2.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DialogWidth {
     #[default]
     Confirm,
     Form,
-    #[expect(dead_code, reason = "used by the view migration")]
-    Wide,
 }
 
 impl DialogWidth {
@@ -903,7 +898,6 @@ impl DialogWidth {
         match self {
             Self::Confirm => m.dialog_width,
             Self::Form => m.dialog_width_form,
-            Self::Wide => m.dialog_width_wide,
         }
     }
 }
