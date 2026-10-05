@@ -549,6 +549,12 @@ impl Skeleton {
         }
     }
 
+    /// The bar fill at loop phase `t` (0: `hover_strong`, 0.5: `pressed`; `None`, reduced
+    /// motion: half way between).
+    pub fn fill_at(p: &Palette, t: Option<f32>) -> Color32 {
+        p.hover_strong().lerp_to_gamma(p.pressed(), Self::pulse(t))
+    }
+
     pub fn show(self, ui: &mut Ui) -> Response {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
@@ -566,7 +572,7 @@ impl Skeleton {
                     Some(loop_phase(&ctx, motion::SKELETON_PERIOD))
                 }
             };
-            let color = p.hover_strong().lerp_to_gamma(p.pressed(), Self::pulse(t));
+            let color = Self::fill_at(p, t);
             let bar_h = (row_h * 0.42).round().max(6.0);
             for i in 0..self.rows {
                 let share = SKELETON_WIDTHS[i % SKELETON_WIDTHS.len()];
@@ -827,6 +833,13 @@ mod tests {
         assert!(out.shapes.iter().any(|c| matches!(&c.shape,
             Shape::Text(t) if t.galley.text() == WORKING)));
         assert_eq!(Skeleton::pulse(None), 0.5);
+    }
+
+    #[test]
+    fn skeleton_pulses_between_hover_strong_and_pressed() {
+        let p = theme::ThemeId::Daylight.palette();
+        assert_eq!(Skeleton::fill_at(p, Some(0.0)), p.hover_strong());
+        assert_eq!(Skeleton::fill_at(p, Some(0.5)), p.pressed());
     }
 
     #[test]

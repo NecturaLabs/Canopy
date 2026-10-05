@@ -1,7 +1,7 @@
 //! Surfaces (design spec 4.20, 7.1 and the owner's amendments): [`PaneFrame`] (flush in
 //! Standard, a floating card over gutters with the focused-pane edge in Deeper), [`PaneHeader`]
 //! (a table pane's header strip, whose top edge is its own colour in Deeper), [`Deck`] (the top
-//! bars), [`Card`], [`Banner`], [`Callout`], [`EmptyState`], [`InsetBox`] and [`Skeleton`].
+//! bars), [`Card`], [`Banner`], [`Callout`], [`EmptyState`] and [`InsetBox`].
 
 use egui::{
     Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Margin, Painter, Rect, Response,
@@ -11,6 +11,7 @@ use egui_phosphor::regular as icon;
 
 use super::button::{Button, LinkButton};
 use super::chip::KeyChord;
+use super::progress::Skeleton;
 use super::{ForceState, Interact, KitResponse, Size, Tone, anim, paint};
 use crate::keymap::Command;
 use crate::ui::art::{self, Art};
@@ -1105,98 +1106,6 @@ impl EmptyState {
 /// An empty state's content column is at most this wide.
 const MAX_WIDTH: f32 = 340.0;
 
-// ----------------------------------------------------------------------------------- Skeleton
-
-/// Placeholder rows while a list loads for the first time (not on refresh): bars at the real row
-/// height, 40, 62 and 78% wide, pulsing over 1.2 s. It shows after `LOADING_DELAY`; reduced
-/// motion holds the pulse at its midpoint.
-#[derive(Debug, Clone, Copy)]
-#[must_use = "call .show(ui) or ui.add(..)"]
-pub struct Skeleton {
-    rows: usize,
-    kind: super::row::RowKind,
-    id_salt: Id,
-    phase: Option<f32>,
-}
-
-impl Skeleton {
-    pub fn rows(rows: usize) -> Self {
-        Self {
-            rows,
-            kind: super::row::RowKind::List,
-            id_salt: Id::new("kit-skeleton"),
-            phase: None,
-        }
-    }
-    /// The list whose rows it stands in for (their height).
-    pub fn kind(mut self, kind: super::row::RowKind) -> Self {
-        self.kind = kind;
-        self
-    }
-    pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
-        self.id_salt = Id::new(salt);
-        self
-    }
-    /// A fixed pulse phase (0 to 1), shown at once (the gallery's motion strip).
-    pub(crate) fn phase(mut self, t: f32) -> Self {
-        self.phase = Some(t);
-        self
-    }
-
-    /// The bar fill at pulse phase `t` (0 and 1: `hover_strong`, 0.5: `pressed`).
-    pub fn fill_at(p: &Palette, t: f32) -> Color32 {
-        let k = 0.5 - 0.5 * (t * std::f32::consts::TAU).cos();
-        p.hover_strong().lerp_to_gamma(p.pressed(), k)
-    }
-
-    pub fn show(self, ui: &mut Ui) -> Response {
-        let ctx = ui.ctx().clone();
-        let p = theme::palette(&ctx);
-        let m = theme::metrics();
-        let h = self.kind.height();
-        let width = ui.available_width();
-        let (rect, response) =
-            ui.allocate_exact_size(vec2(width, h * self.rows as f32), Sense::hover());
-        let id = ui.id().with(self.id_salt);
-        let delay = motion::time(motion::LOADING_DELAY);
-        let elapsed = shown_for(&ctx, id);
-        let due = self.phase.is_some() || elapsed >= delay;
-        if !due {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f32(delay - elapsed));
-        } else if ui.is_rect_visible(rect) {
-            let t = match self.phase {
-                Some(t) => t,
-                None if motion::reduced() => 0.5,
-                None => {
-                    ctx.request_repaint_after(std::time::Duration::from_millis(16));
-                    (ctx.input(|i| i.time) % 1.2) as f32 / 1.2
-                }
-            };
-            let fill = Self::fill_at(p, t);
-            let bar_h = (h * 0.4).round().clamp(8.0, 14.0);
-            for i in 0..self.rows {
-                let w = [0.40, 0.62, 0.78][i % 3] * (width - 2.0 * theme::MD);
-                let cy = rect.top() + h * (i as f32 + 0.5);
-                let bar = Rect::from_min_size(
-                    pos2(rect.left() + theme::MD, cy - bar_h / 2.0),
-                    vec2(w.max(0.0), bar_h),
-                );
-                ui.painter()
-                    .rect_filled(bar, CornerRadius::same(m.radius_sm), fill);
-            }
-        }
-        response
-            .widget_info(|| WidgetInfo::labeled(WidgetType::ProgressIndicator, true, "Loading"));
-        response
-    }
-}
-
-impl Widget for Skeleton {
-    fn ui(self, ui: &mut Ui) -> Response {
-        self.show(ui)
-    }
-}
-
 // ------------------------------------------------------------------------------------ gallery
 
 /// A gallery card: its name, forced state, selected, tone ring and enabled.
@@ -1317,10 +1226,14 @@ pub(crate) fn gallery(ui: &mut Ui) {
         );
     });
     Skeleton::rows(3)
-        .kind(super::row::RowKind::History)
-        .id_salt("gallery-skeleton")
-        .phase(0.25)
-        .show(ui);
+        .row_height(super::row::RowKind::History.height())
+        .show_forced(
+            ui,
+            ForceState {
+                progress: Some(0.25),
+                ..ForceState::default()
+            },
+        );
     let last_id = ui.id().with("gallery-empty-last");
     let last: Option<String> = ui.ctx().data(|d| d.get_temp(last_id));
     small(
@@ -1718,7 +1631,7 @@ mod tests {
             .collect();
         assert_eq!(
             fills,
-            vec![Skeleton::fill_at(p, 0.5); 3],
+            vec![Skeleton::fill_at(p, None); 3],
             "shown at once, at the midpoint"
         );
         // Once egui has settled its first frames, a still skeleton asks for no repaint.
@@ -1834,13 +1747,6 @@ mod tests {
         // The first frame lays out twice, so it already sits where later frames do.
         assert!(first.is_some());
         assert_eq!(first, settled);
-    }
-
-    #[test]
-    fn skeleton_pulses_between_hover_strong_and_pressed() {
-        let p = theme::ThemeId::Daylight.palette();
-        assert_eq!(Skeleton::fill_at(p, 0.0), p.hover_strong());
-        assert_eq!(Skeleton::fill_at(p, 0.5), p.pressed());
     }
 
     #[test]
