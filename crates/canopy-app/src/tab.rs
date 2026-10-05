@@ -724,7 +724,7 @@ impl RepoTab {
 
     fn diff_key(&self, sel: &FileSelection) -> DiffKey {
         DiffKey {
-            source: sel.source.clone(),
+            source: sel.source,
             path: sel.entry.path.clone(),
             old_path: sel.entry.old_path.clone(),
             conflicted: sel.conflicted,

@@ -120,7 +120,7 @@ pub(crate) fn mode_of(file: &git2::DiffFile<'_>) -> Option<u32> {
 }
 
 /// Which diff of a file to compute.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DiffSource {
     /// Working tree against the index (what `git diff` shows).
     Unstaged,

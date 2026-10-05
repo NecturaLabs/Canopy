@@ -663,11 +663,7 @@ mod tests {
     #[test]
     fn streams_progress_lines() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let mut lines = Vec::new();
-        run_streaming(Some(dir.path()), &["init", "-q", "streamed"], |l| {
-            lines.push(l.to_owned());
-        })
-        .expect("init");
+        run_streaming(Some(dir.path()), &["init", "-q", "streamed"], |_| {}).expect("init");
         assert!(dir.path().join("streamed/.git").is_dir());
     }
 

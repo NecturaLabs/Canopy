@@ -534,9 +534,7 @@ fn push_and_fetch_against_a_local_remote() {
     let url = remote.path().to_string_lossy().into_owned();
     repo.add_remote("origin", &url).expect("remote");
 
-    let mut lines = Vec::new();
-    repo.push(false, |l| lines.push(l.to_owned()))
-        .expect("push");
+    repo.push(false, |_| {}).expect("push");
     let snap = repo.snapshot(10).expect("snapshot");
     let main = snap.current_branch().expect("main");
     assert_eq!(main.upstream.as_deref(), Some("origin/main"));

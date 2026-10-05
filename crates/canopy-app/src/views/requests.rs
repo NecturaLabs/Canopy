@@ -197,7 +197,7 @@ fn operation_banner(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
 fn cap(s: &str) -> String {
     let mut c = s.chars();
     c.next()
-        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+        .map(|f| format!("{}{}", f.to_uppercase(), c.as_str()))
         .unwrap_or_default()
 }
 

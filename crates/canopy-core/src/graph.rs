@@ -223,12 +223,12 @@ mod tests {
         assert_eq!(rows[2].lane, 0, "first parent stays in the merge's lane");
         assert_eq!(rows[3].lane, 0);
         // On the fork point both lanes converge into the node.
-        let converging: Vec<_> = rows[3]
+        let converging = rows[3]
             .segments
             .iter()
             .filter(|s| s.from == LineEnd::Top && s.to_lane == 0)
-            .collect();
-        assert_eq!(converging.len(), 2);
+            .count();
+        assert_eq!(converging, 2);
     }
 
     #[test]

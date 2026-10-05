@@ -29,7 +29,7 @@ impl std::fmt::Debug for Repo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Repo")
             .field("workdir", &self.workdir)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -245,12 +245,11 @@ impl Repo {
         Ok(out.into_iter().map(|(_, t)| t).collect())
     }
 
-    fn stashes(&self) -> Result<Vec<StashInfo>> {
-        let reflog = match self.git.reflog("refs/stash") {
-            Ok(r) => r,
-            Err(_) => return Ok(Vec::new()),
+    fn stashes(&self) -> Vec<StashInfo> {
+        let Ok(reflog) = self.git.reflog("refs/stash") else {
+            return Vec::new();
         };
-        Ok(reflog
+        reflog
             .iter()
             .enumerate()
             .map(|(index, entry)| StashInfo {
@@ -258,7 +257,7 @@ impl Repo {
                 message: entry.message().ok().flatten().unwrap_or("").to_owned(),
                 oid: entry.id_new(),
             })
-            .collect())
+            .collect()
     }
 
     /// Reads up to `max_commits` commits reachable from `HEAD`, branches, remote branches and
@@ -298,7 +297,7 @@ impl Repo {
         let branches = self.branches()?;
         let remote_branches = self.remote_branches()?;
         let tags = self.tags()?;
-        let stashes = self.stashes()?;
+        let stashes = self.stashes();
         let (commits, truncated) = self.commits(max_commits)?;
         let graph = graph::layout(commits.iter().map(|c| (c.oid, c.parents.as_slice())));
         // History never depends on status: a partial clone that lacks the tree of `HEAD` still

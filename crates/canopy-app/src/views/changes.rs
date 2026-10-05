@@ -646,7 +646,7 @@ fn list(
         if acted || resp.double_clicked() {
             if conflicted {
                 tab.select_file(FileSelection {
-                    source: source.clone(),
+                    source,
                     entry: f.clone(),
                     conflicted,
                 });
@@ -655,7 +655,7 @@ fn list(
             }
         } else if resp.clicked() {
             tab.select_file(FileSelection {
-                source: source.clone(),
+                source,
                 entry: f.clone(),
                 conflicted,
             });
@@ -671,7 +671,7 @@ fn list(
             if first.show(m.ui).clicked() {
                 if conflicted {
                     tab.select_file(FileSelection {
-                        source: source.clone(),
+                        source,
                         entry: f.clone(),
                         conflicted,
                     });

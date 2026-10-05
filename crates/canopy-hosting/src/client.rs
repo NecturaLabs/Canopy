@@ -59,7 +59,7 @@ impl fmt::Debug for Client {
             .field("api_base", &redact_userinfo(self.http.base()))
             .field("project", &self.project)
             .field("has_token", &self.http.has_token())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

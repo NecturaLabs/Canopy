@@ -625,7 +625,7 @@ fn ignore_files_that_are_symlinks_are_refused() {
         assert!(matches!(err, Error::UnsafePath { .. }), "{err:?}");
     }
     let exclude = p.join(".git").join("info").join("exclude");
-    fs::remove_file(&exclude).ok();
+    let _ = fs::remove_file(&exclude);
     std::os::unix::fs::symlink(&victim, &exclude).unwrap();
     assert!(matches!(
         repo.add_ignore_rule(

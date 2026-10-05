@@ -96,6 +96,10 @@ fn init() -> sentry::ClientInitGuard {
 }
 
 /// The event for a panic: its message followed by where it happened, `src/x.rs:12:5`.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "sentry's panic extractor returns an Option"
+)]
 fn panic_event(info: &std::panic::PanicHookInfo<'_>) -> Option<Event<'static>> {
     let message = integrations::panic::message_from_panic_info(info);
     let value = match info.location() {

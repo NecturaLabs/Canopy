@@ -109,7 +109,7 @@ impl std::fmt::Debug for SettingsScreen {
             .field("tests", &self.tests)
             .field("token_error", &self.token_error)
             .field("identity_scope", &self.identity_scope)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -2208,11 +2208,11 @@ mod tests {
         }
     }
 
-    fn local_source() -> Option<Source> {
-        Some(Source::Config {
+    fn local_source() -> Source {
+        Source::Config {
             scope: "local".into(),
             origin: "file:.git/config".into(),
-        })
+        }
     }
 
     #[test]
@@ -2230,10 +2230,7 @@ mod tests {
             }),
             "the git command line"
         );
-        assert_eq!(
-            label(&local_source().expect("a source")),
-            "this repository: .git/config"
-        );
+        assert_eq!(label(&local_source()), "this repository: .git/config");
         assert_eq!(
             label(&Source::Config {
                 scope: "global".into(),
@@ -2328,8 +2325,8 @@ mod tests {
         assert_eq!(screen.identity_scope, Scope::Local);
 
         let chosen = identity(
-            field("Ada Lovelace", local_source()),
-            field("ada@example.com", local_source()),
+            field("Ada Lovelace", Some(local_source())),
+            field("ada@example.com", Some(local_source())),
         );
         let actions = draw(&mut screen, Some(&repo), &chosen);
         assert_eq!(screen.identity_name, "Ada Lovelace");

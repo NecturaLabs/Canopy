@@ -965,7 +965,6 @@ mod tests {
     fn enter_on_a_focused_item_activates_it() {
         let ctx = context_();
         let mut clicked = false;
-        let mut id = None;
         for frame in 0..3 {
             let events = if frame == 2 {
                 vec![egui::Event::Key {
@@ -983,7 +982,6 @@ mod tests {
                 if frame == 0 {
                     r.request_focus();
                 }
-                id = Some(r.id);
                 clicked |= r.clicked();
             });
         }
