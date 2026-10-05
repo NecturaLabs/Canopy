@@ -21,7 +21,7 @@ impl CanopyApp {
                     thread_ctx.request_repaint();
                 };
                 let result = clone_repository(&thread_url, &dest, |l| {
-                    send(CloneMsg::Progress(l.to_owned()))
+                    send(CloneMsg::Progress(l.to_owned()));
                 });
                 send(CloneMsg::Done(result));
             });
@@ -68,7 +68,7 @@ mod tests {
     fn an_existing_destination_is_refused_before_cloning() {
         let dir = tempfile::tempdir().expect("temporary clone fixture");
         let source = dir.path().join("source");
-        canopy_core::Repo::init(&source).expect("empty local repository");
+        Repo::init(&source).expect("empty local repository");
         let dest = dir.path().join("existing");
         std::fs::create_dir(&dest).expect("existing destination");
         let result = clone_repository(&source.to_string_lossy(), &dest, |_| {});

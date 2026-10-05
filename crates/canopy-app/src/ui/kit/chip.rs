@@ -25,7 +25,9 @@ use crate::ui::widgets;
 /// A radius that `FULL` turns into half the height.
 fn radius_for(radius: u8, height: f32) -> CornerRadius {
     if radius == FULL {
-        CornerRadius::same((height / 2.0).round().min(f32::from(u8::MAX)) as u8)
+        CornerRadius::same(crate::ui::saturate_u8(
+            (height / 2.0).round().min(f32::from(u8::MAX)),
+        ))
     } else {
         CornerRadius::same(radius)
     }
@@ -321,12 +323,11 @@ impl RefPill {
     /// The pill's colour (spec 4.17).
     pub fn color(&self, p: &Palette) -> Color32 {
         match self.kind {
-            RefKind::Head => p.text_dim,
+            RefKind::Head | RefKind::Stash => p.text_dim,
             RefKind::CurrentBranch | RefKind::LocalBranch | RefKind::RemoteBranch => {
                 p.lane(self.lane)
             }
             RefKind::Tag => p.warning,
-            RefKind::Stash => p.text_dim,
         }
     }
 
@@ -403,7 +404,7 @@ impl RefPill {
                     .x
             })
             .sum();
-        m.ref_pill_pad_icon + icon_w + GAP * glyphs.len() as f32 + m.ref_pill_pad
+        m.ref_pill_pad_icon + icon_w + GAP * crate::ui::count_f32(glyphs.len()) + m.ref_pill_pad
     }
 
     /// The pill's width (the history sizes its description column from it).
@@ -441,7 +442,7 @@ impl RefPill {
         let c = self.color(p);
         for glyph in glyphs {
             let gg = painter.layout_no_wrap(glyph.to_owned(), FontId::proportional(m.icon_xs), c);
-            painter.galley(pos2(x, cy - gg.size().y / 2.0), gg.clone(), c);
+            painter.galley(pos2(x, cy - gg.size().y / 2.0), Arc::clone(&gg), c);
             x += gg.size().x + GAP;
         }
         painter.galley(pos2(x, cy - g.size().y / 2.0), g, ink);
@@ -694,7 +695,7 @@ impl KeyChord {
                     None => {
                         ui.painter().galley(
                             pos2(x, rect.center().y - dot.size().y / 2.0),
-                            dot.clone(),
+                            Arc::clone(&dot),
                             p.text_faint,
                         );
                     }
@@ -789,7 +790,7 @@ fn pulse_alpha(ctx: &egui::Context) -> f32 {
         return 1.0;
     }
     ctx.request_repaint_after(std::time::Duration::from_millis(16));
-    let t = (ctx.input(|i| i.time) % 1.6) as f32 / 1.6;
+    let t = crate::ui::to_f32(ctx.input(|i| i.time) % 1.6) / 1.6;
     0.75 + 0.25 * (t * std::f32::consts::TAU).cos()
 }
 
@@ -841,7 +842,7 @@ impl DiffStat {
             ui.allocate_exact_size(vec2(g.size().x + bar_w, g.size().y), Sense::hover());
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
-            painter.galley(rect.left_top(), g.clone(), p.text);
+            painter.galley(rect.left_top(), Arc::clone(&g), p.text);
             if self.bar {
                 let (green, red, _) = blocks(self.added, self.removed);
                 let mut x = rect.left() + g.size().x + 6.0;
@@ -885,6 +886,12 @@ pub fn blocks(added: usize, removed: usize) -> (usize, usize, usize) {
         return (0, 0, 5);
     }
     let filled = total.min(5);
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "line counts are exact in f64, and the rounded share is between 0 and 5"
+    )]
     let mut green = ((added * filled) as f64 / total as f64).round() as usize;
     if added > 0 {
         green = green.max(1);
@@ -1029,7 +1036,7 @@ impl Chip {
             if let Some(g) = glyph {
                 shapes.push(Shape::galley(
                     pos2(x, rect.center().y - g.size().y / 2.0),
-                    g.clone(),
+                    Arc::clone(&g),
                     ink,
                 ));
                 x += g.size().x + gap;
@@ -1222,7 +1229,7 @@ mod tests {
     fn ctx() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
     }
 
@@ -1343,7 +1350,7 @@ mod tests {
                 theme::apply(
                     &ctx,
                     theme::ThemeId::Midnight,
-                    &theme::Appearance {
+                    theme::Appearance {
                         style,
                         density,
                         ..theme::Appearance::STILL
@@ -1382,7 +1389,7 @@ mod tests {
                         physical_key: None,
                         pressed: true,
                         repeat: false,
-                        modifiers: Default::default(),
+                        modifiers: egui::Modifiers::default(),
                     }]
                 } else {
                     Vec::new()
@@ -1406,7 +1413,7 @@ mod tests {
     fn labels_reach_screen_readers() {
         let ctx = ctx();
         ctx.enable_accesskit();
-        let mut out = ctx.run_ui(Default::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             RefPill::new("main", RefKind::CurrentBranch).show(ui);
             DiffStat::new(1, 2).show(ui);
             KeyChord::new("Ctrl+K").show(ui);

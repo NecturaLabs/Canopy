@@ -1,6 +1,8 @@
-//! Canopy's own update feed: a small JSON manifest in the public `NecturaLabs/app-updates`
-//! repository, fetched anonymously over HTTPS. Nothing about the user is sent (no identifiers,
-//! no query string); the request carries only `User-Agent: Canopy/<version>`.
+//! Canopy's own update feed.
+//!
+//! A small JSON manifest in the public `NecturaLabs/app-updates` repository, fetched anonymously
+//! over HTTPS. Nothing about the user is sent (no identifiers, no query string); the request
+//! carries only `User-Agent: Canopy/<version>`.
 //!
 //! Manifest format (`canopy/latest.json` for stable builds, `canopy/beta.json` for beta builds).
 //! `version` is the build number, `git rev-list --count` of the build's commit on `main`:
@@ -19,6 +21,7 @@
 //! ```
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
@@ -141,7 +144,10 @@ fn is_loopback_url(url: &str) -> bool {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 /// Lower-case hex SHA-256 of `bytes`.
@@ -151,6 +157,10 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// A redirect's target: an absolute URL as it is, an absolute path on the same host. Anything
 /// else (a relative path, a protocol-relative `//host`) is refused rather than guessed.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn resolve_location(from: &str, location: &str) -> Result<String> {
     if location.contains("://") {
         return Ok(location.to_owned());
@@ -186,7 +196,7 @@ fn get(
         .max_redirects(0)
         .max_redirects_will_error(false)
         .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_secs(30 * 60)))
+        .timeout_global(Some(Duration::from_mins(30)))
         .user_agent(crate::http::user_agent())
         .tls_config(tls);
     if is_loopback_url(url) {
@@ -323,7 +333,6 @@ pub fn download_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
 
     const SAMPLE: &str = r#"{
         "version": "412",
@@ -343,8 +352,8 @@ mod tests {
         assert_eq!(m.build(), Some(412));
         assert_eq!(m.platforms.len(), 2);
         assert_eq!(m.platforms["windows-x86_64"].sha256, None);
-        assert!(UpdateManifest::parse(b"not json").is_err());
-        assert!(UpdateManifest::parse(br#"{"notes":"no version"}"#).is_err());
+        UpdateManifest::parse(b"not json").unwrap_err();
+        UpdateManifest::parse(br#"{"notes":"no version"}"#).unwrap_err();
         let minimal = UpdateManifest::parse(br#"{"version":"1"}"#).expect("minimal");
         assert!(minimal.platforms.is_empty() && minimal.notes.is_empty());
     }
@@ -500,8 +509,8 @@ mod tests {
             resolve_location("http://127.0.0.1:9", "/z").expect("no path in base"),
             "http://127.0.0.1:9/z"
         );
-        assert!(resolve_location("https://a.example/x", "z").is_err());
-        assert!(resolve_location("https://a.example/x", "//evil.example/z").is_err());
+        resolve_location("https://a.example/x", "z").unwrap_err();
+        resolve_location("https://a.example/x", "//evil.example/z").unwrap_err();
     }
 
     #[test]

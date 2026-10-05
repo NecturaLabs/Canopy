@@ -197,15 +197,13 @@ mod tests {
         started_rx
             .recv_timeout(std::time::Duration::from_secs(2))
             .expect("worker started without blocking caller");
-        assert!(
-            picker
-                .pending
-                .as_ref()
-                .expect("pending picker")
-                .1
-                .try_recv()
-                .is_err()
-        );
+        picker
+            .pending
+            .as_ref()
+            .expect("pending picker")
+            .1
+            .try_recv()
+            .unwrap_err();
         picker.begin_frame();
         picker.end_frame();
         assert!(

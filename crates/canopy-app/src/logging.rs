@@ -51,13 +51,13 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    pub const ALL: [LogLevel; 3] = [LogLevel::Normal, LogLevel::Detailed, LogLevel::Trace];
+    pub const ALL: [Self; 3] = [Self::Normal, Self::Detailed, Self::Trace];
 
     pub fn label(self) -> &'static str {
         match self {
-            LogLevel::Normal => "Normal",
-            LogLevel::Detailed => "Detailed",
-            LogLevel::Trace => "Everything",
+            Self::Normal => "Normal",
+            Self::Detailed => "Detailed",
+            Self::Trace => "Everything",
         }
     }
 
@@ -65,9 +65,9 @@ impl LogLevel {
     /// `canopy_hosting`.
     pub fn filter(self) -> &'static str {
         match self {
-            LogLevel::Normal => "warn,canopy=info,canopy_core=info,canopy_hosting=info",
-            LogLevel::Detailed => "info,canopy=debug,canopy_core=debug,canopy_hosting=debug",
-            LogLevel::Trace => "debug,canopy=trace,canopy_core=trace,canopy_hosting=trace",
+            Self::Normal => "warn,canopy=info,canopy_core=info,canopy_hosting=info",
+            Self::Detailed => "info,canopy=debug,canopy_core=debug,canopy_hosting=debug",
+            Self::Trace => "debug,canopy=trace,canopy_core=trace,canopy_hosting=trace",
         }
     }
 }
@@ -132,6 +132,10 @@ pub fn set_level(level: LogLevel) {
 
 /// Deletes all but the newest `keep - 1` run logs (making room for this run's) and the files of
 /// the old single-file format.
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "Canopy names these files itself, in lower case"
+)]
 fn prune(dir: &Path, keep: usize) {
     let mut runs: Vec<PathBuf> = fs::read_dir(dir)
         .map(|it| it.filter_map(|e| e.ok().map(|e| e.path())).collect())
@@ -239,7 +243,13 @@ impl tracing::field::Visit for MessageVisitor<'_> {
         if field.name() == "message" {
             let _ = write!(self.0, "{value:?}");
             if self.0.starts_with('"') {
-                *self.0 = self.0.trim_matches('"').to_owned();
+                #[expect(
+                    clippy::assigning_clones,
+                    reason = "the source borrows the target, so clone_into cannot take it"
+                )]
+                {
+                    *self.0 = self.0.trim_matches('"').to_owned();
+                }
             }
         } else {
             let _ = write!(self.0, " {}={value:?}", field.name());
@@ -257,9 +267,14 @@ impl tracing::field::Visit for MessageVisitor<'_> {
 }
 
 fn run_id() -> String {
+    use std::fmt::Write as _;
+
     let mut bytes = [0u8; 4];
     let _ = getrandom::fill(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 /// Installs the loggers and the crash-report hook. `level` applies unless `CANOPY_LOG` or
@@ -373,6 +388,10 @@ fn write_report(dir: &Path, report: &str) -> std::io::Result<PathBuf> {
 }
 
 /// Crash reports in `dir`, oldest first (their names sort by time).
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "Canopy names these files itself, in lower case"
+)]
 fn reports(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = fs::read_dir(dir)
         .map(|it| {
@@ -434,6 +453,10 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "Canopy names these files itself, in lower case"
+    )]
     fn old_run_logs_are_pruned() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(dir.path().join("canopy.log"), b"old format").expect("write");

@@ -5,7 +5,7 @@
 use egui::CornerRadius;
 use egui::{Align2, Id, Order, vec2};
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::kit::Tone;
@@ -30,7 +30,7 @@ pub enum Recovery {
 fn error_help(
     title: &str,
     body: &str,
-    repo: Option<&PathBuf>,
+    repo: Option<&Path>,
 ) -> Option<(&'static str, Option<Recovery>)> {
     let lower = body.to_lowercase();
     if title.to_lowercase().contains("push")
@@ -38,7 +38,7 @@ fn error_help(
     {
         Some((
             "The remote has commits you do not have yet. Pull and resolve any conflicts before pushing again.",
-            repo.cloned().map(Recovery::Pull),
+            repo.map(|r| Recovery::Pull(r.to_path_buf())),
         ))
     } else if lower.contains("authentication failed")
         || lower.contains("http basic: access denied")
@@ -103,7 +103,7 @@ impl Toasts {
         kind: ToastKind,
         title: impl Into<String>,
         body: impl Into<String>,
-        repo: Option<PathBuf>,
+        repo: Option<&Path>,
     ) {
         let ttl = if kind == ToastKind::Error {
             f64::INFINITY
@@ -114,7 +114,7 @@ impl Toasts {
         let title = title.into();
         let body = body.into();
         let (help, recovery) = if kind == ToastKind::Error {
-            error_help(&title, &body, repo.as_ref())
+            error_help(&title, &body, repo)
                 .map_or((None, None), |(help, recovery)| (Some(help), recovery))
         } else {
             (None, None)
@@ -240,11 +240,7 @@ mod tests {
     fn five_error_notifications_fit_and_remain_reachable_at_max_zoom() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut toasts = Toasts::default();
         for index in 1..=5 {
             toasts.push(
@@ -263,13 +259,13 @@ mod tests {
                     unit: egui::MouseWheelUnit::Point,
                     delta: vec2(0.0, -30.0),
                     phase: egui::TouchPhase::Move,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 });
             }
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(screen),
-                    time: Some(0.4 + frame as f64 * 0.01),
+                    time: Some(0.4 + f64::from(frame) * 0.01),
                     events,
                     ..Default::default()
                 },
@@ -349,11 +345,7 @@ mod tests {
     fn clicking_a_success_notification_dismisses_it() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut toasts = Toasts::default();
         toasts.push(&ctx, ToastKind::Success, "Committed", "Finished safely");
         let mut pointer = egui::Pos2::ZERO;
@@ -364,7 +356,7 @@ mod tests {
                     pos: pointer,
                     button: egui::PointerButton::Primary,
                     pressed: frame == 3,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 });
             }
             let mut output = ctx.run_ui(
@@ -373,7 +365,7 @@ mod tests {
                         egui::Pos2::ZERO,
                         vec2(1024.0, 640.0),
                     )),
-                    time: Some(0.4 + frame as f64 * 0.01),
+                    time: Some(0.4 + f64::from(frame) * 0.01),
                     events,
                     ..Default::default()
                 },
@@ -405,11 +397,7 @@ mod tests {
     fn expanded_notification_details_survive_a_new_arrival() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut toasts = Toasts::default();
         toasts.push(&ctx, ToastKind::Error, "Original error", "Original output");
         let mut pointer = egui::Pos2::ZERO;
@@ -425,7 +413,7 @@ mod tests {
                     pos: pointer,
                     button: egui::PointerButton::Primary,
                     pressed: frame == 3,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 });
             }
             let mut output = ctx.run_ui(
@@ -434,7 +422,7 @@ mod tests {
                         egui::Pos2::ZERO,
                         vec2(1024.0, 640.0),
                     )),
-                    time: Some(0.4 + frame as f64 * 0.01),
+                    time: Some(0.4 + f64::from(frame) * 0.01),
                     events,
                     ..Default::default()
                 },
@@ -468,11 +456,7 @@ mod tests {
     fn notification_stack_fits_the_viewport() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut toasts = Toasts::default();
         toasts.push(&ctx, ToastKind::Error, "Push failed", "fetch first");
         toasts.push(&ctx, ToastKind::Success, "Committed", "Update README");
@@ -481,7 +465,7 @@ mod tests {
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(screen),
-                    time: Some(0.4 + frame as f64 * 0.01),
+                    time: Some(0.4 + f64::from(frame) * 0.01),
                     ..Default::default()
                 },
                 |_| {

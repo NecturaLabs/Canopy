@@ -36,7 +36,10 @@ mod start;
 mod update;
 mod url;
 
-use common::*;
+use common::{
+    answer, bullet, confirm, document, field, field_with_error, folder_row, home,
+    identity_in_scope, note, swallow_enter, valid_ref_name,
+};
 use credential::credential;
 pub use stack::DialogStack;
 pub use start::Start;
@@ -161,7 +164,7 @@ pub enum Outcome {
 impl Dialog {
     /// The dialog answering a credential prompt.
     pub fn credential(prompt: Prompt) -> Self {
-        Dialog::Credential {
+        Self::Credential {
             prompt,
             answer: String::new(),
         }
@@ -169,12 +172,12 @@ impl Dialog {
 
     /// The open-repository dialog, prefilled with the home directory.
     pub fn open() -> Self {
-        Dialog::Open { path: home() }
+        Self::Open { path: home() }
     }
 
     /// The clone dialog with the default clone folder as the destination.
     pub fn clone_default(settings: &Settings) -> Self {
-        Dialog::Clone {
+        Self::Clone {
             builder: UrlBuilder::new(settings),
             parent: settings.clone_parent(),
             pending: false,
@@ -183,7 +186,7 @@ impl Dialog {
 
     /// The add-remote dialog.
     pub fn add_remote(settings: &Settings) -> Self {
-        Dialog::AddRemote {
+        Self::AddRemote {
             name: "origin".into(),
             builder: UrlBuilder::new(settings),
             publish: false,
@@ -192,7 +195,7 @@ impl Dialog {
 
     /// Turns an add-remote dialog into "Publish": add, then push the current branch.
     pub fn publishing(mut self) -> Self {
-        if let Dialog::AddRemote { publish, .. } = &mut self {
+        if let Self::AddRemote { publish, .. } = &mut self {
             *publish = true;
         }
         self
@@ -200,7 +203,7 @@ impl Dialog {
 
     /// New branch starting at `start`.
     pub fn new_branch_at(start: Start) -> Self {
-        Dialog::NewBranch {
+        Self::NewBranch {
             name: String::new(),
             start,
             checkout: true,
@@ -386,8 +389,7 @@ pub fn show(
             let ok = valid_ref_name(name.trim());
             let from = start.label(|| {
                 tab.and_then(|t| t.snap.as_ref())
-                    .map(|s| s.head.label())
-                    .unwrap_or_else(|| "HEAD".into())
+                    .map_or_else(|| "HEAD".into(), |s| s.head.label())
             });
             let result = KitDialog::new(salt)
                 .title("New branch")
@@ -632,7 +634,7 @@ pub fn show(
                         .id_salt("request-target")
                         .show(ui);
                     if pick != request.target && !pick.is_empty() {
-                        request.target = pick.to_owned();
+                        pick.clone_into(&mut request.target);
                     }
                     field(
                         ui,
@@ -662,7 +664,13 @@ pub fn show(
             answer(result, || {
                 if valid(request) {
                     let mut r = request.clone();
-                    r.title = r.title.trim().to_owned();
+                    #[expect(
+                        clippy::assigning_clones,
+                        reason = "the source borrows the target, so clone_into cannot take it"
+                    )]
+                    {
+                        r.title = r.title.trim().to_owned();
+                    }
                     Outcome::Run(vec![Action::Host(HostJob::Create(r))])
                 } else {
                     Outcome::Keep
@@ -989,7 +997,11 @@ fn merge_body(
                 .iter()
                 .filter(|b| !b.is_head)
                 .map(|b| b.name.clone())
-                .chain(s.remote_branches.iter().map(|b| b.full_name()))
+                .chain(
+                    s.remote_branches
+                        .iter()
+                        .map(canopy_core::RemoteBranchInfo::full_name),
+                )
                 .collect()
         })
         .unwrap_or_default();
@@ -1139,7 +1151,7 @@ fn read(ui: &mut Ui, doc: Document, reading: &mut Option<Document>, height: f32)
     Disclosure::new(("read", doc.title()), doc.title(), &mut open)
         .icon(icon::SCROLL)
         .show(ui, |ui| {
-            document(ui, ("legal", doc.title()), height, doc.body())
+            document(ui, ("legal", doc.title()), height, doc.body());
         });
     if open != was {
         *reading = open.then_some(doc);
@@ -1444,7 +1456,7 @@ mod tests {
                             physical_key: None,
                             pressed: true,
                             repeat: false,
-                            modifiers: Default::default(),
+                            modifiers: egui::Modifiers::default(),
                         }]
                     } else {
                         Vec::new()
@@ -1518,7 +1530,7 @@ mod tests {
                 notes: String::new(),
                 pub_date: None,
                 release_page: None,
-                platforms: Default::default(),
+                platforms: std::collections::BTreeMap::default(),
             },
         };
         for state in [
@@ -1581,7 +1593,7 @@ mod tests {
         crate::ui::theme::apply(
             &ctx,
             crate::ui::theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
+            crate::ui::theme::Appearance::STILL,
         );
         let mut dialog = Dialog::clone_default(&Settings::default());
         if let Dialog::Clone { builder, .. } = &mut dialog {
@@ -1598,7 +1610,7 @@ mod tests {
                         unit: egui::MouseWheelUnit::Point,
                         phase: egui::TouchPhase::Move,
                         delta: egui::vec2(0.0, -1000.0),
-                        modifiers: Default::default(),
+                        modifiers: egui::Modifiers::default(),
                     });
                 }
                 let mut output = ctx.run_ui(
@@ -1657,7 +1669,7 @@ mod tests {
             crate::ui::theme::apply(
                 &ctx,
                 crate::ui::theme::ThemeId::Daylight,
-                &crate::ui::theme::Appearance::STILL,
+                crate::ui::theme::Appearance::STILL,
             );
             let mut dialog = Dialog::Consent {
                 step,

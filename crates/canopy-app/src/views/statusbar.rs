@@ -173,7 +173,6 @@ pub fn show(
                         .tooltip("See what's new and download it"),
                     &label,
                 );
-                let version = v.to_string();
                 let page = a.page();
                 menu::context(&resp, |m| {
                     if m.item(icon::ARROW_SQUARE_OUT, "Release notes and downloads")
@@ -183,7 +182,7 @@ pub fn show(
                         actions.push(Action::OpenUrl(page.clone()));
                     }
                     if m.item(icon::X, "Skip this version").show(m.ui).clicked() {
-                        actions.push(Action::SkipVersion(version.clone()));
+                        actions.push(Action::SkipVersion(v.clone()));
                     }
                 });
                 if resp.clicked() {

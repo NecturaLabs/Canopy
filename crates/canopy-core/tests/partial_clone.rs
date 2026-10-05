@@ -3,7 +3,11 @@
 //! executable or fail with `Error::NotDownloaded`, and match what `git` shows for the same
 //! commits in the full source repository.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)] // Test helpers may panic: that is a failed test.
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "helpers outside #[test] functions may panic too: that is a failed test"
+)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,6 +41,10 @@ fn isolated_home(dir: &Path) -> PathBuf {
 /// running in parallel. They only need the repository's own configuration here (the clones use
 /// `file://` URLs and carry `core.autocrlf=false`); a global setting that changes how
 /// `git fetch` behaves can still reach them.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests drive git directly to build and check repositories"
+)]
 fn git_command(dir: &Path) -> Command {
     let home = isolated_home(dir);
     let mut cmd = Command::new("git");
@@ -171,7 +179,7 @@ fn cli_numstat(src: &Path, oid: Oid) -> Vec<(String, usize, usize)> {
         if path.is_empty() {
             // Rename: old and new path follow as separate fields.
             tokens.next();
-            path = tokens.next().expect("new path").to_owned();
+            tokens.next().expect("new path").clone_into(&mut path);
         }
         rows.push((path, add, del));
     }
@@ -245,7 +253,7 @@ fn assert_history_matches_cli(fx: &Fixture, repo: &Repo, missing: MissingObjects
     }
 }
 
-fn assert_not_downloaded(err: Error, remote: Option<&str>, attempted: bool) {
+fn assert_not_downloaded(err: &Error, remote: Option<&str>, attempted: bool) {
     match &err {
         Error::NotDownloaded { remote: r, reason } => {
             assert_eq!(r.as_deref(), remote, "{err}");
@@ -263,11 +271,13 @@ fn full_clone_is_not_partial_and_reads_offline() {
     let dir = fx.clone("full", &[]);
     let repo = Repo::open(&dir).expect("open");
     assert!(!repo.is_partial_clone());
-    assert!(missing(&dir).is_empty());
+    let absent = missing(&dir);
+    assert!(absent.is_empty(), "{absent:?}");
     assert_history_matches_cli(&fx, &repo, Fail);
 }
 
 #[test]
+#[expect(clippy::string_slice, reason = "object IDs are ASCII hex")]
 fn missing_object_in_full_repository_stays_a_libgit2_error() {
     // Corruption in a repository that is not a partial clone must not be reported as
     // "not downloaded", and must not trigger a download.
@@ -333,8 +343,8 @@ fn blobless_clone_fail_mode_stays_offline() {
             additions: 0,
             deletions: 0,
             lfs: false,
-            old_mode: Some(0o100644),
-            new_mode: Some(0o100644),
+            old_mode: Some(0o100_644),
+            new_mode: Some(0o100_644),
         }]
     );
     let err = repo
@@ -347,7 +357,7 @@ fn blobless_clone_fail_mode_stays_offline() {
             Fail,
         )
         .expect_err("old blobs are missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
     assert_eq!(missing(&dir), before, "Fail must not download anything");
 }
 
@@ -484,7 +494,7 @@ fn the_download_gate_stops_the_fetch_itself() {
     let denied = fx.clone("denied-by-gate", &["--filter=blob:none"]);
     let repo = Repo::open(&denied).expect("open");
     let before = missing(&denied);
-    assert!(!before.is_empty());
+    assert!(!before.is_empty(), "the partial clone has every blob");
     let err = repo
         .commit_details(fx.commits[0], Download)
         .expect_err("the gate refuses the fetch");
@@ -531,7 +541,7 @@ fn treeless_clone_downloads_trees_then_blobs_and_matches_cli() {
     let err = repo
         .commit_details(fx.commits[0], Fail)
         .expect_err("old trees are missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
 
     assert_history_matches_cli(&fx, &repo, Download);
     assert_history_matches_cli(&fx, &repo, Fail);
@@ -560,7 +570,7 @@ fn no_checkout_clone_staged_diff_downloads_head_blob() {
             Fail,
         )
         .expect_err("HEAD blob is missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
     let d = repo
         .file_diff(
             &DiffSource::Staged,
@@ -672,7 +682,7 @@ fn unstaged_diff_against_missing_index_blob_downloads_it() {
             Fail,
         )
         .expect_err("index blob is missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
     let d = repo
         .file_diff(
             &DiffSource::Unstaged,
@@ -698,7 +708,7 @@ fn hunk_staging_stays_offline_and_works_once_the_diff_was_downloaded() {
     let err = repo
         .apply_hunk(HunkAction::Stage, "a.txt", 0, (1, 3, 1, 3), 3)
         .expect_err("index blob is missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
 
     let d = repo
         .file_diff(
@@ -787,8 +797,8 @@ fn unreachable_remote_reports_git_error_and_recovers() {
     else {
         panic!("expected NotDownloaded with a reason, got {err:?}");
     };
-    assert!(!reason.is_empty());
-    assert_not_downloaded(err, Some("origin"), true);
+    assert!(!reason.is_empty(), "the error gives no reason");
+    assert_not_downloaded(&err, Some("origin"), true);
     assert!(fs::read_dir(dir.join(".git")).is_ok(), "repository intact");
 
     fs::rename(&moved, &fx.src).expect("restore the remote");
@@ -824,11 +834,11 @@ fn removed_promisor_remote_cannot_download() {
             Fail,
         )
         .expect_err("no remote");
-    assert_not_downloaded(err, None, false);
+    assert_not_downloaded(&err, None, false);
     let err = repo
         .commit_details(fx.commits[1], Download)
         .expect_err("no remote");
-    assert_not_downloaded(err, None, true);
+    assert_not_downloaded(&err, None, true);
 }
 
 #[test]
@@ -996,7 +1006,7 @@ fn remote_named_like_an_option_is_refused_and_never_run() {
 }
 
 /// `A\tpath`-style lines for a status list, sorted, to compare with `git diff --name-status`.
-fn name_status(files: &[canopy_core::FileEntry]) -> Vec<String> {
+fn name_status(files: &[FileEntry]) -> Vec<String> {
     let mut out: Vec<String> = files
         .iter()
         .map(|f| {
@@ -1042,7 +1052,7 @@ fn treeless_soft_reset_never_reports_head_as_unborn() {
     let err = repo
         .status(Fail)
         .expect_err("status alone reports the missing tree");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
     let err = repo
         .file_diff(
             &DiffSource::Staged,
@@ -1053,7 +1063,7 @@ fn treeless_soft_reset_never_reports_head_as_unborn() {
             Fail,
         )
         .expect_err("HEAD tree is missing");
-    assert_not_downloaded(err, Some("origin"), false);
+    assert_not_downloaded(&err, Some("origin"), false);
     assert_eq!(missing(&dir), before, "Fail must not download anything");
 
     let status = repo.status(Download).expect("downloads the HEAD tree");

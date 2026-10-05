@@ -1,5 +1,7 @@
 //! Headless screenshots for `--screenshot` (tools/screenshot.sh).
 
+use std::sync::Arc;
+
 use super::*;
 
 #[derive(Debug)]
@@ -55,7 +57,7 @@ impl CanopyApp {
         ctx.request_repaint();
         let image = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {
-                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                egui::Event::Screenshot { image, .. } => Some(Arc::clone(image)),
                 _ => None,
             })
         });
@@ -82,7 +84,7 @@ fn save_png(path: &std::path::Path, image: &egui::ColorImage) -> anyhow::Result<
     let bytes: Vec<u8> = image
         .pixels
         .iter()
-        .flat_map(|c| c.to_srgba_unmultiplied())
+        .flat_map(egui::Color32::to_srgba_unmultiplied)
         .collect();
     writer.write_image_data(&bytes)?;
     Ok(())

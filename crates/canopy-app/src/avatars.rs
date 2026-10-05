@@ -26,7 +26,7 @@ const HOUR_SECS: i64 = 60 * 60;
 const LOOKUPS_PER_HOUR_ANONYMOUS: u32 = 30;
 const LOOKUPS_PER_HOUR_SIGNED_IN: u32 = 500;
 /// A cache file nobody refreshed for this long belongs to an author not seen for a month.
-const PRUNE_AFTER: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const PRUNE_AFTER: Duration = Duration::from_hours(30 * 24);
 const PIXEL_BYTES: usize = 64 * 64 * 4;
 const MAX_RECORD_BYTES: u64 = 128 * 1024;
 // Tabs may have separate picture threads. Serialize cache misses so they never fetch an author
@@ -46,7 +46,7 @@ impl Budget {
     fn take(&mut self, now: i64, limit: u32) -> Result<(), i64> {
         let hour = now.div_euclid(HOUR_SECS);
         if hour != self.hour {
-            *self = Budget { hour, used: 0 };
+            *self = Self { hour, used: 0 };
         }
         if self.used >= limit {
             return Err((hour + 1) * HOUR_SECS);
@@ -282,6 +282,10 @@ fn prune(dir: &Path, now: SystemTime, max_age: Duration) -> usize {
         .count()
 }
 
+#[expect(
+    clippy::map_err_ignore,
+    reason = "a failed picture is cached as a miss; why it failed is not kept"
+)]
 fn load_at(
     path: Option<std::path::PathBuf>,
     client: &canopy_hosting::Client,
@@ -325,7 +329,11 @@ fn load_at(
         };
         let bytes = avatar.download().map_err(|_| Miss::Failed)?;
         let image = decode(&bytes).map_err(|_| Miss::Failed)?;
-        Ok(image.pixels.iter().flat_map(|p| p.to_array()).collect())
+        Ok(image
+            .pixels
+            .iter()
+            .flat_map(egui::Color32::to_array)
+            .collect())
     });
     if due
         && record.checked_at == now
@@ -620,12 +628,12 @@ mod tests {
             image.write_to(&mut bytes, format).unwrap();
             assert_eq!(decode(bytes.get_ref()).unwrap().size, [64, 64]);
         }
-        assert!(decode(b"not a picture").is_err());
+        decode(b"not a picture").unwrap_err();
         let mut bytes = Cursor::new(Vec::new());
         image::DynamicImage::new_rgb8(2049, 1)
             .write_to(&mut bytes, image::ImageFormat::Png)
             .unwrap();
-        assert!(decode(bytes.get_ref()).is_err());
-        assert!(decode(&vec![0; 2 * 1024 * 1024 + 1]).is_err());
+        decode(bytes.get_ref()).unwrap_err();
+        decode(&vec![0; 2 * 1024 * 1024 + 1]).unwrap_err();
     }
 }

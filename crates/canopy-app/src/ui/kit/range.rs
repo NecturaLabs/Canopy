@@ -2,6 +2,7 @@
 //! value in a bubble while dragged. Design spec 4.9; replaces `egui::Slider`.
 
 use std::ops::RangeInclusive;
+use std::sync::Arc;
 
 use egui::emath::Numeric;
 use egui::epaint::RectShape;
@@ -173,10 +174,10 @@ impl<'a, T: Numeric> Slider<'a, T> {
             let h = label.size().y.max(value.size().y);
             let (row, _) = ui.allocate_exact_size(vec2(width, h), Sense::hover());
             let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
-            painter.galley(row.left_top(), label.clone(), p.text);
+            painter.galley(row.left_top(), Arc::clone(label), p.text);
             painter.galley(
                 pos2(row.right() - value.size().x, row.top()),
-                value.clone(),
+                Arc::clone(value),
                 p.text,
             );
         }
@@ -197,7 +198,7 @@ impl<'a, T: Numeric> Slider<'a, T> {
         let rail_x = egui::Rangef::new(rect.left() + r, rect.right() - r);
         let to_x = |v: f64| {
             let t = if hi > lo { (v - lo) / (hi - lo) } else { 0.0 };
-            rail_x.min + rail_x.span() * t as f32
+            rail_x.min + rail_x.span() * crate::ui::to_f32(t)
         };
         let from_x = |x: f32| lo + f64::from((x - rail_x.min) / rail_x.span().max(1.0)) * (hi - lo);
 
@@ -405,6 +406,10 @@ pub(crate) fn gallery(ui: &mut Ui) {
             ui.vertical(|ui| {
                 gallery_caption(ui, name);
                 ui.add_space(theme::XL);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "the gallery shows a handful of states"
+                )]
                 let mut v = 3 + i as u32 * 4;
                 let slider = Slider::new(&mut v, 0..=25)
                     .label(name)

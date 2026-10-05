@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crossbeam_channel::Receiver;
 use egui::epaint::CubicBezierShape;
@@ -54,25 +55,25 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Section; 7] = [
-        Section::Appearance,
-        Section::Git,
-        Section::Integrations,
-        Section::Accounts,
-        Section::Updates,
-        Section::Privacy,
-        Section::Keyboard,
+    const ALL: [Self; 7] = [
+        Self::Appearance,
+        Self::Git,
+        Self::Integrations,
+        Self::Accounts,
+        Self::Updates,
+        Self::Privacy,
+        Self::Keyboard,
     ];
 
     fn label(self) -> (&'static str, &'static str) {
         match self {
-            Section::Appearance => (icon::PALETTE, "Appearance"),
-            Section::Git => (icon::GIT_BRANCH, "Git"),
-            Section::Integrations => (icon::PLUGS_CONNECTED, "Integrations"),
-            Section::Accounts => (icon::KEY, "Accounts"),
-            Section::Updates => (icon::ARROW_CIRCLE_UP, "Updates"),
-            Section::Privacy => (icon::SHIELD_CHECK, "Privacy"),
-            Section::Keyboard => (icon::KEYBOARD, "Keyboard"),
+            Self::Appearance => (icon::PALETTE, "Appearance"),
+            Self::Git => (icon::GIT_BRANCH, "Git"),
+            Self::Integrations => (icon::PLUGS_CONNECTED, "Integrations"),
+            Self::Accounts => (icon::KEY, "Accounts"),
+            Self::Updates => (icon::ARROW_CIRCLE_UP, "Updates"),
+            Self::Privacy => (icon::SHIELD_CHECK, "Privacy"),
+            Self::Keyboard => (icon::KEYBOARD, "Keyboard"),
         }
     }
 }
@@ -108,7 +109,7 @@ impl std::fmt::Debug for SettingsScreen {
             .field("tests", &self.tests)
             .field("token_error", &self.token_error)
             .field("identity_scope", &self.identity_scope)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -158,7 +159,7 @@ pub fn show(
     screen: &mut SettingsScreen,
     settings: &mut Settings,
     tokens: &mut TokenStore,
-    data: SettingsData<'_>,
+    data: &SettingsData<'_>,
     actions: &mut Vec<Action>,
 ) -> SettingsResult {
     let p = palette(ctx);
@@ -224,29 +225,35 @@ pub fn show(
                 .show(&mut child, |ui| {
                     egui::Frame::NONE
                         .inner_margin(Margin {
-                            left: theme::XL as i8,
-                            right: theme::LG as i8,
-                            top: theme::LG as i8,
-                            bottom: theme::XL as i8,
+                            left: crate::ui::points_i8(theme::XL),
+                            right: crate::ui::points_i8(theme::LG),
+                            top: crate::ui::points_i8(theme::LG),
+                            bottom: crate::ui::points_i8(theme::XL),
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(ui.available_width());
                             ui.spacing_mut().item_spacing.x = theme::SM;
                             match screen.section {
                                 Section::Appearance => {
-                                    appearance(ui, settings, &mut screen.zoom_preview)
+                                    appearance(ui, settings, &mut screen.zoom_preview);
                                 }
                                 Section::Git => git(ui, screen, settings, &data.identity, actions),
                                 Section::Integrations => {
-                                    integrations(ui, settings, &mut screen.picker)
+                                    integrations(ui, settings, &mut screen.picker);
                                 }
                                 Section::Accounts => {
-                                    result.tokens_changed |=
-                                        accounts(ui, screen, settings, tokens, data.forges, actions)
+                                    result.tokens_changed |= accounts(
+                                        ui,
+                                        screen,
+                                        settings,
+                                        tokens,
+                                        data.forges,
+                                        actions,
+                                    );
                                 }
                                 Section::Updates => updates(ui, settings, data.update, actions),
                                 Section::Privacy => {
-                                    privacy(ui, settings, actions, &mut screen.picker)
+                                    privacy(ui, settings, actions, &mut screen.picker);
                                 }
                                 Section::Keyboard => keyboard(ui),
                             }
@@ -325,7 +332,7 @@ fn navigation(ui: &mut Ui, rect: Rect, radius: u8, current: &mut Section) {
     let cy = title.center().y;
     ui.painter().galley(
         pos2(x, cy - glyph.size().y / 2.0),
-        glyph.clone(),
+        Arc::clone(&glyph),
         p.text_faint,
     );
     ui.painter().text(
@@ -481,7 +488,7 @@ fn row_layout(
                 Layout::right_to_left(Align::Center).with_main_wrap(true),
                 |ui| {
                     ui.add_space(theme::SM);
-                    control(ui)
+                    control(ui);
                 },
             );
         } else {
@@ -502,7 +509,7 @@ fn row_layout(
                     |ui| {
                         // Keeps controls clear of the scroll bar.
                         ui.add_space(theme::SM);
-                        control(ui)
+                        control(ui);
                     },
                 );
             });
@@ -658,9 +665,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     // Whole cards per row, stretched to fill it, with a gutter clear of the scroll bar.
     let gap = m.card_gap;
     let usable = ui.available_width() - theme::LG;
-    let columns = (((usable + gap) / (THEME_CARD_MIN + gap)).floor() as usize).max(1);
-    let card_width = ((usable - gap * (columns - 1) as f32) / columns as f32)
-        .clamp(THEME_CARD_MIN - 20.0, THEME_CARD_MAX);
+    let columns =
+        crate::ui::saturate_usize(((usable + gap) / (THEME_CARD_MIN + gap)).floor()).max(1);
+    let card_width = ((usable - gap * crate::ui::count_f32(columns - 1))
+        / crate::ui::count_f32(columns))
+    .clamp(THEME_CARD_MIN - 20.0, THEME_CARD_MAX);
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing = vec2(gap, gap);
         for themes in ThemeId::ALL.chunks(columns) {
@@ -721,7 +730,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
                 .show(ui);
         },
     );
-    let system = match crate::ui::motion::system() {
+    let system = match motion::system() {
         Some(true) => "Your system asks for reduced motion.",
         Some(false) => "Your system asks for full motion.",
         None => "Your system did not say whether to reduce motion.",
@@ -834,7 +843,7 @@ fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> Respon
                 },
             );
             if let Some(v) = typed {
-                s.zoom = v as f32;
+                s.zoom = crate::ui::to_f32(v);
                 *draft = None;
             }
         },
@@ -1024,7 +1033,7 @@ fn in_use(ui: &mut Ui, field: &Field) {
     let shown = elide_middle(
         ui,
         &source,
-        FontId::proportional(size),
+        &FontId::proportional(size),
         ui.available_width(),
     );
     let cut = shown != source;
@@ -1037,10 +1046,10 @@ fn in_use(ui: &mut Ui, field: &Field) {
 }
 
 /// `text` cut in its middle with an ellipsis until it fits in `max_width`.
-fn elide_middle(ui: &Ui, text: &str, font: FontId, max_width: f32) -> String {
+fn elide_middle(ui: &Ui, text: &str, font: &FontId, max_width: f32) -> String {
     let width = |t: &str| {
         ui.painter()
-            .layout_no_wrap(t.to_owned(), font.clone(), egui::Color32::WHITE)
+            .layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE)
             .size()
             .x
     };
@@ -1093,7 +1102,7 @@ fn identity_group(
         screen.loaded_identity = None;
     }
     if screen.identity_for != repo_path || screen.loaded_identity.as_ref() != identity {
-        screen.identity_for = repo_path.clone();
+        screen.identity_for.clone_from(&repo_path);
         screen.loaded_identity = identity.cloned();
         // Only values someone chose are offered for editing: a guess built from the user and host
         // names would be saved as if it were a choice.
@@ -1369,6 +1378,11 @@ fn git(
 
 /// Commits per page: a number field between − and + steppers.
 fn commit_page(ui: &mut Ui, s: &mut Settings) {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the range's ends are the whole numbers 200 and 50 000"
+    )]
     let (lo, hi) = (*COMMIT_PAGE.start() as usize, *COMMIT_PAGE.end() as usize);
     // Right to left: +, the field, −.
     if IconButton::new(icon::PLUS, "More commits per page")
@@ -1380,6 +1394,11 @@ fn commit_page(ui: &mut Ui, s: &mut Settings) {
     {
         s.commit_page = (s.commit_page + COMMIT_PAGE_STEP).min(hi);
     }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a page size of at most 50 000, exact in f64"
+    )]
+    let current = s.commit_page as f64;
     if let Some(v) = number_field(
         ui,
         NumberField {
@@ -1388,11 +1407,17 @@ fn commit_page(ui: &mut Ui, s: &mut Settings) {
             width: COUNT_FIELD_WIDTH,
             name: "Commits per page",
         },
-        s.commit_page as f64,
+        current,
         |v| format!("{v:.0}"),
         |text| text.replace([',', '_', ' '], "").parse::<f64>().ok(),
     ) {
-        s.commit_page = v.round() as usize;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "number_field clamps the value to COMMIT_PAGE, so it is a whole positive count once rounded"
+        )]
+        let page = v.round() as usize;
+        s.commit_page = page;
     }
     if IconButton::new(icon::MINUS, "Fewer commits per page")
         .size(Size::Sm)
@@ -1709,7 +1734,7 @@ fn privacy(
                 "trusted-folder",
                 &crate::settings::expand_home(&s.clone_parent()),
                 "Add folder…",
-            ) && crate::trust::add(&mut s.trusted_folders, dir)
+            ) && crate::trust::add(&mut s.trusted_folders, &dir)
             {
                 crate::trust::set(&s.trusted_folders);
                 ui.ctx().request_repaint();
@@ -1844,9 +1869,7 @@ fn privacy(
                 .show(ui)
                 .clicked()
             {
-                actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Legal(
-                    Document::Privacy,
-                )));
+                actions.push(Action::OpenDialog(Dialog::Legal(Document::Privacy)));
             }
         },
     );
@@ -1864,9 +1887,7 @@ fn privacy(
                 .show(ui)
                 .clicked()
             {
-                actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Legal(
-                    Document::Terms,
-                )));
+                actions.push(Action::OpenDialog(Dialog::Legal(Document::Terms)));
             }
         },
     );
@@ -2004,10 +2025,7 @@ mod tests {
         let mut row_bottom = 0.0;
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    vec2(500.0, 800.0),
-                )),
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(500.0, 800.0))),
                 ..Default::default()
             },
             |ui| {
@@ -2042,14 +2060,11 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         let mut settings = Settings::default();
         let mut draft = None;
-        let mut rect = egui::Rect::NOTHING;
+        let mut rect = Rect::NOTHING;
         let mut draw = |events| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(600.0, 400.0),
-                    )),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(600.0, 400.0))),
                     events,
                     ..Default::default()
                 },
@@ -2070,7 +2085,7 @@ mod tests {
                 pos,
                 button: egui::PointerButton::Primary,
                 pressed: true,
-                modifiers: Default::default(),
+                modifiers: egui::Modifiers::default(),
             },
         ]);
         assert_eq!(zoom, 1.0, "applying zoom while dragging moves the control");
@@ -2078,7 +2093,7 @@ mod tests {
             pos,
             button: egui::PointerButton::Primary,
             pressed: false,
-            modifiers: Default::default(),
+            modifiers: egui::Modifiers::default(),
         }]);
         assert!(zoom > 1.0, "released slider must apply its preview");
     }
@@ -2092,7 +2107,7 @@ mod tests {
         let mut time = 1.0;
         let mut draw = |events| {
             time += 0.05;
-            let mut rect = egui::Rect::NOTHING;
+            let mut rect = Rect::NOTHING;
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     time: Some(time),
@@ -2115,14 +2130,14 @@ mod tests {
                     pos,
                     button: egui::PointerButton::Primary,
                     pressed: true,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 },
             ]);
             draw(vec![egui::Event::PointerButton {
                 pos,
                 button: egui::PointerButton::Primary,
                 pressed: false,
-                modifiers: Default::default(),
+                modifiers: egui::Modifiers::default(),
             }]);
         }
         assert!(
@@ -2137,7 +2152,7 @@ mod tests {
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers: Default::default(),
+            modifiers: egui::Modifiers::default(),
         }]);
         assert_eq!(zoom, 1.5, "Enter must apply the complete percentage");
     }
@@ -2146,12 +2161,8 @@ mod tests {
     fn settings_fit_a_compact_zoomed_window() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
-        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(562.5, 350.0));
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(562.5, 350.0));
         let mut settings = Settings::default();
         let mut tokens = TokenStore::default();
         for section in Section::ALL {
@@ -2168,7 +2179,7 @@ mod tests {
                             &mut screen,
                             &mut settings,
                             &mut tokens,
-                            SettingsData {
+                            &SettingsData {
                                 forges: &[],
                                 update: &UpdateState::Idle,
                                 identity: IdentityView {
@@ -2215,11 +2226,11 @@ mod tests {
         }
     }
 
-    fn local_source() -> Option<Source> {
-        Some(Source::Config {
+    fn local_source() -> Source {
+        Source::Config {
             scope: "local".into(),
             origin: "file:.git/config".into(),
-        })
+        }
     }
 
     #[test]
@@ -2237,10 +2248,7 @@ mod tests {
             }),
             "the git command line"
         );
-        assert_eq!(
-            label(&local_source().expect("a source")),
-            "this repository: .git/config"
-        );
+        assert_eq!(label(&local_source()), "this repository: .git/config");
         assert_eq!(
             label(&Source::Config {
                 scope: "global".into(),
@@ -2268,16 +2276,16 @@ mod tests {
         let font = FontId::proportional(theme::metrics().small_size);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                assert_eq!(elide_middle(ui, path, font.clone(), 10_000.0), path);
-                let cut = elide_middle(ui, path, font.clone(), 200.0);
+                assert_eq!(elide_middle(ui, path, &font, 10_000.0), path);
+                let cut = elide_middle(ui, path, &font, 200.0);
                 assert!(cut.contains('…') && cut.starts_with("From") && cut.ends_with("gitconfig"));
                 let width = ui
                     .painter()
-                    .layout_no_wrap(cut, font.clone(), egui::Color32::WHITE)
+                    .layout_no_wrap(cut, font.clone(), Color32::WHITE)
                     .size()
                     .x;
                 assert!(width <= 200.0, "{width}");
-                assert_eq!(elide_middle(ui, path, font.clone(), 0.0), "…");
+                assert_eq!(elide_middle(ui, path, &font, 0.0), "…");
             });
         });
         output.textures_delta.clear();
@@ -2301,7 +2309,7 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         let mut settings = Settings::default();
         let mut screen = SettingsScreen::default();
-        let repo = std::path::PathBuf::from("/repo");
+        let repo = PathBuf::from("/repo");
         let mut draw = |screen: &mut SettingsScreen, repo: Option<&Path>, id: &Identity| {
             let mut actions = Vec::new();
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -2335,8 +2343,8 @@ mod tests {
         assert_eq!(screen.identity_scope, Scope::Local);
 
         let chosen = identity(
-            field("Ada Lovelace", local_source()),
-            field("ada@example.com", local_source()),
+            field("Ada Lovelace", Some(local_source())),
+            field("ada@example.com", Some(local_source())),
         );
         let actions = draw(&mut screen, Some(&repo), &chosen);
         assert_eq!(screen.identity_name, "Ada Lovelace");

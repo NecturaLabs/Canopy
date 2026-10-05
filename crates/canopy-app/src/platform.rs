@@ -47,6 +47,13 @@ pub fn web_address(url: &str) -> bool {
 }
 
 /// Opens a web page in the default browser.
+#[cfg_attr(
+    any(target_os = "linux", target_os = "macos", target_os = "windows"),
+    expect(
+        clippy::disallowed_methods,
+        reason = "starts the platform's URL opener, never git"
+    )
+)]
 pub fn open_url(url: &str) -> Result<(), String> {
     if !web_address(url) {
         tracing::warn!("refused to open a non-web address");
@@ -77,6 +84,13 @@ pub fn open_url(url: &str) -> Result<(), String> {
 }
 
 /// Shows `dir` in the file manager.
+#[cfg_attr(
+    any(target_os = "linux", target_os = "macos", target_os = "windows"),
+    expect(
+        clippy::disallowed_methods,
+        reason = "starts the platform's file manager, never git"
+    )
+)]
 pub fn open_folder(dir: &Path) -> Result<(), String> {
     if !dir.is_dir() {
         return Err(format!("{} is not a folder", dir.display()));
@@ -105,7 +119,13 @@ fn split_command(configured: &str) -> Option<(String, Vec<String>)> {
 }
 
 /// Whether the desktop's default handler might run `file` instead of showing it.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "linux", test)),
+    expect(
+        dead_code,
+        reason = "only Linux opens files with the desktop's handler"
+    )
+)]
 fn launchable(file: &Path) -> bool {
     let ext = file
         .extension()
@@ -128,6 +148,10 @@ fn launchable(file: &Path) -> bool {
 /// Opens `file` for editing: with the editor configured in Settings when there is one,
 /// otherwise with the platform's text editor (TextEdit's default on macOS, Notepad on Windows,
 /// the desktop's handler on Linux unless it could run the file, in which case the folder opens).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "starts the configured or the platform's editor, never git"
+)]
 pub fn open_in_editor(file: &Path, configured: &str) -> Result<(), String> {
     if let Some((program, args)) = split_command(configured.trim()) {
         let mut cmd = Command::new(&program);
@@ -170,6 +194,10 @@ pub fn open_in_editor(file: &Path, configured: &str) -> Result<(), String> {
 }
 
 /// Opens a terminal in `dir`: the configured command first, then the platform's usual ones.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "starts the configured or the platform's terminal, never git"
+)]
 pub fn open_terminal(dir: &Path, configured: &str) -> Result<(), String> {
     if let Some((program, args)) = split_command(configured.trim()) {
         let mut cmd = Command::new(&program);
@@ -232,6 +260,13 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(6);
 /// Asks the operating system whether the user wants reduced motion. Blocks while a helper
 /// program answers (up to a few seconds), so call it off the UI thread. `None` when the system
 /// does not say.
+#[cfg_attr(
+    any(target_os = "linux", target_os = "macos", target_os = "windows"),
+    expect(
+        clippy::disallowed_methods,
+        reason = "asks the platform's settings tools, never git"
+    )
+)]
 pub fn prefers_reduced_motion() -> Option<bool> {
     #[cfg(target_os = "linux")]
     {
@@ -289,6 +324,13 @@ pub fn prefers_reduced_motion() -> Option<bool> {
 /// transparency", Windows "Transparency effects" off). Blocks while a helper program answers, so
 /// call it off the UI thread. `None` when the system does not say; Linux desktops have no
 /// standard setting.
+#[cfg_attr(
+    any(target_os = "macos", target_os = "windows"),
+    expect(
+        clippy::disallowed_methods,
+        reason = "asks the platform's settings tools, never git"
+    )
+)]
 pub fn prefers_reduced_transparency() -> Option<bool> {
     #[cfg(target_os = "macos")]
     {
@@ -345,22 +387,25 @@ fn output_within(mut cmd: Command, timeout: Duration) -> Option<String> {
         let _ = child.wait();
         return None;
     }
-    match rx.recv_timeout(timeout) {
-        Ok(out) => {
-            let status = child.wait().ok()?;
-            out.filter(|_| status.success())
-        }
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            tracing::debug!("system settings query timed out");
-            None
-        }
+    if let Ok(out) = rx.recv_timeout(timeout) {
+        let status = child.wait().ok()?;
+        out.filter(|_| status.success())
+    } else {
+        let _ = child.kill();
+        let _ = child.wait();
+        tracing::debug!("system settings query timed out");
+        None
     }
 }
 
 /// `(<uint32 1>,)` from the portal: 1 asks for reduced motion.
-#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "linux", test)),
+    expect(
+        dead_code,
+        reason = "only the Linux query and the tests read this answer"
+    )
+)]
 fn parse_portal(out: &str) -> Option<bool> {
     let value = out
         .trim()
@@ -376,7 +421,13 @@ fn parse_portal(out: &str) -> Option<bool> {
 }
 
 /// `true` or `false` for `enable-animations`; disabled animations mean reduced motion.
-#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "linux", test)),
+    expect(
+        dead_code,
+        reason = "only the Linux query and the tests read this answer"
+    )
+)]
 fn parse_gsettings(out: &str) -> Option<bool> {
     match out.trim() {
         "true" => Some(false),
@@ -386,7 +437,13 @@ fn parse_gsettings(out: &str) -> Option<bool> {
 }
 
 /// `1` or `0` from `defaults read`.
-#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "macos", test)),
+    expect(
+        dead_code,
+        reason = "only the macOS query and the tests read this answer"
+    )
+)]
 fn parse_defaults(out: &str) -> Option<bool> {
     match out.trim() {
         "1" => Some(true),
@@ -396,7 +453,13 @@ fn parse_defaults(out: &str) -> Option<bool> {
 }
 
 /// `True` or `False` for client-area animation; animations off mean reduced motion.
-#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "windows", test)),
+    expect(
+        dead_code,
+        reason = "only the Windows query and the tests read this answer"
+    )
+)]
 fn parse_windows(out: &str) -> Option<bool> {
     match out.trim().to_ascii_lowercase().as_str() {
         "true" => Some(false),
@@ -406,7 +469,13 @@ fn parse_windows(out: &str) -> Option<bool> {
 }
 
 /// The value of `name` in `reg query` output: `    EnableTransparency    REG_DWORD    0x1`.
-#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+#[cfg_attr(
+    not(any(target_os = "windows", test)),
+    expect(
+        dead_code,
+        reason = "only the Windows query and the tests read this answer"
+    )
+)]
 fn parse_reg_dword(out: &str, name: &str) -> Option<u32> {
     out.lines().find_map(|line| {
         let mut words = line.split_whitespace();
@@ -478,6 +547,10 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test runs sh to stand in for a settings tool"
+    )]
     fn slow_or_failing_queries_give_up() {
         let mut ok = Command::new("sh");
         ok.args(["-c", "echo hello"]);

@@ -51,12 +51,7 @@ impl Person {
 
     pub fn looks_like_placeholder(&self) -> bool {
         let name = self.name.value.trim();
-        let domain = self
-            .email
-            .value
-            .rsplit_once('@')
-            .map(|(_, d)| d)
-            .unwrap_or("");
+        let domain = self.email.value.rsplit_once('@').map_or("", |(_, d)| d);
         name.chars().count() < 2
             || domain.is_empty()
             || !domain.contains('.')
@@ -137,9 +132,11 @@ fn git_write(workdir: Option<&Path>, args: &[&str]) -> Result<cli::Output> {
     cli::output_within(command(workdir), args, WRITE_LIMIT)
 }
 
-/// Change Git's `user.*` settings. Git chooses the target global file itself. Environment and
-/// `author.*`/`committer.*` overrides may still take precedence, which the next read reveals.
-/// If the email cannot be written after the name was, the name is put back.
+/// Change Git's `user.*` settings.
+///
+/// Git chooses the target global file itself. Environment and `author.*`/`committer.*` overrides
+/// may still take precedence, which the next read reveals. If the email cannot be written after the
+/// name was, the name is put back.
 pub fn set(workdir: Option<&Path>, scope: Scope, name: &str, email: &str) -> Result<()> {
     if scope == Scope::Local && workdir.is_none() {
         return Err(Error::invalid(
@@ -361,8 +358,8 @@ fn read_person(workdir: Option<&Path>, configured: &Configured, kind: Kind) -> R
             let value = String::from_utf8_lossy(&out.stdout);
             let (effective_name, effective_email) = parse_ident(&value)
                 .ok_or_else(|| Error::invalid("Git returned an unreadable identity."))?;
-            name.value = effective_name.to_owned();
-            email.value = effective_email.to_owned();
+            effective_name.clone_into(&mut name.value);
+            effective_email.clone_into(&mut email.value);
             name.source.get_or_insert(Source::Guessed);
             email.source.get_or_insert(Source::Guessed);
             true
@@ -441,6 +438,10 @@ fn parse_ident(ident: &str) -> Option<(&str, &str)> {
 mod tests {
     use super::*;
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn run_git(dir: &Path, args: &[&str]) {
         let status = std::process::Command::new("git")
             .current_dir(dir)

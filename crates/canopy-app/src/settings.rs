@@ -26,13 +26,13 @@ pub enum PullMode {
 }
 
 impl PullMode {
-    pub const ALL: [PullMode; 3] = [PullMode::Merge, PullMode::Rebase, PullMode::FastForwardOnly];
+    pub const ALL: [Self; 3] = [Self::Merge, Self::Rebase, Self::FastForwardOnly];
 
     pub fn strategy(self) -> PullStrategy {
         match self {
-            PullMode::Merge => PullStrategy::Merge,
-            PullMode::Rebase => PullStrategy::Rebase,
-            PullMode::FastForwardOnly => PullStrategy::FastForwardOnly,
+            Self::Merge => PullStrategy::Merge,
+            Self::Rebase => PullStrategy::Rebase,
+            Self::FastForwardOnly => PullStrategy::FastForwardOnly,
         }
     }
 
@@ -59,17 +59,13 @@ pub enum WhitespaceMode {
 }
 
 impl WhitespaceMode {
-    pub const ALL: [WhitespaceMode; 3] = [
-        WhitespaceMode::Show,
-        WhitespaceMode::IgnoreEol,
-        WhitespaceMode::IgnoreAll,
-    ];
+    pub const ALL: [Self; 3] = [Self::Show, Self::IgnoreEol, Self::IgnoreAll];
 
     pub fn core(self) -> Whitespace {
         match self {
-            WhitespaceMode::Show => Whitespace::Show,
-            WhitespaceMode::IgnoreEol => Whitespace::IgnoreEol,
-            WhitespaceMode::IgnoreAll => Whitespace::IgnoreAll,
+            Self::Show => Whitespace::Show,
+            Self::IgnoreEol => Whitespace::IgnoreEol,
+            Self::IgnoreAll => Whitespace::IgnoreAll,
         }
     }
 
@@ -265,7 +261,7 @@ impl Settings {
         self.diff.context = self.diff.context.min(25);
         let mut seen = Vec::new();
         self.trusted_folders
-            .retain(|f| f.is_absolute() && crate::trust::add(&mut seen, f.clone()));
+            .retain(|f| f.is_absolute() && crate::trust::add(&mut seen, f));
     }
 
     /// Moves `path` to the front of the recent list.

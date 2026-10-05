@@ -46,7 +46,7 @@ pub(super) fn inspector_height(d: &FileDiff, limit: f32) -> f32 {
     let (line_h, hunk_h) = row_heights();
     let mut height = theme::XL * 4.0;
     for hunk in &d.hunks {
-        height += hunk_h + hunk.lines.len() as f32 * line_h;
+        height += hunk_h + crate::ui::count_f32(hunk.lines.len()) * line_h;
         if height >= limit {
             return limit;
         }
@@ -374,11 +374,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let Some(layout) = tab.diff_layout.as_ref() else {
         return;
     };
-    let num_w = layout.digits as f32 * 7.6 + 12.0;
-    let gutter_w = num_w * (usize::from(show_old) + usize::from(show_new)) as f32;
+    let num_w = crate::ui::count_f32(layout.digits) * 7.6 + 12.0;
+    let gutter_w = num_w * crate::ui::count_f32(usize::from(show_old) + usize::from(show_new));
     let mono = FontId::monospace(m.mono_size);
     let char_w = ui.fonts_mut(|f| f.glyph_width(&mono, 'm'));
-    let longest = layout.columns as f32;
+    let longest = crate::ui::count_f32(layout.columns);
     let content_w = if split {
         ui.available_width()
     } else {
@@ -423,7 +423,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 let rect = Rect::from_min_size(origin + vec2(0.0, y), vec2(content_w, rh));
                 match layout.rows[i] {
                     Row::Hunk(h) => {
-                        hunk_header(ui, &cx, &d, h, rect, origin, viewport, line_sel, actions)
+                        hunk_header(ui, &cx, &d, h, rect, origin, viewport, line_sel, actions);
                     }
                     Row::Line(h, l) => {
                         let hunk = &d.hunks[h];
@@ -468,10 +468,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                                         .as_ref()
                                         .is_some_and(|s| s.hunk == h && s.lines.contains(&l));
                                     let clip = ui.painter().clip_rect().intersect(r);
-                                    let mut cell = ui.new_child(egui::UiBuilder::new().max_rect(r));
+                                    let mut cell = ui.new_child(UiBuilder::new().max_rect(r));
                                     cell.set_clip_rect(clip);
                                     if let Some(m) = line_cell(
-                                        &mut cell,
+                                        &cell,
                                         &cx,
                                         line,
                                         cx.spans(h, l),
@@ -533,8 +533,8 @@ fn header(
     };
     let frame = egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(
-            theme::MD as i8,
-            vertical_padding as i8,
+            crate::ui::points_i8(theme::MD),
+            crate::ui::points_i8(vertical_padding),
         ))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -701,9 +701,12 @@ fn layout_toggle(
 }
 
 /// Paints one line (or one side of a pair). Returns the click modifiers when the user picked it.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a cell needs its line, spans, rectangle, gutter, sides, selection and id"
+)]
 fn line_cell(
-    ui: &mut Ui,
+    ui: &Ui,
     cx: &Ctx<'_>,
     line: &DiffLine,
     spans: &[Span],
@@ -739,7 +742,7 @@ fn line_cell(
         // The line numbers sit on the stronger gutter tint. A whole new or deleted file keeps
         // that and gives its code a quiet wash of the line tint, so it still reads as added or
         // removed without a solid block of colour.
-        let gutter_w = num_w * (usize::from(show_old) + usize::from(show_new)) as f32;
+        let gutter_w = num_w * crate::ui::count_f32(usize::from(show_old) + usize::from(show_new));
         let body = if cx.one_sided {
             bg.gamma_multiply(0.4)
         } else {
@@ -844,7 +847,10 @@ fn fade_edge(painter: &egui::Painter, y: egui::Rangef, edge: f32, under: Color32
 }
 
 /// A hunk header band with its actions (or the actions for the selected lines in it).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the band needs its hunk, geometry, viewport, line selection and actions"
+)]
 fn hunk_header(
     ui: &mut Ui,
     cx: &Ctx<'_>,
@@ -1270,8 +1276,8 @@ mod tests {
                     .filter_map(|(_, n)| {
                         let b = n.bounds()?;
                         let r = Rect::from_min_max(
-                            pos2(b.x0 as f32, b.y0 as f32),
-                            pos2(b.x1 as f32, b.y1 as f32),
+                            pos2(crate::ui::to_f32(b.x0), crate::ui::to_f32(b.y0)),
+                            pos2(crate::ui::to_f32(b.x1), crate::ui::to_f32(b.y1)),
                         );
                         Some((n.label()?.to_owned(), r))
                     })
@@ -1284,11 +1290,7 @@ mod tests {
     fn themed() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
     }
 
@@ -1513,7 +1515,7 @@ mod tests {
 
     #[test]
     fn code_job_colours_spans_and_expands_tabs() {
-        let syntax = crate::ui::theme::MIDNIGHT.syntax;
+        let syntax = theme::MIDNIGHT.syntax;
         let spans = [Span {
             start: 1,
             end: 3,

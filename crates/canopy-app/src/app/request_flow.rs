@@ -5,7 +5,7 @@ use super::*;
 impl CanopyApp {
     /// Opens the new pull/merge request dialog, or the provider's page when the API is off or
     /// has no token.
-    pub(super) fn create_request(&mut self, ctx: &egui::Context, source: String) {
+    pub(super) fn create_request(&mut self, ctx: &egui::Context, source: &str) {
         let Some(t) = self.tabs.get(self.active) else {
             return;
         };
@@ -27,7 +27,7 @@ impl CanopyApp {
         let source = local
             .and_then(|b| b.upstream.as_deref())
             .and_then(|u| u.strip_prefix(&prefix))
-            .map_or(source.clone(), str::to_owned);
+            .map_or_else(|| source.to_owned(), str::to_owned);
         let head_commit = local.and_then(|b| b.target);
         let has_token = matches!(t.requests.token, Some(Some(_)));
         if !self.settings.hosting_api || !has_token {
@@ -85,11 +85,11 @@ impl CanopyApp {
             .as_ref()
             .is_some_and(|s| s.branches.iter().any(|b| b.name == r.source_branch));
         let op = if same_repo_branch && local_exists {
-            Op::Checkout(r.source_branch.clone())
+            Op::Checkout(r.source_branch)
         } else if same_repo_branch {
             Op::CheckoutRemote {
                 remote,
-                branch: r.source_branch.clone(),
+                branch: r.source_branch,
             }
         } else {
             let prefix = match forge.kind {

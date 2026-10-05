@@ -58,16 +58,16 @@ pub enum Size {
 }
 
 impl Size {
-    pub const ALL: [Size; 4] = [Size::Xs, Size::Sm, Size::Md, Size::Lg];
+    pub const ALL: [Self; 4] = [Self::Xs, Self::Sm, Self::Md, Self::Lg];
 
     /// The control height of this size in the active metrics.
     pub fn height(self) -> f32 {
         let m = theme::metrics();
         match self {
-            Size::Xs => 20.0_f32.min(m.control_sm),
-            Size::Sm => m.control_sm,
-            Size::Md => m.control,
-            Size::Lg => m.control_lg,
+            Self::Xs => 20.0_f32.min(m.control_sm),
+            Self::Sm => m.control_sm,
+            Self::Md => m.control,
+            Self::Lg => m.control_lg,
         }
     }
 }
@@ -84,43 +84,43 @@ pub enum Tone {
 }
 
 impl Tone {
-    pub const ALL: [Tone; 5] = [
-        Tone::Neutral,
-        Tone::Accent,
-        Tone::Success,
-        Tone::Warning,
-        Tone::Danger,
+    pub const ALL: [Self; 5] = [
+        Self::Neutral,
+        Self::Accent,
+        Self::Success,
+        Self::Warning,
+        Self::Danger,
     ];
 
     /// The text-grade colour of the tone.
     pub fn color(self, p: &Palette) -> Color32 {
         match self {
-            Tone::Neutral => p.text_dim,
-            Tone::Accent => p.accent,
-            Tone::Success => p.success,
-            Tone::Warning => p.warning,
-            Tone::Danger => p.danger,
+            Self::Neutral => p.text_dim,
+            Self::Accent => p.accent,
+            Self::Success => p.success,
+            Self::Warning => p.warning,
+            Self::Danger => p.danger,
         }
     }
 
     /// The tone's 16% tint (banners, callouts, dialog glyph discs).
     pub fn tint(self, p: &Palette) -> Color32 {
         match self {
-            Tone::Neutral => p.hover_strong(),
-            Tone::Accent => p.accent_tint(),
-            Tone::Success => p.success_tint(),
-            Tone::Warning => p.warning_tint(),
-            Tone::Danger => p.danger_tint(),
+            Self::Neutral => p.hover_strong(),
+            Self::Accent => p.accent_tint(),
+            Self::Success => p.success_tint(),
+            Self::Warning => p.warning_tint(),
+            Self::Danger => p.danger_tint(),
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Tone::Neutral => "Neutral",
-            Tone::Accent => "Accent",
-            Tone::Success => "Success",
-            Tone::Warning => "Warning",
-            Tone::Danger => "Danger",
+            Self::Neutral => "Neutral",
+            Self::Accent => "Accent",
+            Self::Success => "Success",
+            Self::Warning => "Warning",
+            Self::Danger => "Danger",
         }
     }
 }

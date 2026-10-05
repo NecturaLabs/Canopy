@@ -188,6 +188,13 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
     /// Shows the control; the response is the group's and reports `changed` when the choice
     /// moved.
     pub fn show(self, ui: &mut Ui) -> Response {
+        struct Seg {
+            icon: Option<Arc<Galley>>,
+            text: Option<Arc<Galley>>,
+            badge: Option<Arc<Galley>>,
+            width: f32,
+        }
+
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
         let style = theme::style();
@@ -205,12 +212,6 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
             m.segment_pad - 3.0
         };
 
-        struct Seg {
-            icon: Option<Arc<Galley>>,
-            text: Option<Arc<Galley>>,
-            badge: Option<Arc<Galley>>,
-            width: f32,
-        }
         let segs: Vec<Seg> = self
             .options
             .iter()
@@ -241,8 +242,8 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                     badge.as_ref().map(|g| badge_width(g)),
                 ];
                 let n = parts.iter().flatten().count();
-                let content: f32 =
-                    parts.iter().flatten().sum::<f32>() + ITEM_GAP * n.saturating_sub(1) as f32;
+                let content: f32 = parts.iter().flatten().sum::<f32>()
+                    + ITEM_GAP * crate::ui::count_f32(n.saturating_sub(1));
                 let width = if self.content == Content::IconOnly && badge.is_none() {
                     (content + 2.0 * (pad - 3.0)).max(seg_h + 4.0)
                 } else {
@@ -369,16 +370,16 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                     seg.badge.as_ref().map(|g| badge_width(g)),
                 ];
                 let n = parts.iter().flatten().count();
-                let content: f32 =
-                    parts.iter().flatten().sum::<f32>() + ITEM_GAP * n.saturating_sub(1) as f32;
+                let content: f32 = parts.iter().flatten().sum::<f32>()
+                    + ITEM_GAP * crate::ui::count_f32(n.saturating_sub(1));
                 let mut x = rect.center().x - content / 2.0;
                 let cy = rect.center().y;
                 if let Some(g) = &seg.icon {
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), color);
+                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), color);
                     x += g.size().x + ITEM_GAP;
                 }
                 if let Some(g) = &seg.text {
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), color);
+                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), color);
                     x += g.size().x + ITEM_GAP;
                 }
                 if let Some(g) = &seg.badge {
@@ -387,7 +388,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                         vec2(badge_width(g), m.badge_height),
                     );
                     painter.rect_filled(r, CornerRadius::same(theme::FULL), s.badge);
-                    painter.galley(r.center() - g.size() / 2.0, g.clone(), p.text);
+                    painter.galley(r.center() - g.size() / 2.0, Arc::clone(g), p.text);
                 }
                 if st.focus > 0.0 {
                     paint::inset_ring(&painter, *rect, radius, p.focus.gamma_multiply(st.focus));
@@ -506,6 +507,13 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
     /// Shows the tabs. The response is the tab list's (`changed` when the active tab moved); the
     /// value is the tab whose close button was pressed, if any.
     pub fn show(self, ui: &mut Ui) -> KitResponse<Option<T>> {
+        struct Tab {
+            icon: Option<Arc<Galley>>,
+            text: Arc<Galley>,
+            count: Option<Arc<Galley>>,
+            width: f32,
+        }
+
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
         let s = theme::surfaces(&ctx);
@@ -522,12 +530,6 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
             TAB_PAD_LEFT
         };
 
-        struct Tab {
-            icon: Option<Arc<Galley>>,
-            text: Arc<Galley>,
-            count: Option<Arc<Galley>>,
-            width: f32,
-        }
         let tabs: Vec<Tab> = self
             .options
             .iter()
@@ -570,9 +572,9 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
                 }
             })
             .collect();
-        let row_w = ui
-            .available_width()
-            .max(tabs.iter().map(|t| t.width).sum::<f32>() + TAB_GAP * tabs.len() as f32);
+        let row_w = ui.available_width().max(
+            tabs.iter().map(|t| t.width).sum::<f32>() + TAB_GAP * crate::ui::count_f32(tabs.len()),
+        );
         let (row, _) = ui.allocate_exact_size(vec2(row_w, h), Sense::hover());
         let mut rects = Vec::with_capacity(tabs.len());
         let mut x = row.left();
@@ -662,17 +664,17 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
                 let cy = rect.center().y;
                 if let Some(g) = &tab.icon {
                     let c = if active { p.accent } else { p.text_faint };
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), c);
+                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), c);
                     x += g.size().x + ITEM_GAP;
                 }
                 painter.galley(
                     pos2(x, cy - tab.text.size().y / 2.0),
-                    tab.text.clone(),
+                    Arc::clone(&tab.text),
                     color,
                 );
                 x += tab.text.size().x + ITEM_GAP;
                 if let Some(g) = &tab.count {
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), p.accent);
+                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), p.accent);
                     x += g.size().x + ITEM_GAP;
                 }
                 if self.closable {

@@ -80,13 +80,13 @@ enum Scalar {
 impl Scalar {
     fn name(self) -> u32 {
         match self {
-            Scalar::MaxTextureSize => glow::MAX_TEXTURE_SIZE,
-            Scalar::SampleBuffers => glow::SAMPLE_BUFFERS,
-            Scalar::ActiveTexture => glow::ACTIVE_TEXTURE,
-            Scalar::BlendSrcRgb => glow::BLEND_SRC_RGB,
-            Scalar::BlendDstRgb => glow::BLEND_DST_RGB,
-            Scalar::BlendSrcAlpha => glow::BLEND_SRC_ALPHA,
-            Scalar::BlendDstAlpha => glow::BLEND_DST_ALPHA,
+            Self::MaxTextureSize => glow::MAX_TEXTURE_SIZE,
+            Self::SampleBuffers => glow::SAMPLE_BUFFERS,
+            Self::ActiveTexture => glow::ACTIVE_TEXTURE,
+            Self::BlendSrcRgb => glow::BLEND_SRC_RGB,
+            Self::BlendDstRgb => glow::BLEND_DST_RGB,
+            Self::BlendSrcAlpha => glow::BLEND_SRC_ALPHA,
+            Self::BlendDstAlpha => glow::BLEND_DST_ALPHA,
         }
     }
 }
@@ -101,8 +101,8 @@ enum Quad {
 impl Quad {
     fn name(self) -> u32 {
         match self {
-            Quad::Viewport => glow::VIEWPORT,
-            Quad::ScissorBox => glow::SCISSOR_BOX,
+            Self::Viewport => glow::VIEWPORT,
+            Self::ScissorBox => glow::SCISSOR_BOX,
         }
     }
 }
@@ -117,8 +117,8 @@ enum Cap {
 impl Cap {
     fn name(self) -> u32 {
         match self {
-            Cap::Scissor => glow::SCISSOR_TEST,
-            Cap::Blend => glow::BLEND,
+            Self::Scissor => glow::SCISSOR_TEST,
+            Self::Blend => glow::BLEND,
         }
     }
 }
@@ -133,15 +133,15 @@ enum Target {
 impl Target {
     fn name(self) -> u32 {
         match self {
-            Target::Draw => glow::DRAW_FRAMEBUFFER,
-            Target::Read => glow::READ_FRAMEBUFFER,
+            Self::Draw => glow::DRAW_FRAMEBUFFER,
+            Self::Read => glow::READ_FRAMEBUFFER,
         }
     }
 
     fn binding(self) -> u32 {
         match self {
-            Target::Draw => glow::DRAW_FRAMEBUFFER_BINDING,
-            Target::Read => glow::READ_FRAMEBUFFER_BINDING,
+            Self::Draw => glow::DRAW_FRAMEBUFFER_BINDING,
+            Self::Read => glow::READ_FRAMEBUFFER_BINDING,
         }
     }
 }
@@ -177,7 +177,7 @@ impl Current<'_> {
         // has room for four.
         unsafe {
             self.0
-                .get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut out)
+                .get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut out);
         };
         out
     }
@@ -290,7 +290,7 @@ impl Current<'_> {
         // SAFETY: the context is current; the factors are blend factor enums.
         unsafe {
             self.0
-                .blend_func_separate(src_rgb, dst_rgb, src_alpha, dst_alpha)
+                .blend_func_separate(src_rgb, dst_rgb, src_alpha, dst_alpha);
         }
     }
 
@@ -337,23 +337,27 @@ impl Current<'_> {
         unsafe { self.0.draw_arrays(glow::TRIANGLES, 0, 3) }
     }
 
-    fn uniform_2(self, at: &glow::UniformLocation, [x, y]: [f32; 2]) {
+    fn uniform_2(self, at: glow::UniformLocation, [x, y]: [f32; 2]) {
         // SAFETY: the context is current; `at` belongs to the program in use.
-        unsafe { self.0.uniform_2_f32(Some(at), x, y) }
+        unsafe { self.0.uniform_2_f32(Some(&at), x, y) }
     }
 
-    fn uniform_1(self, at: &glow::UniformLocation, v: f32) {
+    fn uniform_1(self, at: glow::UniformLocation, v: f32) {
         // SAFETY: the context is current; `at` belongs to the program in use.
-        unsafe { self.0.uniform_1_f32(Some(at), v) }
+        unsafe { self.0.uniform_1_f32(Some(&at), v) }
     }
 
-    fn uniform_4(self, at: &glow::UniformLocation, [x, y, z, w]: [f32; 4]) {
+    fn uniform_4(self, at: glow::UniformLocation, [x, y, z, w]: [f32; 4]) {
         // SAFETY: the context is current; `at` belongs to the program in use.
-        unsafe { self.0.uniform_4_f32(Some(at), x, y, z, w) }
+        unsafe { self.0.uniform_4_f32(Some(&at), x, y, z, w) }
     }
 
     // --------------------------------------------------------------------------- objects
 
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "a blur failure is reported as a fixed Reason code, not the driver's text"
+    )]
     fn create_shader(self, kind: u32) -> Result<glow::Shader, Reason> {
         // SAFETY: the context is current; `kind` is VERTEX_SHADER or FRAGMENT_SHADER.
         let shader = unsafe { self.0.create_shader(kind) }.map_err(|_| Reason::Compile)?;
@@ -383,6 +387,10 @@ impl Current<'_> {
         deleted();
     }
 
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "a blur failure is reported as a fixed Reason code, not the driver's text"
+    )]
     fn create_program(self) -> Result<glow::Program, Reason> {
         // SAFETY: the context is current.
         let program = unsafe { self.0.create_program() }.map_err(|_| Reason::Link)?;
@@ -428,6 +436,10 @@ impl Current<'_> {
         unsafe { self.0.get_uniform_location(program, name) }
     }
 
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "a blur failure is reported as a fixed Reason code, not the driver's text"
+    )]
     fn create_vertex_array(self) -> Result<glow::VertexArray, Reason> {
         // SAFETY: the context is current (OpenGL 3.0 or ES 3.0, where vertex arrays are core).
         let vao = unsafe { self.0.create_vertex_array() }.map_err(|_| Reason::Internal)?;
@@ -441,6 +453,10 @@ impl Current<'_> {
         deleted();
     }
 
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "a blur failure is reported as a fixed Reason code, not the driver's text"
+    )]
     fn create_texture(self) -> Result<glow::Texture, Reason> {
         // SAFETY: the context is current.
         let texture = unsafe { self.0.create_texture() }.map_err(|_| Reason::Framebuffer)?;
@@ -482,6 +498,10 @@ impl Current<'_> {
         }
     }
 
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "a blur failure is reported as a fixed Reason code, not the driver's text"
+    )]
     fn create_framebuffer(self) -> Result<glow::Framebuffer, Reason> {
         // SAFETY: the context is current.
         let fbo = unsafe { self.0.create_framebuffer() }.map_err(|_| Reason::Framebuffer)?;
@@ -675,6 +695,10 @@ impl Drop for Building<'_> {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "taking the level means it cannot be used once its objects are deleted"
+)]
 fn delete_level(cur: Current<'_>, level: Level) {
     cur.delete_framebuffer(level.fbo);
     cur.delete_texture(level.texture);
@@ -924,8 +948,13 @@ impl GlassGl {
         let level = |i: usize| levels.get(i).ok_or(Reason::Internal);
         let used = super::level_sizes([blur.region.w, blur.region.h]);
         let used_at = |i: usize| used.get(i).copied().ok_or(Reason::Internal);
-        let texel = |l: &Level| [1.0 / l.size[0] as f32, 1.0 / l.size[1] as f32];
-        let size = |s: [i32; 2]| [s[0] as f32, s[1] as f32];
+        let texel = |l: &Level| {
+            [
+                1.0 / crate::ui::int_f32(l.size[0]),
+                1.0 / crate::ui::int_f32(l.size[1]),
+            ]
+        };
+        let size = |s: [i32; 2]| [crate::ui::int_f32(s[0]), crate::ui::int_f32(s[1])];
 
         cur.set_enabled(Cap::Scissor, false);
         cur.set_enabled(Cap::Blend, false);
@@ -944,10 +973,10 @@ impl GlassGl {
             cur.bind_both(Some(dst.fbo));
             cur.viewport([0, 0, dst_used[0], dst_used[1]]);
             cur.bind_texture(Some(src.texture));
-            cur.uniform_2(&p.texel, texel(src));
-            cur.uniform_2(&p.src_size, size(used_at(from)?));
-            cur.uniform_2(&p.dst_size, size(dst_used));
-            cur.uniform_1(&p.offset, blur.offset);
+            cur.uniform_2(p.texel, texel(src));
+            cur.uniform_2(p.src_size, size(used_at(from)?));
+            cur.uniform_2(p.dst_size, size(dst_used));
+            cur.uniform_1(p.offset, blur.offset);
             cur.draw_triangle();
             Ok(())
         };
@@ -979,12 +1008,20 @@ impl GlassGl {
         ]);
         cur.use_program(Some(c.program));
         cur.bind_texture(Some(level(0)?.texture));
-        cur.uniform_2(&c.texel, texel(level(0)?));
-        cur.uniform_2(&c.src_size, size(used_at(0)?));
-        cur.uniform_4(&c.region, [r.x as f32, r.y as f32, r.w as f32, r.h as f32]);
-        cur.uniform_4(&c.rect, plan.rect);
-        cur.uniform_4(&c.radii, plan.radii);
-        cur.uniform_4(&c.look, look.uniform());
+        cur.uniform_2(c.texel, texel(level(0)?));
+        cur.uniform_2(c.src_size, size(used_at(0)?));
+        cur.uniform_4(
+            c.region,
+            [
+                crate::ui::int_f32(r.x),
+                crate::ui::int_f32(r.y),
+                crate::ui::int_f32(r.w),
+                crate::ui::int_f32(r.h),
+            ],
+        );
+        cur.uniform_4(c.rect, plan.rect);
+        cur.uniform_4(c.radii, plan.radii);
+        cur.uniform_4(c.look, look.uniform());
         cur.draw_triangle();
         Ok(())
     }

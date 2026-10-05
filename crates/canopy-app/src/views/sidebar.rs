@@ -59,7 +59,7 @@ struct Row<'a> {
 
 /// A sidebar item: icon and label, the checked-out branch selected, ahead and behind counts as
 /// badges at the right.
-fn row(ui: &mut Ui, r: Row<'_>) -> egui::Response {
+fn row(ui: &mut Ui, r: &Row<'_>) -> egui::Response {
     let m = theme::metrics();
     let badges: Vec<(String, Tone)> =
         [(r.ahead, "↑", Tone::Accent), (r.behind, "↓", Tone::Neutral)]
@@ -79,7 +79,7 @@ fn row(ui: &mut Ui, r: Row<'_>) -> egui::Response {
         .x;
     let room = ui.available_width() - 2.0 * theme::MD - m.icon_md - theme::SM;
     let tip = r.hint.map(str::to_owned).or_else(|| {
-        let badges_w = badges.len() as f32 * (m.badge_height + 2.0 * BADGE_GAP);
+        let badges_w = crate::ui::count_f32(badges.len()) * (m.badge_height + 2.0 * BADGE_GAP);
         (label_w > room - badges_w).then(|| r.label.to_owned())
     });
     let mut row = ListRow::new(r.id)
@@ -155,13 +155,13 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         ) {
             if let Some(name) = unborn {
                 let label = format!("{name} (no commits yet)");
-                let _ = row(ui, Row { id: ui.id().with("unborn-branch"), glyph: icon::CHECK_CIRCLE, label: &label, current: true, ahead: 0, behind: 0, hint: Some("Current branch; make the first commit to create it") });
+                let _ = row(ui, &Row { id: ui.id().with("unborn-branch"), glyph: icon::CHECK_CIRCLE, label: &label, current: true, ahead: 0, behind: 0, hint: Some("Current branch; make the first commit to create it") });
             }
             virtual_rows(ui, snap.branches.len(), row_h, |ui, i| {
                 let b = &snap.branches[i];
                 let glyph = if b.is_head { icon::CHECK_CIRCLE } else { icon::GIT_BRANCH };
-                let hint = b.upstream.as_ref().map(|u| format!("Tracks {u}")).unwrap_or_else(|| "No upstream".to_owned());
-                let resp = row(ui, Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, current: b.is_head, ahead: b.ahead, behind: b.behind, hint: Some(&hint) });
+                let hint = b.upstream.as_ref().map_or_else(|| "No upstream".to_owned(), |u| format!("Tracks {u}"));
+                let resp = row(ui, &Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, current: b.is_head, ahead: b.ahead, behind: b.behind, hint: Some(&hint) });
                 if resp.clicked()
                     && let Some(t) = b.target {
                         actions.push(Action::Reveal(t));
@@ -329,7 +329,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             let tag_forge = tab.forge().map(|(_, f)| f.clone());
             virtual_rows(ui, snap.tags.len(), row_h, |ui, i| {
                 let t = &snap.tags[i];
-                let resp = row(ui, Row { id: ui.id().with(("tag", &t.name)), glyph: icon::TAG, label: &t.name, current: false, ahead: 0, behind: 0, hint: t.message.as_deref() });
+                let resp = row(ui, &Row { id: ui.id().with(("tag", &t.name)), glyph: icon::TAG, label: &t.name, current: false, ahead: 0, behind: 0, hint: t.message.as_deref() });
                 if resp.clicked()
                     && let Some(target) = t.target {
                         actions.push(Action::Reveal(target));
@@ -367,7 +367,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             virtual_rows(ui, snap.stashes.len(), row_h, |ui, i| {
                 let s = &snap.stashes[i];
                 let label = s.message.trim_start_matches("On ").to_owned();
-                let resp = row(ui, Row { id: ui.id().with(("stash", s.oid)), glyph: icon::ARCHIVE, label: &label, current: false, ahead: 0, behind: 0, hint: Some(&s.message) });
+                let resp = row(ui, &Row { id: ui.id().with(("stash", s.oid)), glyph: icon::ARCHIVE, label: &label, current: false, ahead: 0, behind: 0, hint: Some(&s.message) });
                 let index = s.index;
                 if resp.clicked() {
                     actions.push(Action::Reveal(s.oid));
@@ -400,7 +400,7 @@ mod tests {
         ctx.enable_accesskit();
         crate::ui::fonts::install(&ctx);
         let mut add = add;
-        let mut out = ctx.run_ui(Default::default(), |ui| add(ui));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| add(ui));
         out.textures_delta.clear();
         out.platform_output
             .accesskit_update
@@ -418,7 +418,7 @@ mod tests {
         let labels = spoken(|ui| {
             row(
                 ui,
-                Row {
+                &Row {
                     id: egui::Id::new("row"),
                     glyph: icon::GIT_BRANCH,
                     label: "feature/auth",

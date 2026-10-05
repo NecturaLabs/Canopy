@@ -123,11 +123,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
                     _ => {}
                 }
                 if layout.compact_details && selected {
-                    let summary = tab
-                        .details
-                        .as_ref()
-                        .map(|d| d.message.lines().next().unwrap_or("").trim())
-                        .unwrap_or("Commit details");
+                    let summary = tab.details.as_ref().map_or("Commit details", |d| {
+                        d.message.lines().next().unwrap_or("").trim()
+                    });
                     row.add_space(theme::SM);
                     row.add(egui::Label::new(RichText::new(summary).color(p.text_dim)).truncate())
                         .on_hover_text(summary);
@@ -329,18 +327,18 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             })
         });
         if let Some(target) = target {
-            let y = target as f32 * row_h;
+            let y = crate::ui::count_f32(target) * row_h;
             if tab.scroll_to_selected || y < offset || y + row_h > offset + view_h {
                 offset = (y - view_h / 2.0 + row_h).max(0.0);
             }
         }
     }
     let total_rows = row_count + usize::from(snap.truncated && filtered.is_none());
-    offset = offset.min((total_rows as f32 * row_h - view_h).max(0.0));
+    offset = offset.min((crate::ui::count_f32(total_rows) * row_h - view_h).max(0.0));
     tab.scroll_to_selected = false;
     tab.reveal_selected = false;
-    let first = (offset / row_h).floor() as usize;
-    let last = ((offset + view_h) / row_h).ceil() as usize;
+    let first = crate::ui::saturate_usize((offset / row_h).floor());
+    let last = crate::ui::saturate_usize(((offset + view_h) / row_h).ceil());
     let date_text = |seconds| {
         if settings.relative_dates {
             widgets::relative_time_format(seconds, now, settings.iso_dates)
@@ -431,19 +429,15 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             let g = snap.graph.get(ci);
             let is_head = snap.head.oid == Some(c.oid);
             let lane = g.map_or(0, |g| g.color);
-            let picture = if avatars && show_author {
+            let picture = (avatars && show_author).then(|| {
                 // Copied only for an author whose lookup is due, not for every row every frame.
                 if tab.avatars.wants_now(&c.author.email) {
                     wanted_pictures.push((c.oid, c.author.email.clone()));
                 }
-                Some(
-                    tab.avatars
-                        .get(&c.author.email)
-                        .map(egui::TextureHandle::id),
-                )
-            } else {
-                None
-            };
+                tab.avatars
+                    .get(&c.author.email)
+                    .map(egui::TextureHandle::id)
+            });
 
             // Ref pills, then the summary after them.
             let desc_right = author_x - CELL_PAD;
@@ -471,7 +465,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                             Rect::from_min_size(rc.rect.min, vec2(graph_w, rc.rect.height()));
                         let mut marks = Marks::new(rc.ground);
                         marks.head = is_head;
-                        graph::paint_row(painter, column, &geometry, g, &marks);
+                        graph::paint_row(painter, column, geometry, g, marks);
                     }
                     let font = if selected || is_head {
                         FontId::new(m.body_size, theme::medium())
@@ -720,13 +714,14 @@ mod tests {
     fn resizing_preserves_visible_commit_rows_above_saved_details() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
-        let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
         tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
             commits: (0..10)
                 .map(|i| canopy_core::CommitSummary {
@@ -785,11 +780,7 @@ mod tests {
     fn populated_details_remain_visible_in_a_minimum_zoomed_window() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         for size in [vec2(562.5, 350.0), vec2(1440.0, 900.0), vec2(600.0, 375.0)] {
             let mut visible = Vec::new();
@@ -809,7 +800,7 @@ mod tests {
                         egui::CentralPanel::default()
                             .frame(egui::Frame::new())
                             .show(ui, |ui| {
-                                show(ui, &mut tab, &Settings::default(), &mut Vec::new())
+                                show(ui, &mut tab, &Settings::default(), &mut Vec::new());
                             });
                     },
                 );
@@ -842,7 +833,12 @@ mod tests {
     }
     fn populated_tab(ctx: &egui::Context) -> (RepoTab, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("temporary tab");
-        let mut tab = RepoTab::new(dir.path().into(), ctx, 100, Default::default());
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
         let author = canopy_core::Signature {
             name: "Author".into(),
             email: "author@example.com".into(),
@@ -869,7 +865,7 @@ mod tests {
             deletions: 0,
             lfs: false,
             old_mode: None,
-            new_mode: Some(0o100644),
+            new_mode: Some(0o100_644),
         };
         tab.selected_commit = Some(oid);
         tab.details = Some(std::sync::Arc::new(canopy_core::CommitDetails {
@@ -951,11 +947,7 @@ mod tests {
     fn truncated_history_can_scroll_to_the_load_more_control() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         std::sync::Arc::make_mut(tab.snap.as_mut().expect("snapshot")).truncated = true;
         let mut output = egui::FullOutput::default();
@@ -996,11 +988,7 @@ mod tests {
     fn growing_the_window_restores_readable_author_files_and_diff() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         visible_details(&ctx, &mut tab, vec2(562.5, 350.0));
         let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
@@ -1026,11 +1014,7 @@ mod tests {
     fn compact_details_show_the_author_and_a_useful_diff() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         let visible = visible_details(&ctx, &mut tab, vec2(562.5, 350.0));
         assert!(
@@ -1050,11 +1034,7 @@ mod tests {
     fn short_details_keep_unselected_changed_files_visible() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         let mut details = (**tab.details.as_ref().expect("fixture details")).clone();
         let mut other = details.files[0].clone();
@@ -1075,18 +1055,14 @@ mod tests {
         for size in [vec2(562.5, 350.0), vec2(1440.0, 900.0)] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
-            theme::apply(
-                &ctx,
-                theme::ThemeId::Midnight,
-                &crate::ui::theme::Appearance::STILL,
-            );
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
             let (mut tab, _dir) = populated_tab(&ctx);
             tab.history_layout.expanded = true;
             visible_details(&ctx, &mut tab, size);
             tab.filter_history(&ctx);
             visible_details(&ctx, &mut tab, size);
             assert_eq!(
-                ctx.memory(|memory| memory.focused()),
+                ctx.memory(egui::Memory::focused),
                 filter_field(&ctx),
                 "the filter command must restore and focus the list at {size:?}"
             );
@@ -1097,11 +1073,7 @@ mod tests {
     fn history_search_stays_hidden_until_invoked_and_has_no_commit_count() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         tab.history_layout.show_list();
         let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
@@ -1121,11 +1093,7 @@ mod tests {
     fn filter_shortcut_toggles_search_and_clears_its_query_on_close() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         tab.filter_history(&ctx);
         let open = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
@@ -1133,7 +1101,7 @@ mod tests {
             open.iter().any(|text| text.contains("Filter by message")),
             "the shortcut must reveal the search field: {open:?}"
         );
-        assert_eq!(ctx.memory(|memory| memory.focused()), filter_field(&ctx));
+        assert_eq!(ctx.memory(egui::Memory::focused), filter_field(&ctx));
         tab.filter = "Commit 3".into();
         tab.filter_history(&ctx);
         let closed = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
@@ -1148,7 +1116,7 @@ mod tests {
             "closing search must restore all rows"
         );
         assert_ne!(
-            ctx.memory(|memory| memory.focused()),
+            ctx.memory(egui::Memory::focused),
             filter_field(&ctx),
             "closing search must return keyboard focus to History"
         );
@@ -1162,11 +1130,7 @@ mod tests {
         ] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
-            theme::apply(
-                &ctx,
-                theme::ThemeId::Midnight,
-                &crate::ui::theme::Appearance::STILL,
-            );
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
             let (mut tab, _dir) = populated_tab(&ctx);
             tab.filter_history(&ctx);
             tab.filter = "fix".into();
@@ -1178,7 +1142,7 @@ mod tests {
             assert_eq!(tab.filter, "fix", "the query must survive at {size:?}");
             let visible = visible_details(&ctx, &mut tab, size);
             assert!(visible.iter().any(|text| text == "fix"), "{visible:?}");
-            assert_eq!(ctx.memory(|memory| memory.focused()), filter_field(&ctx));
+            assert_eq!(ctx.memory(egui::Memory::focused), filter_field(&ctx));
         }
     }
 
@@ -1186,11 +1150,7 @@ mod tests {
     fn opening_search_keeps_the_split_details_at_minimum_window_height() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         tab.history_layout.show_list();
         tab.filter_history(&ctx);
@@ -1207,11 +1167,7 @@ mod tests {
     fn a_short_diff_loaded_later_updates_the_automatic_inspector_height() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
         diff.hunks[0].lines.truncate(7);
@@ -1233,11 +1189,7 @@ mod tests {
     fn manual_inspector_height_survives_a_short_diff() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
         diff.hunks[0].lines.truncate(7);
@@ -1261,11 +1213,7 @@ mod tests {
         for size in [vec2(1440.0, 900.0), vec2(2560.0, 1440.0)] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
-            theme::apply(
-                &ctx,
-                theme::ThemeId::Midnight,
-                &crate::ui::theme::Appearance::STILL,
-            );
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
             let (mut tab, _dir) = populated_tab(&ctx);
             let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
             diff.hunks[0].lines.truncate(7);
@@ -1317,11 +1265,7 @@ mod tests {
     fn expanded_details_can_return_without_a_selected_file() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         tab.history_layout.expanded = true;
         tab.file = None;
@@ -1342,11 +1286,7 @@ mod tests {
     fn detail_expander_shares_the_commit_summary_row() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         let size = vec2(1440.0, 900.0);
         visible_details(&ctx, &mut tab, size);
@@ -1404,11 +1344,7 @@ mod tests {
     fn long_commit_messages_stop_before_the_expander() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (mut tab, _dir) = populated_tab(&ctx);
         let mut details = (**tab.details.as_ref().expect("fixture details")).clone();
         details.message = "very-long-commit-summary ".repeat(20);
@@ -1470,7 +1406,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         for id in theme::ThemeId::ALL {
-            theme::apply(&ctx, id, &crate::ui::theme::Appearance::STILL);
+            theme::apply(&ctx, id, theme::Appearance::STILL);
             let p = palette(&ctx);
             for kind in [
                 RefKind::CurrentBranch,
@@ -1479,13 +1415,13 @@ mod tests {
                 RefKind::Tag,
                 RefKind::Head,
             ] {
-                for lane in 0..p.lanes.len() as u16 {
+                for lane in (0u16..).take(p.lanes.len()) {
                     let label = RefLabel {
                         name: "feature/readability".into(),
                         kind,
                     };
                     let pill = RefPill::from_label(&label, lane);
-                    let mut output = ctx.run_ui(Default::default(), |ui| {
+                    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                         pill.paint(ui, ui.painter(), 20.0, 30.0);
                     });
                     output.textures_delta.clear();

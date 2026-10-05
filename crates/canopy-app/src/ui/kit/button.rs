@@ -32,19 +32,14 @@ pub enum ButtonKind {
 }
 
 impl ButtonKind {
-    pub const ALL: [ButtonKind; 4] = [
-        ButtonKind::Primary,
-        ButtonKind::Secondary,
-        ButtonKind::Ghost,
-        ButtonKind::Danger,
-    ];
+    pub const ALL: [Self; 4] = [Self::Primary, Self::Secondary, Self::Ghost, Self::Danger];
 
     pub fn label(self) -> &'static str {
         match self {
-            ButtonKind::Primary => "Primary",
-            ButtonKind::Secondary => "Secondary",
-            ButtonKind::Ghost => "Ghost",
-            ButtonKind::Danger => "Danger",
+            Self::Primary => "Primary",
+            Self::Secondary => "Secondary",
+            Self::Ghost => "Ghost",
+            Self::Danger => "Danger",
         }
     }
 }
@@ -144,7 +139,7 @@ pub(super) fn spinner_due(ctx: &egui::Context, id: Id, loading: bool) -> bool {
     let now = ctx.input(|i| i.time);
     let since = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(key, || now));
     let delay = motion::time(motion::LOADING_DELAY);
-    if ((now - since) as f32) < delay {
+    if crate::ui::to_f32(now - since) < delay {
         ctx.request_repaint_after(std::time::Duration::from_secs_f32(delay));
         false
     } else {
@@ -433,12 +428,11 @@ impl Button {
                 let icon_color = self.icon_tone.map_or(label, |t| t.color(p));
                 if spinning {
                     let center = pos2(x + w / 2.0, cy);
-                    let sub = painter.clone();
-                    paint::spinner(&sub, center, m.icon_md * 0.38, 1.6, icon_color);
+                    paint::spinner(&painter, center, m.icon_md * 0.38, 1.6, icon_color);
                 } else if let Some(g) = &icon {
                     shapes.push(Shape::galley(
                         pos2(x, cy - g.size().y / 2.0),
-                        g.clone(),
+                        Arc::clone(g),
                         icon_color,
                     ));
                 }
@@ -446,7 +440,7 @@ impl Button {
             }
             shapes.push(Shape::galley(
                 pos2(x, cy - text.size().y / 2.0),
-                text.clone(),
+                Arc::clone(&text),
                 label,
             ));
             x += text.size().x;
@@ -454,7 +448,7 @@ impl Button {
                 x += theme::SM;
                 shapes.push(Shape::galley(
                     pos2(x, cy - c.size().y / 2.0),
-                    c.clone(),
+                    Arc::clone(c),
                     label.gamma_multiply(0.4),
                 ));
                 x += c.size().x;
@@ -463,7 +457,7 @@ impl Button {
                 x += m.button_gap;
                 shapes.push(Shape::galley(
                     pos2(x, cy - t.size().y / 2.0),
-                    t.clone(),
+                    Arc::clone(t),
                     label,
                 ));
             }
@@ -750,17 +744,13 @@ impl ToolButton {
             )
         });
         let badge_w = badge.as_ref().map_or(0.0, |b| b.size().x + 3.0);
-        let (size, height) = if stacked {
-            let h = t.tool_height;
-            let w = (caption.size().x.max(glyph.size().x + badge_w) + 2.0 * t.tool_pad)
-                .max(t.tool_min_width);
-            (vec2(w, h), h)
+        let width = if stacked {
+            (caption.size().x.max(glyph.size().x + badge_w) + 2.0 * t.tool_pad)
+                .max(t.tool_min_width)
         } else {
-            let h = t.tool_height;
-            let w = glyph.size().x + badge_w + gap + caption.size().x + 2.0 * t.tool_pad;
-            (vec2(w, h), h)
+            glyph.size().x + badge_w + gap + caption.size().x + 2.0 * t.tool_pad
         };
-        let size = vec2(size.x.max(self.min_width), height);
+        let size = vec2(width.max(self.min_width), t.tool_height);
         let sense = if enabled {
             Sense::click()
         } else {
@@ -807,7 +797,7 @@ impl ToolButton {
             let (icon_pos, caption_pos) = if stacked {
                 let block = glyph.size().y + gap + caption.size().y;
                 let top = rect.center().y - block / 2.0;
-                let icon_x = rect.center().x - (glyph.size().x + badge_w) / 2.0;
+                let icon_x = rect.center().x - f32::midpoint(glyph.size().x, badge_w);
                 (
                     pos2(icon_x, top),
                     pos2(
@@ -829,16 +819,16 @@ impl ToolButton {
                 let c = icon_pos + glyph.size() / 2.0;
                 paint::spinner(&painter, c, icon_size * 0.36, 1.6, icon_color);
             } else {
-                shapes.push(Shape::galley(icon_pos, glyph.clone(), icon_color));
+                shapes.push(Shape::galley(icon_pos, Arc::clone(&glyph), icon_color));
             }
             if let Some(b) = &badge {
                 let at = pos2(
                     icon_pos.x + glyph.size().x + 3.0,
                     icon_pos.y + glyph.size().y / 2.0 - b.size().y / 2.0,
                 );
-                shapes.push(Shape::galley(at, b.clone(), p.accent));
+                shapes.push(Shape::galley(at, Arc::clone(b), p.accent));
             }
-            shapes.push(Shape::galley(caption_pos, caption.clone(), text_color));
+            shapes.push(Shape::galley(caption_pos, caption, text_color));
             paint_scaled(&painter, shapes, rect.center(), scale);
         }
         let name = self.label;
@@ -1136,7 +1126,11 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                     on,
                 );
             }
-            painter.galley(main_rect.center() - text.size() / 2.0, text.clone(), on);
+            painter.galley(
+                main_rect.center() - text.size() / 2.0,
+                Arc::clone(&text),
+                on,
+            );
             painter.text(
                 caret_rect.center(),
                 Align2::CENTER_CENTER,
@@ -1372,7 +1366,7 @@ mod tests {
                 theme::apply(
                     &ctx,
                     theme::ThemeId::Midnight,
-                    &theme::Appearance {
+                    theme::Appearance {
                         style,
                         density,
                         ..theme::Appearance::STILL
@@ -1395,14 +1389,14 @@ mod tests {
                 assert_eq!(heights[5], m.control);
             }
         }
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
     }
 
     #[test]
     fn disabled_and_loading_buttons_ignore_clicks() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         for (enabled, loading, expect) in [
             (true, false, true),
             (false, false, false),
@@ -1418,14 +1412,14 @@ mod tests {
                             pos: rect.center(),
                             button: egui::PointerButton::Primary,
                             pressed: true,
-                            modifiers: Default::default(),
+                            modifiers: egui::Modifiers::default(),
                         },
                     ],
                     3 => vec![egui::Event::PointerButton {
                         pos: rect.center(),
                         button: egui::PointerButton::Primary,
                         pressed: false,
-                        modifiers: Default::default(),
+                        modifiers: egui::Modifiers::default(),
                     }],
                     _ => Vec::new(),
                 };
@@ -1447,7 +1441,7 @@ mod tests {
     fn disabled_buttons_paint_at_the_disabled_opacity() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let p = theme::palette(&ctx);
         let fills = |enabled: bool| {
             let shapes = frame(&ctx, Vec::new(), |ui| {

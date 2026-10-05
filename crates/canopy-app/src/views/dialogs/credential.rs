@@ -77,12 +77,11 @@ pub(super) fn credential(
                 })
                 .show(ctx);
             match result {
-                DialogResult::Open => Outcome::Keep,
                 DialogResult::Cancel => reply(None),
                 DialogResult::Confirm if !answer.is_empty() || secret => {
                     reply(Some(std::mem::take(answer)))
                 }
-                DialogResult::Confirm => Outcome::Keep,
+                DialogResult::Open | DialogResult::Confirm => Outcome::Keep,
             }
         }
         PromptKind::YesNo => {

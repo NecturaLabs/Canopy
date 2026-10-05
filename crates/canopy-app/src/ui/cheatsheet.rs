@@ -61,10 +61,10 @@ impl Cheatsheet {
                     let pad = m.card_pad;
                     egui::Frame::NONE
                         .inner_margin(egui::Margin {
-                            left: pad as i8,
-                            right: pad as i8,
-                            top: pad as i8,
-                            bottom: theme::XS as i8,
+                            left: crate::ui::points_i8(pad),
+                            right: crate::ui::points_i8(pad),
+                            top: crate::ui::points_i8(pad),
+                            bottom: crate::ui::points_i8(theme::XS),
                         })
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -115,7 +115,7 @@ impl Cheatsheet {
                     let q = self.query.trim().to_lowercase();
                     let remaining = (height - (ui.cursor().min.y - content_top) - pad).max(0.0);
                     let list = egui::Frame::NONE
-                        .inner_margin(egui::Margin::symmetric(pad as i8, theme::SM as i8))
+                        .inner_margin(egui::Margin::symmetric(crate::ui::points_i8(pad), crate::ui::points_i8(theme::SM)))
                         .show(ui, |ui| {
                             egui::ScrollArea::vertical()
                                 .max_height(remaining)
@@ -280,11 +280,7 @@ mod tests {
     fn alternative_shortcuts_have_separate_keycaps() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let chords = keymap::all_keys(keymap::Command::Palette);
         let mut output = ctx.run_ui(
             egui::RawInput {

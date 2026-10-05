@@ -256,7 +256,11 @@ fn lists_height(st: &canopy_core::WorkingStatus) -> f32 {
     let header = theme::metrics().section_header_height;
     let row_h = RowKind::File.height();
     let section = |n: usize| {
-        let body = if n == 0 { EMPTY_LIST } else { n as f32 * row_h };
+        let body = if n == 0 {
+            EMPTY_LIST
+        } else {
+            crate::ui::count_f32(n) * row_h
+        };
         header + theme::XS + body + LIST_GAP
     };
     let mut h = 16.0;
@@ -646,7 +650,7 @@ fn list(
         if acted || resp.double_clicked() {
             if conflicted {
                 tab.select_file(FileSelection {
-                    source: source.clone(),
+                    source,
                     entry: f.clone(),
                     conflicted,
                 });
@@ -655,7 +659,7 @@ fn list(
             }
         } else if resp.clicked() {
             tab.select_file(FileSelection {
-                source: source.clone(),
+                source,
                 entry: f.clone(),
                 conflicted,
             });
@@ -671,7 +675,7 @@ fn list(
             if first.show(m.ui).clicked() {
                 if conflicted {
                     tab.select_file(FileSelection {
-                        source: source.clone(),
+                        source,
                         entry: f.clone(),
                         conflicted,
                     });
@@ -1040,6 +1044,10 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
 
 /// Why the commit button is disabled, when its label does not already say ("Stage files to
 /// commit" is its own reason).
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "each flag is a separate reason the button can be disabled"
+)]
 fn commit_blocker(
     conflicted: bool,
     running: bool,
@@ -1070,10 +1078,10 @@ mod tests {
 
     use super::*;
 
-    fn identity(name: &str, email: &str, source: Option<Source>, usable: bool) -> Identity {
+    fn identity(name: &str, email: &str, source: Option<&Source>, usable: bool) -> Identity {
         let field = |value: &str| Field {
             value: value.into(),
-            source: source.clone(),
+            source: source.cloned(),
         };
         let person = Person {
             name: field(name),
@@ -1142,16 +1150,13 @@ mod tests {
         ctx: &egui::Context,
         tab: &mut RepoTab,
         pointer: Option<egui::Pos2>,
-    ) -> Vec<(String, egui::Rect)> {
+    ) -> Vec<(String, Rect)> {
         let mut texts = Vec::new();
         for _ in 0..3 {
             let events = pointer.map(egui::Event::PointerMoved).into_iter().collect();
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(960.0, 600.0),
-                    )),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(960.0, 600.0))),
                     events,
                     ..Default::default()
                 },
@@ -1176,13 +1181,14 @@ mod tests {
     fn every_row_offers_its_action_under_the_pointer() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
-        let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
         let mut snap = unstaged_snapshot();
         snap.status.unstaged.push(entry("src/lib.rs"));
         snap.status.staged = vec![entry("README.md")];
@@ -1198,7 +1204,7 @@ mod tests {
             .find(|(t, _)| t == "Stage all")
             .map(|(_, r)| r.max.x + theme::LG)
             .expect("painted list header");
-        let shown = |texts: &[(String, egui::Rect)], glyph: &str| {
+        let shown = |texts: &[(String, Rect)], glyph: &str| {
             texts
                 .iter()
                 .filter(|(t, r)| {
@@ -1219,7 +1225,7 @@ mod tests {
                 .iter()
                 .find(|(t, _)| t == name)
                 .expect("painted row name");
-            let pointer = egui::pos2(at.min.x + 20.0, at.center().y);
+            let pointer = pos2(at.min.x + 20.0, at.center().y);
             let hovered = painted_texts(&ctx, &mut tab, Some(pointer));
             assert!(
                 hovered
@@ -1227,7 +1233,7 @@ mod tests {
                     .any(|(t, r)| t == glyph && (r.center().y - at.center().y).abs() < 4.0),
                 "hovering {name} must show {glyph} on its row"
             );
-            painted_texts(&ctx, &mut tab, Some(egui::pos2(5.0, 595.0)));
+            painted_texts(&ctx, &mut tab, Some(pos2(5.0, 595.0)));
         }
     }
 
@@ -1235,31 +1241,29 @@ mod tests {
     fn compact_clean_summary_keeps_publish_reachable_by_scrolling() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (worker, _, _) = crate::worker::Worker::detached();
-        let tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        let tab = RepoTab::with_worker(
+            "fixture".into(),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
         let snap = canopy_core::RepoSnapshot::default();
         let mut publish_visible = false;
         for frame in 0..40 {
-            let mut events = vec![egui::Event::PointerMoved(egui::pos2(180.0, 100.0))];
+            let mut events = vec![egui::Event::PointerMoved(pos2(180.0, 100.0))];
             if frame > 5 {
                 events.push(egui::Event::MouseWheel {
                     unit: egui::MouseWheelUnit::Point,
                     delta: vec2(0.0, -30.0),
                     phase: egui::TouchPhase::Move,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 });
             }
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(360.0, 200.0),
-                    )),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 200.0))),
                     events,
                     ..Default::default()
                 },
@@ -1289,13 +1293,14 @@ mod tests {
     fn the_composer_follows_a_short_list_and_pins_below_a_long_one() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
-        let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
         let summary_y = |tab: &mut RepoTab| {
             let texts = painted_texts(&ctx, tab, None);
             let (_, at) = texts
@@ -1346,7 +1351,7 @@ mod tests {
             scope: "global".into(),
             origin: "file:/home/ada/.gitconfig".into(),
         });
-        let good = identity("Ada Lovelace", "ada@example.com", configured.clone(), true);
+        let good = identity("Ada Lovelace", "ada@example.com", configured.as_ref(), true);
         assert_eq!(identity_notice(Some(&good), false), None);
         assert_eq!(
             identity_notice(None, false),
@@ -1354,12 +1359,12 @@ mod tests {
             "still reading: no warning yet"
         );
 
-        let placeholder = identity("t", "t@t", configured.clone(), true);
+        let placeholder = identity("t", "t@t", configured.as_ref(), true);
         assert_eq!(
             identity_notice(Some(&placeholder), false),
             Some("This identity looks like a placeholder.")
         );
-        let guessed = identity("ada", "ada@host.example", Some(Source::Guessed), true);
+        let guessed = identity("ada", "ada@host.example", Some(&Source::Guessed), true);
         assert_eq!(
             identity_notice(Some(&guessed), false),
             Some("Git guessed part of this identity from the computer.")
@@ -1379,13 +1384,14 @@ mod tests {
     fn wrapped_identity_notice_does_not_overlap_commit_fields() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
-        let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
         let unusable = identity("", "", None, false);
         let warning = unusable.warning().expect("identity warning");
         tab.identity = Some(unusable);
@@ -1393,10 +1399,7 @@ mod tests {
         for _ in 0..3 {
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(562.5, 350.0),
-                    )),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(562.5, 350.0))),
                     ..Default::default()
                 },
                 |ui| {
@@ -1448,19 +1451,20 @@ mod tests {
         for size in [vec2(600.0, 375.0), vec2(960.0, 600.0), vec2(1440.0, 900.0)] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
-            theme::apply(
-                &ctx,
-                theme::ThemeId::Midnight,
-                &crate::ui::theme::Appearance::STILL,
-            );
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
             let dir = tempfile::tempdir().expect("temporary tab");
-            let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
+            let mut tab = RepoTab::new(
+                dir.path().into(),
+                &ctx,
+                100,
+                crate::settings::DiffPrefs::default(),
+            );
             tab.snap = Some(std::sync::Arc::new(unstaged_snapshot()));
             let mut visible = false;
             for _ in 0..3 {
                 let mut output = ctx.run_ui(
                     egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
                         ..Default::default()
                     },
                     |ui| {

@@ -51,12 +51,12 @@ impl IdentityWorker {
                 for job in jobs {
                     let event = match job {
                         Job::ReadRepo(path) => Event::Repo {
-                            result: identity::Identity::read(&path).map_err(|e| e.to_string()),
+                            result: Identity::read(&path).map_err(|e| e.to_string()),
                             path,
                         },
-                        Job::ReadGlobal => Event::Global(
-                            identity::Identity::read_global().map_err(|e| e.to_string()),
-                        ),
+                        Job::ReadGlobal => {
+                            Event::Global(Identity::read_global().map_err(|e| e.to_string()))
+                        }
                         Job::Set {
                             repo,
                             scope,
@@ -118,6 +118,10 @@ mod tests {
             .expect("the worker answers")
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn local(path: &std::path::Path, key: &str) -> Option<String> {
         let out = Command::new("git")
             .current_dir(path)
@@ -130,6 +134,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn jobs_run_in_order_and_answer_with_events() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().to_path_buf();

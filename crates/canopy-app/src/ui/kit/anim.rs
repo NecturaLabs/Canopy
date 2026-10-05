@@ -78,7 +78,7 @@ pub fn spring(ctx: &Context, id: Id, target: f32, s: Spring) -> f32 {
             v: 0.0,
             at: now,
         });
-        let dt = ((now - st.at) as f32).clamp(0.0, 1.0 / 20.0);
+        let dt = crate::ui::to_f32(now - st.at).clamp(0.0, 1.0 / 20.0);
         let (dx, v) = spring_step(st.x - target, st.v, s, dt);
         moving = dx.abs() > 0.01 || v.abs() > 0.1;
         *st = if moving {
@@ -117,7 +117,7 @@ pub fn entrance(ctx: &Context, id: Id, open: bool, seconds: f32) -> f32 {
     }
     let now = ctx.input(|i| i.time);
     let opened = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(key, || now));
-    let t = ((now - opened) as f32 / seconds).clamp(0.0, 1.0);
+    let t = (crate::ui::to_f32(now - opened) / seconds).clamp(0.0, 1.0);
     if t < 1.0 {
         ctx.request_repaint();
     }
@@ -186,6 +186,10 @@ pub fn press_scale(ctx: &Context, id: Id, held: bool, scale: f32) -> f32 {
 mod tests {
     use super::*;
 
+    #[expect(
+        clippy::while_float,
+        reason = "the simulation steps a fixed 1/120 s up to three seconds"
+    )]
     fn settle(s: Spring) -> (f32, f32) {
         // From 0 towards 1 at 120 Hz: the peak and the time to settle.
         let (mut d, mut v, mut peak, mut t) = (-1.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);

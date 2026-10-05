@@ -29,7 +29,7 @@ impl CanopyApp {
             if !b.section.is_bare() {
                 return true;
             }
-            !typing && !(widget_focused && keymap::widget_key(chord.key))
+            !(typing || (widget_focused && keymap::widget_key(chord.key)))
         });
         for f in fired {
             self.command(ctx, f.command, f.chord, actions);
@@ -79,7 +79,7 @@ impl CanopyApp {
                     C::ZoomOut => (self.settings.zoom - 0.1).max(0.8),
                     _ => 1.0,
                 };
-                super::apply_zoom(ctx, self.settings.zoom);
+                apply_zoom(ctx, self.settings.zoom);
             }
             C::Quit => actions.push(Action::Quit),
             _ if !has_tab => {}
@@ -130,10 +130,10 @@ impl CanopyApp {
                     && self.settings.hosting_api
                     && let Some(tab) = self.tabs.get(self.active)
                     && let Some((_, forge)) = tab.forge()
-                    && let Some(request) = crate::views::requests::selected_summary(tab)
+                    && let Some(request) = requests::selected_summary(tab)
                 {
                     if command == C::ApproveRequest {
-                        if let Some(action) = crate::views::requests::approve_action(tab, request) {
+                        if let Some(action) = requests::approve_action(tab, request) {
                             actions.push(action);
                         }
                     } else {
@@ -143,9 +143,9 @@ impl CanopyApp {
                             .as_ref()
                             .and_then(|details| details.as_ref().ok())
                             .map(std::sync::Arc::as_ref);
-                        if let Some(dialog) = crate::views::requests::merge_confirmation(
-                            tab, forge.kind, request, details,
-                        ) {
+                        if let Some(dialog) =
+                            requests::merge_confirmation(tab, forge.kind, request, details)
+                        {
                             actions.push(Action::OpenDialog(dialog));
                         }
                     }
@@ -191,8 +191,7 @@ impl CanopyApp {
                             .requests
                             .selected
                             .and_then(|n| list.iter().find(|r| r.number == n))
-                            .map(|r| r.web_url.clone())
-                            .unwrap_or_else(|| forge.web_url()),
+                            .map_or_else(|| forge.web_url(), |r| r.web_url.clone()),
                         (View::History, Some(oid), _) => forge.commit_url(&oid.to_string()),
                         _ => forge.web_url(),
                     };

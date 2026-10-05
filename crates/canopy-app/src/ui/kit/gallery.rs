@@ -52,7 +52,7 @@ pub fn show(ctx: &egui::Context, page: usize) {
             ui.set_max_size(screen.size());
             egui::ScrollArea::vertical()
                 .id_salt("canopy-gallery-scroll")
-                .vertical_scroll_offset(page as f32 * screen.height())
+                .vertical_scroll_offset(crate::ui::count_f32(page) * screen.height())
                 .show(ui, |ui| {
                     let width = ui.available_width().min(MAX_WIDTH);
                     let side = (ui.available_width() - width) / 2.0;
@@ -119,7 +119,7 @@ pub fn band(ui: &mut Ui, name: &str, draw: fn(&mut Ui)) {
                             .fill(ground)
                             .stroke(Stroke::new(1.0, s.border))
                             .corner_radius(CornerRadius::same(theme::metrics().radius_lg))
-                            .inner_margin(egui::Margin::same(theme::LG as i8))
+                            .inner_margin(egui::Margin::same(crate::ui::points_i8(theme::LG)))
                             .show(ui, |ui| {
                                 ui.set_width(half - 2.0 * theme::LG - 2.0);
                                 caption(ui, if i == 0 { "ON CONTENT" } else { "ON CHROME" });
@@ -455,7 +455,7 @@ fn motion_strip(ui: &mut Ui) {
         ButtonKind::Ghost,
     ] {
         ui.horizontal(|ui| {
-            for t in [0.0, 0.5, 1.0] {
+            for (i, t) in [0.0, 0.5, 1.0].into_iter().enumerate() {
                 let force = ForceState {
                     hover: true,
                     progress: Some(t),
@@ -463,7 +463,7 @@ fn motion_strip(ui: &mut Ui) {
                 };
                 super::Button::new(format!("Hover {t:.1}"))
                     .kind(kind)
-                    .id_salt(("motion", kind, (t * 10.0) as u8))
+                    .id_salt(("motion", kind, i))
                     .show_forced(ui, force);
             }
         });

@@ -22,6 +22,7 @@
 //! one is set ([`crate::cli::set_askpass`]), and uses the user's credential helpers and SSH setup. libgit2 rescans the pack directory
 //! when an object is not found, so the retried read sees the new pack.
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use git2::{ErrorClass, ErrorCode, OdbLookupFlags, Oid, Repository};
@@ -48,9 +49,11 @@ pub(crate) fn is_missing_object(e: &git2::Error) -> bool {
     e.code() == ErrorCode::NotFound && e.class() == ErrorClass::Odb
 }
 
-/// The promisor remotes, in the order git tries them: every `remote.<name>.promisor = true` in
-/// configuration order, then the one `extensions.partialClone` names (git moves it to the end,
-/// `promisor_remote_init` in `promisor-remote.c`).
+/// The promisor remotes, in the order git tries them.
+///
+/// Every `remote.<name>.promisor = true` in configuration order, then the one
+/// `extensions.partialClone` names (git moves it to the end, `promisor_remote_init` in
+/// `promisor-remote.c`).
 pub fn promisor_remotes(repo: &Repository) -> Vec<String> {
     let Ok(config) = repo.config().and_then(|mut c| c.snapshot()) else {
         return Vec::new();
@@ -147,8 +150,9 @@ type DownloadGate = fn(common_dir: &Path, workdir: Option<&Path>) -> bool;
 
 static DOWNLOAD_GATE: std::sync::OnceLock<DownloadGate> = std::sync::OnceLock::new();
 
-/// Installs the rule every download passes at the very point where `git fetch` would start, so
-/// that no read path can reach a fetch around it, however many remotes or rounds one read takes.
+/// Installs the rule every download passes at the very point where `git fetch` would start, so that
+/// no read path can reach a fetch around it, however many remotes or rounds one read takes.
+///
 /// Only the application knows what the user trusts. Until a rule is installed downloads are not
 /// restricted; the first call wins.
 pub fn set_download_gate(gate: DownloadGate) {
@@ -196,14 +200,13 @@ pub(crate) fn legacy_extension(path: &Path) -> Option<String> {
 /// many objects after one [`refresh`].
 pub(crate) fn has_object(repo: &Repository, oid: Oid) -> bool {
     repo.odb()
-        .map(|odb| odb.exists_ext(oid, OdbLookupFlags::NO_REFRESH))
-        .unwrap_or(false)
+        .is_ok_and(|odb| odb.exists_ext(oid, OdbLookupFlags::NO_REFRESH))
 }
 
 /// Whether the object database has `oid`, rescanning the pack directory when it seems missing,
 /// in case `git` added a pack after this handle listed them.
 fn has_object_fresh(repo: &Repository, oid: Oid) -> bool {
-    repo.odb().map(|odb| odb.exists(oid)).unwrap_or(false)
+    repo.odb().is_ok_and(|odb| odb.exists(oid))
 }
 
 /// Makes libgit2 see packs `git` wrote since this handle listed them.
@@ -244,9 +247,8 @@ pub(crate) fn missing_blobs(
 /// accepts shorter hex strings, which are not objects to fetch.
 fn oid_in_message(e: &git2::Error) -> Option<Oid> {
     let msg = e.message();
-    let start = msg.rfind('(')? + 1;
-    let end = start + msg[start..].find(')')?;
-    let id = &msg[start..end];
+    let (_, after) = msg.rsplit_once('(')?;
+    let (id, _) = after.split_once(')')?;
     let full = matches!(id.len(), 40 | 64) && id.bytes().all(|b| b.is_ascii_hexdigit());
     if full { Oid::from_str(id).ok() } else { None }
 }
@@ -284,7 +286,10 @@ pub(crate) fn download(repo: &Repository, workdir: &Path, oids: &[Oid]) -> Resul
                 reason: Some("The repository is not in a folder trusted for downloads.".into()),
             });
         }
-        let input: String = wanted.iter().map(|o| format!("{o}\n")).collect();
+        let input = wanted.iter().fold(String::new(), |mut out, o| {
+            let _ = writeln!(out, "{o}");
+            out
+        });
         let args = [
             "-c",
             "fetch.negotiationAlgorithm=noop",
@@ -399,7 +404,6 @@ pub(crate) fn missing_head_tree(repo: &Repository) -> Option<Oid> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
 
@@ -408,6 +412,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::string_slice, reason = "object IDs are ASCII hex")]
     fn only_a_full_object_id_in_a_message_is_taken() {
         let full = "0123456789abcdef0123456789abcdef01234567";
         let named = |id: &str| {
@@ -425,6 +430,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
     fn promisor_remotes_follow_gits_order_with_the_extension_last() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(dir.path()).expect("init");
@@ -442,6 +451,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
     fn a_repository_is_trusted_only_inside_a_trusted_folder() {
         let root = tempfile::tempdir().expect("tempdir");
         let work = root.path().join("work");
@@ -485,6 +498,10 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
     fn a_trusted_folder_that_is_a_link_to_the_root_trusts_nothing() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo_dir = dir.path().join("repo");
@@ -497,6 +514,10 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
     fn trust_follows_where_the_repository_really_lives() {
         let root = tempfile::tempdir().expect("tempdir");
         let trusted = root.path().join("trusted");

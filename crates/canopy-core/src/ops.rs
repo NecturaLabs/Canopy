@@ -55,7 +55,7 @@ pub enum PullStrategy {
 
 impl PullStrategy {
     /// Every strategy, in menu order.
-    pub const ALL: [PullStrategy; 3] = [Self::Merge, Self::Rebase, Self::FastForwardOnly];
+    pub const ALL: [Self; 3] = [Self::Merge, Self::Rebase, Self::FastForwardOnly];
 
     /// Display name.
     pub fn label(self) -> &'static str {
@@ -97,7 +97,7 @@ pub enum MergeMode {
 
 impl MergeMode {
     /// Every mode, in the order a picker shows them.
-    pub const ALL: [MergeMode; 4] = [
+    pub const ALL: [Self; 4] = [
         Self::Default,
         Self::NoFastForward,
         Self::FastForwardOnly,

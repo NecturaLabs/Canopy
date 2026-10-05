@@ -33,9 +33,9 @@ pub enum TokenSource {
 impl TokenSource {
     pub fn label(self) -> &'static str {
         match self {
-            TokenSource::Saved => "saved in Canopy",
-            TokenSource::Environment => "from the environment",
-            TokenSource::GitCredentials => "from your git credential helper",
+            Self::Saved => "saved in Canopy",
+            Self::Environment => "from the environment",
+            Self::GitCredentials => "from your git credential helper",
         }
     }
 }
@@ -64,7 +64,7 @@ impl std::fmt::Debug for TokenStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TokenStore")
             .field("hosts", &self.tokens.keys().collect::<Vec<_>>())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -230,15 +230,15 @@ impl HostJob {
     fn label(&self, kind: ForgeKind) -> String {
         let n = kind.request_abbrev();
         match self {
-            HostJob::Avatar(..) => "Loading an author picture".into(),
-            HostJob::List(_) => format!("Loading {}s", kind.request_noun()),
-            HostJob::Details(i) => format!("Loading {n} #{i}"),
-            HostJob::Create(_) => format!("Creating {}", kind.request_noun()),
-            HostJob::Merge(i, _, _) => format!("Merging {n} #{i}"),
-            HostJob::SetOpen(i, true) => format!("Reopening {n} #{i}"),
-            HostJob::SetOpen(i, false) => format!("Closing {n} #{i}"),
-            HostJob::Comment(i, _) => format!("Commenting on {n} #{i}"),
-            HostJob::Approve(i) => format!("Approving {n} #{i}"),
+            Self::Avatar(..) => "Loading an author picture".into(),
+            Self::List(_) => format!("Loading {}s", kind.request_noun()),
+            Self::Details(i) => format!("Loading {n} #{i}"),
+            Self::Create(_) => format!("Creating {}", kind.request_noun()),
+            Self::Merge(i, _, _) => format!("Merging {n} #{i}"),
+            Self::SetOpen(i, true) => format!("Reopening {n} #{i}"),
+            Self::SetOpen(i, false) => format!("Closing {n} #{i}"),
+            Self::Comment(i, _) => format!("Commenting on {n} #{i}"),
+            Self::Approve(i) => format!("Approving {n} #{i}"),
         }
     }
 }
@@ -295,7 +295,7 @@ impl HostWorker {
         let (tx, events) = unbounded::<HostEvent>();
         let thread_forge = forge.clone();
         let avatars_enabled = Arc::new(AtomicBool::new(false));
-        let thread_avatars = avatars_enabled.clone();
+        let thread_avatars = Arc::clone(&avatars_enabled);
         let thread_ctx = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name(format!("hosting:{}", forge.host))
@@ -308,7 +308,7 @@ impl HostWorker {
                     tx,
                     thread_ctx,
                     thread_avatars,
-                )
+                );
             });
         if let Err(e) = &spawned {
             tracing::error!("could not start the hosting thread: {e}");
@@ -345,6 +345,10 @@ impl Drop for HostWorker {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the thread owns its channels and context; dropping them on exit tells the other side"
+)]
 fn run(
     forge: Forge,
     saved: Option<String>,
@@ -414,7 +418,7 @@ fn run(
                 }
             }
             HostJob::List(filter) => {
-                emit(HostEvent::List(filter, client.list(filter, 100).map_err(s)))
+                emit(HostEvent::List(filter, client.list(filter, 100).map_err(s)));
             }
             HostJob::Details(n) => emit(HostEvent::Details(
                 n,

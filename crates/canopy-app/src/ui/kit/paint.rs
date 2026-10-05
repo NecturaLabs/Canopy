@@ -41,7 +41,7 @@ pub fn shadow_shapes(rect: Rect, radius: CornerRadius, p: &Palette, m: &Material
         let blur = f32::from(l.blur).min((r.size().min_elem() - 1.0).max(0.0));
         let spread = f32::from(l.spread);
         let corner = if spread >= 0.0 {
-            radius + CornerRadius::same(spread as u8)
+            radius + CornerRadius::same(crate::ui::saturate_u8(spread))
         } else {
             shrink_radius(radius, -spread)
         };
@@ -56,7 +56,7 @@ pub fn shadow_shapes(rect: Rect, radius: CornerRadius, p: &Palette, m: &Material
 }
 
 fn shrink_radius(r: CornerRadius, by: f32) -> CornerRadius {
-    let by = by.round().clamp(0.0, 255.0) as u8;
+    let by = crate::ui::saturate_u8(by.round().clamp(0.0, 255.0));
     CornerRadius {
         nw: r.nw.saturating_sub(by),
         ne: r.ne.saturating_sub(by),
@@ -67,13 +67,19 @@ fn shrink_radius(r: CornerRadius, by: f32) -> CornerRadius {
 
 /// A 1 x 32 ramp from `top` to `bottom`, uploaded once per pair of colours and reused.
 fn ramp(ctx: &Context, top: Color32, bottom: Color32) -> TextureHandle {
+    const N: usize = 32;
+
     let id = Id::new(("canopy-kit-ramp", top, bottom));
     if let Some(t) = ctx.data(|d| d.get_temp::<TextureHandle>(id)) {
         return t;
     }
-    const N: usize = 32;
     let pixels = (0..N)
-        .map(|i| top.lerp_to_gamma(bottom, i as f32 / (N - 1) as f32))
+        .map(|i| {
+            top.lerp_to_gamma(
+                bottom,
+                crate::ui::count_f32(i) / crate::ui::count_f32(N - 1),
+            )
+        })
         .collect();
     let image = egui::ColorImage::new([1, N], pixels);
     let handle = ctx.load_texture("canopy-kit-ramp", image, TextureOptions::LINEAR);
@@ -118,7 +124,7 @@ fn top_highlight_shape(ppp: f32, rect: Rect, radius: CornerRadius, alpha: u8) ->
     Some(Shape::hline(
         Rangef::new(rect.left() + inset, rect.right() - inset),
         y,
-        Stroke::new(w, Color32::from_white_alpha(alpha)),
+        Stroke::new(w, theme::highlight_line(alpha)),
     ))
 }
 
@@ -167,7 +173,7 @@ fn recess_shape(rect: Rect, radius: CornerRadius, color: Color32, alpha: u8) -> 
     let top = rect.top();
     let stroke = PathStroke::new_uv(1.5, move |_bbox: Rect, p: Pos2| {
         let k = (1.0 - (p.y - top) / 4.0).clamp(0.0, 1.0);
-        Palette::tint(color, (f32::from(alpha) * k) as u8)
+        Palette::tint(color, crate::ui::saturate_u8(f32::from(alpha) * k))
     })
     .inside();
     Some(Shape::Path(PathShape {
@@ -257,7 +263,7 @@ pub fn focus_ring(
     color: Color32,
     moat: Color32,
 ) {
-    let grow = |by: f32| radius + CornerRadius::same(by.round() as u8);
+    let grow = |by: f32| radius + CornerRadius::same(crate::ui::saturate_u8(by.round()));
     if moat.a() > 0 {
         painter.rect_stroke(
             rect.expand(FOCUS_OFFSET * 0.5),
@@ -313,7 +319,7 @@ pub fn focus_edge(painter: &Painter, rect: Rect, radius: CornerRadius, focus: Co
     let (top, h) = (rect.top(), rect.height().max(1.0));
     let stroke = PathStroke::new_uv(SEAM, move |_bbox: Rect, p: Pos2| {
         let y = ((p.y - top) / h).clamp(0.0, 1.0);
-        Palette::tint(focus, (focus_edge_alpha(y) * t) as u8)
+        Palette::tint(focus, crate::ui::saturate_u8(focus_edge_alpha(y) * t))
     })
     .inside();
     painter.add(Shape::Path(PathShape {
@@ -393,7 +399,7 @@ pub fn deck(painter: &Painter, rect: Rect, p: &Palette, s: &Surfaces) {
         painter.hline(
             rect.x_range(),
             rect.top() + w * 0.5,
-            Stroke::new(w, Color32::from_white_alpha(m.highlight)),
+            Stroke::new(w, theme::highlight_line(m.highlight)),
         );
     }
     seam_h(
@@ -446,7 +452,7 @@ pub fn spinner(painter: &Painter, center: Pos2, radius: f32, width: f32, color: 
         0.0
     } else {
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
-        (ctx.input(|i| i.time) % 1.0) as f32 * std::f32::consts::TAU
+        crate::ui::to_f32(ctx.input(|i| i.time) % 1.0) * std::f32::consts::TAU
     };
     painter.circle_stroke(
         center,
@@ -455,7 +461,7 @@ pub fn spinner(painter: &Painter, center: Pos2, radius: f32, width: f32, color: 
     );
     let points: Vec<Pos2> = (0..=24)
         .map(|i| {
-            let a = turn + i as f32 / 24.0 * std::f32::consts::TAU * 0.75;
+            let a = turn + crate::ui::int_f32(i) / 24.0 * std::f32::consts::TAU * 0.75;
             center + vec2(a.cos(), a.sin()) * radius
         })
         .collect();
@@ -480,7 +486,7 @@ mod tests {
         let ctx = Context::default();
         let p = theme::ThemeId::Midnight.palette();
         let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(100.0, 40.0));
-        let mut out = ctx.run_ui(Default::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             let m = p.material(Style::Standard, Elevation::Floating);
             shadow(ui.painter(), rect, CornerRadius::same(12), p, &m);
         });

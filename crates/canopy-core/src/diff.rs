@@ -120,7 +120,7 @@ pub(crate) fn mode_of(file: &git2::DiffFile<'_>) -> Option<u32> {
 }
 
 /// Which diff of a file to compute.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DiffSource {
     /// Working tree against the index (what `git diff` shows).
     Unstaged,
@@ -144,7 +144,7 @@ pub enum Whitespace {
 
 impl Whitespace {
     /// Every mode, in menu order.
-    pub const ALL: [Whitespace; 3] = [Self::Show, Self::IgnoreEol, Self::IgnoreAll];
+    pub const ALL: [Self; 3] = [Self::Show, Self::IgnoreEol, Self::IgnoreAll];
 
     /// Display name.
     pub fn label(self) -> &'static str {
@@ -202,7 +202,7 @@ pub(crate) fn delta_kind(status: git2::Delta) -> Option<ChangeKind> {
     })
 }
 
-pub(crate) fn path_of(file: git2::DiffFile<'_>) -> Option<String> {
+pub(crate) fn path_of(file: &git2::DiffFile<'_>) -> Option<String> {
     file.path().map(|p| p.to_string_lossy().replace('\\', "/"))
 }
 
@@ -220,10 +220,10 @@ pub(crate) fn to_file_diff(diff: &Diff<'_>, path: &str) -> Result<FileDiff> {
         out.kind = delta_kind(delta.status());
         out.old_mode = mode_of(&delta.old_file());
         out.new_mode = mode_of(&delta.new_file());
-        if let Some(new) = path_of(delta.new_file()) {
+        if let Some(new) = path_of(&delta.new_file()) {
             out.path = new;
         }
-        let old = path_of(delta.old_file());
+        let old = path_of(&delta.old_file());
         if delta.status() == git2::Delta::Renamed && old.as_deref() != Some(out.path.as_str()) {
             out.old_path = old;
         }

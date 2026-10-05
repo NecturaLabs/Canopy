@@ -94,7 +94,7 @@ thread.
 | `hosting.rs` | A background thread per repository tab for pull and merge requests through `canopy-hosting` (`HostJob`), and the token store (`tokens.json`, per host and port). |
 | `askpass.rs` | Credential prompts for git and ssh: Canopy's own executable is `GIT_ASKPASS`/`SSH_ASKPASS`, and the running app answers over loopback (ADR 0005). |
 | `updater.rs` | The update check against the manifest, and the background install (`Updater::install`, `InstallState`); nothing is downloaded until the user chooses Update. |
-| `selfupdate.rs` | The in-app update ([ADR 0006](adr/0006-canopy-updates-itself-in-place.md)): detects an installer-managed install (`.canopy-install` receipt), downloads and verifies the archive, unpacks it, swaps the install folder in two phases with rollback and refreshes the receipt and registered desktop entry and icons; elsewhere runs the one-line installer; and starts the new program after the window closed. |
+| `selfupdate/mod.rs` | The in-app update ([ADR 0006](adr/0006-canopy-updates-itself-in-place.md)): detects an installer-managed install (`.canopy-install` receipt), downloads and verifies the archive, unpacks it, swaps the install folder in two phases with rollback and refreshes the receipt and registered desktop entry and icons; elsewhere runs the one-line installer; and starts the new program after the window closed. |
 | `build_info.rs` | The build number and short commit hash embedded by `build.rs`, and the release notes the release workflow embeds. |
 | `crash_reports.rs` | Opt-in, scrubbed crash reports to Sentry, and what a report may carry (`DATA_VERSION`). |
 | `logging.rs` | Structured per-run JSON-lines logs, timed spans, local crash files and the diagnostics Settings copies. |
@@ -103,6 +103,7 @@ thread.
 | `settings.rs` | Settings persisted through eframe storage: appearance, Git, integrations, updates, privacy answers, trusted folders, recent and open repositories. |
 | `trust.rs` | The trusted folders (`Settings::trusted_folders`) as a process-wide list the repository threads read; adding a folder (never a root) and the parent offered next to a repository's own folder (ADR 0009). |
 | `platform.rs` | Handing things to the operating system (web pages, folders, files in an editor, a terminal) and reading its settings, such as reduced motion, off the UI thread. |
+| `ui/mod.rs` | The look-and-feel modules, and the conversions between egui's integer and float types (`points_i8`, `count_f32`, `int_f32`, `to_f32`, `saturate_u8`, `saturate_usize`), each a plain cast named for what it does out of range, so views never cast by hand. |
 | `ui/theme.rs` | Design tokens: the eight palettes (shared colours plus Standard and Deeper surfaces), elevation materials, metrics per density and style, the active look (`apply`, `palette`, `surfaces`, `metrics`, `appearance`) and the contrast tests. The only place colours and sizes are defined. |
 | `ui/motion.rs` | Motion tokens (durations, Bézier curves, springs), the Motion preference, the system's answer (asked on a background thread) and whether motion is currently reduced. |
 | `ui/kit/mod.rs` | The component library: `Size`, `Tone`, `ForceState`, `KitResponse`, `focus_visible` and the shared interaction state. |
@@ -311,7 +312,8 @@ Canopy-specific folders.
   stderr unchanged, because git's own message is usually the most useful one.
 - The worker converts errors into `Event` errors; the UI shows them as toasts and logs them
   with `tracing`. Nothing in the app panics on a Git error.
-- `unwrap()` and `expect()` are not used outside tests (clippy `unwrap_used` is enabled) and
+- `unwrap()`, `expect()`, `panic!` and printing are not used outside tests (clippy `unwrap_used`,
+  `expect_used`, `panic`, `print_stdout` and `print_stderr`; `clippy.toml` exempts tests), and
   `unsafe` is denied everywhere except the backdrop blur's OpenGL calls in `ui/kit/glass/gl.rs`
   (ADR 0010; `crates/canopy-app/tests/unsafe_policy.rs` enforces it).
 

@@ -61,6 +61,10 @@ pub struct ToastCard<'a> {
     body_strong: bool,
     actions: Vec<(&'a str, Option<&'a str>)>,
     details: Option<&'a str>,
+    #[expect(
+        clippy::option_option,
+        reason = "no bar, an indeterminate bar or a fraction, as `progress` takes them"
+    )]
     progress: Option<Option<f32>>,
     dismiss: Dismiss,
     clickable: bool,
@@ -172,7 +176,7 @@ impl<'a> ToastCard<'a> {
             if seconds <= 0.0 {
                 return None;
             }
-            let age = (ctx.input(|i| i.time) - born) as f32 - delay;
+            let age = crate::ui::to_f32(ctx.input(|i| i.time) - born) - delay;
             if age < seconds {
                 ctx.request_repaint();
             }
@@ -466,7 +470,7 @@ mod tests {
     fn context() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
     }
 
@@ -489,6 +493,8 @@ mod tests {
 
     #[test]
     fn cards_announce_errors_as_alerts_and_the_rest_as_status() {
+        use egui::accesskit::{Live, Role};
+
         let ctx = context();
         ctx.enable_accesskit();
         let out = run(&ctx, Vec::new(), |ui| {
@@ -507,7 +513,6 @@ mod tests {
                 .find(|(_, n)| n.label() == Some(label))
                 .map(|(_, n)| (n.role(), n.live()))
         };
-        use egui::accesskit::{Live, Role};
         assert_eq!(
             role("Push failed"),
             Some((Role::Alert, Some(Live::Assertive)))
@@ -554,14 +559,14 @@ mod tests {
                         pos: at,
                         button: egui::PointerButton::Primary,
                         pressed: true,
-                        modifiers: Default::default(),
+                        modifiers: egui::Modifiers::default(),
                     },
                 ],
                 2 | 5 => vec![egui::Event::PointerButton {
                     pos: at,
                     button: egui::PointerButton::Primary,
                     pressed: false,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 }],
                 _ => Vec::new(),
             };

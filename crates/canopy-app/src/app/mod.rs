@@ -239,7 +239,7 @@ impl CanopyApp {
             active: 0,
             dialogs: DialogStack::default(),
             settings_screen: None,
-            folder_picker: Default::default(),
+            folder_picker: crate::ui::folder_picker::FolderPicker::default(),
             palette: CommandPalette::default(),
             cheatsheet: Cheatsheet::default(),
             toasts: Toasts::default(),
@@ -299,72 +299,75 @@ impl CanopyApp {
         match launch.overlay.as_deref() {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
             Some("settings-git") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git));
             }
             Some("settings-integrations") => {
                 app.settings_screen =
-                    Some(SettingsScreen::at(settings_screen::Section::Integrations))
+                    Some(SettingsScreen::at(settings_screen::Section::Integrations));
             }
             Some("settings-accounts") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Accounts))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Accounts));
             }
             Some("settings-updates") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates));
             }
             Some("about") => app.dialogs.open(Dialog::About),
             Some("toasts") => {
                 app.toasts.push(
                     &cc.egui_ctx,
-                    crate::ui::toast::ToastKind::Error,
+                    ToastKind::Error,
                     "Push failed",
                     "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
                 );
                 app.toasts.push(
                     &cc.egui_ctx,
-                    crate::ui::toast::ToastKind::Success,
+                    ToastKind::Success,
                     "Committed",
                     "docs: add API reference",
                 );
             }
             Some("settings-keyboard") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard));
             }
             Some("cheatsheet") => app.cheatsheet.open = true,
             Some("palette") => app.palette.open(),
             Some("privacy") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Privacy))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Privacy));
             }
             Some("consent") => {
                 app.dialogs.open(Dialog::Consent {
                     step: crate::ui::legal::Pending::Terms,
                     updated: false,
                     reading: None,
-                })
+                });
             }
             Some("crash-consent") => {
                 app.dialogs.open(Dialog::Consent {
                     step: crate::ui::legal::Pending::CrashReports,
                     updated: false,
                     reading: None,
-                })
+                });
             }
-            Some("legal") => app.dialogs.open(Dialog::Legal(crate::ui::legal::Document::Privacy)),
+            Some("legal") => app
+                .dialogs
+                .open(Dialog::Legal(crate::ui::legal::Document::Privacy)),
             Some("credential") => {
-                app.dialogs.open(Dialog::credential(crate::askpass::Prompt::preview(
-                    "Enter passphrase for key '/home/ada/.ssh/id_ed25519': ",
-                )))
+                app.dialogs
+                    .open(Dialog::credential(crate::askpass::Prompt::preview(
+                        "Enter passphrase for key '/home/ada/.ssh/id_ed25519': ",
+                    )));
             }
             Some("host-key") => {
                 app.dialogs.open(Dialog::credential(crate::askpass::Prompt::preview(
                     "The authenticity of host 'github.com (140.82.121.4)' can't be established.\nED25519 key fingerprint is SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU.\nThis key is not known by any other names.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ",
-                )))
+                )));
             }
             Some("merge") => {
                 app.dialogs.open(Dialog::Merge {
                     target: "feature/search".into(),
                     rebase: false,
                     mode: canopy_core::MergeMode::Squash,
-                })
+                });
             }
             Some("identity") => app.dialogs.open(Dialog::Identity {
                 name: String::new(),
@@ -372,22 +375,28 @@ impl CanopyApp {
                 pending: false,
             }),
             Some("update-installed" | "update-running") => {
-                let available = crate::updater::Available {
+                let available = updater::Available {
                     build: 1001,
                     manifest: canopy_hosting::updates::UpdateManifest {
-                        version: "1001".into(), notes: String::new(), pub_date: None,
-                        release_page: None, platforms: Default::default(),
+                        version: "1001".into(),
+                        notes: String::new(),
+                        pub_date: None,
+                        release_page: None,
+                        platforms: std::collections::BTreeMap::default(),
                     },
                 };
                 app.updater.install = if launch.overlay.as_deref() == Some("update-installed") {
-                    crate::updater::InstallState::Done {
-                        build: 1001, installed: crate::selfupdate::Installed {
-                            exe: Some("canopy".into()), notes: Vec::new(),
+                    updater::InstallState::Done {
+                        build: 1001,
+                        installed: crate::selfupdate::Installed {
+                            exe: Some("canopy".into()),
+                            notes: Vec::new(),
                         },
                     }
                 } else {
-                    crate::updater::InstallState::Running {
-                        build: 1001, phase: crate::selfupdate::Phase::Installing,
+                    updater::InstallState::Running {
+                        build: 1001,
+                        phase: crate::selfupdate::Phase::Installing,
                     }
                 };
                 app.dialogs.open(Dialog::Update(Box::new(available)));
@@ -426,7 +435,7 @@ impl CanopyApp {
             {
                 notices.push(d);
             }
-            app.settings.last_seen_version = version.to_owned();
+            version.clone_into(&mut app.settings.last_seen_version);
         }
         let now = chrono::Utc::now().timestamp();
         app.update_check_due = app.settings.check_updates
@@ -486,7 +495,7 @@ impl CanopyApp {
         let look = self.look();
         let wanted = (self.settings.theme, look);
         if self.applied != Some(wanted) {
-            theme::apply(ctx, self.settings.theme, &look);
+            theme::apply(ctx, self.settings.theme, look);
             self.applied = Some(wanted);
         }
     }
@@ -538,7 +547,7 @@ impl CanopyApp {
         for line in problems {
             let _ = writeln!(t, "{line}");
         }
-        let home = crate::settings::home_dir().display().to_string();
+        let home = settings::home_dir().display().to_string();
         crate::crash_reports::scrub_text(&t, &home)
     }
 
@@ -718,7 +727,7 @@ impl eframe::App for CanopyApp {
                     self.active,
                     self.settings.theme,
                     &mut actions,
-                )
+                );
             });
         if let Some(tab) = self.tabs.get_mut(self.active) {
             egui::Panel::top("actions")
@@ -783,6 +792,8 @@ impl eframe::App for CanopyApp {
 
         if let Some(tab) = self.tabs.get_mut(self.active) {
             if !compact {
+                let sidebar_margin =
+                    egui::Margin::symmetric(crate::ui::points_i8(m.sidebar_pad), 0);
                 egui::Panel::left("sidebar")
                     .resizable(true)
                     .default_size(m.sidebar_width)
@@ -791,7 +802,7 @@ impl eframe::App for CanopyApp {
                     .frame(
                         egui::Frame::new()
                             .fill(s.panel)
-                            .inner_margin(egui::Margin::symmetric(m.sidebar_pad as i8, 0)),
+                            .inner_margin(sidebar_margin),
                     )
                     .show(ui, |ui| {
                         if !deeper {
@@ -803,7 +814,7 @@ impl eframe::App for CanopyApp {
                                 s.border,
                             );
                         }
-                        sidebar::show(ui, tab, &mut actions)
+                        sidebar::show(ui, tab, &mut actions);
                     });
             }
             content_pane(ui, |ui| match tab.view {
@@ -837,7 +848,7 @@ impl eframe::App for CanopyApp {
                 screen,
                 &mut self.settings,
                 &mut self.tokens,
-                settings_screen::SettingsData {
+                &settings_screen::SettingsData {
                     forges: &forges,
                     update: &self.updater.state,
                     identity: settings_screen::IdentityView {
@@ -945,6 +956,10 @@ impl eframe::App for CanopyApp {
         self.handle_screenshot(&ctx);
     }
 
+    #[expect(
+        clippy::print_stdout,
+        reason = "tools/glass-check.py reads the glass soak report from standard output"
+    )]
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         crate::ui::kit::glass::destroy(gl);
         if let Some(soak) = &self.glass_soak {
@@ -978,27 +993,25 @@ fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     let m = theme::metrics();
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
-    let gutter = m.pane_gutter;
+    let gutter = crate::ui::points_i8(m.pane_gutter);
     // Concept 4's body padding: none above (the deck), the gutter at the sides and below.
     let margin = egui::Margin {
-        left: gutter as i8,
-        right: gutter as i8,
+        left: gutter,
+        right: gutter,
         top: 0,
-        bottom: gutter as i8,
+        bottom: gutter,
     };
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.inner_margin(margin))
         .show(ui, |ui| {
             let card = ui.max_rect();
             let radius = crate::ui::kit::paint::pane(ui.painter(), card, p, s.pane, 1.0);
-            if radius == egui::CornerRadius::ZERO {
-                content(ui);
-            } else {
+            if radius != egui::CornerRadius::ZERO {
                 // Content stays inside the rounded card.
                 let clip = card.shrink(f32::from(radius.nw) * 0.3);
                 ui.set_clip_rect(clip.intersect(ui.clip_rect()));
-                content(ui);
             }
+            content(ui);
         });
 }
 
@@ -1070,7 +1083,7 @@ mod tests {
             pos,
             button,
             pressed,
-            modifiers: Default::default(),
+            modifiers: egui::Modifiers::default(),
         };
         draw(vec![
             egui::Event::PointerMoved(menu.center()),
@@ -1138,7 +1151,7 @@ mod tests {
                 "zoom {from} -> {to}"
             );
             let mut next = ctx.run_ui(egui::RawInput::default(), |ui| {
-                update_window_minimum(ui.ctx())
+                update_window_minimum(ui.ctx());
             });
             next.textures_delta.clear();
             assert_eq!(ctx.zoom_factor(), to);
@@ -1164,7 +1177,7 @@ mod tests {
             apply_zoom(&ctx, from);
             for _ in 0..2 {
                 let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                    update_window_minimum(ui.ctx())
+                    update_window_minimum(ui.ctx());
                 });
                 output.textures_delta.clear();
             }
@@ -1201,7 +1214,7 @@ mod tests {
         for zoom in [0.8, 1.0, 1.6] {
             apply_zoom(&ctx, zoom);
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                update_window_minimum(ui.ctx())
+                update_window_minimum(ui.ctx());
             });
             output.textures_delta.clear();
             let minimum = output.viewport_output[&egui::ViewportId::ROOT]

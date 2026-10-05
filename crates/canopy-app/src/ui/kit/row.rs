@@ -6,6 +6,7 @@
 //! an inset 1.5 pt focus ring. Every row is focusable and activates with Enter or Space.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{
@@ -43,21 +44,21 @@ impl RowKind {
     pub fn height(self) -> f32 {
         let m = theme::metrics();
         match self {
-            RowKind::List | RowKind::File => m.row_height,
-            RowKind::History => m.history_row_height,
-            RowKind::Sidebar => m.sidebar_row_height,
-            RowKind::Request => m.request_row_height,
-            RowKind::Palette => m.palette_row_height,
+            Self::List | Self::File => m.row_height,
+            Self::History => m.history_row_height,
+            Self::Sidebar => m.sidebar_row_height,
+            Self::Request => m.request_row_height,
+            Self::Palette => m.palette_row_height,
         }
     }
 
     /// Tables span the full width with square ends; lists are rounded.
     fn rounded(self) -> bool {
-        self != RowKind::History
+        self != Self::History
     }
 
     fn chrome(self) -> bool {
-        self == RowKind::Sidebar
+        self == Self::Sidebar
     }
 
     /// The surface the row sits on by default.
@@ -69,6 +70,10 @@ impl RowKind {
 
 /// The opaque colour of a row's background: its ground with the zebra, selection, hover and
 /// press overlays on top. The graph paints node rings and avatar rings in it.
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "zebra, selection, hover and press are independent overlays"
+)]
 pub fn ground(
     p: &Palette,
     base: Color32,
@@ -496,8 +501,11 @@ impl<'a> ListRow<'a> {
                 let glyph =
                     f.painter
                         .layout_no_wrap(g.clone(), FontId::proportional(m.icon_md), rc.icon);
-                f.painter
-                    .galley(pos2(x, cy - glyph.size().y / 2.0), glyph.clone(), rc.icon);
+                f.painter.galley(
+                    pos2(x, cy - glyph.size().y / 2.0),
+                    Arc::clone(&glyph),
+                    rc.icon,
+                );
                 x += glyph.size().x + GAP;
             }
             if let Some(t) = &self.trailing {
@@ -710,7 +718,7 @@ impl<'a> TreeRow<'a> {
         let id = f.response.id;
         let has_children = self.open.is_some();
         let mut open_now = self.open.as_deref().copied().unwrap_or(false);
-        let chevron_x = f.rect.left() + 6.0 + self.depth as f32 * m.tree_indent;
+        let chevron_x = f.rect.left() + 6.0 + crate::ui::count_f32(self.depth) * m.tree_indent;
         let chevron = Rect::from_center_size(
             pos2(chevron_x + 6.0, f.rect.center().y),
             vec2(16.0, f.rect.height()),
@@ -793,8 +801,11 @@ impl<'a> TreeRow<'a> {
                 let glyph =
                     f.painter
                         .layout_no_wrap(g.clone(), FontId::proportional(m.icon_md), rc.icon);
-                f.painter
-                    .galley(pos2(x, cy - glyph.size().y / 2.0), glyph.clone(), rc.icon);
+                f.painter.galley(
+                    pos2(x, cy - glyph.size().y / 2.0),
+                    Arc::clone(&glyph),
+                    rc.icon,
+                );
                 x += glyph.size().x + GAP;
             }
             let mut right = rc.content.right();
@@ -1120,7 +1131,7 @@ impl<'a> SectionHeader<'a> {
             let glyph = painter.layout_no_wrap(g.clone(), FontId::proportional(13.0), p.text_faint);
             painter.galley(
                 pos2(x, cy - glyph.size().y / 2.0),
-                glyph.clone(),
+                Arc::clone(&glyph),
                 p.text_faint,
             );
             x += glyph.size().x + 6.0;
@@ -1191,7 +1202,7 @@ impl<'a> SectionHeader<'a> {
 
 /// An uppercase label at `micro_size` semibold with 0.07 em tracking (section headers, table
 /// column headers).
-pub fn caps_galley(ui: &Ui, text: &str, color: Color32) -> std::sync::Arc<egui::Galley> {
+pub fn caps_galley(ui: &Ui, text: &str, color: Color32) -> Arc<egui::Galley> {
     let m = theme::metrics();
     let mut job = LayoutJob::default();
     job.append(
@@ -1258,7 +1269,7 @@ impl Selection {
 
 // ------------------------------------------------------------------------------------ gallery
 
-/// The gallery's Lists section: every ListRow state, tree rows open and closed at three depths, a
+/// The gallery's Lists section: every `ListRow` state, tree rows open and closed at three depths, a
 /// disclosure and section headers.
 pub(crate) fn gallery(ui: &mut Ui) {
     let m = theme::metrics();
@@ -1362,7 +1373,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
             .label(format!("feat(ui): commit number {i}"))
             .trailing(format!(
                 "{:07x}",
-                0x00ab_cdef_u32.wrapping_mul(i as u32 + 3)
+                0x00ab_cdef_u32.wrapping_mul(u32::try_from(i).map_or(0, |i| i + 3))
             ))
             .selected(sel.contains(i))
             .joined(above, below)
@@ -1472,7 +1483,7 @@ mod tests {
     fn ctx() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
     }
 
@@ -1510,7 +1521,7 @@ mod tests {
                 theme::apply(
                     &ctx,
                     theme::ThemeId::Midnight,
-                    &theme::Appearance {
+                    theme::Appearance {
                         style,
                         density,
                         ..theme::Appearance::STILL
@@ -1756,8 +1767,7 @@ mod tests {
                 .nodes
                 .iter()
                 .find(|(_, n)| n.label() == Some(label))
-                .map(|(_, n)| n.clone())
-                .unwrap_or_else(|| panic!("no node {label}"))
+                .map_or_else(|| panic!("no node {label}"), |(_, n)| n.clone())
         };
         let row = node("main.rs");
         assert_eq!(row.role(), egui::accesskit::Role::ListItem);

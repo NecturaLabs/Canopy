@@ -1,6 +1,9 @@
 //! End-to-end tests of `canopy-core` against throwaway repositories built with the `git` CLI.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)] // Test helpers may panic: that is a failed test.
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside #[test] functions may panic too: that is a failed test"
+)]
 
 use std::fs;
 use std::path::Path;
@@ -13,6 +16,10 @@ use canopy_core::{
     MissingObjects, PullStrategy, RefKind, Repo, RepoState, Side, Whitespace,
 };
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests drive git directly to build and check repositories"
+)]
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(dir)
@@ -114,13 +121,8 @@ fn stage_unstage_discard_and_commit() {
     assert_eq!(st.staged[0].kind, ChangeKind::Modified);
 
     repo.unstage(&["a.txt".into()]).expect("unstage");
-    assert!(
-        repo.snapshot(10)
-            .expect("snapshot")
-            .status
-            .staged
-            .is_empty()
-    );
+    let staged = repo.snapshot(10).expect("snapshot").status.staged;
+    assert!(staged.is_empty(), "{staged:?}");
 
     let untracked = repo.snapshot(10).expect("snapshot").status.unstaged;
     repo.discard(&untracked).expect("discard");
@@ -204,19 +206,18 @@ fn hunk_staging_stages_only_the_chosen_hunk() {
 
     repo.apply_hunk(HunkAction::Unstage, "a.txt", 0, staged.hunks[0].key(), 1)
         .expect("unstage hunk");
-    assert!(
-        repo.file_diff(
+    let hunks = repo
+        .file_diff(
             &DiffSource::Staged,
             "a.txt",
             None,
             1,
             Whitespace::Show,
-            MissingObjects::Fail
+            MissingObjects::Fail,
         )
         .expect("staged")
-        .hunks
-        .is_empty()
-    );
+        .hunks;
+    assert!(hunks.is_empty(), "{hunks:?}");
 
     let d = repo
         .file_diff(
@@ -464,7 +465,7 @@ fn branches_tags_stash_reset() {
     assert!(snap.stashes[0].message.contains("wip"));
     repo.stash_apply(0, true).expect("pop");
     let snap = repo.snapshot(10).expect("snapshot");
-    assert!(snap.stashes.is_empty());
+    assert!(snap.stashes.is_empty(), "{:?}", snap.stashes);
     assert_eq!(snap.status.unstaged.len(), 1);
 
     repo.stage_all().expect("stage");
@@ -488,7 +489,7 @@ fn merge_conflict_is_reported_and_abortable() {
     fs::write(p.join("a.txt"), "ours\n").expect("write");
     git(p, &["commit", "-q", "-am", "ours"]);
 
-    assert!(repo.merge("other", MergeMode::Default).is_err());
+    repo.merge("other", MergeMode::Default).unwrap_err();
     let snap = repo.snapshot(10).expect("snapshot");
     assert_eq!(snap.state, RepoState::Merge);
     assert_eq!(snap.status.conflicted.len(), 1);
@@ -533,9 +534,7 @@ fn push_and_fetch_against_a_local_remote() {
     let url = remote.path().to_string_lossy().into_owned();
     repo.add_remote("origin", &url).expect("remote");
 
-    let mut lines = Vec::new();
-    repo.push(false, |l| lines.push(l.to_owned()))
-        .expect("push");
+    repo.push(false, |_| {}).expect("push");
     let snap = repo.snapshot(10).expect("snapshot");
     let main = snap.current_branch().expect("main");
     assert_eq!(main.upstream.as_deref(), Some("origin/main"));
@@ -598,6 +597,10 @@ fn in_isolated_git_env(test: &str) -> bool {
 
 /// [`in_isolated_git_env`], with `home_config` written to `$HOME/.gitconfig`: libgit2 reads that
 /// file as global configuration while git, told to use an empty `GIT_CONFIG_GLOBAL`, does not.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test runs itself again in a child process"
+)]
 fn in_isolated_git_env_with_home_config(test: &str, home_config: &str) -> bool {
     if std::env::var_os("CANOPY_TEST_ISOLATED_GIT").is_some_and(|v| v == "1") {
         return true;
@@ -701,6 +704,10 @@ fn identity_uses_git_scope_and_keeps_stored_history_authors() {
 /// Runs the calling test again in a child process whose git sees a throw-away global
 /// configuration and none of the identity variables except those in `env`. Returns true in the
 /// child, where the test body runs, and false in the parent once the child has passed.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test runs itself again in a child process"
+)]
 fn in_identity_child(test: &str, env: &[(&str, &str)]) -> bool {
     if std::env::var_os("CANOPY_IDENTITY_CHILD").is_some() {
         return true;
@@ -800,7 +807,11 @@ fn identity_flags_missing_and_unusable_identities() {
     let half = identity::Identity::read(p).expect("name only");
     assert!(!half.author.usable);
     assert_eq!(half.author.name.value, "Only Name");
-    assert!(half.author.email.value.is_empty());
+    assert!(
+        half.author.email.value.is_empty(),
+        "{:?}",
+        half.author.email
+    );
     assert_eq!(
         half.warning(),
         Some("Git cannot use this identity for a commit.")
@@ -809,7 +820,11 @@ fn identity_flags_missing_and_unusable_identities() {
     // The first-launch view sees global configuration only: the repository's name does not count.
     let global = identity::Identity::read_global().expect("global");
     assert!(!global.author.usable);
-    assert!(global.author.name.value.is_empty());
+    assert!(
+        global.author.name.value.is_empty(),
+        "{:?}",
+        global.author.name
+    );
     assert!(global.warning().is_some());
 }
 
@@ -1126,7 +1141,7 @@ fn pull_fast_forward_only_refuses_diverged_branches() {
     match err {
         canopy_core::Error::Cli { command, stderr } => {
             assert_eq!(command, "pull");
-            assert!(!stderr.is_empty());
+            assert!(!stderr.is_empty(), "git explained nothing");
         }
         other => panic!("unexpected {other:?}"),
     }
@@ -1326,7 +1341,7 @@ fn checkout_request_fetches_and_fast_forwards_the_request_branch() {
     repo.checkout_branch("main").expect("switch to main");
     repo.checkout_request("origin", "refs/pull/1/head", "pr/1", |_| {})
         .expect("update request");
-    assert_eq!(head(&repo), (Some("pr/1".into()), Some(second.clone())));
+    assert_eq!(head(&repo), (Some("pr/1".into()), Some(second)));
     assert_eq!(
         fs::read_to_string(dest.join("pr.txt")).expect("read"),
         "two\n"
@@ -1532,7 +1547,7 @@ fn diff3_conflict_resolved_in_the_editor_completes_the_merge() {
     let p = dir.path();
     git(p, &["config", "merge.conflictStyle", "diff3"]);
     both_modified(p);
-    assert!(repo.merge("other", MergeMode::Default).is_err());
+    repo.merge("other", MergeMode::Default).unwrap_err();
 
     assert_eq!(
         repo.conflict_kind("a.txt").expect("kind"),
@@ -1592,7 +1607,7 @@ fn mark_resolved_stages_a_hand_edited_file() {
     let (dir, repo) = fixture();
     let p = dir.path();
     both_modified(p);
-    assert!(repo.merge("other", MergeMode::Default).is_err());
+    repo.merge("other", MergeMode::Default).unwrap_err();
     fs::write(p.join("a.txt"), "by hand\n").expect("write");
     repo.mark_resolved("a.txt").expect("mark resolved");
     let st = stages(p, "a.txt");
@@ -1606,7 +1621,7 @@ fn write_resolution_with_the_parsed_fingerprint_resolves() {
     let (dir, repo) = fixture();
     let p = dir.path();
     both_modified(p);
-    assert!(repo.merge("other", MergeMode::Default).is_err());
+    repo.merge("other", MergeMode::Default).unwrap_err();
     let file = repo.conflict_file("a.txt").expect("parse");
     let done = file.render(&[Some(Choice::Ours), Some(Choice::Theirs)]);
     repo.write_resolution("a.txt", &done, true, file.fingerprint())
@@ -1625,7 +1640,7 @@ fn write_resolution_refuses_a_file_changed_since_it_was_parsed() {
     let (dir, repo) = fixture();
     let p = dir.path();
     both_modified(p);
-    assert!(repo.merge("other", MergeMode::Default).is_err());
+    repo.merge("other", MergeMode::Default).unwrap_err();
     let original = fs::read_to_string(p.join("a.txt")).expect("read");
     let file = repo.conflict_file("a.txt").expect("parse");
     let stale = file.render(&[Some(Choice::Ours), Some(Choice::Ours)]);
@@ -1681,7 +1696,7 @@ fn conflict_fingerprint_is_stable_across_parses() {
     let (dir, repo) = fixture();
     let p = dir.path();
     both_modified(p);
-    assert!(repo.merge("other", MergeMode::Default).is_err());
+    repo.merge("other", MergeMode::Default).unwrap_err();
     let first = repo.conflict_file("a.txt").expect("parse");
     let second = repo.conflict_file("a.txt").expect("parse again");
     assert_eq!(first.fingerprint(), second.fingerprint());
@@ -1726,7 +1741,7 @@ fn resolve_with_side_matches_git_checkout_ours_and_theirs() {
     git(p, &["switch", "-q", "main"]);
     fs::write(p.join(odd), "ours\n").expect("write");
     git(p, &["commit", "-q", "-am", "ours odd"]);
-    assert!(repo.merge("other", MergeMode::Default).is_err());
+    repo.merge("other", MergeMode::Default).unwrap_err();
     fs::write(p.join("dir x/notes v.txt"), "edited\n").expect("write");
 
     for (path, side, stage) in [("a.txt", Side::Ours, 2), (odd, Side::Theirs, 3)] {
@@ -1764,13 +1779,8 @@ fn resolve_with_side_matches_git_checkout_ours_and_theirs() {
         ),
         ""
     );
-    assert!(
-        repo.snapshot(10)
-            .expect("snapshot")
-            .status
-            .conflicted
-            .is_empty()
-    );
+    let conflicted = repo.snapshot(10).expect("snapshot").status.conflicted;
+    assert!(conflicted.is_empty(), "{conflicted:?}");
     assert!(repo.resolve_with_side("a.txt", Side::Ours).is_err());
     assert_eq!(repo.conflict_kind("a.txt").expect("kind"), None);
 }
@@ -1794,7 +1804,7 @@ fn modify_delete_conflicts_resolve_by_keeping_or_removing() {
     fs::write(p.join("d1.txt"), "ours d1\n").expect("write");
     fs::write(p.join("d2.txt"), "ours d2\n").expect("write");
     git(p, &["commit", "-q", "-am", "ours"]);
-    assert!(repo.merge("other", MergeMode::Default).is_err());
+    repo.merge("other", MergeMode::Default).unwrap_err();
 
     for (path, kind) in [
         ("d1.txt", ConflictKind::DeletedByThem),
@@ -1849,7 +1859,7 @@ fn conflict_file_refuses_binary_content() {
     git(p, &["switch", "-q", "main"]);
     fs::write(p.join("a.txt"), b"ours\0binary\n").expect("write");
     git(p, &["commit", "-q", "-am", "ours"]);
-    assert!(repo.merge("other", MergeMode::Default).is_err());
+    repo.merge("other", MergeMode::Default).unwrap_err();
     assert_eq!(
         repo.conflict_kind("a.txt").expect("kind"),
         Some(ConflictKind::BothModified)
@@ -1884,7 +1894,7 @@ fn write_resolution_keeps_the_executable_bit() {
     assert_eq!(mode & 0o777, 0o755);
     let leftovers = fs::read_dir(p)
         .expect("ls")
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
         .count();
     assert_eq!(leftovers, 0);

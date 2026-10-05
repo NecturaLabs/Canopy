@@ -161,22 +161,22 @@ pub enum MotionPref {
 }
 
 impl MotionPref {
-    pub const ALL: [MotionPref; 3] = [MotionPref::System, MotionPref::Reduced, MotionPref::Full];
+    pub const ALL: [Self; 3] = [Self::System, Self::Reduced, Self::Full];
 
     pub fn label(self) -> &'static str {
         match self {
-            MotionPref::System => "Match system",
-            MotionPref::Reduced => "Reduced",
-            MotionPref::Full => "Full",
+            Self::System => "Match system",
+            Self::Reduced => "Reduced",
+            Self::Full => "Full",
         }
     }
 
     /// The preference for a `--motion` argument.
-    pub fn from_name(name: &str) -> Option<MotionPref> {
+    pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
-            "system" => Some(MotionPref::System),
-            "reduced" => Some(MotionPref::Reduced),
-            "full" => Some(MotionPref::Full),
+            "system" => Some(Self::System),
+            "reduced" => Some(Self::Reduced),
+            "full" => Some(Self::Full),
             _ => None,
         }
     }
@@ -184,9 +184,9 @@ impl MotionPref {
     /// Whether motion is reduced, given what the system asked for (`None` when unknown).
     pub fn reduces(self, system: Option<bool>) -> bool {
         match self {
-            MotionPref::System => system.unwrap_or(false),
-            MotionPref::Reduced => true,
-            MotionPref::Full => false,
+            Self::System => system.unwrap_or(false),
+            Self::Reduced => true,
+            Self::Full => false,
         }
     }
 }
@@ -290,11 +290,11 @@ mod tests {
         assert!((EASE_IN_OUT.at(0.5) - 0.5).abs() < 0.01);
         // The springy curves overshoot 1 before settling.
         let peak = (1..100)
-            .map(|i| SPRING_CURVE.at(i as f32 / 100.0))
+            .map(|i| SPRING_CURVE.at(crate::ui::int_f32(i) / 100.0))
             .fold(0.0_f32, f32::max);
         assert!(peak > 1.05 && peak < 1.15, "{peak}");
         let soft = (1..100)
-            .map(|i| SPRING_SOFT.at(i as f32 / 100.0))
+            .map(|i| SPRING_SOFT.at(crate::ui::int_f32(i) / 100.0))
             .fold(0.0_f32, f32::max);
         assert!(soft > 1.01 && soft < peak, "{soft}");
     }

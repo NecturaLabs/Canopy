@@ -110,7 +110,10 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
     let width = ui.available_width();
     egui::Frame::new()
         .fill(s.pane_header)
-        .inner_margin(egui::Margin::symmetric(theme::LG as i8, theme::SM as i8))
+        .inner_margin(egui::Margin::symmetric(
+            crate::ui::points_i8(theme::LG),
+            crate::ui::points_i8(theme::SM),
+        ))
         .show(ui, |ui| {
             ui.set_min_width((width - theme::LG * 2.0).max(0.0));
             ui.horizontal_wrapped(|ui| {
@@ -355,7 +358,7 @@ fn code_row_height(ui: &Ui) -> f32 {
 /// Height of `n` code lines stacked `spacing` apart (`row_h` each), as [`code_lines`] lays them
 /// out; an empty list shows one "(nothing)" line.
 fn code_height(n: usize, row_h: f32, spacing: f32) -> f32 {
-    let n = n.max(1) as f32;
+    let n = crate::ui::count_f32(n.max(1));
     n * row_h + (n - 1.0) * spacing
 }
 
@@ -412,7 +415,7 @@ fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line
             LayoutJob::single_section(text, egui::TextFormat::simple(font.clone(), color));
         job.wrap = egui::text::TextWrapping::truncate_at_width((width - gutter).max(0.0));
         let galley = ui.painter().layout_job(job);
-        let top = rect.min.y + i as f32 * pitch;
+        let top = rect.min.y + crate::ui::count_f32(i) * pitch;
         // Like a truncated label: the whole line on hover when it does not fit.
         if galley.elided
             && hover.is_some_and(|h| (top..top + row_h).contains(&h.y))
@@ -543,7 +546,12 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 0.0;
                     let width = ui.available_width();
-                    if r.layout.width != width {
+                    #[expect(
+                        clippy::float_cmp,
+                        reason = "the cached heights belong to this exact width"
+                    )]
+                    let resized = r.layout.width != width;
+                    if resized {
                         r.layout.width = width;
                         r.layout.heights.clear();
                     }
@@ -896,6 +904,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
     use std::sync::Arc;
 
     use canopy_core::ConflictFile;
@@ -904,14 +913,14 @@ mod tests {
     fn text(n: usize, lines: usize) -> String {
         let mut s = String::new();
         for c in 0..n {
-            s.push_str(&format!("common {c}\n"));
+            let _ = writeln!(s, "common {c}");
             s.push_str("<<<<<<< HEAD\n");
             for l in 0..lines {
-                s.push_str(&format!("ours {c}.{l}\n"));
+                let _ = writeln!(s, "ours {c}.{l}");
             }
             s.push_str("=======\n");
             for l in 0..lines {
-                s.push_str(&format!("theirs {c}.{l}\n"));
+                let _ = writeln!(s, "theirs {c}.{l}");
             }
             s.push_str(">>>>>>> topic\n");
         }
@@ -941,11 +950,7 @@ mod tests {
     #[test]
     fn compact_resolver_code_never_paints_over_its_footer() {
         let ctx = context();
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut r = Resolver::new("f".into());
         r.reload(None, Ok(Arc::new(ConflictFile::parse(&text(1, 5)))));
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 200.0));

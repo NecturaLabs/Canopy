@@ -87,7 +87,7 @@ fn paint_label(
             rect.left() + glyph_w + LABEL_GAP,
             rect.center().y - t.size().y / 2.0,
         );
-        painter.galley(pos, t.clone(), p.text);
+        painter.galley(pos, Arc::clone(t), p.text);
     }
 }
 
@@ -452,8 +452,12 @@ pub(super) fn step(from: usize, delta: isize, len: usize) -> usize {
     if len == 0 {
         return 0;
     }
-    let len = len as isize;
-    (((from as isize + delta) % len + len) % len) as usize
+    let (from, shift) = (from % len, delta.unsigned_abs() % len);
+    if delta < 0 {
+        (from + len - shift) % len
+    } else {
+        (from + shift) % len
+    }
 }
 
 /// The arrow key pressed this frame, as a step: Down and Right forward, Up and Left back.
@@ -1030,7 +1034,7 @@ mod tests {
         let mut rects = [Rect::NOTHING; 2];
         let mut id = Id::NULL;
         frame(&ctx, Vec::new(), |ui| {
-            (rects, id) = show(ui, &mut c, &mut s)
+            (rects, id) = show(ui, &mut c, &mut s);
         });
         for rect in rects {
             testkit::click(&ctx, rect.center(), |ui| {
@@ -1159,6 +1163,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the box is painted at exactly the token's side length"
+    )]
     fn checked_fill_follows_the_style() {
         for style in theme::Style::ALL {
             let ctx = testkit::ctx_with(theme::ThemeId::Daylight, style, theme::Density::Dense);

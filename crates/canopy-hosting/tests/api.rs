@@ -1,7 +1,10 @@
 //! End-to-end tests of the GitHub and GitLab clients against a canned local HTTP server.
 //! Nothing here touches the network: the server listens on 127.0.0.1 and answers from a table.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)] // Test helpers may panic: that is a failed test.
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside #[test] functions may panic too: that is a failed test"
+)]
 
 use canopy_core::forge::{Forge, ForgeKind};
 use canopy_hosting::{
@@ -13,6 +16,7 @@ mod server {
     //! A tiny HTTP/1.1 server: one request per connection, responses keyed by method and target.
 
     use std::collections::HashMap;
+    use std::fmt::Write as _;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::sync::{Arc, Mutex};
@@ -57,19 +61,19 @@ mod server {
     }
 
     impl Server {
-        pub fn start() -> Server {
+        pub fn start() -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
             let base = format!("http://{}", listener.local_addr().expect("addr"));
             let routes: Routes = Arc::default();
             let log: Arc<Mutex<Vec<Recorded>>> = Arc::default();
-            let (r, l) = (routes.clone(), log.clone());
+            let (r, l) = (Arc::clone(&routes), Arc::clone(&log));
             std::thread::spawn(move || {
                 for stream in listener.incoming() {
                     let Ok(stream) = stream else { continue };
                     handle(stream, &r, &l);
                 }
             });
-            Server { base, routes, log }
+            Self { base, routes, log }
         }
 
         /// Answers `method target` with `status` and a JSON body. A target without `?` matches
@@ -153,7 +157,7 @@ mod server {
         let canned = {
             let routes = routes.lock().expect("routes");
             routes
-                .get(&(method.clone(), target.clone()))
+                .get(&(method.clone(), target))
                 .or_else(|| routes.get(&(method, path)))
                 .cloned()
         }
@@ -168,7 +172,7 @@ mod server {
             canned.body.len()
         );
         for (k, v) in &canned.headers {
-            out.push_str(&format!("{k}: {v}\r\n"));
+            let _ = write!(out, "{k}: {v}\r\n");
         }
         out.push_str("\r\n");
         out.push_str(&canned.body);
@@ -842,7 +846,7 @@ fn gitlab_details_collects_parts_and_tolerates_failures() {
         r#"{"message":"500 Internal Server Error"}"#,
     );
     let d = gitlab(&server, Some(TOKEN)).details(4).expect("details");
-    assert!(d.reviews.is_empty());
+    assert!(d.reviews.is_empty(), "{:?}", d.reviews);
     let checks: Vec<(&str, CheckState)> = d
         .checks
         .iter()
@@ -924,7 +928,7 @@ fn gitlab_writes() {
     assert_eq!(writes[3].json(), json!({ "state_event": "close" }));
     assert_eq!(writes[4].json(), json!({ "state_event": "reopen" }));
     assert_eq!(writes[5].json(), json!({ "body": "Thanks!" }));
-    assert!(writes[6].body.is_empty());
+    assert!(writes[6].body.is_empty(), "{:?}", writes[6].body);
     for w in &writes {
         assert_eq!(w.header("authorization"), Some(&*format!("Bearer {TOKEN}")));
     }
@@ -1255,11 +1259,11 @@ fn author_pictures_resolve_both_providers_and_download_without_tokens() {
     );
     assert_eq!(
         requests[0].header("authorization"),
-        Some(&format!("Bearer {TOKEN}")[..])
+        Some(&*format!("Bearer {TOKEN}"))
     );
     assert_eq!(
         requests[2].header("authorization"),
-        Some(&format!("Bearer {TOKEN}")[..])
+        Some(&*format!("Bearer {TOKEN}"))
     );
     for request in [&requests[1], &requests[3]] {
         assert!(request.header("authorization").is_none());
@@ -1277,7 +1281,7 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
     let external = format!("{}/stolen", other.base);
     let client = github(&server, Some(TOKEN));
     server.route_with_headers("GET", &path, 302, &[("Location", &external)], "");
-    assert!(client.author_avatar(sha, "a@example.com").is_err());
+    client.author_avatar(sha, "a@example.com").unwrap_err();
     assert!(other.requests().is_empty());
     server.route(
         "GET",
@@ -1299,14 +1303,12 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
         &json!([{"sha":sha,"author":{"avatar_url":own}}]).to_string(),
     );
     server.route_with_headers("GET", "/picture", 302, &[("Location", &external)], "");
-    assert!(
-        client
-            .author_avatar(sha, "a@example.com")
-            .unwrap()
-            .unwrap()
-            .download()
-            .is_err()
-    );
+    client
+        .author_avatar(sha, "a@example.com")
+        .unwrap()
+        .unwrap()
+        .download()
+        .unwrap_err();
     assert!(other.requests().is_empty());
 }
 
@@ -1330,26 +1332,22 @@ fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
     );
     assert!(server.requests()[0].header("authorization").is_none());
     let count = server.requests().len();
-    assert!(
-        client
-            .author_avatar("../../users", "a@example.com")
-            .is_err()
-    );
+    client
+        .author_avatar("../../users", "a@example.com")
+        .unwrap_err();
     assert_eq!(server.requests().len(), count);
     for status in [401, 403, 404, 429, 500] {
         server.route("GET", &path, status, r#"{"message":"Unavailable"}"#);
-        assert!(client.author_avatar(sha, "a@example.com").is_err());
+        client.author_avatar(sha, "a@example.com").unwrap_err();
         server.route(
             "GET",
             "/api/v4/avatar",
             status,
             r#"{"message":"Unavailable"}"#,
         );
-        assert!(
-            gitlab(&server, None)
-                .author_avatar(sha, "a@example.com")
-                .is_err()
-        );
+        gitlab(&server, None)
+            .author_avatar(sha, "a@example.com")
+            .unwrap_err();
     }
     // No commit, or a different one than asked for, never yields someone else's picture.
     server.route("GET", &path, 200, "[]");
@@ -1390,12 +1388,10 @@ fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
             .to_string(),
     );
     server.route("GET", "/oversized", 200, &"x".repeat(2 * 1024 * 1024 + 1));
-    assert!(
-        client
-            .author_avatar(sha, "a@example.com")
-            .unwrap()
-            .unwrap()
-            .download()
-            .is_err()
-    );
+    client
+        .author_avatar(sha, "a@example.com")
+        .unwrap()
+        .unwrap()
+        .download()
+        .unwrap_err();
 }

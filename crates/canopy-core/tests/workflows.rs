@@ -2,7 +2,10 @@
 //! repositories. Where Canopy runs a sequence of git commands, the same sequence run with the git
 //! CLI in a twin repository is the oracle.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)] // Test helpers may panic: that is a failed test.
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside #[test] functions may panic too: that is a failed test"
+)]
 
 use std::fs;
 use std::path::Path;
@@ -13,6 +16,10 @@ use canopy_core::{
     SubmoduleState, Whitespace,
 };
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests drive git directly to build and check repositories"
+)]
 fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new("git")
         .current_dir(dir)
@@ -292,28 +299,24 @@ fn flow_start_refuses_what_git_flow_refuses() {
     repo.flow_start(FlowKind::Feature, "x", None)
         .expect("start");
     git(p, &["switch", "-q", "develop"]);
-    assert!(repo.flow_start(FlowKind::Feature, "x", None).is_err());
-    assert!(
-        repo.flow_start(FlowKind::Feature, "y", Some("nope"))
-            .is_err()
-    );
-    assert!(
-        repo.flow_start(FlowKind::Feature, "bad..name", None)
-            .is_err()
-    );
+    repo.flow_start(FlowKind::Feature, "x", None).unwrap_err();
+    repo.flow_start(FlowKind::Feature, "y", Some("nope"))
+        .unwrap_err();
+    repo.flow_start(FlowKind::Feature, "bad..name", None)
+        .unwrap_err();
 
     repo.flow_start(FlowKind::Release, "1.0", None)
         .expect("release");
     git(p, &["switch", "-q", "develop"]);
-    assert!(repo.flow_start(FlowKind::Release, "2.0", None).is_err());
+    repo.flow_start(FlowKind::Release, "2.0", None).unwrap_err();
 
     git(p, &["tag", "v3.0"]);
     git(p, &["branch", "-D", "release/1.0"]);
     git(p, &["config", "gitflow.prefix.versiontag", "v"]);
-    assert!(repo.flow_start(FlowKind::Hotfix, "3.0", None).is_err());
+    repo.flow_start(FlowKind::Hotfix, "3.0", None).unwrap_err();
 
     fs::write(p.join("a.txt"), "dirty\n").expect("write");
-    assert!(repo.flow_start(FlowKind::Hotfix, "3.1", None).is_err());
+    repo.flow_start(FlowKind::Hotfix, "3.1", None).unwrap_err();
     // A feature may start with local changes, as `git switch -c` carries them.
     repo.flow_start(FlowKind::Feature, "z", None)
         .expect("feature with changes");
@@ -365,15 +368,11 @@ fn flow_finish_refuses_a_dirty_tree() {
     commit_file(p, "x.txt", "x\n", "feat: x");
     fs::write(p.join("x.txt"), "changed\n").expect("write");
     let before = shape(p);
-    assert!(
-        repo.flow_finish(FlowKind::Feature, "x", &FlowFinish::default())
-            .is_err()
-    );
+    repo.flow_finish(FlowKind::Feature, "x", &FlowFinish::default())
+        .unwrap_err();
     git(p, &["add", "x.txt"]);
-    assert!(
-        repo.flow_finish(FlowKind::Feature, "x", &FlowFinish::default())
-            .is_err()
-    );
+    repo.flow_finish(FlowKind::Feature, "x", &FlowFinish::default())
+        .unwrap_err();
     assert_eq!(shape(p), before);
     // Untracked files do not block a finish, as in git-flow.
     git(p, &["restore", "--staged", "--worktree", "x.txt"]);
@@ -410,10 +409,8 @@ fn flow_push_pushes_only_the_finished_refs() {
         git(remote.path(), &["rev-parse", "main"]),
         git(p, &["rev-parse", "main"])
     );
-    assert!(
-        repo.flow_push(FlowKind::Release, "2.0", "nope", false, |_| {})
-            .is_err()
-    );
+    repo.flow_push(FlowKind::Release, "2.0", "nope", false, |_| {})
+        .unwrap_err();
 }
 
 #[test]
@@ -473,7 +470,7 @@ fn merged_branches_name_the_check_that_matched() {
             .map(|b| b.reason),
         Some(None)
     );
-    assert!(repo.merged_branches("nope", true).is_err());
+    repo.merged_branches("nope", true).unwrap_err();
 }
 
 const POINTER_OID: &str = "4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393";
@@ -729,7 +726,7 @@ fn submodule_add_adopts_a_repository_already_in_place() {
     );
     let staged = git(&sup, &["diff", "--cached", "--name-only"]);
     assert_eq!(staged.lines().collect::<Vec<_>>(), [".gitmodules", "other"]);
-    assert!(repo.submodule_add("", "x", None, |_| {}).is_err());
+    repo.submodule_add("", "x", None, |_| {}).unwrap_err();
 }
 
 #[test]
@@ -750,7 +747,8 @@ fn submodule_remove_deinits_removes_and_cleans_the_module_directory() {
     assert!(left[0].head_id.is_some() && left[0].index_id.is_none());
     assert!(left[0].is_staged());
     git(&sup, &["commit", "-q", "-m", "chore: drop lib"]);
-    assert!(repo.submodules(false).expect("submodules").is_empty());
+    let submodules = repo.submodules(false).expect("submodules");
+    assert!(submodules.is_empty(), "{submodules:?}");
     assert!(repo.submodule_remove("deps/lib").is_err());
 }
 
@@ -920,7 +918,7 @@ fn flow_refuses_a_name_that_makes_an_invalid_tag_before_changing_anything() {
     let (dir, repo, _cli) = flow_twins();
     let p = dir.path();
     git(p, &["config", "gitflow.prefix.versiontag", ""]);
-    assert!(repo.flow_start(FlowKind::Release, "-x", None).is_err());
+    repo.flow_start(FlowKind::Release, "-x", None).unwrap_err();
     assert_eq!(git(p, &["branch", "--list", "release/*"]), "");
 
     // A branch made outside Canopy: finishing it must refuse before the first merge.
@@ -928,10 +926,8 @@ fn flow_refuses_a_name_that_makes_an_invalid_tag_before_changing_anything() {
     git(p, &["switch", "-q", "release/-x"]);
     commit_file(p, "VERSION", "x\n", "chore: x");
     let before = shape(p);
-    assert!(
-        repo.flow_finish(FlowKind::Release, "-x", &FlowFinish::default())
-            .is_err()
-    );
+    repo.flow_finish(FlowKind::Release, "-x", &FlowFinish::default())
+        .unwrap_err();
     assert_eq!(shape(p), before);
 }
 

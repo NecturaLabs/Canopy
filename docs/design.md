@@ -142,7 +142,8 @@ segmented thumb and the switch knob carry a 1 to 2 px contact shadow, and floati
 popovers, tooltips, toasts, dialogs, palette, cheatsheet) a two-layer soft shadow with a 1 pt
 `overlay_edge` ring. Deeper adds two-layer shadows to controls, coloured glows under primary and
 danger buttons, the `Pane` shadow under cards, the field recess and the deck. Contrast has no
-highlights and rings floating layers in `control_border`.
+highlights and rings floating layers in `control_border`. The top highlight line is white at the
+level's alpha, from `theme::highlight_line`.
 
 Translucent surfaces (off by default) blur what is behind floating layers: a layer asks
 `kit::glass::layer_fill` for its fill, which adds the blurred backdrop (dual Kawase, about 12 pt,

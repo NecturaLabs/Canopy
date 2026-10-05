@@ -32,7 +32,7 @@ yet true, then correctness and the features people meet first, then polish. Take
       refusal that ends in `Event::Failed` (`tab.rs`, `clear_obsolete_refusal`).
 - [ ] App icon: an update made by build 192 or older drops the scalable SVG it registered from the
       receipt but leaves the copy in `~/.local/share/icons/hicolor/scalable/apps`; nothing removes
-      it now (`selfupdate.rs` `integrate` and `install.sh` remove only a copy the receipt lists).
+      it now (`selfupdate/mod.rs` `integrate` and `install.sh` remove only a copy the receipt lists).
       Both check that the copy is a plain file and then remove it: a process of the same user
       could swap in a symlink between the two, which would then be removed (never its target).
 - [ ] Installer follow-ups from the security review (`install.sh` is fixed; `install.ps1` could not
@@ -108,9 +108,19 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] `tests/safety.rs` non-UTF-8 folder test: when the filesystem refuses the name (NTFS under
       `TMPDIR`), fail with a message naming that cause instead of an `unwrap` panic.
 - [ ] Verify the one-line installers on real machines after the first stable release.
+- [ ] Log redaction: `canopy_core::cli::redact_url` removes credentials from the first URL in a
+      text only, and it also runs on git's stderr and error text (`cli.rs` `record`, `worker.rs`),
+      so `user:token@` in a second URL reaches the log; redact every URL, as
+      `crash_reports::redact_url_credentials` does, with a test.
 
 ## Next
 
+- [ ] Errors that drop their cause (found by `clippy::map_err_ignore`): the merged-branches base
+      lookup (`merged.rs`) says "does not exist" for any libgit2 failure, and the hosting picture
+      and profile lookups (`canopy-hosting` `avatars.rs`, `http.rs` `avatar_json`) replace the
+      transport's error with a fixed message; carry the libgit2 or ureq message where it helps.
+- [ ] `canopy_hosting::token_from_env` is deprecated (it ignores the host and can hand a token to
+      the wrong server) and nothing calls it; remove it and its re-export.
 - [ ] Crate package metadata: reconcile the legacy `0.2.1-beta.1` workspace version inherited
       by all three crates with numbered-build releases; document an internal version convention
       and align local lockfile entries and tool/doc assumptions without per-release version bumps.

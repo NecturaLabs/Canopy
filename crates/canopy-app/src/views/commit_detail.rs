@@ -56,9 +56,12 @@ pub fn show(
     let pane_max = (ui.available_width() * 0.4).max(160.0);
     // A compact window keeps the changed files in view: the tighter inset of its controls.
     let pad = if tab.history_layout.compact {
-        egui::Margin::same(theme::SM as i8)
+        egui::Margin::same(crate::ui::points_i8(theme::SM))
     } else {
-        egui::Margin::symmetric(m.detail_pad.x as i8, m.detail_pad.y as i8)
+        egui::Margin::symmetric(
+            crate::ui::points_i8(m.detail_pad.x),
+            crate::ui::points_i8(m.detail_pad.y),
+        )
     };
     egui::Panel::left("detail-meta")
         .resizable(true)
@@ -99,7 +102,7 @@ pub fn show(
                 )
                 .on_hover_text(widgets::full_date(d.author.time, d.author.offset_minutes));
             });
-            let files_min = file_row_height() * d.files.len().min(2) as f32
+            let files_min = file_row_height() * crate::ui::count_f32(d.files.len().min(2))
                 + ui.spacing().interact_size.y * 2.0
                 + theme::XS * 3.0;
             // Measured here: the disclosure's body has no height limit of its own.
@@ -192,11 +195,9 @@ fn header(ui: &mut Ui, tab: &mut RepoTab) {
                     .layout(Layout::left_to_right(Align::Center)),
             );
             summary_ui.set_clip_rect(summary_rect.intersect(ui.clip_rect()));
-            let summary = tab
-                .details
-                .as_ref()
-                .map(|d| d.message.lines().next().unwrap_or("").trim())
-                .unwrap_or("Commit details");
+            let summary = tab.details.as_ref().map_or("Commit details", |d| {
+                d.message.lines().next().unwrap_or("").trim()
+            });
             summary_ui
                 .add(
                     egui::Label::new(
@@ -432,8 +433,8 @@ pub fn visible_rows(n: usize, row_h: f32, top: f32, min_y: f32, max_y: f32) -> R
     let first = ((min_y - top) / row_h).floor().max(0.0);
     let end = ((max_y - top) / row_h).ceil().max(0.0);
     // Float to usize saturates; clamp to the list.
-    let first = (first as usize).min(n);
-    first..(end as usize).clamp(first, n)
+    let first = crate::ui::saturate_usize(first).min(n);
+    first..crate::ui::saturate_usize(end).clamp(first, n)
 }
 
 /// Draws a list of `n` rows of height `row_h` at the cursor, calling `row` only for the rows in
@@ -447,13 +448,13 @@ pub fn virtual_rows(ui: &mut Ui, n: usize, row_h: f32, mut row: impl FnMut(&mut 
     let range = visible_rows(n, row_h, ui.cursor().min.y, clip.min.y, clip.max.y);
     let width = ui.available_width();
     if range.start > 0 {
-        ui.allocate_space(vec2(width, range.start as f32 * row_h));
+        ui.allocate_space(vec2(width, crate::ui::count_f32(range.start) * row_h));
     }
     for i in range.clone() {
         row(ui, i);
     }
     if range.end < n {
-        ui.allocate_space(vec2(width, (n - range.end) as f32 * row_h));
+        ui.allocate_space(vec2(width, crate::ui::count_f32(n - range.end) * row_h));
     }
     ui.spacing_mut().item_spacing.y = spacing;
 }
@@ -498,12 +499,12 @@ fn row_actions_width() -> f32 {
 /// A file row's hover-revealed actions.
 type RowActions<'a> = Box<dyn FnOnce(&mut Ui) + 'a>;
 
-fn file_list_row_inner<'a>(
+fn file_list_row_inner(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
     id: egui::Id,
-    actions: Option<RowActions<'a>>,
+    actions: Option<RowActions<'_>>,
 ) -> egui::Response {
     let p = palette(ui.ctx());
     let m = theme::metrics();
@@ -628,8 +629,8 @@ mod tests {
             additions: 12,
             deletions: 3,
             lfs: false,
-            old_mode: Some(0o100644),
-            new_mode: Some(0o100644),
+            old_mode: Some(0o100_644),
+            new_mode: Some(0o100_644),
         }
     }
 
@@ -639,7 +640,7 @@ mod tests {
         theme::apply(
             &ctx,
             ThemeId::Midnight,
-            &Appearance {
+            Appearance {
                 density,
                 ..Appearance::STILL
             },

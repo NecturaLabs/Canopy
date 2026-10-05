@@ -2,6 +2,7 @@
 //! to [`Error`] with the server's own message.
 
 use std::fmt;
+use std::fmt::Write as _;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -131,6 +132,10 @@ impl Http {
     }
 
     /// Profile lookup: no redirects, bounded JSON, and no author email in logs.
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "kept as it was; docs/backlog.md has the entry to carry the transport's message"
+    )]
     pub(crate) fn avatar_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let mut response = self
             .headers(self.agent.get(format!("{}{}", self.base, path)))
@@ -186,12 +191,12 @@ impl Http {
             Method::Patch => self.send_with_body(self.agent.patch(&url), payload.as_deref()),
         };
         let mut response = result.map_err(|e| {
-            let ms = started.elapsed().as_millis() as u64;
+            let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             tracing::warn!(method = method.as_str(), path, ms, error = %e, "hosting request failed");
             Error::Network(e.to_string())
         })?;
         let status = response.status().as_u16();
-        let ms = started.elapsed().as_millis() as u64;
+        let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let remaining = response
             .headers()
             .get("x-ratelimit-remaining")
@@ -415,7 +420,7 @@ pub(crate) fn encode(s: &str) -> String {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
             out.push(char::from(b));
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
     }
     out

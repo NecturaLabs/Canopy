@@ -54,10 +54,11 @@ of the file they test, so they can reach private items without widening visibili
 need a real repository or the `git` executable go in `crates/<crate>/tests/` instead. Canopy has
 no parameterized-test crate: write a `const` or local array of cases and iterate it with the case
 in the assertion message (`assert_eq!(got, want, "case {name}")`) — the one place a loop in a test
-is the idiom rather than a smell, because the message names the failing case. Use
-`expect("what was being done")`, never `unwrap()`: the workspace enables clippy's `unwrap_used`
-with no test exemption, and `tools/check.sh` denies warnings for `--all-targets`, tests included.
-Run one test with
+is the idiom rather than a smell, because the message names the failing case. Tests may
+`unwrap()`, `expect()` and `panic!` (`clippy.toml` exempts `#[test]` functions and `#[cfg(test)]`
+modules), but a helper outside them, such as a fixture builder in `tests/`, is held to the
+production lints, and `tools/check.sh` denies warnings for `--all-targets`. Prefer
+`expect("what was being done")` where the failure would otherwise be unclear. Run one test with
 `cargo test -p <crate> <name-substring>`; add `-- --nocapture` to see its output.
 
 **JavaScript / TypeScript.** Mock cleanup is off by default in Jest and Vitest (`clearMocks`,

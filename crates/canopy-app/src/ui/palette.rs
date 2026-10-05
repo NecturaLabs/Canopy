@@ -286,7 +286,7 @@ impl<T: Clone> CommandPalette<T> {
                     // Both bounds: the area's own size comes from its last frame and would
                     // otherwise cap the list part-way through a row.
                     let list = egui::Frame::NONE
-                        .inner_margin(egui::Margin::same(list_margin as i8))
+                        .inner_margin(egui::Margin::same(crate::ui::points_i8(list_margin)))
                         .show(ui, |ui| {
                             egui::ScrollArea::vertical()
                                 .max_height(list_h)
@@ -381,8 +381,8 @@ pub(crate) fn surface_search(
         .font(FontId::proportional(m.title_size))
         .text_color(p.text)
         .frame(egui::Frame::NONE.inner_margin(egui::Margin {
-            left: (left + theme::XS) as i8,
-            right: m.field_pad_x as i8,
+            left: crate::ui::points_i8(left + theme::XS),
+            right: crate::ui::points_i8(m.field_pad_x),
             top: 0,
             bottom: 0,
         }))

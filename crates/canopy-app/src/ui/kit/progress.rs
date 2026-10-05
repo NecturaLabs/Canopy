@@ -36,7 +36,7 @@ fn keep_moving(ctx: &egui::Context) {
 /// The phase (0 to 1) of a loop of `period` seconds at the current time.
 fn loop_phase(ctx: &egui::Context, period: f32) -> f32 {
     let t = ctx.input(|i| i.time);
-    ((t % f64::from(period)) / f64::from(period)) as f32
+    crate::ui::to_f32((t % f64::from(period)) / f64::from(period))
 }
 
 /// A fill that eases towards larger values over `PROGRESS_FILL` and snaps to smaller ones, so the bar
@@ -61,7 +61,7 @@ fn forward(ctx: &egui::Context, id: Id, target: f32) -> f32 {
             if seconds <= 0.0 {
                 return st.to;
             }
-            let k = ((now - st.at) as f32 / seconds).clamp(0.0, 1.0);
+            let k = (crate::ui::to_f32(now - st.at) / seconds).clamp(0.0, 1.0);
             st.from + (st.to - st.from) * motion::EASE_OUT.at(k)
         };
         if target > st.to {
@@ -364,6 +364,10 @@ fn paint_band(painter: &Painter, bar: Rect, left: f32, width: f32, color: Color3
         mesh.colored_vertex(pos2(x, bar.top()), c);
         mesh.colored_vertex(pos2(x, bar.bottom()), c);
         if i > 0 {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "a mesh holds far fewer than 2^32 vertices"
+            )]
             let b = (2 * i) as u32;
             mesh.add_triangle(b - 2, b - 1, b);
             mesh.add_triangle(b - 1, b, b + 1);
@@ -499,7 +503,7 @@ pub(crate) fn paint_spinner(
     let start = angle - std::f32::consts::FRAC_PI_2;
     let points: Vec<Pos2> = (0..=27)
         .map(|i| {
-            let a = start + i as f32 / 27.0 * std::f32::consts::TAU * 0.75;
+            let a = start + crate::ui::int_f32(i) / 27.0 * std::f32::consts::TAU * 0.75;
             center + vec2(a.cos(), a.sin()) * r
         })
         .collect();
@@ -561,8 +565,10 @@ impl Skeleton {
         let m = theme::metrics();
         let row_h = self.row_height.unwrap_or(m.row_height);
         let width = ui.available_width();
-        let (rect, response) =
-            ui.allocate_exact_size(vec2(width, row_h * self.rows as f32), Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(
+            vec2(width, row_h * crate::ui::count_f32(self.rows)),
+            Sense::hover(),
+        );
         if ui.is_rect_visible(rect) {
             let t = match self.force.and_then(|f| f.progress) {
                 Some(t) => Some(t),
@@ -576,7 +582,7 @@ impl Skeleton {
             let bar_h = (row_h * 0.42).round().max(6.0);
             for i in 0..self.rows {
                 let share = SKELETON_WIDTHS[i % SKELETON_WIDTHS.len()];
-                let top = rect.top() + row_h * i as f32 + (row_h - bar_h) / 2.0;
+                let top = rect.top() + row_h * crate::ui::count_f32(i) + (row_h - bar_h) / 2.0;
                 let bar = Rect::from_min_size(
                     pos2(rect.left() + theme::MD, top),
                     vec2((width - 2.0 * theme::MD).max(0.0) * share, bar_h),
@@ -683,7 +689,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
                 .show_forced(
                     ui,
                     ForceState {
-                        progress: Some(0.1 * i as f32),
+                        progress: Some(0.1 * crate::ui::count_f32(i)),
                         ..ForceState::default()
                     },
                 );
@@ -722,7 +728,7 @@ mod tests {
     fn context() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
     }
 
@@ -784,7 +790,7 @@ mod tests {
         theme::apply(
             &ctx,
             theme::ThemeId::Midnight,
-            &theme::Appearance {
+            theme::Appearance {
                 reduce_motion: false,
                 ..theme::Appearance::STILL
             },
@@ -825,7 +831,7 @@ mod tests {
         let (a, _) = shapes_at(0.0);
         let (b, _) = shapes_at(0.7);
         assert_eq!(a, b, "the indeterminate fill stands still");
-        assert!(!a.is_empty());
+        assert!(!a.is_empty(), "the indeterminate bar painted nothing");
         // The indeterminate bar says it is working when it cannot move.
         let out = frame(&ctx, 0.0, |ui| {
             Progress::indeterminate().width(200.0).show(ui);

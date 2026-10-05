@@ -1,6 +1,8 @@
 //! The tab strip and the action bar. Both sit on the top deck that `app` paints (flat chrome in
 //! Standard, one lifted surface in Deeper), so nothing here paints a background of its own.
 
+use std::sync::Arc;
+
 use egui::accesskit::Role;
 use egui::text::LayoutJob;
 use egui::{
@@ -452,7 +454,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = m.toolbar_gap;
                 ui.add_space(theme::SM);
-                let changes = snap.map(|s| s.status.len()).unwrap_or(0);
+                let changes = snap.map_or(0, |s| s.status.len());
                 let open_requests = match &tab.requests.list {
                     Some(Ok(l)) if tab.requests.filter == canopy_hosting::StateFilter::Open => {
                         l.len()
@@ -478,7 +480,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 {
                     actions.push(Action::Fetch);
                 }
-                let behind = branch.map(|b| b.behind).unwrap_or(0);
+                let behind = branch.map_or(0, |b| b.behind);
                 let mut pull = ToolButton::new(icon::ARROW_FAT_LINE_DOWN, "Pull")
                     .tooltip("Pull the current branch")
                     .shortcut(Command::Pull)
@@ -490,7 +492,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 if pull.show(ui).clicked() {
                     actions.push(Action::Pull);
                 }
-                let ahead = branch.map(|b| b.ahead).unwrap_or(0);
+                let ahead = branch.map_or(0, |b| b.ahead);
                 if local_only {
                     if ToolButton::new(icon::CLOUD_ARROW_UP, "Publish")
                         .tooltip(
@@ -686,6 +688,13 @@ fn view_tabs(
     requests: Option<(canopy_core::forge::ForgeKind, usize)>,
     actions: &mut Vec<Action>,
 ) {
+    struct Laid {
+        glyph: Arc<egui::Galley>,
+        text: Option<Arc<egui::Galley>>,
+        badge: Option<Badge>,
+        width: f32,
+    }
+
     let ctx = ui.ctx().clone();
     let p = palette(&ctx);
     let style = theme::style();
@@ -726,12 +735,6 @@ fn view_tabs(
     let font = FontId::new(m.body_size, theme::medium());
     let seg_h = m.control - 2.0;
     let inset = m.segment_track_pad + paint::SEAM;
-    struct Laid {
-        glyph: std::sync::Arc<egui::Galley>,
-        text: Option<std::sync::Arc<egui::Galley>>,
-        badge: Option<Badge>,
-        width: f32,
-    }
     let laid: Vec<Laid> = items
         .iter()
         .map(|it| {
@@ -753,8 +756,8 @@ fn view_tabs(
                 badge.as_ref().map(|b| b.measure(ui).x),
             ];
             let k = parts.iter().flatten().count();
-            let content: f32 =
-                parts.iter().flatten().sum::<f32>() + TAB_GAP * k.saturating_sub(1) as f32;
+            let content: f32 = parts.iter().flatten().sum::<f32>()
+                + TAB_GAP * crate::ui::count_f32(k.saturating_sub(1));
             Laid {
                 glyph,
                 text,
@@ -830,10 +833,14 @@ fn view_tabs(
             let parts_w = l.width - 2.0 * m.segment_pad;
             let cy = rect.center().y;
             let mut x = rect.center().x - parts_w / 2.0;
-            painter.galley(pos2(x, cy - l.glyph.size().y / 2.0), l.glyph.clone(), color);
+            painter.galley(
+                pos2(x, cy - l.glyph.size().y / 2.0),
+                Arc::clone(&l.glyph),
+                color,
+            );
             x += l.glyph.size().x + TAB_GAP;
             if let Some(g) = &l.text {
-                painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), color);
+                painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), color);
                 x += g.size().x + TAB_GAP;
             }
             if let Some(b) = &l.badge {
@@ -872,10 +879,7 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    vec2(1200.0, 100.0),
-                )),
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 100.0))),
                 ..Default::default()
             },
             |ui| {
@@ -885,7 +889,7 @@ mod tests {
                     123,
                     Some((canopy_core::forge::ForgeKind::GitLab, 123)),
                     &mut Vec::new(),
-                )
+                );
             },
         );
         output.textures_delta.clear();
@@ -918,7 +922,7 @@ mod tests {
     fn requests_without_a_forge_cannot_be_chosen() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 100.0));
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 100.0));
         let mut actions = Vec::new();
         for events in [Vec::new(), Vec::new()] {
             let mut out = ctx.run_ui(
@@ -945,7 +949,7 @@ mod tests {
                             pos: requests.center(),
                             button: egui::PointerButton::Primary,
                             pressed,
-                            modifiers: Default::default(),
+                            modifiers: egui::Modifiers::default(),
                         },
                     ],
                     ..Default::default()

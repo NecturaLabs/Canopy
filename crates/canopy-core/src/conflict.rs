@@ -213,6 +213,10 @@ pub fn has_conflict_markers(text: &str) -> bool {
 
 /// If `line` is a marker made of `ch` (at least 7 of them, then nothing or a space and a label),
 /// returns its length and label.
+#[expect(
+    clippy::string_slice,
+    reason = "`ch` is ASCII, so `size` falls between characters"
+)]
 fn marker(line: &str, ch: u8) -> Option<(usize, &str)> {
     let line = line.strip_suffix('\r').unwrap_or(line);
     let size = line.bytes().take_while(|&b| b == ch).count();
@@ -274,7 +278,7 @@ fn parse_region(
         match part {
             Part::Ours => {
                 if let Some(label) = sized_marker(line, b'|', size) {
-                    region.base_label = label.to_owned();
+                    label.clone_into(&mut region.base_label);
                     part = Part::Base;
                 } else if sized_marker(line, b'=', size).is_some() {
                     part = Part::Theirs;
@@ -296,7 +300,7 @@ fn parse_region(
             }
             Part::Theirs => {
                 if let Some(label) = sized_marker(line, b'>', size) {
-                    region.theirs_label = label.to_owned();
+                    label.clone_into(&mut region.theirs_label);
                     return Some((region, i + 1));
                 }
                 region.theirs.push(line.to_owned());
@@ -353,7 +357,7 @@ impl ConflictFile {
     /// Parses a working file containing conflict markers. Markers are 7 characters long by
     /// default; a longer `<<<<<<<` (from `conflict-marker-size`) sets the length the rest of that
     /// region must use. Unbalanced or malformed markers are kept as ordinary text.
-    pub fn parse(text: &str) -> ConflictFile {
+    pub fn parse(text: &str) -> Self {
         let mut raw: Vec<&str> = text.split('\n').collect();
         let trailing_newline = text.ends_with('\n');
         if trailing_newline || text.is_empty() {
@@ -407,7 +411,7 @@ impl ConflictFile {
             segments.push(Segment::Common(owned(&common)));
         }
 
-        ConflictFile {
+        Self {
             segments,
             eol: if use_crlf { "\r\n" } else { "\n" }.to_owned(),
             trailing_newline,
@@ -513,6 +517,10 @@ impl Repo {
     /// Reads the working copy of `path` and splits it at its conflict markers. Fails with
     /// [`Error::Invalid`] for a file that is missing, a symbolic link, binary (contains a NUL
     /// byte) or not UTF-8, which can only be resolved by choosing a whole side.
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "the message names the file and what to do; the decoding error adds nothing"
+    )]
     pub fn conflict_file(&self, path: &str) -> Result<ConflictFile> {
         let full = text_file(self.workdir(), path)?;
         match std::fs::symlink_metadata(&full) {
@@ -698,7 +706,7 @@ mod tests {
         let text = "<<<<<<< HEAD\nO\n||||||| 2ec4c1a\nB1\nB2\n=======\nT\n>>>>>>> other\n";
         let f = ConflictFile::parse(text);
         let r = f.regions().next().expect("region");
-        assert_eq!(r.base.as_deref(), Some(&v(&["B1", "B2"])[..]));
+        assert_eq!(r.base.as_deref(), Some(&*v(&["B1", "B2"])));
         assert_eq!(r.base_label, "2ec4c1a");
         assert_eq!(f.render(&[Some(Choice::Base)]), "B1\nB2\n");
         assert_eq!(f.render(&[None]), text);

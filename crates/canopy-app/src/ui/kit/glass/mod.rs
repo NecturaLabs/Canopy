@@ -69,19 +69,19 @@ enum Backend {
 impl Backend {
     fn code(self) -> u8 {
         match self {
-            Backend::Unprobed => 0,
-            Backend::Supported => 1,
-            Backend::Ready => 2,
-            Backend::Unavailable => 3,
+            Self::Unprobed => 0,
+            Self::Supported => 1,
+            Self::Ready => 2,
+            Self::Unavailable => 3,
         }
     }
 
     fn from_code(code: u8) -> Self {
         match code {
-            1 => Backend::Supported,
-            2 => Backend::Ready,
-            3 => Backend::Unavailable,
-            _ => Backend::Unprobed,
+            1 => Self::Supported,
+            2 => Self::Ready,
+            3 => Self::Unavailable,
+            _ => Self::Unprobed,
         }
     }
 }
@@ -122,60 +122,60 @@ pub(super) enum Reason {
 impl Reason {
     fn code(self) -> u8 {
         match self {
-            Reason::NoContext => 1,
-            Reason::OldGl => 2,
-            Reason::Multisampled => 3,
-            Reason::SmallTextures => 4,
-            Reason::Compile => 5,
-            Reason::Link => 6,
-            Reason::Uniform => 7,
-            Reason::Framebuffer => 8,
-            Reason::Gl(_) => 9,
-            Reason::ContextLost => 10,
-            Reason::Panic => 11,
-            Reason::Poisoned => 12,
-            Reason::Exited => 13,
-            Reason::Internal => 14,
+            Self::NoContext => 1,
+            Self::OldGl => 2,
+            Self::Multisampled => 3,
+            Self::SmallTextures => 4,
+            Self::Compile => 5,
+            Self::Link => 6,
+            Self::Uniform => 7,
+            Self::Framebuffer => 8,
+            Self::Gl(_) => 9,
+            Self::ContextLost => 10,
+            Self::Panic => 11,
+            Self::Poisoned => 12,
+            Self::Exited => 13,
+            Self::Internal => 14,
         }
     }
 
     fn from_code(code: u8) -> Option<Self> {
         Some(match code {
-            1 => Reason::NoContext,
-            2 => Reason::OldGl,
-            3 => Reason::Multisampled,
-            4 => Reason::SmallTextures,
-            5 => Reason::Compile,
-            6 => Reason::Link,
-            7 => Reason::Uniform,
-            8 => Reason::Framebuffer,
-            9 => Reason::Gl(0),
-            10 => Reason::ContextLost,
-            11 => Reason::Panic,
-            12 => Reason::Poisoned,
-            13 => Reason::Exited,
-            14 => Reason::Internal,
+            1 => Self::NoContext,
+            2 => Self::OldGl,
+            3 => Self::Multisampled,
+            4 => Self::SmallTextures,
+            5 => Self::Compile,
+            6 => Self::Link,
+            7 => Self::Uniform,
+            8 => Self::Framebuffer,
+            9 => Self::Gl(0),
+            10 => Self::ContextLost,
+            11 => Self::Panic,
+            12 => Self::Poisoned,
+            13 => Self::Exited,
+            14 => Self::Internal,
             _ => return None,
         })
     }
 
     fn describe(self) -> String {
         match self {
-            Reason::NoContext => "no OpenGL context".into(),
-            Reason::OldGl => "OpenGL older than 3.0 (or OpenGL ES 3.0)".into(),
-            Reason::Multisampled => "the window framebuffer is multisampled".into(),
-            Reason::SmallTextures => "the driver's textures are too small".into(),
-            Reason::Compile => "the driver rejected a blur shader".into(),
-            Reason::Link => "the driver could not link a blur program".into(),
-            Reason::Uniform => "a blur program lacks a uniform".into(),
-            Reason::Framebuffer => "a blur framebuffer is incomplete".into(),
-            Reason::Gl(0) => "OpenGL error".into(),
-            Reason::Gl(code) => format!("OpenGL error 0x{code:04X}"),
-            Reason::ContextLost => "the OpenGL context was lost".into(),
-            Reason::Panic => "the blur renderer panicked".into(),
-            Reason::Poisoned => "the blur renderer's lock is poisoned".into(),
-            Reason::Exited => "the window closed".into(),
-            Reason::Internal => "internal error".into(),
+            Self::NoContext => "no OpenGL context".into(),
+            Self::OldGl => "OpenGL older than 3.0 (or OpenGL ES 3.0)".into(),
+            Self::Multisampled => "the window framebuffer is multisampled".into(),
+            Self::SmallTextures => "the driver's textures are too small".into(),
+            Self::Compile => "the driver rejected a blur shader".into(),
+            Self::Link => "the driver could not link a blur program".into(),
+            Self::Uniform => "a blur program lacks a uniform".into(),
+            Self::Framebuffer => "a blur framebuffer is incomplete".into(),
+            Self::Gl(0) => "OpenGL error".into(),
+            Self::Gl(code) => format!("OpenGL error 0x{code:04X}"),
+            Self::ContextLost => "the OpenGL context was lost".into(),
+            Self::Panic => "the blur renderer panicked".into(),
+            Self::Poisoned => "the blur renderer's lock is poisoned".into(),
+            Self::Exited => "the window closed".into(),
+            Self::Internal => "internal error".into(),
         }
     }
 }
@@ -258,7 +258,7 @@ fn max_side() -> i32 {
 fn set_max_side(side: i32) {
     status(|s| {
         s.max_side
-            .store(side.clamp(0, MAX_SIDE_CAP), Ordering::Relaxed)
+            .store(side.clamp(0, MAX_SIDE_CAP), Ordering::Relaxed);
     });
 }
 
@@ -315,9 +315,12 @@ pub fn counters() -> (u64, u64) {
 
 /// Deletes the blur's OpenGL objects (`App::on_exit`, while eframe keeps the context current).
 pub fn destroy(gl: Option<&glow::Context>) {
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| match SLOT.lock() {
-        Ok(mut slot) => gl::destroy(&mut slot, gl),
-        Err(_) => tracing::debug!("translucent surfaces: lock poisoned at exit; objects left"),
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        if let Ok(mut slot) = SLOT.lock() {
+            gl::destroy(&mut slot, gl);
+        } else {
+            tracing::debug!("translucent surfaces: lock poisoned at exit; objects left");
+        }
     }));
     if result.is_err() {
         tracing::warn!("translucent surfaces: panic while deleting the blur's objects");
@@ -467,6 +470,11 @@ fn backdrop_shape_with(
 
 /// The window size in pixels, as eframe paints it.
 fn screen_px(viewport: Rect, ppp: f32) -> Option<[u32; 2]> {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the cast saturates, and its value is kept only when within 1..COORD_LIMIT"
+    )]
     let side = |points: f32| {
         let px = (points * ppp).round();
         (1.0..COORD_LIMIT).contains(&px).then_some(px as u32)
@@ -697,6 +705,10 @@ impl Plan {
     /// outside the rounded layer.
     pub(super) fn cross(&self) -> [Option<PxRect>; 2] {
         let r = self.radii.iter().fold(0.0_f32, |a, &b| a.max(b)).ceil();
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "finite, whole and below COORD_LIMIT, checked first"
+        )]
         let r = if r.is_finite() && r < COORD_LIMIT {
             r as i32
         } else {
@@ -714,6 +726,10 @@ impl Plan {
 }
 
 /// `v` points in pixels, rounded by `round`, if finite and in range.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "finite, whole and within COORD_LIMIT, checked first"
+)]
 fn px(v: f32, ppp: f32, round: fn(f32) -> f32) -> Option<i32> {
     let p = round(v * ppp);
     (p.is_finite() && p.abs() < COORD_LIMIT).then_some(p as i32)
@@ -787,7 +803,12 @@ pub(super) fn plan(
 
     let half = [layer.width() * 0.5 * ppp, layer.height() * 0.5 * ppp];
     let centre = layer.center();
-    let rect = [centre.x * ppp, sh as f32 - centre.y * ppp, half[0], half[1]];
+    let rect = [
+        centre.x * ppp,
+        crate::ui::int_f32(sh) - centre.y * ppp,
+        half[0],
+        half[1],
+    ];
     let most = half[0].min(half[1]).max(0.0);
     let r = |c: u8| (f32::from(c) * ppp).min(most);
     Some(Plan {
@@ -895,8 +916,15 @@ impl Soak {
                 let style = theme::style();
                 for i in 0..layers {
                     let k = n + i as u64 * 97;
+                    #[expect(
+                        clippy::cast_precision_loss,
+                        reason = "below 720 after the modulo, exact in f32"
+                    )]
                     let size = vec2(80.0 + (k * 37 % 720) as f32, 60.0 + (k * 53 % 480) as f32);
-                    let at = pos2(20.0 + i as f32 * 40.0, 20.0 + i as f32 * 30.0);
+                    let at = pos2(
+                        20.0 + crate::ui::count_f32(i) * 40.0,
+                        20.0 + crate::ui::count_f32(i) * 30.0,
+                    );
                     let rect = Rect::from_min_size(at, size);
                     let radius = CornerRadius::same(theme::metrics().radius_lg);
                     let fill = layer_fill(ui.painter(), rect, radius);
@@ -995,7 +1023,11 @@ pub(crate) fn gallery(ui: &mut Ui) {
     let radius = CornerRadius::same(m.radius_lg);
     for (i, forced) in [false, true].into_iter().enumerate() {
         let card = Rect::from_min_size(
-            rect.min + vec2(theme::MD + i as f32 * (card_w + theme::MD), 34.0),
+            rect.min
+                + vec2(
+                    theme::MD + crate::ui::count_f32(i) * (card_w + theme::MD),
+                    34.0,
+                ),
             vec2(card_w, 112.0),
         );
         let fill = layer_fill_with(ui.painter(), card, radius, forced);
@@ -1045,6 +1077,10 @@ fn busy_backdrop(painter: &Painter, rect: Rect, p: &Palette) {
     let bar = 14.0;
     let mut x = rect.left();
     let mut i = 0_u16;
+    #[expect(
+        clippy::while_float,
+        reason = "each step moves a fixed bar width across the rectangle"
+    )]
     while x < rect.right() {
         let r = Rect::from_min_max(
             pos2(x, rect.top()),
@@ -1069,7 +1105,10 @@ fn busy_backdrop(painter: &Painter, rect: Rect, p: &Palette) {
     let m = theme::metrics();
     for row in 0..6 {
         painter.text(
-            pos2(rect.left() + 6.0, rect.top() + 6.0 + row as f32 * 28.0),
+            pos2(
+                rect.left() + 6.0,
+                rect.top() + 6.0 + crate::ui::int_f32(row) * 28.0,
+            ),
             Align2::LEFT_TOP,
             "feat(graph): circles in the history graph · fix: keep the selection on refresh",
             FontId::proportional(m.body_size),

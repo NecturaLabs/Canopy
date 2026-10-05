@@ -33,21 +33,16 @@ pub enum AvatarSize {
 }
 
 impl AvatarSize {
-    pub const ALL: [AvatarSize; 4] = [
-        AvatarSize::Row,
-        AvatarSize::Detail,
-        AvatarSize::Large,
-        AvatarSize::Card,
-    ];
+    pub const ALL: [Self; 4] = [Self::Row, Self::Detail, Self::Large, Self::Card];
 
     /// The diameter in the active metrics.
     pub fn diameter(self) -> f32 {
         let m = theme::metrics();
         match self {
-            AvatarSize::Row => m.avatar_row,
-            AvatarSize::Detail => m.avatar_detail,
-            AvatarSize::Large => m.avatar_lg,
-            AvatarSize::Card => 48.0,
+            Self::Row => m.avatar_row,
+            Self::Detail => m.avatar_detail,
+            Self::Large => m.avatar_lg,
+            Self::Card => 48.0,
         }
     }
 }
@@ -110,8 +105,8 @@ pub fn initial(person: &Person) -> String {
 pub fn colors(p: &Palette, person: &Person) -> (Color32, Color32) {
     let c = widgets::person_color(p, person.identity());
     let s = p.s();
-    let fill = theme::over(p.avatar_fill(c), s.pane);
-    let letter = p.ink(theme::mix(c, p.text, 0.22), p.avatar_fill(c));
+    let fill = theme::over(Palette::avatar_fill(c), s.pane);
+    let letter = p.ink(theme::mix(c, p.text, 0.22), Palette::avatar_fill(c));
     (fill, letter)
 }
 
@@ -159,7 +154,7 @@ pub fn paint(
         && shown > 0.0
     {
         let rect = Rect::from_center_size(center, Vec2::splat(diameter));
-        let radius = CornerRadius::same(r.ceil().min(f32::from(u8::MAX)) as u8);
+        let radius = CornerRadius::same(crate::ui::saturate_u8(r.ceil().min(f32::from(u8::MAX))));
         painter.add(
             RectShape::filled(rect, radius, Color32::WHITE.gamma_multiply(shown))
                 .with_texture(tex, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))),
@@ -300,7 +295,7 @@ impl AvatarStack {
         let avatars_w = if shown == 0 {
             0.0
         } else {
-            d + step * (shown - 1) as f32
+            d + step * crate::ui::count_f32(shown - 1)
         };
         let badge = (hidden > 0).then(|| Badge::new(format!("+{hidden}")));
         let badge_w = badge.as_ref().map_or(0.0, |b| theme::XS + b.measure(ui).x);
@@ -310,7 +305,10 @@ impl AvatarStack {
         if ui.is_rect_visible(rect) {
             // Each avatar sits over the one before it, its ring cutting a clean edge.
             for i in 0..shown {
-                let c = pos2(rect.left() + d / 2.0 + step * i as f32, rect.center().y);
+                let c = pos2(
+                    rect.left() + d / 2.0 + step * crate::ui::count_f32(i),
+                    rect.center().y,
+                );
                 paint(
                     ui.painter(),
                     c,
@@ -437,17 +435,21 @@ pub(crate) fn gallery(ui: &mut Ui) {
 
 /// A small generated picture for the gallery (no network, no files): a diagonal two-tone square.
 fn placeholder_picture(ctx: &egui::Context) -> TextureId {
+    const N: usize = 32;
+
     let id = Id::new("kit-gallery-avatar-picture");
     if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
         return t.id();
     }
     let p = theme::palette(ctx);
     let (a, b) = (p.lanes[0], p.lanes[3]);
-    const N: usize = 32;
     let pixels = (0..N * N)
         .map(|i| {
             let (x, y) = (i % N, i / N);
-            a.lerp_to_gamma(b, (x + y) as f32 / (2 * N - 2) as f32)
+            a.lerp_to_gamma(
+                b,
+                crate::ui::count_f32(x + y) / crate::ui::count_f32(2 * N - 2),
+            )
         })
         .collect();
     let image = egui::ColorImage::new([N, N], pixels);
@@ -469,7 +471,7 @@ mod tests {
     fn ctx() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
     }
 
@@ -511,13 +513,13 @@ mod tests {
             theme::apply(
                 &ctx,
                 theme::ThemeId::Midnight,
-                &theme::Appearance {
+                theme::Appearance {
                     density,
                     ..theme::Appearance::STILL
                 },
             );
             let mut sizes = Vec::new();
-            let mut out = ctx.run_ui(Default::default(), |ui| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 for size in AvatarSize::ALL {
                     sizes.push(
                         Avatar::new(Person::new("Maya Chen", "maya@example.com"))
@@ -561,7 +563,7 @@ mod tests {
         let ctx = ctx();
         let tex = placeholder_picture(&ctx);
         let person = Person::new("Maya", "").picture(Some(tex));
-        let mut out = ctx.run_ui(Default::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             Avatar::new(person.clone()).id_salt("a").show(ui);
         });
         out.textures_delta.clear();

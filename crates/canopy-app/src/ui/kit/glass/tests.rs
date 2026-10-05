@@ -1,3 +1,7 @@
+#![expect(
+    clippy::disallowed_methods,
+    reason = "test backdrops are arbitrary colours, not the theme's"
+)]
 use egui::epaint::{ClippedShape, RectShape};
 
 use super::*;
@@ -17,7 +21,7 @@ fn setup(ctx: &egui::Context, theme: ThemeId, glass: bool, backend: Backend) {
     theme::apply(
         ctx,
         theme,
-        &Appearance {
+        Appearance {
             glass,
             ..Appearance::STILL
         },
@@ -30,7 +34,7 @@ fn setup(ctx: &egui::Context, theme: ThemeId, glass: bool, backend: Backend) {
 }
 
 fn frame(ctx: &egui::Context, f: impl FnMut(&mut Ui)) -> Vec<ClippedShape> {
-    let mut out = ctx.run_ui(Default::default(), f);
+    let mut out = ctx.run_ui(egui::RawInput::default(), f);
     out.textures_delta.clear();
     out.shapes
 }
@@ -522,7 +526,7 @@ fn at_most_four_glass_layers_a_frame() {
         let shapes = frame(&ctx, |ui| {
             let fills: Vec<u8> = (0..6)
                 .map(|i| {
-                    let r = at(10.0 + i as f32 * 20.0, 10.0, 200.0, 100.0);
+                    let r = at(10.0 + crate::ui::int_f32(i) * 20.0, 10.0, 200.0, 100.0);
                     layer_fill(ui.painter(), r, CornerRadius::ZERO).a()
                 })
                 .collect();
@@ -551,7 +555,7 @@ fn layers_nobody_sees_take_no_allowance() {
             255
         );
         for i in 0..4 {
-            let r = at(10.0 + i as f32 * 10.0, 10.0, 90.0, 90.0);
+            let r = at(10.0 + crate::ui::int_f32(i) * 10.0, 10.0, 90.0, 90.0);
             assert!(layer_fill(ui.painter(), r, CornerRadius::ZERO).a() < 255);
         }
     });
@@ -624,7 +628,10 @@ fn reasons_survive_their_code() {
         Reason::Internal,
     ] {
         assert_eq!(Reason::from_code(reason.code()), Some(reason));
-        assert!(!reason.describe().is_empty());
+        assert!(
+            !reason.describe().is_empty(),
+            "{reason:?} has no description"
+        );
     }
     assert_eq!(Reason::from_code(0), None);
     assert_eq!(Reason::Gl(0x0505).describe(), "OpenGL error 0x0505");
@@ -662,6 +669,11 @@ fn shade(c: Color32, dark: bool, cap: f32) -> Color32 {
             ((v + 0.055) / 1.055).powf(2.4)
         }
     };
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the value is clamped to 0..=1 first, so the channel is 0..=255"
+    )]
     let srgb = |v: f64| {
         let s = if v <= 0.003_130_8 {
             12.92 * v
@@ -759,7 +771,7 @@ fn the_soak_ends_after_its_frames() {
         let mut done = false;
         let mut most = 0;
         for _ in 0..18 {
-            let mut out = ctx.run_ui(Default::default(), |ui| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 done = soak.frame(ui.ctx());
             });
             out.textures_delta.clear();
@@ -771,7 +783,7 @@ fn the_soak_ends_after_its_frames() {
         // With the setting off the soak paints the same layers opaque: the baseline run.
         assert_eq!(most, if glass { usize::from(MAX_REGIONS) } else { 0 });
         // A frame after the last one changes nothing.
-        let mut out = ctx.run_ui(Default::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             done = soak.frame(ui.ctx());
         });
         out.textures_delta.clear();

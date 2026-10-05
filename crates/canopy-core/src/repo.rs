@@ -7,7 +7,11 @@ use git2::{BranchType, Oid, Repository, Sort};
 
 use crate::diff::{self, DiffSource, FileDiff, Whitespace};
 use crate::graph;
-use crate::model::*;
+use crate::model::{
+    BranchInfo, ChangeKind, CommitDetails, CommitSummary, FileEntry, HeadInfo, RefKind, RefLabel,
+    RemoteBranchInfo, RemoteInfo, RepoSnapshot, RepoState, Signature, StashInfo, StatusUnavailable,
+    TagInfo, UntrackedListing, WorkingStatus,
+};
 use crate::partial::{self, MissingObjects};
 use crate::{Error, Result, status};
 
@@ -25,7 +29,7 @@ impl std::fmt::Debug for Repo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Repo")
             .field("workdir", &self.workdir)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -71,21 +75,19 @@ impl Repo {
 
     /// The folder name of the working directory.
     pub fn name(&self) -> String {
-        self.workdir
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.workdir.display().to_string())
+        self.workdir.file_name().map_or_else(
+            || self.workdir.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        )
     }
 
     /// Where `HEAD` points.
     pub fn head(&self) -> Result<HeadInfo> {
         match self.git.head() {
             Ok(r) => Ok(HeadInfo {
-                branch: if r.is_branch() {
-                    Some(String::from_utf8_lossy(r.shorthand_bytes()).into_owned())
-                } else {
-                    None
-                },
+                branch: r
+                    .is_branch()
+                    .then(|| String::from_utf8_lossy(r.shorthand_bytes()).into_owned()),
                 oid: r.peel_to_commit().ok().map(|c| c.id()),
                 detached: self.git.head_detached().unwrap_or(false),
             }),
@@ -229,7 +231,7 @@ impl Repo {
                 .and_then(|o| o.as_tag())
                 .and_then(|t| t.message().ok().flatten().map(|m| m.trim().to_owned()));
             let commit = object.and_then(|o| o.peel_to_commit().ok());
-            let time = commit.as_ref().map(|c| c.time().seconds()).unwrap_or(0);
+            let time = commit.as_ref().map_or(0, |c| c.time().seconds());
             out.push((
                 time,
                 TagInfo {
@@ -243,12 +245,11 @@ impl Repo {
         Ok(out.into_iter().map(|(_, t)| t).collect())
     }
 
-    fn stashes(&self) -> Result<Vec<StashInfo>> {
-        let reflog = match self.git.reflog("refs/stash") {
-            Ok(r) => r,
-            Err(_) => return Ok(Vec::new()),
+    fn stashes(&self) -> Vec<StashInfo> {
+        let Ok(reflog) = self.git.reflog("refs/stash") else {
+            return Vec::new();
         };
-        Ok(reflog
+        reflog
             .iter()
             .enumerate()
             .map(|(index, entry)| StashInfo {
@@ -256,7 +257,7 @@ impl Repo {
                 message: entry.message().ok().flatten().unwrap_or("").to_owned(),
                 oid: entry.id_new(),
             })
-            .collect())
+            .collect()
     }
 
     /// Reads up to `max_commits` commits reachable from `HEAD`, branches, remote branches and
@@ -296,7 +297,7 @@ impl Repo {
         let branches = self.branches()?;
         let remote_branches = self.remote_branches()?;
         let tags = self.tags()?;
-        let stashes = self.stashes()?;
+        let stashes = self.stashes();
         let (commits, truncated) = self.commits(max_commits)?;
         let graph = graph::layout(commits.iter().map(|c| (c.oid, c.parents.as_slice())));
         // History never depends on status: a partial clone that lacks the tree of `HEAD` still
@@ -515,14 +516,15 @@ impl Repo {
             let Some(kind) = diff::delta_kind(delta.status()) else {
                 continue;
             };
-            let path = diff::path_of(delta.new_file()).or_else(|| diff::path_of(delta.old_file()));
+            let path =
+                diff::path_of(&delta.new_file()).or_else(|| diff::path_of(&delta.old_file()));
             let Some(path) = path else { continue };
             let old_path = (kind == ChangeKind::Renamed)
-                .then(|| diff::path_of(delta.old_file()))
+                .then(|| diff::path_of(&delta.old_file()))
                 .flatten();
             let (additions, deletions) = if full {
                 match git2::Patch::from_diff(&d, idx)? {
-                    Some(p) => p.line_stats().map(|(_, a, r)| (a, r)).unwrap_or((0, 0)),
+                    Some(p) => p.line_stats().map_or((0, 0), |(_, a, r)| (a, r)),
                     None => (0, 0),
                 }
             } else {

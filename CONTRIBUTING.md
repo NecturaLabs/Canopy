@@ -30,6 +30,19 @@ macOS. It must pass before
 you merge; a failure already listed in `docs/backlog.md` is reported, not hidden. Keep `TMPDIR` on
 a filesystem that accepts non-UTF-8 file names (the default `/tmp` does; NTFS does not).
 
+## Lints
+
+The workspace `Cargo.toml` sets the lint levels for every crate: clippy's `all`, `pedantic` and
+`cargo` groups, the nursery and restriction lints that fit this code, and extra rustc lints, with
+the reason for each lint turned on or left out beside it. `clippy.toml` refuses the calls that
+break three project rules: starting a program other than through `canopy_core::cli`, writing
+with libgit2, and making a colour outside `ui/theme.rs`. It lists the usual calls, not every way
+round a rule, so review still applies the rules themselves. When a finding is deliberate, put
+`#[expect(lint, reason = "...")]` on the narrowest item or statement that covers it; `allow` is
+itself a warning, and an `expect` fails once its finding is gone. Views convert between egui's
+integer and float types through the helpers in `ui/mod.rs` (`points_i8`, `count_f32`,
+`saturate_u8` and the rest) rather than casting by hand.
+
 ## Commit messages
 
 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):

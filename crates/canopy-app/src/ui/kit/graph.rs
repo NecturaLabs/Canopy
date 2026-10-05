@@ -44,7 +44,7 @@ impl Lanes {
     }
 
     /// The centre x of `lane` in a column whose left edge is `left`.
-    pub fn x(&self, left: f32, lane: u16) -> f32 {
+    pub fn x(self, left: f32, lane: u16) -> f32 {
         left + self.x0 + f32::from(lane) * self.pitch
     }
 }
@@ -61,7 +61,7 @@ pub fn column_width(count: u16) -> f32 {
 }
 
 /// How a row's node and edges are marked beyond its layout.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Marks {
     /// The opaque background of the row (pane, or hover, zebra or selection over it): the node's
     /// ring and a merge's hollow take it, so the ring always matches the row.
@@ -86,7 +86,7 @@ impl Marks {
     }
 }
 
-fn anchor(rect: Rect, lanes: &Lanes, lane: u16, end: LineEnd) -> Pos2 {
+fn anchor(rect: Rect, lanes: Lanes, lane: u16, end: LineEnd) -> Pos2 {
     let y = match end {
         LineEnd::Top => rect.top(),
         LineEnd::Mid => rect.center().y,
@@ -99,7 +99,7 @@ fn anchor(rect: Rect, lanes: &Lanes, lane: u16, end: LineEnd) -> Pos2 {
 /// control points sit at the vertical midpoint above `b` and below `a`, so it leaves and enters
 /// vertically.
 pub fn edge_points(a: Pos2, b: Pos2) -> [Pos2; 4] {
-    let my = (a.y + b.y) / 2.0;
+    let my = f32::midpoint(a.y, b.y);
     [a, pos2(a.x, my), pos2(b.x, my), b]
 }
 
@@ -121,12 +121,12 @@ fn dashed(painter: &Painter, a: Pos2, b: Pos2, stroke: Stroke) {
 
 /// The `graph_node_r` circle's centre on `rect`'s row for the node's lane, snapped to device
 /// pixels so prerasterised discs stay crisp.
-pub fn node_center(painter: &Painter, rect: Rect, lanes: &Lanes, lane: u16) -> Pos2 {
+pub fn node_center(painter: &Painter, rect: Rect, lanes: Lanes, lane: u16) -> Pos2 {
     anchor(rect, lanes, lane, LineEnd::Mid).round_to_pixel_center(painter.pixels_per_point())
 }
 
 /// Paints one row of the graph: its edges, then its node.
-pub fn paint_row(painter: &Painter, rect: Rect, lanes: &Lanes, row: &GraphRow, marks: &Marks) {
+pub fn paint_row(painter: &Painter, rect: Rect, lanes: Lanes, row: &GraphRow, marks: Marks) {
     let p = theme::palette(painter.ctx());
     let m = theme::metrics();
     let painter = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
@@ -165,9 +165,9 @@ pub fn paint_row(painter: &Painter, rect: Rect, lanes: &Lanes, row: &GraphRow, m
 fn paint_node(
     painter: &Painter,
     rect: Rect,
-    lanes: &Lanes,
+    lanes: Lanes,
     row: &GraphRow,
-    marks: &Marks,
+    marks: Marks,
     p: &Palette,
 ) {
     let m = theme::metrics();
@@ -186,10 +186,10 @@ fn paint_node(
         let stroke = Stroke::new(m.graph_merge_stroke, p.text_faint);
         // Four dashes, each two thirds of its quarter.
         for q in 0..4 {
-            let start = q as f32 * std::f32::consts::FRAC_PI_2 + 0.26;
+            let start = crate::ui::int_f32(q) * std::f32::consts::FRAC_PI_2 + 0.26;
             let points: Vec<Pos2> = (0..=8)
                 .map(|i| {
-                    let a = start + i as f32 / 8.0 * std::f32::consts::FRAC_PI_3;
+                    let a = start + crate::ui::int_f32(i) / 8.0 * std::f32::consts::FRAC_PI_3;
                     c + egui::vec2(a.cos(), a.sin()) * (r - 0.2)
                 })
                 .collect();
@@ -230,7 +230,7 @@ fn sample() -> Vec<GraphRow> {
         (13, vec![14]),
         (14, vec![]),
     ];
-    let ids: Vec<(canopy_core::Oid, Vec<canopy_core::Oid>)> = graph
+    let ids: Vec<(Oid, Vec<Oid>)> = graph
         .iter()
         .map(|(id, parents)| (oid(*id), parents.iter().map(|p| oid(*p)).collect()))
         .collect();
@@ -291,7 +291,7 @@ pub(crate) fn gallery(ui: &mut egui::Ui) {
                             below_wip: i == 1,
                             ..Marks::new(ground)
                         };
-                        paint_row(ui.painter(), rect, &lanes, row, &marks);
+                        paint_row(ui.painter(), rect, lanes, row, marks);
                         let label = match i {
                             0 => "Uncommitted changes".to_owned(),
                             1 => "HEAD: merge".to_owned(),
@@ -322,7 +322,7 @@ mod tests {
     fn ctx() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
     }
 
@@ -361,9 +361,9 @@ mod tests {
     /// The circles one row paints: (radius, fill, stroke colour).
     fn circles(row: &GraphRow, marks: Marks) -> Vec<(f32, Color32, Color32)> {
         let ctx = ctx();
-        let mut out = ctx.run_ui(Default::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             let rect = Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(76.0, 28.0));
-            paint_row(ui.painter(), rect, &Lanes::new(1), row, &marks);
+            paint_row(ui.painter(), rect, Lanes::new(1), row, marks);
         });
         out.textures_delta.clear();
         out.shapes
@@ -376,6 +376,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a test ground colour, not one of the theme's"
+    )]
     fn nodes_are_rings_of_the_row_ground() {
         let p = theme::ThemeId::Midnight.palette();
         let ground = Color32::from_rgb(1, 2, 3);
@@ -396,7 +400,7 @@ mod tests {
         );
         let merge = GraphRow {
             is_merge: true,
-            ..row.clone()
+            ..row
         };
         let hollow = circles(&merge, Marks::new(ground));
         assert_eq!(hollow[1].1, ground, "a merge is hollow");

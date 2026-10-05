@@ -222,11 +222,11 @@ impl CanopyApp {
                     });
                 }
                 Action::ClearIdentity { repo, scope } => {
-                    self.request_identity(IdentityJob::Clear { repo, scope })
+                    self.request_identity(IdentityJob::Clear { repo, scope });
                 }
                 Action::TrustFolder(folder) => {
                     let shown = folder.display().to_string();
-                    if crate::trust::add(&mut self.settings.trusted_folders, folder) {
+                    if crate::trust::add(&mut self.settings.trusted_folders, &folder) {
                         crate::trust::set(&self.settings.trusted_folders);
                         self.toasts
                             .push(ctx, ToastKind::Success, "Folder trusted", shown);
@@ -279,7 +279,7 @@ impl CanopyApp {
                     self.settings.skipped_version = Some(v);
                     self.updater.state = UpdateState::UpToDate;
                 }
-                Action::CreateRequest { source } => self.create_request(ctx, source),
+                Action::CreateRequest { source } => self.create_request(ctx, &source),
                 Action::Host(job) => {
                     if let Some(t) = self.tab() {
                         let kind = t.host.as_ref().map(|h| h.forge.kind);
@@ -307,8 +307,9 @@ impl CanopyApp {
                 }
                 Action::DismissIntro => self.settings.seen_intro = true,
                 Action::AcceptTerms => {
-                    self.settings.accepted_terms = crate::ui::legal::TERMS_VERSION.to_owned();
-                    self.settings.accepted_privacy = crate::ui::legal::PRIVACY_VERSION.to_owned();
+                    crate::ui::legal::TERMS_VERSION.clone_into(&mut self.settings.accepted_terms);
+                    crate::ui::legal::PRIVACY_VERSION
+                        .clone_into(&mut self.settings.accepted_privacy);
                     // The consent dialog stays open until its actions are applied; this replaces
                     // it with the next question, or ends it.
                     self.dialogs.close_where(is_consent);

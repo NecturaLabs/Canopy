@@ -197,7 +197,7 @@ fn operation_banner(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
 fn cap(s: &str) -> String {
     let mut c = s.chars();
     c.next()
-        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+        .map(|f| format!("{}{}", f.to_uppercase(), c.as_str()))
         .unwrap_or_default()
 }
 
@@ -244,7 +244,7 @@ fn list(
     let s = theme::surfaces(ui.ctx());
     let m = theme::metrics();
     egui::Frame::new()
-        .inner_margin(egui::Margin::same(theme::SM as i8))
+        .inner_margin(egui::Margin::same(crate::ui::points_i8(theme::SM)))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 let options = StateFilter::ALL.map(|f| (f, f.label()));
@@ -354,8 +354,8 @@ fn list(
                 .show(ui, |ui| {
                     egui::Frame::new()
                         .inner_margin(egui::Margin::symmetric(
-                            m.sidebar_pad as i8,
-                            theme::XS as i8,
+                            crate::ui::points_i8(m.sidebar_pad),
+                            crate::ui::points_i8(theme::XS),
                         ))
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
@@ -509,7 +509,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
         _ => None,
     };
     let details = match &tab.requests.details {
-        Some(Ok(d)) => Some(d.clone()),
+        Some(Ok(d)) => Some(Arc::clone(d)),
         _ => None,
     };
     let Some(summary) = details.as_ref().map(|d| d.summary.clone()).or(summary) else {
@@ -523,7 +523,10 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
         .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Frame::new()
-                .inner_margin(egui::Margin::symmetric(theme::XL as i8, theme::LG as i8))
+                .inner_margin(egui::Margin::symmetric(
+                    crate::ui::points_i8(theme::XL),
+                    crate::ui::points_i8(theme::LG),
+                ))
                 .show(ui, |ui| {
                     ui.set_max_width(ui.available_width().min(theme::MEASURE));
                     // Header.
@@ -1041,7 +1044,6 @@ fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Ac
 mod tests {
     use super::*;
     use crate::worker::Worker;
-    use std::sync::Arc;
 
     fn summary(state: RequestState) -> RequestSummary {
         RequestSummary {
@@ -1080,13 +1082,14 @@ mod tests {
     fn merge_controls_fit_a_narrow_details_pane() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        crate::ui::theme::apply(
-            &ctx,
-            crate::ui::theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let (worker, _, _) = Worker::detached();
-        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        let mut tab = RepoTab::with_worker(
+            "fixture".into(),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
         let details = details(RequestState::Open);
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -1132,9 +1135,14 @@ mod tests {
     #[test]
     fn refreshed_request_selection_preserves_action_eligibility() {
         let (worker, _, _) = Worker::detached();
-        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        let mut tab = RepoTab::with_worker(
+            "fixture".into(),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
         tab.requests.selected = Some(7);
-        tab.requests.list = Some(Ok(Arc::new(vec![summary(RequestState::Open)])));
+        tab.requests.list = Some(Ok(Arc::from([summary(RequestState::Open)])));
         for state in [
             RequestState::Open,
             RequestState::Closed,
@@ -1171,9 +1179,14 @@ mod tests {
     #[test]
     fn request_shortcuts_use_the_displayed_state_after_details_refresh() {
         let (worker, _, _) = Worker::detached();
-        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        let mut tab = RepoTab::with_worker(
+            "fixture".into(),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
         tab.requests.selected = Some(7);
-        tab.requests.list = Some(Ok(Arc::new(vec![summary(RequestState::Open)])));
+        tab.requests.list = Some(Ok(Arc::from([summary(RequestState::Open)])));
         tab.requests.details = Some(Ok(Arc::new(details(RequestState::Merged))));
         let request = selected_summary(&tab).expect("selected request");
         assert!(approve_action(&tab, request).is_none());

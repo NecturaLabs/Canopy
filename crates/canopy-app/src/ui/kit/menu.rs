@@ -18,6 +18,7 @@
 //! opacity, with their reason as a tooltip, in menus opened from a button.
 
 use std::cell::Cell;
+use std::sync::Arc;
 
 use egui::containers::menu::{MenuState, SubMenu};
 use egui::{
@@ -201,7 +202,7 @@ impl Menu<'_> {
             st.visuals.window_fill = Color32::TRANSPARENT;
             st.visuals.window_stroke = Stroke::NONE;
             st.visuals.popup_shadow = Shadow::NONE;
-            st.spacing.menu_margin = Margin::same(m.menu_pad as i8);
+            st.spacing.menu_margin = Margin::same(crate::ui::points_i8(m.menu_pad));
             SubMenu::new().show(ui, &trigger, |ui| {
                 let layer = ui.layer_id();
                 let slot = ui.painter().add(Shape::Noop);
@@ -214,7 +215,7 @@ impl Menu<'_> {
                 ui.painter().set(slot, Shape::Vec(shapes));
                 // Left goes back to the parent item.
                 if ctx.input(|i| i.key_pressed(Key::ArrowLeft))
-                    && ctx.memory(|mem| mem.focused()).is_some_and(|f| {
+                    && ctx.memory(egui::Memory::focused).is_some_and(|f| {
                         ctx.read_response(f).is_some_and(|fr| fr.layer_id == layer)
                     })
                 {
@@ -303,9 +304,12 @@ fn show_popup<R>(
         let e = Entrance::of(ui.ctx(), id, motion::BASE, motion::SLOW, keyboard, None);
         ui.multiply_opacity(e.fade);
         let start = overlay::next_shape(ui.ctx(), layer);
-        let r = overlay::floating(ui, Layer::Menu, Margin::same(m.menu_pad as i8), |ui| {
-            body(ui, id, kind, fresh && keyboard, add)
-        });
+        let r = overlay::floating(
+            ui,
+            Layer::Menu,
+            Margin::same(crate::ui::points_i8(m.menu_pad)),
+            |ui| body(ui, id, kind, fresh && keyboard, add),
+        );
         let rect = r.response.rect;
         let point = match kind {
             Kind::Context => Popup::position_of_id(ui.ctx(), id)
@@ -369,10 +373,15 @@ pub(crate) fn inline<R>(
     let m = theme::metrics();
     let id = ui.id().with(("kit-inline-menu", Id::new(id_salt)));
     ui.allocate_ui(vec2(width, 0.0), |ui| {
-        overlay::floating(ui, Layer::Menu, Margin::same(m.menu_pad as i8), |ui| {
-            ui.set_width(width - 2.0 * m.menu_pad);
-            body(ui, id, Kind::Inline, false, add)
-        })
+        overlay::floating(
+            ui,
+            Layer::Menu,
+            Margin::same(crate::ui::points_i8(m.menu_pad)),
+            |ui| {
+                ui.set_width(width - 2.0 * m.menu_pad);
+                body(ui, id, Kind::Inline, false, add)
+            },
+        )
         .inner
     })
     .inner
@@ -593,7 +602,7 @@ impl MenuItem {
         let keyboard = focus_visible(&ctx);
         let other_focused = keyboard
             && ctx
-                .memory(|mem| mem.focused())
+                .memory(egui::Memory::focused)
                 .is_some_and(|id| id != response.id);
         let highlight = enabled
             && (f.hover
@@ -636,13 +645,17 @@ impl MenuItem {
                     let gap = 2.0;
                     let total = label.size().y + gap + d.size().y;
                     let top = cy - total / 2.0;
-                    painter.galley(pos2(x, top), label.clone(), text_color);
-                    painter.galley(pos2(x, top + label.size().y + gap), d.clone(), p.text_dim);
+                    painter.galley(pos2(x, top), Arc::clone(&label), text_color);
+                    painter.galley(
+                        pos2(x, top + label.size().y + gap),
+                        Arc::clone(d),
+                        p.text_dim,
+                    );
                 }
                 None => {
                     painter.galley(
                         pos2(x, cy - label.size().y / 2.0),
-                        label.clone(),
+                        Arc::clone(&label),
                         text_color,
                     );
                 }
@@ -655,7 +668,7 @@ impl MenuItem {
                 };
                 painter.galley(
                     pos2(rect.right() - ITEM_PAD - t.size().x, cy - t.size().y / 2.0),
-                    t.clone(),
+                    Arc::clone(t),
                     color,
                 );
             }
@@ -852,7 +865,7 @@ mod tests {
     fn context_() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
     }
 
@@ -881,14 +894,14 @@ mod tests {
                     pos: at,
                     button,
                     pressed: true,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 },
             ],
             vec![egui::Event::PointerButton {
                 pos: at,
                 button,
                 pressed: false,
-                modifiers: Default::default(),
+                modifiers: egui::Modifiers::default(),
             }],
         ]
     }
@@ -900,7 +913,7 @@ mod tests {
             theme::apply(
                 &ctx,
                 theme::ThemeId::Midnight,
-                &theme::Appearance {
+                theme::Appearance {
                     density,
                     ..theme::Appearance::STILL
                 },
@@ -960,7 +973,6 @@ mod tests {
     fn enter_on_a_focused_item_activates_it() {
         let ctx = context_();
         let mut clicked = false;
-        let mut id = None;
         for frame in 0..3 {
             let events = if frame == 2 {
                 vec![egui::Event::Key {
@@ -968,7 +980,7 @@ mod tests {
                     physical_key: None,
                     pressed: true,
                     repeat: false,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 }]
             } else {
                 Vec::new()
@@ -978,7 +990,6 @@ mod tests {
                 if frame == 0 {
                     r.request_focus();
                 }
-                id = Some(r.id);
                 clicked |= r.clicked();
             });
         }
@@ -987,6 +998,8 @@ mod tests {
 
     #[test]
     fn items_report_menu_roles() {
+        use egui::accesskit::Role;
+
         let ctx = context_();
         ctx.enable_accesskit();
         let out = run(&ctx, Vec::new(), |ui| {
@@ -1005,7 +1018,6 @@ mod tests {
                 .find(|(_, n)| n.label() == Some(label))
                 .map(|(_, n)| n.role())
         };
-        use egui::accesskit::Role;
         assert_eq!(role("New tag…"), Some(Role::MenuItem));
         assert_eq!(role("By name"), Some(Role::MenuItemCheckBox));
         assert!(

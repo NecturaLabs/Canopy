@@ -39,9 +39,10 @@ fn askpass_slot() -> &'static RwLock<Option<Askpass>> {
     SLOT.get_or_init(|| RwLock::new(None))
 }
 
-/// Registers the credential prompt used by every later [`command`], process-wide; `None` turns
-/// it off. A `GIT_ASKPASS`, `SSH_ASKPASS` or `SSH_ASKPASS_REQUIRE` the user already set in the
-/// environment wins over it; the extra `env` pairs are always set.
+/// Registers the credential prompt used by every later [`command`], process-wide.
+///
+/// `None` turns it off. A `GIT_ASKPASS`, `SSH_ASKPASS` or `SSH_ASKPASS_REQUIRE` the user already
+/// set in the environment wins over it; the extra `env` pairs are always set.
 pub fn set_askpass(askpass: Option<Askpass>) {
     let mut slot = askpass_slot()
         .write()
@@ -50,6 +51,10 @@ pub fn set_askpass(askpass: Option<Askpass>) {
 }
 
 /// Builds a `git` command for `workdir` with a non-interactive environment.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the one place Canopy builds a git command"
+)]
 pub fn command(workdir: Option<&Path>) -> Command {
     let mut cmd = Command::new("git");
     if let Some(dir) = workdir {
@@ -88,6 +93,10 @@ const REPOSITORY_ENV: [&str; 12] = [
 
 /// Sets the non-interactive environment, and the registered [`Askpass`] if any, on `cmd`, and
 /// keeps the repository variables of Canopy's own environment out of it.
+#[expect(
+    clippy::significant_drop_tightening,
+    reason = "the askpass settings are read under one lock, so they come from the same app"
+)]
 pub(crate) fn apply_env(cmd: &mut Command) {
     for key in REPOSITORY_ENV {
         cmd.env_remove(key);
@@ -150,7 +159,7 @@ fn subcommand(args: &[&str]) -> String {
 pub(crate) fn failure(args: &[&str], stdout: &[u8], stderr: &[u8]) -> Error {
     let mut msg = String::from_utf8_lossy(stderr).trim().to_owned();
     if msg.is_empty() {
-        msg = String::from_utf8_lossy(stdout).trim().to_owned();
+        String::from_utf8_lossy(stdout).trim().clone_into(&mut msg);
     }
     Error::Cli {
         command: subcommand(args),
@@ -201,6 +210,10 @@ pub fn loggable(args: &[&str]) -> Vec<String> {
 }
 
 /// Removes the `user:password@` part of a URL inside `text`.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 pub fn redact_url(text: &str) -> String {
     let Some(scheme_end) = text.find("://") else {
         return text.to_owned();
@@ -215,7 +228,7 @@ pub fn redact_url(text: &str) -> String {
 
 /// Logs a finished git command: at debug level always, at warn level when it failed.
 fn record(args: &[&str], started: Instant, status: Option<i32>, stderr: &[u8]) {
-    let ms = started.elapsed().as_millis() as u64;
+    let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let command = subcommand(args);
     let shown = loggable(args);
     if status == Some(0) {
@@ -426,8 +439,9 @@ pub(crate) fn run_answer(
 }
 
 /// Runs a long command (clone, fetch, pull, push) and reports each progress line from standard
-/// error to `progress` as it arrives. Returns standard error's last lines on success, which is
-/// where git puts its summary.
+/// error to `progress` as it arrives.
+///
+/// Returns standard error's last lines on success, which is where git puts its summary.
 pub fn run_streaming(
     workdir: Option<&Path>,
     args: &[&str],
@@ -485,7 +499,7 @@ pub fn run_streaming(
     let status = child.wait()?;
     record(args, started, status.code(), &stderr_all);
     if status.success() {
-        tracing::info!(command = %subcommand(args), ms = started.elapsed().as_millis() as u64, "git succeeded");
+        tracing::info!(command = %subcommand(args), ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), "git succeeded");
     }
     let stdout = stdout_reader.join().unwrap_or_default();
     if status.success() {
@@ -613,7 +627,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let out = run_unchecked(dir.path(), &["rev-parse", "--git-dir"]).expect("git runs");
         assert_ne!(out.code, Some(0));
-        assert!(!out.stderr.is_empty());
+        assert!(!out.stderr.is_empty(), "git explained nothing");
         let out = run_unchecked(dir.path(), &["--version"]).expect("git runs");
         assert_eq!(out.code, Some(0));
     }
@@ -653,11 +667,7 @@ mod tests {
     #[test]
     fn streams_progress_lines() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let mut lines = Vec::new();
-        run_streaming(Some(dir.path()), &["init", "-q", "streamed"], |l| {
-            lines.push(l.to_owned())
-        })
-        .expect("init");
+        run_streaming(Some(dir.path()), &["init", "-q", "streamed"], |_| {}).expect("init");
         assert!(dir.path().join("streamed/.git").is_dir());
     }
 
@@ -691,6 +701,10 @@ mod tests {
 
     /// A command as the user's environment might hand it to us: `inherited` pairs set, the
     /// askpass variables otherwise absent whatever the test runner's environment holds.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn user_command(inherited: &[(&str, &str)]) -> Command {
         let mut cmd = Command::new("git");
         for key in ["GIT_ASKPASS", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"] {
@@ -711,6 +725,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn a_repository_chosen_by_the_environment_does_not_reach_git() {
         let git = |dir: &Path, args: &[&str]| {
             let out = Command::new("git")
@@ -813,7 +831,7 @@ mod tests {
         let quick = output_within(command(None), &["--version"], Duration::from_secs(30))
             .expect("a quick command finishes");
         assert_eq!(quick.code, Some(0));
-        assert!(!quick.stdout.is_empty());
+        assert!(!quick.stdout.is_empty(), "git printed no version");
     }
 
     #[test]

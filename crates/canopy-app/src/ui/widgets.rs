@@ -34,7 +34,7 @@ pub fn dismiss_underlying_tooltips(ctx: &egui::Context) {
     ctx.graphics_mut(|graphics| {
         for layer in layers {
             if let Some(list) = graphics.get_mut(layer) {
-                *list = Default::default();
+                *list = egui::layers::PaintList::default();
             }
         }
     });
@@ -42,14 +42,14 @@ pub fn dismiss_underlying_tooltips(ctx: &egui::Context) {
 
 /// A stable colour for a displayed identity, shared by names and matching host handles.
 pub fn person_color(p: &Palette, identity: &str) -> Color32 {
-    let mut h: u32 = 2166136261;
+    let mut h: u32 = 2_166_136_261;
     let key: String = identity
         .chars()
         .filter(|c| c.is_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
+        .flat_map(char::to_lowercase)
         .collect();
     for b in key.bytes() {
-        h = (h ^ u32::from(b)).wrapping_mul(16777619);
+        h = (h ^ u32::from(b)).wrapping_mul(16_777_619);
     }
     p.lanes[(h as usize) % p.lanes.len()]
 }
@@ -103,7 +103,7 @@ pub fn repository_state_banner(
     let conflicts = snap.status.conflicted.len();
     let busy = tab.running.is_some();
     egui::Panel::top("repository-operation-state")
-        .frame(egui::Frame::new().fill(Palette::tint(p.warning, if p.dark { 28 } else { 18 })).inner_margin(egui::Margin::symmetric(theme::LG as i8, theme::SM as i8)))
+        .frame(egui::Frame::new().fill(Palette::tint(p.warning, if p.dark { 28 } else { 18 })).inner_margin(egui::Margin::symmetric(crate::ui::points_i8(theme::LG), crate::ui::points_i8(theme::SM))))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(format!("{}  {} in progress on {}", icon::WARNING, state.label(), snap.head.label())).color(p.warning).strong());
@@ -124,10 +124,8 @@ pub fn repository_state_banner(
 
 /// Splits a path into (file name, parent directory).
 pub fn split_path(path: &str) -> (&str, &str) {
-    match path.rfind('/') {
-        Some(i) => (&path[i + 1..], &path[..i]),
-        None => (path, ""),
-    }
+    path.rsplit_once('/')
+        .map_or((path, ""), |(parent, name)| (name, parent))
 }
 
 /// A short relative time such as "3 hours ago".
@@ -202,11 +200,7 @@ mod tests {
             for enabled in [false, true] {
                 let ctx = egui::Context::default();
                 crate::ui::fonts::install(&ctx);
-                theme::apply(
-                    &ctx,
-                    theme::ThemeId::Midnight,
-                    &crate::ui::theme::Appearance::STILL,
-                );
+                theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
                 let mut checked = false;
                 let mut activated = false;
                 let mut focused = false;
@@ -217,7 +211,7 @@ mod tests {
                             physical_key: None,
                             pressed: true,
                             repeat: false,
-                            modifiers: Default::default(),
+                            modifiers: egui::Modifiers::default(),
                         }]
                     } else {
                         Vec::new()
@@ -230,19 +224,13 @@ mod tests {
                         |ui| {
                             ui.add_enabled_ui(enabled, |ui| {
                                 let response = match kind {
-                                    0 => crate::ui::kit::toggle::Checkbox::new(
-                                        &mut checked,
-                                        "Checkbox",
-                                    )
-                                    .show(ui),
+                                    0 => kit::toggle::Checkbox::new(&mut checked, "Checkbox")
+                                        .show(ui),
                                     1 => primary_button(ui, "Primary", true, 120.0),
-                                    2 => crate::ui::kit::ToolButton::new(icon::CHECK, "Tool")
+                                    2 => kit::ToolButton::new(icon::CHECK, "Tool")
                                         .tooltip("Tool action")
                                         .show(ui),
-                                    _ => {
-                                        crate::ui::kit::IconButton::new(icon::CHECK, "Icon action")
-                                            .show(ui)
-                                    }
+                                    _ => kit::IconButton::new(icon::CHECK, "Icon action").show(ui),
                                 };
                                 if frame == 0 && enabled {
                                     response.request_focus();
@@ -267,7 +255,7 @@ mod tests {
     fn blocking_overlay_hides_underlying_tooltips_and_keeps_its_own() {
         let ctx = egui::Context::default();
         for frame in 0..3 {
-            let mut output = ctx.run_ui(Default::default(), |ui| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::Tooltip::always_open(
                     ctx.clone(),
                     ui.layer_id(),
@@ -321,14 +309,10 @@ mod tests {
     fn disabled_primary_controls_do_not_use_the_enabled_fill() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         for frame in 0..3 {
             let mut button_rect = egui::Rect::NOTHING;
-            let output = ctx.run_ui(Default::default(), |ui| {
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 ui.add_enabled_ui(false, |ui| {
                     button_rect = primary_button(ui, "Commit", true, 120.0).rect;
                 });
@@ -342,7 +326,7 @@ mod tests {
                         _ => None,
                     })
                     .expect("painted disabled primary");
-                let limit = (255.0 * theme::DISABLED_ALPHA).ceil() as u8;
+                let limit = crate::ui::saturate_u8((255.0 * theme::DISABLED_ALPHA).ceil());
                 assert!(
                     rectangle.fill.a() > 0 && rectangle.fill.a() <= limit,
                     "a disabled primary is faded to the disabled opacity, got {:?}",
@@ -359,9 +343,8 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         let mut value = 0;
         for frame in 0..2 {
-            let mut output = ctx.run_ui(Default::default(), |ui| {
-                crate::ui::kit::choice::Segmented::new(&mut value, &[(0, "One"), (1, "Two")])
-                    .show(ui);
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                kit::choice::Segmented::new(&mut value, &[(0, "One"), (1, "Two")]).show(ui);
             });
             output.textures_delta.clear();
             if frame == 0 {

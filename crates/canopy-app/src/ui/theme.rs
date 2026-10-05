@@ -6,6 +6,14 @@
 //! [`Metrics`], one table per ([`Density`], [`Style`]) pair. The active theme, style, density and
 //! translucency are globals set by [`apply`], so views ask [`palette`], [`surfaces`], [`metrics`]
 //! and [`appearance`] without knowing which is active.
+#![expect(
+    clippy::disallowed_methods,
+    reason = "the palette: the one module that makes colours"
+)]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "colours are written 0xRRGGBB, as design tools show them"
+)]
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -31,7 +39,7 @@ pub const DISABLED_ALPHA: f32 = 0.42;
 /// A disabled icon-only button's opacity.
 pub const DISABLED_ICON_ALPHA: f32 = 0.40;
 
-pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
+pub const MIN_WINDOW_SIZE: egui::Vec2 = vec2(900.0, 560.0);
 /// Shared control geometry, in logical points before interface zoom.
 pub const CONTROL_INSET: f32 = 2.0;
 /// Tallest raw-output viewport of a notification card.
@@ -226,7 +234,8 @@ pub struct Syntax {
 }
 
 const fn hex(rgb: u32) -> Color32 {
-    Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+    let [_, r, g, b] = rgb.to_be_bytes();
+    Color32::from_rgb(r, g, b)
 }
 
 // Generated from the design spec's `themes.json` (spec/themes.py, contrast-fitted) plus the
@@ -1697,28 +1706,28 @@ pub enum ThemeId {
 
 impl ThemeId {
     /// Every theme, in menu order.
-    pub const ALL: [ThemeId; 8] = [
-        ThemeId::Midnight,
-        ThemeId::Daylight,
-        ThemeId::Aurora,
-        ThemeId::Ember,
-        ThemeId::Neon,
-        ThemeId::Forest,
-        ThemeId::Paper,
-        ThemeId::Contrast,
+    pub const ALL: [Self; 8] = [
+        Self::Midnight,
+        Self::Daylight,
+        Self::Aurora,
+        Self::Ember,
+        Self::Neon,
+        Self::Forest,
+        Self::Paper,
+        Self::Contrast,
     ];
 
     /// The theme's colours.
     pub fn palette(self) -> &'static Palette {
         match self {
-            ThemeId::Midnight => &MIDNIGHT,
-            ThemeId::Daylight => &DAYLIGHT,
-            ThemeId::Aurora => &AURORA,
-            ThemeId::Ember => &EMBER,
-            ThemeId::Neon => &NEON,
-            ThemeId::Forest => &FOREST,
-            ThemeId::Paper => &PAPER,
-            ThemeId::Contrast => &CONTRAST,
+            Self::Midnight => &MIDNIGHT,
+            Self::Daylight => &DAYLIGHT,
+            Self::Aurora => &AURORA,
+            Self::Ember => &EMBER,
+            Self::Neon => &NEON,
+            Self::Forest => &FOREST,
+            Self::Paper => &PAPER,
+            Self::Contrast => &CONTRAST,
         }
     }
 
@@ -1728,20 +1737,24 @@ impl ThemeId {
     }
 
     /// The theme for a `--theme` argument: the display name or the variant name, any case.
-    pub fn from_name(name: &str) -> Option<ThemeId> {
+    pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|t| {
             t.name().eq_ignore_ascii_case(name) || format!("{t:?}").eq_ignore_ascii_case(name)
         })
     }
 
     /// The theme after this one, wrapping around.
-    pub fn next(self) -> ThemeId {
+    pub fn next(self) -> Self {
         let i = Self::ALL.iter().position(|t| *t == self).unwrap_or(0);
         Self::ALL[(i + 1) % Self::ALL.len()]
     }
 
     fn index(self) -> u8 {
-        Self::ALL.iter().position(|t| *t == self).unwrap_or(0) as u8
+        Self::ALL
+            .iter()
+            .position(|t| *t == self)
+            .and_then(|i| u8::try_from(i).ok())
+            .unwrap_or(0)
     }
 }
 
@@ -1755,17 +1768,17 @@ pub enum Style {
 }
 
 impl Style {
-    pub const ALL: [Style; 2] = [Style::Standard, Style::Deeper];
+    pub const ALL: [Self; 2] = [Self::Standard, Self::Deeper];
 
     pub fn label(self) -> &'static str {
         match self {
-            Style::Standard => "Standard",
-            Style::Deeper => "Deeper",
+            Self::Standard => "Standard",
+            Self::Deeper => "Deeper",
         }
     }
 
     /// The style for a `--style` argument.
-    pub fn from_name(name: &str) -> Option<Style> {
+    pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
             .find(|s| s.label().eq_ignore_ascii_case(name))
@@ -1781,17 +1794,17 @@ pub enum Density {
 }
 
 impl Density {
-    pub const ALL: [Density; 2] = [Density::Comfortable, Density::Dense];
+    pub const ALL: [Self; 2] = [Self::Comfortable, Self::Dense];
 
     pub fn label(self) -> &'static str {
         match self {
-            Density::Comfortable => "Comfortable",
-            Density::Dense => "Dense",
+            Self::Comfortable => "Comfortable",
+            Self::Dense => "Dense",
         }
     }
 
     /// The density for a `--density` argument.
-    pub fn from_name(name: &str) -> Option<Density> {
+    pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
             .find(|d| d.label().eq_ignore_ascii_case(name))
@@ -1823,9 +1836,9 @@ pub enum GlassBlocked {
 impl GlassBlocked {
     pub fn reason(self) -> &'static str {
         match self {
-            GlassBlocked::Theme => "Not available with the Contrast theme",
-            GlassBlocked::System => "Your system asks for reduced transparency",
-            GlassBlocked::Backend => "Not supported by this graphics driver",
+            Self::Theme => "Not available with the Contrast theme",
+            Self::System => "Your system asks for reduced transparency",
+            Self::Backend => "Not supported by this graphics driver",
         }
     }
 }
@@ -1971,7 +1984,7 @@ impl Palette {
     }
 
     fn overlay_alpha(&self, dark: u8, light: u8) -> Color32 {
-        Palette::tint(self.hover_ink, if self.dark { dark } else { light })
+        Self::tint(self.hover_ink, if self.dark { dark } else { light })
     }
 
     /// Hovered rows and quiet controls: a translucent tint drawn over any surface.
@@ -1997,30 +2010,30 @@ impl Palette {
     /// Fill of the selected row in lists, the graph, the sidebar, the palette and diffs, and of
     /// egui's selected values. Every text colour stays readable on it (see the contrast test).
     pub fn selected(&self) -> Color32 {
-        Palette::tint(self.selection, self.selection_alpha)
+        Self::tint(self.selection, self.selection_alpha)
     }
 
     /// Status tints (16%): dialog glyph discs, banners, callouts.
     pub fn success_tint(&self) -> Color32 {
-        Palette::tint(self.success, 41)
+        Self::tint(self.success, 41)
     }
 
     pub fn warning_tint(&self) -> Color32 {
-        Palette::tint(self.warning, 41)
+        Self::tint(self.warning, 41)
     }
 
     /// Concept 1's danger tint, from `danger_base`: the destructive dialog's glyph disc.
     pub fn danger_tint(&self) -> Color32 {
-        Palette::tint(self.danger_base, 41)
+        Self::tint(self.danger_base, 41)
     }
 
     pub fn accent_tint(&self) -> Color32 {
-        Palette::tint(self.accent, 41)
+        Self::tint(self.accent, 41)
     }
 
     /// Highlight of a danger menu item (15% of `danger_base`).
     pub fn danger_highlight(&self) -> Color32 {
-        Palette::tint(self.danger_base, 38)
+        Self::tint(self.danger_base, 38)
     }
 
     /// The surfaces a coloured component (pill, badge, avatar) can sit on in `s`: plain surfaces,
@@ -2059,39 +2072,39 @@ impl Palette {
         let behind = self.component_surfaces(s).map(|b| over(fill, b));
         let readable = |c: Color32| behind.iter().all(|b| contrast(c, *b) >= 4.5);
         (0..=20)
-            .map(|step| mix(fg, self.text, step as f32 / 20.0))
+            .map(|step| mix(fg, self.text, crate::ui::int_f32(step) / 20.0))
             .find(|c| readable(*c))
             .unwrap_or(self.text)
     }
 
     /// Fill of a ref pill in colour `c` (15%); the current branch is stronger (26%).
     pub const fn pill_fill(c: Color32, current: bool) -> Color32 {
-        Palette::tint(c, if current { 66 } else { 38 })
+        Self::tint(c, if current { 66 } else { 38 })
     }
 
     /// The ring of a ref pill (42%), the same for the current branch.
     pub const fn pill_border(c: Color32) -> Color32 {
-        Palette::tint(c, 107)
+        Self::tint(c, 107)
     }
 
     /// Fill of an initials avatar in colour `c` (24%).
-    pub fn avatar_fill(&self, c: Color32) -> Color32 {
-        Palette::tint(c, 61)
+    pub const fn avatar_fill(c: Color32) -> Color32 {
+        Self::tint(c, 61)
     }
 
     /// Fill of a count badge in colour `c` (24%).
     pub const fn badge_fill(c: Color32) -> Color32 {
-        Palette::tint(c, 61)
+        Self::tint(c, 61)
     }
 
     /// Fill of a danger count badge (22% of `danger_base`), labelled in `ink(danger, ..)`.
     pub fn danger_badge_fill(&self) -> Color32 {
-        Palette::tint(self.danger_base, 56)
+        Self::tint(self.danger_base, 56)
     }
 
     /// Fill of a file status letter in colour `c` (18%).
     pub const fn change_fill(c: Color32) -> Color32 {
-        Palette::tint(c, 46)
+        Self::tint(c, 46)
     }
 
     /// A translucent version of `c` for fills behind text (premultiplied).
@@ -2167,7 +2180,8 @@ pub fn contrast(a: Color32, b: Color32) -> f64 {
 /// Translucent `fg` drawn over opaque `bg`, as the GPU blends it (`Color32` is premultiplied).
 pub fn over(fg: Color32, bg: Color32) -> Color32 {
     let a = f32::from(fg.a()) / 255.0;
-    let mix = |f: u8, b: u8| (f32::from(f) + f32::from(b) * (1.0 - a)).round() as u8;
+    let mix =
+        |f: u8, b: u8| crate::ui::saturate_u8((f32::from(f) + f32::from(b) * (1.0 - a)).round());
     Color32::from_rgb(
         mix(fg.r(), bg.r()),
         mix(fg.g(), bg.g()),
@@ -2177,7 +2191,9 @@ pub fn over(fg: Color32, bg: Color32) -> Color32 {
 
 /// `a` moved towards `b` by `t` (0 to 1).
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
-    let m = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    let m = |x: u8, y: u8| {
+        crate::ui::saturate_u8((f32::from(x) + (f32::from(y) - f32::from(x)) * t).round())
+    };
     Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }
 
@@ -2200,6 +2216,11 @@ pub fn clamp_backdrop(c: Color32, dark: bool, cap: f32) -> Color32 {
             ((v + 0.055) / 1.055).powf(2.4)
         }
     };
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "v is clamped to 0..=1 first, so the channel is 0..=255"
+    )]
     let to_srgb = |v: f64| {
         let v = v.clamp(0.0, 1.0);
         let s = if v <= 0.003_130_8 {
@@ -2281,6 +2302,11 @@ pub struct Material {
     pub layers: &'static [ShadowLayer],
 }
 
+/// The colour of a material's top highlight line: white at `alpha` (`Material::highlight`).
+pub fn highlight_line(alpha: u8) -> Color32 {
+    Color32::from_white_alpha(alpha)
+}
+
 /// Elevation levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Elevation {
@@ -2307,17 +2333,17 @@ pub enum Elevation {
 }
 
 impl Elevation {
-    pub const ALL: [Elevation; 10] = [
-        Elevation::Control,
-        Elevation::Thumb,
-        Elevation::Knob,
-        Elevation::Tab,
-        Elevation::Primary,
-        Elevation::Danger,
-        Elevation::Floating,
-        Elevation::Pane,
-        Elevation::Field,
-        Elevation::Deck,
+    pub const ALL: [Self; 10] = [
+        Self::Control,
+        Self::Thumb,
+        Self::Knob,
+        Self::Tab,
+        Self::Primary,
+        Self::Danger,
+        Self::Floating,
+        Self::Pane,
+        Self::Field,
+        Self::Deck,
     ];
 }
 
@@ -3313,7 +3339,7 @@ pub fn with_look<R>(style: Style, density: Density, f: impl FnOnce() -> R) -> R 
 
 /// Makes `id` the active theme with `look`'s style, density, glass and motion, and installs the
 /// matching egui style on `ctx`.
-pub fn apply(ctx: &egui::Context, id: ThemeId, look: &Appearance) {
+pub fn apply(ctx: &egui::Context, id: ThemeId, look: Appearance) {
     look_set(id, look.style, look.density, look.glass);
     super::motion::set_reduced(look.reduce_motion);
     let p = id.palette();
@@ -3342,8 +3368,8 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, look: &Appearance) {
     sp.item_spacing = m.item_spacing;
     sp.button_padding = vec2(m.button_pad_x, m.button_pad_y);
     sp.interact_size.y = m.control;
-    sp.window_margin = Margin::same(m.dialog_pad as i8);
-    sp.menu_margin = Margin::same(m.menu_pad as i8);
+    sp.window_margin = Margin::same(crate::ui::points_i8(m.dialog_pad));
+    sp.menu_margin = Margin::same(crate::ui::points_i8(m.menu_pad));
     sp.menu_spacing = 1.0;
     sp.indent = m.tree_indent;
     sp.icon_width = m.checkbox;
@@ -3391,7 +3417,7 @@ mod tests {
         }
     }
 
-    /// (text, text_dim, text_faint, outline and focus) minimums: Contrast is stricter.
+    /// (`text`, `text_dim`, `text_faint`, `outline` and `focus`) minimums: Contrast is stricter.
     fn targets(p: &Palette) -> (f64, f64, f64, f64) {
         if p.strict {
             (10.0, 7.0, 5.5, 4.5)
@@ -3716,7 +3742,7 @@ mod tests {
                     let mut fills = vec![
                         Palette::pill_fill(c, false),
                         Palette::pill_fill(c, true),
-                        p.avatar_fill(c),
+                        Palette::avatar_fill(c),
                         Palette::badge_fill(c),
                         Palette::change_fill(c),
                     ];
@@ -3900,7 +3926,7 @@ mod tests {
                     glass: false,
                     reduce_motion: true,
                 };
-                apply(&ctx, ThemeId::Midnight, &look);
+                apply(&ctx, ThemeId::Midnight, look);
                 let m = metrics_for(density, style);
                 let s = ctx.style_of(Theme::Dark);
                 assert_eq!(

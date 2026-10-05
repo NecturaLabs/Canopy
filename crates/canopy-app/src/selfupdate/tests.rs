@@ -1,5 +1,3 @@
-use std::io::{Read, Write};
-
 use super::*;
 
 fn write(path: &Path, text: &str) {
@@ -195,9 +193,9 @@ fn a_plan_accepts_canopys_own_release_and_nothing_else() {
         );
     }
     let no_platform = UpdateManifest::parse(br#"{"version":"412"}"#).expect("manifest");
-    assert!(Plan::from_manifest(&no_platform, base).is_err());
+    Plan::from_manifest(&no_platform, base).unwrap_err();
     let semver = UpdateManifest::parse(br#"{"version":"0.2.1-beta.1"}"#).expect("manifest");
-    assert!(Plan::from_manifest(&semver, base).is_err());
+    Plan::from_manifest(&semver, base).unwrap_err();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -468,6 +466,21 @@ fn the_lock_is_exclusive_and_released() {
 }
 
 #[test]
+fn a_lock_that_cannot_be_made_says_why() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let missing = tmp.path().join("not-installed");
+    let err = Lock::take(&missing).map(|_| ()).expect_err("no folder");
+    assert!(
+        !err.contains("another Canopy install or update is running"),
+        "{err}"
+    );
+    assert!(
+        err.contains(&missing.join(".lock").display().to_string()),
+        "{err}"
+    );
+}
+
+#[test]
 fn the_receipt_is_read_and_registered_copies_follow_the_new_files() {
     let tmp = tempfile::tempdir().expect("tmp");
     let root = tmp.path().join("root");
@@ -544,7 +557,7 @@ fn the_receipt_is_read_and_registered_copies_follow_the_new_files() {
         assert!(is_symlink(&svg), "a symlink is never removed");
     }
     let receipt = parse_receipt(&read(&root.join(RECEIPT)));
-    assert_eq!(receipt.desktops, vec![entry.clone()]);
+    assert_eq!(receipt.desktops, vec![entry]);
     assert_eq!(receipt.icons.len(), 1);
     assert_eq!(receipt.icons[0].0, png);
     #[cfg(unix)]
@@ -703,7 +716,7 @@ fn release_archive() -> Vec<u8> {
 
 /// An installed Canopy (build 412) the way the installer leaves it, with its registered copies.
 struct Installed412 {
-    _tmp: tempfile::TempDir,
+    tmp: tempfile::TempDir,
     root: PathBuf,
     entry: PathBuf,
     png: PathBuf,
@@ -751,7 +764,7 @@ fn installed() -> Installed412 {
         ),
     );
     Installed412 {
-        _tmp: tmp,
+        tmp,
         root,
         entry,
         png,
@@ -793,7 +806,7 @@ fn an_update_replaces_the_install_and_everything_registered_with_it() {
     );
     let mut phases = Vec::new();
     let done = install_managed(&old.root, &plan_for(&base, &bytes, None), &mut |p| {
-        phases.push(p)
+        phases.push(p);
     })
     .expect("update");
     let root = fs::canonicalize(&old.root).expect("root");
@@ -1007,11 +1020,11 @@ fn a_binary_in_an_install_folder_with_its_receipt_is_managed() {
         }
     );
     // No receipt, a receipt for another folder, a binary outside bin/: all "other".
-    let elsewhere = old._tmp.path().join("other/bin/canopy");
+    let elsewhere = old.tmp.path().join("other/bin/canopy");
     write(&elsewhere, "x");
     assert_eq!(detect_from(&elsewhere), Install::Other);
     write(
-        &old._tmp.path().join("other").join(RECEIPT),
+        &old.tmp.path().join("other").join(RECEIPT),
         &format!("root={}\n", old.root.display()),
     );
     assert_eq!(
@@ -1019,7 +1032,7 @@ fn a_binary_in_an_install_folder_with_its_receipt_is_managed() {
         Install::Other,
         "the receipt names another folder"
     );
-    let loose = old._tmp.path().join("loose/canopy");
+    let loose = old.tmp.path().join("loose/canopy");
     write(&loose, "x");
     assert_eq!(detect_from(&loose), Install::Other);
     assert_eq!(
@@ -1071,7 +1084,7 @@ fn the_installer_fallback_reports_a_failure_and_refuses_a_foreign_script() {
     assert!(err.contains("is not Canopy's installer"), "{err}");
 
     let missing = serve(vec![], 1);
-    assert!(install_with_installer(&missing, 413, &mut |_| {}).is_err());
+    install_with_installer(&missing, 413, &mut |_| {}).unwrap_err();
 }
 
 #[test]

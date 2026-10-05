@@ -258,7 +258,7 @@ fn the_workspace_denies_unsafe_code() {
 
 #[test]
 fn comments_and_strings_are_not_code() {
-    let src = r####"
+    let src = r###"
 // unsafe in a comment
 /* unsafe /* nested unsafe */ still comment */
 /// unsafe doc
@@ -270,7 +270,7 @@ let e = '"'; let f = '\''; let g = b'\\';
 fn h<'a>(x: &'a str) -> &'a str { 'outer: loop { break 'outer x; } }
 let not_unsafe = 1; let unsafe_ish = 2;
 unsafe { real() }
-"####;
+"###;
     let hits: Vec<usize> = words(&code_only(src))
         .into_iter()
         .filter(|(_, w)| w == "unsafe")

@@ -31,7 +31,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
         .show(ui, |ui| {
             // Sit the whole stack a little above the middle, from its height last frame; a tall
             // window otherwise leaves everything in its upper half.
-            let height_id = egui::Id::new("welcome-content-height");
+            let height_id = Id::new("welcome-content-height");
             let last: f32 = ui.ctx().data(|d| d.get_temp(height_id)).unwrap_or(0.0);
             let top = if rect.height() < 400.0 {
                 theme::XS
@@ -191,6 +191,10 @@ fn glow(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(center, color);
     for i in 0..=SEGMENTS {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "at most 64 segments, exact in f32"
+        )]
         let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
         mesh.colored_vertex(
             center + vec2(a.cos(), a.sin()) * radius,
@@ -335,11 +339,7 @@ mod tests {
     fn quick_action_text_fits_a_minimum_zoomed_window() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut card_rect = egui::Rect::NOTHING;
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             card_rect = card(
@@ -369,11 +369,7 @@ mod tests {
     fn the_ambient_glow_stops_repainting_once_it_has_settled() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::default(),
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::default());
         let mut input = egui::RawInput::default();
         let mut repaint = std::time::Duration::ZERO;
         for frame in 0..40 {

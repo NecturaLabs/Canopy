@@ -2,6 +2,8 @@
 //! for notes, pull request descriptions and comments (headings, bullets, paragraphs, inline
 //! code). Anything fancier is shown as plain text.
 
+use std::sync::Arc;
+
 use egui::{FontId, RichText, Ui};
 
 use super::theme::{self, palette};
@@ -15,7 +17,7 @@ pub fn changelog_section(changelog: &str, version: &str) -> Option<String> {
     let mut lines = changelog.lines().skip_while(|l| !l.starts_with(&header));
     lines.next()?;
     let body: Vec<&str> = lines
-        .take_while(|l| !l.starts_with("## [") && !(l.starts_with('[') && l.contains("]: ")))
+        .take_while(|l| !(l.starts_with("## [") || (l.starts_with('[') && l.contains("]: "))))
         .collect();
     let text = body.join("\n").trim().to_owned();
     (!text.is_empty()).then_some(text)
@@ -50,9 +52,9 @@ fn blocks(text: &str) -> Vec<String> {
 #[derive(Default)]
 struct Blocks;
 
-impl egui::cache::ComputerMut<&str, std::sync::Arc<Vec<String>>> for Blocks {
-    fn compute(&mut self, text: &str) -> std::sync::Arc<Vec<String>> {
-        std::sync::Arc::new(blocks(text))
+impl egui::cache::ComputerMut<&str, Arc<Vec<String>>> for Blocks {
+    fn compute(&mut self, text: &str) -> Arc<Vec<String>> {
+        Arc::new(blocks(text))
     }
 }
 
@@ -61,10 +63,11 @@ pub fn markdown(ui: &mut Ui, text: &str) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let parsed = ui.memory_mut(|mem| {
-        mem.caches
-            .cache::<egui::cache::FrameCache<std::sync::Arc<Vec<String>>, Blocks>>()
-            .get(text)
-            .clone()
+        Arc::clone(
+            mem.caches
+                .cache::<egui::cache::FrameCache<Arc<Vec<String>>, Blocks>>()
+                .get(text),
+        )
     });
     let paragraph = |text: String| RichText::new(text).size(m.body_size).color(p.text_dim);
     for block in parsed.iter() {

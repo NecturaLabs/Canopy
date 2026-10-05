@@ -369,12 +369,12 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             let reveal = if forced_open || st.by_keyboard || motion::reduced() {
                 1.0
             } else {
-                ((now - st.opened_at) as f32 / motion::SLOW).clamp(0.0, 1.0)
+                (crate::ui::to_f32(now - st.opened_at) / motion::SLOW).clamp(0.0, 1.0)
             };
             let fade = if forced_open || st.by_keyboard || motion::reduced() {
                 1.0
             } else {
-                ((now - st.opened_at) as f32 / FADE_IN).clamp(0.0, 1.0)
+                (crate::ui::to_f32(now - st.opened_at) / FADE_IN).clamp(0.0, 1.0)
             };
             if reveal < 1.0 || fade < 1.0 {
                 ctx.request_repaint();
@@ -384,7 +384,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             }
             let anchor = rect.expand2(vec2(LIST_OVERHANG, 0.0));
             let item_h = m.menu_item_height;
-            let rows = self.options.len() as f32;
+            let rows = crate::ui::count_f32(self.options.len());
             let list_w = anchor
                 .width()
                 .max(LIST_MIN_WIDTH.min(anchor.width() + 120.0));
@@ -668,7 +668,7 @@ mod tests {
         assert_eq!(v, 0, "moving the highlight does not choose");
         let mut changed = false;
         frame(&ctx, key(Key::Enter), |ui| {
-            changed = show(ui, &mut v).changed()
+            changed = show(ui, &mut v).changed();
         });
         assert!(changed);
         assert_eq!(v, 1, "Enter chooses the highlighted option");
@@ -726,7 +726,7 @@ mod tests {
             show(ui, &mut v);
         });
         let m = theme::metrics();
-        let row = egui::pos2(
+        let row = pos2(
             rect.center().x,
             rect.bottom() + LIST_GAP + m.menu_pad + 2.5 * m.menu_item_height,
         );

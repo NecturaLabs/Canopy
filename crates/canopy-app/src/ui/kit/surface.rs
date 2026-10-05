@@ -3,6 +3,8 @@
 //! (a table pane's header strip, whose top edge is its own colour in Deeper), [`Deck`] (the top
 //! bars), [`Card`], [`Banner`], [`Callout`], [`EmptyState`] and [`InsetBox`].
 
+use std::sync::Arc;
+
 use egui::{
     Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Margin, Painter, Rect, Response,
     Sense, Shape, Stroke, Ui, UiBuilder, Widget, WidgetInfo, WidgetType, pos2, vec2,
@@ -65,7 +67,7 @@ fn shown_for(ctx: &egui::Context, id: Id) -> f32 {
         d.insert_temp(key, (frame, since));
         since
     });
-    (now - since) as f32
+    crate::ui::to_f32(now - since)
 }
 
 /// Progress of an appearance over `seconds` (`EASE_OUT`), restarting whenever the thing was not
@@ -493,7 +495,6 @@ impl Card {
         let enabled = self.enabled && ui.is_enabled();
         let sense = match (self.interactive, enabled) {
             (true, true) => Sense::click(),
-            (true, false) => Sense::hover(),
             _ => Sense::hover(),
         };
         let slot = ui.painter().add(Shape::Noop);
@@ -509,7 +510,7 @@ impl Card {
                 ui.multiply_opacity(theme::DISABLED_ALPHA);
             }
             egui::Frame::new()
-                .inner_margin(Margin::same(pad as i8))
+                .inner_margin(Margin::same(crate::ui::points_i8(pad)))
                 .show(ui, |ui| {
                     if let Some(w) = self.width {
                         ui.set_width((w - 2.0 * pad).max(0.0));
@@ -558,8 +559,8 @@ impl Card {
             (false, None) => Some(rest_ring.lerp_to_gamma(s.edge, lit)),
         };
         let painter = ui.painter();
-        let mut shapes = match level {
-            Some(level) => paint::surface_shapes(
+        let mut shapes = if let Some(level) = level {
+            paint::surface_shapes(
                 painter,
                 rect,
                 radius,
@@ -568,19 +569,18 @@ impl Card {
                 level,
                 Fill::flat(fill),
                 ring,
-            ),
-            None => {
-                let mut v = vec![Shape::rect_filled(rect, radius, fill)];
-                if let Some(c) = ring {
-                    v.push(Shape::rect_stroke(
-                        rect,
-                        radius,
-                        Stroke::new(paint::SEAM, c),
-                        egui::StrokeKind::Inside,
-                    ));
-                }
-                v
+            )
+        } else {
+            let mut v = vec![Shape::rect_filled(rect, radius, fill)];
+            if let Some(c) = ring {
+                v.push(Shape::rect_stroke(
+                    rect,
+                    radius,
+                    Stroke::new(paint::SEAM, c),
+                    egui::StrokeKind::Inside,
+                ));
             }
+            v
         };
         if self.selected {
             shapes.push(Shape::rect_stroke(
@@ -746,14 +746,14 @@ impl Banner {
             let glyph = self.icon.as_deref().unwrap_or(tone_glyph(self.tone));
             let g =
                 painter.layout_no_wrap(glyph.to_owned(), FontId::proportional(m.icon_lg), tone_c);
-            painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), tone_c);
+            painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(&g), tone_c);
             x += g.size().x + theme::SM;
             let t = painter.layout_no_wrap(
                 self.title.clone(),
                 FontId::new(m.body_size, theme::semibold()),
                 p.text,
             );
-            painter.galley(pos2(x, cy - t.size().y / 2.0), t.clone(), p.text);
+            painter.galley(pos2(x, cy - t.size().y / 2.0), Arc::clone(&t), p.text);
             x += t.size().x + theme::SM;
             let mut child = ui.new_child(
                 UiBuilder::new()
@@ -890,6 +890,10 @@ impl InsetBox {
         Self
     }
 
+    #[expect(
+        clippy::unused_self,
+        reason = "`InsetBox::new().show(ui, ..)` reads like every other kit builder"
+    )]
     pub fn show<R>(self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> KitResponse<R> {
         let s = theme::surfaces(ui.ctx());
         let m = theme::metrics();
@@ -1262,7 +1266,10 @@ pub(crate) fn gallery(ui: &mut Ui) {
     ];
     for (i, empty) in empties.into_iter().enumerate() {
         let r = Rect::from_min_size(
-            pos2(rect.left() + i as f32 * (third + theme::SM), rect.top()),
+            pos2(
+                rect.left() + crate::ui::count_f32(i) * (third + theme::SM),
+                rect.top(),
+            ),
             vec2(third, rect.height()),
         );
         let mut child = ui.new_child(UiBuilder::new().max_rect(r));
@@ -1274,7 +1281,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
             } else {
                 PaneGround::Pane
             })
-            .margin(Margin::same(theme::SM as i8))
+            .margin(Margin::same(crate::ui::points_i8(theme::SM)))
             .show(&mut child, |ui| empty.show(ui).value);
         if let Some(action) = shown.value {
             ui.ctx()
@@ -1445,7 +1452,7 @@ mod tests {
     fn ctx() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
     }
 
@@ -1469,7 +1476,7 @@ mod tests {
         theme::apply(
             ctx,
             theme::ThemeId::Midnight,
-            &theme::Appearance {
+            theme::Appearance {
                 style,
                 density,
                 ..theme::Appearance::STILL
@@ -1560,7 +1567,7 @@ mod tests {
                         physical_key: None,
                         pressed: true,
                         repeat: false,
-                        modifiers: Default::default(),
+                        modifiers: egui::Modifiers::default(),
                     }]
                 } else {
                     Vec::new()
@@ -1664,7 +1671,7 @@ mod tests {
                 theme::apply(
                     &ctx,
                     id,
-                    &theme::Appearance {
+                    theme::Appearance {
                         style,
                         ..theme::Appearance::STILL
                     },
@@ -1734,13 +1741,10 @@ mod tests {
                 },
             );
             out.textures_delta.clear();
-            out.shapes
-                .iter()
-                .filter_map(|c| match &c.shape {
-                    Shape::Text(t) => Some(t.pos.y),
-                    _ => None,
-                })
-                .next()
+            out.shapes.iter().find_map(|c| match &c.shape {
+                Shape::Text(t) => Some(t.pos.y),
+                _ => None,
+            })
         };
         let first = title_y();
         let settled = title_y();
