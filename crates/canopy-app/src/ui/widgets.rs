@@ -307,21 +307,6 @@ pub fn combo_caret(ui: &Ui, rect: egui::Rect, visuals: &egui::style::WidgetVisua
     );
 }
 
-/// The caret of every `CollapsingHeader` (`icon`), matching the app's other expanders.
-pub fn collapse_caret(ui: &mut Ui, openness: f32, response: &Response) {
-    ui.painter().text(
-        response.rect.center(),
-        Align2::CENTER_CENTER,
-        if openness > 0.5 {
-            icon::CARET_DOWN
-        } else {
-            icon::CARET_RIGHT
-        },
-        FontId::proportional(theme::BODY_SIZE),
-        ui.style().interact(response).fg_stroke.color,
-    );
-}
-
 /// egui paints a slider's rail in the inactive widget fill, which is often the surface behind it:
 /// recess it like the segmented control's track so the whole range shows, and fill the chosen
 /// part with the accent rather than the pale selection tint.
@@ -516,59 +501,6 @@ pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> Response {
     resp
 }
 
-/// An on/off switch named `label` for assistive technology (the visible label is the setting's
-/// row). Returns whether it was flipped.
-pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
-    let p = palette(ui.ctx());
-    let enabled = ui.is_enabled();
-    let size = theme::SWITCH_SIZE;
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let flipped = resp.clicked();
-    if flipped {
-        *on = !*on;
-    }
-    let t = ui
-        .ctx()
-        .animate_bool_with_time(resp.id, *on, super::motion::time(super::motion::FAST));
-    let hovered = enabled && resp.hovered();
-    let radius = CornerRadius::same(theme::RADIUS_LG);
-    let off_fill = if hovered { p.hover() } else { p.bg() };
-    let fill = off_fill.lerp_to_gamma(p.button(), t);
-    let stroke = p.control_border.lerp_to_gamma(p.button(), t);
-    ui.painter().rect(
-        rect,
-        radius,
-        fill,
-        Stroke::new(1.0, stroke),
-        egui::StrokeKind::Inside,
-    );
-    let r = (size.y - 2.0 * theme::CONTROL_INSET - 2.0) / 2.0;
-    let cx = egui::lerp((rect.left() + 3.0 + r)..=(rect.right() - 3.0 - r), t);
-    let thumb = if enabled {
-        p.text_dim.lerp_to_gamma(p.on_button(), t)
-    } else {
-        p.text_faint
-    };
-    ui.painter()
-        .circle_filled(pos2(cx, rect.center().y + 1.0), r, p.control_shadow().color);
-    ui.painter()
-        .circle_filled(pos2(cx, rect.center().y), r, thumb);
-    if resp.has_focus() {
-        ui.painter().rect_stroke(
-            rect.expand(2.0),
-            CornerRadius::same(12),
-            Stroke::new(1.5, p.accent),
-            egui::StrokeKind::Outside,
-        );
-    }
-    let name = label.to_owned();
-    let state = *on;
-    resp.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state, &name)
-    });
-    flipped
-}
-
 /// Height of the buttons in a list header, so "Stage all" and a menu beside it match.
 pub fn compact_h() -> f32 {
     kit::Size::Sm.height()
@@ -586,19 +518,6 @@ pub fn secondary_button(
     min_size: Vec2,
 ) -> Response {
     kit::Button::new(text).min_width(min_size.x).show(ui)
-}
-
-/// A destructive action outside a confirmation: a secondary button whose icon is `danger`.
-pub fn danger_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
-    let button = kit::Button::new(text)
-        .min_width(min_size.x)
-        .icon_tone(kit::Tone::Danger);
-    let button = if kit::button::split_glyph(text).0.is_none() {
-        button.icon(icon::TRASH)
-    } else {
-        button
-    };
-    button.show(ui)
 }
 
 /// The primary call to action sized to its label, at least `min_size.x` wide.
