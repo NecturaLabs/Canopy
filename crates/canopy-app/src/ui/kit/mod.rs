@@ -124,10 +124,6 @@ impl Tone {
 
 /// A component's response and the value it produced (a chosen option, an opened menu entry).
 #[derive(Debug)]
-#[expect(
-    dead_code,
-    reason = "returned by the component phase's choices, selects and menus"
-)]
 pub struct KitResponse<T> {
     pub response: Response,
     pub value: T,

@@ -1,2 +1,1878 @@
-//! `Card`, `Banner`, `Callout`, `EmptyState`, `InsetBox`, `PaneFrame` (design spec 4.20). Built in
-//! the component phase; `paint::pane` already paints a pane in either style.
+//! Surfaces (design spec 4.20, 7.1 and the owner's amendments): [`PaneFrame`] (flush in
+//! Standard, a floating card over gutters with the focused-pane edge in Deeper), [`PaneHeader`]
+//! (a table pane's header strip, whose top edge is its own colour in Deeper), [`Deck`] (the top
+//! bars), [`Card`], [`Banner`], [`Callout`], [`EmptyState`], [`InsetBox`] and [`Skeleton`].
+
+use egui::{
+    Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Margin, Painter, Rect, Response,
+    Sense, Shape, Stroke, Ui, UiBuilder, Widget, WidgetInfo, WidgetType, pos2, vec2,
+};
+use egui_phosphor::regular as icon;
+
+use super::button::{Button, LinkButton};
+use super::chip::KeyChord;
+use super::{ForceState, Interact, KitResponse, Size, Tone, anim, paint};
+use crate::keymap::Command;
+use crate::ui::art::{self, Art};
+use crate::ui::motion;
+use crate::ui::theme::{self, Elevation, Fill, Palette, Style};
+
+/// Which sides of a pane touch a neighbour or the window edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Sides {
+    pub left: bool,
+    pub right: bool,
+    pub top: bool,
+    pub bottom: bool,
+}
+
+impl Sides {
+    pub const NONE: Self = Self {
+        left: false,
+        right: false,
+        top: false,
+        bottom: false,
+    };
+    pub const ALL: Self = Self {
+        left: true,
+        right: true,
+        top: true,
+        bottom: true,
+    };
+    /// Concept 4's body padding: the gutter at the sides and below, none above (the deck).
+    pub const BODY: Self = Self {
+        left: true,
+        right: true,
+        top: false,
+        bottom: true,
+    };
+}
+
+/// Seconds since something was first shown in an unbroken run of frames: restarts when a frame
+/// passes without it.
+fn shown_for(ctx: &egui::Context, id: Id) -> f32 {
+    let key = id.with("kit-shown-since");
+    let frame = ctx.cumulative_frame_nr();
+    let now = ctx.input(|i| i.time);
+    let since = ctx.data_mut(|d| {
+        let (last, since) = d.get_temp::<(u64, f64)>(key).unwrap_or((u64::MAX, now));
+        let since = if last.wrapping_add(1) >= frame && last != u64::MAX {
+            since
+        } else {
+            now
+        };
+        d.insert_temp(key, (frame, since));
+        since
+    });
+    (now - since) as f32
+}
+
+/// Progress of an appearance over `seconds` (`EASE_OUT`), restarting whenever the thing was not
+/// shown in the frame before; 1 at once with reduced motion.
+fn appear(ctx: &egui::Context, id: Id, seconds: f32) -> f32 {
+    let seconds = motion::time(seconds);
+    let elapsed = shown_for(ctx, id);
+    if seconds <= 0.0 {
+        return 1.0;
+    }
+    let t = (elapsed / seconds).clamp(0.0, 1.0);
+    if t < 1.0 {
+        ctx.request_repaint();
+    }
+    motion::EASE_OUT.at(t)
+}
+
+// ---------------------------------------------------------------------------------- PaneFrame
+
+/// The ground a pane paints its content on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaneGround {
+    /// Content: tables, file lists, the diff (`Surfaces::pane`).
+    #[default]
+    Pane,
+    /// Chrome: the sidebar, settings navigation (`Surfaces::panel`).
+    Panel,
+}
+
+/// A content pane filling the space it is given. Standard: flush, `seams` on its shared edges.
+/// Deeper: a floating card (`pane_radius`, `pane_edge` ring, `Elevation::Pane`) inset by
+/// `pane_gutter` on its `gutters` sides, and while `focused` the focused-pane edge, fading in
+/// over `BASE`.
+#[derive(Debug, Clone, Copy)]
+#[must_use = "call .show(ui, ..)"]
+pub struct PaneFrame {
+    id_salt: Id,
+    ground: PaneGround,
+    focused: bool,
+    gutters: Sides,
+    seams: Sides,
+    margin: Margin,
+    force: Option<ForceState>,
+}
+
+impl PaneFrame {
+    pub fn new(id_salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        Self {
+            id_salt: Id::new(id_salt),
+            ground: PaneGround::Pane,
+            focused: false,
+            gutters: Sides::BODY,
+            seams: Sides::NONE,
+            margin: Margin::ZERO,
+            force: None,
+        }
+    }
+    pub fn ground(mut self, ground: PaneGround) -> Self {
+        self.ground = ground;
+        self
+    }
+    /// The pane holds the keyboard: Deeper draws the focused-pane edge.
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
+        self
+    }
+    /// Sides that get Deeper's gutter (default: left, right and bottom).
+    pub fn gutters(mut self, gutters: Sides) -> Self {
+        self.gutters = gutters;
+        self
+    }
+    /// Sides that get a 1 pt seam in Standard (shared with a neighbour).
+    pub fn seams(mut self, seams: Sides) -> Self {
+        self.seams = seams;
+        self
+    }
+    /// Space between the pane's edge and its content.
+    pub fn margin(mut self, margin: Margin) -> Self {
+        self.margin = margin;
+        self
+    }
+    pub(crate) fn force(mut self, force: ForceState) -> Self {
+        self.force = Some(force);
+        self
+    }
+
+    /// The pane's card inside `outer` in the active style.
+    pub fn card_rect(&self, outer: Rect) -> Rect {
+        let g = theme::metrics().pane_gutter;
+        let side = |on: bool| if on { g } else { 0.0 };
+        Rect::from_min_max(
+            pos2(
+                outer.left() + side(self.gutters.left),
+                outer.top() + side(self.gutters.top),
+            ),
+            pos2(
+                outer.right() - side(self.gutters.right),
+                outer.bottom() - side(self.gutters.bottom),
+            ),
+        )
+    }
+
+    pub fn show<R>(self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> KitResponse<R> {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let style = theme::style();
+        let s = p.surfaces(style);
+        let m = theme::metrics();
+        let outer = ui.available_rect_before_wrap();
+        let card = self.card_rect(outer);
+        let id = ui.id().with(self.id_salt);
+        let fill = match self.ground {
+            PaneGround::Pane => s.pane,
+            PaneGround::Panel => s.panel,
+        };
+        let focus = match self.force {
+            Some(f) => f32::from(u8::from(f.focus || self.focused)) * f.progress.unwrap_or(1.0),
+            None => anim::ease_bool(
+                &ctx,
+                id.with("kit-pane-focus"),
+                self.focused,
+                motion::BASE,
+                motion::BASE,
+            ),
+        };
+        let painter = ui.painter().clone();
+        let radius = if style == Style::Deeper {
+            CornerRadius::same(m.pane_radius)
+        } else {
+            CornerRadius::ZERO
+        };
+        if style == Style::Deeper {
+            paint::surface(
+                &painter,
+                card,
+                radius,
+                p,
+                style,
+                Elevation::Pane,
+                Fill::flat(fill),
+                None,
+            );
+        } else {
+            painter.rect_filled(card, CornerRadius::ZERO, fill);
+        }
+        let inner = card - self.margin;
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .id_salt(id.with("kit-pane-content"))
+                .max_rect(inner)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        child.set_clip_rect(card.intersect(ui.clip_rect()));
+        let value = add(&mut child);
+        // The ring and the focus edge go over the content, so a header strip at the top of the
+        // card cannot hide them.
+        if style == Style::Deeper {
+            if let Some(edge) = s.pane_edge {
+                paint::rim(&painter, card, radius, edge);
+            }
+            paint::focus_edge(&painter, card, radius, p.focus, focus);
+        } else {
+            let seam = |on: bool, f: &dyn Fn()| {
+                if on {
+                    f();
+                }
+            };
+            seam(self.seams.top, &|| {
+                paint::seam_h(&painter, card.x_range(), card.top() + 0.5, s.border);
+            });
+            seam(self.seams.bottom, &|| {
+                paint::seam_h(&painter, card.x_range(), card.bottom() - 0.5, s.border);
+            });
+            seam(self.seams.left, &|| {
+                paint::seam_v(&painter, card.left() + 0.5, card.y_range(), s.border);
+            });
+            seam(self.seams.right, &|| {
+                paint::seam_v(&painter, card.right() - 0.5, card.y_range(), s.border);
+            });
+        }
+        let response = ui.allocate_rect(outer, Sense::hover());
+        response.widget_info(|| WidgetInfo::new(WidgetType::Panel));
+        KitResponse { response, value }
+    }
+}
+
+// --------------------------------------------------------------------------------- PaneHeader
+
+/// How tall a pane header is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeaderKind {
+    /// A table's column header (`table_header_height`).
+    #[default]
+    Table,
+    /// The detail pane's header (`pane_header_height`).
+    Detail,
+    /// The diff's file header (`file_header_height`).
+    File,
+}
+
+/// The header strip at the top of a table pane (History's columns). Standard: the pane itself
+/// over a `border` seam, as concept 1. Deeper: a lifted `pane_header` tone over a seam tinted
+/// with `focus`, so the table's top edge never reads as one of the neutral pane edges; its top
+/// corners follow the card.
+#[derive(Debug, Clone, Copy)]
+#[must_use = "call .show(ui, ..)"]
+pub struct PaneHeader {
+    kind: HeaderKind,
+    top_of_pane: bool,
+}
+
+impl PaneHeader {
+    pub fn new(kind: HeaderKind) -> Self {
+        Self {
+            kind,
+            top_of_pane: true,
+        }
+    }
+
+    /// The header is the first thing in its pane (default): it takes the card's top corners.
+    pub fn top_of_pane(mut self, top: bool) -> Self {
+        self.top_of_pane = top;
+        self
+    }
+
+    pub fn height(self) -> f32 {
+        let m = theme::metrics();
+        match self.kind {
+            HeaderKind::Table => m.table_header_height,
+            HeaderKind::Detail => m.pane_header_height,
+            HeaderKind::File => m.file_header_height,
+        }
+    }
+
+    /// Paints the strip in `rect` (its seam on the bottom edge).
+    pub fn paint(self, painter: &Painter, rect: Rect) {
+        let p = theme::palette(painter.ctx());
+        let style = theme::style();
+        let s = p.surfaces(style);
+        let m = theme::metrics();
+        let r = if self.top_of_pane && style == Style::Deeper {
+            m.pane_radius
+        } else {
+            0
+        };
+        let radius = CornerRadius {
+            nw: r,
+            ne: r,
+            sw: 0,
+            se: 0,
+        };
+        painter.rect_filled(rect, radius, s.pane_header);
+        paint::seam_h(
+            painter,
+            rect.x_range(),
+            rect.bottom() - 0.5,
+            s.pane_header_seam,
+        );
+    }
+
+    /// Shows the strip across the available width; `add` lays out its content left to right,
+    /// vertically centred, 12 pt in.
+    pub fn show<R>(self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> KitResponse<R> {
+        let width = ui.available_width();
+        let (rect, response) = ui.allocate_exact_size(vec2(width, self.height()), Sense::hover());
+        self.paint(ui.painter(), rect);
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .max_rect(rect.shrink2(vec2(theme::MD, 0.0)))
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        let value = add(&mut child);
+        KitResponse { response, value }
+    }
+}
+
+/// A table column's header label: uppercase, `micro_size` semibold, tracked, `text_faint`.
+pub fn column_label(ui: &mut Ui, text: &str) -> Response {
+    let p = theme::palette(ui.ctx());
+    let g = super::row::caps_galley(ui, text, p.text_faint);
+    let (rect, response) = ui.allocate_exact_size(g.size(), Sense::hover());
+    ui.painter().galley(rect.min, g, p.text_faint);
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
+    response
+}
+
+// --------------------------------------------------------------------------------------- Deck
+
+/// The top bars: the repository tab strip and, with a repository open, the action bar.
+/// Standard paints each as flat chrome over its own seam. Deeper paints both as one lifted deck
+/// (its gradient, highlight and shadow onto the ground) with no seam between them, edged below by
+/// `deck_edge`, so the bars read as one instrument panel over the floating panes.
+#[derive(Debug, Clone, Copy)]
+#[must_use = "call .paint(painter, rect)"]
+pub struct Deck {
+    action_bar: bool,
+}
+
+impl Deck {
+    pub fn new(action_bar: bool) -> Self {
+        Self { action_bar }
+    }
+
+    /// The deck's height in the active metrics.
+    pub fn height(self) -> f32 {
+        let m = theme::metrics();
+        m.tab_strip_height
+            + if self.action_bar {
+                m.action_bar_height
+            } else {
+                0.0
+            }
+    }
+
+    /// Paints the deck across the top of `screen`; returns its rect.
+    pub fn paint(self, painter: &Painter, screen: Rect) -> Rect {
+        let p = theme::palette(painter.ctx());
+        let s = theme::surfaces(painter.ctx());
+        let m = theme::metrics();
+        let deck = Rect::from_min_size(screen.min, vec2(screen.width(), self.height()));
+        if theme::style() == Style::Deeper {
+            paint::deck(painter, deck, p, s);
+        } else {
+            let strip = Rect::from_min_size(screen.min, vec2(screen.width(), m.tab_strip_height));
+            paint::deck(painter, strip, p, s);
+            if self.action_bar {
+                let bar = Rect::from_min_size(
+                    pos2(screen.left(), strip.bottom()),
+                    vec2(screen.width(), m.action_bar_height),
+                );
+                paint::deck(painter, bar, p, s);
+            }
+        }
+        deck
+    }
+}
+
+// --------------------------------------------------------------------------------------- Card
+
+/// A framed group: welcome action cards, settings theme cards, conflict cards. Standard: `panel`
+/// with a 1 pt `border` ring and no shadow. Deeper: `pane` with the `pane_edge` ring and the pane
+/// shadow. An interactive card hovers (`hover` over its fill, `edge` ring), selects (`focus` ring
+/// 1.5 pt and the accent wash) and shows the outside focus ring; it never lifts.
+#[derive(Debug, Clone)]
+#[must_use = "call .show(ui, ..)"]
+pub struct Card {
+    id_salt: Option<Id>,
+    interactive: bool,
+    selected: bool,
+    enabled: bool,
+    ring: Option<Tone>,
+    width: Option<f32>,
+    label: Option<String>,
+    tooltip: Option<String>,
+    disabled_reason: Option<String>,
+    force: Option<ForceState>,
+}
+
+impl Card {
+    pub fn new() -> Self {
+        Self {
+            id_salt: None,
+            interactive: false,
+            selected: false,
+            enabled: true,
+            ring: None,
+            width: None,
+            label: None,
+            tooltip: None,
+            disabled_reason: None,
+            force: None,
+        }
+    }
+    /// The card is one button: hover, press, focus, and `clicked()` on its response.
+    pub fn interactive(mut self, on: bool) -> Self {
+        self.interactive = on;
+        self
+    }
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+    /// A ring in the tone's colour (conflict cards: warning unresolved, success resolved).
+    pub fn ring(mut self, tone: Tone) -> Self {
+        self.ring = Some(tone);
+        self
+    }
+    /// The card's outer width (default: what its content needs).
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+    /// The AccessKit name of an interactive card.
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+    pub fn tooltip(mut self, text: impl Into<String>) -> Self {
+        self.tooltip = Some(text.into());
+        self
+    }
+    pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
+        self.disabled_reason = Some(text.into());
+        self
+    }
+    pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        self.id_salt = Some(Id::new(salt));
+        self
+    }
+    pub(crate) fn force(mut self, force: ForceState) -> Self {
+        self.force = Some(force);
+        self
+    }
+
+    pub fn show<R>(self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> KitResponse<R> {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let style = theme::style();
+        let s = p.surfaces(style);
+        let m = theme::metrics();
+        let enabled = self.enabled && ui.is_enabled();
+        let sense = match (self.interactive, enabled) {
+            (true, true) => Sense::click(),
+            (true, false) => Sense::hover(),
+            _ => Sense::hover(),
+        };
+        let slot = ui.painter().add(Shape::Noop);
+        let mut builder = UiBuilder::new()
+            .sense(sense)
+            .layout(Layout::top_down(Align::Min));
+        if let Some(id) = self.id_salt {
+            builder = builder.id_salt(id);
+        }
+        let pad = m.card_pad;
+        let inner = ui.scope_builder(builder, |ui| {
+            if !enabled && ui.is_enabled() && self.interactive {
+                ui.multiply_opacity(theme::DISABLED_ALPHA);
+            }
+            egui::Frame::new()
+                .inner_margin(Margin::same(pad as i8))
+                .show(ui, |ui| {
+                    if let Some(w) = self.width {
+                        ui.set_width((w - 2.0 * pad).max(0.0));
+                    }
+                    add(ui)
+                })
+                .inner
+        });
+        let response = inner.response;
+        let rect = response.rect;
+        let st = if self.interactive {
+            Interact::of(&ctx, &response, enabled, self.force)
+        } else {
+            Interact {
+                hover: 0.0,
+                press: 0.0,
+                held: false,
+                focus: 0.0,
+            }
+        };
+        let radius = CornerRadius::same(m.card_radius);
+        let (base, rest_ring, level) = if style == Style::Deeper {
+            (
+                s.pane,
+                s.pane_edge.unwrap_or(s.border),
+                Some(Elevation::Pane),
+            )
+        } else {
+            (s.panel, s.border, None)
+        };
+        let mut fill = base;
+        if self.selected {
+            fill = theme::over(p.accent_tint(), fill);
+        }
+        let lit = st.hover.max(st.press);
+        if lit > 0.0 {
+            let over = p
+                .hover()
+                .lerp_to_gamma(p.pressed(), st.press)
+                .gamma_multiply(lit);
+            fill = theme::over(over, fill);
+        }
+        let ring = match (self.selected, self.ring) {
+            (true, _) => None,
+            (false, Some(t)) => Some(t.color(p)),
+            (false, None) => Some(rest_ring.lerp_to_gamma(s.edge, lit)),
+        };
+        let painter = ui.painter();
+        let mut shapes = match level {
+            Some(level) => paint::surface_shapes(
+                painter,
+                rect,
+                radius,
+                p,
+                style,
+                level,
+                Fill::flat(fill),
+                ring,
+            ),
+            None => {
+                let mut v = vec![Shape::rect_filled(rect, radius, fill)];
+                if let Some(c) = ring {
+                    v.push(Shape::rect_stroke(
+                        rect,
+                        radius,
+                        Stroke::new(paint::SEAM, c),
+                        egui::StrokeKind::Inside,
+                    ));
+                }
+                v
+            }
+        };
+        if self.selected {
+            shapes.push(Shape::rect_stroke(
+                rect,
+                radius,
+                Stroke::new(paint::INSET_FOCUS_WIDTH, p.focus),
+                egui::StrokeKind::Inside,
+            ));
+        }
+        if !enabled && self.interactive {
+            for sh in &mut shapes {
+                multiply_shape(sh, theme::DISABLED_ALPHA);
+            }
+        }
+        painter.set(slot, Shape::Vec(shapes));
+        if st.focus > 0.0 {
+            paint::focus_ring(
+                painter,
+                rect,
+                radius,
+                p.focus.gamma_multiply(st.focus),
+                Color32::TRANSPARENT,
+            );
+        }
+        if self.interactive {
+            let label = self.label.clone().unwrap_or_default();
+            response.widget_info(|| {
+                WidgetInfo::selected(WidgetType::Button, enabled, self.selected, &label)
+            });
+        }
+        let tip = if enabled {
+            self.tooltip
+        } else {
+            self.disabled_reason.or(self.tooltip)
+        };
+        let response = match tip {
+            Some(t) => response.on_hover_text(&t).on_disabled_hover_text(&t),
+            None => response,
+        };
+        KitResponse {
+            response,
+            value: inner.inner,
+        }
+    }
+}
+
+impl Default for Card {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Fades a painted shape (a disabled card's surface).
+fn multiply_shape(shape: &mut Shape, alpha: f32) {
+    match shape {
+        Shape::Rect(r) => {
+            r.fill = r.fill.gamma_multiply(alpha);
+            r.stroke.color = r.stroke.color.gamma_multiply(alpha);
+        }
+        Shape::LineSegment { stroke, .. } => stroke.color = stroke.color.gamma_multiply(alpha),
+        Shape::Vec(v) => v.iter_mut().for_each(|s| multiply_shape(s, alpha)),
+        _ => {}
+    }
+}
+
+// ------------------------------------------------------------------------------------- Banner
+
+fn tone_glyph(tone: Tone) -> &'static str {
+    match tone {
+        Tone::Neutral | Tone::Accent => icon::INFO,
+        Tone::Success => icon::CHECK_CIRCLE,
+        Tone::Warning => icon::WARNING,
+        Tone::Danger => icon::WARNING_OCTAGON,
+    }
+}
+
+/// A full-width notice at the top of a view (a merge or rebase in progress): the tone's tint
+/// over the chrome, a seam in the tone below, icon, title, body and up to two ghost actions. It
+/// grows in over `BASE` when it appears.
+#[derive(Debug, Clone)]
+#[must_use = "call .show(ui)"]
+pub struct Banner {
+    tone: Tone,
+    title: String,
+    body: Option<String>,
+    icon: Option<String>,
+    actions: Vec<String>,
+    id_salt: Id,
+    force: Option<ForceState>,
+}
+
+impl Banner {
+    pub fn new(tone: Tone, title: impl Into<String>) -> Self {
+        let title = title.into();
+        Self {
+            tone,
+            id_salt: Id::new(("kit-banner", title.clone())),
+            title,
+            body: None,
+            icon: None,
+            actions: Vec::new(),
+            force: None,
+        }
+    }
+    pub fn body(mut self, text: impl Into<String>) -> Self {
+        self.body = Some(text.into());
+        self
+    }
+    pub fn icon(mut self, glyph: &str) -> Self {
+        self.icon = Some(glyph.to_owned());
+        self
+    }
+    /// An action button at the right (at most two; the first is the main one).
+    pub fn action(mut self, label: impl Into<String>) -> Self {
+        if self.actions.len() < 2 {
+            self.actions.push(label.into());
+        }
+        self
+    }
+    pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        self.id_salt = Id::new(salt);
+        self
+    }
+    pub(crate) fn force(mut self, force: ForceState) -> Self {
+        self.force = Some(force);
+        self
+    }
+
+    /// Shows the banner; the value is the index of the action clicked.
+    pub fn show(self, ui: &mut Ui) -> KitResponse<Option<usize>> {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let s = theme::surfaces(&ctx);
+        let m = theme::metrics();
+        let id = ui.id().with(self.id_salt);
+        let grow = match self.force.and_then(|f| f.progress) {
+            Some(t) => t,
+            None => appear(&ctx, id, motion::BASE),
+        };
+        let full = m.pane_header_height;
+        let width = ui.available_width();
+        let (rect, response) = ui.allocate_exact_size(vec2(width, full * grow), Sense::hover());
+        let mut clicked = None;
+        if rect.height() > 0.0 {
+            let tone_c = self.tone.color(p);
+            let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+            painter.rect_filled(
+                rect,
+                CornerRadius::ZERO,
+                theme::over(self.tone.tint(p), s.panel),
+            );
+            paint::seam_h(
+                &painter,
+                rect.x_range(),
+                rect.bottom() - 0.5,
+                Palette::tint(tone_c, 90),
+            );
+            // The content slides down with the growing edge.
+            let full_rect =
+                Rect::from_min_size(pos2(rect.left(), rect.bottom() - full), vec2(width, full));
+            let cy = full_rect.center().y;
+            let mut x = full_rect.left() + theme::MD;
+            let glyph = self.icon.as_deref().unwrap_or(tone_glyph(self.tone));
+            let g =
+                painter.layout_no_wrap(glyph.to_owned(), FontId::proportional(m.icon_lg), tone_c);
+            painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), tone_c);
+            x += g.size().x + theme::SM;
+            let t = painter.layout_no_wrap(
+                self.title.clone(),
+                FontId::new(m.body_size, theme::semibold()),
+                p.text,
+            );
+            painter.galley(pos2(x, cy - t.size().y / 2.0), t.clone(), p.text);
+            x += t.size().x + theme::SM;
+            let mut child = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(full_rect.shrink2(vec2(theme::SM, 0.0)))
+                    .layout(Layout::right_to_left(Align::Center)),
+            );
+            child.set_clip_rect(rect.intersect(ui.clip_rect()));
+            for (i, label) in self.actions.iter().enumerate().rev() {
+                let b = Button::new(label.clone())
+                    .ghost()
+                    .size(Size::Sm)
+                    .id_salt((self.id_salt, i));
+                if b.show(&mut child).clicked() {
+                    clicked = Some(i);
+                }
+            }
+            let right = child.min_rect().left() - theme::SM;
+            if let Some(body) = &self.body {
+                let b = crate::ui::widgets::single_line_galley(
+                    ui,
+                    body.clone(),
+                    FontId::proportional(m.body_size),
+                    p.text_dim,
+                    (right - x).max(0.0),
+                );
+                painter.galley(pos2(x, cy - b.size().y / 2.0), b, p.text_dim);
+            }
+        }
+        let spoken = match &self.body {
+            Some(b) => format!("{}: {b}", self.title),
+            None => self.title.clone(),
+        };
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &spoken));
+        KitResponse {
+            response,
+            value: clicked,
+        }
+    }
+}
+
+// ------------------------------------------------------------------------------------ Callout
+
+/// An inline note in a pane or dialog: the tone's tint, an icon, optional title and wrapped
+/// text. No side bar.
+#[derive(Debug, Clone)]
+#[must_use = "call .show(ui)"]
+pub struct Callout {
+    tone: Tone,
+    text: String,
+    title: Option<String>,
+    icon: Option<String>,
+}
+
+impl Callout {
+    pub fn new(tone: Tone, text: impl Into<String>) -> Self {
+        Self {
+            tone,
+            text: text.into(),
+            title: None,
+            icon: None,
+        }
+    }
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+    pub fn icon(mut self, glyph: &str) -> Self {
+        self.icon = Some(glyph.to_owned());
+        self
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let p = theme::palette(ui.ctx());
+        let m = theme::metrics();
+        let tone_c = self.tone.color(p);
+        let glyph = self
+            .icon
+            .clone()
+            .unwrap_or_else(|| tone_glyph(self.tone).to_owned());
+        let response = egui::Frame::new()
+            .fill(self.tone.tint(p))
+            .corner_radius(CornerRadius::same(m.radius))
+            .inner_margin(Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = theme::SM;
+                    ui.label(egui::RichText::new(glyph).size(m.icon_lg).color(tone_c));
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        if let Some(t) = &self.title {
+                            ui.label(
+                                egui::RichText::new(t)
+                                    .font(FontId::new(m.body_size, theme::semibold()))
+                                    .color(p.text),
+                            );
+                        }
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(&self.text)
+                                    .size(m.body_size)
+                                    .color(p.text),
+                            )
+                            .wrap(),
+                        );
+                    });
+                });
+            })
+            .response;
+        let spoken = match &self.title {
+            Some(t) => format!("{t}: {}", self.text),
+            None => self.text.clone(),
+        };
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &spoken));
+        response
+    }
+}
+
+impl Widget for Callout {
+    fn ui(self, ui: &mut Ui) -> Response {
+        self.show(ui)
+    }
+}
+
+// ----------------------------------------------------------------------------------- InsetBox
+
+/// A recessed box for code and values in dialogs: `field` fill, `border` ring, `radius_sm`,
+/// padding 8 by 10.
+#[derive(Debug, Clone, Copy, Default)]
+#[must_use = "call .show(ui, ..)"]
+pub struct InsetBox;
+
+impl InsetBox {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn show<R>(self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> KitResponse<R> {
+        let s = theme::surfaces(ui.ctx());
+        let m = theme::metrics();
+        let r = egui::Frame::new()
+            .fill(s.field)
+            .stroke(Stroke::new(paint::SEAM, s.border))
+            .corner_radius(CornerRadius::same(m.radius_sm))
+            .inner_margin(Margin::symmetric(10, 8))
+            .show(ui, add);
+        KitResponse {
+            response: r.response,
+            value: r.inner,
+        }
+    }
+}
+
+// --------------------------------------------------------------------------------- EmptyState
+
+/// What an empty state's buttons did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmptyAction {
+    /// The primary action (Clear filters, Retry, the first-run call to action).
+    Primary,
+    /// The link under it (Details, Learn more).
+    Link,
+}
+
+/// A pane with nothing to show: art (or, in a compact pane, an icon), a title, at most two lines
+/// of body, a primary action, an optional link and keycap hints, centred a little above the
+/// middle. The art grows in once (still with reduced motion).
+#[derive(Debug, Clone)]
+#[must_use = "call .show(ui)"]
+pub struct EmptyState {
+    title: String,
+    body: Option<String>,
+    art: Option<Art>,
+    icon: Option<String>,
+    action: Option<String>,
+    link: Option<String>,
+    hints: Vec<(Command, String)>,
+    compact: bool,
+    id_salt: Id,
+}
+
+impl EmptyState {
+    pub fn new(title: impl Into<String>) -> Self {
+        let title = title.into();
+        Self {
+            id_salt: Id::new(("kit-empty", title.clone())),
+            title,
+            body: None,
+            art: None,
+            icon: None,
+            action: None,
+            link: None,
+            hints: Vec::new(),
+            compact: false,
+        }
+    }
+
+    /// A filtered list with no match: "Clear filters".
+    pub fn filtered(title: impl Into<String>) -> Self {
+        Self::new(title)
+            .icon(icon::FUNNEL_X)
+            .body("Nothing matches the current filters.")
+            .action("Clear filters")
+    }
+
+    /// Something failed: the error art, `message` as the body, Retry and Details.
+    pub fn error(title: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(title)
+            .art(art::empty_error())
+            .icon(icon::WARNING_OCTAGON)
+            .body(message)
+            .action("Retry")
+            .link("Details")
+    }
+
+    pub fn body(mut self, text: impl Into<String>) -> Self {
+        self.body = Some(text.into());
+        self
+    }
+    /// The illustration (`ui/art.rs`), 96 pt tall.
+    pub fn art(mut self, art: Art) -> Self {
+        self.art = Some(art);
+        self
+    }
+    /// The glyph shown instead of the art in compact panes (and when there is no art).
+    pub fn icon(mut self, glyph: &str) -> Self {
+        self.icon = Some(glyph.to_owned());
+        self
+    }
+    pub fn action(mut self, label: impl Into<String>) -> Self {
+        self.action = Some(label.into());
+        self
+    }
+    pub fn link(mut self, label: impl Into<String>) -> Self {
+        self.link = Some(label.into());
+        self
+    }
+    /// A keycap hint under the actions: the command's keys, then `what` it does.
+    pub fn hint(mut self, command: Command, what: impl Into<String>) -> Self {
+        self.hints.push((command, what.into()));
+        self
+    }
+    /// A small pane: the icon instead of the art.
+    pub fn compact(mut self, compact: bool) -> Self {
+        self.compact = compact;
+        self
+    }
+    pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        self.id_salt = Id::new(salt);
+        self
+    }
+
+    /// Fills the available space; the value is the button clicked, if any.
+    pub fn show(self, ui: &mut Ui) -> KitResponse<Option<EmptyAction>> {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let m = theme::metrics();
+        let outer = ui.available_rect_before_wrap();
+        let id = ui.id().with(self.id_salt);
+        let key = id.with("kit-empty-height");
+        let width = outer.width().min(MAX_WIDTH);
+        let measured: f32 = ctx.data(|d| d.get_temp(key)).unwrap_or(0.0);
+        let top = (outer.center().y - measured / 2.0 - outer.height() * 0.06).max(outer.top());
+        let area = Rect::from_min_size(
+            pos2(outer.center().x - width / 2.0, top),
+            vec2(width, outer.bottom() - top),
+        );
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .id_salt(id)
+                .max_rect(area)
+                .layout(Layout::top_down(Align::Center)),
+        );
+        let mut clicked = None;
+        child.spacing_mut().item_spacing.y = theme::SM;
+        let compact = self.compact || outer.height() < 260.0;
+        match (self.art, compact) {
+            (Some(a), false) => {
+                art::show(&mut child, a, vec2(128.0, 96.0));
+            }
+            _ => {
+                if let Some(g) = &self.icon {
+                    child.label(egui::RichText::new(g).size(m.icon_hero).color(p.text_faint));
+                }
+            }
+        }
+        child.add_space(theme::XS);
+        child.label(
+            egui::RichText::new(&self.title)
+                .font(FontId::new(m.subtitle_size, theme::semibold()))
+                .color(p.text),
+        );
+        if let Some(body) = &self.body {
+            let mut job = egui::text::LayoutJob::simple(
+                body.clone(),
+                FontId::proportional(m.body_size),
+                p.text_dim,
+                width,
+            );
+            job.wrap.max_rows = 2;
+            job.halign = Align::Center;
+            child.add(egui::Label::new(job));
+        }
+        if self.action.is_some() || self.link.is_some() {
+            child.add_space(theme::XS);
+        }
+        if let Some(a) = &self.action
+            && Button::new(a.clone())
+                .primary()
+                .id_salt((self.id_salt, "action"))
+                .show(&mut child)
+                .clicked()
+        {
+            clicked = Some(EmptyAction::Primary);
+        }
+        if let Some(l) = &self.link
+            && LinkButton::new(l.clone()).show(&mut child).clicked()
+        {
+            clicked = Some(EmptyAction::Link);
+        }
+        for (command, what) in &self.hints {
+            child.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                KeyChord::command(*command).show(ui);
+                ui.label(
+                    egui::RichText::new(what)
+                        .size(m.meta_size)
+                        .color(p.text_faint),
+                );
+            });
+        }
+        let used = child.min_rect().height();
+        if (used - measured).abs() > 0.5 {
+            // Centred on last frame's height: lay out again with this one.
+            ctx.data_mut(|d| d.insert_temp(key, used));
+            ctx.request_discard("empty state measured");
+        }
+        let response = ui.allocate_rect(outer, Sense::hover());
+        let spoken = match &self.body {
+            Some(b) => format!("{}. {b}", self.title),
+            None => self.title.clone(),
+        };
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &spoken));
+        KitResponse {
+            response,
+            value: clicked,
+        }
+    }
+}
+
+/// An empty state's content column is at most this wide.
+const MAX_WIDTH: f32 = 340.0;
+
+// ----------------------------------------------------------------------------------- Skeleton
+
+/// Placeholder rows while a list loads for the first time (not on refresh): bars at the real row
+/// height, 40, 62 and 78% wide, pulsing over 1.2 s. It shows after `LOADING_DELAY`; reduced
+/// motion holds the pulse at its midpoint.
+#[derive(Debug, Clone, Copy)]
+#[must_use = "call .show(ui) or ui.add(..)"]
+pub struct Skeleton {
+    rows: usize,
+    kind: super::row::RowKind,
+    id_salt: Id,
+    phase: Option<f32>,
+}
+
+impl Skeleton {
+    pub fn rows(rows: usize) -> Self {
+        Self {
+            rows,
+            kind: super::row::RowKind::List,
+            id_salt: Id::new("kit-skeleton"),
+            phase: None,
+        }
+    }
+    /// The list whose rows it stands in for (their height).
+    pub fn kind(mut self, kind: super::row::RowKind) -> Self {
+        self.kind = kind;
+        self
+    }
+    pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        self.id_salt = Id::new(salt);
+        self
+    }
+    /// A fixed pulse phase (0 to 1), shown at once (the gallery's motion strip).
+    pub(crate) fn phase(mut self, t: f32) -> Self {
+        self.phase = Some(t);
+        self
+    }
+
+    /// The bar fill at pulse phase `t` (0 and 1: `hover_strong`, 0.5: `pressed`).
+    pub fn fill_at(p: &Palette, t: f32) -> Color32 {
+        let k = 0.5 - 0.5 * (t * std::f32::consts::TAU).cos();
+        p.hover_strong().lerp_to_gamma(p.pressed(), k)
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let m = theme::metrics();
+        let h = self.kind.height();
+        let width = ui.available_width();
+        let (rect, response) =
+            ui.allocate_exact_size(vec2(width, h * self.rows as f32), Sense::hover());
+        let id = ui.id().with(self.id_salt);
+        let delay = motion::time(motion::LOADING_DELAY);
+        let elapsed = shown_for(&ctx, id);
+        let due = self.phase.is_some() || elapsed >= delay;
+        if !due {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f32(delay - elapsed));
+        } else if ui.is_rect_visible(rect) {
+            let t = match self.phase {
+                Some(t) => t,
+                None if motion::reduced() => 0.5,
+                None => {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(16));
+                    (ctx.input(|i| i.time) % 1.2) as f32 / 1.2
+                }
+            };
+            let fill = Self::fill_at(p, t);
+            let bar_h = (h * 0.4).round().clamp(8.0, 14.0);
+            for i in 0..self.rows {
+                let w = [0.40, 0.62, 0.78][i % 3] * (width - 2.0 * theme::MD);
+                let cy = rect.top() + h * (i as f32 + 0.5);
+                let bar = Rect::from_min_size(
+                    pos2(rect.left() + theme::MD, cy - bar_h / 2.0),
+                    vec2(w.max(0.0), bar_h),
+                );
+                ui.painter()
+                    .rect_filled(bar, CornerRadius::same(m.radius_sm), fill);
+            }
+        }
+        response
+            .widget_info(|| WidgetInfo::labeled(WidgetType::ProgressIndicator, true, "Loading"));
+        response
+    }
+}
+
+impl Widget for Skeleton {
+    fn ui(self, ui: &mut Ui) -> Response {
+        self.show(ui)
+    }
+}
+
+// ------------------------------------------------------------------------------------ gallery
+
+/// A gallery card: its name, forced state, selected, tone ring and enabled.
+type CardCase<'a> = (&'a str, Option<ForceState>, bool, Option<Tone>, bool);
+
+/// The gallery's Surfaces section: cards in every state, banners and callouts per tone, an empty
+/// state, an inset box, skeleton rows, pane frames (flush, and floating with and without the
+/// focused edge), the table header strip and the top bars in both styles.
+pub(crate) fn gallery(ui: &mut Ui) {
+    let m = theme::metrics();
+    let p = theme::palette(ui.ctx());
+    let small = |ui: &mut Ui, text: &str| {
+        ui.label(
+            egui::RichText::new(text)
+                .size(m.small_size)
+                .color(p.text_faint),
+        );
+    };
+    small(
+        ui,
+        "Cards: static, interactive rest, hover, pressed, selected, focus, warning ring, disabled",
+    );
+    let card_body = |ui: &mut Ui, title: &str| {
+        ui.label(
+            egui::RichText::new(title)
+                .font(FontId::new(m.subtitle_size, theme::semibold()))
+                .color(p.text),
+        );
+        ui.label(
+            egui::RichText::new("Open a folder")
+                .size(m.meta_size)
+                .color(p.text_dim),
+        );
+    };
+    let w = 132.0;
+    let states: [CardCase<'_>; 8] = [
+        ("Static", None, false, None, true),
+        ("Rest", None, false, None, true),
+        ("Hover", Some(ForceState::HOVER), false, None, true),
+        ("Pressed", Some(ForceState::PRESSED), false, None, true),
+        ("Selected", None, true, None, true),
+        ("Focus", Some(ForceState::FOCUS), false, None, true),
+        ("Unresolved", None, false, Some(Tone::Warning), true),
+        ("Disabled", None, false, None, false),
+    ];
+    // Cards size to their content, so a row cannot wrap them: four to a row.
+    for (r, chunk) in states.chunks(4).enumerate() {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing = vec2(theme::SM, theme::SM);
+            for (j, (name, force, selected, ring, enabled)) in chunk.iter().enumerate() {
+                let i = r * 4 + j;
+                if i == 0 {
+                    Card::new()
+                        .width(w)
+                        .tooltip("A static card")
+                        .show(ui, |ui| card_body(ui, name));
+                    continue;
+                }
+                let mut c = Card::new()
+                    .interactive(true)
+                    .selected(*selected)
+                    .enabled(*enabled)
+                    .width(w)
+                    .label(*name)
+                    .disabled_reason("Not available")
+                    .id_salt(("gallery-card", i));
+                if let Some(t) = ring {
+                    c = c.ring(*t);
+                }
+                if let Some(f) = force {
+                    c = c.force(*f);
+                }
+                c.show(ui, |ui| card_body(ui, name));
+            }
+        });
+        ui.add_space(theme::SM);
+    }
+    ui.add_space(theme::SM);
+    small(ui, "Banners per tone");
+    for tone in Tone::ALL {
+        let mut b = Banner::new(tone, format!("{} banner", tone.label()))
+            .body("A merge is in progress on main.")
+            .id_salt(("gallery-banner", tone));
+        if tone == Tone::Warning {
+            b = b.action("Continue").action("Abort");
+        }
+        b.show(ui);
+    }
+    small(ui, "Banner growing in (0.5), custom icon");
+    Banner::new(Tone::Accent, "Rebasing feature/auth")
+        .icon(icon::GIT_PULL_REQUEST)
+        .body("Step 2 of 5")
+        .id_salt("gallery-banner-grow")
+        .force(ForceState {
+            progress: Some(0.5),
+            ..ForceState::default()
+        })
+        .show(ui);
+    small(ui, "Callouts per tone");
+    for tone in [Tone::Accent, Tone::Success, Tone::Warning, Tone::Danger] {
+        let c = Callout::new(
+            tone,
+            "Canopy signs commits with the key your Git configuration names.",
+        )
+        .title(tone.label());
+        if tone == Tone::Accent {
+            c.icon(icon::SEAL_CHECK).show(ui);
+        } else {
+            c.show(ui);
+        }
+    }
+    small(ui, "Inset box, skeleton rows");
+    InsetBox::new().show(ui, |ui| {
+        ui.label(
+            egui::RichText::new("git push --force-with-lease origin main")
+                .font(FontId::monospace(m.mono_size))
+                .color(p.text),
+        );
+    });
+    Skeleton::rows(3)
+        .kind(super::row::RowKind::History)
+        .id_salt("gallery-skeleton")
+        .phase(0.25)
+        .show(ui);
+    let last_id = ui.id().with("gallery-empty-last");
+    let last: Option<String> = ui.ctx().data(|d| d.get_temp(last_id));
+    small(
+        ui,
+        &format!(
+            "Empty states: filtered, error with art, compact first run (last action: {})",
+            last.as_deref().unwrap_or("none")
+        ),
+    );
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 300.0), Sense::hover());
+    let third = (rect.width() - 2.0 * theme::SM) / 3.0;
+    let empties = [
+        EmptyState::filtered("No commits match")
+            .hint(Command::Palette, "Search commands")
+            .id_salt("gallery-empty-filtered"),
+        EmptyState::error("Could not load history", "git log exited with status 128.")
+            .id_salt("gallery-empty-error"),
+        EmptyState::new("No repository")
+            .art(art::empty_history())
+            .icon(icon::FOLDER_OPEN)
+            .body("Open a folder to begin.")
+            .action("Open…")
+            .link("Clone instead")
+            .compact(true)
+            .id_salt("gallery-empty-compact"),
+    ];
+    for (i, empty) in empties.into_iter().enumerate() {
+        let r = Rect::from_min_size(
+            pos2(rect.left() + i as f32 * (third + theme::SM), rect.top()),
+            vec2(third, rect.height()),
+        );
+        let mut child = ui.new_child(UiBuilder::new().max_rect(r));
+        let shown = PaneFrame::new(("gallery-empty-pane", i))
+            .gutters(Sides::NONE)
+            .seams(Sides::ALL)
+            .ground(if i == 2 {
+                PaneGround::Panel
+            } else {
+                PaneGround::Pane
+            })
+            .margin(Margin::same(theme::SM as i8))
+            .show(&mut child, |ui| empty.show(ui).value);
+        if let Some(action) = shown.value {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(last_id, format!("{action:?} in pane {i}")));
+        }
+    }
+    small(
+        ui,
+        "Panes: Standard and Deeper, focused and not, with the table header strip",
+    );
+    ui.horizontal_top(|ui| {
+        let density = theme::density();
+        for style in Style::ALL {
+            for focused in [false, true] {
+                theme::with_look(style, density, || pane_sample(ui, style, focused));
+            }
+        }
+    });
+    small(ui, "Detail and file headers (not at the top of a pane)");
+    PaneHeader::new(HeaderKind::Detail)
+        .top_of_pane(false)
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new("docs: add API reference")
+                    .font(FontId::new(m.body_size, theme::semibold()))
+                    .color(p.text),
+            );
+        });
+    PaneHeader::new(HeaderKind::File)
+        .top_of_pane(false)
+        .show(ui, |ui| column_label(ui, "api.md"));
+    small(ui, "Top bars: Standard and Deeper");
+    let density = theme::density();
+    for style in Style::ALL {
+        theme::with_look(style, density, || deck_sample(ui, style));
+    }
+}
+
+/// A miniature window corner: ground, a pane with the table header strip and two rows.
+fn pane_sample(ui: &mut Ui, style: Style, focused: bool) {
+    let p = theme::palette(ui.ctx());
+    let s = p.surfaces(style);
+    let m = theme::metrics();
+    let (outer, _) = ui.allocate_exact_size(vec2(140.0, 120.0), Sense::hover());
+    ui.painter().rect_filled(outer, CornerRadius::ZERO, s.bg);
+    let mut child = ui.new_child(UiBuilder::new().max_rect(outer));
+    PaneFrame::new(("gallery-pane", style, focused))
+        .gutters(Sides::ALL)
+        .focused(focused)
+        .force(ForceState {
+            focus: focused,
+            ..ForceState::default()
+        })
+        .show(&mut child, |ui| {
+            PaneHeader::new(HeaderKind::Table).show(ui, |ui| {
+                column_label(ui, if focused { "Focused" } else { "Graph" });
+            });
+            for i in 0..2 {
+                let (r, _) = ui.allocate_exact_size(
+                    vec2(ui.available_width(), m.history_row_height),
+                    Sense::hover(),
+                );
+                if i == 0 {
+                    ui.painter()
+                        .rect_filled(r, CornerRadius::ZERO, p.selected());
+                }
+                ui.painter().text(
+                    r.left_center() + vec2(theme::MD, 0.0),
+                    Align2::LEFT_CENTER,
+                    format!("{} row", style.label()),
+                    FontId::proportional(m.body_size),
+                    p.text,
+                );
+            }
+        });
+}
+
+/// The top bars of a window in `style`: tab strip (a tab, the search trigger) and the action bar.
+fn deck_sample(ui: &mut Ui, style: Style) {
+    let p = theme::palette(ui.ctx());
+    let s = p.surfaces(style);
+    let m = theme::metrics();
+    let deck = Deck::new(true);
+    let width = ui.available_width();
+    let (outer, _) = ui.allocate_exact_size(vec2(width, deck.height() + 24.0), Sense::hover());
+    let painter = ui.painter().with_clip_rect(outer.intersect(ui.clip_rect()));
+    painter.rect_filled(outer, CornerRadius::ZERO, s.bg);
+    let rect = deck.paint(&painter, outer);
+    let tab = Rect::from_min_size(
+        pos2(
+            rect.left() + theme::MD,
+            rect.top() + (m.tab_strip_height - m.doc_tab_height) / 2.0,
+        ),
+        vec2(130.0, m.doc_tab_height),
+    );
+    paint::surface(
+        &painter,
+        tab,
+        CornerRadius::same(m.doc_tab_radius),
+        p,
+        style,
+        Elevation::Tab,
+        s.tab,
+        Some(s.tab_edge),
+    );
+    painter.text(
+        tab.left_center() + vec2(theme::SM + 2.0, 0.0),
+        Align2::LEFT_CENTER,
+        format!("{} showcase", icon::FOLDER_SIMPLE),
+        FontId::new(m.body_size, theme::medium()),
+        p.text,
+    );
+    let search = Rect::from_min_size(
+        pos2(
+            rect.right() - theme::MD - m.search_trigger.x,
+            rect.top() + (m.tab_strip_height - m.search_trigger.y) / 2.0,
+        ),
+        m.search_trigger,
+    );
+    paint::surface(
+        &painter,
+        search,
+        CornerRadius::same(m.radius),
+        p,
+        style,
+        Elevation::Field,
+        Fill::flat(s.field),
+        Some(s.edge),
+    );
+    painter.text(
+        search.left_center() + vec2(theme::SM + 2.0, 0.0),
+        Align2::LEFT_CENTER,
+        format!("{}  Search commands", icon::MAGNIFYING_GLASS),
+        FontId::proportional(m.body_size),
+        p.text_faint,
+    );
+    let bar = Rect::from_min_max(pos2(rect.left(), rect.top() + m.tab_strip_height), rect.max);
+    let mut child = ui.new_child(
+        UiBuilder::new()
+            .max_rect(bar.shrink2(vec2(theme::MD, 0.0)))
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    child.spacing_mut().item_spacing.x = m.toolbar_gap;
+    for (i, (glyph, label)) in [
+        (icon::ARROWS_CLOCKWISE, "Fetch"),
+        (icon::ARROW_DOWN, "Pull"),
+        (icon::ARROW_UP, "Push"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let t = super::ToolButton::new(glyph, label);
+        if i == 1 {
+            t.show_forced(&mut child, ForceState::HOVER);
+        } else {
+            t.show(&mut child);
+        }
+    }
+    super::button::tool_divider(&mut child);
+    super::ToolButton::new(icon::GIT_BRANCH, "Branch").show(&mut child);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::theme::Density;
+
+    fn ctx() -> egui::Context {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        ctx
+    }
+
+    fn run(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        mut f: impl FnMut(&mut Ui),
+    ) -> egui::FullOutput {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| f(ui),
+        );
+        out.textures_delta.clear();
+        out
+    }
+
+    fn apply(ctx: &egui::Context, style: Style, density: Density) {
+        theme::apply(
+            ctx,
+            theme::ThemeId::Midnight,
+            &theme::Appearance {
+                style,
+                density,
+                ..theme::Appearance::STILL
+            },
+        );
+    }
+
+    #[test]
+    fn panes_float_over_gutters_only_in_deeper() {
+        let ctx = ctx();
+        let outer = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 100.0));
+        for (style, density, gutter) in [
+            (Style::Standard, Density::Comfortable, 0.0),
+            (Style::Deeper, Density::Comfortable, 6.0),
+            (Style::Deeper, Density::Dense, 4.0),
+        ] {
+            apply(&ctx, style, density);
+            let card = PaneFrame::new("p").card_rect(outer);
+            assert_eq!(
+                card,
+                Rect::from_min_max(pos2(gutter, 0.0), pos2(200.0 - gutter, 100.0 - gutter)),
+                "{style:?} {density:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_table_header_takes_its_own_top_edge_in_deeper() {
+        let ctx = ctx();
+        for style in Style::ALL {
+            apply(&ctx, style, Density::Comfortable);
+            let s = theme::surfaces(&ctx);
+            let out = run(&ctx, Vec::new(), |ui| {
+                PaneHeader::new(HeaderKind::Table).show(ui, |_| {});
+            });
+            let fills: Vec<Color32> = out
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Rect(r) => Some(r.fill),
+                    _ => None,
+                })
+                .collect();
+            assert!(fills.contains(&s.pane_header), "{style:?} {fills:?}");
+            if style == Style::Deeper {
+                // Distinct from every neutral edge and from the panes around it.
+                for neutral in [
+                    s.border,
+                    s.edge,
+                    s.pane_edge.unwrap_or(s.border),
+                    s.deck_edge,
+                ] {
+                    assert_ne!(s.pane_header_seam, neutral);
+                }
+                assert_ne!(s.pane_header, s.pane);
+                assert_ne!(s.pane_header, s.bg);
+            } else {
+                assert_eq!(s.pane_header_seam, s.border);
+            }
+        }
+    }
+
+    #[test]
+    fn the_deck_spans_the_bars_of_the_active_density() {
+        let ctx = ctx();
+        for density in Density::ALL {
+            for style in Style::ALL {
+                apply(&ctx, style, density);
+                let m = theme::metrics();
+                assert_eq!(Deck::new(false).height(), m.tab_strip_height);
+                assert_eq!(
+                    Deck::new(true).height(),
+                    m.tab_strip_height + m.action_bar_height
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn interactive_cards_click_from_the_keyboard_and_not_when_disabled() {
+        let ctx = ctx();
+        for enabled in [true, false] {
+            let mut clicked = false;
+            for i in 0..4 {
+                let events = if i == 2 {
+                    vec![egui::Event::Key {
+                        key: egui::Key::Enter,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Default::default(),
+                    }]
+                } else {
+                    Vec::new()
+                };
+                run(&ctx, events, |ui| {
+                    let r = Card::new()
+                        .interactive(true)
+                        .enabled(enabled)
+                        .label("Open")
+                        .id_salt("card")
+                        .show(ui, |ui| ui.label("Open a folder"));
+                    if i == 1 {
+                        ui.memory_mut(|m| m.request_focus(r.response.id));
+                    }
+                    clicked |= r.response.clicked();
+                });
+            }
+            assert_eq!(clicked, enabled, "enabled {enabled}");
+        }
+    }
+
+    #[test]
+    fn a_card_paints_its_surface_under_its_content() {
+        let ctx = ctx();
+        let out = run(&ctx, Vec::new(), |ui| {
+            Card::new().show(ui, |ui| ui.label("Inside"));
+        });
+        let s = theme::surfaces(&ctx);
+        let first_text = out
+            .shapes
+            .iter()
+            .position(|c| matches!(c.shape, Shape::Text(_)));
+        let card = out.shapes.iter().position(|c| match &c.shape {
+            Shape::Vec(v) => v
+                .iter()
+                .any(|s2| matches!(s2, Shape::Rect(r) if r.fill == s.panel)),
+            _ => false,
+        });
+        assert!(card.is_some() && first_text.is_some());
+        assert!(card < first_text, "the surface comes first");
+    }
+
+    #[test]
+    fn banners_and_skeletons_hold_still_with_reduced_motion() {
+        let ctx = ctx();
+        let mut heights = Vec::new();
+        run(&ctx, Vec::new(), |ui| {
+            heights.push(
+                Banner::new(Tone::Warning, "Merging")
+                    .show(ui)
+                    .response
+                    .rect
+                    .height(),
+            );
+        });
+        assert_eq!(heights, vec![theme::metrics().pane_header_height]);
+        let p = theme::palette(&ctx);
+        let mut out = run(&ctx, Vec::new(), |ui| {
+            Skeleton::rows(3).show(ui);
+        });
+        let fills: Vec<Color32> = out
+            .shapes
+            .drain(..)
+            .filter_map(|c| match c.shape {
+                Shape::Rect(r) => Some(r.fill),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            fills,
+            vec![Skeleton::fill_at(p, 0.5); 3],
+            "shown at once, at the midpoint"
+        );
+        // Once egui has settled its first frames, a still skeleton asks for no repaint.
+        let mut settled = out;
+        for _ in 0..3 {
+            settled = run(&ctx, Vec::new(), |ui| {
+                Banner::new(Tone::Warning, "Merging").show(ui);
+                Skeleton::rows(3).show(ui);
+            });
+        }
+        assert!(
+            settled
+                .viewport_output
+                .values()
+                .all(|v| v.repaint_delay > std::time::Duration::from_secs(1)),
+            "{:?}",
+            settled
+                .viewport_output
+                .values()
+                .map(|v| v.repaint_delay)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn surface_shapes_match_what_surface_paints() {
+        let ctx = ctx();
+        for id in [theme::ThemeId::Midnight, theme::ThemeId::Daylight] {
+            for style in Style::ALL {
+                theme::apply(
+                    &ctx,
+                    id,
+                    &theme::Appearance {
+                        style,
+                        ..theme::Appearance::STILL
+                    },
+                );
+                let p = theme::palette(&ctx);
+                let s = p.surfaces(style);
+                let rect = Rect::from_min_size(pos2(20.0, 20.0), vec2(120.0, 40.0));
+                let radius = CornerRadius::same(10);
+                for level in Elevation::ALL {
+                    let painted = run(&ctx, Vec::new(), |ui| {
+                        paint::surface(
+                            ui.painter(),
+                            rect,
+                            radius,
+                            p,
+                            style,
+                            level,
+                            s.raised,
+                            Some(s.edge),
+                        );
+                    });
+                    let built = run(&ctx, Vec::new(), |ui| {
+                        let shapes = paint::surface_shapes(
+                            ui.painter(),
+                            rect,
+                            radius,
+                            p,
+                            style,
+                            level,
+                            s.raised,
+                            Some(s.edge),
+                        );
+                        ui.painter().extend(shapes);
+                    });
+                    let shapes = |o: &egui::FullOutput| {
+                        // Path colours are closures, so compare what each shape is.
+                        format!(
+                            "{:?}",
+                            o.shapes.iter().map(|c| &c.shape).collect::<Vec<_>>()
+                        )
+                    };
+                    assert_eq!(
+                        shapes(&painted),
+                        shapes(&built),
+                        "{id:?} {style:?} {level:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_state_centres_itself_in_its_first_frame() {
+        let ctx = ctx();
+        let title_y = || {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 600.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    EmptyState::new("Nothing here")
+                        .icon(icon::FUNNEL_X)
+                        .body("Body")
+                        .action("Clear filters")
+                        .show(ui);
+                },
+            );
+            out.textures_delta.clear();
+            out.shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Text(t) => Some(t.pos.y),
+                    _ => None,
+                })
+                .next()
+        };
+        let first = title_y();
+        let settled = title_y();
+        // The first frame lays out twice, so it already sits where later frames do.
+        assert!(first.is_some());
+        assert_eq!(first, settled);
+    }
+
+    #[test]
+    fn skeleton_pulses_between_hover_strong_and_pressed() {
+        let p = theme::ThemeId::Daylight.palette();
+        assert_eq!(Skeleton::fill_at(p, 0.0), p.hover_strong());
+        assert_eq!(Skeleton::fill_at(p, 0.5), p.pressed());
+    }
+
+    #[test]
+    fn surfaces_report_themselves_to_screen_readers() {
+        let ctx = ctx();
+        ctx.enable_accesskit();
+        let out = run(&ctx, Vec::new(), |ui| {
+            Banner::new(Tone::Warning, "Merge in progress").show(ui);
+            Callout::new(Tone::Accent, "Signed").show(ui);
+            Card::new()
+                .interactive(true)
+                .label("Clone a repository")
+                .show(ui, |ui| ui.label("Clone"));
+            Skeleton::rows(1).show(ui);
+        });
+        let labels: Vec<String> = out
+            .platform_output
+            .accesskit_update
+            .map(|u| {
+                u.nodes
+                    .iter()
+                    .filter_map(|(_, n)| n.label().or(n.value()).map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for want in [
+            "Merge in progress",
+            "Signed",
+            "Clone a repository",
+            "Loading",
+        ] {
+            assert!(labels.iter().any(|l| l == want), "{want}: {labels:?}");
+        }
+    }
+}

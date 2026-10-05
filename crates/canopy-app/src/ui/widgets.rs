@@ -158,34 +158,23 @@ pub fn initials(name: &str) -> String {
     out.to_uppercase()
 }
 
-/// Paints a round avatar with initials centred on `center`.
+/// Paints a round avatar with initials centred on `center` (`kit::avatar::paint`).
 pub fn paint_avatar(ui: &Ui, center: egui::Pos2, radius: f32, name: &str, email: &str) {
-    let p = palette(ui.ctx());
-    let color = person_color(p, if name.trim().is_empty() { email } else { name });
-    let painter = ui.painter();
-    let fill = p.avatar_fill(color);
-    painter.circle_filled(center, radius, fill);
-    painter.circle_stroke(center, radius, Stroke::new(1.0, Palette::tint(color, 90)));
-    let letters = initials(name);
-    let shown = if radius <= 13.0 {
-        letters.chars().take(1).collect::<String>()
-    } else {
-        letters
-    };
-    painter.text(
+    kit::avatar::paint(
+        ui.painter(),
         center,
-        Align2::CENTER_CENTER,
-        shown,
-        FontId::new(radius, theme::semibold()),
-        p.ink(color, fill),
+        radius * 2.0,
+        &kit::avatar::Person::new(name, email),
+        None,
+        None,
     );
 }
 
-/// Allocates and paints an avatar.
+/// Allocates and paints an avatar (`kit::avatar::Avatar`).
 pub fn avatar(ui: &mut Ui, size: f32, name: &str, email: &str) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
-    paint_avatar(ui, rect.center(), size / 2.0, name, email);
-    resp
+    kit::avatar::Avatar::new(kit::avatar::Person::new(name, email))
+        .diameter(size)
+        .show(ui)
 }
 
 /// Colour and letter of a change kind.
