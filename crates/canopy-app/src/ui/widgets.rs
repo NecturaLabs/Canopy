@@ -5,7 +5,7 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use canopy_core::{ChangeKind, RefKind, RefLabel};
+use canopy_core::ChangeKind;
 
 use super::kit;
 use super::theme::{self, Palette, palette};
@@ -60,79 +60,6 @@ pub fn context_menu(
     menu
 }
 
-fn ref_icon(kind: RefKind) -> &'static str {
-    match kind {
-        RefKind::Head => icon::CROSSHAIR,
-        RefKind::CurrentBranch => icon::CHECK_CIRCLE,
-        RefKind::LocalBranch => icon::GIT_BRANCH,
-        RefKind::RemoteBranch => icon::CLOUD,
-        RefKind::Tag => icon::TAG,
-        RefKind::Stash => icon::ARCHIVE,
-    }
-}
-
-/// Colour a ref pill uses; branches take their lane colour.
-pub fn ref_color(p: &Palette, kind: RefKind, lane: Color32) -> Color32 {
-    match kind {
-        RefKind::Head => p.danger,
-        RefKind::CurrentBranch | RefKind::LocalBranch => lane,
-        RefKind::RemoteBranch => p.accent2,
-        RefKind::Tag => p.warning,
-        RefKind::Stash => p.text_dim,
-    }
-}
-
-/// The untruncated width of a ref pill, for content-based table sizing.
-pub fn ref_pill_width(ui: &Ui, label: &RefLabel) -> f32 {
-    ui.painter()
-        .layout_no_wrap(
-            format!("{} {}", ref_icon(label.kind), label.name),
-            FontId::new(theme::SMALL_SIZE, theme::medium()),
-            Color32::PLACEHOLDER,
-        )
-        .size()
-        .x
-        + 14.0
-}
-
-/// Paints a ref pill with its left edge at `x`, vertically centred on `cy`. Returns its width.
-pub fn paint_ref_pill(ui: &Ui, x: f32, cy: f32, label: &RefLabel, lane: Color32) -> f32 {
-    paint_ref_pill_with_palette(ui, x, cy, label, lane, palette(ui.ctx()))
-}
-
-fn paint_ref_pill_with_palette(
-    ui: &Ui,
-    x: f32,
-    cy: f32,
-    label: &RefLabel,
-    lane: Color32,
-    p: &Palette,
-) -> f32 {
-    let color = ref_color(p, label.kind, lane);
-    let strong = label.kind == RefKind::CurrentBranch || label.kind == RefKind::Head;
-    let fill = Palette::pill_fill(color, strong);
-    let ink = p.ink(p.text, fill);
-    let text = format!("{} {}", ref_icon(label.kind), label.name);
-    let galley =
-        ui.painter()
-            .layout_no_wrap(text, FontId::new(theme::SMALL_SIZE, theme::medium()), ink);
-    let size = vec2(galley.size().x + 14.0, 19.0);
-    let rect = egui::Rect::from_min_size(pos2(x, cy - size.y / 2.0), size);
-    ui.painter().rect(
-        rect,
-        CornerRadius::same(10),
-        fill,
-        Stroke::new(1.0, Palette::pill_border(color)),
-        egui::StrokeKind::Inside,
-    );
-    ui.painter().galley(
-        pos2(rect.min.x + 7.0, cy - galley.size().y / 2.0),
-        galley,
-        ink,
-    );
-    size.x
-}
-
 /// A stable colour for a displayed identity, shared by names and matching host handles.
 pub fn person_color(p: &Palette, identity: &str) -> Color32 {
     let mut h: u32 = 2166136261;
@@ -160,18 +87,6 @@ pub fn initials(name: &str) -> String {
     out.to_uppercase()
 }
 
-/// Paints a round avatar with initials centred on `center` (`kit::avatar::paint`).
-pub fn paint_avatar(ui: &Ui, center: egui::Pos2, radius: f32, name: &str, email: &str) {
-    kit::avatar::paint(
-        ui.painter(),
-        center,
-        radius * 2.0,
-        &kit::avatar::Person::new(name, email),
-        None,
-        None,
-    );
-}
-
 /// Allocates and paints an avatar (`kit::avatar::Avatar`).
 pub fn avatar(ui: &mut Ui, size: f32, name: &str, email: &str) -> Response {
     kit::avatar::Avatar::new(kit::avatar::Person::new(name, email))
@@ -187,26 +102,6 @@ pub fn change_style(p: &Palette, kind: ChangeKind) -> Color32 {
         ChangeKind::Deleted | ChangeKind::Conflicted => p.danger,
         ChangeKind::Renamed => p.accent2,
     }
-}
-
-/// A small square badge with the change letter.
-pub fn change_badge(ui: &mut Ui, kind: ChangeKind) -> Response {
-    let p = palette(ui.ctx());
-    let color = change_style(p, kind);
-    let (rect, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-    let fill = Palette::badge_fill(color);
-    ui.painter().rect_filled(rect, CornerRadius::same(5), fill);
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        kind.letter(),
-        FontId::new(theme::SMALL_SIZE, theme::semibold()),
-        p.ink(color, fill),
-    );
-    resp.on_hover_text(match kind {
-        ChangeKind::Untracked => "Untracked: a new file Git does not track yet",
-        _ => kind.label(),
-    })
 }
 
 /// An icon-only button with a tooltip.
@@ -235,22 +130,6 @@ pub fn segmented<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, options: &[(T
         }
         None => false,
     }
-}
-
-/// [`segmented`] with icons; each option is `(glyph, name)` and shows its name as a tooltip.
-/// Returns the index of a newly chosen option.
-pub fn icon_segmented(ui: &mut Ui, selected: usize, options: &[(&str, &str)]) -> Option<usize> {
-    let segments: Vec<Segment<'_>> = options
-        .iter()
-        .enumerate()
-        .map(|(i, (glyph, name))| Segment {
-            text: glyph,
-            name,
-            selected: i == selected,
-            font: FontId::proportional(theme::ICON_SM),
-        })
-        .collect();
-    segment_track(ui, &segments, ui.spacing().interact_size.y, theme::SM)
 }
 
 struct Segment<'a> {
@@ -874,62 +753,5 @@ mod tests {
         assert_eq!(relative_time(0, 120), "2 minutes ago");
         assert_eq!(relative_time(0, 3600), "1 hour ago");
         assert_eq!(relative_time(0, 86_400 * 3), "3 days ago");
-    }
-    #[test]
-    fn rendered_ref_pills_use_readable_neutral_text_in_every_theme() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        for id in theme::ThemeId::ALL {
-            let p = id.palette();
-            for kind in [
-                RefKind::CurrentBranch,
-                RefKind::LocalBranch,
-                RefKind::RemoteBranch,
-                RefKind::Tag,
-                RefKind::Head,
-            ] {
-                for lane in p.lanes {
-                    let label = RefLabel {
-                        name: "feature/readability".into(),
-                        kind,
-                    };
-                    let mut output = ctx.run_ui(Default::default(), |ui| {
-                        paint_ref_pill_with_palette(ui, 20.0, 30.0, &label, lane, p);
-                    });
-                    output.textures_delta.clear();
-                    let text = output
-                        .shapes
-                        .iter()
-                        .find_map(|shape| {
-                            if let egui::Shape::Text(text) = &shape.shape {
-                                Some(text)
-                            } else {
-                                None
-                            }
-                        })
-                        .expect("painted ref text");
-                    let actual = text
-                        .override_text_color
-                        .unwrap_or(text.galley.job.sections[0].format.color);
-                    let fill = Palette::pill_fill(
-                        ref_color(p, kind, lane),
-                        matches!(kind, RefKind::CurrentBranch | RefKind::Head),
-                    );
-                    for surface in p.component_surfaces(p.s()) {
-                        let ratio = theme::contrast(actual, theme::over(fill, surface));
-                        assert!(
-                            ratio >= 4.5,
-                            "{} {kind:?}: painted ink {actual:?} contrast {ratio:.2}:1",
-                            p.name
-                        );
-                    }
-                    assert_eq!(
-                        actual, p.text,
-                        "{} ref text keeps a consistent neutral tone",
-                        p.name
-                    );
-                }
-            }
-        }
     }
 }

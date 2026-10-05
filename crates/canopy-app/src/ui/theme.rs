@@ -66,7 +66,6 @@ pub const ICON_MD: f32 = 16.0;
 pub const ICON_HERO: f32 = 32.0;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
 /// Shared control geometry, in logical points before interface zoom.
-pub const COMPACT_CONTROL_HEIGHT: f32 = 28.0;
 pub const CONTROL_INSET: f32 = 2.0;
 pub const CHECKBOX_SIZE: f32 = 18.0;
 /// Inner margin of every framed text field, matching the standard control height.
@@ -2197,14 +2196,6 @@ impl Palette {
     /// Seam in the active style (`Surfaces::border`).
     pub fn border(&self) -> Color32 {
         self.s().border
-    }
-
-    pub fn added_bg(&self) -> Color32 {
-        self.s().added_bg
-    }
-
-    pub fn removed_bg(&self) -> Color32 {
-        self.s().removed_bg
     }
 
     /// Primary fill, top end (`Surfaces::primary`).
