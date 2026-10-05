@@ -1460,4 +1460,67 @@ mod tests {
             summary.clip_rect
         );
     }
+
+    /// The history's ref pills keep their labels readable on every surface a row can have, in
+    /// every theme and lane colour: local branches and tags in the neutral text colour, remote
+    /// branches and detached HEAD in the dim one.
+    #[test]
+    fn rendered_ref_pills_use_readable_neutral_text_in_every_theme() {
+        use canopy_core::{RefKind, RefLabel};
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        for id in theme::ThemeId::ALL {
+            theme::apply(&ctx, id, &crate::ui::theme::Appearance::STILL);
+            let p = palette(&ctx);
+            for kind in [
+                RefKind::CurrentBranch,
+                RefKind::LocalBranch,
+                RefKind::RemoteBranch,
+                RefKind::Tag,
+                RefKind::Head,
+            ] {
+                for lane in 0..p.lanes.len() as u16 {
+                    let label = RefLabel {
+                        name: "feature/readability".into(),
+                        kind,
+                    };
+                    let pill = RefPill::from_label(&label, lane);
+                    let mut output = ctx.run_ui(Default::default(), |ui| {
+                        pill.paint(ui, ui.painter(), 20.0, 30.0);
+                    });
+                    output.textures_delta.clear();
+                    let text = output
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            egui::Shape::Text(text) => Some(text),
+                            _ => None,
+                        })
+                        .find(|text| ["feature/readability", "HEAD"].contains(&text.galley.text()))
+                        .expect("painted ref text");
+                    let actual = text
+                        .override_text_color
+                        .unwrap_or(text.galley.job.sections[0].format.color);
+                    let (fill, _, _) = pill.colors(p);
+                    for surface in p.component_surfaces(p.s()) {
+                        let ratio = theme::contrast(actual, theme::over(fill, surface));
+                        assert!(
+                            ratio >= 4.5,
+                            "{} {kind:?} lane {lane}: painted ink {actual:?} contrast {ratio:.2}:1",
+                            p.name
+                        );
+                    }
+                    let tone = match kind {
+                        RefKind::RemoteBranch | RefKind::Head => p.text_dim,
+                        _ => p.text,
+                    };
+                    assert_eq!(
+                        actual, tone,
+                        "{} {kind:?} ref text keeps a consistent neutral tone",
+                        p.name
+                    );
+                }
+            }
+        }
+    }
 }
