@@ -10,6 +10,12 @@ commits since the previous build.
 
 ### Added
 
+- Redesigned themes and appearance options. All eight themes take the new look: quiet two-tone
+  chrome, solid indigo primary buttons in Midnight and Daylight, soft shadows only under menus
+  and dialogs. Settings → Appearance adds Style (Standard, or Deeper with floating panes and
+  gradient controls), Density (Comfortable, or Dense with 24-point rows and a one-row toolbar) and
+  Motion (match the system, reduced or full), which replaces the Reduce motion switch; an earlier
+  "reduce motion" choice carries over as Reduced.
 - Git identity in Settings shows the effective author and its source for the open repository, and
   lets you save or clear repository or global Git configuration. A warning in Changes links to it
   when Git cannot use the identity, guessed it, or it looks like a placeholder. First launch asks

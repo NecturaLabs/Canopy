@@ -20,105 +20,32 @@ defined. When a token or component changes, update this document in the same cha
 
 ## Colour tokens
 
-### Midnight (dark, default)
+Every colour is defined in `ui/theme.rs` and nowhere else. A theme is a `Palette`: the colours
+both styles share (text, accents, status, lanes, syntax, focus, selection, shadows, scrim, glass)
+plus two `Surfaces` sets, one per Style. Views read the active set with `theme::surfaces(ctx)` and
+the shared colours with `theme::palette(ctx)`.
 
-| Token | Hex | Use |
-|---|---|---|
-| `bg` | `#0D1016` | Window background, history table |
-| `panel` | `#12161E` | Sidebar, detail pane, toolbar, status bar |
-| `elevated` | `#171C26` | Popups, dialogs, palette, menus, cards |
-| `hover` | `#1E2431` | Hovered rows and buttons |
-| `border` | `#262D3B` | 1px hairlines between regions (decorative) |
-| `control-border` | `#696F7A` | Outlines that identify a control: text fields, checkboxes, switch tracks (3:1) |
-| `text` | `#E6E9EF` | Primary text |
-| `text-dim` | `#A5ADBD` | Secondary text: authors, dates, paths |
-| `text-faint` | `#979EAD` | Placeholders, disabled text, line numbers |
-| `accent` | `#9C71F8` | Focus rings, selection, primary buttons, HEAD |
-| `accent-2` | `#22D3EE` | Gradient end, links, progress |
-| `success` | `#34D399` | Added lines, ahead counts, success toasts |
-| `warning` | `#FBBF24` | Conflicts, in-progress banners |
-| `danger` | `#F87171` | Removed lines, destructive buttons, error toasts |
-| `added-bg` | `#0F2A21` | Added line background in diffs |
-| `removed-bg` | `#2E1518` | Removed line background in diffs |
-| `button`, `button2` | `#7C3AED`, `#0E7490` | Primary fill and companion accent, labelled `on-button` (`#FFFFFF`) |
+- **Standard** (the default) is round-2 concept 1: flat fills, two-tone chrome (`panel` one step
+  lighter than the `bg` ground in dark themes, darker in light), flush panes divided by 1 pt
+  `border` seams, raised `raised` secondary buttons with a 1 pt `raised_edge`, a solid `primary`,
+  and soft shadows only under floating layers. Content is painted on `pane`, which equals `bg`.
+- **Deeper** is concept 4: a darker ground with the chrome on it, content panes as floating cards
+  (`pane`, `pane_edge`) over gutters, gradient fills (`Fill { top, bottom }`), stronger highlights,
+  layered shadows and a focused-pane edge in `focus`. The tab strip and action bar form one lifted
+  `deck`; the table header strip is `pane_header` with a `focus`-tinted seam, so neither reads as
+  one more neutral edge.
 
-### Daylight (light)
+Interaction states are translucent overlays of `hover_ink`: `hover()`, `hover_strong()`,
+`pressed()` and Dense's `zebra()`; selection is the `selected()` wash with no side bar. Status
+tints (`success_tint()` and so on) are 16%. `danger` is the text-grade red; `danger_base` is
+concept 1's `#e5484d` red for error rings, the danger button's focus ring and danger fills;
+`danger_solid` fills the danger button. Light themes ring the switch knob in `knob_edge`.
 
-| Token | Hex | Use |
-|---|---|---|
-| `bg` | `#F7F8FA` | Window background, history table |
-| `panel` | `#FFFFFF` | Sidebar, detail pane, toolbar, status bar |
-| `elevated` | `#FFFFFF` | Popups, dialogs, palette (separated by border and shadow) |
-| `hover` | `#EEF1F6` | Hovered rows and buttons |
-| `border` | `#DDE2EA` | 1px hairlines between regions (decorative) |
-| `control-border` | `#858A92` | Outlines that identify a control: text fields, checkboxes, switch tracks (3:1) |
-| `text` | `#161A22` | Primary text |
-| `text-dim` | `#4B5466` | Secondary text |
-| `text-faint` | `#586071` | Placeholders, disabled text, line numbers |
-| `accent` | `#7C3AED` | Focus rings, selection, primary buttons, HEAD |
-| `accent-2` | `#0D6F8A` | Gradient end, links, progress |
-| `success` | `#047555` | Added lines, ahead counts, success toasts |
-| `warning` | `#A04A08` | Conflicts, in-progress banners |
-| `danger` | `#C72222` | Removed lines, destructive buttons, error toasts |
-| `added-bg` | `#E3F7EC` | Added line background in diffs |
-| `removed-bg` | `#FDE7E7` | Removed line background in diffs |
-| `button`, `button2` | `#7C3AED`, `#0E7490` | Primary fill and companion accent, labelled `on-button` (`#FFFFFF`) |
-
-Every theme passes the contrast test in `theme.rs` for every pairing the views draw: `text` 7:1
-and `text-dim` and `text-faint` 4.5:1 on every surface (`bg`, `panel`, `elevated`, `hover`, a
-selected row over each, `added-bg`, `removed-bg` and the warning tint); links and SHAs
-(`accent-2`) and status colours 4.5:1 on plain surfaces and selected rows, `success` on added
-lines, `danger` on removed lines and `warning` on its tint; `accent` 4.5:1 on plain surfaces;
-`control-border`, the focus ring and lane colours 3:1. The six other themes define the same tokens
-(their lanes and syntax colours are in `theme.rs`):
-
-- **Aurora** (dark): cool arctic blues after the Nord palette.
-- **Ember** (dark): warm charcoal with orange and gold.
-- **Neon** (dark): deep violet night; electric cyan carries selection and focus and hot pink the
-  links, so selection never reads as the orange-red of removed lines and destructive actions.
-- **Forest** (dark): deep greens lit with sunlit gold; gold carries selection and focus and sky
-  blue the links, so neither is mistaken for the green of added lines.
-- **Paper** (light): warm off-white with rust and teal.
-- **Contrast** (dark): black and white with saturated signal colours, a blue accent, yellow
-  links and strong outlines, for low vision and bright rooms.
-
-| Token | Aurora | Ember | Neon | Forest | Paper | Contrast |
-|---|---|---|---|---|---|---|
-| `bg` | `#1E222A` | `#16110F` | `#0B0716` | `#0E1411` | `#F4EFE6` | `#000000` |
-| `panel` | `#242933` | `#1D1714` | `#110B20` | `#131B17` | `#FBF8F2` | `#0A0A0A` |
-| `elevated` | `#2B303B` | `#241C18` | `#170F2B` | `#18221D` | `#FFFDF8` | `#121212` |
-| `hover` | `#333A47` | `#2E241F` | `#211638` | `#1F2B25` | `#EDE6DA` | `#242424` |
-| `border` | `#3B4252` | `#3A2E27` | `#2D1F4A` | `#2A3830` | `#DCD3C4` | `#6B6B6B` |
-| `control-border` | `#7E8490` | `#796E67` | `#6F6386` | `#67746D` | `#8B8379` | `#B3B3B3` |
-| `text` | `#ECEFF4` | `#F3E9E2` | `#F5EEFF` | `#E4EEE8` | `#2B2620` | `#FFFFFF` |
-| `text-dim` | `#C2C8D3` | `#BCAB9F` | `#CDBFE6` | `#B3C5BB` | `#585044` | `#E6E6E6` |
-| `text-faint` | `#B1B8C4` | `#AC9D93` | `#BBAEDC` | `#A7B4AD` | `#655B50` | `#CCCCCC` |
-| `accent` | `#88C0D0` | `#F97316` | `#00E5FF` | `#E2B84F` | `#A14A08` | `#4CC2FF` |
-| `accent-2` | `#CAAFC5` | `#FACC15` | `#FF7ABD` | `#7DD3FC` | `#0E6E67` | `#FFE14D` |
-| `success` | `#A5C08F` | `#4ADE80` | `#3DF5A0` | `#4ADE80` | `#166534` | `#3DFF8A` |
-| `warning` | `#EBCB8B` | `#FBBF24` | `#FFD60A` | `#FB923C` | `#825500` | `#FFA62B` |
-| `danger` | `#EAA5AB` | `#F87171` | `#FF6B4A` | `#F98282` | `#B91C1C` | `#FF6B6B` |
-| `added-bg` | `#253229` | `#15281B` | `#0B2A22` | `#12301F` | `#E3F0DC` | `#002B14` |
-| `removed-bg` | `#3A262C` | `#331816` | `#2E0B1E` | `#2E1618` | `#F8E1DC` | `#3B0009` |
-| `button` | `#88C0D0` | `#C2410C` | `#0E7490` | `#8A5A00` | `#B45309` | `#005FB8` |
-| `button2` | `#B48EAD` | `#A16207` | `#7C3AED` | `#166534` | `#0F766E` | `#005FB8` |
-| `on-button` | `#1E222A` | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` |
-
-In every theme the accent's hue stays clear of `success` and `danger`, so a selected row is never
-confused with an added or removed line.
-
-The accent gradient runs from `accent` to `accent-2` (violet to cyan in Midnight). It is used
-sparingly: the active tab indicator, the welcome screen mark and progress bars. The primary
-button uses a solid `button` fill, chosen so its `on-button` label stays readable.
-
-Keep all eight themes. Each earns its place by carrying the graph, selection and status colours
-through the full interface, rather than borrowing Midnight's lanes or changing only the chrome.
-
-Selected rows will all use `Palette::selected()`: `accent` at low opacity over the row background,
-set by `selection_alpha` (18% in most dark themes, 12% in light themes and Ember to keep its orange
-calm). An `accent` bar marks the left edge (3px in the history list, 4px on diff lines). egui's
-selected values use the same fill. Views still carrying their
-own tint move to it in the controls pass.
+Midnight and Daylight carry concept 1's values; the other six themes keep their own colour
+identities on the same lightness ladders. Every pairing (text on every surface and state, labels
+on every fill end, focus, outlines, lanes, syntax, coloured components, glass over any backdrop)
+is a test in `theme.rs`, run for every theme in both styles; `Palette::ink` keeps coloured text
+readable on its own tint.
 
 ### Lane colours
 
@@ -180,60 +107,66 @@ margin and a compact section picker when its navigation sidebar would crowd the 
 
 ## Spacing
 
-Standard controls use `CONTROL_HEIGHT` (30 points); compact list actions use
-`COMPACT_CONTROL_HEIGHT` (28), primary actions `PRIMARY_CONTROL_HEIGHT` (36), and toolbar
-tools `TOOL_HEIGHT` (40). Text fields use `FIELD_MARGIN` (8 by 7). Passive headings and metadata
-stay dense rather than inheriting button-sized rows; compact commit details retain room for two
-changed files. A 4px base grid. Tokens: `xs` 4, `sm` 8, `md` 12, `lg` 16, `xl` 24. Panels use `md` inner
-padding; dialogs `xl`; rows `sm` horizontally. Related controls are `sm` apart, groups `lg`.
+A 4 pt base grid: `XS` 4, `SM` 8, `MD` 12, `LG` 16, `XL` 24, `XXL` 32. Everything else that has a
+size (type scale, icons, radii, control and row heights, toolbar anatomy, graph geometry) is a
+`Metrics` field, one table per (Density, Style) pair, read with `theme::metrics()`.
+
+| | Comfortable (default, concept 1) | Dense (concept 5) |
+|---|---|---|
+| Body text | 13 | 12 |
+| Controls (sm / md / lg) | 24 / 28 / 32 | 20 / 24 / 28 |
+| History row / file row | 28 / 30 | 24 / 24 |
+| Tab strip / action bar / status bar | 42 / 58 / 28 | 34 / 36 / 24 |
+| Tool buttons | 46 tall, icon over caption | 26 tall, icon beside label |
+| Zebra rows | off | on |
+
+Deeper overrides the geometry only: controls 30 (26 Dense), panes as cards with a 6 pt gutter
+(4 Dense).
 
 ## Radii
 
-| Token | Value | Use |
-|---|---|---|
-| `radius-sm` | 6px | Buttons, inputs, ref pills, badges |
-| `radius` | 8px | Menus, list selection, toasts |
-| `radius-lg` | 12px | Dialogs, command palette, cards on the welcome screen |
+| Field | Comfortable | Dense | Deeper (Comfortable / Dense) |
+|---|---|---|---|
+| `radius_sm` | 5 | 3 | 6 / 4 |
+| `radius` | 7 | 5 | 10 / 7 |
+| `radius_lg` | 12 | 6 | 14 / 8 |
+| `pill_radius` | full | 3 | 6 / 4 |
 
 ## Elevation
 
-Three levels, by background token plus shadow:
+`theme::material(style, dark, level)` gives each `Elevation` level its top highlight, bottom line,
+recess and shadow layers; `kit::paint::surface` paints them. In Standard only buttons, the
+segmented thumb and the switch knob carry a 1 to 2 px contact shadow, and floating layers (menus,
+popovers, tooltips, toasts, dialogs, palette, cheatsheet) a two-layer soft shadow with a 1 pt
+`overlay_edge` ring. Deeper adds two-layer shadows to controls, coloured glows under primary and
+danger buttons, the `Pane` shadow under cards, the field recess and the deck. Contrast has no
+highlights and rings floating layers in `control_border`.
 
-- **Base** (`bg`, `panel`): no shadow; panels are separated by 1px `border` hairlines.
-- **Controls**: primary buttons and selected segments use `Palette::control_shadow()` for a
-  one-point lift, with a restrained inner highlight. Neutral action edges use `control_edge()`;
-  fields and unchecked controls keep the stronger `control-border`. Keyboard focus stays opaque
-  accent, and inherited disabled state suppresses primary fills and active decoration.
-- **Raised** (`elevated`): menus, tooltips, toasts. Shadow offset (0, 4), blur 16, black at 35%
-  (Midnight) or 10% (Daylight).
-- **Overlay** (`elevated` over a scrim): dialogs and the palette. Shadow offset (0, 12), blur 32,
-  black at 45% / 14%; the scrim is black at 69% in dark themes or 24% in light themes, so the
-  dialog leads over a busy graph without hiding the repository beneath it.
+Translucent surfaces (off by default) will blur what is behind floating layers; until the blur
+lands the setting is unavailable and every layer is opaque (`kit::glass::layer_fill`).
 
 ## Motion
 
-Motion is feedback, never decoration. The tokens live in `ui/motion.rs`.
+Motion is feedback, never decoration. Durations, curves and springs live in `ui/motion.rs`; the
+kit's helpers in `ui/kit/anim.rs`.
 
 | Token | Duration | Use |
 |---|---|---|
-| instant | 0 | Anything driven by the keyboard or repeated often: row hover, selection, the focus ring, tab switches, palette filtering, scrolling to the selection, lists updated by a background refresh |
-| `FAST` | 100ms | Pointer hover and press feedback on controls, switch thumbs, checkboxes |
-| `BASE` | 150ms | Popovers, menus and tooltips appearing; expand and collapse; toasts leaving |
-| `SLOW` | 200ms | Dialogs arriving (fade and 0.98 to 1.0 scale); toasts arriving (8px slide and fade) |
+| `INSTANT` | 0 | Rows, selection, menu-item highlight, palette filtering, keyboard-opened menus |
+| `FAST` / `FAST_OUT` | 80 / 120ms | Hover in and out, press release, focus ring in |
+| `BASE` | 150ms | Chevrons, label crossfades, tooltips, field halo |
+| `SLOW` | 220ms | Dialog and popover entrance |
+| `TOAST_IN` | 280ms | Toast slide-in |
+| `EXIT_POPUP` / `EXIT_DIALOG` / `EXIT_TOAST` | 100 / 120 / 160ms | Exits |
+| `TOOLTIP_DELAY` / `TOOLTIP_SKIP` | 450 / 300ms | First tooltip delay; no delay right after one closed |
+| `LOADING_DELAY` / `LOADING_MIN` | 150 / 400ms | Spinners appear late and stay a minimum time |
 
-Enter and hover transitions ease out (cubic). Exits take about three quarters of the enter time
-and only fade; closing a menu, tooltip or the palette is instant. Spinners turn once per second,
-linearly.
-
-Running jobs show a spinner in the status bar and on the triggering toolbar button. Outside the
-welcome screen, whose glow drifts and whose canopy's halos breathe, no animation loops while
-idle, so an idle repository view does not repaint. Reduce motion makes every duration zero and
-stills the welcome screen. Today it is an on/off switch in Settings → Appearance; `FAST` times
-the segmented controls and switches, while the three-way preference (match the system, reduced
-or full) and the `SLOW` token are not wired up yet (the backlog's "Motion" entry). The system setting it will follow is read by
-`platform::prefers_reduced_motion` from the desktop portal or GNOME settings on Linux,
-`com.apple.universalaccess` on macOS and the client-area animation setting on Windows, off the UI
-thread.
+Curves are cubic Béziers (`EASE_OUT` by default); springs (`SWITCH`, `PRESS`, the indicator
+pair) use the exact damped solution and repaint only while moving. Buttons scale their content
+to 0.97 while pressed. Settings → Appearance → Motion offers Match system (the default), Reduced
+and Full; the system answer comes from `platform::prefers_reduced_motion` on a background thread.
+Reduced makes every duration zero, lands every spring at once, turns the press scale off and
+stills the welcome screen. Only spinners and skeletons repaint continuously, and only while shown.
 
 ## Iconography
 
@@ -370,6 +303,19 @@ in `theme.rs`:
   windows. Layouts are checked at 900×560, 960×600, 1440×900 and 2560×1440.
 
 ## Components
+
+### Component library
+
+`ui/kit/` holds the components. Each is a builder: `new(..)` with the required inputs, chained
+setters (`size`, `icon`, `enabled`, `tooltip`, `disabled_reason`, `shortcut`, `id_salt`,
+`full_width`, `min_width`), and `show(ui)`; each also implements `egui::Widget`. Components read
+colours, metrics and options themselves and report their AccessKit role and label. Buttons come in
+Primary, Secondary, Ghost and Danger at Sm, Md and Lg, plus icon, tool, link and split buttons;
+disabled controls are the whole control at 42% and stay hoverable for their reason. Keyboard focus
+draws a 2 pt ring 2 pt outside the control (`danger_base` on danger buttons), only after keyboard
+use. `tools/screenshot.sh <repo> out.png --overlay gallery [--style deeper] [--density dense]
+[--gallery-page N]` renders every component in every state.
+
 
 ### Ref pill
 

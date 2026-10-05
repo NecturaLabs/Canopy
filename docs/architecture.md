@@ -103,11 +103,18 @@ thread.
 | `settings.rs` | Settings persisted through eframe storage: appearance, Git, integrations, updates, privacy answers, trusted folders, recent and open repositories. |
 | `trust.rs` | The trusted folders (`Settings::trusted_folders`) as a process-wide list the repository threads read; adding a folder (never a root) and the parent offered next to a repository's own folder (ADR 0009). |
 | `platform.rs` | Handing things to the operating system (web pages, folders, files in an editor, a terminal) and reading its settings, such as reduced motion, off the UI thread. |
-| `ui/theme.rs` | Design tokens: the eight palettes, lane colours, syntax colours, spacing, radii. The only place colours are defined. |
-| `ui/motion.rs` | Motion tokens (100/150/200 ms), the reduce-motion preference and whether motion is currently reduced. |
+| `ui/theme.rs` | Design tokens: the eight palettes (shared colours plus Standard and Deeper surfaces), elevation materials, metrics per density and style, the active look (`apply`, `palette`, `surfaces`, `metrics`, `appearance`) and the contrast tests. The only place colours and sizes are defined. |
+| `ui/motion.rs` | Motion tokens (durations, Bézier curves, springs), the Motion preference, the system's answer (asked on a background thread) and whether motion is currently reduced. |
+| `ui/kit/mod.rs` | The component library: `Size`, `Tone`, `ForceState`, `KitResponse`, `focus_visible` and the shared interaction state. |
+| `ui/kit/anim.rs` | Eased booleans and values, springs, entrances, sliding rectangles and the press scale; all instant with reduced motion. |
+| `ui/kit/paint.rs` | Shadows, gradient fills, highlights, recesses, focus rings, pixel-snapped seams, Deeper panes and deck, spinners and scroll fades. |
+| `ui/kit/button.rs` | `Button` (primary, secondary, ghost, danger), `IconButton`, `ToolButton`, `LinkButton`, `SplitButton`: the reference component. |
+| `ui/kit/glass.rs` | The safe facade for translucent floating layers; opaque until the backdrop blur is built. |
+| `ui/kit/gallery.rs` | The component gallery (`--overlay gallery`) with a section per kit module, plus token, elevation, style and motion strips. |
+| `ui/kit/avatar.rs`, `ui/kit/chip.rs`, `ui/kit/choice.rs`, `ui/kit/field.rs`, `ui/kit/graph.rs`, `ui/kit/menu.rs`, `ui/kit/overlay.rs`, `ui/kit/progress.rs`, `ui/kit/range.rs`, `ui/kit/row.rs`, `ui/kit/select.rs`, `ui/kit/split.rs`, `ui/kit/surface.rs`, `ui/kit/toast.rs`, `ui/kit/toggle.rs` | Placeholders for the remaining components (avatars, chips, choices, fields, the graph row, menus, overlays, progress, sliders, rows, selects, split handles, surfaces, toast painting, toggles), filled module by module. |
 | `ui/fonts.rs` | Registers the bundled Inter, JetBrains Mono and Phosphor fonts. |
 | `ui/art.rs` | The illustrations (logo mark, welcome canopy, empty-state spots) drawn with the painter in the active theme's colours; each grows in once when it appears. |
-| `ui/widgets.rs` | Ref pills, avatars, icon buttons, badges, segmented controls, switches, checkboxes, primary buttons and scroll-edge fades. |
+| `ui/widgets.rs` | Ref pills, avatars, badges, segmented controls, switches, checkboxes, and the older button helpers, which now draw `ui::kit` buttons. |
 | `ui/folder_picker.rs` | Native folder selection on a background thread; a bounded result channel and requesting-field lifetime keep the event loop responsive. |
 | `ui/toast.rs` | Toast queue and animation. |
 | `ui/palette.rs` | Command palette with fuzzy matching; entries built on opening, ranked on query change. |
