@@ -21,6 +21,8 @@ pub type Section = (&'static str, fn(&mut Ui));
 /// The sections, in the spec's order (design spec 9). Component modules append theirs here.
 pub const SECTIONS: &[Section] = &[
     ("Buttons", button::gallery),
+    ("Fields", super::field::gallery),
+    ("Select", super::select::gallery),
     ("Toggles", super::toggle::gallery),
     ("Segmented and tabs", super::choice::gallery),
     ("Slider", super::range::gallery),

@@ -22,7 +22,6 @@ pub const FAST_OUT: f32 = 0.12;
 /// Chevron rotation, label crossfades, tooltip in, field halo.
 pub const BASE: f32 = 0.15;
 /// Dialog and popover entrance transform.
-#[expect(dead_code, reason = "used by the component phase")]
 pub const SLOW: f32 = 0.22;
 /// Toast slide-in.
 #[expect(dead_code, reason = "used by the component phase")]

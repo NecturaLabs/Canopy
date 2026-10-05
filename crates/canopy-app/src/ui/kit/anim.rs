@@ -19,7 +19,6 @@ pub fn ease(ctx: &Context, id: Id, on: bool, seconds: f32) -> f32 {
 }
 
 /// Eases a number towards `target` over `seconds` (instant with reduced motion).
-#[expect(dead_code, reason = "used by the component phase")]
 pub fn ease_value(ctx: &Context, id: Id, target: f32, seconds: f32) -> f32 {
     ctx.animate_value_with_time(id, target, motion::time(seconds))
 }
