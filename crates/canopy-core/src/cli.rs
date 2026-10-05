@@ -669,6 +669,22 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         run_streaming(Some(dir.path()), &["init", "-q", "streamed"], |_| {}).expect("init");
         assert!(dir.path().join("streamed/.git").is_dir());
+
+        let mut lines = Vec::new();
+        run_streaming(
+            Some(dir.path()),
+            &["clone", "--progress", "streamed", "copy"],
+            |l| lines.push(l.to_owned()),
+        )
+        .expect("clone");
+        assert!(
+            lines.iter().any(|l| l.starts_with("Cloning into 'copy'")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().all(|l| !l.is_empty() && l.trim() == l),
+            "{lines:?}"
+        );
     }
 
     /// Serialises the tests that change the process-wide hook and turns it off afterwards, even
