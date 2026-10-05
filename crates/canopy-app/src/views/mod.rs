@@ -39,9 +39,6 @@ mod tests {
         "ui.separator(",
     ];
 
-    /// The top bar moves onto the kit's `DocTabs` in a separate change.
-    const NOT_YET: [&str; 1] = ["toolbar.rs"];
-
     fn view_files(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("views folder").flatten() {
             let path = entry.path();
@@ -63,12 +60,6 @@ mod tests {
         );
         let mut found = Vec::new();
         for path in files {
-            if path
-                .file_name()
-                .is_some_and(|n| NOT_YET.iter().any(|x| n == *x))
-            {
-                continue;
-            }
             let src = std::fs::read_to_string(&path).expect("view source");
             let code = src.split("#[cfg(test)]").next().unwrap_or_default();
             for (i, line) in code.lines().enumerate() {

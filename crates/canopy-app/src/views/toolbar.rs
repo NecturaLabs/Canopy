@@ -2,38 +2,31 @@
 //! seam each; Deeper: the tab strip on the ground and the action bar on a lifted card), so nothing
 //! here paints a background of its own.
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
-use egui::accesskit::Role;
-use egui::text::LayoutJob;
+use canopy_core::forge::ForgeKind;
+use canopy_hosting::{RequestState, RequestSummary, StateFilter};
 use egui::{
-    Align, Color32, CornerRadius, FontFamily, FontId, Id, Layout, Rect, RichText, Sense, Ui,
-    UiBuilder, Vec2, WidgetInfo, WidgetType, pos2, vec2,
+    Align, CornerRadius, FontId, Id, Layout, Rect, RichText, Sense, Ui, Vec2, WidgetInfo,
+    WidgetType, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
 use crate::action::Action;
-use crate::keymap::{Command, hint};
+use crate::keymap::Command;
 use crate::tab::{RepoTab, View};
 use crate::ui::art;
 use crate::ui::kit::button::tool_divider;
-use crate::ui::kit::chip::{Badge, count_text};
+use crate::ui::kit::chip::Badge;
+use crate::ui::kit::choice::ViewTabs;
 use crate::ui::kit::field::SearchField;
-use crate::ui::kit::progress::Spinner;
-use crate::ui::kit::{IconButton, Size, ToolButton, anim, menu, paint};
-use crate::ui::theme::{self, Elevation, ThemeId, palette};
+use crate::ui::kit::overlay::TooltipExt;
+use crate::ui::kit::tabs::{DocTab, DocTabs, DocTabsEvent};
+use crate::ui::kit::{IconButton, Size, ToolButton, menu, paint};
+use crate::ui::theme::{self, ThemeId, palette};
 use crate::ui::widgets::forge_icon;
 use crate::worker::Op;
-
-/// "Fetch (Ctrl+Shift+F)".
-fn tip(text: &str, command: Command) -> String {
-    let keys = hint(command);
-    if keys.is_empty() {
-        text.to_owned()
-    } else {
-        format!("{text}  ({keys})")
-    }
-}
 
 /// Repository tabs: the wordmark, the document tabs, and the strip's tools on the right.
 pub fn tabs(
@@ -56,28 +49,30 @@ pub fn tabs(
                 .color(p.text),
         );
         ui.add_space(theme::MD);
-        // The tools on the right keep their room; the tabs scroll in the rest.
+        // The tools on the right keep their room; the tabs scroll in the rest, and the "+" after
+        // them stays in sight.
         let tools_id = ui.id().with("tab-strip-tools");
         let tools_w: f32 = ui.data(|d| d.get_temp(tools_id)).unwrap_or(0.0);
-        egui::ScrollArea::horizontal()
+        let open_w = Size::Sm.height() + theme::XS;
+        let room = (ui.available_width() - tools_w - theme::LG - open_w).max(m.control * 2.0);
+        let docs = doc_tabs(tabs);
+        let shown = DocTabs::new(&docs, active)
+            .max_width(room)
             .id_salt("repository-tabs")
-            .max_width((ui.available_width() - tools_w - theme::LG).max(m.control * 2.0))
-            .show(ui, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.spacing_mut().item_spacing.x = theme::XS;
-                    if let Some(event) = DocTabs::new(tabs, active).show(ui) {
-                        actions.push(event);
-                    }
-                    if IconButton::new(icon::PLUS, "Open repository")
-                        .shortcut(Command::Open)
-                        .size(Size::Sm)
-                        .show(ui)
-                        .clicked()
-                    {
-                        actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::open()));
-                    }
-                });
-            });
+            .show(ui);
+        match shown.value {
+            Some(DocTabsEvent::Select(i)) => actions.push(Action::SwitchTab(i)),
+            Some(DocTabsEvent::Close(i)) => actions.push(Action::CloseTab(i)),
+            None => {}
+        }
+        if IconButton::new(icon::PLUS, "Open repository")
+            .shortcut(Command::Open)
+            .size(Size::Sm)
+            .show(ui)
+            .clicked()
+        {
+            actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::open()));
+        }
         let tools = ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = theme::XS;
             let start = ui.cursor().right();
@@ -120,6 +115,40 @@ pub fn tabs(
             ui.ctx().request_repaint();
         }
     });
+}
+
+/// The kit's document tabs for the open repositories: keyed by path, with each one's sync state,
+/// whether it is working, and its path and switch shortcut in the tooltip.
+fn doc_tabs(tabs: &[RepoTab]) -> Vec<DocTab<'_>> {
+    tabs.iter()
+        .enumerate()
+        .map(|(i, tab)| {
+            // Commits to push and pull, like the status bar, so every tab shows its sync state.
+            let (ahead, behind) = tab
+                .snap
+                .as_ref()
+                .and_then(|s| s.current_branch())
+                .filter(|b| b.upstream.is_some())
+                .map_or((0, 0), |b| (b.ahead, b.behind));
+            let mut detail = tab.path.display().to_string();
+            if i < 9 {
+                let modifier = if cfg!(target_os = "macos") {
+                    "Cmd"
+                } else {
+                    "Ctrl"
+                };
+                let _ = write!(detail, "  ·  {modifier}+{}", i + 1);
+            }
+            let doc = DocTab::new(&tab.path, &tab.name)
+                .sync(ahead, behind)
+                .busy(tab.running.is_some())
+                .detail(detail);
+            match &tab.running {
+                Some(job) => doc.tooltip(format!("{}  ·  {job}…", tab.name)),
+                None => doc,
+            }
+        })
+        .collect()
 }
 
 /// The theme menu: every theme with its swatch (ground and accent), the active one checked.
@@ -189,238 +218,11 @@ fn search_trigger(ui: &mut Ui) -> egui::Response {
             ui.id().with("title-search-open"),
             Sense::click(),
         )
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(tip("Search commands", Command::Palette));
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     r.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Search commands"));
-    r
-}
-
-// ------------------------------------------------------------------------------------ DocTabs
-
-/// Padding inside a document tab: left of the icon, right of the close button.
-const TAB_PAD_LEFT: f32 = 10.0;
-const TAB_PAD_RIGHT: f32 = 6.0;
-/// Gap between a tab's icon, label, counts and close button.
-const TAB_GAP: f32 = 7.0;
-const TAB_MIN_WIDTH: f32 = 100.0;
-const TAB_MAX_WIDTH: f32 = 220.0;
-/// The ahead/behind counts (mono, `accent`).
-const TAB_COUNT_SIZE: f32 = 11.5;
-
-/// The repository tabs (concept `.h-tab`, design spec 4.8): the active tab is the `tab` fill
-/// with its edge, the others transparent until hovered. A busy repository shows a spinner in
-/// place of its folder; ahead/behind counts follow the name; the close button shows on hover and
-/// on the active tab; a middle click closes too.
-struct DocTabs<'a> {
-    tabs: &'a [RepoTab],
-    active: usize,
-}
-
-impl<'a> DocTabs<'a> {
-    fn new(tabs: &'a [RepoTab], active: usize) -> Self {
-        Self { tabs, active }
-    }
-
-    /// Shows the tabs; returns the switch or close the user asked for.
-    fn show(self, ui: &mut Ui) -> Option<Action> {
-        let mut event = None;
-        let list = ui
-            .scope_builder(UiBuilder::new().id_salt("doc-tabs"), |ui| {
-                ui.spacing_mut().item_spacing.x = theme::XS;
-                for (i, tab) in self.tabs.iter().enumerate() {
-                    if let Some(e) = doc_tab(ui, i, tab, i == self.active) {
-                        event = Some(e);
-                    }
-                }
-            })
-            .response;
-        ui.ctx().accesskit_node_builder(list.id, |n| {
-            n.set_role(Role::TabList);
-            n.set_label("Repositories");
-        });
-        event
-    }
-}
-
-fn doc_tab(ui: &mut Ui, i: usize, tab: &RepoTab, selected: bool) -> Option<Action> {
-    let ctx = ui.ctx().clone();
-    let p = palette(&ctx);
-    let style = theme::style();
-    let s = p.surfaces(style);
-    let m = theme::metrics();
-    let font = FontId::new(m.body_size, theme::medium());
-    // Commits to push and pull, like the status bar, so every tab shows its sync state.
-    let sync = tab
-        .snap
-        .as_ref()
-        .and_then(|s| s.current_branch())
-        .filter(|b| b.upstream.is_some() && (b.ahead > 0 || b.behind > 0))
-        .map(|b| (b.ahead, b.behind));
-    let counts = sync.map(|(ahead, behind)| {
-        let mut parts = Vec::new();
-        if ahead > 0 {
-            parts.push(format!("↑{ahead}"));
-        }
-        if behind > 0 {
-            parts.push(format!("↓{behind}"));
-        }
-        ui.painter().layout_no_wrap(
-            parts.join(" "),
-            FontId::new(TAB_COUNT_SIZE, FontFamily::Monospace),
-            p.accent,
-        )
-    });
-    let close_side = Size::Xs.height();
-    let name_w = ui
-        .painter()
-        .layout_no_wrap(tab.name.clone(), font.clone(), Color32::PLACEHOLDER)
-        .size()
-        .x;
-    let fixed = TAB_PAD_LEFT
-        + m.icon_sm
-        + TAB_GAP
-        + counts.as_ref().map_or(0.0, |g| g.size().x + TAB_GAP)
-        + TAB_GAP
-        + close_side
-        + TAB_PAD_RIGHT;
-    let width = (fixed + name_w).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH);
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, m.doc_tab_height), Sense::click());
-    let hover = anim::ease_bool(
-        &ctx,
-        resp.id.with("doc-tab-hover"),
-        resp.hovered() || ui.rect_contains_pointer(rect),
-        crate::ui::motion::FAST,
-        crate::ui::motion::FAST_OUT,
-    );
-    let radius = CornerRadius::same(m.doc_tab_radius);
-    let mut event = None;
-    if ui.is_rect_visible(rect) {
-        let painter = ui.painter().clone();
-        if selected {
-            paint::surface(
-                &painter,
-                rect,
-                radius,
-                p,
-                style,
-                Elevation::Tab,
-                s.tab,
-                Some(s.tab_edge),
-            );
-        } else if hover > 0.0 {
-            painter.rect_filled(rect, radius, p.hover().gamma_multiply(hover));
-        }
-        let cy = rect.center().y;
-        let mut x = rect.left() + TAB_PAD_LEFT;
-        let icon_rect =
-            Rect::from_center_size(pos2(x + m.icon_sm / 2.0, cy), Vec2::splat(m.icon_sm));
-        if tab.running.is_some() {
-            ui.put(
-                icon_rect,
-                Spinner::new()
-                    .size(Size::Xs)
-                    .label(tab.name.clone())
-                    .id_salt(("doc-tab-busy", i)),
-            );
-        } else {
-            let color = if selected {
-                p.text_dim
-            } else {
-                p.text_faint.lerp_to_gamma(p.text_dim, hover)
-            };
-            let g = painter.layout_no_wrap(
-                icon::FOLDER_SIMPLE.to_owned(),
-                FontId::proportional(m.icon_sm),
-                color,
-            );
-            painter.galley(icon_rect.center() - g.size() / 2.0, g, color);
-        }
-        x += m.icon_sm + TAB_GAP;
-        let close_left = rect.right() - TAB_PAD_RIGHT - close_side;
-        let counts_w = counts.as_ref().map_or(0.0, |g| g.size().x + TAB_GAP);
-        let label_right = close_left - TAB_GAP - counts_w;
-        let label_color = if selected {
-            p.text
-        } else {
-            p.text_dim.lerp_to_gamma(p.text, hover)
-        };
-        let mut job = LayoutJob::simple(
-            tab.name.clone(),
-            font,
-            label_color,
-            (label_right - x).max(1.0),
-        );
-        job.wrap.max_rows = 1;
-        job.wrap.break_anywhere = true;
-        let g = painter.layout_job(job);
-        let label_w = g.size().x;
-        painter.galley(pos2(x, cy - g.size().y / 2.0), g, label_color);
-        if let Some(g) = counts {
-            painter.galley(
-                pos2(x + label_w + TAB_GAP, cy - g.size().y / 2.0),
-                g,
-                p.accent,
-            );
-        }
-        if selected || hover > 0.0 {
-            let at = Rect::from_min_size(
-                pos2(close_left, cy - close_side / 2.0),
-                Vec2::splat(close_side),
-            );
-            let mut slot = ui.new_child(UiBuilder::new().max_rect(at));
-            if !selected {
-                slot.multiply_opacity(hover);
-            }
-            if slot
-                .add(
-                    IconButton::new(icon::X, format!("Close {}", tab.name))
-                        .size(Size::Xs)
-                        .id_salt(("doc-tab-close", i)),
-                )
-                .clicked()
-            {
-                event = Some(Action::CloseTab(i));
-            }
-        }
-    }
-    if event.is_none() {
-        if resp.clicked() {
-            event = Some(Action::SwitchTab(i));
-        } else if resp.middle_clicked() {
-            event = Some(Action::CloseTab(i));
-        }
-    }
-    let sync_text = sync.map_or(String::new(), |(ahead, behind)| {
-        format!(", {ahead} to push, {behind} to pull")
-    });
-    let label = format!("Repository tab {}{sync_text}", tab.name);
-    resp.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, &label));
-    ctx.accesskit_node_builder(resp.id, |n| {
-        n.set_role(Role::Tab);
-        n.clear_toggled();
-        n.set_selected(selected);
-    });
-    if resp.has_focus() && crate::ui::kit::focus_visible(&ctx) {
-        paint::inset_ring(ui.painter(), rect, radius, p.focus);
-    }
-    resp.on_hover_text(format!(
-        "{}\n{}",
-        tab.path.display(),
-        if i < 9 {
-            format!(
-                "{}+{}",
-                if cfg!(target_os = "macos") {
-                    "Cmd"
-                } else {
-                    "Ctrl"
-                },
-                i + 1
-            )
-        } else {
-            String::new()
-        }
-    ));
-    event
+    r.kit_tooltip("Search commands")
+        .shortcut(Command::Palette)
+        .show()
 }
 
 // ---------------------------------------------------------------------------------- action bar
@@ -432,6 +234,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
     let has_remote = snap.is_some_and(|s| !s.remotes.is_empty());
     let local_only = tab.is_local_only();
     let busy = tab.running.is_some();
+    let running = Running::of(tab);
     let branch = snap.and_then(|s| s.current_branch());
     let forge = tab.forge();
     let width = ui.available_width();
@@ -456,12 +259,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 ui.spacing_mut().item_spacing.x = m.toolbar_gap;
                 ui.add_space(theme::SM);
                 let changes = snap.map_or(0, |s| s.status.len());
-                let open_requests = match &tab.requests.list {
-                    Some(Ok(l)) if tab.requests.filter == canopy_hosting::StateFilter::Open => {
-                        l.len()
-                    }
-                    _ => 0,
-                };
+                let open_requests = open_requests(ui.ctx(), tab);
                 view_tabs(
                     ui,
                     tab.view,
@@ -471,31 +269,27 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 );
                 ui.add_space(theme::SM);
                 tool_divider(ui);
-                if ToolButton::new(icon::ARROWS_CLOCKWISE, "Fetch")
+                let fetch = ToolButton::new(icon::ARROWS_CLOCKWISE, "Fetch")
                     .tooltip("Fetch all remotes")
-                    .shortcut(Command::Fetch)
                     .enabled(has_remote && !busy)
-                    .disabled_reason(reason(true))
-                    .show(ui)
-                    .clicked()
-                {
+                    .disabled_reason(reason(true));
+                if running.show(ui, fetch, Tool::Fetch, Some(Command::Fetch)) {
                     actions.push(Action::Fetch);
                 }
                 let behind = branch.map_or(0, |b| b.behind);
                 let mut pull = ToolButton::new(icon::ARROW_FAT_LINE_DOWN, "Pull")
                     .tooltip("Pull the current branch")
-                    .shortcut(Command::Pull)
                     .enabled(has_remote && !busy)
                     .disabled_reason(reason(true));
                 if behind > 0 {
                     pull = pull.badge(format!("↓{behind}"));
                 }
-                if pull.show(ui).clicked() {
+                if running.show(ui, pull, Tool::Pull, Some(Command::Pull)) {
                     actions.push(Action::Pull);
                 }
                 let ahead = branch.map_or(0, |b| b.ahead);
                 if local_only {
-                    if ToolButton::new(icon::CLOUD_ARROW_UP, "Publish")
+                    let publish = ToolButton::new(icon::CLOUD_ARROW_UP, "Publish")
                         .tooltip(
                             "This repository has no remote. Add one on GitHub or GitLab and push",
                         )
@@ -504,16 +298,13 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                             busy_reason
                         } else {
                             "Check out a branch to publish"
-                        })
-                        .show(ui)
-                        .clicked()
-                    {
+                        });
+                    if running.show(ui, publish, Tool::Publish, None) {
                         actions.push(Action::Publish);
                     }
                 } else {
                     let mut push = ToolButton::new(icon::ARROW_FAT_LINE_UP, "Push")
                         .tooltip("Push the current branch")
-                        .shortcut(Command::Push)
                         .enabled(has_remote && !busy && branch.is_some())
                         .disabled_reason(if branch.is_none() && has_remote && !busy {
                             "Check out a branch to push"
@@ -523,7 +314,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     if ahead > 0 {
                         push = push.badge(format!("↑{ahead}"));
                     }
-                    if push.show(ui).clicked() {
+                    if running.show(ui, push, Tool::Push, Some(Command::Push)) {
                         actions.push(Action::Push);
                     }
                 }
@@ -548,32 +339,26 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     });
                 }
                 tool_divider(ui);
-                if ToolButton::new(icon::GIT_BRANCH, "Branch")
+                let new_branch = ToolButton::new(icon::GIT_BRANCH, "Branch")
                     .tooltip("New branch")
-                    .shortcut(Command::NewBranch)
                     .enabled(snap.is_some())
-                    .disabled_reason("The repository is still loading")
-                    .show(ui)
-                    .clicked()
-                {
+                    .disabled_reason("The repository is still loading");
+                if running.show(ui, new_branch, Tool::Branch, Some(Command::NewBranch)) {
                     actions.push(Action::OpenDialog(
                         crate::views::dialogs::Dialog::new_branch_at(
                             crate::views::dialogs::Start::Head,
                         ),
                     ));
                 }
-                if ToolButton::new(icon::GIT_MERGE, "Merge")
+                let merge = ToolButton::new(icon::GIT_MERGE, "Merge")
                     .tooltip("Merge or rebase")
-                    .shortcut(Command::MergeDialog)
                     .enabled(branch.is_some() && !busy)
                     .disabled_reason(if busy {
                         busy_reason
                     } else {
                         "Check out a branch to merge into"
-                    })
-                    .show(ui)
-                    .clicked()
-                {
+                    });
+                if running.show(ui, merge, Tool::Merge, Some(Command::MergeDialog)) {
                     actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Merge {
                         target: String::new(),
                         rebase: false,
@@ -581,18 +366,15 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     }));
                 }
                 let dirty = snap.is_some_and(|s| !s.status.is_clean());
-                if ToolButton::new(icon::ARCHIVE, "Stash")
+                let stash = ToolButton::new(icon::ARCHIVE, "Stash")
                     .tooltip("Stash changes")
-                    .shortcut(Command::Stash)
                     .enabled(dirty && !busy)
                     .disabled_reason(if busy {
                         busy_reason
                     } else {
                         "Nothing to stash"
-                    })
-                    .show(ui)
-                    .clicked()
-                {
+                    });
+                if running.show(ui, stash, Tool::Stash, Some(Command::Stash)) {
                     actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Stash {
                         message: String::new(),
                         untracked: true,
@@ -606,14 +388,11 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     ),
                     None => "Apply the latest stash and remove it from the stash list".to_owned(),
                 };
-                if ToolButton::new(icon::TRAY_ARROW_UP, "Pop")
+                let pop = ToolButton::new(icon::TRAY_ARROW_UP, "Pop")
                     .tooltip(pop_tip)
-                    .shortcut(Command::PopStash)
                     .enabled(latest.is_some() && !busy)
-                    .disabled_reason(if busy { busy_reason } else { "No stashes" })
-                    .show(ui)
-                    .clicked()
-                {
+                    .disabled_reason(if busy { busy_reason } else { "No stashes" });
+                if running.show(ui, pop, Tool::Pop, Some(Command::PopStash)) {
                     actions.push(Action::Op(Op::StashApply {
                         index: 0,
                         pop: true,
@@ -663,302 +442,518 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
         });
 }
 
-/// One view of the switcher.
-struct ViewTab {
-    view: View,
-    glyph: &'static str,
-    label: &'static str,
-    count: usize,
-    command: Command,
-    enabled: bool,
-}
-
-/// Id of view tab `index` (its response, for tests).
-fn view_tab_id(index: usize) -> Id {
-    Id::new(("view-tab", index))
-}
-
-/// The History / Changes / Requests switcher (design spec 4.8 ViewTabs): the kit's segmented
-/// control, drawn here because its options differ in ways the kit's `Segmented` has no slot for:
-/// Requests is disabled without a GitHub or GitLab remote (saying why), each view has its own
-/// shortcut tooltip, and in a narrow window only the active view keeps its name.
+/// The History / Changes / Requests switcher (design spec 4.8 ViewTabs): the kit's view tabs with
+/// counts on the strong badge, each view's shortcut in its tooltip, Requests off (saying why)
+/// without a GitHub or GitLab remote, and in a narrow window only the active view named.
 fn view_tabs(
     ui: &mut Ui,
     view: View,
     changes: usize,
-    requests: Option<(canopy_core::forge::ForgeKind, usize)>,
+    requests: Option<(ForgeKind, usize)>,
     actions: &mut Vec<Action>,
 ) {
-    struct Laid {
-        glyph: Arc<egui::Galley>,
-        text: Option<Arc<egui::Galley>>,
-        badge: Option<Badge>,
-        width: f32,
+    let compact = ui.ctx().content_rect().width() < theme::COMPACT_WIDTH;
+    let (kind, n) = requests.unwrap_or((ForgeKind::GitHub, 0));
+    let requests_label = match (compact, kind) {
+        (true, _) => "Requests",
+        (false, ForgeKind::GitHub) => "Pull requests",
+        (false, ForgeKind::GitLab) => "Merge requests",
+    };
+    let options = [
+        (View::History, icon::GRAPH, "History"),
+        (View::Changes, icon::PENCIL_SIMPLE_LINE, "Changes"),
+        (View::Requests, icon::GIT_PULL_REQUEST, requests_label),
+    ];
+    let commands = [Command::History, Command::Changes, Command::Requests];
+    let mut chosen = view;
+    let mut tabs = ViewTabs::with_icons(&mut chosen, &options)
+        .compact(compact)
+        .strong_badges(true)
+        .badge(1, changes)
+        .badge(2, n)
+        .label("View")
+        .id_salt(VIEW_TABS)
+        .option_enabled(
+            2,
+            requests.is_some(),
+            Some("Add a GitHub or GitLab remote to view pull or merge requests"),
+        );
+    for (i, ((_, _, label), command)) in options.iter().zip(commands).enumerate() {
+        tabs = tabs.option_tooltip(i, *label).option_shortcut(i, command);
+    }
+    if tabs.show(ui).changed() && chosen != view {
+        actions.push(Action::SetView(chosen));
+    }
+}
+
+/// The view switcher's id salt.
+const VIEW_TABS: &str = "view-tabs";
+
+/// The open requests the list shows, when it says: all of it under Open, its open ones under All.
+/// Under Closed, while it loads and after a failure it says nothing.
+fn open_in_list(
+    filter: StateFilter,
+    list: Option<&Result<Arc<[RequestSummary]>, String>>,
+) -> Option<usize> {
+    match (filter, list?.as_ref().ok()?) {
+        (StateFilter::Open, l) => Some(l.len()),
+        (StateFilter::All, l) => Some(l.iter().filter(|r| r.state == RequestState::Open).count()),
+        (StateFilter::Closed, _) => None,
+    }
+}
+
+/// The count on the Requests view: what the list says, else the last count it gave for this
+/// repository, so the badge stays while the list reloads or shows closed requests. A failed list
+/// clears it.
+fn open_requests(ctx: &egui::Context, tab: &RepoTab) -> usize {
+    let id = Id::new(("toolbar-open-requests", &tab.path));
+    let list = tab.requests.list.as_ref();
+    if matches!(list, Some(Err(_))) {
+        ctx.data_mut(|d| d.remove_temp::<usize>(id));
+        return 0;
+    }
+    match open_in_list(tab.requests.filter, list) {
+        Some(n) => {
+            ctx.data_mut(|d| d.insert_temp(id, n));
+            n
+        }
+        None => ctx.data(|d| d.get_temp(id)).unwrap_or(0),
+    }
+}
+
+/// An action-bar tool whose operation can be under way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tool {
+    Fetch,
+    Pull,
+    Push,
+    Publish,
+    Branch,
+    Merge,
+    Stash,
+    Pop,
+}
+
+/// The tool the running operation (its worker label, `Op::label`) belongs to, if any.
+fn running_tool(label: &str) -> Option<Tool> {
+    Some(match label {
+        "Fetching" => Tool::Fetch,
+        "Pulling" => Tool::Pull,
+        "Pushing" | "Force pushing" => Tool::Push,
+        "Stashing" => Tool::Stash,
+        "Popping stash" => Tool::Pop,
+        l if ["Merging ", "Squashing ", "Rebasing onto "]
+            .iter()
+            .any(|p| l.starts_with(p)) =>
+        {
+            Tool::Merge
+        }
+        l if l.starts_with("Creating branch ") => Tool::Branch,
+        l if l.starts_with("Adding remote ") => Tool::Publish,
+        _ => return None,
+    })
+}
+
+/// The operation the action bar is running, as its tools show it.
+struct Running {
+    tool: Option<Tool>,
+    /// "Fetching…  Receiving objects: 45%".
+    tip: String,
+}
+
+impl Running {
+    fn of(tab: &RepoTab) -> Self {
+        let job = tab.running.as_deref();
+        let mut tip = job.map_or_else(String::new, |j| format!("{j}…"));
+        if let Some(progress) = tab.progress.as_deref().filter(|_| job.is_some()) {
+            let _ = write!(tip, "  {progress}");
+        }
+        Self {
+            tool: job.and_then(running_tool),
+            tip,
+        }
     }
 
-    let ctx = ui.ctx().clone();
-    let p = palette(&ctx);
-    let style = theme::style();
-    let s = p.surfaces(style);
-    let m = theme::metrics();
-    let (kind, n) = requests.unwrap_or((canopy_core::forge::ForgeKind::GitHub, 0));
-    let compact = ctx.content_rect().width() < theme::COMPACT_WIDTH;
-    let items = [
-        ViewTab {
-            view: View::History,
-            glyph: icon::GRAPH,
-            label: "History",
-            count: 0,
-            command: Command::History,
-            enabled: true,
-        },
-        ViewTab {
-            view: View::Changes,
-            glyph: icon::PENCIL_SIMPLE_LINE,
-            label: "Changes",
-            count: changes,
-            command: Command::Changes,
-            enabled: true,
-        },
-        ViewTab {
-            view: View::Requests,
-            glyph: icon::GIT_PULL_REQUEST,
-            label: match (compact, kind) {
-                (true, _) => "Requests",
-                (false, canopy_core::forge::ForgeKind::GitHub) => "Pull requests",
-                (false, canopy_core::forge::ForgeKind::GitLab) => "Merge requests",
-            },
-            count: n,
-            command: Command::Requests,
-            enabled: requests.is_some(),
-        },
-    ];
-    let font = FontId::new(m.body_size, theme::medium());
-    let seg_h = m.control - 2.0;
-    let inset = m.segment_track_pad + paint::SEAM;
-    let laid: Vec<Laid> = items
-        .iter()
-        .map(|it| {
-            let glyph = ui.painter().layout_no_wrap(
-                it.glyph.to_owned(),
-                FontId::proportional(m.icon_md),
-                Color32::PLACEHOLDER,
-            );
-            // Compact: only the active view keeps its name; the others show their glyph and
-            // count.
-            let text = (!compact || it.view == view).then(|| {
-                ui.painter()
-                    .layout_no_wrap(it.label.to_owned(), font.clone(), Color32::PLACEHOLDER)
-            });
-            let badge = (it.count > 0).then(|| Badge::new(count_text(it.count)).mono().strong());
-            let parts = [
-                Some(glyph.size().x),
-                text.as_ref().map(|g| g.size().x),
-                badge.as_ref().map(|b| b.measure(ui).x),
-            ];
-            let k = parts.iter().flatten().count();
-            let content: f32 = parts.iter().flatten().sum::<f32>()
-                + TAB_GAP * crate::ui::count_f32(k.saturating_sub(1));
-            Laid {
-                glyph,
-                text,
-                badge,
-                width: content + 2.0 * m.segment_pad,
-            }
-        })
-        .collect();
-    let total = vec2(
-        laid.iter().map(|l| l.width).sum::<f32>() + 2.0 * inset,
-        seg_h + 2.0 * inset,
-    );
-    let (track, group) = ui.allocate_exact_size(total, Sense::hover());
-    let mut x = track.left() + inset;
-    let rects: Vec<Rect> = laid
-        .iter()
-        .map(|l| {
-            let r = Rect::from_min_size(pos2(x, track.top() + inset), vec2(l.width, seg_h));
-            x += l.width;
-            r
-        })
-        .collect();
-    let chosen = items.iter().position(|it| it.view == view).unwrap_or(0);
-    let responses: Vec<egui::Response> = items
-        .iter()
-        .enumerate()
-        .map(|(i, it)| {
-            let sense = if it.enabled {
-                Sense::click()
-            } else {
-                Sense::hover()
-            };
-            ui.interact(rects[i], view_tab_id(i), sense)
-        })
-        .collect();
-    if ui.is_rect_visible(track) {
-        let painter = ui.painter();
-        let track_radius = CornerRadius::same(m.radius.saturating_add(2));
-        paint::fill(painter, track, track_radius, theme::Fill::flat(s.track));
-        paint::rim(painter, track, track_radius, s.track_edge);
-        let radius = CornerRadius::same(m.radius);
-        let local = rects[chosen].translate(-track.min.to_vec2());
-        let thumb = anim::slide_rect(&ctx, group.id.with("view-thumb"), local)
-            .translate(track.min.to_vec2());
-        paint::surface(
-            painter,
-            thumb,
-            radius,
-            p,
-            style,
-            Elevation::Thumb,
-            s.thumb,
-            None,
-        );
-        for (i, (l, rect)) in laid.iter().zip(&rects).enumerate() {
-            let hovered = anim::ease_bool(
-                &ctx,
-                responses[i].id.with("view-tab-hover"),
-                responses[i].hovered() && items[i].enabled,
-                crate::ui::motion::FAST,
-                crate::ui::motion::FAST_OUT,
-            );
-            let on = anim::ease(
-                &ctx,
-                responses[i].id.with("view-tab-on"),
-                i == chosen,
-                crate::ui::motion::BASE,
-            );
-            let mut color = p.text_dim.lerp_to_gamma(p.text, on.max(hovered));
-            if !items[i].enabled {
-                color = color.gamma_multiply(theme::DISABLED_ALPHA);
-            }
-            let parts_w = l.width - 2.0 * m.segment_pad;
-            let cy = rect.center().y;
-            let mut x = rect.center().x - parts_w / 2.0;
-            painter.galley(
-                pos2(x, cy - l.glyph.size().y / 2.0),
-                Arc::clone(&l.glyph),
-                color,
-            );
-            x += l.glyph.size().x + TAB_GAP;
-            if let Some(g) = &l.text {
-                painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), color);
-                x += g.size().x + TAB_GAP;
-            }
-            if let Some(b) = &l.badge {
-                let size = b.measure(ui);
-                b.paint(ui, Rect::from_min_size(pos2(x, cy - size.y / 2.0), size));
-            }
-            if responses[i].has_focus() && crate::ui::kit::focus_visible(&ctx) {
-                paint::inset_ring(painter, *rect, radius, p.focus);
-            }
+    /// Shows `button`, the `tool` with `shortcut`; returns whether it was clicked. While the
+    /// tool's own operation runs it spins on the accent ground, its tooltip is the progress, and a
+    /// click does nothing.
+    fn show(&self, ui: &mut Ui, button: ToolButton, tool: Tool, shortcut: Option<Command>) -> bool {
+        if self.tool == Some(tool) {
+            let _ = button
+                .enabled(true)
+                .toggled(true)
+                .running(true)
+                .tooltip(self.tip.clone())
+                .show(ui);
+            return false;
         }
-    }
-    for (i, (it, r)) in items.iter().zip(responses).enumerate() {
-        r.widget_info(|| {
-            WidgetInfo::selected(WidgetType::RadioButton, it.enabled, i == chosen, it.label)
-        });
-        let tip_text = if it.enabled {
-            tip(it.label, it.command)
-        } else {
-            "Add a GitHub or GitLab remote to view pull or merge requests.".to_owned()
-        };
-        let r = r.on_hover_text(&tip_text).on_disabled_hover_text(&tip_text);
-        if it.enabled && r.clicked() && it.view != view {
-            actions.push(Action::SetView(it.view));
+        match shortcut {
+            Some(c) => button.shortcut(c),
+            None => button,
         }
+        .show(ui)
+        .clicked()
     }
-    group.widget_info(|| WidgetInfo::labeled(WidgetType::RadioGroup, true, "View"));
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use egui::accesskit::{Node, Role};
+
     use super::*;
+    use crate::settings::DiffPrefs;
+    use crate::worker::Worker;
+
+    const SCREEN: Rect = Rect::from_min_max(egui::Pos2::ZERO, pos2(1200.0, 100.0));
+
+    fn context() -> egui::Context {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        ctx.enable_accesskit();
+        ctx
+    }
+
+    /// One frame of `add` with `events`: what it painted and the AccessKit nodes it reported.
+    fn frame(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        add: impl FnMut(&mut Ui),
+    ) -> (Vec<egui::epaint::ClippedShape>, Vec<Node>) {
+        let mut add = add;
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(SCREEN),
+                events,
+                ..Default::default()
+            },
+            |ui| add(ui),
+        );
+        out.textures_delta.clear();
+        let nodes = out
+            .platform_output
+            .accesskit_update
+            .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect())
+            .unwrap_or_default();
+        (out.shapes, nodes)
+    }
+
+    fn node<'a>(nodes: &'a [Node], role: Role, label: &str) -> &'a Node {
+        nodes
+            .iter()
+            .find(|n| n.role() == role && n.label() == Some(label))
+            .unwrap_or_else(|| panic!("no {role:?} named {label}"))
+    }
+
+    fn node_rect(n: &Node) -> Rect {
+        let b = n.bounds().expect("bounds");
+        Rect::from_min_max(
+            pos2(crate::ui::to_f32(b.x0), crate::ui::to_f32(b.y0)),
+            pos2(crate::ui::to_f32(b.x1), crate::ui::to_f32(b.y1)),
+        )
+    }
+
+    /// Where `text` was painted.
+    fn text_rect(shapes: &[egui::epaint::ClippedShape], text: &str) -> Option<Rect> {
+        fn find(shape: &egui::Shape, text: &str) -> Option<Rect> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == text => Some(t.visual_bounding_rect()),
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, text)),
+                _ => None,
+            }
+        }
+        shapes.iter().find_map(|c| find(&c.shape, text))
+    }
+
+    fn click(at: egui::Pos2) -> Vec<egui::Event> {
+        let mut events = vec![egui::Event::PointerMoved(at)];
+        for pressed in [true, false] {
+            events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            });
+        }
+        events
+    }
+
+    fn repo_tab(name: &str) -> RepoTab {
+        let (worker, _, _) = Worker::detached();
+        RepoTab::with_worker(PathBuf::from(name), 100, DiffPrefs::default(), worker)
+    }
 
     #[test]
     fn view_labels_fit_their_controls_with_counts() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 100.0))),
-                ..Default::default()
-            },
-            |ui| {
-                view_tabs(
-                    ui,
-                    View::Requests,
-                    123,
-                    Some((canopy_core::forge::ForgeKind::GitLab, 123)),
-                    &mut Vec::new(),
-                );
-            },
-        );
-        output.textures_delta.clear();
-        for (index, label) in ["History", "Changes", "Merge requests"]
-            .into_iter()
-            .enumerate()
-        {
-            let rect = ctx
-                .read_response(view_tab_id(index))
-                .expect("view control")
-                .rect;
-            let text = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::epaint::Shape::Text(text) if text.galley.text().contains(label) => {
-                        Some(text)
-                    }
-                    _ => None,
-                })
-                .expect("view label");
-            assert!(
-                rect.contains_rect(text.galley.rect.translate(text.pos.to_vec2())),
-                "{label} overflows its control"
+        let ctx = context();
+        let (shapes, nodes) = frame(&ctx, Vec::new(), |ui| {
+            view_tabs(
+                ui,
+                View::Requests,
+                123,
+                Some((ForgeKind::GitLab, 123)),
+                &mut Vec::new(),
             );
+        });
+        for label in ["History", "Changes", "Merge requests"] {
+            let control = node_rect(node(&nodes, Role::RadioButton, label));
+            let text = text_rect(&shapes, label).expect("view label");
+            assert!(control.contains_rect(text), "{label} overflows its control");
         }
     }
 
     #[test]
     fn requests_without_a_forge_cannot_be_chosen() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 100.0));
+        let ctx = context();
         let mut actions = Vec::new();
-        for events in [Vec::new(), Vec::new()] {
-            let mut out = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(screen),
-                    events,
-                    ..Default::default()
-                },
-                |ui| view_tabs(ui, View::History, 0, None, &mut actions),
-            );
-            out.textures_delta.clear();
+        let mut nodes = Vec::new();
+        for _ in 0..2 {
+            nodes = frame(&ctx, Vec::new(), |ui| {
+                view_tabs(ui, View::History, 0, None, &mut actions);
+            })
+            .1;
         }
-        let requests = ctx
-            .read_response(view_tab_id(2))
-            .expect("requests tab")
-            .rect;
-        for pressed in [true, false] {
-            let mut out = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(screen),
-                    events: vec![
-                        egui::Event::PointerMoved(requests.center()),
-                        egui::Event::PointerButton {
-                            pos: requests.center(),
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: egui::Modifiers::default(),
-                        },
-                    ],
-                    ..Default::default()
-                },
-                |ui| view_tabs(ui, View::History, 0, None, &mut actions),
-            );
-            out.textures_delta.clear();
-        }
+        let requests = node(&nodes, Role::RadioButton, "Pull requests");
+        assert!(requests.is_disabled(), "Requests is spoken as unavailable");
+        let at = node_rect(requests).center();
+        let _ = frame(&ctx, click(at), |ui| {
+            view_tabs(ui, View::History, 0, None, &mut actions);
+        });
         assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    #[test]
+    fn a_click_on_another_view_switches_to_it() {
+        let ctx = context();
+        let mut actions = Vec::new();
+        let mut nodes = Vec::new();
+        for _ in 0..2 {
+            nodes = frame(&ctx, Vec::new(), |ui| {
+                view_tabs(ui, View::History, 4, None, &mut actions);
+            })
+            .1;
+        }
+        let at = node_rect(node(&nodes, Role::RadioButton, "Changes")).center();
+        let _ = frame(&ctx, click(at), |ui| {
+            view_tabs(ui, View::History, 4, None, &mut actions);
+        });
+        assert!(
+            matches!(actions.as_slice(), [Action::SetView(View::Changes)]),
+            "{actions:?}"
+        );
+    }
+
+    fn summary(number: u64, state: RequestState) -> RequestSummary {
+        RequestSummary {
+            number,
+            title: format!("Request {number}"),
+            author: "maya".into(),
+            state,
+            draft: false,
+            source_branch: "topic".into(),
+            target_branch: "main".into(),
+            from_fork: false,
+            created_at: 0,
+            updated_at: 0,
+            web_url: String::new(),
+            labels: Vec::new(),
+        }
+    }
+
+    /// Fixture F7: the Requests count is the open requests, whichever filter the list shows.
+    #[test]
+    fn the_open_count_comes_from_open_and_all_lists_only() {
+        let list: Arc<[RequestSummary]> = vec![
+            summary(1, RequestState::Open),
+            summary(2, RequestState::Merged),
+            summary(3, RequestState::Open),
+            summary(4, RequestState::Closed),
+        ]
+        .into();
+        let ok = Ok(Arc::clone(&list));
+        assert_eq!(open_in_list(StateFilter::Open, Some(&ok)), Some(4));
+        assert_eq!(open_in_list(StateFilter::All, Some(&ok)), Some(2));
+        assert_eq!(open_in_list(StateFilter::Closed, Some(&ok)), None);
+        assert_eq!(open_in_list(StateFilter::Open, None), None);
+        assert_eq!(
+            open_in_list(StateFilter::Open, Some(&Err("401".into()))),
+            None
+        );
+    }
+
+    /// Fixture F7: the badge keeps the last count while the list reloads or shows closed ones,
+    /// and a failed list clears it.
+    #[test]
+    fn the_requests_badge_survives_loading_and_the_closed_filter() {
+        let ctx = context();
+        let mut tab = repo_tab("alpha");
+        let open: Arc<[RequestSummary]> = vec![
+            summary(1, RequestState::Open),
+            summary(2, RequestState::Open),
+        ]
+        .into();
+        tab.requests.filter = StateFilter::Open;
+        tab.requests.list = Some(Ok(open));
+        assert_eq!(open_requests(&ctx, &tab), 2);
+        tab.requests.list = None;
+        assert_eq!(open_requests(&ctx, &tab), 2, "loading");
+        tab.requests.filter = StateFilter::Closed;
+        tab.requests.list = Some(Ok(vec![summary(3, RequestState::Merged)].into()));
+        assert_eq!(open_requests(&ctx, &tab), 2, "closed filter");
+        tab.requests.list = Some(Err("Not Found".into()));
+        assert_eq!(open_requests(&ctx, &tab), 0, "failed");
+        tab.requests.list = None;
+        assert_eq!(open_requests(&ctx, &tab), 0, "a failure forgets the count");
+    }
+
+    /// V30: each running operation's worker label lights the tool that started it.
+    #[test]
+    fn running_operations_map_to_their_tools() {
+        use canopy_core::MergeMode;
+        use canopy_core::ops::PullStrategy;
+        let cases = [
+            (
+                Op::Fetch {
+                    prune: false,
+                    quiet: false,
+                },
+                Some(Tool::Fetch),
+            ),
+            (
+                Op::Pull {
+                    strategy: PullStrategy::default(),
+                },
+                Some(Tool::Pull),
+            ),
+            (Op::Push { force: false }, Some(Tool::Push)),
+            (Op::Push { force: true }, Some(Tool::Push)),
+            (
+                Op::StashSave {
+                    message: None,
+                    untracked: true,
+                },
+                Some(Tool::Stash),
+            ),
+            (
+                Op::StashApply {
+                    index: 0,
+                    pop: true,
+                },
+                Some(Tool::Pop),
+            ),
+            (
+                Op::StashApply {
+                    index: 0,
+                    pop: false,
+                },
+                None,
+            ),
+            (
+                Op::Merge("topic".into(), MergeMode::Default),
+                Some(Tool::Merge),
+            ),
+            (
+                Op::Merge("topic".into(), MergeMode::Squash),
+                Some(Tool::Merge),
+            ),
+            (Op::Rebase("main".into()), Some(Tool::Merge)),
+            (
+                Op::CreateBranch {
+                    name: "topic".into(),
+                    start: None,
+                    checkout: true,
+                },
+                Some(Tool::Branch),
+            ),
+            (
+                Op::AddRemote {
+                    name: "origin".into(),
+                    url: "https://example.com/r.git".into(),
+                },
+                Some(Tool::Publish),
+            ),
+            (
+                Op::PushTag {
+                    remote: "origin".into(),
+                    tag: "v1".into(),
+                },
+                None,
+            ),
+            (
+                Op::Commit {
+                    message: "m".into(),
+                    amend: false,
+                    signoff: false,
+                },
+                None,
+            ),
+        ];
+        for (op, tool) in cases {
+            assert_eq!(running_tool(&op.label()), tool, "{}", op.label());
+        }
+    }
+
+    /// V30: the running tool spins and swallows clicks; the others act as usual.
+    #[test]
+    fn the_running_tool_spins_and_ignores_clicks() {
+        let ctx = context();
+        let running = Running {
+            tool: Some(Tool::Fetch),
+            tip: "Fetching…".into(),
+        };
+        let idle = Running {
+            tool: None,
+            tip: String::new(),
+        };
+        let fetch = || ToolButton::new(icon::ARROWS_CLOCKWISE, "Fetch");
+        for (state, expected) in [(&running, false), (&idle, true)] {
+            let mut nodes = Vec::new();
+            for _ in 0..2 {
+                nodes = frame(&ctx, Vec::new(), |ui| {
+                    let _ = state.show(ui, fetch(), Tool::Fetch, None);
+                })
+                .1;
+            }
+            let at = node_rect(node(&nodes, Role::Button, "Fetch")).center();
+            let mut clicked = false;
+            let _ = frame(&ctx, click(at), |ui| {
+                clicked |= state.show(ui, fetch(), Tool::Fetch, None);
+            });
+            assert_eq!(clicked, expected);
+            // Let the click end before the next case.
+            let _ = frame(&ctx, Vec::new(), |_| {});
+        }
+    }
+
+    /// H1 (kit-b F1): the title bar's tabs are the kit's: a tab list with each repository, and a
+    /// busy one keeps its width instead of overlapping the next.
+    #[test]
+    fn the_title_bar_tabs_announce_each_repository_and_a_busy_one_keeps_its_room() {
+        let ctx = context();
+        let mut alpha = repo_tab("alpha");
+        alpha.running = Some("Fetching".into());
+        let tabs = [alpha, repo_tab("beta")];
+        let mut actions = Vec::new();
+        let (shapes, nodes) = frame(&ctx, Vec::new(), |ui| {
+            super::tabs(ui, &tabs, 1, ThemeId::Midnight, &mut actions);
+        });
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.role() == Role::TabList && n.label() == Some("Repositories"))
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.role() == Role::Tab && n.label().is_some_and(|l| l.starts_with("beta"))),
+            "the tab is spoken"
+        );
+        let a = text_rect(&shapes, "alpha").expect("alpha");
+        let b = text_rect(&shapes, "beta").expect("beta");
+        assert!(
+            a.right() + 40.0 < b.left(),
+            "the busy tab overlaps the next: {a:?} {b:?}"
+        );
     }
 }
