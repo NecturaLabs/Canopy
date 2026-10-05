@@ -1061,9 +1061,7 @@ mod tests {
                 .show(ui);
         });
         assert!(
-            !shapes
-                .iter()
-                .any(|c| matches!(&c.shape, Shape::Text(_))),
+            !shapes.iter().any(|c| matches!(&c.shape, Shape::Text(_))),
             "no label is painted"
         );
         let nodes = spoken(&ctx, |ui| {
