@@ -149,9 +149,18 @@ const NAV_WIDTH: f32 = 220.0;
 const NAV_MIN_WIDTH: f32 = 720.0;
 /// The width of the section select in a narrow screen's header.
 const SECTION_SELECT_WIDTH: f32 = 200.0;
-/// The shell grows in from this scale and leaves towards the second, as dialogs do.
-const SHELL_SCALE: f32 = 0.94;
-const SHELL_EXIT_SCALE: f32 = 0.97;
+
+/// The shell's size: the room a modal card may fill (clear of the tab strip and the status bar),
+/// centred on the window as dialogs are, and no larger than the settings' maximum.
+fn shell_size(ctx: &egui::Context) -> (f32, f32) {
+    let room = overlay::modal_room(ctx);
+    let centre = ctx.content_rect().center().y;
+    let tall = 2.0 * (centre - room.top()).min(room.bottom() - centre);
+    (
+        room.width().clamp(0.0, theme::SETTINGS_MAX_WIDTH),
+        tall.clamp(0.0, theme::SETTINGS_MAX_HEIGHT),
+    )
+}
 
 /// Draws the screen. `forges` are the GitHub/GitLab remotes of open repositories, so their hosts
 /// show up under Accounts.
@@ -169,9 +178,7 @@ pub fn show(
     let m = theme::metrics();
     let mut result = SettingsResult::default();
     screen.picker.begin_frame();
-    let screen_rect = ctx.content_rect();
-    let width = (screen_rect.width() - theme::XL * 2.0).clamp(0.0, theme::SETTINGS_MAX_WIDTH);
-    let height = (screen_rect.height() - theme::XL * 2.0).clamp(0.0, theme::SETTINGS_MAX_HEIGHT);
+    let (width, height) = shell_size(ctx);
     let sidebar = width >= NAV_MIN_WIDTH;
     let id = egui::Id::new("settings");
     // The dialog's motion: the scrim fades in while the card grows from a little smaller.
@@ -220,10 +227,12 @@ pub fn show(
                     .layout(Layout::top_down(Align::Min)),
             );
             child.set_clip_rect(body.intersect(ui.clip_rect()));
-            egui::ScrollArea::vertical()
-                .id_salt(("settings-content", screen.section))
-                .auto_shrink([false, false])
-                .show(&mut child, |ui| {
+            overlay::scroll_body(
+                &mut child,
+                ("settings-content", screen.section),
+                body.height(),
+                s.pane,
+                |ui| {
                     egui::Frame::NONE
                         .inner_margin(Margin {
                             left: crate::ui::points_i8(theme::XL),
@@ -259,7 +268,8 @@ pub fn show(
                                 Section::Keyboard => keyboard(ui),
                             }
                         });
-                });
+                },
+            );
             // The ring goes over the chrome painted inside the card.
             paint::rim(
                 ui.painter(),
@@ -272,7 +282,7 @@ pub fn show(
                 ui.ctx(),
                 layer,
                 start,
-                entrance.transform(center, SHELL_SCALE, Vec2::ZERO),
+                entrance.transform(center, overlay::DIALOG_SCALE, Vec2::ZERO),
             );
             let end = overlay::next_shape(ui.ctx(), layer);
             overlay::record_exit(
@@ -283,7 +293,7 @@ pub fn show(
                 start.0..end.0,
                 overlay::ExitMotion {
                     seconds: motion::EXIT_DIALOG,
-                    scale: SHELL_EXIT_SCALE,
+                    scale: overlay::DIALOG_EXIT_SCALE,
                     origin: center,
                     offset: Vec2::ZERO,
                     instant_on_input: false,
@@ -2212,6 +2222,66 @@ mod tests {
             );
         }
     }
+    /// qa-b F13: at 1024 x 700 the shell covered the title bar's tab strip and the status bar.
+    #[test]
+    fn the_shell_stays_clear_of_the_tab_strip_and_the_status_bar() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let m = theme::metrics();
+        let mut settings = Settings::default();
+        let mut tokens = TokenStore::default();
+        for size in [
+            vec2(1024.0, 700.0),
+            vec2(1440.0, 900.0),
+            vec2(1920.0, 1080.0),
+        ] {
+            let bounds = Rect::from_min_size(egui::Pos2::ZERO, size);
+            let mut screen = SettingsScreen::default();
+            for _ in 0..4 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(bounds),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(
+                            ui.ctx(),
+                            &mut screen,
+                            &mut settings,
+                            &mut tokens,
+                            &SettingsData {
+                                forges: &[],
+                                update: &UpdateState::Idle,
+                                identity: IdentityView {
+                                    repo: None,
+                                    identity: None,
+                                    error: None,
+                                },
+                            },
+                            &mut Vec::new(),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            let rect = ctx
+                .memory(|m| m.area_rect(egui::Id::new("settings")))
+                .expect("settings area");
+            assert!(
+                rect.top() >= m.tab_strip_height,
+                "{size:?}: the shell's top {} covers the tab strip ({})",
+                rect.top(),
+                m.tab_strip_height
+            );
+            assert!(
+                rect.bottom() <= size.y - m.status_bar_height,
+                "{size:?}: the shell's bottom {} covers the status bar",
+                rect.bottom()
+            );
+        }
+    }
+
     fn field(value: &str, source: Option<Source>) -> Field {
         Field {
             value: value.into(),
