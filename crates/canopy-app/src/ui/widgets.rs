@@ -1,8 +1,6 @@
 //! Small reusable widgets drawn with the design tokens.
 
-use egui::{
-    Align2, Color32, CornerRadius, FontId, Response, RichText, Sense, Stroke, Ui, Vec2, pos2, vec2,
-};
+use egui::{Color32, FontId, Response, RichText, Ui};
 use egui_phosphor::regular as icon;
 
 use canopy_core::ChangeKind;
@@ -42,24 +40,6 @@ pub fn dismiss_underlying_tooltips(ctx: &egui::Context) {
     });
 }
 
-/// Shows context actions above their containing navigation popup. Views use `kit::menu::context`
-/// now; only app/mod.rs's compact-navigation test still calls this.
-#[cfg(test)]
-pub fn context_menu(
-    response: &Response,
-    content: impl FnOnce(&mut Ui),
-) -> Option<egui::InnerResponse<()>> {
-    let menu = response.context_menu(content);
-    if let Some(menu) = &menu
-        && response.layer_id.order == egui::Order::Foreground
-    {
-        response
-            .ctx
-            .set_sublayer(response.layer_id, menu.response.layer_id);
-    }
-    menu
-}
-
 /// A stable colour for a displayed identity, shared by names and matching host handles.
 pub fn person_color(p: &Palette, identity: &str) -> Color32 {
     let mut h: u32 = 2166136261;
@@ -87,13 +67,6 @@ pub fn initials(name: &str) -> String {
     out.to_uppercase()
 }
 
-/// Allocates and paints an avatar (`kit::avatar::Avatar`).
-pub fn avatar(ui: &mut Ui, size: f32, name: &str, email: &str) -> Response {
-    kit::avatar::Avatar::new(kit::avatar::Person::new(name, email))
-        .diameter(size)
-        .show(ui)
-}
-
 /// Colour and letter of a change kind.
 pub fn change_style(p: &Palette, kind: ChangeKind) -> Color32 {
     match kind {
@@ -104,267 +77,6 @@ pub fn change_style(p: &Palette, kind: ChangeKind) -> Color32 {
     }
 }
 
-/// An icon-only button with a tooltip.
-pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
-    kit::IconButton::new(glyph, tooltip).show(ui)
-}
-
-/// Mutually exclusive options in one recessed track; the chosen one is a raised segment, the others
-/// stay quiet but still read as options. `options` are in visual order, left to right, whatever the
-/// surrounding layout's direction. Returns whether the value changed.
-pub fn segmented<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, options: &[(T, &str)]) -> bool {
-    let font = FontId::new(theme::BODY_SIZE, theme::medium());
-    let segments: Vec<Segment<'_>> = options
-        .iter()
-        .map(|(option, label)| Segment {
-            text: label,
-            name: label,
-            selected: *value == *option,
-            font: font.clone(),
-        })
-        .collect();
-    match segment_track(ui, &segments, ui.spacing().interact_size.y, theme::MD) {
-        Some(i) => {
-            *value = options[i].0.clone();
-            true
-        }
-        None => false,
-    }
-}
-
-struct Segment<'a> {
-    text: &'a str,
-    name: &'a str,
-    selected: bool,
-    font: FontId,
-}
-
-/// The caret of every drop-down (`ComboBox::icon`), from the icon font like the rest of the app.
-pub fn combo_caret(ui: &Ui, rect: egui::Rect, visuals: &egui::style::WidgetVisuals, open: bool) {
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        if open {
-            icon::CARET_UP
-        } else {
-            icon::CARET_DOWN
-        },
-        FontId::proportional(theme::BODY_SIZE),
-        visuals.fg_stroke.color,
-    );
-}
-
-/// egui paints a slider's rail in the inactive widget fill, which is often the surface behind it:
-/// recess it like the segmented control's track so the whole range shows, and fill the chosen
-/// part with the accent rather than the pale selection tint.
-pub fn recessed_rail(ui: &mut Ui) {
-    let p = palette(ui.ctx());
-    let v = ui.visuals_mut();
-    v.widgets.inactive.bg_fill = if p.dark { p.bg() } else { p.border() };
-    v.selection.bg_fill = p.accent;
-}
-
-/// Paints the track and its segments; returns the index of a segment clicked while not selected.
-fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -> Option<usize> {
-    let p = palette(ui.ctx());
-    let galleys: Vec<_> = segments
-        .iter()
-        .map(|s| {
-            ui.painter().layout_no_wrap(
-                s.text.to_owned(),
-                s.font.clone(),
-                egui::Color32::PLACEHOLDER,
-            )
-        })
-        .collect();
-    let enabled = ui.is_enabled();
-    let inset = theme::CONTROL_INSET;
-    let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + 2.0 * pad).collect();
-    let (outer, _) = ui.allocate_exact_size(
-        vec2(widths.iter().sum::<f32>() + 2.0 * inset, height),
-        Sense::hover(),
-    );
-    ui.painter().rect(
-        outer,
-        CornerRadius::same(theme::RADIUS_SM + 1),
-        p.bg(),
-        Stroke::new(1.0, p.border()),
-        egui::StrokeKind::Inside,
-    );
-    let mut chosen = None;
-    let mut x = outer.min.x + inset;
-    let id = ui.next_auto_id();
-    for (i, (segment, galley)) in segments.iter().zip(galleys).enumerate() {
-        let rect = egui::Rect::from_min_size(
-            pos2(x, outer.min.y + inset),
-            vec2(widths[i], height - 2.0 * inset),
-        );
-        x += widths[i];
-        let mut resp = ui.interact(rect, id.with(i), Sense::click());
-        if segment.text != segment.name {
-            resp = resp.on_hover_text(segment.name);
-        }
-        if resp.clicked() && !segment.selected {
-            chosen = Some(i);
-        }
-        let selected = chosen.map_or(segment.selected, |c| c == i);
-        let hover = ui.ctx().animate_bool_with_time(
-            resp.id,
-            enabled && resp.hovered() && !selected,
-            super::motion::time(super::motion::FAST),
-        );
-        let radius = CornerRadius::same(theme::RADIUS_SM - 1);
-        if selected {
-            if enabled {
-                ui.painter().add(p.control_shadow().as_shape(rect, radius));
-            }
-            ui.painter().rect(
-                rect,
-                radius,
-                p.elevated(),
-                Stroke::new(1.0, p.control_edge()),
-                egui::StrokeKind::Inside,
-            );
-            if enabled {
-                ui.painter().line_segment(
-                    [
-                        pos2(rect.left() + theme::SM, rect.bottom() - inset),
-                        pos2(rect.right() - theme::SM, rect.bottom() - inset),
-                    ],
-                    Stroke::new(1.5, p.accent),
-                );
-            }
-        } else if hover > 0.0 {
-            ui.painter().rect_filled(
-                rect,
-                radius,
-                Palette::tint(p.text, (hover * if p.dark { 12.0 } else { 14.0 }) as u8),
-            );
-        }
-        let color = if !enabled {
-            p.text_faint
-        } else if selected {
-            p.text
-        } else {
-            p.text_dim.lerp_to_gamma(p.text, hover)
-        };
-        ui.painter()
-            .galley(rect.center() - galley.size() / 2.0, galley, color);
-        if resp.has_focus() {
-            ui.painter().rect_stroke(
-                rect.expand(1.0),
-                CornerRadius::same(theme::RADIUS_SM),
-                Stroke::new(1.5, p.accent),
-                egui::StrokeKind::Outside,
-            );
-        }
-        let name = segment.name.to_owned();
-        resp.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, selected, &name)
-        });
-    }
-    chosen
-}
-
-/// A square checkbox with its label, distinct from radio options and switches.
-pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> Response {
-    let p = palette(ui.ctx());
-    let box_size = theme::CHECKBOX_SIZE;
-    let galley = ui.painter().layout_no_wrap(
-        label.to_owned(),
-        FontId::new(theme::BODY_SIZE, egui::FontFamily::Proportional),
-        Color32::PLACEHOLDER,
-    );
-    let size = vec2(
-        box_size + theme::SM + galley.size().x,
-        ui.spacing().interact_size.y,
-    );
-    let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
-    if resp.clicked() {
-        *checked = !*checked;
-        resp.mark_changed();
-    }
-    let enabled = ui.is_enabled();
-    let t = ui.ctx().animate_bool_with_time(
-        resp.id,
-        *checked,
-        super::motion::time(super::motion::FAST),
-    );
-    let b = egui::Rect::from_center_size(
-        pos2(rect.left() + box_size / 2.0, rect.center().y),
-        Vec2::splat(box_size),
-    );
-    let off_fill = if resp.hovered() && enabled {
-        p.hover()
-    } else {
-        p.bg()
-    };
-    let fill = off_fill.lerp_to_gamma(p.button(), t);
-    let stroke = if resp.hovered() && enabled && t < 1.0 {
-        Palette::tint(p.accent, 200)
-    } else {
-        p.control_border.lerp_to_gamma(p.button(), t)
-    };
-    ui.painter().rect(
-        b,
-        CornerRadius::same(4),
-        fill,
-        Stroke::new(1.0, stroke),
-        egui::StrokeKind::Inside,
-    );
-    if t > 0.0 {
-        let c = b.shrink(4.0);
-        let ink = Palette::tint(p.on_button(), (t * 255.0) as u8);
-        ui.painter().add(egui::Shape::line(
-            vec![
-                pos2(c.left(), c.center().y + 0.5),
-                pos2(c.left() + c.width() * 0.38, c.bottom() - 0.5),
-                pos2(c.right(), c.top() + 1.0),
-            ],
-            Stroke::new(1.8, ink),
-        ));
-    }
-    if resp.has_focus() {
-        ui.painter().rect_stroke(
-            b.expand(2.0),
-            CornerRadius::same(6),
-            Stroke::new(1.5, p.accent),
-            egui::StrokeKind::Outside,
-        );
-    }
-    ui.painter().galley(
-        pos2(
-            b.right() + theme::SM,
-            rect.center().y - galley.size().y / 2.0,
-        ),
-        galley,
-        if enabled { p.text } else { p.text_faint },
-    );
-    let name = label.to_owned();
-    let state = *checked;
-    resp.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state, &name)
-    });
-    resp
-}
-
-/// A neutral action: the secondary button, at least `min_size.x` wide.
-pub fn secondary_button(
-    ui: &mut Ui,
-    text: impl Into<egui::WidgetText>,
-    min_size: Vec2,
-) -> Response {
-    kit::Button::new(text).min_width(min_size.x).show(ui)
-}
-
-/// The primary call to action sized to its label, at least `min_size.x` wide.
-pub fn accent_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
-    kit::Button::new(text)
-        .primary()
-        .min_width(min_size.x)
-        .show(ui)
-}
-
 /// The primary call to action, at least `width` wide.
 pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Response {
     kit::Button::new(text)
@@ -372,64 +84,6 @@ pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Res
         .enabled(enabled)
         .min_width(width)
         .show(ui)
-}
-
-/// Fills `rect` with a horizontal gradient from `left` to `right` and rounded corners.
-pub fn gradient_rect(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    left: Color32,
-    right: Color32,
-    radius: u8,
-) {
-    // Draw the gradient as a mesh clipped to a rounded shape by painting rounded caps first.
-    let r = f32::from(radius).min(rect.height() / 2.0);
-    painter.rect_filled(
-        egui::Rect::from_min_max(rect.min, pos2(rect.min.x + 2.0 * r, rect.max.y)),
-        CornerRadius::same(radius),
-        left,
-    );
-    painter.rect_filled(
-        egui::Rect::from_min_max(pos2(rect.max.x - 2.0 * r, rect.min.y), rect.max),
-        CornerRadius::same(radius),
-        right,
-    );
-    let inner = egui::Rect::from_min_max(
-        pos2(rect.min.x + r, rect.min.y),
-        pos2(rect.max.x - r, rect.max.y),
-    );
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(inner.left_top(), left);
-    mesh.colored_vertex(inner.right_top(), right);
-    mesh.colored_vertex(inner.right_bottom(), right);
-    mesh.colored_vertex(inner.left_bottom(), left);
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    painter.add(mesh);
-}
-
-/// Fades the top and bottom edges of a vertical scroll area into `surface` where more content
-/// lies beyond them ([`kit::paint::scroll_fade`]).
-pub fn scroll_fade<R>(ui: &Ui, output: &egui::scroll_area::ScrollAreaOutput<R>, surface: Color32) {
-    kit::paint::scroll_fade(ui, output, surface);
-}
-
-/// A soft radial glow centred on `center`, used behind the welcome screen.
-pub fn glow(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Color32) {
-    let mut mesh = egui::Mesh::default();
-    let segments = 64;
-    mesh.colored_vertex(center, color);
-    for i in 0..=segments {
-        let a = i as f32 / segments as f32 * std::f32::consts::TAU;
-        mesh.colored_vertex(
-            center + vec2(a.cos(), a.sin()) * radius,
-            Color32::TRANSPARENT,
-        );
-    }
-    for i in 1..=segments {
-        mesh.add_triangle(0, i, i + 1);
-    }
-    painter.add(mesh);
 }
 
 /// Repository operation state stays visible in every work view.
@@ -453,7 +107,7 @@ pub fn repository_state_banner(
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(format!("{}  {} in progress on {}", icon::WARNING, state.label(), snap.head.label())).color(p.warning).strong());
-                ui.label(RichText::new(if conflicts > 0 { format!("{conflicts} conflict{} left", if conflicts == 1 { "" } else { "s" }) } else { "No conflicts left".to_owned() }).size(theme::META_SIZE).color(p.text_dim));
+                ui.label(RichText::new(if conflicts > 0 { format!("{conflicts} conflict{} left", if conflicts == 1 { "" } else { "s" }) } else { "No conflicts left".to_owned() }).size(theme::metrics().meta_size).color(p.text_dim));
                 if let Some(command) = state.command() {
                     let can_continue = conflicts == 0 && !busy;
                     if primary_button(ui, "Continue", can_continue, 110.0).on_hover_text(if busy { "Wait for the current operation" } else if conflicts > 0 { "Resolve and stage every conflicted file first" } else { "Continue this operation using the staged resolutions" }).clicked() {
@@ -466,16 +120,6 @@ pub fn repository_state_banner(
                 }
             });
         });
-}
-
-/// A sentence-case section heading.
-pub fn section_label(ui: &mut Ui, text: &str) {
-    let p = palette(ui.ctx());
-    ui.label(
-        RichText::new(text)
-            .font(FontId::new(theme::SMALL_SIZE, theme::semibold()))
-            .color(p.text_dim),
-    );
 }
 
 /// Splits a path into (file name, parent directory).
@@ -586,12 +230,19 @@ mod tests {
                         |ui| {
                             ui.add_enabled_ui(enabled, |ui| {
                                 let response = match kind {
-                                    0 => checkbox(ui, &mut checked, "Checkbox"),
+                                    0 => crate::ui::kit::toggle::Checkbox::new(
+                                        &mut checked,
+                                        "Checkbox",
+                                    )
+                                    .show(ui),
                                     1 => primary_button(ui, "Primary", true, 120.0),
                                     2 => crate::ui::kit::ToolButton::new(icon::CHECK, "Tool")
                                         .tooltip("Tool action")
                                         .show(ui),
-                                    _ => icon_button(ui, icon::CHECK, "Icon action"),
+                                    _ => {
+                                        crate::ui::kit::IconButton::new(icon::CHECK, "Icon action")
+                                            .show(ui)
+                                    }
                                 };
                                 if frame == 0 && enabled {
                                     response.request_focus();
@@ -709,7 +360,8 @@ mod tests {
         let mut value = 0;
         for frame in 0..2 {
             let mut output = ctx.run_ui(Default::default(), |ui| {
-                segmented(ui, &mut value, &[(0, "One"), (1, "Two")]);
+                crate::ui::kit::choice::Segmented::new(&mut value, &[(0, "One"), (1, "Two")])
+                    .show(ui);
             });
             output.textures_delta.clear();
             if frame == 0 {

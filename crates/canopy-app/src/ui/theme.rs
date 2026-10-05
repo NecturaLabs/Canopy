@@ -31,45 +31,9 @@ pub const DISABLED_ALPHA: f32 = 0.42;
 /// A disabled icon-only button's opacity.
 pub const DISABLED_ICON_ALPHA: f32 = 0.40;
 
-// Type scale and control sizes used by views written before the component library. The
-// component library reads [`metrics`] instead, and the migration moves views onto it and deletes
-// these constants.
-/// Pills, badges and uppercase section labels.
-pub const MICRO_SIZE: f32 = 10.5;
-/// Dates, counts, hints and other secondary detail.
-pub const SMALL_SIZE: f32 = 11.5;
-/// Metadata beside a row's main text: author, date, palette detail.
-pub const META_SIZE: f32 = 12.0;
-/// Default interface text.
-pub const BODY_SIZE: f32 = 13.0;
-/// The text that leads a row, a field label or a button.
-pub const LEAD_SIZE: f32 = 13.5;
-/// Card and group titles, the repository name.
-pub const SUBTITLE_SIZE: f32 = 14.0;
-/// View and dialog titles, the palette query.
-pub const TITLE_SIZE: f32 = 16.0;
-/// The subject of a detail view and first-run dialog headings.
-pub const HEADLINE_SIZE: f32 = 20.0;
-/// Code, diffs and identifiers.
-pub const MONO_SIZE: f32 = 12.5;
-/// Short identifiers and key chords beside proportional text.
-pub const MONO_SMALL_SIZE: f32 = 11.5;
-
-// Icon sizes, for Phosphor glyphs drawn on their own (beside text, a glyph takes the text's size).
-/// Disclosure chevrons and the close crosses of tabs and recent repositories.
-pub const ICON_XS: f32 = 11.5;
-/// Row glyphs in the sidebar, tab and segmented-control icons.
-pub const ICON_SM: f32 = 14.0;
-/// Glyphs on buttons, in palette rows, settings navigation and request status.
-pub const ICON_MD: f32 = 16.0;
-/// The centre of an empty or finished state.
-pub const ICON_HERO: f32 = 32.0;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
 /// Shared control geometry, in logical points before interface zoom.
 pub const CONTROL_INSET: f32 = 2.0;
-pub const CHECKBOX_SIZE: f32 = 18.0;
-/// Inner margin of every framed text field, matching the standard control height.
-pub const FIELD_MARGIN: Margin = Margin::symmetric(8, 7);
 /// Tallest raw-output viewport of a notification card.
 pub const TOAST_DETAILS_HEIGHT: f32 = 140.0;
 
@@ -2170,64 +2134,14 @@ impl Palette {
         }
     }
 
-    // Accessors kept for views written before the component library; the migration moves them
-    // onto `s()` and the kit, then deletes these.
-
-    /// The ground views painted their content on before the kit (`Surfaces::pane`: the window
-    /// ground in Standard, the floating card in Deeper).
+    /// The ground content is painted on (`Surfaces::pane`: the window ground in Standard, the
+    /// floating card in Deeper).
     #[expect(
         clippy::misnamed_getters,
-        reason = "views say bg for their content ground until the migration"
+        reason = "bg names the content ground, which is the pane surface"
     )]
     pub fn bg(&self) -> Color32 {
         self.s().pane
-    }
-
-    /// Chrome in the active style (`Surfaces::panel`).
-    pub fn panel(&self) -> Color32 {
-        self.s().panel
-    }
-
-    /// Raised surface in the active style (`Surfaces::elevated`).
-    pub fn elevated(&self) -> Color32 {
-        self.s().elevated
-    }
-
-    /// Seam in the active style (`Surfaces::border`).
-    pub fn border(&self) -> Color32 {
-        self.s().border
-    }
-
-    /// Primary fill, top end (`Surfaces::primary`).
-    pub fn button(&self) -> Color32 {
-        self.s().primary.top
-    }
-
-    /// Label on the primary fill (`on_accent`).
-    pub fn on_button(&self) -> Color32 {
-        self.on_accent
-    }
-
-    /// The scrim behind modal dialogs, the settings screen, the palette and the cheatsheet.
-    pub fn backdrop(&self) -> Color32 {
-        self.scrim
-    }
-
-    /// Ring of a raised control (`Surfaces::raised_edge`).
-    pub fn control_edge(&self) -> Color32 {
-        self.s().raised_edge
-    }
-
-    /// Contact shadow of a raised control, as one egui shadow.
-    pub fn control_shadow(&self) -> Shadow {
-        let style = style();
-        let m = self.material(style, Elevation::Control);
-        m.layers.first().map_or(Shadow::NONE, |l| Shadow {
-            offset: [0, l.dy],
-            blur: l.blur,
-            spread: 0,
-            color: Palette::tint(self.shadow_color(l.tint), l.alpha),
-        })
     }
 }
 
@@ -3246,11 +3160,6 @@ pub fn medium() -> FontFamily {
     FontFamily::Name("medium".into())
 }
 
-/// Corner radii kept for views written before the component library (Comfortable Standard).
-pub const RADIUS_SM: u8 = COMFORTABLE.radius_sm;
-pub const RADIUS: u8 = COMFORTABLE.radius;
-pub const RADIUS_LG: u8 = COMFORTABLE.radius_lg;
-
 // ------------------------------------------------------------------------------- egui mapping
 
 /// The largest `Floating` layer of `style` as one egui shadow (egui's own windows and popups).
@@ -4002,8 +3911,6 @@ mod tests {
                 assert_eq!(appearance(), look);
             }
         }
-        apply(&ctx, ThemeId::Midnight, &Appearance::STILL);
-        assert_eq!(FIELD_MARGIN.top + FIELD_MARGIN.bottom, 14);
     }
 
     #[test]

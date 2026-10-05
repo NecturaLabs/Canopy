@@ -177,7 +177,6 @@ const RING: f32 = 1.5;
 #[must_use = "call .show(ui) or ui.add(..)"]
 pub struct Avatar {
     person: Person,
-    diameter: Option<f32>,
     size: AvatarSize,
     ring: Option<Color32>,
     tooltip: bool,
@@ -188,7 +187,6 @@ impl Avatar {
     pub fn new(person: Person) -> Self {
         Self {
             person,
-            diameter: None,
             size: AvatarSize::Row,
             ring: None,
             tooltip: false,
@@ -198,14 +196,6 @@ impl Avatar {
 
     pub fn size(mut self, size: AvatarSize) -> Self {
         self.size = size;
-        self.diameter = None;
-        self
-    }
-
-    /// An exact diameter, for views placed before the kit (`widgets::avatar`); new code uses
-    /// [`Avatar::size`].
-    pub(crate) fn diameter(mut self, diameter: f32) -> Self {
-        self.diameter = Some(diameter);
         self
     }
 
@@ -227,7 +217,7 @@ impl Avatar {
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
-        let d = self.diameter.unwrap_or_else(|| self.size.diameter());
+        let d = self.size.diameter();
         let (rect, response) = ui.allocate_exact_size(Vec2::splat(d), Sense::hover());
         let id = self.id_salt.map_or(response.id, |s| ui.id().with(s));
         if ui.is_rect_visible(rect) {

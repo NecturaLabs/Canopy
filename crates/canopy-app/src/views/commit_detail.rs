@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use egui::{
-    Align, Align2, CornerRadius, FontId, Layout, Rect, RichText, Sense, Ui, UiBuilder, pos2, vec2,
+    Align, Align2, CornerRadius, FontId, Layout, Rect, RichText, Ui, UiBuilder, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -18,7 +18,7 @@ use crate::ui::kit::chip::{ChangeBadge, DiffStat};
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{Disclosure, ListRow, RowKind};
 use crate::ui::kit::{Button, IconButton, Size, paint};
-use crate::ui::theme::{self, Palette, Style, palette};
+use crate::ui::theme::{self, Style, palette};
 use crate::ui::{art, widgets};
 use crate::views::diff;
 
@@ -423,9 +423,6 @@ fn meta_row(ui: &mut Ui, glyph: &str, text: &str) {
     });
 }
 
-/// Height of [`file_row`].
-pub const FILE_ROW_H: f32 = 28.0;
-
 /// The rows of a fixed-height list (`row_h` apart, no spacing) whose top is at `top`, that
 /// intersect `min_y..max_y`.
 pub fn visible_rows(n: usize, row_h: f32, top: f32, min_y: f32, max_y: f32) -> Range<usize> {
@@ -459,91 +456,6 @@ pub fn virtual_rows(ui: &mut Ui, n: usize, row_h: f32, mut row: impl FnMut(&mut 
         ui.allocate_space(vec2(width, (n - range.end) as f32 * row_h));
     }
     ui.spacing_mut().item_spacing.y = spacing;
-}
-
-/// A changed-file row with its badge, name, folder and line counts. `id` identifies the row
-/// across frames (for hover and its context menu).
-pub fn file_row(ui: &mut Ui, f: &FileEntry, selected: bool, id: egui::Id) -> egui::Response {
-    let p = palette(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), FILE_ROW_H), Sense::hover());
-    let resp = ui.interact(rect, id, Sense::click());
-    resp.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &f.path)
-    });
-    let hover = ui
-        .ctx()
-        .animate_bool_with_time(resp.id, resp.hovered(), 0.1);
-    if selected {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(theme::RADIUS_SM), p.selected());
-    } else if hover > 0.0 {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::same(theme::RADIUS_SM),
-            Palette::tint(p.text, (hover * 12.0) as u8),
-        );
-    }
-    let color = widgets::change_style(p, f.kind);
-    let badge =
-        egui::Rect::from_center_size(rect.left_center() + vec2(15.0, 0.0), vec2(18.0, 18.0));
-    ui.painter()
-        .rect_filled(badge, CornerRadius::same(5), Palette::tint(color, 40));
-    ui.painter().text(
-        badge.center(),
-        Align2::CENTER_CENTER,
-        f.kind.letter(),
-        FontId::new(theme::SMALL_SIZE, theme::semibold()),
-        color,
-    );
-    let (name, dir) = widgets::split_path(&f.path);
-    let mut right = rect.max.x - 8.0;
-    if f.additions + f.deletions > 0 {
-        let dg = ui.painter().text(
-            egui::pos2(right, rect.center().y),
-            Align2::RIGHT_CENTER,
-            format!("−{}", f.deletions),
-            FontId::monospace(theme::MONO_SMALL_SIZE),
-            p.danger,
-        );
-        let ag = ui.painter().text(
-            egui::pos2(dg.min.x - 6.0, rect.center().y),
-            Align2::RIGHT_CENTER,
-            format!("+{}", f.additions),
-            FontId::monospace(theme::MONO_SMALL_SIZE),
-            p.success,
-        );
-        right = ag.min.x - 8.0;
-    }
-    let clip = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + 30.0, rect.min.y),
-        egui::pos2(right, rect.max.y),
-    );
-    let painter = ui.painter().with_clip_rect(clip);
-    let ng = painter.layout_no_wrap(
-        name.to_owned(),
-        FontId::new(theme::BODY_SIZE, theme::medium()),
-        p.text,
-    );
-    let nx = clip.min.x;
-    painter.galley(
-        egui::pos2(nx, rect.center().y - ng.size().y / 2.0),
-        ng.clone(),
-        p.text,
-    );
-    if !dir.is_empty() {
-        painter.text(
-            egui::pos2(nx + ng.size().x + 8.0, rect.center().y),
-            Align2::LEFT_CENTER,
-            dir,
-            FontId::proportional(theme::SMALL_SIZE),
-            p.text_faint,
-        );
-    }
-    let tip = match &f.old_path {
-        Some(old) => format!("{} → {}", old, f.path),
-        None => f.path.clone(),
-    };
-    resp.on_hover_text(tip)
 }
 
 /// Height of [`file_list_row`] in the active density (`row_height`).

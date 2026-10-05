@@ -2265,7 +2265,7 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         let path =
             "From global: /run/media/nectura/Programming SSD/tmp/canopy-polish/tmpdir/gitconfig";
-        let font = FontId::proportional(theme::SMALL_SIZE);
+        let font = FontId::proportional(theme::metrics().small_size);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 assert_eq!(elide_middle(ui, path, font.clone(), 10_000.0), path);

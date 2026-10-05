@@ -72,23 +72,25 @@ align. Both are bundled (SIL OFL 1.1), so metrics are consistent on Linux, macOS
 Inter Regular, Medium and SemiBold distinguish body text, controls and headings; monospace is
 reserved for code and identifiers. Sizes scale with the interface zoom and display density.
 
-One scale, as tokens in `theme.rs` (`*_SIZE`); views never write a size of their own. Icon glyphs
-are sized for their optical weight and are not part of the scale.
+One scale, as fields of the density's metrics (`theme::metrics()`); views never write a size of
+their own. Dense shrinks the scale where noted. Icon glyphs are sized for their optical weight and
+are not part of the scale.
 
-| Token | Font | Size (pt) | Use |
+| Token | Font | Size (pt), Comfortable / Dense | Use |
 |---|---|---|---|
-| `metrics().hero_size` | Inter SemiBold | 38 | Welcome screen title |
-| `DISPLAY_SIZE` | Inter SemiBold | 24 | The About dialog's name |
-| `HEADLINE_SIZE` | Inter SemiBold | 20 | Pull request title in details, first-run dialog headings |
-| `TITLE_SIZE` | Inter SemiBold | 16 | View and dialog titles, the palette query |
-| `SUBTITLE_SIZE` | Inter SemiBold | 14 | Card and group titles, the repository name, commit summary |
-| `LEAD_SIZE` | Inter Medium or SemiBold | 13.5 | The text that leads a row, field labels, toasts, primary buttons |
-| `BODY_SIZE` | Inter Regular or Medium | 13 | Default text, table rows, branch names |
-| `META_SIZE` | Inter Regular | 12 | Metadata beside a row's main text, setting descriptions |
-| `SMALL_SIZE` | Inter Regular or Medium | 11.5 | Hints, counts, badges, status bar |
-| `MICRO_SIZE` | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Pills, sidebar sections and table headers |
-| `MONO_SIZE` | JetBrains Mono Regular | 12.5 | Diffs, commit message editor, error output |
-| `MONO_SMALL_SIZE` | JetBrains Mono Regular | 11.5 | Short SHAs, key chords, History dates and line counts |
+| `hero_size` | Inter SemiBold | 38 | Welcome screen title |
+| `display_size` | Inter SemiBold | 24 | The About dialog's name |
+| `headline_size` | Inter SemiBold | 15.5 / 14 | The detail pane's commit subject, first-run dialog headings |
+| `title_size` | Inter SemiBold | 15 | View and dialog titles, the palette query |
+| `subtitle_size` | Inter SemiBold | 14 / 13.5 | Card and group titles, the repository name |
+| `lead_size` | Inter Medium or SemiBold | 13 / 12 | The text that leads a row, field labels, primary buttons |
+| `body_size` | Inter Regular or Medium | 13 / 12 | Default text, table rows, buttons |
+| `meta_size` | Inter Regular | 12.5 / 12 | Metadata beside a row's main text, toast bodies, setting descriptions |
+| `small_size` | Inter Regular or Medium | 11.5 / 11 | Hints, counts, ref pills, status bar |
+| `micro_size` | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Uppercase section labels and table headers |
+| `mono_size` | JetBrains Mono Regular | 12.5 / 12 | Diffs, commit message editor, error output |
+| `sha_size` | JetBrains Mono Regular | 12 | Short SHAs and History dates |
+| `chord_size` | JetBrains Mono Regular | 11 / 10.5 | Keycaps |
 
 Settings → Keyboard reuses the shortcuts sheet rows and keycaps. Palette entries lead with
 repository and current-view actions before app commands; staging buttons include their keys
@@ -184,16 +186,18 @@ hover and `accent` when active. Toolbar buttons pair an icon with a short label;
 always have a tooltip naming the action and its shortcut.
 
 A glyph beside text takes the text's size. A glyph drawn on its own takes one of the icon sizes
-in `theme.rs`:
+in the density's metrics:
 
-| Token | Size | Use |
+| Token | Size (px), Comfortable / Dense | Use |
 |---|---|---|
-| `ICON_XS` | 11.5px | Disclosure chevrons, close crosses on tabs and recent repositories |
-| `ICON_SM` | 14px | Sidebar row glyphs, tab and segmented-control icons |
-| `ICON_MD` | 16px | Buttons, palette rows, settings navigation, request status |
-| `ICON_TITLE` | 20px | Beside a dialog's title |
-| `metrics().icon_xl` | 24px (Dense 22) | The welcome screen's action cards |
-| `ICON_HERO` | 32px | The centre of an empty or finished state |
+| `icon_xs` | 12 | Disclosure chevrons, close crosses on tabs and recent repositories |
+| `icon_sm` | 13 | Sidebar row glyphs, tab and segmented-control icons |
+| `icon_md` | 15 | Buttons, palette rows, settings navigation, request status |
+| `icon_lg` | 16 / 15 | Beside a dialog's title |
+| `icon_tool` | 17 / 15 | Toolbar tools |
+| `icon_toast` | 18 | A notification's leading glyph |
+| `icon_xl` | 24 / 22 | The welcome screen's action cards |
+| `icon_hero` | 32 / 28 | The centre of an empty or finished state |
 
 ## Layout
 
@@ -282,7 +286,7 @@ in `theme.rs`:
   State and conflict count precede Continue; unresolved conflicts or active work disable it.
   Abort is separated and confirmed. The merge composer says Conclude merge and starts with
   Git's pending message when no draft exists.
-- Changes list headers: "Stage all" and "Unstage all" are 28 px tall (`widgets::COMPACT_H`). Discard
+- Changes list headers: "Stage all" and "Unstage all" are small kit buttons (`Size::Sm`). Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).
@@ -334,7 +338,7 @@ both icons. Pills that do not fit collapse to a `+N` badge with a tooltip.
 
 ### Segmented control
 
-`widgets::segmented` (text) and `widgets::icon_segmented` (icons with tooltips) for a choice
+`kit::choice::Segmented` (text, icons with tooltips, or both) for a choice
 between a few exclusive options: settings choices, the merge dialog's merge or rebase, the clone
 source and protocol, the request state filter and the diff layout. A recessed `bg` track with a
 hairline `border`; the chosen segment is raised (`elevated`, restrained edge and micro-shadow),
@@ -344,16 +348,16 @@ technology and shows the focus ring.
 
 ### Switch and checkbox
 
-On/off settings use `widgets::switch`: a 40×24 track, `bg` with a `control-border` outline when off
+On/off settings use `kit::toggle::Switch`: a 40×24 track, `bg` with a `control-border` outline when off
 and the `button` colour when on, with an 18-point thumb that slides (`FAST`). Checkboxes in forms
-use `widgets::checkbox`: an 18-point square, radius 4, filled with `button` and an `on-button` tick
+use `kit::toggle::Checkbox`: an 18-point square, radius 4, filled with `button` and an `on-button` tick
 when checked. Both carry their name for assistive technology and show the focus ring.
 
 ### Scroll edges
 
 Lists that scroll inside a fixed area (the command palette, the cheatsheet) fade their top and
 bottom 12 points into the surface, at 85% strength, where more content lies beyond, so a cut row reads
-as "more" (`widgets::scroll_fade`). The palette's list also shows whole rows only. A scrollbar's handle
+as "more" (`kit::paint::scroll_fade`). The palette's list also shows whole rows only. A scrollbar's handle
 is never shorter than 32 points, so a long document's stays easy to see and grab.
 
 ### Illustrations
@@ -408,7 +412,7 @@ while their labels and shortcuts remain discoverable in tooltips and the palette
 Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, bounded by the viewport. Title, body, then right-aligned
 buttons: secondary (outlined) then primary (the solid `button` fill, the same widget everywhere,
 with a focus ring). Destructive confirmations use a
-solid `danger` primary button (`widgets::danger_primary_button`, its text white or black by contrast
+solid `danger` primary button (`kit::Button::danger`, its text white or black by contrast
 with the theme's `danger`) whose label names the action ("Delete branch", "Discard 3 files"), never
 "OK"; Cancel has the initial focus, so Enter does not confirm a destructive dialog unless the button
 has focus. A choice that is riskier than the main one (trusting a whole folder) is a quiet link in

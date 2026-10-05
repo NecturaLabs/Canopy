@@ -327,7 +327,7 @@ mod tests {
                     }
                 }
                 egui::Shape::Rect(rect)
-                    if rect.corner_radius == CornerRadius::same(theme::RADIUS_LG)
+                    if rect.corner_radius == CornerRadius::same(theme::metrics().radius_lg)
                         && rect.stroke.width > 0.0 =>
                 {
                     let visible = rect.rect.intersect(clip);
