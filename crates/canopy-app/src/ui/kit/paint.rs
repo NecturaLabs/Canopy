@@ -100,39 +100,67 @@ pub fn fill(painter: &Painter, rect: Rect, radius: CornerRadius, fill: Fill) {
 
 /// A 1 px light line just inside the top edge, inset by the corner radius (white at `alpha`).
 pub fn top_highlight(painter: &Painter, rect: Rect, radius: CornerRadius, alpha: u8) {
+    painter.extend(top_highlight_shape(
+        painter.pixels_per_point(),
+        rect,
+        radius,
+        alpha,
+    ));
+}
+
+fn top_highlight_shape(ppp: f32, rect: Rect, radius: CornerRadius, alpha: u8) -> Option<Shape> {
     if alpha == 0 {
-        return;
+        return None;
     }
     let inset = f32::from(radius.nw.max(radius.ne)).max(1.0);
-    let ppp = painter.pixels_per_point();
     let w = 1.0 / ppp;
     let y = rect.top() + w * 0.5;
-    painter.hline(
+    Some(Shape::hline(
         Rangef::new(rect.left() + inset, rect.right() - inset),
         y,
         Stroke::new(w, Color32::from_white_alpha(alpha)),
-    );
+    ))
 }
 
 /// A 1 px dark line just inside the bottom edge (light Deeper controls).
 pub fn bottom_line(painter: &Painter, rect: Rect, radius: CornerRadius, color: Color32, alpha: u8) {
+    painter.extend(bottom_line_shape(
+        painter.pixels_per_point(),
+        rect,
+        radius,
+        color,
+        alpha,
+    ));
+}
+
+fn bottom_line_shape(
+    ppp: f32,
+    rect: Rect,
+    radius: CornerRadius,
+    color: Color32,
+    alpha: u8,
+) -> Option<Shape> {
     if alpha == 0 {
-        return;
+        return None;
     }
     let inset = f32::from(radius.sw.max(radius.se)).max(1.0);
-    let w = 1.0 / painter.pixels_per_point();
-    painter.hline(
+    let w = 1.0 / ppp;
+    Some(Shape::hline(
         Rangef::new(rect.left() + inset, rect.right() - inset),
         rect.bottom() - w * 0.5,
         Stroke::new(w, Palette::tint(color, alpha)),
-    );
+    ))
 }
 
 /// An inner shadow along the top edge (Deeper's field recess): three 1 pt rows fading down, clipped
 /// to the rounded rect.
 pub fn recess(painter: &Painter, rect: Rect, radius: CornerRadius, color: Color32, alpha: u8) {
+    painter.extend(recess_shape(rect, radius, color, alpha));
+}
+
+fn recess_shape(rect: Rect, radius: CornerRadius, color: Color32, alpha: u8) -> Option<Shape> {
     if alpha == 0 {
-        return;
+        return None;
     }
     let mut pts = Vec::new();
     rounded_rectangle(&mut pts, rect.shrink(0.5), CornerRadiusF32::from(radius));
@@ -142,12 +170,12 @@ pub fn recess(painter: &Painter, rect: Rect, radius: CornerRadius, color: Color3
         Palette::tint(color, (f32::from(alpha) * k) as u8)
     })
     .inside();
-    painter.add(Shape::Path(PathShape {
+    Some(Shape::Path(PathShape {
         points: pts,
         closed: true,
         fill: Color32::TRANSPARENT,
         stroke,
-    }));
+    }))
 }
 
 /// Everything a surface of `level` paints in `style`: its shadow layers, the fill, the top
@@ -172,6 +200,38 @@ pub fn surface(
     if let Some(c) = ring {
         rim(painter, rect, radius, c);
     }
+}
+
+/// The shapes [`surface`] paints, for a surface laid out after its content (reserve a slot with
+/// `Painter::add(Shape::Noop)` and fill it with `Painter::set(slot, Shape::Vec(..))`).
+#[expect(clippy::too_many_arguments, reason = "one call builds a whole surface")]
+pub fn surface_shapes(
+    painter: &Painter,
+    rect: Rect,
+    radius: CornerRadius,
+    p: &Palette,
+    style: Style,
+    level: Elevation,
+    body: Fill,
+    ring: Option<Color32>,
+) -> Vec<Shape> {
+    let m = p.material(style, level);
+    let ppp = painter.pixels_per_point();
+    let mut out = shadow_shapes(rect, radius, p, &m);
+    out.push(fill_shape(painter.ctx(), rect, radius, body));
+    out.extend(top_highlight_shape(ppp, rect, radius, m.highlight));
+    out.extend(bottom_line_shape(
+        ppp,
+        rect,
+        radius,
+        p.shadow,
+        m.bottom_line,
+    ));
+    out.extend(recess_shape(rect, radius, p.shadow, m.recess));
+    if let Some(c) = ring {
+        out.push(RectShape::stroke(rect, radius, Stroke::new(SEAM, c), StrokeKind::Inside).into());
+    }
+    out
 }
 
 /// A 1 pt ring inside `rect`'s edge.

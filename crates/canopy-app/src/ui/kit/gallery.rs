@@ -29,6 +29,11 @@ pub const SECTIONS: &[Section] = &[
     ("Progress", progress::gallery),
     ("Menus", menu::gallery),
     ("Overlays", overlay::gallery),
+    ("Lists", super::row::gallery),
+    ("Chips", super::chip::gallery),
+    ("People", super::avatar::gallery),
+    ("Surfaces", super::surface::gallery),
+    ("Graph", super::graph::gallery),
 ];
 
 const MAX_WIDTH: f32 = 1360.0;
