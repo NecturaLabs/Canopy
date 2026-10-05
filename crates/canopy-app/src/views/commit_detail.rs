@@ -54,19 +54,18 @@ pub fn show(
         return;
     };
     let pane_max = (ui.available_width() * 0.4).max(160.0);
+    // A compact window keeps the changed files in view: the tighter inset of its controls.
+    let pad = if tab.history_layout.compact {
+        egui::Margin::same(theme::SM as i8)
+    } else {
+        egui::Margin::symmetric(m.detail_pad.x as i8, m.detail_pad.y as i8)
+    };
     egui::Panel::left("detail-meta")
         .resizable(true)
         .default_size(pane_max.min(m.detail_info_width))
         .min_size(pane_max.min(220.0))
         .max_size(pane_max.min(640.0))
-        .frame(
-            egui::Frame::new()
-                .fill(s.pane)
-                .inner_margin(egui::Margin::symmetric(
-                    m.detail_pad.x as i8,
-                    m.detail_pad.y as i8,
-                )),
-        )
+        .frame(egui::Frame::new().fill(s.pane).inner_margin(pad))
         .show(ui, |ui| {
             ui.spacing_mut().scroll = theme::solid_scroll();
             ui.spacing_mut().item_spacing.y = if tab.history_layout.compact {
@@ -103,15 +102,18 @@ pub fn show(
             let files_min = file_row_height() * d.files.len().min(2) as f32
                 + ui.spacing().interact_size.y * 2.0
                 + theme::XS * 3.0;
-            let information = Disclosure::new(
-                "commit-information",
-                "Commit information",
-                &mut tab.history_layout.information_open,
-            );
-            information.show(ui, |ui| {
+            // Measured here: the disclosure's body has no height limit of its own.
+            let info_room =
+                (ui.available_height() - files_min - RowKind::List.height() - theme::XS * 2.0)
+                    .max(0.0);
+            // Without room for a line of it the block stays shut: the changed files come first.
+            let roomy = info_room >= theme::XL;
+            let mut open = tab.history_layout.information_open && roomy;
+            let was_open = open;
+            Disclosure::new("commit-information", "Commit information", &mut open).show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("commit-metadata")
-                    .max_height((ui.available_height() - files_min).max(0.0))
+                    .max_height(info_room)
                     .min_scrolled_height(0.0)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
@@ -128,6 +130,9 @@ pub fn show(
                         metadata(ui, &d, actions);
                     });
             });
+            if open != was_open {
+                tab.history_layout.information_open = open;
+            }
             ui.add_space(theme::XS);
             file_stats(ui, &d);
             ui.add_space(theme::XS);
@@ -214,7 +219,7 @@ const PANE_HEADER_PAD: (f32, f32) = (14.0, 10.0);
 
 /// The detail header's ground: the chrome step over a seam in Standard; in Deeper the card's own
 /// ground (the header sits inside the floating pane) over the same seam.
-fn paint_header_strip(ui: &Ui, rect: Rect) {
+pub(super) fn paint_header_strip(ui: &Ui, rect: Rect) {
     let p = palette(ui.ctx());
     let s = p.s();
     let fill = if theme::style() == Style::Deeper {

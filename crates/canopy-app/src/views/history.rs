@@ -1,31 +1,58 @@
 //! The commit graph: a virtualised table with coloured lanes, ref pills and the details pane.
 
-use egui::{
-    Align2, Color32, CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2,
-};
+use egui::{Align, FontId, Layout, Rect, RichText, Ui, UiBuilder, pos2, vec2};
 use egui_phosphor::regular as icon;
 
 use canopy_core::ops::ResetMode;
-use canopy_core::{GraphRow, LineEnd, Oid, short_id};
+use canopy_core::{Oid, short_id};
 
 use canopy_core::forge::Forge;
 
 use crate::action::Action;
+use crate::keymap::Command;
 use crate::settings::Settings;
 use crate::tab::RepoTab;
-use crate::ui::theme::{self, Palette, palette};
+use crate::ui::kit::avatar::{self, Person};
+use crate::ui::kit::chip::RefPill;
+use crate::ui::kit::choice::Segmented;
+use crate::ui::kit::field::SearchField;
+use crate::ui::kit::graph::{self, Lanes, Marks};
+use crate::ui::kit::menu::{self, Menu};
+use crate::ui::kit::progress::Spinner;
+use crate::ui::kit::row::{ListRow, RowKind, caps_galley};
+use crate::ui::kit::surface::{EmptyState, HeaderKind, PaneHeader};
+use crate::ui::kit::{Button, IconButton, paint};
+use crate::ui::theme::{self, palette};
 use crate::ui::widgets::forge_icon;
 use crate::ui::{art, widgets};
 use crate::views::{commit_detail, dialogs::Dialog, diff};
 use crate::worker::Op;
 
-const ROW_H: f32 = 30.0;
-const LANE_W: f32 = 16.0;
+/// Lanes past this many are clipped off the graph column.
 const MAX_LANES: u16 = 18;
+/// Left inset of a table cell's content (concept 1's `.h-row > span`).
+const CELL_PAD: f32 = 10.0;
+/// Left inset of the graph column's header label.
+const GRAPH_LABEL_X: f32 = 12.0;
+/// Gap between ref pills, and between the last pill and the summary.
+const PILL_GAP: f32 = 6.0;
+/// Gap between an author's avatar and name.
+const AVATAR_GAP: f32 = 8.0;
+/// The id `RepoTab::filter_history` focuses; the filter field takes focus from it.
+const FILTER_ID: &str = "history-filter";
+
+/// Which half of History a compact window shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompactPane {
+    History,
+    Details,
+}
 
 /// Draws the history view.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let s = p.s();
+    let row_h = RowKind::History.height();
     if tab.snap.is_none() {
         loading(ui, tab);
         return;
@@ -39,18 +66,18 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         tab.history_layout.compact_details = false;
         tab.history_layout.expanded = false;
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(p.bg()))
+            .frame(egui::Frame::new().fill(s.pane))
             .show(ui, |ui| table(ui, tab, settings, actions));
         return;
     }
     let h = ui.available_height();
-    let compact_table_min = ROW_H * 6.0 + theme::XL + theme::MD;
+    let compact_table_min = row_h * 6.0 + theme::XL + theme::MD;
     let table_preferred = if tab.history_filter_open {
-        ROW_H * 6.0 + theme::XL * 3.0 + theme::LG
+        row_h * 6.0 + theme::XL * 3.0 + theme::LG
     } else {
         compact_table_min
     };
-    let table_required = table_preferred - ROW_H * 4.0;
+    let table_required = table_preferred - row_h * 4.0;
     let compact = h < 260.0 + table_required;
     let table_min = table_preferred.min((h - 260.0).max(table_required));
     tab.history_layout.compact = compact;
@@ -59,46 +86,57 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
     if compact {
         egui::Panel::top("history-detail-controls")
             .exact_size(theme::XL + theme::SM)
-            .frame(
-                egui::Frame::new()
-                    .fill(p.panel())
-                    .inner_margin(egui::Margin::symmetric(theme::MD as i8, theme::XS as i8)),
-            )
+            .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if ui
-                        .selectable_label(!layout.compact_details || !selected, "History")
-                        .clicked()
-                    {
+                let strip = ui.max_rect();
+                commit_detail::paint_header_strip(ui, strip);
+                let mut row = ui.new_child(
+                    UiBuilder::new()
+                        .max_rect(strip.shrink2(vec2(theme::MD, 0.0)))
+                        .layout(Layout::left_to_right(Align::Center)),
+                );
+                let before = if layout.compact_details && selected {
+                    CompactPane::Details
+                } else {
+                    CompactPane::History
+                };
+                let mut pane = before;
+                Segmented::new(
+                    &mut pane,
+                    &[
+                        (CompactPane::History, "History"),
+                        (CompactPane::Details, "Commit details"),
+                    ],
+                )
+                .label("History pane")
+                .id_salt("history-compact-pane")
+                .enabled(selected)
+                .disabled_reason("Select a commit to see its details")
+                .show(&mut row);
+                match (before, pane) {
+                    (CompactPane::Details, CompactPane::History) => {
                         layout.compact_details = false;
                         layout.expanded = false;
                         tab.history_layout.expanded = false;
                     }
-                    ui.add_enabled_ui(selected, |ui| {
-                        if ui
-                            .selectable_label(layout.compact_details && selected, "Commit details")
-                            .clicked()
-                        {
-                            layout.compact_details = true;
-                        }
-                    });
-                    if layout.compact_details && selected {
-                        let summary = tab
-                            .details
-                            .as_ref()
-                            .map(|d| d.message.lines().next().unwrap_or("").trim())
-                            .unwrap_or("Commit details");
-                        ui.add(
-                            egui::Label::new(RichText::new(summary).color(p.text_dim)).truncate(),
-                        )
+                    (CompactPane::History, CompactPane::Details) => layout.compact_details = true,
+                    _ => {}
+                }
+                if layout.compact_details && selected {
+                    let summary = tab
+                        .details
+                        .as_ref()
+                        .map(|d| d.message.lines().next().unwrap_or("").trim())
+                        .unwrap_or("Commit details");
+                    row.add_space(theme::SM);
+                    row.add(egui::Label::new(RichText::new(summary).color(p.text_dim)).truncate())
                         .on_hover_text(summary);
-                    }
-                });
+                }
             });
     }
     if compact || layout.expanded {
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(p.bg()))
+            .frame(egui::Frame::new().fill(s.pane))
             .show(ui, |ui| {
                 if (layout.expanded || layout.compact_details) && selected {
                     commit_detail::show(ui, tab, settings, actions);
@@ -135,17 +173,24 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         }
         egui::Panel::bottom("details")
             .resizable(true)
+            .show_separator_line(false)
             .default_size(default_height)
             .min_size(260.0_f32.min(detail_max))
             .max_size(detail_max)
-            .frame(
-                egui::Frame::new()
-                    .fill(p.panel())
-                    .stroke(Stroke::new(1.0, p.border())),
-            )
-            .show(ui, |ui| commit_detail::show(ui, tab, settings, actions));
+            .frame(egui::Frame::new().fill(s.pane))
+            .show(ui, |ui| {
+                let top = ui.max_rect();
+                commit_detail::show(ui, tab, settings, actions);
+                // The seam between the table and the details (concept 1's `.h-det` top border).
+                paint::seam_h(
+                    ui.painter(),
+                    top.x_range(),
+                    top.top() + paint::SEAM * 0.5,
+                    s.border,
+                );
+            });
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(p.bg()))
+            .frame(egui::Frame::new().fill(s.pane))
             .show(ui, |ui| table(ui, tab, settings, actions));
     }
     tab.history_layout.compact_details = layout.compact_details || tab.history_layout.expanded;
@@ -153,62 +198,93 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
 
 fn loading(ui: &mut Ui, tab: &RepoTab) {
     let p = palette(ui.ctx());
+    if let Some(e) = &tab.load_error {
+        EmptyState::new("Could not read this repository")
+            .art(art::empty_error())
+            .icon(icon::WARNING_OCTAGON)
+            .body(e.clone())
+            .show(ui);
+        return;
+    }
     ui.vertical_centered(|ui| {
         ui.add_space(ui.available_height() * 0.35);
-        if let Some(e) = &tab.load_error {
-            art::show(ui, art::empty_error(), vec2(160.0, 120.0));
-            ui.label(RichText::new("Could not read this repository").heading());
-            ui.label(RichText::new(e).color(p.text_dim));
-        } else {
-            ui.spinner();
-            ui.label(RichText::new("Reading repository…").color(p.text_dim));
-        }
+        Spinner::new().label("the repository").show(ui);
+        ui.label(RichText::new("Reading repository…").color(p.text_dim));
     });
+}
+
+/// The search field over the table, and its close button.
+fn filter_bar(ui: &mut Ui, tab: &mut RepoTab) {
+    let mut close_search = false;
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 14,
+            right: 14,
+            top: 10,
+            bottom: 8,
+        })
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                // The filter command focuses `FILTER_ID`; the field takes that focus over.
+                let wants_focus = tab.focus_history_filter
+                    || ui.memory(|m| m.has_focus(egui::Id::new(FILTER_ID)));
+                let field = SearchField::new(&mut tab.filter)
+                    .placeholder("Filter by message, author or SHA…")
+                    .name("Filter commits")
+                    .shortcut(Command::Filter)
+                    .width((ui.available_width() - 48.0).clamp(120.0, 340.0))
+                    .id_salt(FILTER_ID)
+                    .show(ui);
+                if wants_focus {
+                    field.request_focus();
+                    tab.focus_history_filter = false;
+                }
+                ui.data_mut(|d| d.insert_temp(filter_field_key(), field.id));
+                close_search = IconButton::new(icon::X, "Close search")
+                    .id_salt("history-filter-close")
+                    .show(ui)
+                    .clicked();
+            });
+        });
+    if close_search {
+        tab.close_history_filter(ui.ctx());
+    }
+}
+
+/// Where the filter field's own id is kept, for code that asks whether it has focus.
+fn filter_field_key() -> egui::Id {
+    egui::Id::new(FILTER_ID).with("field")
+}
+
+/// Paints `text` on one line from `x`, ellipsized before `right`; returns where it ends.
+fn paint_line(
+    painter: &egui::Painter,
+    x: f32,
+    right: f32,
+    cy: f32,
+    text: &str,
+    font: FontId,
+    color: egui::Color32,
+) -> f32 {
+    if right <= x {
+        return x;
+    }
+    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, color, right - x);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let g = painter.layout_job(job);
+    let end = x + g.size().x;
+    painter.galley(pos2(x, cy - g.size().y / 2.0), g, color);
+    end
 }
 
 fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<Action>) -> bool {
     let p = palette(ui.ctx());
+    let s = p.s();
+    let m = theme::metrics();
+    let row_h = RowKind::History.height();
     if tab.history_filter_open {
-        let mut close_search = false;
-        egui::Frame::new()
-            .inner_margin(egui::Margin {
-                left: 14,
-                right: 14,
-                top: 10,
-                bottom: 8,
-            })
-            .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    if tab.history_filter_open {
-                        let id = egui::Id::new("history-filter");
-                        egui::Frame::new()
-                            .fill(p.panel())
-                            .stroke(Stroke::new(1.0, p.border()))
-                            .corner_radius(CornerRadius::same(theme::RADIUS))
-                            .inner_margin(egui::Margin::symmetric(10, 4))
-                            .show(ui, |ui| {
-                                ui.label(RichText::new(icon::FUNNEL_SIMPLE).color(p.text_faint));
-                                let edit = ui.add(
-                                    egui::TextEdit::singleline(&mut tab.filter)
-                                        .id(id)
-                                        .hint_text("Filter by message, author or SHA…")
-                                        .frame(egui::Frame::NONE)
-                                        .desired_width(
-                                            (ui.available_width() - 48.0).clamp(120.0, 340.0),
-                                        ),
-                                );
-                                if tab.focus_history_filter {
-                                    edit.request_focus();
-                                    tab.focus_history_filter = false;
-                                }
-                            });
-                        close_search = widgets::icon_button(ui, icon::X, "Close search").clicked();
-                    }
-                });
-            });
-        if close_search {
-            tab.close_history_filter(ui.ctx());
-        }
+        filter_bar(ui, tab);
     }
 
     // Refresh the filter cache, then borrow it (and everything else) without copying: a frame
@@ -225,23 +301,22 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     let commit_at = |ri: usize| filtered.map_or(Some(ri), |f| f.get(ri).copied());
 
     if snap.commits.is_empty() {
-        ui.vertical_centered(|ui| {
-            ui.add_space(60.0);
-            art::show(ui, art::empty_history(), vec2(160.0, 120.0));
-            ui.add_space(8.0);
-            ui.label(RichText::new("No commits yet").heading());
-            ui.label(
-                RichText::new("Stage some files in Changes and make the first commit.")
-                    .color(p.text_dim),
-            );
-        });
+        EmptyState::new("No commits yet")
+            .art(art::empty_history())
+            .icon(icon::GIT_COMMIT)
+            .body("Stage some files in Changes and make the first commit.")
+            .show(ui);
         return false;
     }
 
     let now = chrono::Utc::now().timestamp();
-    let mut full = ui.available_rect_before_wrap();
+    let row_spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let outer = ui.available_rect_before_wrap();
+    let mut full = outer;
     full.max.x -= theme::LG;
-    let view_h = (full.height() - 22.0 - ui.spacing().item_spacing.y).max(ROW_H);
+    let header = PaneHeader::new(HeaderKind::Table).top_of_pane(!tab.history_filter_open);
+    let view_h = (full.height() - header.height()).max(row_h);
     let scroll_id = ui.make_persistent_id(egui::IdSalt::new("history-rows"));
     let mut offset =
         egui::scroll_area::State::load(ui.ctx(), scroll_id).map_or(0.0, |s| s.offset.y);
@@ -254,18 +329,18 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             })
         });
         if let Some(target) = target {
-            let y = target as f32 * ROW_H;
-            if tab.scroll_to_selected || y < offset || y + ROW_H > offset + view_h {
-                offset = (y - view_h / 2.0 + ROW_H).max(0.0);
+            let y = target as f32 * row_h;
+            if tab.scroll_to_selected || y < offset || y + row_h > offset + view_h {
+                offset = (y - view_h / 2.0 + row_h).max(0.0);
             }
         }
     }
     let total_rows = row_count + usize::from(snap.truncated && filtered.is_none());
-    offset = offset.min((total_rows as f32 * ROW_H - view_h).max(0.0));
+    offset = offset.min((total_rows as f32 * row_h - view_h).max(0.0));
     tab.scroll_to_selected = false;
     tab.reveal_selected = false;
-    let first = (offset / ROW_H).floor() as usize;
-    let last = ((offset + view_h) / ROW_H).ceil() as usize;
+    let first = (offset / row_h).floor() as usize;
+    let last = ((offset + view_h) / row_h).ceil() as usize;
     let date_text = |seconds| {
         if settings.relative_dates {
             widgets::relative_time_format(seconds, now, settings.iso_dates)
@@ -273,100 +348,49 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             widgets::absolute_date_format(seconds, settings.iso_dates)
         }
     };
-    let text_width =
-        |text: String, font: FontId| ui.painter().layout_no_wrap(text, font, p.text).size().x;
     let mut lanes = 1;
-    let mut desc_w = 150.0_f32;
-    let mut author_w = 70.0_f32;
-    let mut date_w = 50.0_f32;
-    let avatars = settings.show_avatars;
-    let name_x = if avatars { 32.0 } else { 6.0 };
     for ri in first..last.min(row_count) {
-        let Some(ci) = commit_at(ri) else {
-            continue;
-        };
-        let Some(commit) = snap.commits.get(ci) else {
-            continue;
-        };
-        if let Some(graph) = snap.graph.get(ci) {
+        if let Some(graph) = commit_at(ri).and_then(|ci| snap.graph.get(ci)) {
             lanes = lanes.max(graph.width.clamp(1, MAX_LANES));
         }
-        let refs_w = snap.refs.get(&commit.oid).map_or(0.0, |refs| {
-            refs.iter()
-                .map(|label| widgets::ref_pill_width(ui, label) + 5.0)
-                .sum::<f32>()
-                + 3.0
-        });
-        desc_w = desc_w.max(
-            refs_w
-                + text_width(
-                    commit.summary.clone(),
-                    FontId::new(theme::BODY_SIZE, theme::medium()),
-                )
-                + theme::LG,
-        );
-        author_w = author_w.max(
-            name_x
-                + text_width(
-                    commit.author.name.clone(),
-                    FontId::proportional(theme::META_SIZE),
-                )
-                + theme::LG,
-        );
-        date_w = date_w.max(
-            text_width(
-                date_text(commit.author.time),
-                FontId::monospace(theme::MONO_SMALL_SIZE),
-            ) + theme::LG,
-        );
     }
+    let [_, author_col, date_col, sha_col] = m.history_columns;
     let graph_w = if show_graph {
-        (f32::from(lanes) * LANE_W + theme::LG).min(full.width() * 0.28)
+        graph::column_width(lanes)
     } else {
         0.0
     };
-    let lane_pitch = ((graph_w - theme::LG) / f32::from(lanes)).clamp(1.0, LANE_W);
+    let geometry = Lanes::new(lanes);
     let show_author = full.width() >= 560.0;
     let show_date = full.width() >= 760.0;
     let show_sha = full.width() >= 460.0;
-    author_w = if show_author {
-        author_w.min(220.0).min(full.width() * 0.22)
-    } else {
-        0.0
-    };
-    date_w = if show_date {
-        date_w.min(full.width() * 0.18)
-    } else {
-        0.0
-    };
-    let sha_w = if show_sha { 74.0 } else { 0.0 };
-    let desc_x = full.min.x + graph_w + 10.0;
-    let remaining = (full.width() - graph_w - 10.0 - author_w - date_w - sha_w).max(0.0);
-    desc_w = desc_w.min(remaining);
+    let author_w = if show_author { author_col } else { 0.0 };
+    let date_w = if show_date { date_col } else { 0.0 };
+    let sha_w = if show_sha { sha_col } else { 0.0 };
+    let desc_w = (full.width() - graph_w - author_w - date_w - sha_w).max(0.0);
+    let desc_x = full.min.x + graph_w;
     let author_x = desc_x + desc_w;
     let date_x = author_x + author_w;
     let sha_x = date_x + date_w;
+    let avatars = settings.show_avatars;
 
-    // Header.
-    let (hdr, _) = ui.allocate_exact_size(vec2(full.width(), 22.0), Sense::hover());
-    let hf = FontId::new(theme::MICRO_SIZE, theme::semibold());
-    for (x, t) in [
-        (full.min.x + 12.0, if show_graph { "GRAPH" } else { "" }),
-        (desc_x, "DESCRIPTION"),
-        (author_x + 6.0, if show_author { "AUTHOR" } else { "" }),
-        (date_x, if show_date { "DATE" } else { "" }),
-        (sha_x, if show_sha { "COMMIT" } else { "" }),
+    // Column header: the table pane's own strip, distinct from the neutral pane edges in Deeper.
+    let (hdr, _) =
+        ui.allocate_exact_size(vec2(outer.width(), header.height()), egui::Sense::hover());
+    header.paint(ui.painter(), hdr);
+    for (x, t, shown) in [
+        (full.min.x + GRAPH_LABEL_X, "Graph", show_graph),
+        (desc_x + CELL_PAD, "Description", true),
+        (author_x + CELL_PAD, "Author", show_author),
+        (date_x + CELL_PAD, "Date", show_date),
+        (sha_x + CELL_PAD, "Commit", show_sha),
     ] {
-        ui.painter().text(
-            pos2(x, hdr.center().y),
-            Align2::LEFT_CENTER,
-            t,
-            hf.clone(),
-            p.text_faint,
-        );
+        if shown {
+            let g = caps_galley(ui, t, p.text_faint);
+            ui.painter()
+                .galley(pos2(x, hdr.center().y - g.size().y / 2.0), g, p.text_faint);
+        }
     }
-    ui.painter()
-        .hline(full.x_range(), hdr.max.y, Stroke::new(1.0, p.border()));
 
     let mut clicked: Option<Oid> = None;
     let area = egui::ScrollArea::vertical()
@@ -374,170 +398,150 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         .id_salt("history-rows")
         .vertical_scroll_offset(offset);
     let mut wanted_pictures = Vec::new();
-    let row_spacing = ui.spacing().item_spacing.y;
-    ui.spacing_mut().item_spacing.y = 0.0;
-    let list = area.show_rows(ui, ROW_H, total_rows, |ui, range| {
+    let list = area.show_rows(ui, row_h, total_rows, |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for ri in range {
             let Some(ci) = commit_at(ri).filter(|_| ri < row_count) else {
-                let (rect, _) = ui.allocate_exact_size(vec2(full.width(), ROW_H), Sense::hover());
-                let b = ui.put(
-                    Rect::from_center_size(rect.center(), vec2(220.0, 24.0)),
-                    egui::Button::new(
-                        RichText::new(format!("{}  Load more commits", icon::ARROW_DOWN))
-                            .color(p.accent),
-                    ),
+                let (rect, _) =
+                    ui.allocate_exact_size(vec2(full.width(), row_h), egui::Sense::hover());
+                let mut slot = ui.new_child(
+                    UiBuilder::new()
+                        .id_salt("history-load-more")
+                        .max_rect(rect)
+                        .layout(
+                            Layout::left_to_right(Align::Center).with_main_align(Align::Center),
+                        ),
                 );
-                if b.clicked() {
+                if Button::new("Load more commits")
+                    .secondary()
+                    .icon(icon::ARROW_DOWN)
+                    .id_salt("history-load-more")
+                    .show(&mut slot)
+                    .clicked()
+                {
                     actions.push(Action::LoadMore);
                 }
                 continue;
             };
             let Some(c) = snap.commits.get(ci) else {
-                ui.allocate_space(vec2(full.width(), ROW_H));
+                ui.allocate_space(vec2(full.width(), row_h));
                 continue;
             };
-            let (rect, resp) = ui.allocate_exact_size(vec2(full.width(), ROW_H), Sense::click());
             let selected = tab.selected_commit == Some(c.oid);
-            let hover = ui
-                .ctx()
-                .animate_bool_with_time(resp.id, resp.hovered(), 0.1);
-            let painter = ui.painter();
-            if selected {
-                painter.rect_filled(rect, CornerRadius::ZERO, p.selected());
-                painter.rect_filled(
-                    Rect::from_min_size(rect.min, vec2(3.0, ROW_H)),
-                    CornerRadius::ZERO,
-                    p.accent,
-                );
-            } else if hover > 0.0 {
-                painter.rect_filled(
-                    rect,
-                    CornerRadius::ZERO,
-                    Palette::tint(p.text, (hover * if p.dark { 10.0 } else { 14.0 }) as u8),
-                );
-            }
-
             let g = snap.graph.get(ci);
             let is_head = snap.head.oid == Some(c.oid);
-            if show_graph && let Some(g) = g {
-                paint_graph_row(
-                    ui,
-                    Rect::from_min_size(rect.min + vec2(10.0, 0.0), vec2(graph_w - 10.0, ROW_H)),
-                    g,
-                    lane_pitch,
-                    is_head,
-                    p,
-                );
-            }
-            let lane_color = g.map(|g| p.lane(g.color)).unwrap_or(p.accent);
-
-            // Description: ref pills then summary.
-            let cy = rect.center().y;
-            let desc_clip =
-                Rect::from_min_max(pos2(desc_x, rect.min.y), pos2(author_x - 12.0, rect.max.y))
-                    .intersect(ui.clip_rect());
-            let mut x = desc_x;
-            if let Some(labels) = snap.refs.get(&c.oid) {
-                let clip_ui = ui.new_child(egui::UiBuilder::new().max_rect(desc_clip));
-                let mut clip_ui = clip_ui;
-                clip_ui.set_clip_rect(desc_clip);
-                for l in labels {
-                    if x > desc_clip.max.x - 40.0 {
-                        break;
-                    }
-                    x += widgets::paint_ref_pill(&clip_ui, x, cy, l, lane_color) + 5.0;
+            let lane = g.map_or(0, |g| g.color);
+            let picture = if avatars && show_author {
+                // Copied only for an author whose lookup is due, not for every row every frame.
+                if tab.avatars.wants_now(&c.author.email) {
+                    wanted_pictures.push((c.oid, c.author.email.clone()));
                 }
-                x += 3.0;
-            }
-            let text_color = if selected || is_head {
-                p.text
+                Some(
+                    tab.avatars
+                        .get(&c.author.email)
+                        .map(egui::TextureHandle::id),
+                )
             } else {
-                p.text.gamma_multiply(0.92)
+                None
             };
-            let font = if is_head {
-                FontId::new(theme::BODY_SIZE, theme::medium())
-            } else {
-                FontId::proportional(theme::BODY_SIZE)
-            };
-            let galley = widgets::single_line_galley(
-                ui,
-                c.summary.clone(),
-                font,
-                text_color,
-                (desc_clip.max.x - x).max(0.0),
-            );
-            ui.painter().with_clip_rect(desc_clip).galley(
-                pos2(x, cy - galley.size().y / 2.0),
-                galley,
-                text_color,
-            );
 
-            if show_author {
-                // Author.
-                if avatars {
-                    // Copied only for an author whose lookup is due, not for every row every frame.
-                    if tab.avatars.wants_now(&c.author.email) {
-                        wanted_pictures.push((c.oid, c.author.email.clone()));
+            // Ref pills, then the summary after them.
+            let desc_right = author_x - CELL_PAD;
+            let mut pills = Vec::new();
+            let mut x = desc_x + CELL_PAD;
+            for l in snap.refs.get(&c.oid).into_iter().flatten() {
+                if x > desc_right - 40.0 {
+                    break;
+                }
+                let pill = RefPill::from_label(l, lane);
+                let left = x;
+                x += pill.width(ui) + PILL_GAP;
+                pills.push((pill, left));
+            }
+            let summary_x = x;
+            let date = date_text(c.author.time);
+            let response = ListRow::new(("history-row", c.oid))
+                .kind(RowKind::History)
+                .index(ri)
+                .selected(selected)
+                .show_with(ui, |rc, painter| {
+                    let cy = rc.rect.center().y;
+                    if show_graph && let Some(g) = g {
+                        let column =
+                            Rect::from_min_size(rc.rect.min, vec2(graph_w, rc.rect.height()));
+                        let mut marks = Marks::new(rc.ground);
+                        marks.head = is_head;
+                        graph::paint_row(painter, column, &geometry, g, &marks);
                     }
-                    let center = pos2(author_x + 16.0, cy);
-                    if let Some(texture) = tab.avatars.get(&c.author.email) {
-                        egui::Image::new(texture)
-                            .corner_radius(egui::CornerRadius::same(10))
-                            .paint_at(ui, Rect::from_center_size(center, vec2(20.0, 20.0)));
+                    let font = if selected || is_head {
+                        FontId::new(m.body_size, theme::medium())
                     } else {
-                        widgets::paint_avatar(ui, center, 10.0, &c.author.name, &c.author.email);
-                    }
-                }
-                let ag = ui.painter().layout_no_wrap(
-                    c.author.name.clone(),
-                    FontId::proportional(theme::META_SIZE),
-                    p.text_dim,
-                );
-                ui.painter()
-                    .with_clip_rect(
-                        Rect::from_min_max(
-                            pos2(author_x + name_x - 2.0, rect.min.y),
-                            pos2(date_x - 8.0, rect.max.y),
-                        )
-                        .intersect(ui.clip_rect()),
-                    )
-                    .galley(
-                        pos2(author_x + name_x, cy - ag.size().y / 2.0),
-                        ag,
-                        p.text_dim,
+                        FontId::proportional(m.body_size)
+                    };
+                    paint_line(
+                        painter, summary_x, desc_right, cy, &c.summary, font, rc.text,
                     );
+                    if show_author {
+                        let mut name_x = author_x + CELL_PAD;
+                        if let Some(picture) = picture {
+                            let d = m.avatar_row;
+                            let person =
+                                Person::new(&c.author.name, &c.author.email).picture(picture);
+                            avatar::paint(
+                                painter,
+                                pos2(name_x + d / 2.0, cy),
+                                d,
+                                &person,
+                                None,
+                                Some(egui::Id::new(("history-avatar", &c.author.email))),
+                            );
+                            name_x += d + AVATAR_GAP;
+                        }
+                        paint_line(
+                            painter,
+                            name_x,
+                            date_x - CELL_PAD,
+                            cy,
+                            &c.author.name,
+                            FontId::proportional(m.body_size),
+                            rc.dim,
+                        );
+                    }
+                    if show_date {
+                        paint_line(
+                            painter,
+                            date_x + CELL_PAD,
+                            sha_x - CELL_PAD,
+                            cy,
+                            &date,
+                            FontId::proportional(m.body_size),
+                            rc.dim,
+                        );
+                    }
+                    if show_sha {
+                        paint_line(
+                            painter,
+                            sha_x + CELL_PAD,
+                            full.max.x,
+                            cy,
+                            &short_id(c.oid),
+                            FontId::monospace(m.sha_size),
+                            rc.accent,
+                        );
+                    }
+                });
+            if !pills.is_empty() {
+                let clip = Rect::from_min_max(
+                    pos2(desc_x, response.rect.top()),
+                    pos2(desc_right, response.rect.bottom()),
+                )
+                .intersect(ui.clip_rect());
+                let painter = ui.painter().with_clip_rect(clip);
+                for (pill, left) in &pills {
+                    pill.paint(ui, &painter, *left, response.rect.center().y);
+                }
             }
-            if show_date {
-                ui.painter().text(
-                    pos2(date_x, cy),
-                    Align2::LEFT_CENTER,
-                    if settings.relative_dates {
-                        widgets::relative_time_format(c.author.time, now, settings.iso_dates)
-                    } else {
-                        widgets::absolute_date_format(c.author.time, settings.iso_dates)
-                    },
-                    FontId::monospace(theme::MONO_SMALL_SIZE),
-                    p.text_faint,
-                );
-            }
-            if show_sha {
-                ui.painter().text(
-                    pos2(sha_x, cy),
-                    Align2::LEFT_CENTER,
-                    short_id(c.oid),
-                    FontId::monospace(theme::MONO_SMALL_SIZE),
-                    if selected { p.accent2 } else { p.text_faint },
-                );
-            }
-
-            let resp = resp.on_hover_text_at_pointer(format!(
-                "{}\n{} <{}>\n{}",
-                c.summary,
-                c.author.name,
-                c.author.email,
-                widgets::full_date(c.author.time, c.author.offset_minutes)
-            ));
+            // The row paints its own columns; screen readers get the commit in one sentence.
             let info = format!(
                 "Commit {}, {}, by {}, {}",
                 short_id(c.oid),
@@ -545,20 +549,28 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 c.author.name,
                 widgets::relative_time_format(c.author.time, now, settings.iso_dates)
             );
-            resp.widget_info(|| {
-                egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &info)
-            });
-            if resp.clicked() {
+            ui.ctx()
+                .accesskit_node_builder(response.id, |n| n.set_label(info));
+            let response = response.on_hover_text_at_pointer(format!(
+                "{}\n{} <{}>\n{}",
+                c.summary,
+                c.author.name,
+                c.author.email,
+                widgets::full_date(c.author.time, c.author.offset_minutes)
+            ));
+            if response.clicked() {
                 clicked = Some(c.oid);
             }
             let oid = c.oid;
             let summary = c.summary.clone();
-            resp.context_menu(|ui| commit_menu(ui, oid, &summary, forge.as_ref(), actions));
+            menu::context(&response, |m| {
+                commit_menu(m, oid, &summary, forge.as_ref(), actions);
+            });
         }
     });
     ui.spacing_mut().item_spacing.y = row_spacing;
 
-    widgets::scroll_fade(ui, &list, p.bg());
+    paint::scroll_fade(ui, &list, s.pane);
 
     for (oid, email) in wanted_pictures {
         tab.request_avatar(oid, &email);
@@ -572,165 +584,137 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
 
 /// The context menu of a commit row.
 pub fn commit_menu(
-    ui: &mut Ui,
+    m: &mut Menu<'_>,
     oid: Oid,
     summary: &str,
     forge: Option<&Forge>,
     actions: &mut Vec<Action>,
 ) {
-    let p = palette(ui.ctx());
-    ui.set_min_width(240.0);
     if let Some(f) = forge {
-        if ui
-            .button(format!(
-                "{}  Open commit on {}",
-                forge_icon(f.kind),
-                f.kind.name()
-            ))
-            .clicked()
+        if m.item(
+            forge_icon(f.kind),
+            format!("Open commit on {}", f.kind.name()),
+        )
+        .shortcut(Command::OpenOnForge)
+        .show(m.ui)
+        .clicked()
         {
             actions.push(Action::OpenUrl(f.commit_url(&oid.to_string())));
         }
-        ui.separator();
+        m.separator();
     }
-    if ui
-        .button(format!("{}  Check out (detached HEAD)", icon::CHECK))
+    if m.item(icon::CHECK, "Check out (detached HEAD)")
+        .show(m.ui)
         .clicked()
     {
         actions.push(Action::Op(Op::CheckoutDetached(oid)));
     }
-    if ui
-        .button(format!("{}  New branch here…", icon::GIT_BRANCH))
+    if m.item(icon::GIT_BRANCH, "New branch here…")
+        .shortcut(Command::NewBranch)
+        .show(m.ui)
         .clicked()
     {
         actions.push(Action::OpenDialog(Dialog::new_branch_at(
             crate::views::dialogs::Start::Commit(oid),
         )));
     }
-    if ui.button(format!("{}  New tag here…", icon::TAG)).clicked() {
+    if m.item(icon::TAG, "New tag here…")
+        .shortcut(Command::Tag)
+        .show(m.ui)
+        .clicked()
+    {
         actions.push(Action::OpenDialog(Dialog::NewTag {
             name: String::new(),
             target: oid,
             message: String::new(),
         }));
     }
-    ui.separator();
-    if ui
-        .button(format!("{}  Cherry-pick", icon::CHERRIES))
-        .clicked()
-    {
+    m.separator();
+    if m.item(icon::CHERRIES, "Cherry-pick").show(m.ui).clicked() {
         actions.push(Action::Op(Op::CherryPick(oid)));
     }
-    if ui
-        .button(format!("{}  Revert", icon::ARROW_COUNTER_CLOCKWISE))
+    if m.item(icon::ARROW_COUNTER_CLOCKWISE, "Revert")
+        .show(m.ui)
         .clicked()
     {
         actions.push(Action::Op(Op::Revert(oid)));
     }
-    ui.menu_button(format!("{}  Reset current branch here", icon::CLOCK_COUNTER_CLOCKWISE), |ui| {
-        let choice = |ui: &mut Ui, name: &str, explanation: &str, danger: bool| {
-            let mut job = egui::text::LayoutJob::default();
-            job.append(
-                name,
-                0.0,
-                egui::TextFormat::simple(
-                    FontId::new(theme::BODY_SIZE, theme::semibold()),
-                    if danger { p.danger } else { p.text },
-                ),
-            );
-            job.append("\n", 0.0, egui::TextFormat::default());
-            job.append(
-                explanation,
-                0.0,
-                egui::TextFormat::simple(FontId::proportional(theme::SMALL_SIZE), p.text_dim),
-            );
-            ui.button(job).clicked()
-        };
-        if choice(ui, "Soft", "Keep index and working tree", false) {
-            actions.push(Action::Op(Op::Reset { oid, mode: ResetMode::Soft }));
-        }
-        if choice(ui, "Mixed", "Keep working tree", false) {
-            actions.push(Action::Op(Op::Reset { oid, mode: ResetMode::Mixed }));
-        }
-        if choice(ui, "Hard reset…", "Discard all uncommitted changes", true) {
-            actions.push(Action::Confirm { title: "Hard reset".into(), body: format!("Move the current branch to {} and throw away every uncommitted change? This cannot be undone.", short_id(oid)), confirm: "Reset".into(), danger: true, op: Op::Reset { oid, mode: ResetMode::Hard } });
-        }
-    });
-    ui.separator();
-    if ui.button(format!("{}  Copy SHA", icon::COPY)).clicked() {
+    m.submenu(
+        icon::CLOCK_COUNTER_CLOCKWISE,
+        "Reset current branch here",
+        |m| {
+            if m.item("", "Soft")
+                .description("Keep index and working tree")
+                .show(m.ui)
+                .clicked()
+            {
+                actions.push(Action::Op(Op::Reset {
+                    oid,
+                    mode: ResetMode::Soft,
+                }));
+            }
+            if m.item("", "Mixed")
+                .description("Keep working tree")
+                .show(m.ui)
+                .clicked()
+            {
+                actions.push(Action::Op(Op::Reset {
+                    oid,
+                    mode: ResetMode::Mixed,
+                }));
+            }
+            m.separator();
+            if m.item("", "Hard reset…")
+                .description("Discard all uncommitted changes")
+                .danger()
+                .show(m.ui)
+                .clicked()
+            {
+                actions.push(Action::Confirm {
+                    title: "Hard reset".into(),
+                    body: format!(
+                        "Move the current branch to {} and throw away every uncommitted \
+                         change? This cannot be undone.",
+                        short_id(oid)
+                    ),
+                    confirm: "Reset".into(),
+                    danger: true,
+                    op: Op::Reset {
+                        oid,
+                        mode: ResetMode::Hard,
+                    },
+                });
+            }
+        },
+    );
+    m.separator();
+    if m.item(icon::COPY, "Copy SHA")
+        .shortcut(Command::CopySha)
+        .show(m.ui)
+        .clicked()
+    {
         actions.push(Action::Copy(oid.to_string()));
     }
-    if ui
-        .button(format!("{}  Copy message", icon::TEXT_ALIGN_LEFT))
+    if m.item(icon::TEXT_ALIGN_LEFT, "Copy message")
+        .show(m.ui)
         .clicked()
     {
         actions.push(Action::Copy(summary.to_owned()));
     }
 }
 
-fn lane_x(rect: Rect, lane: u16, pitch: f32) -> f32 {
-    rect.min.x + pitch / 2.0 + f32::from(lane) * pitch
-}
-
-fn anchor(rect: Rect, lane: u16, end: LineEnd, pitch: f32) -> Pos2 {
-    let y = match end {
-        LineEnd::Top => rect.min.y,
-        LineEnd::Mid => rect.center().y,
-        LineEnd::Bottom => rect.max.y,
-    };
-    pos2(lane_x(rect, lane, pitch), y)
-}
-
-/// Paints one row of the graph: edges as straight lines or smooth S-curves, then the node.
-fn paint_graph_row(ui: &Ui, rect: Rect, g: &GraphRow, pitch: f32, is_head: bool, p: &Palette) {
-    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-    let w = 2.0;
-    for s in &g.segments {
-        if s.from_lane >= MAX_LANES && s.to_lane >= MAX_LANES {
-            continue;
-        }
-        let color = p.lane(s.color);
-        let a = anchor(rect, s.from_lane, s.from, pitch);
-        let b = anchor(rect, s.to_lane, s.to, pitch);
-        if s.from_lane == s.to_lane {
-            painter.line_segment([a, b], Stroke::new(w, color));
-        } else {
-            let my = (a.y + b.y) / 2.0;
-            let shape = egui::epaint::CubicBezierShape::from_points_stroke(
-                [a, pos2(a.x, my), pos2(b.x, my), b],
-                false,
-                Color32::TRANSPARENT,
-                egui::epaint::PathStroke::new(w, color),
-            );
-            painter.add(shape);
-        }
-    }
-    if g.lane >= MAX_LANES {
-        return;
-    }
-    let c = anchor(rect, g.lane, LineEnd::Mid, pitch);
-    let color = p.lane(g.color);
-    if is_head {
-        for (r, a) in [(12.0, 18u8), (9.0, 40), (7.5, 70)] {
-            painter.circle_filled(c, r, Palette::tint(color, a));
-        }
-    }
-    let r = if is_head { 5.5 } else { 4.5 };
-    painter.circle_filled(c, r + 2.0, p.bg());
-    if g.is_merge {
-        painter.circle_filled(c, r, p.bg());
-        painter.circle_stroke(c, r - 0.5, Stroke::new(2.0, color));
-    } else {
-        painter.circle_filled(c, r, color);
-        if is_head {
-            painter.circle_filled(c, 2.0, p.bg());
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use egui::Pos2;
+
     use super::*;
+
+    /// The id of the history filter's text field, once it has been shown.
+    fn filter_field(ctx: &egui::Context) -> Option<egui::Id> {
+        let id = ctx.data(|d| d.get_temp::<egui::Id>(filter_field_key()));
+        assert!(id.is_some(), "the filter field has been shown");
+        id
+    }
 
     #[test]
     fn resizing_preserves_visible_commit_rows_above_saved_details() {
@@ -1103,7 +1087,7 @@ mod tests {
             visible_details(&ctx, &mut tab, size);
             assert_eq!(
                 ctx.memory(|memory| memory.focused()),
-                Some(egui::Id::new("history-filter")),
+                filter_field(&ctx),
                 "the filter command must restore and focus the list at {size:?}"
             );
         }
@@ -1149,10 +1133,7 @@ mod tests {
             open.iter().any(|text| text.contains("Filter by message")),
             "the shortcut must reveal the search field: {open:?}"
         );
-        assert_eq!(
-            ctx.memory(|memory| memory.focused()),
-            Some(egui::Id::new("history-filter"))
-        );
+        assert_eq!(ctx.memory(|memory| memory.focused()), filter_field(&ctx));
         tab.filter = "Commit 3".into();
         tab.filter_history(&ctx);
         let closed = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
@@ -1168,7 +1149,7 @@ mod tests {
         );
         assert_ne!(
             ctx.memory(|memory| memory.focused()),
-            Some(egui::Id::new("history-filter")),
+            filter_field(&ctx),
             "closing search must return keyboard focus to History"
         );
     }
@@ -1197,10 +1178,7 @@ mod tests {
             assert_eq!(tab.filter, "fix", "the query must survive at {size:?}");
             let visible = visible_details(&ctx, &mut tab, size);
             assert!(visible.iter().any(|text| text == "fix"), "{visible:?}");
-            assert_eq!(
-                ctx.memory(|memory| memory.focused()),
-                Some(egui::Id::new("history-filter"))
-            );
+            assert_eq!(ctx.memory(|memory| memory.focused()), filter_field(&ctx));
         }
     }
 

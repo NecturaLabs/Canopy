@@ -576,7 +576,7 @@ fn header(
                         .diff
                         .as_deref()
                         .is_some_and(|d| gutters(d) != (true, true));
-                    layout_toggle(ui, tab.split_diff, one_column, actions);
+                    layout_toggle(ui, tab.split_diff, one_column, single_row, actions);
                 }
                 if let Some(d) = &tab.diff {
                     DiffStat::new(d.additions, d.deletions).show(ui);
@@ -667,15 +667,27 @@ fn header(
     );
 }
 
-/// Unified / side-by-side switch. For a new or deleted file, which is always one column, it is
-/// shown off on Unified and the choice is kept for the next modified file.
-fn layout_toggle(ui: &mut Ui, split: bool, one_column: bool, actions: &mut Vec<Action>) {
+/// Unified / side-by-side switch, with labels when the header has room for them. For a new or
+/// deleted file, which is always one column, it is shown off on Unified and the choice is kept
+/// for the next modified file.
+fn layout_toggle(
+    ui: &mut Ui,
+    split: bool,
+    one_column: bool,
+    labels: bool,
+    actions: &mut Vec<Action>,
+) {
     const OPTIONS: [(bool, &str, &str); 2] = [
         (false, icon::ROWS, "Unified"),
         (true, icon::COLUMNS, "Side by side"),
     ];
     let mut value = split && !one_column;
-    let changed = Segmented::with_icons(&mut value, &OPTIONS)
+    let segmented = if labels {
+        Segmented::with_icons(&mut value, &OPTIONS)
+    } else {
+        Segmented::icons(&mut value, &OPTIONS)
+    };
+    let changed = segmented
         .size(Size::Sm)
         .label("Diff layout")
         .id_salt("diff-layout")
