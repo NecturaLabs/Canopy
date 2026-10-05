@@ -495,7 +495,6 @@ impl Card {
         let enabled = self.enabled && ui.is_enabled();
         let sense = match (self.interactive, enabled) {
             (true, true) => Sense::click(),
-            (true, false) => Sense::hover(),
             _ => Sense::hover(),
         };
         let slot = ui.painter().add(Shape::Noop);

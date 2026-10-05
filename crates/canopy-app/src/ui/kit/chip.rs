@@ -321,12 +321,11 @@ impl RefPill {
     /// The pill's colour (spec 4.17).
     pub fn color(&self, p: &Palette) -> Color32 {
         match self.kind {
-            RefKind::Head => p.text_dim,
+            RefKind::Head | RefKind::Stash => p.text_dim,
             RefKind::CurrentBranch | RefKind::LocalBranch | RefKind::RemoteBranch => {
                 p.lane(self.lane)
             }
             RefKind::Tag => p.warning,
-            RefKind::Stash => p.text_dim,
         }
     }
 

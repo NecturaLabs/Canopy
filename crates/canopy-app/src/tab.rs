@@ -796,9 +796,8 @@ impl RepoTab {
             .and_then(|s| rows.iter().position(|&i| snap.commits[i].oid == s));
         let last = rows.len() - 1;
         let next = match (pos, delta) {
-            (_, isize::MIN) => 0,
             (_, isize::MAX) => last,
-            (None, _) => 0,
+            (_, isize::MIN) | (None, _) => 0,
             (Some(p), d) => p.saturating_add_signed(d).min(last),
         };
         let oid = snap.commits[rows[next]].oid;
