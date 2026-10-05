@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::selfupdate::{Install, Phase};
+use crate::ui::kit::progress::Progress;
 use crate::updater::{Available, InstallState, Updater};
 
 /// "12.3 MB", or "12.3 of 45.6 MB" while the size is known.
@@ -15,16 +16,14 @@ fn megabytes(done: u64, total: Option<u64>) -> String {
 
 /// The update dialog for `a`. `updater` says how this copy was installed and where an install
 /// started from here stands.
-pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
-    let p = palette(ui.ctx());
-    let mut outcome = Outcome::Keep;
-    let title = |ui: &mut Ui, glyph: &str, text: &str| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(glyph).size(theme::ICON_TITLE).color(p.accent));
-            ui.label(RichText::new(text).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
-        });
-        ui.add_space(12.0);
-    };
+pub(super) fn update(
+    ctx: &egui::Context,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    a: &Available,
+    updater: &Updater,
+) -> Outcome {
+    let p = palette(ctx);
+    let m = theme::metrics();
     // Only an install of this update counts for this dialog.
     let state = match &updater.install {
         InstallState::Running { build, .. }
@@ -43,13 +42,10 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
         .and_then(|d| d.get(..10))
         .map(|d| format!(" Released {d}."))
         .unwrap_or_default();
+    let dialog = KitDialog::new(salt).width(DialogWidth::Form);
+    let mut extra: Option<Outcome> = None;
     match state {
         InstallState::Running { phase, .. } => {
-            title(
-                ui,
-                icon::ARROW_CIRCLE_UP,
-                &format!("Updating to Canopy {}", a.label()),
-            );
             let fraction = match phase {
                 Phase::Downloading {
                     done,
@@ -61,112 +57,60 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
                 Phase::Installing => 0.92,
                 Phase::Finishing => 0.98,
             };
-            ui.add(
-                egui::ProgressBar::new(fraction)
-                    .desired_height(8.0)
-                    .fill(p.accent),
-            );
-            ui.add_space(6.0);
             let detail = match phase {
-                Phase::Downloading { done, total } if *done > 0 => {
-                    format!("{}  ·  {}", phase.text(), megabytes(*done, *total))
-                }
-                _ => phase.text(),
+                Phase::Downloading { done, total } if *done > 0 => megabytes(*done, *total),
+                _ => String::new(),
             };
-            ui.label(
-                RichText::new(detail)
-                    .size(theme::META_SIZE)
-                    .color(p.text_dim),
-            );
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new("Canopy keeps working while it updates, and stays as it is if anything goes wrong.")
-                    .size(theme::META_SIZE)
-                    .color(p.text_faint),
-            );
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_sized([90.0, 34.0], egui::Button::new("Hide"))
-                        .clicked()
-                    {
-                        outcome = Outcome::Close;
-                    }
-                });
-            });
+            let result = dialog
+                .title(format!("Updating to Canopy {}", a.label()))
+                .icon(icon::ARROW_CIRCLE_UP)
+                .body(|ui| {
+                    Progress::new(fraction)
+                        .label(phase.text())
+                        .value_text(detail)
+                        .id_salt("update-progress")
+                        .show(ui);
+                    note(
+                        ui,
+                        "Canopy keeps working while it updates, and stays as it is if anything goes wrong.",
+                        p.text_faint,
+                    );
+                })
+                .footer(|f| {
+                    f.cancel_label("Hide");
+                })
+                .show(ctx);
+            answer(result, || Outcome::Keep)
         }
         InstallState::Done { installed, .. } => {
-            title(
-                ui,
-                icon::CHECK_CIRCLE,
-                &format!("Canopy {} is installed", a.label()),
-            );
             let text = if installed.exe.is_some() {
                 "Restart Canopy to start using it. Your repositories and settings are untouched."
             } else {
                 "Start it from your launcher or the command line. This window still runs the old build."
             };
-            ui.label(RichText::new(text).color(p.text_dim));
-            for note in &installed.notes {
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(format!("{}  {note}", icon::WARNING))
-                        .size(theme::META_SIZE)
-                        .color(p.warning),
-                );
-            }
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(exe) = &installed.exe
-                        && widgets::primary_button(ui, "Restart now", true, 150.0).clicked()
-                    {
-                        outcome = Outcome::Run(vec![Action::RestartInto(exe.clone())]);
+            let result = dialog
+                .title(format!("Canopy {} is installed", a.label()))
+                .icon(icon::CHECK_CIRCLE)
+                .description(text)
+                .body(|ui| {
+                    for note_text in &installed.notes {
+                        note(ui, format!("{}  {note_text}", icon::WARNING), p.warning);
                     }
-                    if ui
-                        .add_sized([90.0, 34.0], egui::Button::new("Later"))
-                        .clicked()
-                    {
-                        outcome = Outcome::Close;
+                })
+                .footer(|f| {
+                    f.cancel_label("Later");
+                    if installed.exe.is_some() {
+                        f.confirm("Restart now");
                     }
-                });
-            });
+                })
+                .show(ctx);
+            answer(result, || match &installed.exe {
+                Some(exe) => Outcome::Run(vec![Action::RestartInto(exe.clone())]),
+                None => Outcome::Keep,
+            })
         }
         InstallState::Idle | InstallState::Failed { .. } => {
-            title(
-                ui,
-                icon::ARROW_CIRCLE_UP,
-                &format!("Canopy {} is available", a.label()),
-            );
-            ui.label(
-                RichText::new(format!(
-                    "You have {}.{released}",
-                    crate::build_info::label()
-                ))
-                .size(theme::META_SIZE)
-                .color(p.text_dim),
-            );
-            ui.add_space(8.0);
-            egui::Frame::new()
-                .fill(p.panel())
-                .stroke(egui::Stroke::new(1.0, p.border()))
-                .corner_radius(egui::CornerRadius::same(theme::RADIUS))
-                .inner_margin(egui::Margin::same(12))
-                .show(ui, |ui| {
-                    ui.set_max_width(ui.available_width());
-                    egui::ScrollArea::vertical()
-                        .max_height(220.0)
-                        .show(ui, |ui| {
-                            let notes = a.manifest.notes.trim();
-                            if notes.is_empty() {
-                                ui.label(RichText::new("No release notes.").color(p.text_faint));
-                            } else {
-                                crate::ui::notes::markdown(ui, notes);
-                            }
-                        });
-                });
-            ui.add_space(8.0);
+            let retry = matches!(state, InstallState::Failed { .. });
             let how = match &updater.kind {
                 Install::Managed { root } => format!(
                     "Canopy updates itself in {}. Settings and repositories are untouched, and the folder stays as it is if anything goes wrong.",
@@ -174,57 +118,67 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
                 ),
                 Install::Other => "This copy was not put here by Canopy's installer. Updating runs the installer, which installs a copy of its own and leaves this one as it is.".to_owned(),
             };
-            ui.label(
-                RichText::new(how)
-                    .size(theme::META_SIZE)
-                    .color(p.text_faint),
-            );
-            if let InstallState::Failed { error, .. } = state {
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(format!("{}  {error}", icon::WARNING))
-                        .size(theme::META_SIZE)
-                        .color(p.danger),
-                );
-            }
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let retry = matches!(state, InstallState::Failed { .. });
-                    if widgets::primary_button(
-                        ui,
-                        if retry { "Try again" } else { "Update" },
-                        true,
-                        150.0,
-                    )
-                    .clicked()
-                    {
-                        outcome =
-                            Outcome::RunKeep(vec![Action::InstallUpdate(Box::new(a.clone()))]);
+            let result = dialog
+                .title(format!("Canopy {} is available", a.label()))
+                .icon(icon::ARROW_CIRCLE_UP)
+                .description(format!(
+                    "You have {}.{released}",
+                    crate::build_info::label()
+                ))
+                .body(|ui| {
+                    InsetBox::new().show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::ScrollArea::vertical()
+                            .id_salt("update-notes")
+                            .max_height(220.0)
+                            .show(ui, |ui| {
+                                let notes = a.manifest.notes.trim();
+                                if notes.is_empty() {
+                                    ui.label(
+                                        RichText::new("No release notes.").color(p.text_faint),
+                                    );
+                                } else {
+                                    crate::ui::notes::markdown(ui, notes);
+                                }
+                            });
+                    });
+                    note(ui, how, p.text_faint);
+                    if let InstallState::Failed { error, .. } = state {
+                        note(ui, format!("{}  {error}", icon::WARNING), p.danger);
                     }
-                    if ui
-                        .add_sized([90.0, 34.0], egui::Button::new("Later"))
-                        .clicked()
-                    {
-                        outcome = Outcome::Close;
-                    }
-                    if ui
-                        .add_sized([130.0, 34.0], egui::Button::new("Skip this version"))
-                        .clicked()
-                    {
-                        outcome = Outcome::Run(vec![Action::SkipVersion(a.build.to_string())]);
-                    }
-                });
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = theme::MD;
+                        if Button::new("Skip this version")
+                            .ghost()
+                            .size(Size::Sm)
+                            .show(ui)
+                            .clicked()
+                        {
+                            extra =
+                                Some(Outcome::Run(vec![Action::SkipVersion(a.build.to_string())]));
+                        }
+                        if LinkButton::new("Download it yourself")
+                            .text_size(m.meta_size)
+                            .show(ui)
+                            .on_hover_text(a.download())
+                            .clicked()
+                        {
+                            extra = Some(Outcome::Run(vec![Action::OpenUrl(a.download())]));
+                        }
+                    });
+                })
+                .footer(|f| {
+                    f.cancel_label("Later")
+                        .confirm(if retry { "Try again" } else { "Update" });
+                })
+                .show(ctx);
+            let outcome = answer(result, || {
+                Outcome::RunKeep(vec![Action::InstallUpdate(Box::new(a.clone()))])
             });
-            ui.add_space(4.0);
-            if ui
-                .link("Download it yourself")
-                .on_hover_text(a.download())
-                .clicked()
-            {
-                outcome = Outcome::Run(vec![Action::OpenUrl(a.download())]);
+            match (extra, outcome) {
+                (Some(e), Outcome::Keep) => e,
+                (_, o) => o,
             }
         }
     }
-    outcome
 }

@@ -1,6 +1,6 @@
 //! Modal dialogs. Each returns the actions to run when the user confirms.
 
-use egui::{FontId, Id, Key, RichText, Ui};
+use egui::{FontId, Key, RichText, Ui};
 use egui_phosphor::regular as icon;
 
 use canopy_core::forge::{self, ForgeKind};
@@ -12,9 +12,21 @@ use crate::askpass::{Prompt, PromptKind};
 use crate::hosting::HostJob;
 use crate::settings::{CloneProtocol, Settings};
 use crate::tab::RepoTab;
+use crate::ui::art;
+use crate::ui::kit::button::LinkButton;
+use crate::ui::kit::choice::Segmented;
+use crate::ui::kit::field::{TextArea, TextField};
+use crate::ui::kit::overlay::{
+    Dialog as KitDialog, DialogResult, DialogWidth, Footer, InitialFocus,
+};
+use crate::ui::kit::progress::Spinner;
+use crate::ui::kit::row::Disclosure;
+use crate::ui::kit::select::Select;
+use crate::ui::kit::surface::InsetBox;
+use crate::ui::kit::toggle::{Checkbox, RadioGroup};
+use crate::ui::kit::{Button, Size, Tone, paint};
 use crate::ui::legal::{Document, Pending};
 use crate::ui::theme::{self, palette};
-use crate::ui::{art, widgets};
 use crate::worker::Op;
 
 mod common;
@@ -135,8 +147,6 @@ pub enum Dialog {
     Credential {
         prompt: Prompt,
         answer: String,
-        /// Show the secret being typed.
-        reveal: bool,
     },
 }
 
@@ -154,7 +164,6 @@ impl Dialog {
         Dialog::Credential {
             prompt,
             answer: String::new(),
-            reveal: false,
         }
     }
 
@@ -210,581 +219,1005 @@ pub fn show(
     git_version: &str,
 ) -> Outcome {
     let p = palette(ctx);
-    let mut outcome = Outcome::Keep;
-    let modal = egui::Modal::new(Id::new("dialog"))
-        .frame(egui::Frame::new().fill(p.elevated()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS_LG)).shadow(ctx.global_style().visuals.window_shadow).inner_margin(egui::Margin::same(22)))
-        .backdrop_color(p.backdrop())
-        .show(ctx, |ui| {
-            ui.set_width((ctx.content_rect().width() - theme::XL * 4.0).clamp(0.0, 460.0));
-            ui.set_max_height((ctx.content_rect().height() - theme::XL * 4.0).max(0.0));
-            ui.spacing_mut().scroll = theme::solid_scroll();
-            let document_actions = matches!(dialog, Dialog::Consent { .. } | Dialog::Legal(_));
-            let pinned_actions = document_actions && ctx.content_rect().height() < 600.0;
-            if pinned_actions {
-                ui.set_height((ctx.content_rect().height() - theme::XL * 4.0).max(0.0));
-                egui::Panel::bottom("dialog-actions")
-                    .frame(egui::Frame::new())
-                    .show(ui, |ui| { outcome = common::document_actions(ui, dialog); });
-            }
-            egui::ScrollArea::vertical()
-                .id_salt(("dialog-body", std::mem::discriminant(dialog)))
-                .max_height(if pinned_actions { ui.available_height() } else { (ctx.content_rect().height() - theme::XL * 4.0).max(0.0) })
-                .min_scrolled_height(0.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-            // Enter submits, except in a multi-line field, where it starts a new line and
-            // Ctrl+Enter submits instead.
-            let in_multiline = ctx.data(|d| d.get_temp::<Id>(multiline_key())).is_some_and(|id| ctx.memory(|m| m.has_focus(id)));
-            let enter = ui.input(|i| i.key_pressed(Key::Enter) && !i.modifiers.shift && (!in_multiline || i.modifiers.command));
-            let mut primary = |ui: &mut Ui, label: &str, enabled: bool| -> bool {
-                ui.add_space(6.0);
-                let mut go = false;
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        go = widgets::primary_button(ui, label, enabled, 150.0).clicked() || (enter && enabled);
-                        if ui.add_sized([90.0, 34.0], egui::Button::new("Cancel")).clicked() {
-                            outcome = Outcome::Close;
-                        }
-                    });
-                });
-                go
+    let m = theme::metrics();
+    let salt = salt(dialog);
+    // What a control inside the body asked for (a link, a secondary action); it wins over the
+    // footer.
+    let mut extra: Option<Outcome> = None;
+    let outcome = match dialog {
+        Dialog::Identity {
+            name,
+            email,
+            pending,
+        } => {
+            let ok = !name.trim().is_empty() && !email.trim().is_empty();
+            let missing = if name.trim().is_empty() && email.trim().is_empty() {
+                "Enter a name and an email to save."
+            } else if name.trim().is_empty() {
+                "Enter a name to save."
+            } else {
+                "Enter an email to save."
             };
-            let title = |ui: &mut Ui, glyph: &str, text: &str| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(glyph).size(theme::ICON_TITLE).color(p.accent));
-                    ui.label(RichText::new(text).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
-                });
-                ui.add_space(12.0);
-            };
-            match dialog {
-                Dialog::Identity { name, email, pending } => {
-                    title(ui, icon::IDENTIFICATION_CARD, "Set your Git identity");
-                    ui.label("Git stores an author name and email in every new commit. Enter the details you want to use. Canopy will not guess them, and commits already made keep their authors.");
-                    ui.add_space(theme::MD);
-                    ui.label("Name");
-                    ui.add(egui::TextEdit::singleline(name).hint_text("e.g. Ada Lovelace").desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
-                    ui.label("Email");
-                    ui.add(egui::TextEdit::singleline(email).hint_text("e.g. ada@example.com").desired_width(ui.available_width()).margin(theme::FIELD_MARGIN));
-                    ui.add_space(theme::XS);
-                    ui.label(RichText::new("Saved to your global Git configuration, so every repository without its own identity uses it. You can change it later in Settings → Git.").size(theme::META_SIZE).color(p.text_dim));
-                    let ok = !name.trim().is_empty() && !email.trim().is_empty() && !*pending;
-                    if !ok && !*pending {
-                        ui.add_space(theme::XS);
-                        ui.label(RichText::new(if name.trim().is_empty() && email.trim().is_empty() { "Enter a name and an email to save." } else if name.trim().is_empty() { "Enter a name to save." } else { "Enter an email to save." }).size(theme::META_SIZE).color(p.text_faint));
+            let busy = *pending;
+            let result = KitDialog::new(salt)
+                .title("Set your Git identity")
+                .icon(icon::IDENTIFICATION_CARD)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .description("Git stores an author name and email in every new commit. Enter the details you want to use. Canopy will not guess them, and commits already made keep their authors.")
+                .body(|ui| {
+                    field(ui, "Name", name, "e.g. Ada Lovelace", true);
+                    field(ui, "Email", email, "e.g. ada@example.com", false);
+                    note(ui, "Saved to your global Git configuration, so every repository without its own identity uses it. You can change it later in Settings → Git.", p.text_dim);
+                    if !ok && !busy {
+                        note(ui, missing, p.text_faint);
                     }
-                    if primary(ui, "Save globally", ok) {
-                        outcome = Outcome::RunKeep(vec![Action::SaveIdentity {
-                            repo: None,
-                            scope: canopy_core::identity::Scope::Global,
-                            name: name.clone(),
-                            email: email.clone(),
-                        }]);
-                    }
+                })
+                .footer(|f| {
+                    confirm(f, "Save globally", ok, missing);
+                    f.confirm_loading(busy);
+                })
+                .show(ctx);
+            answer(result, || {
+                if !name.trim().is_empty() && !email.trim().is_empty() && !*pending {
+                    Outcome::RunKeep(vec![Action::SaveIdentity {
+                        repo: None,
+                        scope: canopy_core::identity::Scope::Global,
+                        name: name.clone(),
+                        email: email.clone(),
+                    }])
+                } else {
+                    Outcome::Keep
                 }
-                Dialog::Open { path } => {
-                    title(ui, icon::FOLDER_OPEN, "Open repository");
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Folder").size(theme::META_SIZE).color(p.text_dim));
-                    });
-                    ui.horizontal(|ui| {
-                        let r = ui.add(egui::TextEdit::singleline(path).desired_width((ui.available_width() - 110.0).max(80.0)).margin(theme::FIELD_MARGIN));
-                        if ui.memory(|m| m.focused().is_none()) {
-                            r.request_focus();
-                        }
-                        if let Some(picked) = picker.show(ui, "open", &crate::settings::expand_home(path)) {
-                                *path = picked.display().to_string();
-                            }
-                    });
-                    ui.add_space(8.0);
-                    let ok = !path.trim().is_empty();
-                    if primary(ui, "Open", ok) {
-                        outcome = Outcome::Run(vec![Action::OpenRepo(path.trim().into())]);
-                    }
+            })
+        }
+        Dialog::Open { path } => {
+            let ok = !path.trim().is_empty();
+            let result = KitDialog::new(salt)
+                .title("Open repository")
+                .icon(icon::FOLDER_OPEN)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .body(|ui| {
+                    let start = crate::settings::expand_home(path);
+                    folder_row(ui, picker, "open", "Folder", path, "", &start, true);
+                })
+                .footer(|f| confirm(f, "Open", ok, "Enter a folder"))
+                .show(ctx);
+            answer(result, || {
+                if path.trim().is_empty() {
+                    Outcome::Keep
+                } else {
+                    Outcome::Run(vec![Action::OpenRepo(path.trim().into())])
                 }
-                Dialog::Clone { builder, parent, pending } => {
-                    title(ui, icon::CLOUD_ARROW_DOWN, "Clone repository");
-                    let (url, dest, ok) = ui.add_enabled_ui(!*pending, |ui| {
+            })
+        }
+        Dialog::Clone {
+            builder,
+            parent,
+            pending,
+        } => {
+            let busy = *pending;
+            let mut target: Option<(String, std::path::PathBuf)> = None;
+            let resolved = clone_target(builder, parent);
+            let ok = resolved.is_some() && !clone_running;
+            let result = KitDialog::new(salt)
+                .title("Clone repository")
+                .icon(icon::CLOUD_ARROW_DOWN)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .body(|ui| {
+                    ui.add_enabled_ui(!busy, |ui| {
                         builder.ui(ui, true);
-                        let url = builder.resolve().unwrap_or_default();
-                        ui.label(RichText::new("Clone into").size(theme::META_SIZE).color(p.text_dim));
+                        let start = crate::settings::expand_home(parent);
+                        folder_row(ui, picker, "clone", "Clone into", parent, "", &start, false);
+                        target = clone_target(builder, parent);
+                        if let Some((_, dest)) = &target {
+                            note(ui, format!("→ {}", dest.display()), p.text_faint);
+                        }
+                    });
+                    if busy {
                         ui.horizontal(|ui| {
-                            ui.add(egui::TextEdit::singleline(parent).desired_width((ui.available_width() - 110.0).max(80.0)).margin(theme::FIELD_MARGIN));
-                            if let Some(picked) = picker.show(ui, "clone", &crate::settings::expand_home(parent)) {
-                                *parent = picked.display().to_string();
-                            }
+                            Spinner::new().size(Size::Sm).label("the clone").show(ui);
+                            ui.label(RichText::new("Cloning repository…").size(m.body_size));
                         });
-                        let name = url.trim().trim_end_matches('/').trim_end_matches(".git").rsplit(['/', ':']).next().unwrap_or("").to_owned();
-                        let dest = crate::settings::expand_home(parent).join(&name);
-                        ui.add_space(4.0);
-                        ui.label(RichText::new(format!("→ {}", dest.display())).size(theme::META_SIZE).color(p.text_faint));
-                        let ok = !url.trim().is_empty() && !name.is_empty();
-                        (url, dest, ok)
-                    }).inner;
-                    ui.add_space(8.0);
-                    if *pending {
-                        ui.horizontal(|ui| { ui.spinner(); ui.label("Cloning repository…"); });
-                        if ui.button("Continue in background").clicked() { outcome = Outcome::Close; }
-                    } else if primary(ui, "Clone", ok && !clone_running) {
-                        *pending = true;
-                        outcome = Outcome::RunKeep(vec![Action::Clone { url: url.trim().to_owned(), dest }]);
                     }
-                }
-                Dialog::Init { path } => {
-                    title(ui, icon::PLANT, "New repository");
-                    ui.label(RichText::new("Folder (created if missing)").size(theme::META_SIZE).color(p.text_dim));
-                    ui.horizontal(|ui| {
-                        let r = ui.add(egui::TextEdit::singleline(path).desired_width((ui.available_width() - 110.0).max(80.0)).hint_text("~/src/my-project").margin(theme::FIELD_MARGIN));
-                        if ui.memory(|m| m.focused().is_none()) {
-                            r.request_focus();
-                        }
-                        if let Some(picked) = picker.show(ui, "init", &crate::settings::expand_home(&home())) {
-                                *path = picked.display().to_string();
-                            }
-                    });
-                    ui.add_space(8.0);
-                    if primary(ui, "Create", !path.trim().is_empty()) {
-                        outcome = Outcome::Run(vec![Action::Init(crate::settings::expand_home(path))]);
-                    }
-                }
-                Dialog::NewBranch { name, start, checkout } => {
-                    title(ui, icon::GIT_BRANCH, "New branch");
-                    let r = field(ui, "Name", name, "feature/something", true);
-                    let _ = r;
-                    let from = start.label(|| tab.and_then(|t| t.snap.as_ref()).map(|s| s.head.label()).unwrap_or_else(|| "HEAD".into()));
-                    ui.label(RichText::new(format!("{}  Starts at {from}", icon::GIT_COMMIT)).size(theme::META_SIZE).color(p.text_faint));
-                    ui.add_space(6.0);
-                    widgets::checkbox(ui, checkout, "Check out after creating");
-                    ui.add_space(8.0);
-                    let ok = valid_ref_name(name.trim());
-                    if !name.is_empty() && !ok {
-                        ui.label(RichText::new("Not a valid branch name").size(theme::META_SIZE).color(p.danger));
-                    }
-                    if primary(ui, "Create branch", ok) {
-                        outcome = Outcome::Run(vec![Action::Op(Op::CreateBranch { name: name.trim().to_owned(), start: start.rev(), checkout: *checkout })]);
-                    }
-                }
-                Dialog::Rename { old, new } => {
-                    title(ui, icon::PENCIL_SIMPLE, &format!("Rename {old}"));
-                    field(ui, "New name", new, "", true);
-                    let ok = valid_ref_name(new.trim()) && new.trim() != old;
-                    if primary(ui, "Rename", ok) {
-                        outcome = Outcome::Run(vec![Action::Op(Op::RenameBranch { old: old.clone(), new: new.trim().to_owned() })]);
-                    }
-                }
-                Dialog::NewTag { name, target, message } => {
-                    title(ui, icon::TAG, &format!("Tag {}", short_id(*target)));
-                    field(ui, "Name", name, "v1.2.0", true);
-                    ui.label(RichText::new("Message (makes an annotated tag)").size(theme::META_SIZE).color(p.text_dim));
-                    let r = ui.add(egui::TextEdit::multiline(message).desired_rows(3).desired_width(f32::INFINITY).margin(theme::FIELD_MARGIN));
-                    remember_multiline(ui, r.id);
-                    ui.add_space(8.0);
-                    let ok = valid_ref_name(name.trim());
-                    if primary(ui, "Create tag", ok) {
-                        let m = (!message.trim().is_empty()).then(|| message.trim().to_owned());
-                        outcome = Outcome::Run(vec![Action::Op(Op::CreateTag { name: name.trim().to_owned(), target: *target, message: m })]);
-                    }
-                }
-                Dialog::Stash { message, untracked } => {
-                    title(ui, icon::ARCHIVE, "Stash changes");
-                    field(ui, "Message (optional)", message, "WIP: what you were doing", true);
-                    widgets::checkbox(ui, untracked, "Include untracked files");
-                    ui.add_space(8.0);
-                    if primary(ui, "Stash", true) {
-                        let m = (!message.trim().is_empty()).then(|| message.trim().to_owned());
-                        outcome = Outcome::Run(vec![Action::Op(Op::StashSave { message: m, untracked: *untracked })]);
-                    }
-                }
-                Dialog::Merge { target, rebase, mode } => {
-                    let current = tab.and_then(|t| t.snap.as_ref()).map(|s| s.head.label()).unwrap_or_default();
-                    title(ui, icon::GIT_MERGE, if *rebase { "Rebase" } else { "Merge" });
-                    // The branch name keeps the two choices from reading as "current" in the abstract.
-                    let shown: String = if current.chars().count() > 20 { current.chars().take(19).chain(['…']).collect() } else { current.clone() };
-                    let (merge_label, rebase_label) = if shown.is_empty() { ("Merge into current".to_owned(), "Rebase current onto".to_owned()) } else { (format!("Merge into {shown}"), format!("Rebase {shown} onto")) };
-                    widgets::segmented(ui, rebase, &[(false, merge_label.as_str()), (true, rebase_label.as_str())]);
-                    ui.add_space(8.0);
-                    egui::ComboBox::from_id_salt("merge-target").icon(crate::ui::widgets::combo_caret).width(ui.available_width()).selected_text(if target.is_empty() { "Choose a branch…".to_owned() } else { target.clone() }).show_ui(ui, |ui| {
-                        // Listed only while the menu is open, not on every frame of the dialog.
-                        if let Some(s) = tab.and_then(|t| t.snap.as_ref()) {
-                            for b in s.branches.iter().filter(|b| !b.is_head).map(|b| b.name.clone()).chain(s.remote_branches.iter().map(|b| b.full_name())) {
-                                ui.selectable_value(target, b.clone(), b);
-                            }
-                        }
-                    });
-                    ui.add_space(8.0);
-                    if !*rebase {
-                        ui.label(RichText::new("How").size(theme::META_SIZE).color(p.text_dim));
-                        for m in canopy_core::MergeMode::ALL {
-                            ui.radio_value(mode, m, m.label());
-                            let explanation = match m {
-                                canopy_core::MergeMode::Default => "Otherwise creates a merge commit.",
-                                canopy_core::MergeMode::NoFastForward => "Keeps the branch join visible in history.",
-                                canopy_core::MergeMode::FastForwardOnly => "Stops without changes if the branches diverged.",
-                                canopy_core::MergeMode::Squash => "Leaves one combined change to review and commit.",
-                            };
-                            ui.label(
-                                RichText::new(explanation)
-                                    .size(theme::SMALL_SIZE)
-                                    .color(p.text_dim),
-                            );
-                        }
-                        ui.add_space(6.0);
-                    }
-                    if !target.is_empty() {
-                        use canopy_core::MergeMode as M;
-                        let text = match (*rebase, *mode) {
-                            (true, _) => format!("Replay {current}'s commits on top of {target}."),
-                            (false, M::Default) => format!("Merge {target} into {current}, fast-forwarding when {current} has no commits of its own."),
-                            (false, M::NoFastForward) => format!("Merge {target} into {current} with a merge commit, even when a fast-forward is possible."),
-                            (false, M::FastForwardOnly) => format!("Move {current} forward to {target}; stops without changes if they have diverged."),
-                            (false, M::Squash) => format!("Stage all of {target}'s changes on {current} as one change, without committing. Review them in Changes, then commit."),
-                        };
-                        ui.label(RichText::new(text).size(theme::META_SIZE).color(p.text_faint));
-                    }
-                    ui.add_space(8.0);
-                    let verb = match (*rebase, *mode) {
-                        (true, _) => "Rebase",
-                        (false, canopy_core::MergeMode::Squash) => "Squash",
-                        _ => "Merge",
-                    };
-                    if primary(ui, verb, !target.is_empty()) {
-                        let op = if *rebase { Op::Rebase(target.clone()) } else { Op::Merge(target.clone(), *mode) };
-                        outcome = Outcome::Run(vec![Action::Op(op)]);
-                    }
-                }
-                Dialog::AddRemote { name, builder, publish } => {
-                    if *publish {
-                        title(ui, icon::CLOUD_ARROW_UP, "Publish repository");
-                        ui.label(RichText::new("This repository is local only. Create an empty repository on GitHub or GitLab, enter it here, and Canopy adds it as a remote and pushes the current branch.").size(theme::META_SIZE).color(p.text_dim));
-                        ui.add_space(10.0);
+                })
+                .footer(|f| {
+                    if busy {
+                        f.cancel_label("Continue in background");
                     } else {
-                        title(ui, icon::CLOUD, "Add remote");
+                        confirm(
+                            f,
+                            "Clone",
+                            ok,
+                            if clone_running {
+                                "Another clone is running"
+                            } else {
+                                "Enter a repository"
+                            },
+                        );
                     }
+                })
+                .show(ctx);
+            answer(result, || match target {
+                Some((url, dest)) if !*pending && !clone_running => {
+                    *pending = true;
+                    Outcome::RunKeep(vec![Action::Clone { url, dest }])
+                }
+                _ => Outcome::Keep,
+            })
+        }
+        Dialog::Init { path } => {
+            let ok = !path.trim().is_empty();
+            let result = KitDialog::new(salt)
+                .title("New repository")
+                .icon(icon::PLANT)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .body(|ui| {
+                    let start = crate::settings::expand_home(&home());
+                    folder_row(
+                        ui,
+                        picker,
+                        "init",
+                        "Folder (created if missing)",
+                        path,
+                        "~/src/my-project",
+                        &start,
+                        true,
+                    );
+                })
+                .footer(|f| confirm(f, "Create", ok, "Enter a folder"))
+                .show(ctx);
+            answer(result, || {
+                if path.trim().is_empty() {
+                    Outcome::Keep
+                } else {
+                    Outcome::Run(vec![Action::Init(crate::settings::expand_home(path))])
+                }
+            })
+        }
+        Dialog::NewBranch {
+            name,
+            start,
+            checkout,
+        } => {
+            let ok = valid_ref_name(name.trim());
+            let from = start.label(|| {
+                tab.and_then(|t| t.snap.as_ref())
+                    .map(|s| s.head.label())
+                    .unwrap_or_else(|| "HEAD".into())
+            });
+            let result = KitDialog::new(salt)
+                .title("New branch")
+                .icon(icon::GIT_BRANCH)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .body(|ui| {
+                    let error = (!name.is_empty() && !valid_ref_name(name.trim()))
+                        .then_some("Not a valid branch name");
+                    field_with_error(ui, "Name", name, "feature/something", true, error);
+                    note(
+                        ui,
+                        format!("{}  Starts at {from}", icon::GIT_COMMIT),
+                        p.text_faint,
+                    );
+                    Checkbox::new(checkout, "Check out after creating").show(ui);
+                })
+                .footer(|f| confirm(f, "Create branch", ok, "Enter a valid branch name"))
+                .show(ctx);
+            answer(result, || {
+                if valid_ref_name(name.trim()) {
+                    Outcome::Run(vec![Action::Op(Op::CreateBranch {
+                        name: name.trim().to_owned(),
+                        start: start.rev(),
+                        checkout: *checkout,
+                    })])
+                } else {
+                    Outcome::Keep
+                }
+            })
+        }
+        Dialog::Rename { old, new } => {
+            let valid = |new: &str| valid_ref_name(new.trim()) && new.trim() != old;
+            let ok = valid(new);
+            let result = KitDialog::new(salt)
+                .title(format!("Rename {old}"))
+                .icon(icon::PENCIL_SIMPLE)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .body(|ui| {
+                    field(ui, "New name", new, "", true);
+                })
+                .footer(|f| confirm(f, "Rename", ok, "Enter a new, valid branch name"))
+                .show(ctx);
+            answer(result, || {
+                if valid(new) {
+                    Outcome::Run(vec![Action::Op(Op::RenameBranch {
+                        old: old.clone(),
+                        new: new.trim().to_owned(),
+                    })])
+                } else {
+                    Outcome::Keep
+                }
+            })
+        }
+        Dialog::NewTag {
+            name,
+            target,
+            message,
+        } => {
+            let ok = valid_ref_name(name.trim());
+            let mut submitted = false;
+            let result = KitDialog::new(salt)
+                .title(format!("Tag {}", short_id(*target)))
+                .icon(icon::TAG)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .body(|ui| {
+                    field(ui, "Name", name, "v1.2.0", true);
+                    submitted = TextArea::new(message)
+                        .label("Message (makes an annotated tag)")
+                        .rows(3..=8)
+                        .id_salt("tag-message")
+                        .show(ui)
+                        .value;
+                })
+                .footer(|f| confirm(f, "Create tag", ok, "Enter a valid tag name"))
+                .show(ctx);
+            let result = if submitted {
+                DialogResult::Confirm
+            } else {
+                result
+            };
+            answer(result, || {
+                if valid_ref_name(name.trim()) {
+                    let m = (!message.trim().is_empty()).then(|| message.trim().to_owned());
+                    Outcome::Run(vec![Action::Op(Op::CreateTag {
+                        name: name.trim().to_owned(),
+                        target: *target,
+                        message: m,
+                    })])
+                } else {
+                    Outcome::Keep
+                }
+            })
+        }
+        Dialog::Stash { message, untracked } => {
+            let result = KitDialog::new(salt)
+                .title("Stash changes")
+                .icon(icon::ARCHIVE)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .body(|ui| {
+                    field(
+                        ui,
+                        "Message (optional)",
+                        message,
+                        "WIP: what you were doing",
+                        true,
+                    );
+                    Checkbox::new(untracked, "Include untracked files").show(ui);
+                })
+                .footer(|f| {
+                    f.cancel().confirm("Stash");
+                })
+                .show(ctx);
+            answer(result, || {
+                let m = (!message.trim().is_empty()).then(|| message.trim().to_owned());
+                Outcome::Run(vec![Action::Op(Op::StashSave {
+                    message: m,
+                    untracked: *untracked,
+                })])
+            })
+        }
+        Dialog::Merge {
+            target,
+            rebase,
+            mode,
+        } => {
+            let current = tab
+                .and_then(|t| t.snap.as_ref())
+                .map(|s| s.head.label())
+                .unwrap_or_default();
+            let verb = |rebase: bool, mode: canopy_core::MergeMode| match (rebase, mode) {
+                (true, _) => "Rebase",
+                (false, canopy_core::MergeMode::Squash) => "Squash",
+                _ => "Merge",
+            };
+            let ok = !target.is_empty();
+            let label = verb(*rebase, *mode);
+            let result = KitDialog::new(salt)
+                .title(if *rebase { "Rebase" } else { "Merge" })
+                .icon(icon::GIT_MERGE)
+                .width(DialogWidth::Form)
+                .body(|ui| merge_body(ui, tab, &current, target, rebase, mode))
+                .footer(|f| confirm(f, label, ok, "Choose a branch"))
+                .show(ctx);
+            answer(result, || {
+                if target.is_empty() {
+                    return Outcome::Keep;
+                }
+                let op = if *rebase {
+                    Op::Rebase(target.clone())
+                } else {
+                    Op::Merge(target.clone(), *mode)
+                };
+                Outcome::Run(vec![Action::Op(op)])
+            })
+        }
+        Dialog::AddRemote {
+            name,
+            builder,
+            publish,
+        } => {
+            let ok = valid_ref_name(name.trim()) && builder.resolve().is_some();
+            let mut dialog = KitDialog::new(salt)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body);
+            dialog = if *publish {
+                dialog
+                    .title("Publish repository")
+                    .icon(icon::CLOUD_ARROW_UP)
+                    .description("This repository is local only. Create an empty repository on GitHub or GitLab, enter it here, and Canopy adds it as a remote and pushes the current branch.")
+            } else {
+                dialog.title("Add remote").icon(icon::CLOUD)
+            };
+            let label = if *publish {
+                "Add and push"
+            } else {
+                "Add remote"
+            };
+            let result = dialog
+                .body(|ui| {
                     field(ui, "Name", name, "origin", false);
                     builder.ui(ui, true);
-                    let url = builder.resolve();
-                    let ok = valid_ref_name(name.trim()) && url.is_some();
-                    if primary(ui, if *publish { "Add and push" } else { "Add remote" }, ok)
-                        && let Some(url) = url
-                    {
-                        let mut run = vec![Action::Op(Op::AddRemote { name: name.trim().to_owned(), url })];
-                        if *publish {
-                            run.push(Action::Op(Op::Push { force: false }));
-                        }
-                        outcome = Outcome::Run(run);
+                })
+                .footer(|f| confirm(f, label, ok, "Enter a remote name and a repository"))
+                .show(ctx);
+            answer(result, || match builder.resolve() {
+                Some(url) if valid_ref_name(name.trim()) => {
+                    let mut run = vec![Action::Op(Op::AddRemote {
+                        name: name.trim().to_owned(),
+                        url,
+                    })];
+                    if *publish {
+                        run.push(Action::Op(Op::Push { force: false }));
                     }
+                    Outcome::Run(run)
                 }
-                Dialog::NewRequest { kind, request, branches } => {
-                    title(ui, icon::GIT_PULL_REQUEST, &format!("New {}", kind.request_noun()));
-                    ui.label(RichText::new(format!("{}  {}  →", icon::GIT_BRANCH, request.source)).size(theme::META_SIZE).color(p.text_dim));
-                    ui.add_space(4.0);
-                    egui::ComboBox::from_id_salt("request-target").icon(crate::ui::widgets::combo_caret).width(ui.available_width()).selected_text(format!("{}  {}", icon::GIT_BRANCH, request.target)).show_ui(ui, |ui| {
-                        for b in branches.iter().filter(|b| **b != request.source) {
-                            ui.selectable_value(&mut request.target, b.clone(), b);
-                        }
-                    });
-                    ui.add_space(10.0);
-                    field(ui, "Title", &mut request.title, "What this change does…", true);
-                    ui.label(RichText::new("Description").size(theme::META_SIZE).color(p.text_dim));
-                    let r = ui.add(egui::TextEdit::multiline(&mut request.body).desired_rows(6).desired_width(f32::INFINITY).hint_text("Why, how it was tested, anything reviewers should know (Markdown)…").margin(theme::FIELD_MARGIN));
-                    remember_multiline(ui, r.id);
-                    ui.add_space(6.0);
-                    widgets::checkbox(ui, &mut request.draft, "Create as draft");
-                    ui.add_space(8.0);
-                    let ok = !request.title.trim().is_empty() && !request.target.is_empty() && request.target != request.source;
-                    if primary(ui, &format!("Create {}", kind.request_abbrev()), ok) {
-                        let mut r = request.clone();
-                        r.title = r.title.trim().to_owned();
-                        outcome = Outcome::Run(vec![Action::Host(HostJob::Create(r))]);
+                _ => Outcome::Keep,
+            })
+        }
+        Dialog::NewRequest {
+            kind,
+            request,
+            branches,
+        } => {
+            let valid = |r: &NewRequest| {
+                !r.title.trim().is_empty() && !r.target.is_empty() && r.target != r.source
+            };
+            let ok = valid(request);
+            let reason = if request.title.trim().is_empty() {
+                "Enter a title"
+            } else {
+                "Choose a target branch"
+            };
+            let label = format!("Create {}", kind.request_abbrev());
+            let mut submitted = false;
+            let result = KitDialog::new(salt)
+                .title(format!("New {}", kind.request_noun()))
+                .icon(icon::GIT_PULL_REQUEST)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .body(|ui| {
+                    note(
+                        ui,
+                        format!("{}  {}  →", icon::GIT_BRANCH, request.source),
+                        p.text_dim,
+                    );
+                    let options: Vec<(&str, &str)> = branches
+                        .iter()
+                        .filter(|b| **b != request.source)
+                        .map(|b| (b.as_str(), b.as_str()))
+                        .collect();
+                    let mut pick = options
+                        .iter()
+                        .find(|(b, _)| *b == request.target)
+                        .map_or("", |(b, _)| *b);
+                    Select::new(&mut pick, &options)
+                        .name("Target branch")
+                        .placeholder("Choose a branch…")
+                        .id_salt("request-target")
+                        .show(ui);
+                    if pick != request.target && !pick.is_empty() {
+                        request.target = pick.to_owned();
                     }
+                    field(
+                        ui,
+                        "Title",
+                        &mut request.title,
+                        "What this change does…",
+                        true,
+                    );
+                    submitted = TextArea::new(&mut request.body)
+                        .label("Description")
+                        .placeholder(
+                            "Why, how it was tested, anything reviewers should know (Markdown)…",
+                        )
+                        .rows(6..=12)
+                        .id_salt("request-body")
+                        .show(ui)
+                        .value;
+                    Checkbox::new(&mut request.draft, "Create as draft").show(ui);
+                })
+                .footer(|f| confirm(f, &label, ok, reason))
+                .show(ctx);
+            let result = if submitted {
+                DialogResult::Confirm
+            } else {
+                result
+            };
+            answer(result, || {
+                if valid(request) {
+                    let mut r = request.clone();
+                    r.title = r.title.trim().to_owned();
+                    Outcome::Run(vec![Action::Host(HostJob::Create(r))])
+                } else {
+                    Outcome::Keep
                 }
-                Dialog::Confirm { title: t, body, confirm, danger, op } => {
-                    let glyph = if *danger { icon::WARNING } else { icon::QUESTION };
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(glyph).size(theme::ICON_TITLE).color(if *danger { p.danger } else { p.accent }));
-                        ui.label(RichText::new(t.as_str()).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
-                    });
-                    ui.add_space(10.0);
-                    ui.label(RichText::new(body.as_str()).color(p.text_dim));
-                    ui.add_space(16.0);
-                    match confirm_buttons(ui, confirm, *danger) {
-                        Some(true) => outcome = Outcome::Run(vec![Action::Op(op.clone())]),
-                        Some(false) => outcome = Outcome::Close,
-                        None => {}
-                    }
+            })
+        }
+        Dialog::Confirm {
+            title,
+            body,
+            confirm,
+            danger,
+            op,
+        } => {
+            let result =
+                confirmation(salt, title, body, confirm, *danger, icon::QUESTION, |_| {}).show(ctx);
+            answer(result, || Outcome::Run(vec![Action::Op(op.clone())]))
+        }
+        Dialog::ConfirmClearIdentity { repo, scope } => {
+            let target = match scope {
+                canopy_core::identity::Scope::Local => "this repository's configuration",
+                canopy_core::identity::Scope::Global => {
+                    "your global Git configuration, which every repository without its own identity uses"
                 }
-                Dialog::ConfirmClearIdentity { repo, scope } => {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(icon::WARNING).size(theme::ICON_TITLE).color(p.danger));
-                        ui.label(RichText::new("Clear Git identity?").font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
-                    });
-                    ui.add_space(10.0);
-                    let target = match scope {
-                        canopy_core::identity::Scope::Local => "this repository's configuration",
-                        canopy_core::identity::Scope::Global => "your global Git configuration, which every repository without its own identity uses",
-                    };
-                    ui.label(RichText::new(format!("This removes user.name and user.email from {target}. Commits already made keep their authors. If the same value is also set in another file, that one stays in use.")).color(p.text_dim));
-                    if let Some(values) = identity_in_scope(tab, *scope) {
-                        ui.add_space(theme::SM);
-                        egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+            };
+            let body = format!(
+                "This removes user.name and user.email from {target}. Commits already made keep their authors. If the same value is also set in another file, that one stays in use."
+            );
+            let values = identity_in_scope(tab, *scope);
+            let result = confirmation(
+                salt,
+                "Clear Git identity?",
+                &body,
+                "Clear identity",
+                true,
+                icon::QUESTION,
+                |ui| {
+                    if let Some(values) = &values {
+                        InsetBox::new().show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            ui.label(RichText::new("Removing").size(theme::META_SIZE).color(p.text_dim));
-                            ui.label(RichText::new(values).font(FontId::monospace(theme::MONO_SIZE)).color(p.text));
+                            note(ui, "Removing", p.text_dim);
+                            ui.label(
+                                RichText::new(values)
+                                    .font(FontId::monospace(m.mono_size))
+                                    .color(p.text),
+                            );
                         });
                     }
-                    ui.add_space(16.0);
-                    match confirm_buttons(ui, "Clear identity", true) {
-                        Some(true) => outcome = Outcome::Run(vec![Action::ClearIdentity { repo: repo.clone(), scope: *scope }]),
-                        Some(false) => outcome = Outcome::Close,
-                        None => {}
-                    }
-                }
-                Dialog::TrustFolder { repo, remote } => {
-                    title(ui, icon::SHIELD_CHECK, "Trust this folder?");
-                    let name = |path: &std::path::Path| path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-                    ui.label(RichText::new(format!("{} is a partial clone: some of its files were left on the server. To show them, Canopy has to download them from {remote} with git, and git then follows this repository's own configuration, which can run programs and contact servers.", name(repo))).color(p.text_dim));
-                    ui.add_space(theme::SM);
-                    ui.label(RichText::new("Trust a folder only if everything in it was made by you or by people you trust. You can remove it again in Settings.").color(p.text_dim));
-                    if let Some(parent) = crate::trust::parent_offer(repo) {
-                        ui.add_space(theme::MD);
-                        ui.separator();
+                },
+            )
+            .show(ctx);
+            answer(result, || {
+                Outcome::Run(vec![Action::ClearIdentity {
+                    repo: repo.clone(),
+                    scope: *scope,
+                }])
+            })
+        }
+        Dialog::TrustFolder { repo, remote } => {
+            let name = |path: &std::path::Path| {
+                path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                )
+            };
+            swallow_enter(ctx);
+            let parent = crate::trust::parent_offer(repo);
+            let result = KitDialog::new(salt)
+                .title("Trust this folder?")
+                .icon(icon::SHIELD_CHECK)
+                .width(DialogWidth::Form)
+                .initial_focus(InitialFocus::Body)
+                .description(format!("{} is a partial clone: some of its files were left on the server. To show them, Canopy has to download them from {remote} with git, and git then follows this repository's own configuration, which can run programs and contact servers.", name(repo)))
+                .body(|ui| {
+                    ui.label(
+                        RichText::new("Trust a folder only if everything in it was made by you or by people you trust. You can remove it again in Settings.")
+                            .size(m.body_size)
+                            .color(p.text_dim),
+                    );
+                    if let Some(parent) = &parent {
+                        paint::seam_h(
+                            ui.painter(),
+                            ui.max_rect().x_range(),
+                            ui.cursor().top(),
+                            theme::surfaces(ui.ctx()).border,
+                        );
                         ui.add_space(theme::XS);
-                        ui.label(RichText::new(format!("Trusting {} covers every repository inside it, including ones you clone later. Only do that for a folder that is entirely yours.", name(&parent))).size(theme::META_SIZE).color(p.text_faint));
-                        let broader = egui::Button::new(RichText::new(format!("Trust everything in {}", name(&parent))).size(theme::META_SIZE).color(p.warning)).frame(false);
-                        if ui.add(broader).on_hover_text(parent.display().to_string()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            outcome = Outcome::Run(vec![Action::TrustFolder(parent)]);
+                        note(ui, format!("Trusting {} covers every repository inside it, including ones you clone later. Only do that for a folder that is entirely yours.", name(parent)), p.text_faint);
+                        if Button::new(format!("Trust everything in {}", name(parent)))
+                            .ghost()
+                            .size(Size::Sm)
+                            .icon(icon::WARNING)
+                            .icon_tone(Tone::Warning)
+                            .tooltip(parent.display().to_string())
+                            .show(ui)
+                            .clicked()
+                        {
+                            extra = Some(Outcome::Run(vec![Action::TrustFolder(parent.clone())]));
                         }
                     }
-                    ui.add_space(theme::MD);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if widgets::accent_button(ui, &format!("Trust {}", name(repo)), egui::vec2(130.0, 34.0)).clicked() {
-                                outcome = Outcome::Run(vec![Action::TrustFolder(repo.clone())]);
-                            }
-                            if ui.add_sized([110.0, 34.0], egui::Button::new("Not now")).clicked() {
-                                outcome = Outcome::Close;
-                            }
-                        });
-                    });
-                }
-                Dialog::ConfirmHost { title: t, body, confirm, danger, job } => {
-                    let glyph = if *danger { icon::WARNING } else { icon::GIT_MERGE };
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(glyph).size(theme::ICON_TITLE).color(if *danger { p.danger } else { p.accent }));
-                        ui.label(RichText::new(t.as_str()).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
-                    });
-                    ui.add_space(10.0);
-                    ui.label(RichText::new(body.as_str()).color(p.text_dim));
-                    ui.add_space(16.0);
-                    match confirm_buttons(ui, confirm, *danger) {
-                        Some(true) => outcome = Outcome::Run(vec![Action::Host(job.clone())]),
-                        Some(false) => outcome = Outcome::Close,
-                        None => {}
+                })
+                .footer(|f| {
+                    f.cancel_label("Not now")
+                        .confirm(format!("Trust {}", name(repo)));
+                })
+                .show(ctx);
+            answer(result, || {
+                Outcome::Run(vec![Action::TrustFolder(repo.clone())])
+            })
+        }
+        Dialog::ConfirmHost {
+            title,
+            body,
+            confirm,
+            danger,
+            job,
+        } => {
+            let result = confirmation(salt, title, body, confirm, *danger, icon::GIT_MERGE, |_| {})
+                .show(ctx);
+            answer(result, || Outcome::Run(vec![Action::Host(job.clone())]))
+        }
+        Dialog::Credential { prompt, answer } => credential(ctx, salt, prompt, answer),
+        Dialog::Update(a) => update::update(ctx, salt, a, updater),
+        Dialog::WhatsNew { version, notes } => {
+            let result = KitDialog::new(salt)
+                .title(format!("What's new in Canopy {version}"))
+                .icon(icon::SPARKLE)
+                .width(DialogWidth::Form)
+                .body(|ui| {
+                    document(ui, "whats-new", 360.0, notes);
+                    if LinkButton::new("All releases")
+                        .external(true)
+                        .text_size(m.meta_size)
+                        .show(ui)
+                        .clicked()
+                    {
+                        extra = Some(Outcome::Run(vec![Action::OpenUrl(
+                            crate::updater::RELEASES_PAGE.to_owned(),
+                        )]));
                     }
-                }
-                Dialog::Credential { prompt, answer, reveal } => {
-                    outcome = credential(ui, prompt, answer, reveal, enter);
-                }
-                Dialog::Update(a) => {
-                    outcome = update::update(ui, a, updater);
-                }
-                Dialog::WhatsNew { version, notes } => {
-                    title(ui, icon::SPARKLE, &format!("What's new in Canopy {version}"));
-                    egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                        ui.set_max_width(ui.available_width());
-                        egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| crate::ui::notes::markdown(ui, notes));
-                    });
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if widgets::primary_button(ui, "Continue", true, 120.0).clicked() || enter {
-                                outcome = Outcome::Close;
-                            }
-                            if ui.add_sized([150.0, 34.0], egui::Button::new(format!("{}  All releases", icon::ARROW_SQUARE_OUT))).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenUrl(crate::updater::RELEASES_PAGE.to_owned())]);
-                            }
-                        });
-                    });
-                }
-                Dialog::Crash(report) => {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(icon::FIRST_AID_KIT).size(theme::ICON_TITLE).color(p.warning));
-                        ui.label(RichText::new("Canopy closed unexpectedly").font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
-                    });
-                    ui.add_space(10.0);
-                    ui.label(RichText::new("Sorry about that. A crash report was saved on this computer; nothing was sent anywhere. Sharing it with the developers helps fix the problem.").color(p.text_dim));
+                })
+                .footer(|f| {
+                    f.confirm("Continue");
+                })
+                .show(ctx);
+            answer(result, || Outcome::Close)
+        }
+        Dialog::Crash(report) => {
+            let result = KitDialog::new(salt)
+                .title("Canopy closed unexpectedly")
+                .icon(icon::FIRST_AID_KIT)
+                .width(DialogWidth::Form)
+                .description("Sorry about that. A crash report was saved on this computer; nothing was sent anywhere. Sharing it with the developers helps fix the problem.")
+                .body(|ui| {
                     if !report.message.is_empty() {
-                        ui.add_space(8.0);
-                        egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
-                            ui.set_max_width(ui.available_width());
-                            ui.label(RichText::new(&report.message).font(FontId::monospace(theme::MONO_SIZE)).color(p.text));
+                        InsetBox::new().show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&report.message)
+                                        .font(FontId::monospace(m.mono_size))
+                                        .color(p.text),
+                                )
+                                .wrap(),
+                            );
                         });
                     }
-                    ui.add_space(14.0);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if widgets::primary_button(ui, "Open report", true, 130.0).clicked() {
-                                outcome = Outcome::Run(vec![Action::OpenInEditor(report.path.clone())]);
-                            }
-                            if ui.add_sized([90.0, 34.0], egui::Button::new("Dismiss")).clicked() {
-                                outcome = Outcome::Close;
-                            }
-                            if let Some(dir) = report.path.parent()
-                                && ui.add_sized([120.0, 34.0], egui::Button::new(format!("{}  Show folder", icon::FOLDER))).clicked()
-                            {
-                                outcome = Outcome::Run(vec![Action::OpenPath(dir.to_path_buf())]);
-                            }
-                        });
-                    });
-                }
-                Dialog::Consent { step, updated, reading } => {
-                    let read_buttons = |ui: &mut Ui, reading: &mut Option<Document>| {
-                        ui.horizontal(|ui| {
-                            for doc in [Document::Terms, Document::Privacy] {
-                                let open = *reading == Some(doc);
-                                let label = format!("{}  {}", if open { icon::CARET_DOWN } else { icon::CARET_RIGHT }, doc.title());
-                                if ui.selectable_label(open, label).clicked() {
-                                    *reading = if open { None } else { Some(doc) };
-                                }
-                            }
-                        });
-                        if let Some(doc) = *reading {
-                            ui.add_space(6.0);
-                            egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                                ui.set_max_width(ui.available_width());
-                                egui::ScrollArea::vertical().id_salt(("legal", doc.title())).max_height(260.0).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
-                            });
-                        }
-                    };
-                    match step {
-                        Pending::Terms => {
-                            ui.horizontal(|ui| {
-                                art::show(ui, art::logo(), egui::vec2(28.0, 28.0));
-                                ui.label(RichText::new(if *updated { "We've updated our terms" } else { "Welcome to Canopy" }).font(FontId::new(theme::HEADLINE_SIZE, theme::semibold())));
-                            });
-                            ui.add_space(10.0);
-                            ui.label(RichText::new(if *updated {
-                                "Please read and accept the new Terms of Service and Privacy Policy to keep using Canopy."
-                            } else {
-                                "Before you start, please read and accept the Terms of Service and the Privacy Policy."
-                            }).color(p.text_dim));
-                            ui.add_space(6.0);
-                            for (glyph, text) in [
-                                (icon::LOCK_SIMPLE, "Your repositories and tokens are never sent to NecturaLabs. Requests to GitHub and GitLab go straight to them."),
-                                (icon::ARROW_CIRCLE_UP, "At most once a day, Canopy checks GitHub for a new version. You can turn this off."),
-                                (icon::FIRST_AID_KIT, "Crash reports are sent only if you agree. You choose next, and can change it any time."),
-                            ] {
-                                bullet(ui, glyph, p.accent, text);
-                            }
-                            ui.add_space(8.0);
-                            read_buttons(ui, reading);
-
-                        }
-                        Pending::CrashReports => {
-                            title(ui, icon::FIRST_AID_KIT, "Send crash reports?");
-                            ui.label(RichText::new("If Canopy crashes, it can send a report to NecturaLabs so we can fix the problem. It also sends a short record of each session: when it started, how long it ran and how it ended.").color(p.text_dim));
-                            ui.add_space(6.0);
-                            for (glyph, text, color) in [
-                                (icon::CHECK, "A report holds the error message, a stack trace, your Canopy version and your operating system.", p.success),
-                                (icon::SHIELD_CHECK, "Canopy does not add your name, tokens, logs or repository files. An error message can name a file or branch.", p.accent),
-                                (icon::GLOBE_HEMISPHERE_WEST, "Reports are stored in the EU (Germany) by Sentry and deleted after 90 days.", p.accent2),
-                            ] {
-                                bullet(ui, glyph, color, text);
-                            }
-                            ui.add_space(6.0);
-                            ui.label(RichText::new("Canopy works the same either way. You can change this at any time in Settings → Privacy.").size(theme::META_SIZE).color(p.text_faint));
-                            ui.add_space(8.0);
-                            let mut privacy_only = reading.filter(|d| *d == Document::Privacy);
-                            ui.horizontal(|ui| {
-                                let open = privacy_only.is_some();
-                                if ui.selectable_label(open, format!("{}  Privacy Policy", if open { icon::CARET_DOWN } else { icon::CARET_RIGHT })).clicked() {
-                                    privacy_only = if open { None } else { Some(Document::Privacy) };
-                                }
-                            });
-                            *reading = privacy_only;
-                            if reading.is_some() {
-                                ui.add_space(6.0);
-                                egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                                    ui.set_max_width(ui.available_width());
-                                    egui::ScrollArea::vertical().id_salt("legal-privacy").max_height(240.0).show(ui, |ui| crate::ui::notes::markdown(ui, Document::Privacy.body()));
-                                });
-                            }
-
-                        }
+                    if let Some(dir) = report.path.parent()
+                        && Button::new("Show folder")
+                            .ghost()
+                            .size(Size::Sm)
+                            .icon(icon::FOLDER)
+                            .show(ui)
+                            .clicked()
+                    {
+                        extra = Some(Outcome::Run(vec![Action::OpenPath(dir.to_path_buf())]));
                     }
-                }
-                Dialog::Legal(doc) => {
-                    let glyph = match doc {
-                        Document::Privacy => icon::SHIELD_CHECK,
-                        Document::Terms => icon::SCROLL,
-                    };
-                    title(ui, glyph, doc.title());
-                    egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                        ui.set_max_width(ui.available_width());
-                        ui.style_mut().spacing.scroll.floating = false;
-                        egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 180.0).clamp(0.0, 420.0)).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
-                    });
-
-                }
-                Dialog::About => {
-                    ui.vertical_centered(|ui| {
-                        art::show(ui, art::logo(), egui::vec2(64.0, 64.0));
-                        ui.label(RichText::new("Canopy").font(FontId::new(theme::DISPLAY_SIZE, theme::semibold())));
-                        ui.label(RichText::new(crate::build_info::title_label()).color(p.text_dim));
-                        ui.label(RichText::new(git_version.strip_prefix("git version ").map_or_else(|| git_version.to_owned(), |v| format!("Git {v}"))).size(theme::META_SIZE).color(p.text_faint));
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("A fast, beautiful, Linux-first Git client.").color(p.text_dim));
-                        ui.label(RichText::new("© 2026 NecturaLabs.").size(theme::META_SIZE).color(p.text_faint));
-                        ui.add_space(14.0);
-                        if widgets::accent_button(ui, &format!("{}  Check for updates", icon::ARROW_CIRCLE_UP), egui::vec2(190.0, 34.0)).clicked() {
-                            outcome = Outcome::Run(vec![Action::CheckUpdates]);
-                        }
-                        ui.add_space(10.0);
-                        // Where to read more: quiet text links, so the one action above stays the main one.
-                        let links: [(&str, Outcome); 4] = [
-                            ("What's new", Outcome::Run(vec![Action::WhatsNew])),
-                            ("Releases", Outcome::Run(vec![Action::OpenUrl(crate::updater::RELEASES_PAGE.to_owned())])),
-                            ("Privacy Policy", Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Privacy))])),
-                            ("Terms of Service", Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Terms))])),
-                        ];
-                        ui.spacing_mut().item_spacing.x = theme::MD;
-                        // Centre the row: its width is the labels, their button padding and the gaps.
-                        let font = FontId::proportional(theme::META_SIZE);
-                        let text_width = |t: &str| ui.painter().layout_no_wrap(t.to_owned(), font.clone(), p.accent).size().x;
-                        let row_width: f32 = links.iter().map(|(label, _)| text_width(label) + 2.0 * ui.spacing().button_padding.x).sum::<f32>() + (links.len() - 1) as f32 * (text_width("·") + 2.0 * theme::MD);
-                        ui.horizontal(|ui| {
-                            ui.add_space(((ui.available_width() - row_width) / 2.0).max(0.0));
-                            for (i, (label, target)) in links.into_iter().enumerate() {
-                                if i > 0 {
-                                    ui.label(RichText::new("·").color(p.text_faint));
-                                }
-                                if ui.add(egui::Button::new(RichText::new(label).size(theme::META_SIZE).color(p.accent)).frame(false)).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                    outcome = target;
-                                }
-                            }
-                        });
-                    });
-                    ui.add_space(theme::MD);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add_sized([90.0, 34.0], egui::Button::new("Close")).clicked() {
-                                outcome = Outcome::Close;
-                            }
-                        });
-                    });
-                }
-            }
-            ui.add_space(theme::SM);
-            });
-            if document_actions && !pinned_actions {
-                outcome = common::document_actions(ui, dialog);
-            }
-        });
-    if modal.should_close()
-        && matches!(outcome, Outcome::Keep)
-        && !matches!(dialog, Dialog::Consent { .. } | Dialog::Credential { .. })
-    {
-        outcome = Outcome::Close;
+                })
+                .footer(|f| {
+                    f.cancel_label("Dismiss").confirm("Open report");
+                })
+                .show(ctx);
+            answer(result, || {
+                Outcome::Run(vec![Action::OpenInEditor(report.path.clone())])
+            })
+        }
+        Dialog::Consent {
+            step,
+            updated,
+            reading,
+        } => consent(ctx, salt, *step, *updated, reading),
+        Dialog::Legal(doc) => {
+            let glyph = match doc {
+                Document::Privacy => icon::SHIELD_CHECK,
+                Document::Terms => icon::SCROLL,
+            };
+            let height = (ctx.content_rect().height() - 180.0).clamp(0.0, 420.0);
+            let result = KitDialog::new(salt)
+                .title(doc.title())
+                .icon(glyph)
+                .width(DialogWidth::Form)
+                .body(|ui| document(ui, ("legal", doc.title()), height, doc.body()))
+                .footer(|f| {
+                    f.cancel_label("Close");
+                })
+                .show(ctx);
+            answer(result, || Outcome::Close)
+        }
+        Dialog::About => {
+            let result = KitDialog::new(salt)
+                .title("About Canopy")
+                .initial_focus(InitialFocus::Cancel)
+                .body(|ui| extra = about(ui, git_version))
+                .footer(|f| {
+                    f.cancel_label("Close")
+                        .confirm("Check for updates")
+                        .confirm_icon(icon::ARROW_CIRCLE_UP);
+                })
+                .show(ctx);
+            answer(result, || Outcome::Run(vec![Action::CheckUpdates]))
+        }
+    };
+    match (extra, outcome) {
+        (Some(e), Outcome::Keep) => e,
+        (_, o) => o,
     }
+}
+
+/// The id every dialog of `dialog`'s kind shares, so switching to another kind animates it in.
+fn salt(dialog: &Dialog) -> (&'static str, std::mem::Discriminant<Dialog>) {
+    ("dialog", std::mem::discriminant(dialog))
+}
+
+/// The modal area the kit shows `dialog` in (the kit derives it from the dialog's id).
+#[cfg(test)]
+fn area_id(dialog: &Dialog) -> egui::Id {
+    egui::Id::new(("kit-dialog", egui::Id::new(salt(dialog)))).with("modal")
+}
+
+/// Where a clone goes: the URL and `parent`/`name`, once both are known.
+fn clone_target(builder: &UrlBuilder, parent: &str) -> Option<(String, std::path::PathBuf)> {
+    let url = builder.resolve()?;
+    let name = url
+        .trim()
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or("")
+        .to_owned();
+    if url.trim().is_empty() || name.is_empty() {
+        return None;
+    }
+    let dest = crate::settings::expand_home(parent).join(&name);
+    Some((url.trim().to_owned(), dest))
+}
+
+/// A yes-or-no question: destructive ones get the danger disc and button and keep Enter from
+/// confirming.
+fn confirmation<'a>(
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    title: &str,
+    body: &str,
+    confirm: &str,
+    danger: bool,
+    glyph: &str,
+    extra: impl FnOnce(&mut Ui) + 'a,
+) -> KitDialog<'a> {
+    let mut d = KitDialog::new(salt)
+        .title(title)
+        .description(body)
+        .body(extra)
+        .footer(|f| {
+            f.cancel().confirm(confirm).hint(if danger {
+                "Esc cancels"
+            } else {
+                "Enter confirms · Esc cancels"
+            });
+        });
+    d = if danger {
+        d.destructive().icon(icon::WARNING)
+    } else {
+        d.icon(glyph)
+    };
+    d
+}
+
+/// The merge dialog's body: merge or rebase, the branch, the merge mode and what will happen.
+fn merge_body(
+    ui: &mut Ui,
+    tab: Option<&RepoTab>,
+    current: &str,
+    target: &mut String,
+    rebase: &mut bool,
+    mode: &mut canopy_core::MergeMode,
+) {
+    use canopy_core::MergeMode as M;
+    let p = palette(ui.ctx());
+    // The branch name keeps the two choices from reading as "current" in the abstract.
+    let shown: String = if current.chars().count() > 20 {
+        current.chars().take(19).chain(['…']).collect()
+    } else {
+        current.to_owned()
+    };
+    let (merge_label, rebase_label) = if shown.is_empty() {
+        (
+            "Merge into current".to_owned(),
+            "Rebase current onto".to_owned(),
+        )
+    } else {
+        (
+            format!("Merge into {shown}"),
+            format!("Rebase {shown} onto"),
+        )
+    };
+    let kinds = [(false, merge_label.as_str()), (true, rebase_label.as_str())];
+    Segmented::new(rebase, &kinds)
+        .label("Merge or rebase")
+        .id_salt("merge-kind")
+        .show(ui);
+    let names: Vec<String> = tab
+        .and_then(|t| t.snap.as_ref())
+        .map(|s| {
+            s.branches
+                .iter()
+                .filter(|b| !b.is_head)
+                .map(|b| b.name.clone())
+                .chain(s.remote_branches.iter().map(|b| b.full_name()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let options: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), n.as_str())).collect();
+    let mut pick = names
+        .iter()
+        .find(|n| *n == target)
+        .map_or("", String::as_str);
+    Select::new(&mut pick, &options)
+        .name("Branch")
+        .placeholder("Choose a branch…")
+        .id_salt("merge-target")
+        .show(ui);
+    if pick != target && !pick.is_empty() {
+        *target = pick.to_owned();
+    }
+    if !*rebase {
+        let modes: Vec<(M, &str, Option<&str>)> = M::ALL
+            .iter()
+            .map(|m| {
+                let explanation = match m {
+                    M::Default => "Otherwise creates a merge commit.",
+                    M::NoFastForward => "Keeps the branch join visible in history.",
+                    M::FastForwardOnly => "Stops without changes if the branches diverged.",
+                    M::Squash => "Leaves one combined change to review and commit.",
+                };
+                (*m, m.label(), Some(explanation))
+            })
+            .collect();
+        RadioGroup::new(mode, &modes)
+            .label("How")
+            .id_salt("merge-mode")
+            .show(ui);
+    }
+    if !target.is_empty() {
+        let text = match (*rebase, *mode) {
+            (true, _) => format!("Replay {current}'s commits on top of {target}."),
+            (false, M::Default) => format!(
+                "Merge {target} into {current}, fast-forwarding when {current} has no commits of its own."
+            ),
+            (false, M::NoFastForward) => format!(
+                "Merge {target} into {current} with a merge commit, even when a fast-forward is possible."
+            ),
+            (false, M::FastForwardOnly) => format!(
+                "Move {current} forward to {target}; stops without changes if they have diverged."
+            ),
+            (false, M::Squash) => format!(
+                "Stage all of {target}'s changes on {current} as one change, without committing. Review them in Changes, then commit."
+            ),
+        };
+        note(ui, text, p.text_faint);
+    }
+}
+
+/// The first-start consent: the terms, then the crash-report question. Answered only with its
+/// buttons; bare Enter accepts nothing.
+fn consent(
+    ctx: &egui::Context,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    step: Pending,
+    updated: bool,
+    reading: &mut Option<Document>,
+) -> Outcome {
+    let p = palette(ctx);
+    swallow_enter(ctx);
+    match step {
+        Pending::Terms => {
+            let result = KitDialog::new(salt)
+                .title(if updated {
+                    "We've updated our terms"
+                } else {
+                    "Welcome to Canopy"
+                })
+                .icon(icon::TREE)
+                .width(DialogWidth::Form)
+                .blocking()
+                .initial_focus(InitialFocus::Body)
+                .description(if updated {
+                    "Please read and accept the new Terms of Service and Privacy Policy to keep using Canopy."
+                } else {
+                    "Before you start, please read and accept the Terms of Service and the Privacy Policy."
+                })
+                .body(|ui| {
+                    for (glyph, text) in [
+                        (icon::LOCK_SIMPLE, "Your repositories and tokens are never sent to NecturaLabs. Requests to GitHub and GitLab go straight to them."),
+                        (icon::ARROW_CIRCLE_UP, "At most once a day, Canopy checks GitHub for a new version. You can turn this off."),
+                        (icon::FIRST_AID_KIT, "Crash reports are sent only if you agree. You choose next, and can change it any time."),
+                    ] {
+                        bullet(ui, glyph, p.accent, text);
+                    }
+                    for doc in [Document::Terms, Document::Privacy] {
+                        read(ui, doc, reading, 260.0);
+                    }
+                })
+                .footer(|f| {
+                    f.cancel_label("Quit").confirm("I agree");
+                })
+                .show(ctx);
+            match result {
+                DialogResult::Open => Outcome::Keep,
+                DialogResult::Cancel => Outcome::Run(vec![Action::Quit]),
+                DialogResult::Confirm => Outcome::Run(vec![Action::AcceptTerms]),
+            }
+        }
+        Pending::CrashReports => {
+            if *reading != Some(Document::Privacy) {
+                *reading = None;
+            }
+            let result = KitDialog::new(salt)
+                .title("Send crash reports?")
+                .icon(icon::FIRST_AID_KIT)
+                .width(DialogWidth::Form)
+                .blocking()
+                .description("If Canopy crashes, it can send a report to NecturaLabs so we can fix the problem. It also sends a short record of each session: when it started, how long it ran and how it ended.")
+                .body(|ui| {
+                    for (glyph, text, color) in [
+                        (icon::CHECK, "A report holds the error message, a stack trace, your Canopy version and your operating system.", p.success),
+                        (icon::SHIELD_CHECK, "Canopy does not add your name, tokens, logs or repository files. An error message can name a file or branch.", p.accent),
+                        (icon::GLOBE_HEMISPHERE_WEST, "Reports are stored in the EU (Germany) by Sentry and deleted after 90 days.", p.accent2),
+                    ] {
+                        bullet(ui, glyph, color, text);
+                    }
+                    note(ui, "Canopy works the same either way. You can change this at any time in Settings → Privacy.", p.text_faint);
+                    read(ui, Document::Privacy, reading, 240.0);
+                })
+                .footer(|f| {
+                    f.choice("Send crash reports", "Don't send");
+                })
+                .show(ctx);
+            match result {
+                DialogResult::Open => Outcome::Keep,
+                DialogResult::Cancel => Outcome::Run(vec![Action::SetCrashReports(false)]),
+                DialogResult::Confirm => Outcome::Run(vec![Action::SetCrashReports(true)]),
+            }
+        }
+    }
+}
+
+/// A legal document that opens inline under its title (one at a time).
+fn read(ui: &mut Ui, doc: Document, reading: &mut Option<Document>, height: f32) {
+    let mut open = *reading == Some(doc);
+    let was = open;
+    Disclosure::new(("read", doc.title()), doc.title(), &mut open)
+        .icon(icon::SCROLL)
+        .show(ui, |ui| {
+            document(ui, ("legal", doc.title()), height, doc.body())
+        });
+    if open != was {
+        *reading = open.then_some(doc);
+    }
+}
+
+/// The About dialog's body: the logo, the version, and where to read more.
+fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    let mut outcome = None;
+    ui.vertical_centered(|ui| {
+        art::show(ui, art::logo(), egui::Vec2::splat(64.0));
+        ui.label(
+            RichText::new("Canopy")
+                .font(FontId::new(m.display_size, theme::semibold()))
+                .color(p.text),
+        );
+        ui.label(RichText::new(crate::build_info::title_label()).color(p.text_dim));
+        ui.label(
+            RichText::new(
+                git_version
+                    .strip_prefix("git version ")
+                    .map_or_else(|| git_version.to_owned(), |v| format!("Git {v}")),
+            )
+            .size(m.meta_size)
+            .color(p.text_faint),
+        );
+        ui.add_space(theme::SM);
+        ui.label(RichText::new("A fast, beautiful, Linux-first Git client.").color(p.text_dim));
+        ui.label(
+            RichText::new("© 2026 NecturaLabs.")
+                .size(m.meta_size)
+                .color(p.text_faint),
+        );
+        ui.add_space(theme::MD);
+        // Where to read more: links, so the one action in the footer stays the main one. The row
+        // is centred on its width from the frame before.
+        let links: [(&str, bool, Outcome); 4] = [
+            ("What's new", false, Outcome::Run(vec![Action::WhatsNew])),
+            (
+                "Releases",
+                true,
+                Outcome::Run(vec![Action::OpenUrl(
+                    crate::updater::RELEASES_PAGE.to_owned(),
+                )]),
+            ),
+            (
+                "Privacy Policy",
+                false,
+                Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Privacy))]),
+            ),
+            (
+                "Terms of Service",
+                false,
+                Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Terms))]),
+            ),
+        ];
+        let width_id = ui.id().with("about-links-width");
+        let last: f32 = ui.data(|d| d.get_temp(width_id)).unwrap_or(0.0);
+        let row = ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = theme::MD;
+            ui.add_space(((ui.available_width() - last) / 2.0).max(0.0));
+            let start = ui.cursor().left();
+            for (label, external, target) in links {
+                if LinkButton::new(label)
+                    .external(external)
+                    .text_size(m.meta_size)
+                    .show(ui)
+                    .clicked()
+                {
+                    outcome = Some(target);
+                }
+            }
+            ui.min_rect().right() - start
+        });
+        let width = row.inner;
+        if (width - last).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(width_id, width));
+            ui.ctx().request_repaint();
+        }
+    });
     outcome
 }
 
@@ -1126,7 +1559,7 @@ mod tests {
                 );
                 output.textures_delta.clear();
             }
-            let bounds = egui::containers::AreaState::load(&ctx, egui::Id::new("dialog"))
+            let bounds = egui::containers::AreaState::load(&ctx, super::area_id(&dialog))
                 .expect("update dialog area")
                 .rect();
             assert!(
@@ -1199,7 +1632,7 @@ mod tests {
                     false
                 });
             }
-            let bounds = egui::containers::AreaState::load(&ctx, egui::Id::new("dialog"))
+            let bounds = egui::containers::AreaState::load(&ctx, super::area_id(&dialog))
                 .expect("clone dialog area")
                 .rect();
             assert!(
