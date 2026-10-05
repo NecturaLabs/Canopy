@@ -234,7 +234,8 @@ pub struct Syntax {
 }
 
 const fn hex(rgb: u32) -> Color32 {
-    Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+    let [_, r, g, b] = rgb.to_be_bytes();
+    Color32::from_rgb(r, g, b)
 }
 
 // Generated from the design spec's `themes.json` (spec/themes.py, contrast-fitted) plus the
@@ -1749,7 +1750,11 @@ impl ThemeId {
     }
 
     fn index(self) -> u8 {
-        Self::ALL.iter().position(|t| *t == self).unwrap_or(0) as u8
+        Self::ALL
+            .iter()
+            .position(|t| *t == self)
+            .and_then(|i| u8::try_from(i).ok())
+            .unwrap_or(0)
     }
 }
 
@@ -2063,6 +2068,10 @@ impl Palette {
     }
 
     /// [`Palette::ink`] for the surfaces `s`, uncached.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "values drawn on screen, where f32 rounding is invisible"
+    )]
     pub fn ink_on(&self, s: &Surfaces, fg: Color32, fill: Color32) -> Color32 {
         let behind = self.component_surfaces(s).map(|b| over(fill, b));
         let readable = |c: Color32| behind.iter().all(|b| contrast(c, *b) >= 4.5);
@@ -2173,6 +2182,11 @@ pub fn contrast(a: Color32, b: Color32) -> f64 {
 }
 
 /// Translucent `fg` drawn over opaque `bg`, as the GPU blends it (`Color32` is premultiplied).
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 pub fn over(fg: Color32, bg: Color32) -> Color32 {
     let a = f32::from(fg.a()) / 255.0;
     let mix = |f: u8, b: u8| (f32::from(f) + f32::from(b) * (1.0 - a)).round() as u8;
@@ -2184,6 +2198,11 @@ pub fn over(fg: Color32, bg: Color32) -> Color32 {
 }
 
 /// `a` moved towards `b` by `t` (0 to 1).
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let m = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
     Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
@@ -2198,6 +2217,11 @@ pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
         dead_code,
         reason = "the glass renderer's luminance clamp uniform comes with the blur"
     )
+)]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
 )]
 pub fn clamp_backdrop(c: Color32, dark: bool, cap: f32) -> Color32 {
     let to_lin = |v: u8| {
@@ -3326,6 +3350,10 @@ pub fn with_look<R>(style: Style, density: Density, f: impl FnOnce() -> R) -> R 
 
 /// Makes `id` the active theme with `look`'s style, density, glass and motion, and installs the
 /// matching egui style on `ctx`.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 pub fn apply(ctx: &egui::Context, id: ThemeId, look: Appearance) {
     look_set(id, look.style, look.density, look.glass);
     super::motion::set_reduced(look.reduce_motion);

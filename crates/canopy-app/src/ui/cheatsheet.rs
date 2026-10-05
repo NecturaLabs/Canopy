@@ -28,6 +28,10 @@ impl Cheatsheet {
     }
 
     /// Draws the overlay when open.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+    )]
     pub fn show(&mut self, ctx: &egui::Context) {
         if !self.open {
             return;

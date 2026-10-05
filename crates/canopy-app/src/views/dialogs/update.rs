@@ -6,6 +6,10 @@ use crate::ui::kit::progress::Progress;
 use crate::updater::{Available, InstallState, Updater};
 
 /// "12.3 MB", or "12.3 of 45.6 MB" while the size is known.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn megabytes(done: u64, total: Option<u64>) -> String {
     let mb = |n: u64| n as f64 / (1024.0 * 1024.0);
     match total {
@@ -16,6 +20,10 @@ fn megabytes(done: u64, total: Option<u64>) -> String {
 
 /// The update dialog for `a`. `updater` says how this copy was installed and where an install
 /// started from here stands.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 pub(super) fn update(
     ctx: &egui::Context,
     salt: impl std::hash::Hash + std::fmt::Debug,

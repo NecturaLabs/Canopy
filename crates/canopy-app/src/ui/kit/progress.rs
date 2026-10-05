@@ -34,6 +34,10 @@ fn keep_moving(ctx: &egui::Context) {
 }
 
 /// The phase (0 to 1) of a loop of `period` seconds at the current time.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 fn loop_phase(ctx: &egui::Context, period: f32) -> f32 {
     let t = ctx.input(|i| i.time);
     ((t % f64::from(period)) / f64::from(period)) as f32
@@ -41,6 +45,10 @@ fn loop_phase(ctx: &egui::Context, period: f32) -> f32 {
 
 /// A fill that eases towards larger values over `PROGRESS_FILL` and snaps to smaller ones, so the bar
 /// never visibly runs backwards.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 fn forward(ctx: &egui::Context, id: Id, target: f32) -> f32 {
     #[derive(Clone, Copy)]
     struct Fill {
@@ -364,6 +372,10 @@ fn paint_band(painter: &Painter, bar: Rect, left: f32, width: f32, color: Color3
         mesh.colored_vertex(pos2(x, bar.top()), c);
         mesh.colored_vertex(pos2(x, bar.bottom()), c);
         if i > 0 {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "a mesh holds far fewer than 2^32 vertices"
+            )]
             let b = (2 * i) as u32;
             mesh.add_triangle(b - 2, b - 1, b);
             mesh.add_triangle(b - 1, b, b + 1);
@@ -467,6 +479,10 @@ impl Widget for Spinner {
 
 /// Paints a spinner of diameter `side` around `center`. `turn` fixes the rotation (0 to 1);
 /// otherwise it turns with the clock, or pulses in place with reduced motion.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 pub(crate) fn paint_spinner(
     painter: &Painter,
     center: Pos2,
@@ -555,6 +571,10 @@ impl Skeleton {
         p.hover_strong().lerp_to_gamma(p.pressed(), Self::pulse(t))
     }
 
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "values drawn on screen, where f32 rounding is invisible"
+    )]
     pub fn show(self, ui: &mut Ui) -> Response {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
@@ -601,6 +621,10 @@ impl Widget for Skeleton {
 
 /// The gallery's Progress section: determinate stops, indeterminate and line bars at rest and
 /// mid-sweep, the spinner sizes, a labelled wait and skeleton rows.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 pub(crate) fn gallery(ui: &mut Ui) {
     let m = theme::metrics();
     let p = theme::palette(ui.ctx());

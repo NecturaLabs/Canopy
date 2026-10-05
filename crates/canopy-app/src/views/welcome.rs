@@ -186,6 +186,10 @@ fn ambient(ui: &Ui, rect: egui::Rect) {
 }
 
 /// A soft radial glow centred on `center`: `color` at the centre, transparent at `radius`.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn glow(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
     const SEGMENTS: u32 = 64;
     let mut mesh = egui::Mesh::default();

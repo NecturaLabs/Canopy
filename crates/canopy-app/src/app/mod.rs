@@ -658,10 +658,6 @@ fn start_askpass(ctx: &egui::Context) -> Option<crate::askpass::Server> {
 }
 
 impl eframe::App for CanopyApp {
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "egui margins are whole points in an i8; theme::metrics keeps them small"
-    )]
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         update_window_minimum(&ctx);
@@ -796,6 +792,11 @@ impl eframe::App for CanopyApp {
 
         if let Some(tab) = self.tabs.get_mut(self.active) {
             if !compact {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "egui margins are whole points in an i8; theme::metrics keeps them small"
+                )]
+                let sidebar_margin = egui::Margin::symmetric(m.sidebar_pad as i8, 0);
                 egui::Panel::left("sidebar")
                     .resizable(true)
                     .default_size(m.sidebar_width)
@@ -804,7 +805,7 @@ impl eframe::App for CanopyApp {
                     .frame(
                         egui::Frame::new()
                             .fill(s.panel)
-                            .inner_margin(egui::Margin::symmetric(m.sidebar_pad as i8, 0)),
+                            .inner_margin(sidebar_margin),
                     )
                     .show(ui, |ui| {
                         if !deeper {

@@ -938,6 +938,10 @@ impl GlassGl {
     }
 
     /// Copies, blurs and composites one layer. `saved` holds egui's framebuffer binding.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "values drawn on screen, where f32 rounding is invisible"
+    )]
     fn draw(&self, cur: Current<'_>, saved: &Saved, plan: &Plan, look: Look) -> Result<(), Reason> {
         let Some(blur) = plan.blur else {
             return Err(Reason::Internal);

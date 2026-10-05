@@ -132,6 +132,10 @@ pub fn set_level(level: LogLevel) {
 
 /// Deletes all but the newest `keep - 1` run logs (making room for this run's) and the files of
 /// the old single-file format.
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "Canopy names these files itself, in lower case"
+)]
 fn prune(dir: &Path, keep: usize) {
     let mut runs: Vec<PathBuf> = fs::read_dir(dir)
         .map(|it| it.filter_map(|e| e.ok().map(|e| e.path())).collect())
@@ -384,6 +388,10 @@ fn write_report(dir: &Path, report: &str) -> std::io::Result<PathBuf> {
 }
 
 /// Crash reports in `dir`, oldest first (their names sort by time).
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "Canopy names these files itself, in lower case"
+)]
 fn reports(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = fs::read_dir(dir)
         .map(|it| {
@@ -445,6 +453,10 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "Canopy names these files itself, in lower case"
+    )]
     fn old_run_logs_are_pruned() {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(dir.path().join("canopy.log"), b"old format").expect("write");

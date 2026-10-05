@@ -26,6 +26,10 @@ impl Trust {
         }
     }
 
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "the change count moves while the list is still locked, so readers never see one without the other"
+    )]
     fn set(&self, folders: &[PathBuf]) -> bool {
         let mut list = self.folders.write().unwrap_or_else(PoisonError::into_inner);
         if *list == folders {
@@ -125,7 +129,7 @@ pub fn install_gate() {
 /// root is refused, whether spelled `/`, `C:\` or `/a/../..`. This is a reading of the path,
 /// without touching the repository's disk (it runs on the UI thread); core resolves links when it
 /// checks, and a link that leads to a root trusts nothing there.
-pub fn add(list: &mut Vec<PathBuf>, folder: &PathBuf) -> bool {
+pub fn add(list: &mut Vec<PathBuf>, folder: &Path) -> bool {
     let Ok(folder) = std::path::absolute(folder) else {
         return false;
     };

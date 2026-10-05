@@ -280,6 +280,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "values drawn on screen, where f32 rounding is invisible"
+    )]
     fn bezier_matches_its_ends_and_shape() {
         for b in [EASE_OUT, EASE_IN_OUT, SPRING_SOFT, SPRING_CURVE] {
             assert_eq!(b.at(0.0), 0.0);

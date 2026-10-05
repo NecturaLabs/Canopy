@@ -23,6 +23,11 @@ use crate::ui::theme::{self, Density, FULL, Fill, Palette};
 use crate::ui::widgets;
 
 /// A radius that `FULL` turns into half the height.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 fn radius_for(radius: u8, height: f32) -> CornerRadius {
     if radius == FULL {
         CornerRadius::same((height / 2.0).round().min(f32::from(u8::MAX)) as u8)
@@ -388,6 +393,10 @@ impl RefPill {
     }
 
     /// Everything but the label: padding, icons and their gaps.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "values drawn on screen, where f32 rounding is invisible"
+    )]
     fn chrome_width(&self, ui: &Ui) -> f32 {
         let m = theme::metrics();
         let glyphs = self.glyphs();
@@ -783,6 +792,10 @@ impl Widget for StatusDot {
 
 /// The breathing alpha of a pulsing dot now (0.5 to 1 over 1.6 s), repainting while shown; 1 and
 /// still with reduced motion.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 fn pulse_alpha(ctx: &egui::Context) -> f32 {
     if motion::reduced() {
         return 1.0;
@@ -878,6 +891,12 @@ impl Widget for DiffStat {
 
 /// The five blocks of a diffstat bar: (added, removed, neutral). Up to five lines fill one block
 /// each; more fill all five in proportion, and a side with any change keeps at least one block.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants; values drawn on screen, where f32 rounding is invisible"
+)]
 pub fn blocks(added: usize, removed: usize) -> (usize, usize, usize) {
     let total = added + removed;
     if total == 0 {

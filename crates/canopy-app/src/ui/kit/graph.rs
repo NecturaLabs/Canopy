@@ -162,6 +162,10 @@ pub fn paint_row(painter: &Painter, rect: Rect, lanes: Lanes, row: &GraphRow, ma
     paint_node(&painter, rect, lanes, row, marks, p);
 }
 
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn paint_node(
     painter: &Painter,
     rect: Rect,

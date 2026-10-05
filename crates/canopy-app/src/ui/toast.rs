@@ -5,7 +5,7 @@
 use egui::CornerRadius;
 use egui::{Align2, Id, Order, vec2};
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::kit::Tone;
@@ -30,7 +30,7 @@ pub enum Recovery {
 fn error_help(
     title: &str,
     body: &str,
-    repo: Option<&PathBuf>,
+    repo: Option<&Path>,
 ) -> Option<(&'static str, Option<Recovery>)> {
     let lower = body.to_lowercase();
     if title.to_lowercase().contains("push")
@@ -38,7 +38,7 @@ fn error_help(
     {
         Some((
             "The remote has commits you do not have yet. Pull and resolve any conflicts before pushing again.",
-            repo.cloned().map(Recovery::Pull),
+            repo.map(|r| Recovery::Pull(r.to_path_buf())),
         ))
     } else if lower.contains("authentication failed")
         || lower.contains("http basic: access denied")
@@ -103,7 +103,7 @@ impl Toasts {
         kind: ToastKind,
         title: impl Into<String>,
         body: impl Into<String>,
-        repo: Option<&PathBuf>,
+        repo: Option<&Path>,
     ) {
         let ttl = if kind == ToastKind::Error {
             f64::INFINITY

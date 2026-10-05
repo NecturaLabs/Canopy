@@ -87,6 +87,10 @@ pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Res
 }
 
 /// Repository operation state stays visible in every work view.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 pub fn repository_state_banner(
     ui: &mut Ui,
     tab: &crate::tab::RepoTab,
@@ -306,6 +310,11 @@ mod tests {
     /// Design spec 2.4: a disabled button is the whole control at `DISABLED_ALPHA`, never the
     /// enabled fill at full strength.
     #[test]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+    )]
     fn disabled_primary_controls_do_not_use_the_enabled_fill() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);

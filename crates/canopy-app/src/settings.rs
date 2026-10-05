@@ -261,7 +261,7 @@ impl Settings {
         self.diff.context = self.diff.context.min(25);
         let mut seen = Vec::new();
         self.trusted_folders
-            .retain(|f| f.is_absolute() && crate::trust::add(&mut seen, &f.clone()));
+            .retain(|f| f.is_absolute() && crate::trust::add(&mut seen, f));
     }
 
     /// Moves `path` to the front of the recent list.

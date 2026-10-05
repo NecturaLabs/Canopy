@@ -619,7 +619,7 @@ impl RepoTab {
     }
 
     /// Runs an API action.
-    pub fn host_job(&mut self, job: HostJob) {
+    pub fn host_job(&self, job: HostJob) {
         if let Some(h) = &self.host {
             h.send(job);
         }

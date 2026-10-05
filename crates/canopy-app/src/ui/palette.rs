@@ -178,6 +178,10 @@ impl<T: Clone> CommandPalette<T> {
     }
 
     /// Draws the palette; returns what the entry the user ran runs.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+    )]
     pub fn show(&mut self, ctx: &egui::Context) -> Option<T> {
         if !self.open {
             return None;
@@ -342,6 +346,10 @@ const ROW_GAP: f32 = 10.0;
 
 /// "The field that is the surface": the palette's and cheatsheet's search, with no ring and no
 /// border of its own, only a seam under it. A magnifier leads; `height` tall, full width.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 pub(crate) fn surface_search(
     ui: &mut egui::Ui,
     text: &mut String,

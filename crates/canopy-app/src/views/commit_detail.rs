@@ -23,6 +23,11 @@ use crate::ui::{art, widgets};
 use crate::views::diff;
 
 /// Draws the details pane.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; values drawn on screen, where f32 rounding is invisible"
+)]
 pub fn show(
     ui: &mut Ui,
     tab: &mut RepoTab,
@@ -423,6 +428,11 @@ fn meta_row(ui: &mut Ui, glyph: &str, text: &str) {
 
 /// The rows of a fixed-height list (`row_h` apart, no spacing) whose top is at `top`, that
 /// intersect `min_y..max_y`.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 pub fn visible_rows(n: usize, row_h: f32, top: f32, min_y: f32, max_y: f32) -> Range<usize> {
     if n == 0 || row_h <= 0.0 || max_y <= min_y {
         return 0..0;
@@ -438,6 +448,10 @@ pub fn visible_rows(n: usize, row_h: f32, top: f32, min_y: f32, max_y: f32) -> R
 /// view and reserving the space of the others, so a list of thousands costs only its visible
 /// rows. Rows must allocate exactly `row_h` and give themselves ids that do not depend on their
 /// position (they come and go while scrolling).
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 pub fn virtual_rows(ui: &mut Ui, n: usize, row_h: f32, mut row: impl FnMut(&mut Ui, usize)) {
     let spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 0.0;

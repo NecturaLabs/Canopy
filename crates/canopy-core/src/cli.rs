@@ -93,6 +93,10 @@ const REPOSITORY_ENV: [&str; 12] = [
 
 /// Sets the non-interactive environment, and the registered [`Askpass`] if any, on `cmd`, and
 /// keeps the repository variables of Canopy's own environment out of it.
+#[expect(
+    clippy::significant_drop_tightening,
+    reason = "the askpass settings are read under one lock, so they come from the same app"
+)]
 pub(crate) fn apply_env(cmd: &mut Command) {
     for key in REPOSITORY_ENV {
         cmd.env_remove(key);

@@ -69,10 +69,6 @@ FILES:
     (~/.local/share/canopy on Linux) and never leave your computer.";
 
 #[expect(
-    clippy::map_err_ignore,
-    reason = "the option's own message says what a valid value is"
-)]
-#[expect(
     clippy::print_stdout,
     clippy::exit,
     reason = "--help and --version print to the terminal and quit before any window opens"
@@ -135,16 +131,24 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 );
             }
             "--glass-soak" if cfg!(debug_assertions) => {
-                launch.glass_soak = Some(
-                    next_text(&mut args, "--glass-soak needs a number of frames")?
-                        .parse()
-                        .map_err(|_| "--glass-soak takes a whole number of frames")?,
-                );
+                #[expect(
+                    clippy::map_err_ignore,
+                    reason = "the option's own message says what a valid value is"
+                )]
+                let frames = next_text(&mut args, "--glass-soak needs a number of frames")?
+                    .parse()
+                    .map_err(|_| "--glass-soak takes a whole number of frames")?;
+                launch.glass_soak = Some(frames);
             }
             "--gallery-page" => {
-                launch.gallery_page = next_text(&mut args, "--gallery-page needs a number")?
+                #[expect(
+                    clippy::map_err_ignore,
+                    reason = "the option's own message says what a valid value is"
+                )]
+                let page = next_text(&mut args, "--gallery-page needs a number")?
                     .parse()
                     .map_err(|_| "--gallery-page takes a whole number")?;
+                launch.gallery_page = page;
             }
             "--overlay" => {
                 let names = app::OVERLAYS.join(", ");
@@ -188,10 +192,15 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 let (w, h) = v
                     .split_once('x')
                     .ok_or("--size takes WxH, e.g. 1600x1000")?;
-                size = [
+                #[expect(
+                    clippy::map_err_ignore,
+                    reason = "the option's own message says what a valid value is"
+                )]
+                let parsed = [
                     w.parse().map_err(|_| "bad width")?,
                     h.parse().map_err(|_| "bad height")?,
                 ];
+                size = parsed;
             }
             s if s.starts_with('-') => return Err(format!("unknown option {s}; see --help")),
             _ => launch.paths.push(PathBuf::from(arg)),

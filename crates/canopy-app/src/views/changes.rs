@@ -248,6 +248,10 @@ const EMPTY_LIST: f32 = theme::XL;
 
 /// Height of the sections `lists` draws, close enough to decide whether the composer fits
 /// below them. An overestimate only pins the composer; an underestimate scrolls.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn lists_height(st: &canopy_core::WorkingStatus) -> f32 {
     if st.is_clean() {
         return 40.0;
@@ -1040,6 +1044,10 @@ fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
 
 /// Why the commit button is disabled, when its label does not already say ("Stage files to
 /// commit" is its own reason).
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "each flag is a separate reason the button can be disabled"
+)]
 fn commit_blocker(
     conflicted: bool,
     running: bool,

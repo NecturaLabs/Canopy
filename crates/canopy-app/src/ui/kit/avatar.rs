@@ -113,6 +113,11 @@ pub fn colors(p: &Palette, person: &Person) -> (Color32, Color32) {
 /// Paints an avatar of `diameter` centred on `center`. `ring` draws a 1.5 pt ring in the surface
 /// behind (over the graph or in a stack). `id` keys the picture's crossfade; without one the
 /// picture shows at once.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 pub fn paint(
     painter: &Painter,
     center: Pos2,
@@ -287,6 +292,10 @@ impl AvatarStack {
         (shown, self.people.len() - shown)
     }
 
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "values drawn on screen, where f32 rounding is invisible"
+    )]
     pub fn show(self, ui: &mut Ui) -> Response {
         let ground = self.ground.unwrap_or(theme::surfaces(ui.ctx()).pane);
         let d = self.size.diameter();
@@ -431,6 +440,10 @@ pub(crate) fn gallery(ui: &mut Ui) {
 }
 
 /// A small generated picture for the gallery (no network, no files): a diagonal two-tone square.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn placeholder_picture(ctx: &egui::Context) -> TextureId {
     const N: usize = 32;
 

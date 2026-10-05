@@ -187,6 +187,10 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
 
     /// Shows the control; the response is the group's and reports `changed` when the choice
     /// moved.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "values drawn on screen, where f32 rounding is invisible"
+    )]
     pub fn show(self, ui: &mut Ui) -> Response {
         struct Seg {
             icon: Option<Arc<Galley>>,
@@ -506,6 +510,10 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
 
     /// Shows the tabs. The response is the tab list's (`changed` when the active tab moved); the
     /// value is the tab whose close button was pressed, if any.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "values drawn on screen, where f32 rounding is invisible"
+    )]
     pub fn show(self, ui: &mut Ui) -> KitResponse<Option<T>> {
         struct Tab {
             icon: Option<Arc<Galley>>,

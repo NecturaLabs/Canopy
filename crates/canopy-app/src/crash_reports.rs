@@ -39,6 +39,10 @@ pub fn available() -> bool {
 }
 
 /// Turns reporting on or off immediately.
+#[expect(
+    clippy::significant_drop_tightening,
+    reason = "the lock is held until the client is started or stopped, so two calls cannot race"
+)]
 pub fn set_enabled(on: bool) {
     let mut guard = GUARD
         .lock()

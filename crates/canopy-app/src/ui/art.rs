@@ -63,6 +63,10 @@ pub fn empty_error() -> Art {
 }
 
 /// A soft radial halo: `color` at the centre fading to nothing at `radius`.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn radial_halo(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
     const SEGMENTS: u32 = 64;
     let mut mesh = egui::Mesh::default();
@@ -81,6 +85,12 @@ fn radial_halo(painter: &egui::Painter, center: Pos2, radius: f32, color: Color3
 }
 
 /// Draws `art` at `size` points (its aspect ratio is kept, centred in `size`).
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants; values drawn on screen, where f32 rounding is invisible"
+)]
 pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
     if !ui.is_rect_visible(rect) {
@@ -186,6 +196,10 @@ fn progress(ui: &Ui, art: Art, id: egui::Id) -> f32 {
 }
 
 /// The grow-in timing behind `progress`, whatever the motion settings.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 fn growth(ui: &Ui, art: Art, id: egui::Id) -> f32 {
     let now = ui.input(|i| i.time);
     let frame = ui.ctx().cumulative_frame_nr();
@@ -201,6 +215,10 @@ fn growth(ui: &Ui, art: Art, id: egui::Id) -> f32 {
 }
 
 /// The welcome canopy's halos breathe slowly; the screen already repaints for its drifting glow.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 fn breathing(ui: &Ui, art: Art) -> f32 {
     if art != Art::Welcome || motion::reduced() {
         return 1.0;
@@ -276,6 +294,10 @@ fn stroke(
         let lengths = cumulative(&pts);
         let total = lengths.last().copied().unwrap_or(0.0);
         let mut at = 0.0;
+        #[expect(
+            clippy::while_float,
+            reason = "each step moves a positive dash and gap along the line"
+        )]
         while at < total {
             let a = point_at(&pts, &lengths, at);
             let b = point_at(&pts, &lengths, (at + dash).min(total));
@@ -328,6 +350,10 @@ fn cap(painter: &egui::Painter, at: Pos2, width: f32, color: Color32) {
 
 /// Fills a closed outline as a fan from its centre: right for the star-shaped outlines used here
 /// (every edge visible from the centre), which convex filling would not be.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn fill_star(painter: &egui::Painter, pts: &[Pos2], color: Color32) {
     if pts.len() < 3 {
         return;
@@ -338,6 +364,10 @@ fn fill_star(painter: &egui::Painter, pts: &[Pos2], color: Color32) {
     for p in pts {
         mesh.colored_vertex(*p, color);
     }
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a mesh holds far fewer than 2^32 vertices"
+    )]
     let n = pts.len() as u32;
     for i in 0..n {
         mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
@@ -747,6 +777,10 @@ fn error_scene() -> Scene {
 }
 
 /// Parses absolute `M L H V C Z` path data into flattened subpaths; whether the path is closed.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn parse(d: &str) -> (Vec<Polyline>, bool) {
     let mut tokens = Vec::new();
     let mut num = String::new();

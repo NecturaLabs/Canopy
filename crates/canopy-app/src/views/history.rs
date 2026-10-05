@@ -276,6 +276,12 @@ fn paint_line(
     end
 }
 
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible; egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<Action>) -> bool {
     let p = palette(ui.ctx());
     let s = p.s();
@@ -1415,7 +1421,7 @@ mod tests {
                 RefKind::Tag,
                 RefKind::Head,
             ] {
-                for lane in 0..p.lanes.len() as u16 {
+                for lane in (0u16..).take(p.lanes.len()) {
                     let label = RefLabel {
                         name: "feature/readability".into(),
                         kind,

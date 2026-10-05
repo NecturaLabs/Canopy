@@ -40,6 +40,10 @@ pub const SECTIONS: &[Section] = &[
 const MAX_WIDTH: f32 = 1360.0;
 
 /// Paints the gallery over the whole window, scrolled down `page` window heights.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 pub fn show(ctx: &egui::Context, page: usize) {
     let screen = ctx.content_rect();
     egui::Area::new(Id::new("canopy-gallery"))
@@ -101,6 +105,10 @@ fn caption(ui: &mut Ui, text: &str) {
 }
 
 /// A titled band: `draw` on the content ground (left) and on the chrome (right).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 pub fn band(ui: &mut Ui, name: &str, draw: fn(&mut Ui)) {
     let s = theme::surfaces(ui.ctx());
     ui.add_space(theme::XL);
@@ -448,6 +456,11 @@ fn slice(ui: &mut Ui, style: Style) {
 }
 
 /// Each animated component at 0, 0.5 and 1 of its transition, painted with a fixed progress.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 fn motion_strip(ui: &mut Ui) {
     for kind in [
         ButtonKind::Primary,

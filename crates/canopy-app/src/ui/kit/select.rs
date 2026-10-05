@@ -145,6 +145,11 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
 
     /// Shows the trigger (and the list while open). The response is the trigger's and reports
     /// `changed` when a new value was chosen.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; values drawn on screen, where f32 rounding is invisible"
+    )]
     pub fn show(self, ui: &mut Ui) -> Response {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);

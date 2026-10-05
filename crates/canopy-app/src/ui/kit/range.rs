@@ -145,6 +145,10 @@ impl<'a, T: Numeric> Slider<'a, T> {
         }
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+    )]
     pub fn show(self, ui: &mut Ui) -> Response {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
@@ -406,6 +410,10 @@ pub(crate) fn gallery(ui: &mut Ui) {
             ui.vertical(|ui| {
                 gallery_caption(ui, name);
                 ui.add_space(theme::XL);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "the gallery shows a handful of states"
+                )]
                 let mut v = 3 + i as u32 * 4;
                 let slider = Slider::new(&mut v, 0..=25)
                     .label(name)

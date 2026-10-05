@@ -140,6 +140,12 @@ impl<'t> Core<'t> {
         .inner
     }
 
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "values drawn on screen, where f32 rounding is invisible; egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+    )]
     fn show_inner(self, ui: &mut Ui, id: Id, enabled: bool) -> (Response, bool) {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);

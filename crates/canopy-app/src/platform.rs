@@ -401,7 +401,10 @@ fn output_within(mut cmd: Command, timeout: Duration) -> Option<String> {
 /// `(<uint32 1>,)` from the portal: 1 asks for reduced motion.
 #[cfg_attr(
     not(any(target_os = "linux", test)),
-    expect(dead_code, reason = "a Linux answer")
+    expect(
+        dead_code,
+        reason = "only the Linux query and the tests read this answer"
+    )
 )]
 fn parse_portal(out: &str) -> Option<bool> {
     let value = out
@@ -420,7 +423,10 @@ fn parse_portal(out: &str) -> Option<bool> {
 /// `true` or `false` for `enable-animations`; disabled animations mean reduced motion.
 #[cfg_attr(
     not(any(target_os = "linux", test)),
-    expect(dead_code, reason = "a Linux answer")
+    expect(
+        dead_code,
+        reason = "only the Linux query and the tests read this answer"
+    )
 )]
 fn parse_gsettings(out: &str) -> Option<bool> {
     match out.trim() {
@@ -433,7 +439,10 @@ fn parse_gsettings(out: &str) -> Option<bool> {
 /// `1` or `0` from `defaults read`.
 #[cfg_attr(
     not(any(target_os = "macos", test)),
-    expect(dead_code, reason = "a macOS answer")
+    expect(
+        dead_code,
+        reason = "only the macOS query and the tests read this answer"
+    )
 )]
 fn parse_defaults(out: &str) -> Option<bool> {
     match out.trim() {
@@ -446,7 +455,10 @@ fn parse_defaults(out: &str) -> Option<bool> {
 /// `True` or `False` for client-area animation; animations off mean reduced motion.
 #[cfg_attr(
     not(any(target_os = "windows", test)),
-    expect(dead_code, reason = "a Windows answer")
+    expect(
+        dead_code,
+        reason = "only the Windows query and the tests read this answer"
+    )
 )]
 fn parse_windows(out: &str) -> Option<bool> {
     match out.trim().to_ascii_lowercase().as_str() {
@@ -459,7 +471,10 @@ fn parse_windows(out: &str) -> Option<bool> {
 /// The value of `name` in `reg query` output: `    EnableTransparency    REG_DWORD    0x1`.
 #[cfg_attr(
     not(any(target_os = "windows", test)),
-    expect(dead_code, reason = "a Windows answer")
+    expect(
+        dead_code,
+        reason = "only the Windows query and the tests read this answer"
+    )
 )]
 fn parse_reg_dword(out: &str, name: &str) -> Option<u32> {
     out.lines().find_map(|line| {

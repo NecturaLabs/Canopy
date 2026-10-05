@@ -70,6 +70,10 @@ impl RowKind {
 
 /// The opaque colour of a row's background: its ground with the zebra, selection, hover and
 /// press overlays on top. The graph paints node rings and avatar rings in it.
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "zebra, selection, hover and press are independent overlays"
+)]
 pub fn ground(
     p: &Palette,
     base: Color32,
@@ -694,6 +698,10 @@ impl<'a> TreeRow<'a> {
         self.show(ui)
     }
 
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "values drawn on screen, where f32 rounding is invisible"
+    )]
     pub fn show(self, ui: &mut Ui) -> KitResponse<Option<TreeNav>> {
         let m = theme::metrics();
         let p = theme::palette(ui.ctx());
@@ -1369,7 +1377,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
             .label(format!("feat(ui): commit number {i}"))
             .trailing(format!(
                 "{:07x}",
-                0x00ab_cdef_u32.wrapping_mul(i as u32 + 3)
+                0x00ab_cdef_u32.wrapping_mul(u32::try_from(i).map_or(0, |i| i + 3))
             ))
             .selected(sel.contains(i))
             .joined(above, below)

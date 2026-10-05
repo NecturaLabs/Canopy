@@ -19,6 +19,10 @@ enum IdentityStep {
     Ask,
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "the step is decided from independent facts about the app's state"
+)]
 fn identity_step(
     asked: bool,
     consent_pending: bool,
@@ -265,7 +269,7 @@ impl CanopyApp {
                     },
                     n.title,
                     n.body,
-                    Some(&tab.path.clone()),
+                    Some(&tab.path),
                 );
             }
             // Taken after the poll that set it, so the dialog shows in this frame.

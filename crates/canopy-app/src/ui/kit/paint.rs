@@ -29,6 +29,11 @@ pub fn shadow(painter: &Painter, rect: Rect, radius: CornerRadius, p: &Palette, 
 
 /// The shapes [`shadow`] paints, for surfaces painted into a reserved slot once their size is
 /// known (floating layers).
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 pub fn shadow_shapes(rect: Rect, radius: CornerRadius, p: &Palette, m: &Material) -> Vec<Shape> {
     let mut shapes = Vec::with_capacity(m.layers.len());
     for l in m.layers {
@@ -55,6 +60,11 @@ pub fn shadow_shapes(rect: Rect, radius: CornerRadius, p: &Palette, m: &Material
     shapes
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 fn shrink_radius(r: CornerRadius, by: f32) -> CornerRadius {
     let by = by.round().clamp(0.0, 255.0) as u8;
     CornerRadius {
@@ -66,6 +76,10 @@ fn shrink_radius(r: CornerRadius, by: f32) -> CornerRadius {
 }
 
 /// A 1 x 32 ramp from `top` to `bottom`, uploaded once per pair of colours and reused.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn ramp(ctx: &Context, top: Color32, bottom: Color32) -> TextureHandle {
     const N: usize = 32;
 
@@ -159,6 +173,11 @@ pub fn recess(painter: &Painter, rect: Rect, radius: CornerRadius, color: Color3
     painter.extend(recess_shape(rect, radius, color, alpha));
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 fn recess_shape(rect: Rect, radius: CornerRadius, color: Color32, alpha: u8) -> Option<Shape> {
     if alpha == 0 {
         return None;
@@ -251,6 +270,11 @@ pub fn rim(painter: &Painter, rect: Rect, radius: CornerRadius, color: Color32) 
 
 /// The outside focus ring: `FOCUS_WIDTH` in `color`, `FOCUS_OFFSET` outside the control with the
 /// gap filled by `moat` (the surface behind). The painter must not clip outside `rect`.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 pub fn focus_ring(
     painter: &Painter,
     rect: Rect,
@@ -305,6 +329,11 @@ pub fn seam_v(painter: &Painter, x: f32, y: Rangef, color: Color32) {
 
 /// Deeper's focused-pane edge: a 1 pt ring inside the pane, `focus` at `theme::FOCUS_EDGE`'s alphas
 /// from the top down, scaled by `t` (its fade-in).
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 pub fn focus_edge(painter: &Painter, rect: Rect, radius: CornerRadius, focus: Color32, t: f32) {
     if t <= 0.0 {
         return;
@@ -440,6 +469,11 @@ pub fn scroll_fade<R>(
 /// A spinner: a 270 degree arc turning once a second around `center`, `color` at full strength
 /// over a faint full circle. Repaints itself while painted; still (one fixed arc) with reduced
 /// motion.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; values drawn on screen, where f32 rounding is invisible"
+)]
 pub fn spinner(painter: &Painter, center: Pos2, radius: f32, width: f32, color: Color32) {
     let ctx = painter.ctx();
     let still = crate::ui::motion::reduced();

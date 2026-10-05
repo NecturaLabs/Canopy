@@ -6,6 +6,10 @@ pub(super) fn home() -> String {
     crate::settings::home_dir().display().to_string()
 }
 
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "git refuses a ref name ending in `.lock`, compared as written"
+)]
 pub(super) fn valid_ref_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('-')

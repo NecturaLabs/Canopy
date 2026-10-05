@@ -139,6 +139,10 @@ impl Menu<'_> {
     /// An item that opens `add` as a submenu: after the pointer rests on it for `SUBMENU_DELAY`,
     /// or on Right or Enter; Left or Esc closes it. The item stays highlighted while it is open.
     /// Returns what `add` returned, while open.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+    )]
     pub fn submenu<R>(
         &mut self,
         glyph: &str,
@@ -280,6 +284,10 @@ fn body<R>(
 }
 
 /// Shows a menu in `popup` anchored to `anchor`.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 fn show_popup<R>(
     anchor: &Response,
     popup: Popup<'_>,
@@ -361,6 +369,10 @@ pub fn menu<R>(button: &Response, add: impl FnOnce(&mut Menu<'_>) -> R) -> Optio
 }
 
 /// A menu painted in place, `width` wide (the gallery shows menus without opening them).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 pub(crate) fn inline<R>(
     ui: &mut Ui,
     id_salt: impl std::hash::Hash + std::fmt::Debug,

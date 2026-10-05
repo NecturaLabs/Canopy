@@ -160,6 +160,10 @@ pub fn scrim(painter: &Painter, rect: Rect, alpha: f32) {
 
 /// How long the overlay `id` has been shown in an unbroken run of frames, and whether this is
 /// the first frame of the run (it was not shown the frame before).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 pub(crate) fn presence(ctx: &Context, id: Id) -> (f32, bool) {
     #[derive(Clone, Copy)]
     struct Run {
@@ -393,6 +397,10 @@ fn without_callbacks(shape: Shape) -> Shape {
 }
 
 /// Starts the exits of layers not shown this pass and paints the ones still leaving.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 fn paint_exits(ctx: &Context) {
     let pass = ctx.cumulative_pass_nr();
     let now = ctx.input(|i| i.time);
@@ -712,6 +720,10 @@ impl<'a> Popover<'a> {
         self
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+    )]
     pub fn show<R>(self, add: impl FnOnce(&mut Ui) -> R) -> Option<InnerResponse<R>> {
         let Popover {
             id,
@@ -1079,6 +1091,10 @@ impl<'a> Dialog<'a> {
     }
 
     /// The card at the cursor, at most `max_h` tall. Returns the result and the card's rect.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+    )]
     fn card(self, ui: &mut Ui, max_h: f32, fresh: bool) -> (DialogResult, Rect) {
         let Dialog {
             id,
@@ -1325,6 +1341,12 @@ impl<'a> Dialog<'a> {
 
 /// The gallery's Overlays section, drawn inline and forced open: tooltips with keycaps, a
 /// popover, both dialogs on a local scrim, their entrances part-way, and the toast cards.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants; values drawn on screen, where f32 rounding is invisible"
+)]
 pub(crate) fn gallery(ui: &mut Ui) {
     let m = theme::metrics();
     let p = theme::palette(ui.ctx());

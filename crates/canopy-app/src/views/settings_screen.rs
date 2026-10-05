@@ -154,6 +154,10 @@ const SHELL_EXIT_SCALE: f32 = 0.97;
 
 /// Draws the screen. `forges` are the GitHub/GitLab remotes of open repositories, so their hosts
 /// show up under Accounts.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 pub fn show(
     ctx: &egui::Context,
     screen: &mut SettingsScreen,
@@ -659,6 +663,12 @@ fn number_field(
 const COMMIT_PAGE: RangeInclusive<f64> = 200.0..=50_000.0;
 const COMMIT_PAGE_STEP: usize = 100;
 
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants; values drawn on screen, where f32 rounding is invisible"
+)]
 fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     let m = theme::metrics();
     heading(ui, "Theme");
@@ -799,6 +809,10 @@ const ZOOM_FIELD_WIDTH: f32 = 72.0;
 /// The zoom slider and the percentage beside it. Dragging previews the value; the interface
 /// rescales once the drag ends (rescaling under the pointer would move the slider away from it).
 /// A typed percentage applies on Enter.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> Response {
     let percent = |v: f64| format!("{:.0}%", v * 100.0);
     // Left to right, so the value follows the rail, wherever the row puts the pair.
@@ -1375,6 +1389,12 @@ fn git(
 }
 
 /// Commits per page: a number field between − and + steppers.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants; values drawn on screen, where f32 rounding is invisible"
+)]
 fn commit_page(ui: &mut Ui, s: &mut Settings) {
     let (lo, hi) = (*COMMIT_PAGE.start() as usize, *COMMIT_PAGE.end() as usize);
     // Right to left: +, the field, −.
@@ -2258,8 +2278,8 @@ mod tests {
         let font = FontId::proportional(theme::metrics().small_size);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                assert_eq!(elide_middle(ui, path, &font.clone(), 10_000.0), path);
-                let cut = elide_middle(ui, path, &font.clone(), 200.0);
+                assert_eq!(elide_middle(ui, path, &font, 10_000.0), path);
+                let cut = elide_middle(ui, path, &font, 200.0);
                 assert!(cut.contains('…') && cut.starts_with("From") && cut.ends_with("gitconfig"));
                 let width = ui
                     .painter()
@@ -2267,7 +2287,7 @@ mod tests {
                     .size()
                     .x;
                 assert!(width <= 200.0, "{width}");
-                assert_eq!(elide_middle(ui, path, &font.clone(), 0.0), "…");
+                assert_eq!(elide_middle(ui, path, &font, 0.0), "…");
             });
         });
         output.textures_delta.clear();

@@ -42,6 +42,10 @@ fn row_heights() -> (f32, f32) {
 }
 
 /// Bounds the initial inspector height without walking the lines of a large diff.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 pub(super) fn inspector_height(d: &FileDiff, limit: f32) -> f32 {
     let (line_h, hunk_h) = row_heights();
     let mut height = theme::XL * 4.0;
@@ -314,6 +318,10 @@ fn click_line(
 }
 
 /// Draws the diff of the selected file.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let s = p.s();
@@ -471,7 +479,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                                     let mut cell = ui.new_child(UiBuilder::new().max_rect(r));
                                     cell.set_clip_rect(clip);
                                     if let Some(m) = line_cell(
-                                        &mut cell,
+                                        &cell,
                                         &cx,
                                         line,
                                         cx.spans(h, l),
@@ -513,6 +521,10 @@ fn gutters(d: &FileDiff) -> (bool, bool) {
 }
 
 /// The file header: name, counts, layout and options, and the file-level action.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 fn header(
     ui: &mut Ui,
     tab: &mut RepoTab,
@@ -705,8 +717,12 @@ fn layout_toggle(
     clippy::too_many_arguments,
     reason = "a cell needs its line, spans, rectangle, gutter, sides, selection and id"
 )]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn line_cell(
-    ui: &mut Ui,
+    ui: &Ui,
     cx: &Ctx<'_>,
     line: &DiffLine,
     spans: &[Span],
@@ -1224,6 +1240,10 @@ mod tests {
 
     /// Labels and bounds of the AccessKit nodes one frame of a working-copy hunk header made,
     /// `width` wide, and the actions it pushed.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+    )]
     fn hunk_frame(
         ctx: &egui::Context,
         width: f32,

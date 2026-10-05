@@ -519,6 +519,10 @@ fn a_surface_at_another_rect_leaves_the_backdrop_where_it_was() {
 }
 
 #[test]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn at_most_four_glass_layers_a_frame() {
     let ctx = egui::Context::default();
     setup(&ctx, ThemeId::Midnight, true, Backend::Supported);
@@ -539,6 +543,10 @@ fn at_most_four_glass_layers_a_frame() {
 }
 
 #[test]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn layers_nobody_sees_take_no_allowance() {
     let ctx = egui::Context::default();
     setup(&ctx, ThemeId::Midnight, true, Backend::Supported);
@@ -660,6 +668,11 @@ fn luminance(c: Color32) -> f64 {
 
 /// The composite shader's colour maths in Rust: saturation from Rec. 709 luma, then the luminance
 /// clamp, in linear light.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 fn shade(c: Color32, dark: bool, cap: f32) -> Color32 {
     let lin = |v: u8| {
         let v = f64::from(v) / 255.0;

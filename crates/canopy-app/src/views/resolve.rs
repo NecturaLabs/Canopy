@@ -103,6 +103,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     }
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
@@ -354,6 +358,10 @@ fn code_row_height(ui: &Ui) -> f32 {
 
 /// Height of `n` code lines stacked `spacing` apart (`row_h` each), as [`code_lines`] lays them
 /// out; an empty list shows one "(nothing)" line.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn code_height(n: usize, row_h: f32, spacing: f32) -> f32 {
     let n = n.max(1) as f32;
     n * row_h + (n - 1.0) * spacing
@@ -366,6 +374,10 @@ fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
     code_lines_at(ui, lines, color, None);
 }
 
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line: Option<usize>) {
     if lines.is_empty() {
         ui.label(

@@ -59,6 +59,10 @@ struct Row<'a> {
 
 /// A sidebar item: icon and label, the checked-out branch selected, ahead and behind counts as
 /// badges at the right.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn row(ui: &mut Ui, r: &Row<'_>) -> egui::Response {
     let m = theme::metrics();
     let badges: Vec<(String, Tone)> =

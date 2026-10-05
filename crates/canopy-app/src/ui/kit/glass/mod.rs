@@ -469,6 +469,11 @@ fn backdrop_shape_with(
 }
 
 /// The window size in pixels, as eframe paints it.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
+)]
 fn screen_px(viewport: Rect, ppp: f32) -> Option<[u32; 2]> {
     let side = |points: f32| {
         let px = (points * ppp).round();
@@ -698,6 +703,10 @@ impl Plan {
     /// The opaque fallback as two scissor rectangles: the layer without its left and right
     /// corner columns, and without its top and bottom corner rows, so no square corner shows
     /// outside the rounded layer.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+    )]
     pub(super) fn cross(&self) -> [Option<PxRect>; 2] {
         let r = self.radii.iter().fold(0.0_f32, |a, &b| a.max(b)).ceil();
         let r = if r.is_finite() && r < COORD_LIMIT {
@@ -717,6 +726,10 @@ impl Plan {
 }
 
 /// `v` points in pixels, rounded by `round`, if finite and in range.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+)]
 fn px(v: f32, ppp: f32, round: fn(f32) -> f32) -> Option<i32> {
     let p = round(v * ppp);
     (p.is_finite() && p.abs() < COORD_LIMIT).then_some(p as i32)
@@ -725,6 +738,10 @@ fn px(v: f32, ppp: f32, round: fn(f32) -> f32) -> Option<i32> {
 /// Works out one paint of a layer at `layer` (points) with corner `radius`, on a screen of
 /// `screen` pixels at `ppp`, clipped to `clip` (points), with textures of at most `max_side`.
 /// `None` when nothing of the layer is visible or an input is out of range.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 pub(super) fn plan(
     layer: Rect,
     radius: CornerRadius,
@@ -880,6 +897,10 @@ impl Soak {
     }
 
     /// Paints this frame's layers. Returns true after the last frame.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "values drawn on screen, where f32 rounding is invisible"
+    )]
     pub fn frame(&mut self, ctx: &egui::Context) -> bool {
         let last = self.warmup.saturating_add(self.frames);
         if self.frame >= last {
@@ -964,6 +985,10 @@ fn parse_vm_rss(status: &str) -> Option<u64> {
 /// The gallery section: the blur's state, then the same floating card opaque and translucent
 /// over a busy backdrop. The translucent one is forced on whatever the setting says (the theme
 /// and the graphics driver still decide).
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 pub(crate) fn gallery(ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let p = theme::palette(&ctx);
@@ -1043,11 +1068,19 @@ pub(crate) fn gallery(ui: &mut Ui) {
 
 /// Stripes in the lane colours, light and dark bars and lines of text: content whose blur is easy
 /// to see.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "values drawn on screen, where f32 rounding is invisible"
+)]
 fn busy_backdrop(painter: &Painter, rect: Rect, p: &Palette) {
     let painter = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
     let bar = 14.0;
     let mut x = rect.left();
     let mut i = 0_u16;
+    #[expect(
+        clippy::while_float,
+        reason = "each step moves a fixed bar width across the rectangle"
+    )]
     while x < rect.right() {
         let r = Rect::from_min_max(
             pos2(x, rect.top()),
