@@ -118,15 +118,16 @@ thread.
 | `ui/kit/select.rs` | `Select`, which replaces `ComboBox`: a Secondary trigger and a floating list driven from the keyboard. |
 | `ui/kit/toggle.rs` | `Checkbox` (with indeterminate), `Radio`, `RadioGroup` (arrow keys, one Tab stop) and `Switch`. |
 | `ui/kit/choice.rs` | `Segmented` with its sliding thumb, `ViewTabs` and `UnderlineTabs` with a sliding indicator. |
+| `ui/kit/tabs.rs` | `DocTabs`, the title bar's repository tabs: busy spinner, ahead/behind counts, close on hover and middle click, sideways scrolling with edge fades, and closed tabs collapsing out. |
 | `ui/kit/range.rs` | `Slider`, which replaces `egui::Slider`: keyboard steps and a value bubble while dragged. |
 | `ui/kit/progress.rs` | `Progress` (determinate, indeterminate, line), `Spinner` and `Skeleton`; all static under reduced motion. |
 | `ui/kit/menu.rs` | Menus and context menus: items with icon, shortcut, check, danger, disabled-with-reason and second line, headings, separators and delayed submenus. |
-| `ui/kit/overlay.rs` | The floating surface every layer shares (shadow, glass backdrop, fill, ring), `Tooltip`, `Popover`, `Dialog` and its scrim, entrances and exit fades. |
-| `ui/kit/toast.rs` | `ToastCard`, the toast's painting; the queue and timers stay in `ui/toast.rs`. |
+| `ui/kit/overlay.rs` | The floating surface every layer shares (shadow, glass backdrop, fill, ring) and the ground its content sits on, scrolling bodies with edge fades, the room a modal card may take, `Tooltip`, `Popover`, `Dialog` and its scrim, entrances and exit fades. |
+| `ui/kit/toast.rs` | `ToastCard`, the toast's painting; the queue, its pausing timers and the cards' slide into place stay in `ui/toast.rs`. |
 | `ui/kit/row.rs` | `ListRow`, `TreeRow`, `Disclosure`, `SectionHeader` and the Shift/Ctrl `Selection`. |
 | `ui/kit/chip.rs` | `Badge`, `CountBadge`, `ChangeBadge`, `RefPill`, `RefOverflow`, `Keycap`, `KeyChord`, `StatusDot`, `DiffStat` and the status `Chip`. |
 | `ui/kit/avatar.rs` | `Avatar` and `AvatarStack` with the picture crossfade. |
-| `ui/kit/surface.rs` | `PaneFrame`, `PaneHeader`, `Deck` (the top bars), `Card`, `Banner`, `Callout`, `EmptyState` and `InsetBox`. |
+| `ui/kit/surface.rs` | `PaneFrame`, `PaneHeader`, `Deck` (the top bars), `Card`, `Banner` and `Callout` with their `NoticeAction`s, `EmptyState` and `InsetBox`. |
 | `ui/kit/graph.rs` | The history row painter: circle nodes, hollow merges, the HEAD halo, a dashed WIP node and lane spacing by density. |
 | `ui/kit/split.rs` | Placeholder for `SplitHandle` (custom split handles), not built yet. |
 | `ui/kit/testkit.rs` | Test-only helpers for the kit's tests: a themed context, frames with input events and the AccessKit nodes a frame produced. |

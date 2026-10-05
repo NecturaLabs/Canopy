@@ -163,11 +163,13 @@ kit's helpers in `ui/kit/anim.rs`.
 
 | Token | Duration | Use |
 |---|---|---|
-| `INSTANT` | 0 | Rows, selection, menu-item highlight, palette filtering, keyboard-opened menus |
+| (none) | 0 | Rows, selection, menu-item highlight, palette filtering, keyboard-opened menus change at once |
 | `FAST` / `FAST_OUT` | 80 / 120ms | Hover in and out, press release, focus ring in |
 | `BASE` | 150ms | Chevrons, label crossfades, tooltips, field halo |
 | `SLOW` | 220ms | Dialog and popover entrance |
 | `TOAST_IN` | 280ms | Toast slide-in |
+| `TOAST_SHIFT` | 200ms | Toasts sliding into the place of one that left |
+| `TAB_CLOSE` | 250ms | A closed repository tab collapsing |
 | `EXIT_POPUP` / `EXIT_DIALOG` / `EXIT_TOAST` | 100 / 120 / 160ms | Exits |
 | `TOOLTIP_DELAY` / `TOOLTIP_SKIP` | 450 / 300ms | First tooltip delay; no delay right after one closed |
 | `LOADING_DELAY` / `LOADING_MIN` | 150 / 400ms | Spinners appear late and stay a minimum time |
@@ -326,7 +328,8 @@ Primary, Secondary, Ghost and Danger at Sm, Md and Lg, plus icon, tool, link and
 disabled controls are the whole control at 42% and stay hoverable for their reason. Keyboard focus
 draws a 2 pt ring 2 pt outside the control (`danger_base` on danger buttons), only after keyboard
 use. `tools/screenshot.sh <repo> out.png --overlay gallery [--style deeper] [--density dense]
-[--gallery-page N]` renders every component in every state.
+[--gallery-page N]` renders every component in every state; a page past the end shows the last,
+and each page is numbered at the bottom right.
 
 
 ### Ref pill
@@ -356,10 +359,40 @@ when checked. Both carry their name for assistive technology and show the focus 
 
 ### Scroll edges
 
-Lists that scroll inside a fixed area (the command palette, the cheatsheet) fade their top and
-bottom 12 points into the surface, at 85% strength, where more content lies beyond, so a cut row reads
-as "more" (`kit::paint::scroll_fade`). The palette's list also shows whole rows only. A scrollbar's handle
-is never shorter than 32 points, so a long document's stays easy to see and grab.
+Bodies that scroll inside a card (the command palette, the cheatsheet, dialog bodies) are
+`kit::overlay::scroll_body`: they fade their top and bottom 12 points into the card's ground, at 85%
+strength, where more content lies beyond, so a cut row reads as "more" (`kit::paint::scroll_fade`);
+their scrollbar stands 2 points in from the card's edge; and once they overflow, 8 points of room
+follow the last line so it scrolls clear of the edge. The ground is `kit::overlay::ground`, the fill
+the layer really has (the translucent overlay over glass, else the opaque overlay), so the fades and
+row washes match the card in both. The palette opens on whole entries, its group headings counted.
+A scrollbar's handle is never shorter than 32 points, so a long document's stays easy to see and
+grab.
+
+### Banner and callout
+
+`kit::surface::Banner` is the one repository-state notice at the top of a view (a merge, rebase or
+cherry-pick in progress): the tone's tint over the chrome, a seam in the tone, icon, title and body
+left, and up to two `Sm` ghost actions right. Each action is a `NoticeAction`: a label, an optional
+glyph and its tone (Abort's `danger` circle), and, when unavailable, disabled with the reason on
+hover ("Resolve the 2 conflicts first"), so History, Changes and Requests share one layout.
+`Callout` is the inline note: tint, icon, optional title, wrapped text and up to two actions under
+it, their labels in line with the text (`Callout::show_actions` reports a click). `Card::compact`
+gives picture-led cards (the settings theme cards) `SM` padding instead of `card_pad`.
+
+### Document tabs
+
+`kit::tabs::DocTabs` are the repository tabs in the title bar (spec 4.8): 30 / 24 points tall,
+100 to 220 wide, padding 10 left and 6 right, 7 between icon, name, counts and close. The active
+tab is the `tab` fill with its 1 pt `tab_edge` ring (and `Elevation::Tab` in Deeper); the others
+are transparent until hovered (`hover`, label to `text`). A folder icon (a spinner while the
+repository works), the name ellipsised, ahead/behind `↑n ↓n` in mono `accent`, and a close button
+on hover and on the active tab; a middle click closes too, and the tooltip gives the path and the
+switching shortcut. Tabs that need more room than they have scroll sideways (the wheel scrolls
+them) and fade 16 points into the deck at an edge that hides more; the active tab scrolls into view
+when it changes. A closed tab collapses to nothing over `TAB_CLOSE` while its neighbours slide in.
+AccessKit: a `TabList` named "Repositories", a `Tab` per tab with its selected state, and the close
+button named "Close <name>".
 
 ### Illustrations
 
@@ -385,20 +418,23 @@ the last picture.
 
 ### Toast
 
-`elevated` cards share a bounded bottom-right scroll stack, at most 408 points wide, so five
-errors remain reachable even in a compact zoomed window. Newest notices lead the stack. Titles
-truncate without displacing Close. Errors stay until dismissed, offer Close and
-Copy, and keep raw output in a scrollable monospace Details disclosure. Known failures lead
-with a plain explanation. A rejected push offers Pull for its originating repository; account
-failures offer Accounts. Other toasts dismiss on a card click or expire after four seconds.
-The stack retains five notices; arrivals and exits fade without shifting card geometry.
+Overlay cards (glass with Translucent surfaces on) share a bounded bottom-right scroll stack, at
+most 408 points wide, so five errors remain reachable even in a compact zoomed window. Newest
+notices lead the stack. Titles truncate without displacing Close. Errors stay until dismissed,
+offer Close and Copy, and keep raw output in a scrollable monospace Details disclosure. Known
+failures lead with a plain explanation. A rejected push offers Pull for its originating repository;
+account failures offer Accounts. Other toasts dismiss on a card click or after four seconds, which
+run only while the pointer is off the stack and the window has focus. The stack retains five
+notices; a card enters from the right and leaves to the right as it fades, and the cards above one
+that left slide into its place (`TOAST_SHIFT`, instant with reduced motion).
 
 ### Command palette
 
 Placed near the top of the window, up to 620 points wide, `radius-lg`, overlay elevation. Its
 height stays inside the viewport. A search field at the top, then scrollable results: icon, command name with matched characters in `accent`, and
 the shortcut right-aligned in `text-faint`. Up/Down move, Enter runs, Esc closes. Branch names
-appear as "Checkout <branch>" entries.
+appear as "Checkout <branch>" entries. Under Appearance, besides the themes, it sets Style,
+Density, Translucent surfaces (On only where it can work) and Motion, as Settings does.
 
 Field placeholders end in an ellipsis when they ask the user to act (for example, "Search
 shortcuts…"); example values and field names do not.
@@ -410,9 +446,13 @@ while their labels and shortcuts remain discoverable in tooltips and the palette
 
 ### Dialog
 
-Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, bounded by the viewport. Title, body, then right-aligned
-buttons: secondary (outlined) then primary (the solid `button` fill, the same widget everywhere,
-with a focus ring). Destructive confirmations use a
+Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, centred and no taller than
+fits between the tab strip and the status bar (`kit::overlay::modal_room`, which the settings
+screen may take too). Title, body (a `scroll_body` when it overflows), then right-aligned `Md`
+buttons as in the approved preview: secondary (outlined) then primary (the solid `button` fill,
+the same widget everywhere, with a focus ring). Tab reaches the footer's buttons in reading order,
+left to right; a choice between two equal answers (crash reports) is two Secondary buttons with no
+Enter default and no initial focus. Destructive confirmations use a
 solid `danger` primary button (`kit::Button::danger`, its text white or black by contrast
 with the theme's `danger`) whose label names the action ("Delete branch", "Discard 3 files"), never
 "OK"; Cancel has the initial focus, so Enter does not confirm a destructive dialog unless the button

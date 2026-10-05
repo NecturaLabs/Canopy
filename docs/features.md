@@ -174,7 +174,8 @@ list summaries do not carry those verdicts. Bulk or bounded cached list badges r
 | Native folder chooser without blocking the app | Unreleased | ? | ? | ? |
 | Configurable keybindings | Planned | ? | ? | ? |
 | Dark and light themes (two in v0.1, eight in `main`, one high-contrast) | Done | Yes | Yes | ? |
-| Appearance options: Style (Standard, Deeper), Density (Comfortable, Dense), Motion (match system, reduced, full); Translucent surfaces (off by default; the command palette so far, other floating layers as they move to the component kit) | Unreleased | ? | ? | ? |
+| Appearance options: Style (Standard, Deeper), Density (Comfortable, Dense), Motion (match system, reduced, full); Translucent surfaces (off by default; menus, select lists, popovers, dialogs, toasts, the command palette and the cheatsheet) | Unreleased | ? | ? | ? |
+| Command palette entries for Style, Density, Translucent surfaces and Motion | Unreleased | ? | ? | ? |
 | Custom themes | Planned | No | Yes | No |
 | Confirmation for destructive operations | Done | Yes | Yes | Yes |
 | Toast notifications with git's error output and a viewport-bounded overflow stack | Done | ? | ? | ? |
