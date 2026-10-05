@@ -1,4 +1,218 @@
-# Tests may unwrap and expect: a panic there is a failed assertion. Production code may not
-# (workspace lints `unwrap_used` and `expect_used`).
+# Clippy configuration. The lint levels are in the workspace Cargo.toml ([workspace.lints]).
+
+# Nothing outside the workspace uses these crates (publish = false), so lints may suggest changing
+# public signatures.
+avoid-breaking-exported-api = false
+
+# Tests may unwrap, expect, panic and print: a panic there is a failed assertion. Production code
+# may not (workspace lints `unwrap_used`, `expect_used`, `panic`, `print_stdout`, `print_stderr`).
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+
+doc-valid-idents = ["GitHub", "GitLab", "OpenGL", "WebGL", "macOS", "..", "libgit2", "egui", "eframe", "egui_glow", "Wayland"]
+
+# AGENTS.md, "Conventions": every repository mutation and all Git network traffic run the git
+# executable through canopy_core::cli. The few other programs Canopy starts (the platform's URL
+# opener, file manager and terminal, the updater's installer) carry an `expect` naming them.
+[[disallowed-methods]]
+path = "std::process::Command::new"
+reason = "git runs through canopy_core::cli (AGENTS.md, Conventions); other programs need an expect saying why"
+
+# AGENTS.md, "Conventions": mutations go through the git CLI; libgit2 only reads.
+[[disallowed-methods]]
+path = "git2::Repository::init"
+reason = "libgit2 only reads; create repositories with the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::commit"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::set_head"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::set_head_detached"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::checkout_head"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::checkout_index"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::checkout_tree"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::branch"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::reference"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::reference_symbolic"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::tag"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::tag_lightweight"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::tag_delete"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::stash_save"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::stash_apply"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::stash_pop"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::stash_drop"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::remote"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::remote_delete"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::remote_rename"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::remote_set_url"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::merge"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::rebase"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::cherrypick"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::revert"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::reset"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::cleanup_state"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::apply"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Index::write"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Index::add_path"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Index::add_all"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Index::remove_path"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Branch::delete"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Branch::rename"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Branch::set_upstream"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Reference::delete"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Reference::set_target"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Remote::fetch"
+reason = "Git network traffic runs the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Remote::push"
+reason = "Git network traffic runs the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Remote::connect"
+reason = "Git network traffic runs the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Config::set_str"
+reason = "libgit2 only reads; write configuration with the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Config::set_bool"
+reason = "libgit2 only reads; write configuration with the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Config::set_i32"
+reason = "libgit2 only reads; write configuration with the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Config::set_i64"
+reason = "libgit2 only reads; write configuration with the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Config::set_multivar"
+reason = "libgit2 only reads; write configuration with the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Config::remove"
+reason = "libgit2 only reads; write configuration with the git CLI through canopy_core::cli (AGENTS.md)"
+
+# AGENTS.md, "Conventions": colours come only from crates/canopy-app/src/ui/theme.rs.
+[[disallowed-methods]]
+path = "egui::Color32::from_rgb"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Color32::from_rgb_additive"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Color32::from_rgba_premultiplied"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Color32::from_rgba_unmultiplied"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Color32::from_rgba_unmultiplied_const"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Color32::from_gray"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Color32::from_black_alpha"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Color32::from_white_alpha"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Color32::from_additive_luminance"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Color32::from_hex"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Rgba::from_rgb"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Rgba::from_rgba_premultiplied"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Rgba::from_rgba_unmultiplied"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Rgba::from_gray"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Rgba::from_luminance_alpha"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Rgba::from_black_alpha"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Rgba::from_white_alpha"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+
+[[disallowed-macros]]
+path = "egui::hex_color"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"

@@ -39,13 +39,139 @@ tempfile = "3"
 unsafe_code = "deny"
 rust_2018_idioms = { level = "warn", priority = -1 }
 missing_debug_implementations = "warn"
+missing_copy_implementations = "warn"
+meta_variable_misuse = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+unused_qualifications = "warn"
+# Not enabled:
+# - unreachable_pub: canopy-app is a binary, where `pub` in a private module already means
+#   crate-visible; 1,129 of its 1,139 findings were there.
+# - let_underscore_drop: `let _ = sender.send(..)` and friends drop the value on purpose (105).
+# - unused_crate_dependencies: fires for every test target that does not use every dependency.
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
-dbg_macro = "warn"
-todo = "warn"
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# Duplicate versions deep in the dependency tree (syn 2 and 3); only upstream releases fix them.
+multiple_crate_versions = "allow"
+
+# Pedantic lints turned off, with their finding counts when this was set up.
+# `# Errors` sections on every fallible function (103): the errors are git's, libgit2's or the
+# server's own messages, passed through unchanged, and nothing outside the workspace calls these.
+missing_errors_doc = "allow"
+# `#[must_use]` on every pure function (100): unused `Result`s are already caught by rustc.
+must_use_candidate = "allow"
+# Immediate-mode views and git sequences read top to bottom (79); splitting them is a refactor.
+too_many_lines = "allow"
+# Geometry and colour maths names its coordinates x, y, w, h, r, g, b (57).
+many_single_char_names = "allow"
+# Widget options and settings are independent switches, not states of one enum (12).
+struct_excessive_bools = "allow"
+
+# Nursery lints that are sound on this toolchain. Left out, with findings when this was set up:
+# missing_const_for_fn (301; `const` would be a promise nothing needs), suboptimal_flops (174) and
+# imprecise_flops (they change float results, and mul_add is a slow libm call without FMA),
+# redundant_pub_crate (74; it contradicts unreachable_pub-style `pub(crate)`), option_if_let_else
+# (54) and or_fun_call (24; closures that read worse than the code they replace),
+# significant_drop_tightening (3), needless_pass_by_ref_mut (2), suspicious_operation_groupings (1),
+# literal_string_with_formatting_args and significant_drop_in_scrutinee (false positives),
+# while_float (3; stepping over pixels and time is deliberate), and future_not_send (no async).
+branches_sharing_code = "warn"
+clear_with_drain = "warn"
+coerce_container_to_any = "warn"
+collection_is_never_read = "warn"
+debug_assert_with_mut_call = "warn"
+derive_partial_eq_without_eq = "warn"
+empty_enums = "warn"
+equatable_if_let = "warn"
+fallible_impl_from = "warn"
+iter_on_empty_collections = "warn"
+iter_on_single_items = "warn"
+iter_with_drain = "warn"
+large_stack_frames = "warn"
+needless_collect = "warn"
+non_send_fields_in_send_ty = "warn"
+path_buf_push_overwrite = "warn"
+read_zero_byte_vec = "warn"
+redundant_clone = "warn"
+set_contains_or_insert = "warn"
+single_option_map = "warn"
+string_lit_as_bytes = "warn"
+too_long_first_doc_paragraph = "warn"
+trailing_empty_array = "warn"
+trait_duplication_in_bounds = "warn"
+transmute_undefined_repr = "warn"
+tuple_array_conversions = "warn"
+type_repetition_in_bounds = "warn"
+uninhabited_references = "warn"
+unnecessary_struct_initialization = "warn"
+unused_peekable = "warn"
+unused_rounding = "warn"
+use_self = "warn"
+useless_let_if_seq = "warn"
+
+# Restriction lints that fit a GUI and git backend. Considered and left out: float_cmp_const (exact
+# comparisons in tests are deliberate), tests_outside_test_module (fires on every integration
+# test), create_dir (exclusive creation is the point where it is used), iter_over_hash_type (the
+# loops found are order-independent), filetype_is_file (the updater copies regular files only, on
+# purpose), use_debug, wildcard_enum_match_arm (88) and unused_trait_names (36).
+# Suppressions are `#[expect(lint, reason = "...")]`, which fails once the finding is gone.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+# unwrap and expect are for tests (clippy.toml); production code propagates errors.
 unwrap_used = "warn"
 expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+# Logging goes through tracing; the command-line entry points that must print say so.
+print_stdout = "warn"
+print_stderr = "warn"
+exit = "warn"
+# Errors reach the user with git's or the server's own message, so do not throw them away.
+map_err_ignore = "warn"
+unused_result_ok = "warn"
+# Slicing a string at a byte offset panics inside a multi-byte character (paths, branch names).
+string_slice = "warn"
+# `assert!(r.is_ok())` hides the error a failing test should show.
+assertions_on_result_states = "warn"
+clone_on_ref_ptr = "warn"
+rc_buffer = "warn"
+mem_forget = "warn"
+get_unwrap = "warn"
+lossy_float_literal = "warn"
+verbose_file_reads = "warn"
+try_err = "warn"
+empty_structs_with_brackets = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_drop = "warn"
+if_then_some_else_none = "warn"
+unnecessary_self_imports = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+infinite_loop = "warn"
+self_named_module_files = "warn"
+str_to_string = "warn"
+string_add = "warn"
+needless_raw_strings = "warn"
+deref_by_slicing = "warn"
+mixed_read_write_in_expression = "warn"
+mutex_atomic = "warn"
+string_lit_chars_any = "warn"
+suspicious_xor_used_as_pow = "warn"
+precedence_bits = "warn"
+pathbuf_init_then_push = "warn"
+redundant_type_annotations = "warn"
+unnecessary_safety_doc = "warn"
 undocumented_unsafe_blocks = "deny"
 multiple_unsafe_ops_per_block = "deny"
 unnecessary_safety_comment = "warn"
