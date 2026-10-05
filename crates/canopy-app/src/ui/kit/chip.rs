@@ -16,6 +16,7 @@ use egui_phosphor::regular as icon;
 
 use canopy_core::{ChangeKind, RefKind, RefLabel};
 
+use super::overlay::TooltipExt;
 use super::{ForceState, Interact, Tone, paint};
 use crate::keymap::{self, Command};
 use crate::ui::motion;
@@ -42,7 +43,7 @@ fn layout(ui: &Ui, text: String, font: FontId) -> Arc<Galley> {
 fn label_response(response: Response, label: &str, tooltip: Option<&str>) -> Response {
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, label));
     match tooltip {
-        Some(t) => response.on_hover_text(t),
+        Some(t) => response.kit_tooltip(t).show(),
         None => response,
     }
 }
@@ -498,8 +499,8 @@ impl RefPill {
         };
         if self.clickable {
             response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &spoken));
-            match &self.tooltip {
-                Some(t) => response.on_hover_text(t),
+            match self.tooltip {
+                Some(t) => response.kit_tooltip(t).show(),
                 None => response,
             }
         } else {
@@ -1107,7 +1108,7 @@ impl Chip {
             self.disabled_reason.or(self.tooltip)
         };
         match tip {
-            Some(t) => response.on_hover_text(&t).on_disabled_hover_text(&t),
+            Some(t) => response.kit_tooltip(t).show(),
             None => response,
         }
     }
@@ -1439,6 +1440,32 @@ mod tests {
                     }
                 });
             }
+        }
+    }
+
+    /// Spec 4.17: a branch pill takes its lane's colour whether it is local or remote (a remote
+    /// branch is not a second, fixed colour), so `main` and `origin/main` on one lane match.
+    #[test]
+    fn remote_branch_pills_take_their_lane_colour_like_local_ones() {
+        for id in theme::ThemeId::ALL {
+            let p = id.palette();
+            for lane in (0_u16..).take(p.lanes.len()) {
+                let local = RefPill::new("main", RefKind::LocalBranch).lane(lane);
+                let remote = RefPill::new("origin/main", RefKind::RemoteBranch).lane(lane);
+                assert_eq!(remote.color(p), p.lane(lane), "{} lane {lane}", p.name);
+                assert_eq!(remote.color(p), local.color(p), "{} lane {lane}", p.name);
+                let (fill, ring, ink) = remote.colors(p);
+                assert_eq!(fill, Color32::TRANSPARENT, "a remote pill is outlined");
+                assert_eq!(ring, Palette::pill_border(p.lane(lane)));
+                assert_eq!(ink, p.text_dim);
+            }
+            let tag = RefPill::new("v1.0.0", RefKind::Tag).lane(3);
+            assert_eq!(
+                tag.color(p),
+                p.warning,
+                "{}: tags keep the tag colour",
+                p.name
+            );
         }
     }
 
