@@ -1191,12 +1191,19 @@ mod tests {
         // show theirs only under the pointer.
         let rest = painted_texts(&ctx, &mut tab, None);
         // Row actions only: the list headers' "Stage all" and "Unstage all" buttons draw the
-        // same glyphs as their icons, after a label rather than a file name.
+        // same glyphs as their icons, after a label rather than a file name, and the diff's
+        // file header beside the list has its own "Stage file" button after the file name.
+        let list_right = rest
+            .iter()
+            .find(|(t, _)| t == "Stage all")
+            .map(|(_, r)| r.max.x + theme::LG)
+            .expect("painted list header");
         let shown = |texts: &[(String, egui::Rect)], glyph: &str| {
             texts
                 .iter()
                 .filter(|(t, r)| {
                     t == glyph
+                        && r.max.x <= list_right
                         && texts.iter().any(|(name, at)| {
                             name.contains('.')
                                 && at.max.x < r.min.x
