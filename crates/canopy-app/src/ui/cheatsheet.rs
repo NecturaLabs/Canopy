@@ -7,7 +7,7 @@ use egui_phosphor::regular as icon;
 use super::kit::chip::Keycap;
 use super::kit::overlay::{self, Layer};
 use super::kit::row::SectionHeader;
-use super::kit::{IconButton, Size, paint};
+use super::kit::{IconButton, Size};
 use super::palette::KEY_GAP;
 use super::theme::{self, palette};
 use crate::keymap::{self, BINDINGS, Section};
@@ -33,7 +33,6 @@ impl Cheatsheet {
             return;
         }
         let p = palette(ctx);
-        let s = theme::surfaces(ctx);
         let m = theme::metrics();
         let screen = ctx.content_rect();
         egui::Area::new(Id::new("cheatsheet-scrim"))
@@ -114,14 +113,11 @@ impl Cheatsheet {
                     }
                     let q = self.query.trim().to_lowercase();
                     let remaining = (height - (ui.cursor().min.y - content_top) - pad).max(0.0);
-                    let list = egui::Frame::NONE
+                    let ground = overlay::ground(ctx, Layer::Popover);
+                    egui::Frame::NONE
                         .inner_margin(egui::Margin::symmetric(crate::ui::points_i8(pad), crate::ui::points_i8(theme::SM)))
                         .show(ui, |ui| {
-                            egui::ScrollArea::vertical()
-                                .max_height(remaining)
-                                .min_scrolled_height(remaining)
-                                .auto_shrink([false, true])
-                                .show(ui, |ui| {
+                            overlay::scroll_body(ui, "cheatsheet-list", remaining, ground, |ui| {
                                     if width < 800.0 {
                                         for section in Section::ALL {
                                             rows(ui, section, &q);
@@ -154,10 +150,8 @@ impl Cheatsheet {
                                             }
                                         });
                                     }
-                                })
-                        })
-                        .inner;
-                    paint::scroll_fade(ui, &list, s.overlay);
+                            });
+                        });
                 });
             });
     }

@@ -183,7 +183,6 @@ impl<T: Clone> CommandPalette<T> {
             return None;
         }
         let p = palette(ctx);
-        let s = theme::surfaces(ctx);
         if self.ranked_for.as_deref() != Some(self.query.as_str()) {
             self.ranked = rank(&self.query, &self.haystacks);
             self.ranked_for = Some(self.query.clone());
@@ -278,55 +277,44 @@ impl<T: Clone> CommandPalette<T> {
                         return;
                     }
                     let list_margin = m.menu_pad;
-                    let row_h = m.palette_row_height;
-                    // Whole rows only, so the list never ends in a half-cut entry.
                     let room = (screen.height() - top - theme::XL * 2.0 - m.palette_input_height)
                         .clamp(0.0, 400.0);
-                    let list_h = (room / row_h).floor().max(1.0) * row_h;
-                    // Both bounds: the area's own size comes from its last frame and would
-                    // otherwise cap the list part-way through a row.
-                    let list = egui::Frame::NONE
+                    let list_h =
+                        whole_rows_height(&ranked, &self.items, self.query.is_empty(), room);
+                    let ground = overlay::ground(ctx, Layer::Popover);
+                    egui::Frame::NONE
                         .inner_margin(egui::Margin::same(crate::ui::points_i8(list_margin)))
                         .show(ui, |ui| {
-                            egui::ScrollArea::vertical()
-                                .max_height(list_h)
-                                .min_scrolled_height(list_h)
-                                .auto_shrink([false, true])
-                                .show(ui, |ui| {
-                                    ui.spacing_mut().item_spacing.y = 0.0;
-                                    let mut previous_group = None;
-                                    for (row, (_, i)) in ranked.iter().enumerate() {
-                                        let Some((e, _)) = self.items.get(*i) else {
-                                            continue;
-                                        };
-                                        if self.query.is_empty() {
-                                            let group =
-                                                category(e).unwrap_or("Recent repositories");
-                                            if previous_group != Some(group) {
-                                                menu::heading(ui, group);
-                                                previous_group = Some(group);
-                                            }
-                                        }
-                                        let selected = row == self.selected;
-                                        let resp = entry_row(ui, row, e, selected);
-                                        if resp.hovered()
-                                            && ui.input(|inp| {
-                                                inp.pointer.delta() != egui::Vec2::ZERO
-                                            })
-                                        {
-                                            self.selected = row;
-                                        }
-                                        if selected {
-                                            ui.scroll_to_rect(resp.rect, None);
-                                        }
-                                        if resp.clicked() {
-                                            chosen = Some(*i);
+                            overlay::scroll_body(ui, "palette-list", list_h, ground, |ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                let mut previous_group = None;
+                                for (row, (_, i)) in ranked.iter().enumerate() {
+                                    let Some((e, _)) = self.items.get(*i) else {
+                                        continue;
+                                    };
+                                    if self.query.is_empty() {
+                                        let group = category(e).unwrap_or("Recent repositories");
+                                        if previous_group != Some(group) {
+                                            menu::heading(ui, group);
+                                            previous_group = Some(group);
                                         }
                                     }
-                                })
-                        })
-                        .inner;
-                    paint::scroll_fade(ui, &list, s.overlay);
+                                    let selected = row == self.selected;
+                                    let resp = entry_row(ui, row, e, selected, ground);
+                                    if resp.hovered()
+                                        && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO)
+                                    {
+                                        self.selected = row;
+                                    }
+                                    if selected {
+                                        ui.scroll_to_rect(resp.rect, None);
+                                    }
+                                    if resp.clicked() {
+                                        chosen = Some(*i);
+                                    }
+                                }
+                            });
+                        });
                 });
             });
 
@@ -335,6 +323,34 @@ impl<T: Clone> CommandPalette<T> {
         }
         chosen.and_then(|i| self.items.get(i).map(|(_, t)| t.clone()))
     }
+}
+
+/// The tallest list of whole entries (and their group headings, when grouped) that fits in
+/// `room`, so the list never opens on a half-cut entry.
+fn whole_rows_height<T>(
+    ranked: &[(i32, usize)],
+    items: &[(Entry, T)],
+    grouped: bool,
+    room: f32,
+) -> f32 {
+    let row = theme::metrics().palette_row_height;
+    let mut height = 0.0;
+    let mut previous_group = None;
+    for (_, i) in ranked {
+        let mut next = row;
+        if grouped && let Some((e, _)) = items.get(*i) {
+            let group = category(e).unwrap_or("Recent repositories");
+            if previous_group != Some(group) {
+                next += menu::HEADING_HEIGHT;
+                previous_group = Some(group);
+            }
+        }
+        if height + next > room {
+            break;
+        }
+        height += next;
+    }
+    height.max(row.min(room))
 }
 
 /// Gap between a palette row's icon, label and detail, and before its keys.
@@ -398,9 +414,14 @@ pub(crate) fn surface_search(
 
 /// One palette entry as a list row: icon, label, detail, and its shortcut as keycaps. The
 /// selection is the row's wash; the pointer moving over a row selects it.
-fn entry_row(ui: &mut egui::Ui, row: usize, e: &Entry, selected: bool) -> egui::Response {
+fn entry_row(
+    ui: &mut egui::Ui,
+    row: usize,
+    e: &Entry,
+    selected: bool,
+    ground: egui::Color32,
+) -> egui::Response {
     let m = theme::metrics();
-    let s = theme::surfaces(ui.ctx());
     let keys: Vec<Keycap> = e
         .shortcut
         .split('·')
@@ -414,7 +435,7 @@ fn entry_row(ui: &mut egui::Ui, row: usize, e: &Entry, selected: bool) -> egui::
     let r = ListRow::new(("palette-row", row))
         .kind(RowKind::Palette)
         .selected(selected)
-        .ground(s.overlay)
+        .ground(ground)
         .show_with(ui, |rc, painter| {
             let cy = rc.rect.center().y;
             let right = rc.content.right() - keys_w - ROW_GAP;
@@ -560,5 +581,59 @@ mod tests {
         let b = fuzzy_score("nb", "Unbind").expect("match");
         assert!(a > b, "{a} <= {b}");
         assert_eq!(fuzzy_score("", "anything"), Some(0));
+    }
+
+    #[test]
+    fn the_list_opens_on_whole_entries_and_their_headings() {
+        let row = theme::metrics().palette_row_height;
+        let heading = menu::HEADING_HEIGHT;
+        let items = items();
+        let ranked: Vec<(i32, usize)> = (0..items.len()).map(|i| (0, i)).collect();
+        // Grouped: Remote heading, Push, Pull, Branch heading, New branch, ...
+        let room = heading + 2.0 * row + heading + row + row / 2.0;
+        assert_eq!(
+            whole_rows_height(&ranked, &items, true, room),
+            heading + 2.0 * row + heading + row
+        );
+        // Ungrouped (a query): rows only.
+        assert_eq!(
+            whole_rows_height(&ranked, &items, false, 2.5 * row),
+            2.0 * row
+        );
+    }
+
+    #[test]
+    fn a_long_list_fades_into_the_card_at_its_bottom() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut p = CommandPalette::default();
+        p.open();
+        let many: Vec<(Entry, u32)> = (0..40)
+            .map(|i| (entry(&format!("Entry {i}"), "Branch"), i))
+            .collect();
+        p.set_entries(1, many);
+        let mut meshes = 0;
+        for _ in 0..4 {
+            let out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(1440.0, 900.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = p.show(ui.ctx());
+                },
+            );
+            meshes = out
+                .shapes
+                .iter()
+                .filter(|c| matches!(c.shape, egui::Shape::Mesh(_)))
+                .count();
+            out.drop_without_applying_deltas();
+        }
+        assert!(meshes > 0, "no fade");
     }
 }

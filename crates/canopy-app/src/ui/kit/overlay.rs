@@ -50,6 +50,10 @@ const DIALOG_EXIT_SCALE: f32 = 0.97;
 /// Tooltips grow from this scale and rise this far.
 const TOOLTIP_SCALE: f32 = 0.96;
 const TOOLTIP_RISE: f32 = 3.0;
+/// Room after the last line of a scrolling body, so its end never sits on the card's edge.
+pub const SCROLL_END_ROOM: f32 = theme::SM;
+/// A scrolling body's bar stands this far in from the edge of the card (spec 4.21's 2 pt margin).
+const BAR_INSET: f32 = 2.0;
 
 /// What a floating surface is: decides its radius, fill and whether it may be glass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -84,6 +88,67 @@ impl Layer {
 /// glass layers used up).
 pub(crate) fn backdrop(painter: &Painter, rect: Rect, radius: CornerRadius) -> Option<Shape> {
     super::glass::backdrop_shape(painter, rect, radius)
+}
+
+/// What a floating layer of `layer` is filled with this frame: the overlay at the theme's glass
+/// opacity when its backdrop is blurred (Translucent surfaces on and the blur running), else the
+/// opaque overlay (tooltips: the `tooltip` fill). Content that paints over the layer's ground (row
+/// washes, scroll fades) uses this, so it matches the surface in both paths. A layer past the
+/// frame's glass budget falls back to opaque; its content then fades into a slightly lighter tint
+/// of the same overlay, which reads the same.
+pub fn ground(ctx: &Context, layer: Layer) -> Color32 {
+    let p = theme::palette(ctx);
+    let s = theme::surfaces(ctx);
+    if layer == Layer::Tooltip {
+        s.tooltip.top
+    } else if theme::appearance().glass && super::glass::available() && p.glass_alpha > 0 {
+        Palette::tint(s.overlay, p.glass_alpha)
+    } else {
+        s.overlay
+    }
+}
+
+/// A vertical scrolling body for an overlay, a dialog or a settings page: at most `max_height`
+/// tall, its scrollbar inset from the card's edge, and edge fades into `ground` (see [`ground`])
+/// wherever more is scrolled out of sight, so a body never ends on a line cut through its glyphs
+/// without a cue. When the content overflows, `SCROLL_END_ROOM` follows it, so its last line
+/// scrolls clear of the card's edge; a body that fits keeps its own height.
+pub fn scroll_body<R>(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    max_height: f32,
+    ground: Color32,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> egui::scroll_area::ScrollAreaOutput<R> {
+    let id = ui.make_persistent_id(id_salt);
+    let overflow_key = id.with("kit-scroll-body-overflows");
+    let overflowed = ui.data(|d| d.get_temp::<bool>(overflow_key).unwrap_or(false));
+    let out = ui
+        .scope(|ui| {
+            ui.spacing_mut().scroll.bar_outer_margin = BAR_INSET;
+            egui::ScrollArea::vertical()
+                .id_salt(id)
+                .max_height(max_height)
+                // A scrolling body takes all of `max_height`, whatever size its area had last
+                // frame.
+                .min_scrolled_height(max_height)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    let r = add(ui);
+                    if overflowed {
+                        ui.add_space(SCROLL_END_ROOM);
+                    }
+                    r
+                })
+        })
+        .inner;
+    let overflows = out.content_size.y > out.inner_rect.height() + 0.5;
+    if overflows != overflowed {
+        ui.data_mut(|d| d.insert_temp(overflow_key, overflows));
+        ui.ctx().request_repaint();
+    }
+    paint::scroll_fade(ui, &out, ground);
+    out
 }
 
 /// Everything a floating surface of `layer` paints at `rect`, bottom first: the `Floating`
@@ -1183,11 +1248,12 @@ impl<'a> Dialog<'a> {
                     let room = (max_h - 2.0 * pad - used - footer_h - m.dialog_gap).max(48.0);
                     let has_body = description.is_some() || body.is_some();
                     let scrolled = if has_body {
-                        let out = egui::ScrollArea::vertical()
-                            .id_salt(id.with("body"))
-                            .max_height(room)
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
+                        let out = scroll_body(
+                            ui,
+                            id.with("body"),
+                            room,
+                            ground(&ctx, Layer::Dialog),
+                            |ui| {
                                 ui.spacing_mut().item_spacing.y = m.dialog_gap;
                                 if let Some(d) = &description {
                                     ui.add(
@@ -1203,7 +1269,8 @@ impl<'a> Dialog<'a> {
                                 if let Some(b) = body {
                                     b(ui);
                                 }
-                            });
+                            },
+                        );
                         out.content_size.y > out.inner_rect.height() + 0.5
                     } else {
                         false
@@ -1996,5 +2063,53 @@ mod tests {
             });
         }
         assert!(shown);
+    }
+
+    #[test]
+    fn a_scrolling_body_fades_where_it_hides_more_and_ends_clear_of_the_edge() {
+        let ctx = context();
+        let ground = ground(&ctx, Layer::Dialog);
+        assert_eq!(
+            ground,
+            theme::surfaces(&ctx).overlay,
+            "opaque without glass"
+        );
+        let mut sizes = Vec::new();
+        let mut faded = false;
+        for _ in 0..3 {
+            let out = run(&ctx, Vec::new(), |ui| {
+                let o = scroll_body(ui, "body", 100.0, ground, |ui| {
+                    for i in 0..40 {
+                        ui.label(format!("line {i}"));
+                    }
+                });
+                sizes.push((o.content_size.y, o.inner_rect.height()));
+            });
+            let edge = ground.gamma_multiply(0.85);
+            faded = out.shapes.iter().any(|c| {
+                matches!(&c.shape, Shape::Mesh(m) if m.vertices.iter().any(|v| v.color == edge))
+            });
+        }
+        assert!(faded, "the bottom edge fades into the ground");
+        assert_eq!(sizes[2].1, 100.0, "a scrolling body takes all its room");
+        // The room, plus the item gap egui puts before any space.
+        let gap = ctx.global_style().spacing.item_spacing.y;
+        assert_eq!(
+            sizes[2].0 - sizes[0].0,
+            SCROLL_END_ROOM + gap,
+            "room after the last line once it overflows: {sizes:?}"
+        );
+        // A body that fits keeps its own height and fades nowhere.
+        let mut fit = Vec::new();
+        for _ in 0..3 {
+            let out = run(&ctx, Vec::new(), |ui| {
+                let o = scroll_body(ui, "short", 100.0, ground, |ui| {
+                    ui.label("one line");
+                });
+                fit.push(o.content_size.y);
+            });
+            assert!(!out.shapes.iter().any(|c| matches!(c.shape, Shape::Mesh(_))));
+        }
+        assert_eq!(fit[0], fit[2]);
     }
 }
