@@ -299,8 +299,8 @@ impl ExitMotion {
 struct Snapshot {
     key: Id,
     order: Order,
-    fixed: Arc<Vec<ClippedShape>>,
-    moving: Arc<Vec<ClippedShape>>,
+    fixed: Arc<[ClippedShape]>,
+    moving: Arc<[ClippedShape]>,
     motion: ExitMotion,
     pass: u64,
 }
@@ -369,8 +369,8 @@ pub(crate) fn record_exit(
     let snap = Snapshot {
         key,
         order: layer.order,
-        fixed: Arc::new(take(fixed)),
-        moving: Arc::new(take(moving)),
+        fixed: Arc::from(take(fixed)),
+        moving: Arc::from(take(moving)),
         motion,
         pass: ctx.cumulative_pass_nr(),
     };
@@ -1177,8 +1177,7 @@ impl<'a> Dialog<'a> {
                 let footer_h = m.control + theme::XS;
                 let room = (max_h - 2.0 * pad - used - footer_h - m.dialog_gap).max(48.0);
                 let has_body = description.is_some() || body.is_some();
-                let mut scrolled = false;
-                if has_body {
+                let scrolled = if has_body {
                     let out = egui::ScrollArea::vertical()
                         .id_salt(id.with("body"))
                         .max_height(room)
@@ -1200,8 +1199,10 @@ impl<'a> Dialog<'a> {
                                 b(ui);
                             }
                         });
-                    scrolled = out.content_size.y > out.inner_rect.height() + 0.5;
-                }
+                    out.content_size.y > out.inner_rect.height() + 0.5
+                } else {
+                    false
+                };
                 // Footer: 4 pt more above it, a seam only when the body scrolls.
                 ui.add_space(theme::XS);
                 let (row, _) =
@@ -1230,8 +1231,7 @@ impl<'a> Dialog<'a> {
                         .layout(Layout::right_to_left(Align::Center)),
                     |ui| {
                         ui.spacing_mut().item_spacing.x = theme::SM;
-                        let mut confirm_id = None;
-                        if let Some(label) = &footer.confirm {
+                        let confirm_id = if let Some(label) = &footer.confirm {
                             let mut b = Button::new(label.as_str())
                                 .size(Size::Md)
                                 .enabled(footer.confirm_enabled)
@@ -1258,8 +1258,10 @@ impl<'a> Dialog<'a> {
                             if r.clicked() {
                                 result = DialogResult::Confirm;
                             }
-                            confirm_id = Some(r.id);
-                        }
+                            Some(r.id)
+                        } else {
+                            None
+                        };
                         if let Some(label) = &footer.cancel {
                             let b = Button::new(label.as_str())
                                 .secondary()

@@ -17,7 +17,7 @@ pub fn changelog_section(changelog: &str, version: &str) -> Option<String> {
     let mut lines = changelog.lines().skip_while(|l| !l.starts_with(&header));
     lines.next()?;
     let body: Vec<&str> = lines
-        .take_while(|l| !l.starts_with("## [") && !(l.starts_with('[') && l.contains("]: ")))
+        .take_while(|l| !(l.starts_with("## [") || (l.starts_with('[') && l.contains("]: "))))
         .collect();
     let text = body.join("\n").trim().to_owned();
     (!text.is_empty()).then_some(text)

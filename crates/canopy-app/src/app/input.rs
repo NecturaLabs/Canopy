@@ -29,7 +29,7 @@ impl CanopyApp {
             if !b.section.is_bare() {
                 return true;
             }
-            !typing && !(widget_focused && keymap::widget_key(chord.key))
+            !(typing || (widget_focused && keymap::widget_key(chord.key)))
         });
         for f in fired {
             self.command(ctx, f.command, f.chord, actions);

@@ -253,7 +253,7 @@ pub struct Notice {
 pub struct Requests {
     pub filter: StateFilter,
     /// Shared so a frame can hold the list while it mutates the tab, without copying it.
-    pub list: Option<Result<Arc<Vec<RequestSummary>>, String>>,
+    pub list: Option<Result<Arc<[RequestSummary]>, String>>,
     pub loading: bool,
     pub selected: Option<u64>,
     pub details: Option<Result<Arc<RequestDetails>, String>>,
@@ -623,8 +623,8 @@ impl RepoTab {
 
     /// Toggles the on-demand history filter.
     pub fn filter_history(&mut self, ctx: &egui::Context) {
-        let list_visible = !self.history_layout.expanded
-            && !(self.history_layout.compact && self.history_layout.compact_details);
+        let list_visible = !(self.history_layout.expanded
+            || (self.history_layout.compact && self.history_layout.compact_details));
         if self.history_filter_open && self.view == View::History && list_visible {
             self.close_history_filter(ctx);
             return;
@@ -1219,7 +1219,7 @@ impl RepoTab {
                                 .as_ref()
                                 .is_ok_and(|l| l.iter().any(|r| r.number == n))
                         });
-                        self.requests.list = Some(result.map(Arc::new));
+                        self.requests.list = Some(result.map(Arc::from));
                         if !keep {
                             self.requests.selected = None;
                             self.requests.details = None;

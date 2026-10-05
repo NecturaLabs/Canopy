@@ -1139,7 +1139,7 @@ mod tests {
             worker,
         );
         tab.requests.selected = Some(7);
-        tab.requests.list = Some(Ok(Arc::new(vec![summary(RequestState::Open)])));
+        tab.requests.list = Some(Ok(Arc::from([summary(RequestState::Open)])));
         for state in [
             RequestState::Open,
             RequestState::Closed,
@@ -1183,7 +1183,7 @@ mod tests {
             worker,
         );
         tab.requests.selected = Some(7);
-        tab.requests.list = Some(Ok(Arc::new(vec![summary(RequestState::Open)])));
+        tab.requests.list = Some(Ok(Arc::from([summary(RequestState::Open)])));
         tab.requests.details = Some(Ok(Arc::new(details(RequestState::Merged))));
         let request = selected_summary(&tab).expect("selected request");
         assert!(approve_action(&tab, request).is_none());
