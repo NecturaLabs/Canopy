@@ -187,10 +187,6 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
 
     /// Shows the control; the response is the group's and reports `changed` when the choice
     /// moved.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "values drawn on screen, where f32 rounding is invisible"
-    )]
     pub fn show(self, ui: &mut Ui) -> Response {
         struct Seg {
             icon: Option<Arc<Galley>>,
@@ -246,8 +242,8 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                     badge.as_ref().map(|g| badge_width(g)),
                 ];
                 let n = parts.iter().flatten().count();
-                let content: f32 =
-                    parts.iter().flatten().sum::<f32>() + ITEM_GAP * n.saturating_sub(1) as f32;
+                let content: f32 = parts.iter().flatten().sum::<f32>()
+                    + ITEM_GAP * crate::ui::count_f32(n.saturating_sub(1));
                 let width = if self.content == Content::IconOnly && badge.is_none() {
                     (content + 2.0 * (pad - 3.0)).max(seg_h + 4.0)
                 } else {
@@ -374,8 +370,8 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                     seg.badge.as_ref().map(|g| badge_width(g)),
                 ];
                 let n = parts.iter().flatten().count();
-                let content: f32 =
-                    parts.iter().flatten().sum::<f32>() + ITEM_GAP * n.saturating_sub(1) as f32;
+                let content: f32 = parts.iter().flatten().sum::<f32>()
+                    + ITEM_GAP * crate::ui::count_f32(n.saturating_sub(1));
                 let mut x = rect.center().x - content / 2.0;
                 let cy = rect.center().y;
                 if let Some(g) = &seg.icon {
@@ -510,10 +506,6 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
 
     /// Shows the tabs. The response is the tab list's (`changed` when the active tab moved); the
     /// value is the tab whose close button was pressed, if any.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "values drawn on screen, where f32 rounding is invisible"
-    )]
     pub fn show(self, ui: &mut Ui) -> KitResponse<Option<T>> {
         struct Tab {
             icon: Option<Arc<Galley>>,
@@ -580,9 +572,9 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
                 }
             })
             .collect();
-        let row_w = ui
-            .available_width()
-            .max(tabs.iter().map(|t| t.width).sum::<f32>() + TAB_GAP * tabs.len() as f32);
+        let row_w = ui.available_width().max(
+            tabs.iter().map(|t| t.width).sum::<f32>() + TAB_GAP * crate::ui::count_f32(tabs.len()),
+        );
         let (row, _) = ui.allocate_exact_size(vec2(row_w, h), Sense::hover());
         let mut rects = Vec::with_capacity(tabs.len());
         let mut x = row.left();

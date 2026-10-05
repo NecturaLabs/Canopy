@@ -28,10 +28,6 @@ impl Cheatsheet {
     }
 
     /// Draws the overlay when open.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-    )]
     pub fn show(&mut self, ctx: &egui::Context) {
         if !self.open {
             return;
@@ -65,10 +61,10 @@ impl Cheatsheet {
                     let pad = m.card_pad;
                     egui::Frame::NONE
                         .inner_margin(egui::Margin {
-                            left: pad as i8,
-                            right: pad as i8,
-                            top: pad as i8,
-                            bottom: theme::XS as i8,
+                            left: crate::ui::points_i8(pad),
+                            right: crate::ui::points_i8(pad),
+                            top: crate::ui::points_i8(pad),
+                            bottom: crate::ui::points_i8(theme::XS),
                         })
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -119,7 +115,7 @@ impl Cheatsheet {
                     let q = self.query.trim().to_lowercase();
                     let remaining = (height - (ui.cursor().min.y - content_top) - pad).max(0.0);
                     let list = egui::Frame::NONE
-                        .inner_margin(egui::Margin::symmetric(pad as i8, theme::SM as i8))
+                        .inner_margin(egui::Margin::symmetric(crate::ui::points_i8(pad), crate::ui::points_i8(theme::SM)))
                         .show(ui, |ui| {
                             egui::ScrollArea::vertical()
                                 .max_height(remaining)

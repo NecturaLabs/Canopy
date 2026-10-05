@@ -63,15 +63,15 @@ pub fn empty_error() -> Art {
 }
 
 /// A soft radial halo: `color` at the centre fading to nothing at `radius`.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn radial_halo(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
     const SEGMENTS: u32 = 64;
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(center, color);
     for i in 0..=SEGMENTS {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "at most 64 segments, exact in f32"
+        )]
         let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
         mesh.colored_vertex(
             center + vec2(a.cos(), a.sin()) * radius,
@@ -85,12 +85,6 @@ fn radial_halo(painter: &egui::Painter, center: Pos2, radius: f32, color: Color3
 }
 
 /// Draws `art` at `size` points (its aspect ratio is kept, centred in `size`).
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants; values drawn on screen, where f32 rounding is invisible"
-)]
 pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
     if !ui.is_rect_visible(rect) {
@@ -118,7 +112,10 @@ pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
                     &painter,
                     c,
                     r,
-                    Palette::tint(color, (item.alpha * f32::from(color.a())) as u8),
+                    Palette::tint(
+                        color,
+                        crate::ui::saturate_u8(item.alpha * f32::from(color.a())),
+                    ),
                 );
             }
             Geometry::Ellipse { center, radius } => {
@@ -126,7 +123,7 @@ pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
                 let fill = item.ink.resolve(p, c.y, origin.y, scene.size.y * scale);
                 let points: Vec<Pos2> = (0..48)
                     .map(|i| {
-                        let a = i as f32 / 48.0 * std::f32::consts::TAU;
+                        let a = crate::ui::int_f32(i) / 48.0 * std::f32::consts::TAU;
                         c + vec2(a.cos() * radius.x, a.sin() * radius.y) * scale * ease_out(local)
                     })
                     .collect();
@@ -196,10 +193,6 @@ fn progress(ui: &Ui, art: Art, id: egui::Id) -> f32 {
 }
 
 /// The grow-in timing behind `progress`, whatever the motion settings.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn growth(ui: &Ui, art: Art, id: egui::Id) -> f32 {
     let now = ui.input(|i| i.time);
     let frame = ui.ctx().cumulative_frame_nr();
@@ -211,19 +204,15 @@ fn growth(ui: &Ui, art: Art, id: egui::Id) -> f32 {
         start
     });
     let duration = if art == Art::Welcome { 1.6 } else { 1.0 };
-    ((now - start) / duration).clamp(0.0, 1.0) as f32
+    crate::ui::to_f32(((now - start) / duration).clamp(0.0, 1.0))
 }
 
 /// The welcome canopy's halos breathe slowly; the screen already repaints for its drifting glow.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn breathing(ui: &Ui, art: Art) -> f32 {
     if art != Art::Welcome || motion::reduced() {
         return 1.0;
     }
-    1.0 + 0.08 * (ui.input(|i| i.time) as f32 * 0.9).sin()
+    1.0 + 0.08 * (crate::ui::to_f32(ui.input(|i| i.time)) * 0.9).sin()
 }
 
 fn ease_out(t: f32) -> f32 {
@@ -350,15 +339,12 @@ fn cap(painter: &egui::Painter, at: Pos2, width: f32, color: Color32) {
 
 /// Fills a closed outline as a fan from its centre: right for the star-shaped outlines used here
 /// (every edge visible from the centre), which convex filling would not be.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn fill_star(painter: &egui::Painter, pts: &[Pos2], color: Color32) {
     if pts.len() < 3 {
         return;
     }
-    let centre = pts.iter().fold(Vec2::ZERO, |acc, p| acc + p.to_vec2()) / pts.len() as f32;
+    let centre =
+        pts.iter().fold(Vec2::ZERO, |acc, p| acc + p.to_vec2()) / crate::ui::count_f32(pts.len());
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(centre.to_pos2(), color);
     for p in pts {
@@ -777,10 +763,6 @@ fn error_scene() -> Scene {
 }
 
 /// Parses absolute `M L H V C Z` path data into flattened subpaths; whether the path is closed.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn parse(d: &str) -> (Vec<Polyline>, bool) {
     let mut tokens = Vec::new();
     let mut num = String::new();
@@ -857,7 +839,7 @@ fn parse(d: &str) -> (Vec<Polyline>, bool) {
                 let Some(v) = nums(&mut i, 6) else { break };
                 let (a, b, c) = (pos2(v[0], v[1]), pos2(v[2], v[3]), pos2(v[4], v[5]));
                 for s in 1..=16 {
-                    let t = s as f32 / 16.0;
+                    let t = crate::ui::int_f32(s) / 16.0;
                     let u = 1.0 - t;
                     let pt = cur.to_vec2() * (u * u * u)
                         + a.to_vec2() * (3.0 * u * u * t)

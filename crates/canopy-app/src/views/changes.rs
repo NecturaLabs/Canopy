@@ -248,10 +248,6 @@ const EMPTY_LIST: f32 = theme::XL;
 
 /// Height of the sections `lists` draws, close enough to decide whether the composer fits
 /// below them. An overestimate only pins the composer; an underestimate scrolls.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn lists_height(st: &canopy_core::WorkingStatus) -> f32 {
     if st.is_clean() {
         return 40.0;
@@ -260,7 +256,11 @@ fn lists_height(st: &canopy_core::WorkingStatus) -> f32 {
     let header = theme::metrics().section_header_height;
     let row_h = RowKind::File.height();
     let section = |n: usize| {
-        let body = if n == 0 { EMPTY_LIST } else { n as f32 * row_h };
+        let body = if n == 0 {
+            EMPTY_LIST
+        } else {
+            crate::ui::count_f32(n) * row_h
+        };
         header + theme::XS + body + LIST_GAP
     };
     let mut h = 16.0;

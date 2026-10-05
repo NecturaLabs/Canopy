@@ -145,10 +145,6 @@ impl<'a, T: Numeric> Slider<'a, T> {
         }
     }
 
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-    )]
     pub fn show(self, ui: &mut Ui) -> Response {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
@@ -202,7 +198,7 @@ impl<'a, T: Numeric> Slider<'a, T> {
         let rail_x = egui::Rangef::new(rect.left() + r, rect.right() - r);
         let to_x = |v: f64| {
             let t = if hi > lo { (v - lo) / (hi - lo) } else { 0.0 };
-            rail_x.min + rail_x.span() * t as f32
+            rail_x.min + rail_x.span() * crate::ui::to_f32(t)
         };
         let from_x = |x: f32| lo + f64::from((x - rail_x.min) / rail_x.span().max(1.0)) * (hi - lo);
 

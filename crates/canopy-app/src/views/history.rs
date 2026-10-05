@@ -276,12 +276,6 @@ fn paint_line(
     end
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible; egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<Action>) -> bool {
     let p = palette(ui.ctx());
     let s = p.s();
@@ -333,18 +327,18 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             })
         });
         if let Some(target) = target {
-            let y = target as f32 * row_h;
+            let y = crate::ui::count_f32(target) * row_h;
             if tab.scroll_to_selected || y < offset || y + row_h > offset + view_h {
                 offset = (y - view_h / 2.0 + row_h).max(0.0);
             }
         }
     }
     let total_rows = row_count + usize::from(snap.truncated && filtered.is_none());
-    offset = offset.min((total_rows as f32 * row_h - view_h).max(0.0));
+    offset = offset.min((crate::ui::count_f32(total_rows) * row_h - view_h).max(0.0));
     tab.scroll_to_selected = false;
     tab.reveal_selected = false;
-    let first = (offset / row_h).floor() as usize;
-    let last = ((offset + view_h) / row_h).ceil() as usize;
+    let first = crate::ui::saturate_usize((offset / row_h).floor());
+    let last = crate::ui::saturate_usize(((offset + view_h) / row_h).ceil());
     let date_text = |seconds| {
         if settings.relative_dates {
             widgets::relative_time_format(seconds, now, settings.iso_dates)

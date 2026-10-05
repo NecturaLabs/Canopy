@@ -162,10 +162,6 @@ pub fn paint_row(painter: &Painter, rect: Rect, lanes: Lanes, row: &GraphRow, ma
     paint_node(&painter, rect, lanes, row, marks, p);
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn paint_node(
     painter: &Painter,
     rect: Rect,
@@ -190,10 +186,10 @@ fn paint_node(
         let stroke = Stroke::new(m.graph_merge_stroke, p.text_faint);
         // Four dashes, each two thirds of its quarter.
         for q in 0..4 {
-            let start = q as f32 * std::f32::consts::FRAC_PI_2 + 0.26;
+            let start = crate::ui::int_f32(q) * std::f32::consts::FRAC_PI_2 + 0.26;
             let points: Vec<Pos2> = (0..=8)
                 .map(|i| {
-                    let a = start + i as f32 / 8.0 * std::f32::consts::FRAC_PI_3;
+                    let a = start + crate::ui::int_f32(i) / 8.0 * std::f32::consts::FRAC_PI_3;
                     c + egui::vec2(a.cos(), a.sin()) * (r - 0.2)
                 })
                 .collect();

@@ -233,10 +233,6 @@ fn state_style(r: &RequestSummary) -> (&'static str, Tone, &'static str) {
     }
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn list(
     ui: &mut Ui,
     tab: &mut RepoTab,
@@ -248,7 +244,7 @@ fn list(
     let s = theme::surfaces(ui.ctx());
     let m = theme::metrics();
     egui::Frame::new()
-        .inner_margin(egui::Margin::same(theme::SM as i8))
+        .inner_margin(egui::Margin::same(crate::ui::points_i8(theme::SM)))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 let options = StateFilter::ALL.map(|f| (f, f.label()));
@@ -358,8 +354,8 @@ fn list(
                 .show(ui, |ui| {
                     egui::Frame::new()
                         .inner_margin(egui::Margin::symmetric(
-                            m.sidebar_pad as i8,
-                            theme::XS as i8,
+                            crate::ui::points_i8(m.sidebar_pad),
+                            crate::ui::points_i8(theme::XS),
                         ))
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
@@ -498,10 +494,6 @@ fn name_row(ui: &Ui, response: &Response, selected: bool, name: &str) {
     });
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
@@ -531,7 +523,10 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
         .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Frame::new()
-                .inner_margin(egui::Margin::symmetric(theme::XL as i8, theme::LG as i8))
+                .inner_margin(egui::Margin::symmetric(
+                    crate::ui::points_i8(theme::XL),
+                    crate::ui::points_i8(theme::LG),
+                ))
                 .show(ui, |ui| {
                     ui.set_max_width(ui.available_width().min(theme::MEASURE));
                     // Header.

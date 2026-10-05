@@ -87,10 +87,6 @@ pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Res
 }
 
 /// Repository operation state stays visible in every work view.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 pub fn repository_state_banner(
     ui: &mut Ui,
     tab: &crate::tab::RepoTab,
@@ -107,7 +103,7 @@ pub fn repository_state_banner(
     let conflicts = snap.status.conflicted.len();
     let busy = tab.running.is_some();
     egui::Panel::top("repository-operation-state")
-        .frame(egui::Frame::new().fill(Palette::tint(p.warning, if p.dark { 28 } else { 18 })).inner_margin(egui::Margin::symmetric(theme::LG as i8, theme::SM as i8)))
+        .frame(egui::Frame::new().fill(Palette::tint(p.warning, if p.dark { 28 } else { 18 })).inner_margin(egui::Margin::symmetric(crate::ui::points_i8(theme::LG), crate::ui::points_i8(theme::SM))))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(format!("{}  {} in progress on {}", icon::WARNING, state.label(), snap.head.label())).color(p.warning).strong());
@@ -310,11 +306,6 @@ mod tests {
     /// Design spec 2.4: a disabled button is the whole control at `DISABLED_ALPHA`, never the
     /// enabled fill at full strength.
     #[test]
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-    )]
     fn disabled_primary_controls_do_not_use_the_enabled_fill() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
@@ -335,7 +326,7 @@ mod tests {
                         _ => None,
                     })
                     .expect("painted disabled primary");
-                let limit = (255.0 * theme::DISABLED_ALPHA).ceil() as u8;
+                let limit = crate::ui::saturate_u8((255.0 * theme::DISABLED_ALPHA).ceil());
                 assert!(
                     rectangle.fill.a() > 0 && rectangle.fill.a() <= limit,
                     "a disabled primary is faded to the disabled opacity, got {:?}",

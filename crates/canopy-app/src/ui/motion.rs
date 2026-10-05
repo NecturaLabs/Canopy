@@ -280,10 +280,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "values drawn on screen, where f32 rounding is invisible"
-    )]
     fn bezier_matches_its_ends_and_shape() {
         for b in [EASE_OUT, EASE_IN_OUT, SPRING_SOFT, SPRING_CURVE] {
             assert_eq!(b.at(0.0), 0.0);
@@ -294,11 +290,11 @@ mod tests {
         assert!((EASE_IN_OUT.at(0.5) - 0.5).abs() < 0.01);
         // The springy curves overshoot 1 before settling.
         let peak = (1..100)
-            .map(|i| SPRING_CURVE.at(i as f32 / 100.0))
+            .map(|i| SPRING_CURVE.at(crate::ui::int_f32(i) / 100.0))
             .fold(0.0_f32, f32::max);
         assert!(peak > 1.05 && peak < 1.15, "{peak}");
         let soft = (1..100)
-            .map(|i| SPRING_SOFT.at(i as f32 / 100.0))
+            .map(|i| SPRING_SOFT.at(crate::ui::int_f32(i) / 100.0))
             .fold(0.0_f32, f32::max);
         assert!(soft > 1.01 && soft < peak, "{soft}");
     }

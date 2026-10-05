@@ -42,15 +42,11 @@ fn row_heights() -> (f32, f32) {
 }
 
 /// Bounds the initial inspector height without walking the lines of a large diff.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 pub(super) fn inspector_height(d: &FileDiff, limit: f32) -> f32 {
     let (line_h, hunk_h) = row_heights();
     let mut height = theme::XL * 4.0;
     for hunk in &d.hunks {
-        height += hunk_h + hunk.lines.len() as f32 * line_h;
+        height += hunk_h + crate::ui::count_f32(hunk.lines.len()) * line_h;
         if height >= limit {
             return limit;
         }
@@ -318,10 +314,6 @@ fn click_line(
 }
 
 /// Draws the diff of the selected file.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let s = p.s();
@@ -382,11 +374,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let Some(layout) = tab.diff_layout.as_ref() else {
         return;
     };
-    let num_w = layout.digits as f32 * 7.6 + 12.0;
-    let gutter_w = num_w * (usize::from(show_old) + usize::from(show_new)) as f32;
+    let num_w = crate::ui::count_f32(layout.digits) * 7.6 + 12.0;
+    let gutter_w = num_w * crate::ui::count_f32(usize::from(show_old) + usize::from(show_new));
     let mono = FontId::monospace(m.mono_size);
     let char_w = ui.fonts_mut(|f| f.glyph_width(&mono, 'm'));
-    let longest = layout.columns as f32;
+    let longest = crate::ui::count_f32(layout.columns);
     let content_w = if split {
         ui.available_width()
     } else {
@@ -521,10 +513,6 @@ fn gutters(d: &FileDiff) -> (bool, bool) {
 }
 
 /// The file header: name, counts, layout and options, and the file-level action.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn header(
     ui: &mut Ui,
     tab: &mut RepoTab,
@@ -545,8 +533,8 @@ fn header(
     };
     let frame = egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(
-            theme::MD as i8,
-            vertical_padding as i8,
+            crate::ui::points_i8(theme::MD),
+            crate::ui::points_i8(vertical_padding),
         ))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
@@ -717,10 +705,6 @@ fn layout_toggle(
     clippy::too_many_arguments,
     reason = "a cell needs its line, spans, rectangle, gutter, sides, selection and id"
 )]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn line_cell(
     ui: &Ui,
     cx: &Ctx<'_>,
@@ -758,7 +742,7 @@ fn line_cell(
         // The line numbers sit on the stronger gutter tint. A whole new or deleted file keeps
         // that and gives its code a quiet wash of the line tint, so it still reads as added or
         // removed without a solid block of colour.
-        let gutter_w = num_w * (usize::from(show_old) + usize::from(show_new)) as f32;
+        let gutter_w = num_w * crate::ui::count_f32(usize::from(show_old) + usize::from(show_new));
         let body = if cx.one_sided {
             bg.gamma_multiply(0.4)
         } else {
@@ -1240,10 +1224,6 @@ mod tests {
 
     /// Labels and bounds of the AccessKit nodes one frame of a working-copy hunk header made,
     /// `width` wide, and the actions it pushed.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-    )]
     fn hunk_frame(
         ctx: &egui::Context,
         width: f32,
@@ -1296,8 +1276,8 @@ mod tests {
                     .filter_map(|(_, n)| {
                         let b = n.bounds()?;
                         let r = Rect::from_min_max(
-                            pos2(b.x0 as f32, b.y0 as f32),
-                            pos2(b.x1 as f32, b.y1 as f32),
+                            pos2(crate::ui::to_f32(b.x0), crate::ui::to_f32(b.y0)),
+                            pos2(crate::ui::to_f32(b.x1), crate::ui::to_f32(b.y1)),
                         );
                         Some((n.label()?.to_owned(), r))
                     })

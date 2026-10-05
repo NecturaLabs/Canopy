@@ -698,10 +698,6 @@ impl<'a> TreeRow<'a> {
         self.show(ui)
     }
 
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "values drawn on screen, where f32 rounding is invisible"
-    )]
     pub fn show(self, ui: &mut Ui) -> KitResponse<Option<TreeNav>> {
         let m = theme::metrics();
         let p = theme::palette(ui.ctx());
@@ -722,7 +718,7 @@ impl<'a> TreeRow<'a> {
         let id = f.response.id;
         let has_children = self.open.is_some();
         let mut open_now = self.open.as_deref().copied().unwrap_or(false);
-        let chevron_x = f.rect.left() + 6.0 + self.depth as f32 * m.tree_indent;
+        let chevron_x = f.rect.left() + 6.0 + crate::ui::count_f32(self.depth) * m.tree_indent;
         let chevron = Rect::from_center_size(
             pos2(chevron_x + 6.0, f.rect.center().y),
             vec2(16.0, f.rect.height()),

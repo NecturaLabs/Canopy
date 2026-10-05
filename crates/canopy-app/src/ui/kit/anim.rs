@@ -65,10 +65,6 @@ pub fn spring_step(d: f32, v: f32, s: Spring, dt: f32) -> (f32, f32) {
 /// A spring towards `target`, its state kept per `id`. The first call returns `target`; reduced
 /// motion always does. Frame-rate independent (the exact solution over the real elapsed time),
 /// repaints only while moving and snaps once within 0.01 and slower than 0.1 per second.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 pub fn spring(ctx: &Context, id: Id, target: f32, s: Spring) -> f32 {
     if motion::reduced() {
         ctx.data_mut(|d| d.remove::<SpringState>(id));
@@ -82,7 +78,7 @@ pub fn spring(ctx: &Context, id: Id, target: f32, s: Spring) -> f32 {
             v: 0.0,
             at: now,
         });
-        let dt = ((now - st.at) as f32).clamp(0.0, 1.0 / 20.0);
+        let dt = crate::ui::to_f32(now - st.at).clamp(0.0, 1.0 / 20.0);
         let (dx, v) = spring_step(st.x - target, st.v, s, dt);
         moving = dx.abs() > 0.01 || v.abs() > 0.1;
         *st = if moving {
@@ -109,10 +105,6 @@ pub fn spring(ctx: &Context, id: Id, target: f32, s: Spring) -> f32 {
 /// Progress of an entrance from the first frame `open` was true, eased along `EASE_OUT`; 0 while
 /// closed, 1 at once with reduced motion.
 #[cfg_attr(not(test), expect(dead_code, reason = "used by the component phase"))]
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 pub fn entrance(ctx: &Context, id: Id, open: bool, seconds: f32) -> f32 {
     let key = id.with("kit-opened-at");
     if !open {
@@ -125,7 +117,7 @@ pub fn entrance(ctx: &Context, id: Id, open: bool, seconds: f32) -> f32 {
     }
     let now = ctx.input(|i| i.time);
     let opened = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(key, || now));
-    let t = ((now - opened) as f32 / seconds).clamp(0.0, 1.0);
+    let t = (crate::ui::to_f32(now - opened) / seconds).clamp(0.0, 1.0);
     if t < 1.0 {
         ctx.request_repaint();
     }

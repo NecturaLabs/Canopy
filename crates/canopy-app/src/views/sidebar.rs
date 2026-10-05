@@ -59,10 +59,6 @@ struct Row<'a> {
 
 /// A sidebar item: icon and label, the checked-out branch selected, ahead and behind counts as
 /// badges at the right.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn row(ui: &mut Ui, r: &Row<'_>) -> egui::Response {
     let m = theme::metrics();
     let badges: Vec<(String, Tone)> =
@@ -83,7 +79,7 @@ fn row(ui: &mut Ui, r: &Row<'_>) -> egui::Response {
         .x;
     let room = ui.available_width() - 2.0 * theme::MD - m.icon_md - theme::SM;
     let tip = r.hint.map(str::to_owned).or_else(|| {
-        let badges_w = badges.len() as f32 * (m.badge_height + 2.0 * BADGE_GAP);
+        let badges_w = crate::ui::count_f32(badges.len()) * (m.badge_height + 2.0 * BADGE_GAP);
         (label_w > room - badges_w).then(|| r.label.to_owned())
     });
     let mut row = ListRow::new(r.id)

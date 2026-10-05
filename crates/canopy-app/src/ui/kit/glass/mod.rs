@@ -469,12 +469,12 @@ fn backdrop_shape_with(
 }
 
 /// The window size in pixels, as eframe paints it.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 fn screen_px(viewport: Rect, ppp: f32) -> Option<[u32; 2]> {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "whole and within 1..COORD_LIMIT, checked first"
+    )]
     let side = |points: f32| {
         let px = (points * ppp).round();
         (1.0..COORD_LIMIT).contains(&px).then_some(px as u32)
@@ -703,12 +703,12 @@ impl Plan {
     /// The opaque fallback as two scissor rectangles: the layer without its left and right
     /// corner columns, and without its top and bottom corner rows, so no square corner shows
     /// outside the rounded layer.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-    )]
     pub(super) fn cross(&self) -> [Option<PxRect>; 2] {
         let r = self.radii.iter().fold(0.0_f32, |a, &b| a.max(b)).ceil();
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "finite, whole and below COORD_LIMIT, checked first"
+        )]
         let r = if r.is_finite() && r < COORD_LIMIT {
             r as i32
         } else {
@@ -728,7 +728,7 @@ impl Plan {
 /// `v` points in pixels, rounded by `round`, if finite and in range.
 #[expect(
     clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
+    reason = "finite, whole and within COORD_LIMIT, checked first"
 )]
 fn px(v: f32, ppp: f32, round: fn(f32) -> f32) -> Option<i32> {
     let p = round(v * ppp);
@@ -738,10 +738,6 @@ fn px(v: f32, ppp: f32, round: fn(f32) -> f32) -> Option<i32> {
 /// Works out one paint of a layer at `layer` (points) with corner `radius`, on a screen of
 /// `screen` pixels at `ppp`, clipped to `clip` (points), with textures of at most `max_side`.
 /// `None` when nothing of the layer is visible or an input is out of range.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 pub(super) fn plan(
     layer: Rect,
     radius: CornerRadius,
@@ -807,7 +803,12 @@ pub(super) fn plan(
 
     let half = [layer.width() * 0.5 * ppp, layer.height() * 0.5 * ppp];
     let centre = layer.center();
-    let rect = [centre.x * ppp, sh as f32 - centre.y * ppp, half[0], half[1]];
+    let rect = [
+        centre.x * ppp,
+        crate::ui::int_f32(sh) - centre.y * ppp,
+        half[0],
+        half[1],
+    ];
     let most = half[0].min(half[1]).max(0.0);
     let r = |c: u8| (f32::from(c) * ppp).min(most);
     Some(Plan {
@@ -897,10 +898,6 @@ impl Soak {
     }
 
     /// Paints this frame's layers. Returns true after the last frame.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "values drawn on screen, where f32 rounding is invisible"
-    )]
     pub fn frame(&mut self, ctx: &egui::Context) -> bool {
         let last = self.warmup.saturating_add(self.frames);
         if self.frame >= last {
@@ -919,8 +916,15 @@ impl Soak {
                 let style = theme::style();
                 for i in 0..layers {
                     let k = n + i as u64 * 97;
+                    #[expect(
+                        clippy::cast_precision_loss,
+                        reason = "below 720 after the modulo, exact in f32"
+                    )]
                     let size = vec2(80.0 + (k * 37 % 720) as f32, 60.0 + (k * 53 % 480) as f32);
-                    let at = pos2(20.0 + i as f32 * 40.0, 20.0 + i as f32 * 30.0);
+                    let at = pos2(
+                        20.0 + crate::ui::count_f32(i) * 40.0,
+                        20.0 + crate::ui::count_f32(i) * 30.0,
+                    );
                     let rect = Rect::from_min_size(at, size);
                     let radius = CornerRadius::same(theme::metrics().radius_lg);
                     let fill = layer_fill(ui.painter(), rect, radius);
@@ -985,10 +989,6 @@ fn parse_vm_rss(status: &str) -> Option<u64> {
 /// The gallery section: the blur's state, then the same floating card opaque and translucent
 /// over a busy backdrop. The translucent one is forced on whatever the setting says (the theme
 /// and the graphics driver still decide).
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 pub(crate) fn gallery(ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let p = theme::palette(&ctx);
@@ -1023,7 +1023,11 @@ pub(crate) fn gallery(ui: &mut Ui) {
     let radius = CornerRadius::same(m.radius_lg);
     for (i, forced) in [false, true].into_iter().enumerate() {
         let card = Rect::from_min_size(
-            rect.min + vec2(theme::MD + i as f32 * (card_w + theme::MD), 34.0),
+            rect.min
+                + vec2(
+                    theme::MD + crate::ui::count_f32(i) * (card_w + theme::MD),
+                    34.0,
+                ),
             vec2(card_w, 112.0),
         );
         let fill = layer_fill_with(ui.painter(), card, radius, forced);
@@ -1068,10 +1072,6 @@ pub(crate) fn gallery(ui: &mut Ui) {
 
 /// Stripes in the lane colours, light and dark bars and lines of text: content whose blur is easy
 /// to see.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn busy_backdrop(painter: &Painter, rect: Rect, p: &Palette) {
     let painter = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
     let bar = 14.0;
@@ -1105,7 +1105,10 @@ fn busy_backdrop(painter: &Painter, rect: Rect, p: &Palette) {
     let m = theme::metrics();
     for row in 0..6 {
         painter.text(
-            pos2(rect.left() + 6.0, rect.top() + 6.0 + row as f32 * 28.0),
+            pos2(
+                rect.left() + 6.0,
+                rect.top() + 6.0 + crate::ui::int_f32(row) * 28.0,
+            ),
             Align2::LEFT_TOP,
             "feat(graph): circles in the history graph · fix: keep the selection on refresh",
             FontId::proportional(m.body_size),

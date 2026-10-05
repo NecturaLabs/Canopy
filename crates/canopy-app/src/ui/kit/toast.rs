@@ -149,10 +149,6 @@ impl<'a> ToastCard<'a> {
         id.with("kit-toast-details")
     }
 
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-    )]
     pub fn show(self, ui: &mut Ui) -> ToastOutput {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
@@ -180,7 +176,7 @@ impl<'a> ToastCard<'a> {
             if seconds <= 0.0 {
                 return None;
             }
-            let age = (ctx.input(|i| i.time) - born) as f32 - delay;
+            let age = crate::ui::to_f32(ctx.input(|i| i.time) - born) - delay;
             if age < seconds {
                 ctx.request_repaint();
             }

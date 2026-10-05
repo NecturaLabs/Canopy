@@ -139,10 +139,6 @@ impl Menu<'_> {
     /// An item that opens `add` as a submenu: after the pointer rests on it for `SUBMENU_DELAY`,
     /// or on Right or Enter; Left or Esc closes it. The item stays highlighted while it is open.
     /// Returns what `add` returned, while open.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-    )]
     pub fn submenu<R>(
         &mut self,
         glyph: &str,
@@ -206,7 +202,7 @@ impl Menu<'_> {
             st.visuals.window_fill = Color32::TRANSPARENT;
             st.visuals.window_stroke = Stroke::NONE;
             st.visuals.popup_shadow = Shadow::NONE;
-            st.spacing.menu_margin = Margin::same(m.menu_pad as i8);
+            st.spacing.menu_margin = Margin::same(crate::ui::points_i8(m.menu_pad));
             SubMenu::new().show(ui, &trigger, |ui| {
                 let layer = ui.layer_id();
                 let slot = ui.painter().add(Shape::Noop);
@@ -284,10 +280,6 @@ fn body<R>(
 }
 
 /// Shows a menu in `popup` anchored to `anchor`.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn show_popup<R>(
     anchor: &Response,
     popup: Popup<'_>,
@@ -312,9 +304,12 @@ fn show_popup<R>(
         let e = Entrance::of(ui.ctx(), id, motion::BASE, motion::SLOW, keyboard, None);
         ui.multiply_opacity(e.fade);
         let start = overlay::next_shape(ui.ctx(), layer);
-        let r = overlay::floating(ui, Layer::Menu, Margin::same(m.menu_pad as i8), |ui| {
-            body(ui, id, kind, fresh && keyboard, add)
-        });
+        let r = overlay::floating(
+            ui,
+            Layer::Menu,
+            Margin::same(crate::ui::points_i8(m.menu_pad)),
+            |ui| body(ui, id, kind, fresh && keyboard, add),
+        );
         let rect = r.response.rect;
         let point = match kind {
             Kind::Context => Popup::position_of_id(ui.ctx(), id)
@@ -369,10 +364,6 @@ pub fn menu<R>(button: &Response, add: impl FnOnce(&mut Menu<'_>) -> R) -> Optio
 }
 
 /// A menu painted in place, `width` wide (the gallery shows menus without opening them).
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 pub(crate) fn inline<R>(
     ui: &mut Ui,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
@@ -382,10 +373,15 @@ pub(crate) fn inline<R>(
     let m = theme::metrics();
     let id = ui.id().with(("kit-inline-menu", Id::new(id_salt)));
     ui.allocate_ui(vec2(width, 0.0), |ui| {
-        overlay::floating(ui, Layer::Menu, Margin::same(m.menu_pad as i8), |ui| {
-            ui.set_width(width - 2.0 * m.menu_pad);
-            body(ui, id, Kind::Inline, false, add)
-        })
+        overlay::floating(
+            ui,
+            Layer::Menu,
+            Margin::same(crate::ui::points_i8(m.menu_pad)),
+            |ui| {
+                ui.set_width(width - 2.0 * m.menu_pad);
+                body(ui, id, Kind::Inline, false, add)
+            },
+        )
         .inner
     })
     .inner

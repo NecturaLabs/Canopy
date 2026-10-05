@@ -53,10 +53,6 @@ impl Sides {
 
 /// Seconds since something was first shown in an unbroken run of frames: restarts when a frame
 /// passes without it.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn shown_for(ctx: &egui::Context, id: Id) -> f32 {
     let key = id.with("kit-shown-since");
     let frame = ctx.cumulative_frame_nr();
@@ -71,7 +67,7 @@ fn shown_for(ctx: &egui::Context, id: Id) -> f32 {
         d.insert_temp(key, (frame, since));
         since
     });
-    (now - since) as f32
+    crate::ui::to_f32(now - since)
 }
 
 /// Progress of an appearance over `seconds` (`EASE_OUT`), restarting whenever the thing was not
@@ -490,10 +486,6 @@ impl Card {
         self
     }
 
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-    )]
     pub fn show<R>(self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> KitResponse<R> {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
@@ -518,7 +510,7 @@ impl Card {
                 ui.multiply_opacity(theme::DISABLED_ALPHA);
             }
             egui::Frame::new()
-                .inner_margin(Margin::same(pad as i8))
+                .inner_margin(Margin::same(crate::ui::points_i8(pad)))
                 .show(ui, |ui| {
                     if let Some(w) = self.width {
                         ui.set_width((w - 2.0 * pad).max(0.0));
@@ -1126,11 +1118,6 @@ type CardCase<'a> = (&'a str, Option<ForceState>, bool, Option<Tone>, bool);
 /// The gallery's Surfaces section: cards in every state, banners and callouts per tone, an empty
 /// state, an inset box, skeleton rows, pane frames (flush, and floating with and without the
 /// focused edge), the table header strip and the top bars in both styles.
-#[expect(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    reason = "values drawn on screen, where f32 rounding is invisible; egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 pub(crate) fn gallery(ui: &mut Ui) {
     let m = theme::metrics();
     let p = theme::palette(ui.ctx());
@@ -1279,7 +1266,10 @@ pub(crate) fn gallery(ui: &mut Ui) {
     ];
     for (i, empty) in empties.into_iter().enumerate() {
         let r = Rect::from_min_size(
-            pos2(rect.left() + i as f32 * (third + theme::SM), rect.top()),
+            pos2(
+                rect.left() + crate::ui::count_f32(i) * (third + theme::SM),
+                rect.top(),
+            ),
             vec2(third, rect.height()),
         );
         let mut child = ui.new_child(UiBuilder::new().max_rect(r));
@@ -1291,7 +1281,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
             } else {
                 PaneGround::Pane
             })
-            .margin(Margin::same(theme::SM as i8))
+            .margin(Margin::same(crate::ui::points_i8(theme::SM)))
             .show(&mut child, |ui| empty.show(ui).value);
         if let Some(action) = shown.value {
             ui.ctx()

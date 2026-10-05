@@ -154,10 +154,6 @@ const SHELL_EXIT_SCALE: f32 = 0.97;
 
 /// Draws the screen. `forges` are the GitHub/GitLab remotes of open repositories, so their hosts
 /// show up under Accounts.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 pub fn show(
     ctx: &egui::Context,
     screen: &mut SettingsScreen,
@@ -229,10 +225,10 @@ pub fn show(
                 .show(&mut child, |ui| {
                     egui::Frame::NONE
                         .inner_margin(Margin {
-                            left: theme::XL as i8,
-                            right: theme::LG as i8,
-                            top: theme::LG as i8,
-                            bottom: theme::XL as i8,
+                            left: crate::ui::points_i8(theme::XL),
+                            right: crate::ui::points_i8(theme::LG),
+                            top: crate::ui::points_i8(theme::LG),
+                            bottom: crate::ui::points_i8(theme::XL),
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(ui.available_width());
@@ -663,21 +659,17 @@ fn number_field(
 const COMMIT_PAGE: RangeInclusive<f64> = 200.0..=50_000.0;
 const COMMIT_PAGE_STEP: usize = 100;
 
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants; values drawn on screen, where f32 rounding is invisible"
-)]
 fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     let m = theme::metrics();
     heading(ui, "Theme");
     // Whole cards per row, stretched to fill it, with a gutter clear of the scroll bar.
     let gap = m.card_gap;
     let usable = ui.available_width() - theme::LG;
-    let columns = (((usable + gap) / (THEME_CARD_MIN + gap)).floor() as usize).max(1);
-    let card_width = ((usable - gap * (columns - 1) as f32) / columns as f32)
-        .clamp(THEME_CARD_MIN - 20.0, THEME_CARD_MAX);
+    let columns =
+        crate::ui::saturate_usize(((usable + gap) / (THEME_CARD_MIN + gap)).floor()).max(1);
+    let card_width = ((usable - gap * crate::ui::count_f32(columns - 1))
+        / crate::ui::count_f32(columns))
+    .clamp(THEME_CARD_MIN - 20.0, THEME_CARD_MAX);
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing = vec2(gap, gap);
         for themes in ThemeId::ALL.chunks(columns) {
@@ -809,10 +801,6 @@ const ZOOM_FIELD_WIDTH: f32 = 72.0;
 /// The zoom slider and the percentage beside it. Dragging previews the value; the interface
 /// rescales once the drag ends (rescaling under the pointer would move the slider away from it).
 /// A typed percentage applies on Enter.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> Response {
     let percent = |v: f64| format!("{:.0}%", v * 100.0);
     // Left to right, so the value follows the rail, wherever the row puts the pair.
@@ -855,7 +843,7 @@ fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> Respon
                 },
             );
             if let Some(v) = typed {
-                s.zoom = v as f32;
+                s.zoom = crate::ui::to_f32(v);
                 *draft = None;
             }
         },
@@ -1389,13 +1377,12 @@ fn git(
 }
 
 /// Commits per page: a number field between − and + steppers.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants; values drawn on screen, where f32 rounding is invisible"
-)]
 fn commit_page(ui: &mut Ui, s: &mut Settings) {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the range's ends are the whole numbers 200 and 50 000"
+    )]
     let (lo, hi) = (*COMMIT_PAGE.start() as usize, *COMMIT_PAGE.end() as usize);
     // Right to left: +, the field, −.
     if IconButton::new(icon::PLUS, "More commits per page")
@@ -1407,6 +1394,11 @@ fn commit_page(ui: &mut Ui, s: &mut Settings) {
     {
         s.commit_page = (s.commit_page + COMMIT_PAGE_STEP).min(hi);
     }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a page size of at most 50 000, exact in f64"
+    )]
+    let current = s.commit_page as f64;
     if let Some(v) = number_field(
         ui,
         NumberField {
@@ -1415,11 +1407,17 @@ fn commit_page(ui: &mut Ui, s: &mut Settings) {
             width: COUNT_FIELD_WIDTH,
             name: "Commits per page",
         },
-        s.commit_page as f64,
+        current,
         |v| format!("{v:.0}"),
         |text| text.replace([',', '_', ' '], "").parse::<f64>().ok(),
     ) {
-        s.commit_page = v.round() as usize;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "number_field clamps the value to COMMIT_PAGE, so it is a whole positive count once rounded"
+        )]
+        let page = v.round() as usize;
+        s.commit_page = page;
     }
     if IconButton::new(icon::MINUS, "Fewer commits per page")
         .size(Size::Sm)

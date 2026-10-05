@@ -23,14 +23,11 @@ use crate::ui::theme::{self, Density, FULL, Fill, Palette};
 use crate::ui::widgets;
 
 /// A radius that `FULL` turns into half the height.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 fn radius_for(radius: u8, height: f32) -> CornerRadius {
     if radius == FULL {
-        CornerRadius::same((height / 2.0).round().min(f32::from(u8::MAX)) as u8)
+        CornerRadius::same(crate::ui::saturate_u8(
+            (height / 2.0).round().min(f32::from(u8::MAX)),
+        ))
     } else {
         CornerRadius::same(radius)
     }
@@ -393,10 +390,6 @@ impl RefPill {
     }
 
     /// Everything but the label: padding, icons and their gaps.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "values drawn on screen, where f32 rounding is invisible"
-    )]
     fn chrome_width(&self, ui: &Ui) -> f32 {
         let m = theme::metrics();
         let glyphs = self.glyphs();
@@ -411,7 +404,7 @@ impl RefPill {
                     .x
             })
             .sum();
-        m.ref_pill_pad_icon + icon_w + GAP * glyphs.len() as f32 + m.ref_pill_pad
+        m.ref_pill_pad_icon + icon_w + GAP * crate::ui::count_f32(glyphs.len()) + m.ref_pill_pad
     }
 
     /// The pill's width (the history sizes its description column from it).
@@ -792,16 +785,12 @@ impl Widget for StatusDot {
 
 /// The breathing alpha of a pulsing dot now (0.5 to 1 over 1.6 s), repainting while shown; 1 and
 /// still with reduced motion.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn pulse_alpha(ctx: &egui::Context) -> f32 {
     if motion::reduced() {
         return 1.0;
     }
     ctx.request_repaint_after(std::time::Duration::from_millis(16));
-    let t = (ctx.input(|i| i.time) % 1.6) as f32 / 1.6;
+    let t = crate::ui::to_f32(ctx.input(|i| i.time) % 1.6) / 1.6;
     0.75 + 0.25 * (t * std::f32::consts::TAU).cos()
 }
 
@@ -891,18 +880,18 @@ impl Widget for DiffStat {
 
 /// The five blocks of a diffstat bar: (added, removed, neutral). Up to five lines fill one block
 /// each; more fill all five in proportion, and a side with any change keeps at least one block.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants; values drawn on screen, where f32 rounding is invisible"
-)]
 pub fn blocks(added: usize, removed: usize) -> (usize, usize, usize) {
     let total = added + removed;
     if total == 0 {
         return (0, 0, 5);
     }
     let filled = total.min(5);
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "line counts are exact in f64, and the rounded share is between 0 and 5"
+    )]
     let mut green = ((added * filled) as f64 / total as f64).round() as usize;
     if added > 0 {
         green = green.max(1);

@@ -145,11 +145,6 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
 
     /// Shows the trigger (and the list while open). The response is the trigger's and reports
     /// `changed` when a new value was chosen.
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_precision_loss,
-        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; values drawn on screen, where f32 rounding is invisible"
-    )]
     pub fn show(self, ui: &mut Ui) -> Response {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
@@ -374,12 +369,12 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             let reveal = if forced_open || st.by_keyboard || motion::reduced() {
                 1.0
             } else {
-                ((now - st.opened_at) as f32 / motion::SLOW).clamp(0.0, 1.0)
+                (crate::ui::to_f32(now - st.opened_at) / motion::SLOW).clamp(0.0, 1.0)
             };
             let fade = if forced_open || st.by_keyboard || motion::reduced() {
                 1.0
             } else {
-                ((now - st.opened_at) as f32 / FADE_IN).clamp(0.0, 1.0)
+                (crate::ui::to_f32(now - st.opened_at) / FADE_IN).clamp(0.0, 1.0)
             };
             if reveal < 1.0 || fade < 1.0 {
                 ctx.request_repaint();
@@ -389,7 +384,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             }
             let anchor = rect.expand2(vec2(LIST_OVERHANG, 0.0));
             let item_h = m.menu_item_height;
-            let rows = self.options.len() as f32;
+            let rows = crate::ui::count_f32(self.options.len());
             let list_w = anchor
                 .width()
                 .max(LIST_MIN_WIDTH.min(anchor.width() + 120.0));

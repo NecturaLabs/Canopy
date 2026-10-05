@@ -938,10 +938,6 @@ impl GlassGl {
     }
 
     /// Copies, blurs and composites one layer. `saved` holds egui's framebuffer binding.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "values drawn on screen, where f32 rounding is invisible"
-    )]
     fn draw(&self, cur: Current<'_>, saved: &Saved, plan: &Plan, look: Look) -> Result<(), Reason> {
         let Some(blur) = plan.blur else {
             return Err(Reason::Internal);
@@ -952,8 +948,13 @@ impl GlassGl {
         let level = |i: usize| levels.get(i).ok_or(Reason::Internal);
         let used = super::level_sizes([blur.region.w, blur.region.h]);
         let used_at = |i: usize| used.get(i).copied().ok_or(Reason::Internal);
-        let texel = |l: &Level| [1.0 / l.size[0] as f32, 1.0 / l.size[1] as f32];
-        let size = |s: [i32; 2]| [s[0] as f32, s[1] as f32];
+        let texel = |l: &Level| {
+            [
+                1.0 / crate::ui::int_f32(l.size[0]),
+                1.0 / crate::ui::int_f32(l.size[1]),
+            ]
+        };
+        let size = |s: [i32; 2]| [crate::ui::int_f32(s[0]), crate::ui::int_f32(s[1])];
 
         cur.set_enabled(Cap::Scissor, false);
         cur.set_enabled(Cap::Blend, false);
@@ -1009,7 +1010,15 @@ impl GlassGl {
         cur.bind_texture(Some(level(0)?.texture));
         cur.uniform_2(c.texel, texel(level(0)?));
         cur.uniform_2(c.src_size, size(used_at(0)?));
-        cur.uniform_4(c.region, [r.x as f32, r.y as f32, r.w as f32, r.h as f32]);
+        cur.uniform_4(
+            c.region,
+            [
+                crate::ui::int_f32(r.x),
+                crate::ui::int_f32(r.y),
+                crate::ui::int_f32(r.w),
+                crate::ui::int_f32(r.h),
+            ],
+        );
         cur.uniform_4(c.rect, plan.rect);
         cur.uniform_4(c.radii, plan.radii);
         cur.uniform_4(c.look, look.uniform());

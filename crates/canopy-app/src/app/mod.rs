@@ -792,11 +792,8 @@ impl eframe::App for CanopyApp {
 
         if let Some(tab) = self.tabs.get_mut(self.active) {
             if !compact {
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "egui margins are whole points in an i8; theme::metrics keeps them small"
-                )]
-                let sidebar_margin = egui::Margin::symmetric(m.sidebar_pad as i8, 0);
+                let sidebar_margin =
+                    egui::Margin::symmetric(crate::ui::points_i8(m.sidebar_pad), 0);
                 egui::Panel::left("sidebar")
                     .resizable(true)
                     .default_size(m.sidebar_width)
@@ -992,21 +989,17 @@ impl eframe::App for CanopyApp {
 
 /// The central content pane: flush on the pane ground in Standard; in Deeper a floating card over
 /// the ground's gutters, with the focused-pane edge (the main pane holds the keyboard).
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui margins are whole points in an i8; theme::metrics keeps them small"
-)]
 fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     let m = theme::metrics();
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
-    let gutter = m.pane_gutter;
+    let gutter = crate::ui::points_i8(m.pane_gutter);
     // Concept 4's body padding: none above (the deck), the gutter at the sides and below.
     let margin = egui::Margin {
-        left: gutter as i8,
-        right: gutter as i8,
+        left: gutter,
+        right: gutter,
         top: 0,
-        bottom: gutter as i8,
+        bottom: gutter,
     };
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.inner_margin(margin))

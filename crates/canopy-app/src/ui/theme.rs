@@ -2068,15 +2068,11 @@ impl Palette {
     }
 
     /// [`Palette::ink`] for the surfaces `s`, uncached.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "values drawn on screen, where f32 rounding is invisible"
-    )]
     pub fn ink_on(&self, s: &Surfaces, fg: Color32, fill: Color32) -> Color32 {
         let behind = self.component_surfaces(s).map(|b| over(fill, b));
         let readable = |c: Color32| behind.iter().all(|b| contrast(c, *b) >= 4.5);
         (0..=20)
-            .map(|step| mix(fg, self.text, step as f32 / 20.0))
+            .map(|step| mix(fg, self.text, crate::ui::int_f32(step) / 20.0))
             .find(|c| readable(*c))
             .unwrap_or(self.text)
     }
@@ -2182,14 +2178,10 @@ pub fn contrast(a: Color32, b: Color32) -> f64 {
 }
 
 /// Translucent `fg` drawn over opaque `bg`, as the GPU blends it (`Color32` is premultiplied).
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 pub fn over(fg: Color32, bg: Color32) -> Color32 {
     let a = f32::from(fg.a()) / 255.0;
-    let mix = |f: u8, b: u8| (f32::from(f) + f32::from(b) * (1.0 - a)).round() as u8;
+    let mix =
+        |f: u8, b: u8| crate::ui::saturate_u8((f32::from(f) + f32::from(b) * (1.0 - a)).round());
     Color32::from_rgb(
         mix(fg.r(), bg.r()),
         mix(fg.g(), bg.g()),
@@ -2198,13 +2190,10 @@ pub fn over(fg: Color32, bg: Color32) -> Color32 {
 }
 
 /// `a` moved towards `b` by `t` (0 to 1).
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
-    let m = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    let m = |x: u8, y: u8| {
+        crate::ui::saturate_u8((f32::from(x) + (f32::from(y) - f32::from(x)) * t).round())
+    };
     Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }
 
@@ -2218,11 +2207,6 @@ pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
         reason = "the glass renderer's luminance clamp uniform comes with the blur"
     )
 )]
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 pub fn clamp_backdrop(c: Color32, dark: bool, cap: f32) -> Color32 {
     let to_lin = |v: u8| {
         let v = f64::from(v) / 255.0;
@@ -2232,6 +2216,11 @@ pub fn clamp_backdrop(c: Color32, dark: bool, cap: f32) -> Color32 {
             ((v + 0.055) / 1.055).powf(2.4)
         }
     };
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "v is clamped to 0..=1 first, so the channel is 0..=255"
+    )]
     let to_srgb = |v: f64| {
         let v = v.clamp(0.0, 1.0);
         let s = if v <= 0.003_130_8 {
@@ -3350,10 +3339,6 @@ pub fn with_look<R>(style: Style, density: Density, f: impl FnOnce() -> R) -> R 
 
 /// Makes `id` the active theme with `look`'s style, density, glass and motion, and installs the
 /// matching egui style on `ctx`.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 pub fn apply(ctx: &egui::Context, id: ThemeId, look: Appearance) {
     look_set(id, look.style, look.density, look.glass);
     super::motion::set_reduced(look.reduce_motion);
@@ -3383,8 +3368,8 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, look: Appearance) {
     sp.item_spacing = m.item_spacing;
     sp.button_padding = vec2(m.button_pad_x, m.button_pad_y);
     sp.interact_size.y = m.control;
-    sp.window_margin = Margin::same(m.dialog_pad as i8);
-    sp.menu_margin = Margin::same(m.menu_pad as i8);
+    sp.window_margin = Margin::same(crate::ui::points_i8(m.dialog_pad));
+    sp.menu_margin = Margin::same(crate::ui::points_i8(m.menu_pad));
     sp.menu_spacing = 1.0;
     sp.indent = m.tree_indent;
     sp.icon_width = m.checkbox;

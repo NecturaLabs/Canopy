@@ -103,10 +103,6 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     }
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
@@ -114,7 +110,10 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
     let width = ui.available_width();
     egui::Frame::new()
         .fill(s.pane_header)
-        .inner_margin(egui::Margin::symmetric(theme::LG as i8, theme::SM as i8))
+        .inner_margin(egui::Margin::symmetric(
+            crate::ui::points_i8(theme::LG),
+            crate::ui::points_i8(theme::SM),
+        ))
         .show(ui, |ui| {
             ui.set_min_width((width - theme::LG * 2.0).max(0.0));
             ui.horizontal_wrapped(|ui| {
@@ -358,12 +357,8 @@ fn code_row_height(ui: &Ui) -> f32 {
 
 /// Height of `n` code lines stacked `spacing` apart (`row_h` each), as [`code_lines`] lays them
 /// out; an empty list shows one "(nothing)" line.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn code_height(n: usize, row_h: f32, spacing: f32) -> f32 {
-    let n = n.max(1) as f32;
+    let n = crate::ui::count_f32(n.max(1));
     n * row_h + (n - 1.0) * spacing
 }
 
@@ -374,10 +369,6 @@ fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
     code_lines_at(ui, lines, color, None);
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line: Option<usize>) {
     if lines.is_empty() {
         ui.label(
@@ -424,7 +415,7 @@ fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line
             LayoutJob::single_section(text, egui::TextFormat::simple(font.clone(), color));
         job.wrap = egui::text::TextWrapping::truncate_at_width((width - gutter).max(0.0));
         let galley = ui.painter().layout_job(job);
-        let top = rect.min.y + i as f32 * pitch;
+        let top = rect.min.y + crate::ui::count_f32(i) * pitch;
         // Like a truncated label: the whole line on hover when it does not fit.
         if galley.elided
             && hover.is_some_and(|h| (top..top + row_h).contains(&h.y))

@@ -29,11 +29,6 @@ pub fn shadow(painter: &Painter, rect: Rect, radius: CornerRadius, p: &Palette, 
 
 /// The shapes [`shadow`] paints, for surfaces painted into a reserved slot once their size is
 /// known (floating layers).
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 pub fn shadow_shapes(rect: Rect, radius: CornerRadius, p: &Palette, m: &Material) -> Vec<Shape> {
     let mut shapes = Vec::with_capacity(m.layers.len());
     for l in m.layers {
@@ -46,7 +41,7 @@ pub fn shadow_shapes(rect: Rect, radius: CornerRadius, p: &Palette, m: &Material
         let blur = f32::from(l.blur).min((r.size().min_elem() - 1.0).max(0.0));
         let spread = f32::from(l.spread);
         let corner = if spread >= 0.0 {
-            radius + CornerRadius::same(spread as u8)
+            radius + CornerRadius::same(crate::ui::saturate_u8(spread))
         } else {
             shrink_radius(radius, -spread)
         };
@@ -60,13 +55,8 @@ pub fn shadow_shapes(rect: Rect, radius: CornerRadius, p: &Palette, m: &Material
     shapes
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 fn shrink_radius(r: CornerRadius, by: f32) -> CornerRadius {
-    let by = by.round().clamp(0.0, 255.0) as u8;
+    let by = crate::ui::saturate_u8(by.round().clamp(0.0, 255.0));
     CornerRadius {
         nw: r.nw.saturating_sub(by),
         ne: r.ne.saturating_sub(by),
@@ -76,10 +66,6 @@ fn shrink_radius(r: CornerRadius, by: f32) -> CornerRadius {
 }
 
 /// A 1 x 32 ramp from `top` to `bottom`, uploaded once per pair of colours and reused.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn ramp(ctx: &Context, top: Color32, bottom: Color32) -> TextureHandle {
     const N: usize = 32;
 
@@ -88,7 +74,12 @@ fn ramp(ctx: &Context, top: Color32, bottom: Color32) -> TextureHandle {
         return t;
     }
     let pixels = (0..N)
-        .map(|i| top.lerp_to_gamma(bottom, i as f32 / (N - 1) as f32))
+        .map(|i| {
+            top.lerp_to_gamma(
+                bottom,
+                crate::ui::count_f32(i) / crate::ui::count_f32(N - 1),
+            )
+        })
         .collect();
     let image = egui::ColorImage::new([1, N], pixels);
     let handle = ctx.load_texture("canopy-kit-ramp", image, TextureOptions::LINEAR);
@@ -173,11 +164,6 @@ pub fn recess(painter: &Painter, rect: Rect, radius: CornerRadius, color: Color3
     painter.extend(recess_shape(rect, radius, color, alpha));
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 fn recess_shape(rect: Rect, radius: CornerRadius, color: Color32, alpha: u8) -> Option<Shape> {
     if alpha == 0 {
         return None;
@@ -187,7 +173,7 @@ fn recess_shape(rect: Rect, radius: CornerRadius, color: Color32, alpha: u8) -> 
     let top = rect.top();
     let stroke = PathStroke::new_uv(1.5, move |_bbox: Rect, p: Pos2| {
         let k = (1.0 - (p.y - top) / 4.0).clamp(0.0, 1.0);
-        Palette::tint(color, (f32::from(alpha) * k) as u8)
+        Palette::tint(color, crate::ui::saturate_u8(f32::from(alpha) * k))
     })
     .inside();
     Some(Shape::Path(PathShape {
@@ -270,11 +256,6 @@ pub fn rim(painter: &Painter, rect: Rect, radius: CornerRadius, color: Color32) 
 
 /// The outside focus ring: `FOCUS_WIDTH` in `color`, `FOCUS_OFFSET` outside the control with the
 /// gap filled by `moat` (the surface behind). The painter must not clip outside `rect`.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 pub fn focus_ring(
     painter: &Painter,
     rect: Rect,
@@ -282,7 +263,7 @@ pub fn focus_ring(
     color: Color32,
     moat: Color32,
 ) {
-    let grow = |by: f32| radius + CornerRadius::same(by.round() as u8);
+    let grow = |by: f32| radius + CornerRadius::same(crate::ui::saturate_u8(by.round()));
     if moat.a() > 0 {
         painter.rect_stroke(
             rect.expand(FOCUS_OFFSET * 0.5),
@@ -329,11 +310,6 @@ pub fn seam_v(painter: &Painter, x: f32, y: Rangef, color: Color32) {
 
 /// Deeper's focused-pane edge: a 1 pt ring inside the pane, `focus` at `theme::FOCUS_EDGE`'s alphas
 /// from the top down, scaled by `t` (its fade-in).
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 pub fn focus_edge(painter: &Painter, rect: Rect, radius: CornerRadius, focus: Color32, t: f32) {
     if t <= 0.0 {
         return;
@@ -343,7 +319,7 @@ pub fn focus_edge(painter: &Painter, rect: Rect, radius: CornerRadius, focus: Co
     let (top, h) = (rect.top(), rect.height().max(1.0));
     let stroke = PathStroke::new_uv(SEAM, move |_bbox: Rect, p: Pos2| {
         let y = ((p.y - top) / h).clamp(0.0, 1.0);
-        Palette::tint(focus, (focus_edge_alpha(y) * t) as u8)
+        Palette::tint(focus, crate::ui::saturate_u8(focus_edge_alpha(y) * t))
     })
     .inside();
     painter.add(Shape::Path(PathShape {
@@ -469,11 +445,6 @@ pub fn scroll_fade<R>(
 /// A spinner: a 270 degree arc turning once a second around `center`, `color` at full strength
 /// over a faint full circle. Repaints itself while painted; still (one fixed arc) with reduced
 /// motion.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; values drawn on screen, where f32 rounding is invisible"
-)]
 pub fn spinner(painter: &Painter, center: Pos2, radius: f32, width: f32, color: Color32) {
     let ctx = painter.ctx();
     let still = crate::ui::motion::reduced();
@@ -481,7 +452,7 @@ pub fn spinner(painter: &Painter, center: Pos2, radius: f32, width: f32, color: 
         0.0
     } else {
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
-        (ctx.input(|i| i.time) % 1.0) as f32 * std::f32::consts::TAU
+        crate::ui::to_f32(ctx.input(|i| i.time) % 1.0) * std::f32::consts::TAU
     };
     painter.circle_stroke(
         center,
@@ -490,7 +461,7 @@ pub fn spinner(painter: &Painter, center: Pos2, radius: f32, width: f32, color: 
     );
     let points: Vec<Pos2> = (0..=24)
         .map(|i| {
-            let a = turn + i as f32 / 24.0 * std::f32::consts::TAU * 0.75;
+            let a = turn + crate::ui::int_f32(i) / 24.0 * std::f32::consts::TAU * 0.75;
             center + vec2(a.cos(), a.sin()) * radius
         })
         .collect();

@@ -6,11 +6,11 @@ use crate::ui::kit::progress::Progress;
 use crate::updater::{Available, InstallState, Updater};
 
 /// "12.3 MB", or "12.3 of 45.6 MB" while the size is known.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn megabytes(done: u64, total: Option<u64>) -> String {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "shown to a tenth of a megabyte; f64 is exact far beyond any download"
+    )]
     let mb = |n: u64| n as f64 / (1024.0 * 1024.0);
     match total {
         Some(total) => format!("{:.1} of {:.1} MB", mb(done), mb(total)),
@@ -20,10 +20,6 @@ fn megabytes(done: u64, total: Option<u64>) -> String {
 
 /// The update dialog for `a`. `updater` says how this copy was installed and where an install
 /// started from here stands.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 pub(super) fn update(
     ctx: &egui::Context,
     salt: impl std::hash::Hash + std::fmt::Debug,
@@ -54,6 +50,10 @@ pub(super) fn update(
     let mut extra: Option<Outcome> = None;
     match state {
         InstallState::Running { phase, .. } => {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "a share of the progress bar; f32 rounding is invisible there"
+            )]
             let fraction = match phase {
                 Phase::Downloading {
                     done,

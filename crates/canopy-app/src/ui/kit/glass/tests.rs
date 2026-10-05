@@ -519,10 +519,6 @@ fn a_surface_at_another_rect_leaves_the_backdrop_where_it_was() {
 }
 
 #[test]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn at_most_four_glass_layers_a_frame() {
     let ctx = egui::Context::default();
     setup(&ctx, ThemeId::Midnight, true, Backend::Supported);
@@ -530,7 +526,7 @@ fn at_most_four_glass_layers_a_frame() {
         let shapes = frame(&ctx, |ui| {
             let fills: Vec<u8> = (0..6)
                 .map(|i| {
-                    let r = at(10.0 + i as f32 * 20.0, 10.0, 200.0, 100.0);
+                    let r = at(10.0 + crate::ui::int_f32(i) * 20.0, 10.0, 200.0, 100.0);
                     layer_fill(ui.painter(), r, CornerRadius::ZERO).a()
                 })
                 .collect();
@@ -543,10 +539,6 @@ fn at_most_four_glass_layers_a_frame() {
 }
 
 #[test]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn layers_nobody_sees_take_no_allowance() {
     let ctx = egui::Context::default();
     setup(&ctx, ThemeId::Midnight, true, Backend::Supported);
@@ -563,7 +555,7 @@ fn layers_nobody_sees_take_no_allowance() {
             255
         );
         for i in 0..4 {
-            let r = at(10.0 + i as f32 * 10.0, 10.0, 90.0, 90.0);
+            let r = at(10.0 + crate::ui::int_f32(i) * 10.0, 10.0, 90.0, 90.0);
             assert!(layer_fill(ui.painter(), r, CornerRadius::ZERO).a() < 255);
         }
     });
@@ -668,11 +660,6 @@ fn luminance(c: Color32) -> f64 {
 
 /// The composite shader's colour maths in Rust: saturation from Rec. 709 luma, then the luminance
 /// clamp, in linear light.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 fn shade(c: Color32, dark: bool, cap: f32) -> Color32 {
     let lin = |v: u8| {
         let v = f64::from(v) / 255.0;
@@ -682,6 +669,11 @@ fn shade(c: Color32, dark: bool, cap: f32) -> Color32 {
             ((v + 0.055) / 1.055).powf(2.4)
         }
     };
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the value is clamped to 0..=1 first, so the channel is 0..=255"
+    )]
     let srgb = |v: f64| {
         let s = if v <= 0.003_130_8 {
             12.92 * v

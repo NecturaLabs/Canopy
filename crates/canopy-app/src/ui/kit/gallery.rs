@@ -40,10 +40,6 @@ pub const SECTIONS: &[Section] = &[
 const MAX_WIDTH: f32 = 1360.0;
 
 /// Paints the gallery over the whole window, scrolled down `page` window heights.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 pub fn show(ctx: &egui::Context, page: usize) {
     let screen = ctx.content_rect();
     egui::Area::new(Id::new("canopy-gallery"))
@@ -56,7 +52,7 @@ pub fn show(ctx: &egui::Context, page: usize) {
             ui.set_max_size(screen.size());
             egui::ScrollArea::vertical()
                 .id_salt("canopy-gallery-scroll")
-                .vertical_scroll_offset(page as f32 * screen.height())
+                .vertical_scroll_offset(crate::ui::count_f32(page) * screen.height())
                 .show(ui, |ui| {
                     let width = ui.available_width().min(MAX_WIDTH);
                     let side = (ui.available_width() - width) / 2.0;
@@ -105,10 +101,6 @@ fn caption(ui: &mut Ui, text: &str) {
 }
 
 /// A titled band: `draw` on the content ground (left) and on the chrome (right).
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 pub fn band(ui: &mut Ui, name: &str, draw: fn(&mut Ui)) {
     let s = theme::surfaces(ui.ctx());
     ui.add_space(theme::XL);
@@ -127,7 +119,7 @@ pub fn band(ui: &mut Ui, name: &str, draw: fn(&mut Ui)) {
                             .fill(ground)
                             .stroke(Stroke::new(1.0, s.border))
                             .corner_radius(CornerRadius::same(theme::metrics().radius_lg))
-                            .inner_margin(egui::Margin::same(theme::LG as i8))
+                            .inner_margin(egui::Margin::same(crate::ui::points_i8(theme::LG)))
                             .show(ui, |ui| {
                                 ui.set_width(half - 2.0 * theme::LG - 2.0);
                                 caption(ui, if i == 0 { "ON CONTENT" } else { "ON CHROME" });
@@ -456,11 +448,6 @@ fn slice(ui: &mut Ui, style: Style) {
 }
 
 /// Each animated component at 0, 0.5 and 1 of its transition, painted with a fixed progress.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-)]
 fn motion_strip(ui: &mut Ui) {
     for kind in [
         ButtonKind::Primary,
@@ -476,7 +463,7 @@ fn motion_strip(ui: &mut Ui) {
                 };
                 super::Button::new(format!("Hover {t:.1}"))
                     .kind(kind)
-                    .id_salt(("motion", kind, (t * 10.0) as u8))
+                    .id_salt(("motion", kind, crate::ui::saturate_u8(t * 10.0)))
                     .show_forced(ui, force);
             }
         });

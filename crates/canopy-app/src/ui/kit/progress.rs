@@ -34,21 +34,13 @@ fn keep_moving(ctx: &egui::Context) {
 }
 
 /// The phase (0 to 1) of a loop of `period` seconds at the current time.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn loop_phase(ctx: &egui::Context, period: f32) -> f32 {
     let t = ctx.input(|i| i.time);
-    ((t % f64::from(period)) / f64::from(period)) as f32
+    crate::ui::to_f32((t % f64::from(period)) / f64::from(period))
 }
 
 /// A fill that eases towards larger values over `PROGRESS_FILL` and snaps to smaller ones, so the bar
 /// never visibly runs backwards.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn forward(ctx: &egui::Context, id: Id, target: f32) -> f32 {
     #[derive(Clone, Copy)]
     struct Fill {
@@ -69,7 +61,7 @@ fn forward(ctx: &egui::Context, id: Id, target: f32) -> f32 {
             if seconds <= 0.0 {
                 return st.to;
             }
-            let k = ((now - st.at) as f32 / seconds).clamp(0.0, 1.0);
+            let k = (crate::ui::to_f32(now - st.at) / seconds).clamp(0.0, 1.0);
             st.from + (st.to - st.from) * motion::EASE_OUT.at(k)
         };
         if target > st.to {
@@ -479,10 +471,6 @@ impl Widget for Spinner {
 
 /// Paints a spinner of diameter `side` around `center`. `turn` fixes the rotation (0 to 1);
 /// otherwise it turns with the clock, or pulses in place with reduced motion.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 pub(crate) fn paint_spinner(
     painter: &Painter,
     center: Pos2,
@@ -515,7 +503,7 @@ pub(crate) fn paint_spinner(
     let start = angle - std::f32::consts::FRAC_PI_2;
     let points: Vec<Pos2> = (0..=27)
         .map(|i| {
-            let a = start + i as f32 / 27.0 * std::f32::consts::TAU * 0.75;
+            let a = start + crate::ui::int_f32(i) / 27.0 * std::f32::consts::TAU * 0.75;
             center + vec2(a.cos(), a.sin()) * r
         })
         .collect();
@@ -571,18 +559,16 @@ impl Skeleton {
         p.hover_strong().lerp_to_gamma(p.pressed(), Self::pulse(t))
     }
 
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "values drawn on screen, where f32 rounding is invisible"
-    )]
     pub fn show(self, ui: &mut Ui) -> Response {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
         let m = theme::metrics();
         let row_h = self.row_height.unwrap_or(m.row_height);
         let width = ui.available_width();
-        let (rect, response) =
-            ui.allocate_exact_size(vec2(width, row_h * self.rows as f32), Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(
+            vec2(width, row_h * crate::ui::count_f32(self.rows)),
+            Sense::hover(),
+        );
         if ui.is_rect_visible(rect) {
             let t = match self.force.and_then(|f| f.progress) {
                 Some(t) => Some(t),
@@ -596,7 +582,7 @@ impl Skeleton {
             let bar_h = (row_h * 0.42).round().max(6.0);
             for i in 0..self.rows {
                 let share = SKELETON_WIDTHS[i % SKELETON_WIDTHS.len()];
-                let top = rect.top() + row_h * i as f32 + (row_h - bar_h) / 2.0;
+                let top = rect.top() + row_h * crate::ui::count_f32(i) + (row_h - bar_h) / 2.0;
                 let bar = Rect::from_min_size(
                     pos2(rect.left() + theme::MD, top),
                     vec2((width - 2.0 * theme::MD).max(0.0) * share, bar_h),
@@ -621,10 +607,6 @@ impl Widget for Skeleton {
 
 /// The gallery's Progress section: determinate stops, indeterminate and line bars at rest and
 /// mid-sweep, the spinner sizes, a labelled wait and skeleton rows.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 pub(crate) fn gallery(ui: &mut Ui) {
     let m = theme::metrics();
     let p = theme::palette(ui.ctx());
@@ -707,7 +689,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
                 .show_forced(
                     ui,
                     ForceState {
-                        progress: Some(0.1 * i as f32),
+                        progress: Some(0.1 * crate::ui::count_f32(i)),
                         ..ForceState::default()
                     },
                 );

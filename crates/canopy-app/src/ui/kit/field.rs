@@ -140,12 +140,6 @@ impl<'t> Core<'t> {
         .inner
     }
 
-    #[expect(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "values drawn on screen, where f32 rounding is invisible; egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants"
-    )]
     fn show_inner(self, ui: &mut Ui, id: Id, enabled: bool) -> (Response, bool) {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
@@ -183,8 +177,9 @@ impl<'t> Core<'t> {
         };
         let height = match &self.kind {
             Kind::Area { rows } | Kind::Code { rows, .. } => {
-                let min = *rows.start() as f32 * line_h + 2.0 * pad_y;
-                let max = (*rows.end()).max(*rows.start()) as f32 * line_h + 2.0 * pad_y;
+                let min = crate::ui::count_f32(*rows.start()) * line_h + 2.0 * pad_y;
+                let max =
+                    crate::ui::count_f32((*rows.end()).max(*rows.start())) * line_h + 2.0 * pad_y;
                 let content: f32 = ctx
                     .data(|d| d.get_temp(id.with("kit-area-content")))
                     .unwrap_or(min);
@@ -308,10 +303,10 @@ impl<'t> Core<'t> {
         let interactive = enabled && !self.read_only;
         let text_color = if self.read_only { p.text_dim } else { p.text };
         let margin = Margin {
-            left: left.round() as i8,
-            right: right.round() as i8,
-            top: pad_y as i8,
-            bottom: pad_y as i8,
+            left: crate::ui::points_i8(left.round()),
+            right: crate::ui::points_i8(right.round()),
+            top: crate::ui::points_i8(pad_y),
+            bottom: crate::ui::points_i8(pad_y),
         };
         let multiline = self.kind.multiline();
         let edit_id = id.with("kit-edit");
@@ -413,7 +408,7 @@ impl<'t> Core<'t> {
             let w = HALO * t;
             painter.rect_stroke(
                 rect.expand(w / 2.0),
-                radius + CornerRadius::same((w / 2.0).round() as u8),
+                radius + CornerRadius::same(crate::ui::saturate_u8((w / 2.0).round())),
                 Stroke::new(w, Palette::tint(color, alpha)),
                 StrokeKind::Middle,
             );

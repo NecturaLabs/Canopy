@@ -681,10 +681,6 @@ fn view_tab_id(index: usize) -> Id {
 /// control, drawn here because its options differ in ways the kit's `Segmented` has no slot for:
 /// Requests is disabled without a GitHub or GitLab remote (saying why), each view has its own
 /// shortcut tooltip, and in a narrow window only the active view keeps its name.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "values drawn on screen, where f32 rounding is invisible"
-)]
 fn view_tabs(
     ui: &mut Ui,
     view: View,
@@ -760,8 +756,8 @@ fn view_tabs(
                 badge.as_ref().map(|b| b.measure(ui).x),
             ];
             let k = parts.iter().flatten().count();
-            let content: f32 =
-                parts.iter().flatten().sum::<f32>() + TAB_GAP * k.saturating_sub(1) as f32;
+            let content: f32 = parts.iter().flatten().sum::<f32>()
+                + TAB_GAP * crate::ui::count_f32(k.saturating_sub(1));
             Laid {
                 glyph,
                 text,

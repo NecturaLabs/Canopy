@@ -37,9 +37,11 @@ The workspace `Cargo.toml` sets the lint levels for every crate: clippy's `all`,
 the reason for each lint turned on or left out beside it. `clippy.toml` refuses the calls that
 break three project rules: starting a program other than through `canopy_core::cli`, writing
 with libgit2, and making a colour outside `ui/theme.rs`. It lists the usual calls, not every way
-round a rule, so review still applies the rules themselves. When a finding is deliberate, put `#[expect(lint, reason = "...")]` on the
-narrowest item or statement that covers it; `allow` is itself a warning, and an `expect` fails
-once its finding is gone.
+round a rule, so review still applies the rules themselves. When a finding is deliberate, put
+`#[expect(lint, reason = "...")]` on the narrowest item or statement that covers it; `allow` is
+itself a warning, and an `expect` fails once its finding is gone. Views convert between egui's
+integer and float types through the helpers in `ui/mod.rs` (`points_i8`, `count_f32`,
+`saturate_u8` and the rest) rather than casting by hand.
 
 ## Commit messages
 

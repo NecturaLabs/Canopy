@@ -160,10 +160,6 @@ pub fn scrim(painter: &Painter, rect: Rect, alpha: f32) {
 
 /// How long the overlay `id` has been shown in an unbroken run of frames, and whether this is
 /// the first frame of the run (it was not shown the frame before).
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 pub(crate) fn presence(ctx: &Context, id: Id) -> (f32, bool) {
     #[derive(Clone, Copy)]
     struct Run {
@@ -185,7 +181,7 @@ pub(crate) fn presence(ctx: &Context, id: Id) -> (f32, bool) {
         run.last = pass;
         (run.since, fresh)
     });
-    ((now - since) as f32, fresh)
+    (crate::ui::to_f32(now - since), fresh)
 }
 
 /// How far an entrance has come: `fade` (opacity, 0 to 1) and `grow` (the transform's progress
@@ -397,10 +393,6 @@ fn without_callbacks(shape: Shape) -> Shape {
 }
 
 /// Starts the exits of layers not shown this pass and paints the ones still leaving.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 fn paint_exits(ctx: &Context) {
     let pass = ctx.cumulative_pass_nr();
     let now = ctx.input(|i| i.time);
@@ -421,11 +413,11 @@ fn paint_exits(ctx: &Context) {
             }
         }
         e.leaving
-            .retain(|x| ((now - x.started) as f32) < x.snap.motion.seconds);
+            .retain(|x| crate::ui::to_f32(now - x.started) < x.snap.motion.seconds);
         e.leaving.clone()
     });
     for x in &leaving {
-        let t = ((now - x.started) as f32 / x.snap.motion.seconds).clamp(0.0, 1.0);
+        let t = (crate::ui::to_f32(now - x.started) / x.snap.motion.seconds).clamp(0.0, 1.0);
         let k = motion::EASE_OUT.at(t);
         let alpha = 1.0 - k;
         let m = x.snap.motion;
@@ -720,10 +712,6 @@ impl<'a> Popover<'a> {
         self
     }
 
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-    )]
     pub fn show<R>(self, add: impl FnOnce(&mut Ui) -> R) -> Option<InnerResponse<R>> {
         let Popover {
             id,
@@ -759,7 +747,7 @@ impl<'a> Popover<'a> {
             let e = Entrance::of(ui.ctx(), id, motion::BASE, motion::SLOW, keyboard, progress);
             ui.multiply_opacity(e.fade);
             let start = next_shape(ui.ctx(), layer);
-            let pad = theme::metrics().card_pad as i8;
+            let pad = crate::ui::points_i8(theme::metrics().card_pad);
             let r = floating(ui, Layer::Popover, Margin::same(pad), |ui| {
                 let inner = anchor_rect.width() - 2.0 * f32::from(pad);
                 ui.set_min_width(width.unwrap_or(0.0).max(inner));
@@ -1091,10 +1079,6 @@ impl<'a> Dialog<'a> {
     }
 
     /// The card at the cursor, at most `max_h` tall. Returns the result and the card's rect.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-    )]
     fn card(self, ui: &mut Ui, max_h: f32, fresh: bool) -> (DialogResult, Rect) {
         let Dialog {
             id,
@@ -1122,217 +1106,224 @@ impl<'a> Dialog<'a> {
         let pad = m.dialog_pad;
         let mut result = DialogResult::Open;
         let enter = ctx.input(|i| i.key_pressed(Key::Enter));
-        let r = floating(ui, Layer::Dialog, Margin::same(pad as i8), |ui| {
-            // The card's own node, so its controls are announced inside the dialog.
-            ctx.accesskit_node_builder(ui.id(), |n| {
-                n.set_role(if destructive {
-                    egui::accesskit::Role::AlertDialog
-                } else {
-                    egui::accesskit::Role::Dialog
-                });
-                n.set_label(title.as_str());
-            });
-            ui.set_width(w - 2.0 * pad);
-            // Stacked whatever the caller's layout is.
-            ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                ui.spacing_mut().item_spacing = vec2(theme::SM, m.dialog_gap);
-                let top = ui.cursor().top();
-                // Title row.
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
-                    if let Some(g) = &glyph {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(DISC), Sense::hover());
-                        let (tint, color) = if destructive {
-                            (p.danger_tint(), p.danger)
-                        } else {
-                            (p.accent_tint(), p.accent)
-                        };
-                        ui.painter().circle_filled(rect.center(), DISC / 2.0, tint);
-                        ui.painter().text(
-                            rect.center(),
-                            Align2::CENTER_CENTER,
-                            g,
-                            FontId::proportional(m.icon_md),
-                            color,
-                        );
-                    }
-                    // The close button sits at the right end, past the title.
-                    let close_w = if closable {
-                        m.control_sm + 2.0 + ui.spacing().item_spacing.x
+        let r = floating(
+            ui,
+            Layer::Dialog,
+            Margin::same(crate::ui::points_i8(pad)),
+            |ui| {
+                // The card's own node, so its controls are announced inside the dialog.
+                ctx.accesskit_node_builder(ui.id(), |n| {
+                    n.set_role(if destructive {
+                        egui::accesskit::Role::AlertDialog
                     } else {
-                        0.0
-                    };
-                    let title_w = (ui.available_width() - close_w).max(0.0);
-                    ui.allocate_ui_with_layout(
-                        vec2(title_w, DISC),
-                        Layout::left_to_right(Align::Center),
-                        |ui| {
-                            ui.set_min_width(title_w);
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(&title)
-                                        .font(FontId::new(m.title_size, theme::semibold()))
-                                        .color(p.text),
-                                )
-                                .wrap(),
-                            );
-                        },
-                    );
-                    if closable
-                        && IconButton::new(icon::X, "Close")
-                            .size(Size::Sm)
-                            .id_salt(id.with("close"))
-                            .show(ui)
-                            .clicked()
-                    {
-                        result = DialogResult::Cancel;
-                    }
+                        egui::accesskit::Role::Dialog
+                    });
+                    n.set_label(title.as_str());
                 });
-                // Description and body, scrolling inside the card when it would be too tall.
-                let used = ui.cursor().top() - top;
-                let footer_h = m.control + theme::XS;
-                let room = (max_h - 2.0 * pad - used - footer_h - m.dialog_gap).max(48.0);
-                let has_body = description.is_some() || body.is_some();
-                let scrolled = if has_body {
-                    let out = egui::ScrollArea::vertical()
-                        .id_salt(id.with("body"))
-                        .max_height(room)
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = m.dialog_gap;
-                            if let Some(d) = &description {
+                ui.set_width(w - 2.0 * pad);
+                // Stacked whatever the caller's layout is.
+                ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing = vec2(theme::SM, m.dialog_gap);
+                    let top = ui.cursor().top();
+                    // Title row.
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        if let Some(g) = &glyph {
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::splat(DISC), Sense::hover());
+                            let (tint, color) = if destructive {
+                                (p.danger_tint(), p.danger)
+                            } else {
+                                (p.accent_tint(), p.accent)
+                            };
+                            ui.painter().circle_filled(rect.center(), DISC / 2.0, tint);
+                            ui.painter().text(
+                                rect.center(),
+                                Align2::CENTER_CENTER,
+                                g,
+                                FontId::proportional(m.icon_md),
+                                color,
+                            );
+                        }
+                        // The close button sits at the right end, past the title.
+                        let close_w = if closable {
+                            m.control_sm + 2.0 + ui.spacing().item_spacing.x
+                        } else {
+                            0.0
+                        };
+                        let title_w = (ui.available_width() - close_w).max(0.0);
+                        ui.allocate_ui_with_layout(
+                            vec2(title_w, DISC),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                ui.set_min_width(title_w);
                                 ui.add(
                                     egui::Label::new(
-                                        RichText::new(d)
-                                            .size(m.body_size)
-                                            .line_height(Some((m.body_size * 1.5).round()))
-                                            .color(p.text_dim),
+                                        RichText::new(&title)
+                                            .font(FontId::new(m.title_size, theme::semibold()))
+                                            .color(p.text),
                                     )
                                     .wrap(),
                                 );
-                            }
-                            if let Some(b) = body {
-                                b(ui);
-                            }
-                        });
-                    out.content_size.y > out.inner_rect.height() + 0.5
-                } else {
-                    false
-                };
-                // Footer: 4 pt more above it, a seam only when the body scrolls.
-                ui.add_space(theme::XS);
-                let (row, _) =
-                    ui.allocate_exact_size(vec2(ui.available_width(), m.control), Sense::hover());
-                if scrolled {
-                    paint::seam_h(
-                        ui.painter(),
-                        Rangef::new(row.left() - pad, row.right() + pad),
-                        row.top() - theme::XS - m.dialog_gap / 2.0,
-                        s.border,
-                    );
-                }
-                if let Some(h) = &footer.hint {
-                    ui.painter().text(
-                        row.left_center(),
-                        Align2::LEFT_CENTER,
-                        h,
-                        FontId::proportional(m.meta_size),
-                        p.text_faint,
-                    );
-                }
-                let mut cancel_focus = false;
-                ui.scope_builder(
-                    UiBuilder::new()
-                        .max_rect(row)
-                        .layout(Layout::right_to_left(Align::Center)),
-                    |ui| {
-                        ui.spacing_mut().item_spacing.x = theme::SM;
-                        let confirm_id = if let Some(label) = &footer.confirm {
-                            let mut b = Button::new(label.as_str())
-                                .size(Size::Md)
-                                .enabled(footer.confirm_enabled)
-                                .loading(footer.confirm_loading)
-                                .id_salt(id.with("confirm"));
-                            b = if footer.neutral {
-                                b.secondary()
-                            } else if destructive {
-                                b.danger()
-                            } else {
-                                b.primary()
-                            };
-                            if let Some(g) = &footer.confirm_icon {
-                                b = b.icon(g);
-                            }
-                            if let Some(r) = &footer.confirm_reason {
-                                b = b.disabled_reason(r.as_str());
-                            }
-                            let forced = force.filter(|f| f.focus && !destructive);
-                            let r = match forced {
-                                Some(f) => b.show_forced(ui, f),
-                                None => b.show(ui),
-                            };
-                            if r.clicked() {
-                                result = DialogResult::Confirm;
-                            }
-                            Some(r.id)
-                        } else {
-                            None
-                        };
-                        if let Some(label) = &footer.cancel {
-                            let b = Button::new(label.as_str())
-                                .secondary()
-                                .size(Size::Md)
-                                .id_salt(id.with("cancel"));
-                            let forced = force.filter(|f| f.focus && destructive);
-                            let r = match forced {
-                                Some(f) => b.show_forced(ui, f),
-                                None => b.show(ui),
-                            };
-                            if r.clicked() {
-                                result = DialogResult::Cancel;
-                            }
-                            cancel_focus = r.has_focus();
-                            if fresh {
-                                let want = initial_focus.unwrap_or(if footer.neutral {
-                                    InitialFocus::Body
-                                } else if destructive {
-                                    InitialFocus::Cancel
-                                } else {
-                                    InitialFocus::Confirm
-                                });
-                                match (want, confirm_id) {
-                                    (InitialFocus::Cancel, _) | (InitialFocus::Confirm, None) => {
-                                        r.request_focus();
-                                    }
-                                    (InitialFocus::Confirm, Some(c)) => {
-                                        ctx.memory_mut(|m| m.request_focus(c));
-                                    }
-                                    (InitialFocus::Body, _) => {}
-                                }
-                            }
-                        } else if fresh
-                            && let Some(c) = confirm_id
-                            && initial_focus != Some(InitialFocus::Body)
+                            },
+                        );
+                        if closable
+                            && IconButton::new(icon::X, "Close")
+                                .size(Size::Sm)
+                                .id_salt(id.with("close"))
+                                .show(ui)
+                                .clicked()
                         {
-                            ctx.memory_mut(|m| m.request_focus(c));
+                            result = DialogResult::Cancel;
                         }
-                    },
-                );
-                if result == DialogResult::Open
-                    && force.is_none()
-                    && !destructive
-                    && !footer.neutral
-                    && enter
-                    && footer.confirm.is_some()
-                    && footer.confirm_enabled
-                    && !footer.confirm_loading
-                    && !cancel_focus
-                    && !ctx.egui_wants_keyboard_input()
-                {
-                    result = DialogResult::Confirm;
-                }
-            });
-        });
+                    });
+                    // Description and body, scrolling inside the card when it would be too tall.
+                    let used = ui.cursor().top() - top;
+                    let footer_h = m.control + theme::XS;
+                    let room = (max_h - 2.0 * pad - used - footer_h - m.dialog_gap).max(48.0);
+                    let has_body = description.is_some() || body.is_some();
+                    let scrolled = if has_body {
+                        let out = egui::ScrollArea::vertical()
+                            .id_salt(id.with("body"))
+                            .max_height(room)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = m.dialog_gap;
+                                if let Some(d) = &description {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(d)
+                                                .size(m.body_size)
+                                                .line_height(Some((m.body_size * 1.5).round()))
+                                                .color(p.text_dim),
+                                        )
+                                        .wrap(),
+                                    );
+                                }
+                                if let Some(b) = body {
+                                    b(ui);
+                                }
+                            });
+                        out.content_size.y > out.inner_rect.height() + 0.5
+                    } else {
+                        false
+                    };
+                    // Footer: 4 pt more above it, a seam only when the body scrolls.
+                    ui.add_space(theme::XS);
+                    let (row, _) = ui
+                        .allocate_exact_size(vec2(ui.available_width(), m.control), Sense::hover());
+                    if scrolled {
+                        paint::seam_h(
+                            ui.painter(),
+                            Rangef::new(row.left() - pad, row.right() + pad),
+                            row.top() - theme::XS - m.dialog_gap / 2.0,
+                            s.border,
+                        );
+                    }
+                    if let Some(h) = &footer.hint {
+                        ui.painter().text(
+                            row.left_center(),
+                            Align2::LEFT_CENTER,
+                            h,
+                            FontId::proportional(m.meta_size),
+                            p.text_faint,
+                        );
+                    }
+                    let mut cancel_focus = false;
+                    ui.scope_builder(
+                        UiBuilder::new()
+                            .max_rect(row)
+                            .layout(Layout::right_to_left(Align::Center)),
+                        |ui| {
+                            ui.spacing_mut().item_spacing.x = theme::SM;
+                            let confirm_id = if let Some(label) = &footer.confirm {
+                                let mut b = Button::new(label.as_str())
+                                    .size(Size::Md)
+                                    .enabled(footer.confirm_enabled)
+                                    .loading(footer.confirm_loading)
+                                    .id_salt(id.with("confirm"));
+                                b = if footer.neutral {
+                                    b.secondary()
+                                } else if destructive {
+                                    b.danger()
+                                } else {
+                                    b.primary()
+                                };
+                                if let Some(g) = &footer.confirm_icon {
+                                    b = b.icon(g);
+                                }
+                                if let Some(r) = &footer.confirm_reason {
+                                    b = b.disabled_reason(r.as_str());
+                                }
+                                let forced = force.filter(|f| f.focus && !destructive);
+                                let r = match forced {
+                                    Some(f) => b.show_forced(ui, f),
+                                    None => b.show(ui),
+                                };
+                                if r.clicked() {
+                                    result = DialogResult::Confirm;
+                                }
+                                Some(r.id)
+                            } else {
+                                None
+                            };
+                            if let Some(label) = &footer.cancel {
+                                let b = Button::new(label.as_str())
+                                    .secondary()
+                                    .size(Size::Md)
+                                    .id_salt(id.with("cancel"));
+                                let forced = force.filter(|f| f.focus && destructive);
+                                let r = match forced {
+                                    Some(f) => b.show_forced(ui, f),
+                                    None => b.show(ui),
+                                };
+                                if r.clicked() {
+                                    result = DialogResult::Cancel;
+                                }
+                                cancel_focus = r.has_focus();
+                                if fresh {
+                                    let want = initial_focus.unwrap_or(if footer.neutral {
+                                        InitialFocus::Body
+                                    } else if destructive {
+                                        InitialFocus::Cancel
+                                    } else {
+                                        InitialFocus::Confirm
+                                    });
+                                    match (want, confirm_id) {
+                                        (InitialFocus::Cancel, _)
+                                        | (InitialFocus::Confirm, None) => {
+                                            r.request_focus();
+                                        }
+                                        (InitialFocus::Confirm, Some(c)) => {
+                                            ctx.memory_mut(|m| m.request_focus(c));
+                                        }
+                                        (InitialFocus::Body, _) => {}
+                                    }
+                                }
+                            } else if fresh
+                                && let Some(c) = confirm_id
+                                && initial_focus != Some(InitialFocus::Body)
+                            {
+                                ctx.memory_mut(|m| m.request_focus(c));
+                            }
+                        },
+                    );
+                    if result == DialogResult::Open
+                        && force.is_none()
+                        && !destructive
+                        && !footer.neutral
+                        && enter
+                        && footer.confirm.is_some()
+                        && footer.confirm_enabled
+                        && !footer.confirm_loading
+                        && !cancel_focus
+                        && !ctx.egui_wants_keyboard_input()
+                    {
+                        result = DialogResult::Confirm;
+                    }
+                });
+            },
+        );
         (result, r.response.rect)
     }
 }
@@ -1341,12 +1332,6 @@ impl<'a> Dialog<'a> {
 
 /// The gallery's Overlays section, drawn inline and forced open: tooltips with keycaps, a
 /// popover, both dialogs on a local scrim, their entrances part-way, and the toast cards.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate; a negative value saturates to 0, the clamp the layout wants; values drawn on screen, where f32 rounding is invisible"
-)]
 pub(crate) fn gallery(ui: &mut Ui) {
     let m = theme::metrics();
     let p = theme::palette(ui.ctx());
@@ -1376,7 +1361,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
     });
     ui.add_space(theme::SM);
     small(ui, "Popover");
-    let pad = m.card_pad as i8;
+    let pad = crate::ui::points_i8(m.card_pad);
     floating(ui, Layer::Popover, Margin::same(pad), |ui| {
         ui.set_width(240.0);
         ui.label(
@@ -1413,8 +1398,10 @@ pub(crate) fn gallery(ui: &mut Ui) {
         let (area, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
         // A busy backdrop so the scrim reads.
         let painter = ui.painter_at(area);
-        for row in 0..((height / m.history_row_height) as usize) {
-            let y = area.top() + row as f32 * m.history_row_height + m.history_row_height / 2.0;
+        for row in 0..crate::ui::saturate_usize(height / m.history_row_height) {
+            let y = area.top()
+                + crate::ui::count_f32(row) * m.history_row_height
+                + m.history_row_height / 2.0;
             painter.text(
                 pos2(area.left() + theme::MD, y),
                 Align2::LEFT_CENTER,

@@ -130,10 +130,6 @@ pub(super) fn paint_scaled(painter: &Painter, shapes: Vec<Shape>, pivot: Pos2, s
 
 /// When a loading spinner may show: after `LOADING_DELAY` of loading (instantly with reduced
 /// motion, where nothing would show the wait otherwise).
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "egui lays out in f32 points, u8 channels and i8 margins; the values are bounded by the layout and float casts saturate"
-)]
 pub(super) fn spinner_due(ctx: &egui::Context, id: Id, loading: bool) -> bool {
     let key = id.with("kit-loading-since");
     if !loading {
@@ -143,7 +139,7 @@ pub(super) fn spinner_due(ctx: &egui::Context, id: Id, loading: bool) -> bool {
     let now = ctx.input(|i| i.time);
     let since = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(key, || now));
     let delay = motion::time(motion::LOADING_DELAY);
-    if ((now - since) as f32) < delay {
+    if crate::ui::to_f32(now - since) < delay {
         ctx.request_repaint_after(std::time::Duration::from_secs_f32(delay));
         false
     } else {
