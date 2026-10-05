@@ -125,7 +125,9 @@ fn code_only(src: &str) -> String {
         // Character literals ('a', '\n', '\u{1F600}', b'x'); a lone quote is a lifetime or label.
         if c == '\'' {
             let literal_end = if next == Some('\\') {
-                let mut k = i + 2;
+                // The escaped character (`'`, `\`, `n`, `u`, `x`) is never the closing quote, so
+                // look for that after it: `'\''`, `'\\'`, `'\u{27}'`, `'\x27'`.
+                let mut k = i + 3;
                 while k < chars.len() && chars[k] != '\'' && chars[k] != '\n' {
                     k += 1;
                 }
@@ -285,4 +287,84 @@ unsafe { real() }
             .iter()
             .any(|(_, w)| w == "unsafe_code")
     );
+}
+
+/// The 1-based lines of `src` where the scanner sees `unsafe` or `unsafe_code` as code.
+fn unsafe_lines(src: &str) -> Vec<usize> {
+    words(&code_only(src))
+        .into_iter()
+        .filter(|(_, w)| w == "unsafe" || w == "unsafe_code")
+        .map(|(line, _)| line)
+        .collect()
+}
+
+#[test]
+fn literals_do_not_hide_the_code_after_them() {
+    // Each line is valid Rust that holds quotes in a literal; `unsafe` inside its strings is not
+    // code, and the `unsafe` block on the next line must still be reported (security pass F1:
+    // `'\''` once flipped the scanner's string state and hid everything up to the next quote).
+    let lines = [
+        r#"let _ = stringify!('\''"'");"#,
+        r#"let _ = ('\'', "unsafe");"#,
+        r#"let _ = (b'\'', "unsafe");"#,
+        r#"let _ = ('\u{27}', "unsafe");"#,
+        r#"let _ = ('\x27', "unsafe");"#,
+        r#"let _ = ('\u{22}', "unsafe");"#,
+        r#"let _ = ('\\', "unsafe");"#,
+        r#"let _ = (b'\\', "unsafe");"#,
+        r#"let _ = ('"', "unsafe");"#,
+        r#"let _ = (b'"', "unsafe");"#,
+        r#"let _ = ('\"', "unsafe");"#,
+        r#"let _ = ('\n', '\t', '\0', "unsafe");"#,
+        r#"let _ = ('\u{1F600}', '😀', 'é', "unsafe");"#,
+        r#"let _ = ('{', '}', '[', '/', '*', "unsafe");"#,
+        r##"let _ = (r#"a " quote and unsafe"#, "unsafe");"##,
+        r###"let _ = (r##"a "# still unsafe"##, "unsafe");"###,
+        r##"let _ = (br#"b " unsafe"#, cr#"c " unsafe"#, "unsafe");"##,
+        r#"let _ = ("a \" unsafe \\", "unsafe");"#,
+        r#"let _ = "/* unsafe"; let _ = "// unsafe";"#,
+        r#"let _ = ("'", '"', "'", "unsafe");"#,
+    ];
+    let mut wrong = Vec::new();
+    for line in lines {
+        let src = format!("{line}\nunsafe {{ real() }}\n");
+        if unsafe_lines(&src) != [2] || code_only(&src).lines().count() != src.lines().count() {
+            wrong.push(line);
+        }
+    }
+    assert!(wrong.is_empty(), "mis-scanned:\n{}", wrong.join("\n"));
+}
+
+#[test]
+fn lifetimes_and_labels_are_not_character_literals() {
+    let src = r#"
+fn f<'a, 'b: 'a>(x: &'a str, y: &'b str) -> &'a str { let _ = ('a', "unsafe"); x }
+struct S<'a>(&'a str); impl<'a> S<'a> { fn g(&self) -> &'a str { self.0 } }
+fn h() { 'outer: loop { 'inner: loop { break 'outer; } } let _ = "unsafe"; }
+fn i(_: &'static str) { let _ = 'x'; let _ = "unsafe"; }
+unsafe { real() }
+"#;
+    assert_eq!(unsafe_lines(src), [6]);
+}
+
+#[test]
+fn comments_do_not_hide_the_code_around_them() {
+    let src = r#"
+/* a /* b */ unsafe c */ let _ = 1;
+/* it's a "quote */ let _ = 2;
+// it's a "quote
+/// doc with a "quote and unsafe
+//! inner doc '
+/*/ unsafe */
+/**/ let _ = "unsafe";
+/* "unsafe" /* 'x */ unsafe */ let _ = 3;
+unsafe { real() }
+"#;
+    assert_eq!(unsafe_lines(src), [10]);
+}
+
+#[test]
+fn a_string_continued_over_lines_stays_a_string() {
+    let src = "let _ = \"unsafe \\\n   unsafe\";\nunsafe { real() }\n";
+    assert_eq!(unsafe_lines(src), [3]);
 }
