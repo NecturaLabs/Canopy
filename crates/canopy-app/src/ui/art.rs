@@ -62,6 +62,24 @@ pub fn empty_error() -> Art {
     Art::Error
 }
 
+/// A soft radial halo: `color` at the centre fading to nothing at `radius`.
+fn radial_halo(painter: &egui::Painter, center: Pos2, radius: f32, color: egui::Color32) {
+    const SEGMENTS: u32 = 64;
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(center, color);
+    for i in 0..=SEGMENTS {
+        let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        mesh.colored_vertex(
+            center + vec2(a.cos(), a.sin()) * radius,
+            egui::Color32::TRANSPARENT,
+        );
+    }
+    for i in 1..=SEGMENTS {
+        mesh.add_triangle(0, i, i + 1);
+    }
+    painter.add(mesh);
+}
+
 /// Draws `art` at `size` points (its aspect ratio is kept, centred in `size`).
 pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
@@ -86,7 +104,7 @@ pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
                 let c = to_screen(*center);
                 let r = radius * scale * (0.6 + 0.4 * ease_out(local)) * breathe;
                 let color = item.ink.resolve(p, c.y, origin.y, scene.size.y * scale);
-                super::widgets::glow(
+                radial_halo(
                     &painter,
                     c,
                     r,
