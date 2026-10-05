@@ -33,10 +33,11 @@ a filesystem that accepts non-UTF-8 file names (the default `/tmp` does; NTFS do
 ## Lints
 
 The workspace `Cargo.toml` sets the lint levels for every crate: clippy's `all`, `pedantic` and
-`cargo` groups, the nursery and restriction lints that fit this code, and extra rustc lints, each
-lint left out with its reason beside it. `clippy.toml` turns project rules into disallowed
-methods: git runs through `canopy_core::cli`, libgit2 only reads, and colours come only from
-`ui/theme.rs`. When a finding is deliberate, put `#[expect(lint, reason = "...")]` on the
+`cargo` groups, the nursery and restriction lints that fit this code, and extra rustc lints, with
+the reason for each lint turned on or left out beside it. `clippy.toml` refuses the calls that
+break three project rules: starting a program other than through `canopy_core::cli`, writing
+with libgit2, and making a colour outside `ui/theme.rs`. It lists the usual calls, not every way
+round a rule, so review still applies the rules themselves. When a finding is deliberate, put `#[expect(lint, reason = "...")]` on the
 narrowest item or statement that covers it; `allow` is itself a warning, and an `expect` fails
 once its finding is gone.
 
