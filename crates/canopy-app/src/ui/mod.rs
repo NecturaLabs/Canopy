@@ -47,7 +47,7 @@ pub fn int_f32(n: i32) -> f32 {
 /// egui's `f64` clock (or another `f64`) as the `f32` egui draws and animates with.
 #[expect(
     clippy::cast_possible_truncation,
-    reason = "egui paints in f32; elapsed times and fractions lose nothing visible"
+    reason = "egui paints in f32; times, fractions and coordinates lose nothing visible"
 )]
 pub fn to_f32(v: f64) -> f32 {
     v as f32

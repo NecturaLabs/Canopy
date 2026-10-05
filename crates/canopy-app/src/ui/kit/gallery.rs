@@ -455,7 +455,7 @@ fn motion_strip(ui: &mut Ui) {
         ButtonKind::Ghost,
     ] {
         ui.horizontal(|ui| {
-            for t in [0.0, 0.5, 1.0] {
+            for (i, t) in [0.0, 0.5, 1.0].into_iter().enumerate() {
                 let force = ForceState {
                     hover: true,
                     progress: Some(t),
@@ -463,7 +463,7 @@ fn motion_strip(ui: &mut Ui) {
                 };
                 super::Button::new(format!("Hover {t:.1}"))
                     .kind(kind)
-                    .id_salt(("motion", kind, crate::ui::saturate_u8(t * 10.0)))
+                    .id_salt(("motion", kind, i))
                     .show_forced(ui, force);
             }
         });

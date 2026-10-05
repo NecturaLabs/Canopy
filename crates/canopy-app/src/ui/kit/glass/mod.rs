@@ -473,7 +473,7 @@ fn screen_px(viewport: Rect, ppp: f32) -> Option<[u32; 2]> {
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "whole and within 1..COORD_LIMIT, checked first"
+        reason = "the cast saturates, and its value is kept only when within 1..COORD_LIMIT"
     )]
     let side = |points: f32| {
         let px = (points * ppp).round();
