@@ -34,6 +34,7 @@ pub mod row;
 pub mod select;
 pub mod split;
 pub mod surface;
+pub mod tabs;
 pub mod toast;
 pub mod toggle;
 

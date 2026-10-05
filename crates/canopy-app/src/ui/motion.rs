@@ -41,6 +41,8 @@ pub const TOAST_STAGGER: f32 = 0.09;
 pub const TOOLTIP_OUT: f32 = 0.06;
 /// A submenu opens after the pointer rests on its item this long.
 pub const SUBMENU_DELAY: f32 = 0.10;
+/// A closed document tab collapses to nothing over this long.
+pub const TAB_CLOSE: f32 = 0.25;
 /// A determinate progress fill easing towards a larger value.
 pub const PROGRESS_FILL: f32 = 0.18;
 /// Loops (they run while visible and stop with reduced motion): one indeterminate sweep, one sweep

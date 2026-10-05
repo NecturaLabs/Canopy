@@ -25,6 +25,7 @@ pub const SECTIONS: &[Section] = &[
     ("Select", super::select::gallery),
     ("Toggles", super::toggle::gallery),
     ("Segmented and tabs", super::choice::gallery),
+    ("Document tabs", super::tabs::gallery),
     ("Slider", super::range::gallery),
     ("Progress", progress::gallery),
     ("Menus", menu::gallery),
