@@ -694,7 +694,7 @@ fn luminance(c: Color32) -> f64 {
 }
 
 /// The composite shader's colour maths in Rust: saturation from Rec. 709 luma, then the luminance
-/// clamp, in linear light.
+/// band (the dark cap or the light lift), in linear light.
 fn shade(c: Color32, dark: bool, cap: f32) -> Color32 {
     let lin = |v: u8| {
         let v = f64::from(v) / 255.0;
@@ -725,8 +725,8 @@ fn shade(c: Color32, dark: bool, cap: f32) -> Color32 {
     let cap = f64::from(cap);
     if dark && y > cap {
         l = l.map(|x| x * cap / y);
-    } else if !dark && y < cap {
-        l = l.map(|x| x + (1.0 - x) * (cap - y) / (1.0 - y));
+    } else if !dark {
+        l = l.map(|x| 1.0 - (1.0 - x) * (1.0 - cap));
     }
     Color32::from_rgb(srgb(l[0]), srgb(l[1]), srgb(l[2]))
 }
@@ -760,20 +760,77 @@ fn the_shader_clamp_keeps_the_backdrop_in_the_band_the_contrast_test_assumes() {
                 assert!(y >= cap - 0.01, "{}: {probe:?} -> {out:?} ({y})", p.name);
             }
         }
-        // Greys have nothing to saturate: the shader's clamp is `theme::clamp_backdrop`.
-        for grey in [0, 60, 128, 200, 255] {
-            let c = Color32::from_gray(grey);
-            let ours = shade(c, p.dark, p.glass_luminance);
-            let theirs = theme::clamp_backdrop(c, p.dark, p.glass_luminance);
-            for (a, b) in ours.to_array().into_iter().zip(theirs.to_array()) {
+        if p.dark {
+            // Greys have nothing to saturate: the shader's clamp is `theme::clamp_backdrop`.
+            for grey in [0, 60, 128, 200, 255] {
+                let c = Color32::from_gray(grey);
+                let ours = shade(c, p.dark, p.glass_luminance);
+                let theirs = theme::clamp_backdrop(c, p.dark, p.glass_luminance);
+                for (a, b) in ours.to_array().into_iter().zip(theirs.to_array()) {
+                    assert!(
+                        a.abs_diff(b) <= 1,
+                        "{}: grey {grey}: {ours:?} vs {theirs:?}",
+                        p.name
+                    );
+                }
+            }
+        } else {
+            // Every channel of every backdrop ends at least as light as the darkest case the
+            // theme's contrast test checks (black lifted to the floor), and the theme's inks are
+            // all darker than glass over it: whatever lies behind, the glass is no darker than
+            // that case, so its contrast holds.
+            let floor = theme::clamp_backdrop(Color32::BLACK, false, p.glass_luminance);
+            for r in (0..=255).step_by(15) {
+                for g in (0..=255).step_by(15) {
+                    for b in (0..=255).step_by(15) {
+                        let c = Color32::from_rgb(r, g, b);
+                        let out = shade(c, false, p.glass_luminance);
+                        for (a, f) in out.to_array().into_iter().zip(floor.to_array()) {
+                            assert!(
+                                a.saturating_add(1) >= f,
+                                "{}: {c:?} -> {out:?} under {floor:?}",
+                                p.name
+                            );
+                        }
+                    }
+                }
+            }
+            let darkest = theme::over(
+                Palette::tint(p.surfaces(Style::Standard).overlay, p.glass_alpha),
+                floor,
+            );
+            for ink in [
+                p.text,
+                p.text_dim,
+                p.text_faint,
+                p.accent,
+                p.danger,
+                p.focus,
+                p.control_border,
+            ] {
                 assert!(
-                    a.abs_diff(b) <= 1,
-                    "{}: grey {grey}: {ours:?} vs {theirs:?}",
+                    luminance(ink) < luminance(darkest),
+                    "{}: {ink:?} is lighter than the glass",
                     p.name
                 );
             }
         }
     }
+}
+
+#[test]
+fn light_glass_keeps_the_shapes_behind_it() {
+    // Text and lines dimmed under a scrim sit below a light theme's luminance floor; lifting them
+    // as a whole keeps them apart, where raising each to the floor flattened them to one grey.
+    let (line, ground) = (Color32::from_gray(40), Color32::from_gray(150));
+    for floor in [0.45, 0.5, 0.8] {
+        let (l, g) = (shade(line, false, floor), shade(ground, false, floor));
+        assert!(g.g() > l.g(), "floor {floor}: {l:?} vs {g:?}");
+        let flat = |c| theme::clamp_backdrop(c, false, floor);
+        assert_eq!(flat(line), flat(ground), "floor {floor}");
+    }
+    let (l, g) = (shade(line, false, 0.5), shade(ground, false, 0.5));
+    assert!(g.g() >= l.g() + 16, "{l:?} vs {g:?}");
 }
 
 #[test]
