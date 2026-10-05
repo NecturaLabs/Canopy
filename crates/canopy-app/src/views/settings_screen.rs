@@ -1385,9 +1385,12 @@ fn commit_page(ui: &mut Ui, s: &mut Settings) {
         reason = "the range's ends are the whole numbers 200 and 50 000"
     )]
     let (lo, hi) = (*COMMIT_PAGE.start() as usize, *COMMIT_PAGE.end() as usize);
+    // The steppers stand a gap away from the field and as tall as it, like the other rows'
+    // controls, rather than pressed against it.
+    ui.spacing_mut().item_spacing.x = theme::SM;
     // Right to left: +, the field, −.
     if IconButton::new(icon::PLUS, "More commits per page")
-        .size(Size::Sm)
+        .size(Size::Md)
         .enabled(s.commit_page < hi)
         .id_salt("commit-page-more")
         .show(ui)
@@ -1421,7 +1424,7 @@ fn commit_page(ui: &mut Ui, s: &mut Settings) {
         s.commit_page = page;
     }
     if IconButton::new(icon::MINUS, "Fewer commits per page")
-        .size(Size::Sm)
+        .size(Size::Md)
         .enabled(s.commit_page > lo)
         .id_salt("commit-page-fewer")
         .show(ui)
