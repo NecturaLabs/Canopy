@@ -14,7 +14,6 @@ pub fn ease_bool(ctx: &Context, id: Id, on: bool, in_s: f32, out_s: f32) -> f32 
 }
 
 /// [`ease_bool`] with one duration both ways.
-#[expect(dead_code, reason = "used by the component phase")]
 pub fn ease(ctx: &Context, id: Id, on: bool, seconds: f32) -> f32 {
     ease_bool(ctx, id, on, seconds, seconds)
 }
@@ -144,7 +143,6 @@ pub fn phase(ctx: &Context, id: Id, open: bool, enter_s: f32, exit_s: f32) -> Op
 /// A rectangle that slides to `target`: the edge moving towards the target leads
 /// (`INDICATOR_LEAD`), the other trails (`INDICATOR_TRAIL`), so it stretches then settles. Paint it
 /// with pixel rounding off.
-#[expect(dead_code, reason = "used by the component phase")]
 pub fn slide_rect(ctx: &Context, id: Id, target: Rect) -> Rect {
     let last: Option<Rect> = ctx.data(|d| d.get_temp(id.with("kit-slide-target")));
     ctx.data_mut(|d| d.insert_temp(id.with("kit-slide-target"), target));
