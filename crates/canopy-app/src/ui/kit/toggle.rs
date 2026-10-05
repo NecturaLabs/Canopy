@@ -671,6 +671,7 @@ impl<'a, T: PartialEq + Clone> RadioGroup<'a, T> {
 pub struct Switch<'a> {
     value: &'a mut bool,
     label: String,
+    show_label: bool,
     enabled: bool,
     tooltip: Option<String>,
     disabled_reason: Option<String>,
@@ -683,12 +684,19 @@ impl<'a> Switch<'a> {
         Self {
             value,
             label: label.into(),
+            show_label: true,
             enabled: true,
             tooltip: None,
             disabled_reason: None,
             id_salt: None,
             force: None,
         }
+    }
+    /// `false`: the label is the switch's accessible name only, not painted beside it (a
+    /// settings row that lays its own title out). The switch reports itself once either way.
+    pub fn show_label(mut self, show: bool) -> Self {
+        self.show_label = show;
+        self
     }
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
@@ -718,7 +726,11 @@ impl<'a> Switch<'a> {
         let s = p.surfaces(style);
         let m = theme::metrics();
         let enabled = self.enabled && ui.is_enabled();
-        let text = label_galley(ui, &self.label);
+        let text = if self.show_label {
+            label_galley(ui, &self.label)
+        } else {
+            None
+        };
         let (rect, mut response) = allocate_row(
             ui,
             m.switch,
@@ -949,6 +961,10 @@ pub(crate) fn gallery(ui: &mut Ui) {
         remembered(ui, "switch", true, |ui, v| {
             Switch::new(v, "Click me").id_salt("g-s7").show(ui);
         });
+        Switch::new(&mut true, "Named, label not drawn")
+            .show_label(false)
+            .id_salt("g-s8")
+            .show(ui);
     });
     ui.add_space(theme::XS);
     gallery_caption(ui, "Turning on at t = 0, 0.5, 1: tick, dash, dot, thumb");
@@ -1034,6 +1050,33 @@ mod tests {
                 .show(ui);
         });
         assert!(on, "clicking a partial selection selects everything");
+    }
+
+    #[test]
+    fn a_switch_can_be_named_without_drawing_its_label() {
+        let ctx = testkit::ctx();
+        let shapes = frame(&ctx, Vec::new(), |ui| {
+            Switch::new(&mut true, "Prune on fetch")
+                .show_label(false)
+                .show(ui);
+        });
+        assert!(
+            !shapes
+                .iter()
+                .any(|c| matches!(&c.shape, Shape::Text(_))),
+            "no label is painted"
+        );
+        let nodes = spoken(&ctx, |ui| {
+            Switch::new(&mut true, "Prune on fetch")
+                .show_label(false)
+                .show(ui);
+        });
+        let named: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.label.as_deref() == Some("Prune on fetch"))
+            .collect();
+        assert_eq!(named.len(), 1, "named once: {nodes:?}");
+        assert_eq!(named[0].role, Role::Switch);
     }
 
     #[test]

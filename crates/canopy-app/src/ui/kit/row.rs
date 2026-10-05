@@ -16,7 +16,8 @@ use egui::{
 use egui_phosphor::regular as icon;
 
 use super::button::IconButton;
-use super::{ForceState, KitResponse, Size, anim, focus_visible, paint};
+use super::chip::Badge;
+use super::{ForceState, KitResponse, Size, Tone, anim, focus_visible, paint};
 use crate::ui::motion;
 use crate::ui::theme::{self, Palette};
 
@@ -158,6 +159,7 @@ struct FrameSpec {
     enabled: bool,
     joined: (bool, bool),
     ground: Option<Color32>,
+    read_only: bool,
     force: Option<ForceState>,
 }
 
@@ -171,16 +173,20 @@ fn frame(ui: &mut Ui, spec: &FrameSpec) -> Frame {
         width = theme::metrics().sidebar_width;
     }
     let rect = ui.allocate_space(vec2(width, spec.height)).1;
-    let sense = if enabled {
+    // A read-only row takes focus (to be read, or copied from) but no clicks, hover or press.
+    let live = enabled && !spec.read_only;
+    let sense = if live {
         Sense::click()
+    } else if enabled {
+        Sense::focusable_noninteractive()
     } else {
         Sense::hover()
     };
     let response = ui.interact(rect, ui.id().with(spec.id_salt), sense);
     let f = spec.force.unwrap_or_default();
     // The pointer anywhere over the row (its trailing actions included) hovers it.
-    let hovered = enabled && (f.hover || ui.rect_contains_pointer(rect));
-    let pressed = enabled && (f.pressed || response.is_pointer_button_down_on());
+    let hovered = live && (f.hover || ui.rect_contains_pointer(rect));
+    let pressed = live && (f.pressed || response.is_pointer_button_down_on());
     let hover = match spec.force {
         Some(f) => f32::from(u8::from(hovered)) * f.progress.unwrap_or(1.0),
         None => anim::ease_bool(
@@ -361,8 +367,12 @@ pub struct ListRow<'a> {
     ground: Option<Color32>,
     icon: Option<String>,
     label: String,
+    accessible: Option<String>,
     detail: Option<String>,
     trailing: Option<String>,
+    badge: Option<Badge>,
+    widgets: Option<(f32, Actions<'a>)>,
+    read_only: bool,
     indent: f32,
     tooltip: Option<String>,
     disabled_reason: Option<String>,
@@ -395,8 +405,12 @@ impl<'a> ListRow<'a> {
             ground: None,
             icon: None,
             label: String::new(),
+            accessible: None,
             detail: None,
             trailing: None,
+            badge: None,
+            widgets: None,
+            read_only: false,
             indent: 0.0,
             tooltip: None,
             disabled_reason: None,
@@ -413,6 +427,34 @@ impl<'a> ListRow<'a> {
     /// The spec's name for [`ListRow::kind`].
     pub fn height_from(self, kind: RowKind) -> Self {
         self.kind(kind)
+    }
+    /// A height of its own instead of the kind's (a two-line row).
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
+        self
+    }
+    /// What screen readers call the row when it differs from the painted label, or when the
+    /// row paints its own content ([`ListRow::show_with`]) and has no label slot. The row
+    /// reports itself once, under this name.
+    pub fn accessible_name(mut self, name: impl Into<String>) -> Self {
+        self.accessible = Some(name.into());
+        self
+    }
+    /// A badge at the right, before the trailing text (a count, a status).
+    pub fn trailing_badge(mut self, badge: Badge) -> Self {
+        self.badge = Some(badge);
+        self
+    }
+    /// Widgets at the right edge, always shown (unlike [`ListRow::actions`]), in a slot `width`
+    /// wide laid out right to left.
+    pub fn trailing_ui(mut self, width: f32, add: impl FnOnce(&mut Ui) + 'a) -> Self {
+        self.widgets = Some((width, Box::new(add)));
+        self
+    }
+    /// The row can be focused and read but not clicked: no hover, no press.
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
     }
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
@@ -496,6 +538,7 @@ impl<'a> ListRow<'a> {
             enabled: self.enabled,
             joined: self.joined,
             ground: self.ground,
+            read_only: self.read_only,
             force: self.force,
         }
     }
@@ -512,14 +555,16 @@ impl<'a> ListRow<'a> {
         let rc = f.ctx;
         let cy = rc.rect.center().y;
         let actions = self.actions.take();
+        let widgets = self.widgets.take();
         let actions_w = if actions.is_some() {
             (m.control_sm + 2.0) * 2.0
         } else {
             0.0
         };
+        let widgets_w = widgets.as_ref().map_or(0.0, |(w, _)| *w + GAP);
         if ui.is_rect_visible(f.rect) {
             let mut x = rc.content.left() + self.indent;
-            let mut right = rc.content.right() - actions_w;
+            let mut right = rc.content.right() - actions_w - widgets_w;
             if let Some(g) = &self.icon {
                 let glyph =
                     f.painter
@@ -540,6 +585,15 @@ impl<'a> ListRow<'a> {
                 right -= g.size().x;
                 f.painter
                     .galley(pos2(right, cy - g.size().y / 2.0), g, rc.accent);
+                right -= GAP;
+            }
+            if let Some(b) = &self.badge {
+                let size = b.measure(ui);
+                right -= size.x;
+                b.paint(
+                    ui,
+                    Rect::from_min_size(pos2(right, cy - size.y / 2.0), size),
+                );
                 right -= GAP;
             }
             let family = match (self.selected, self.kind.chrome()) {
@@ -570,6 +624,22 @@ impl<'a> ListRow<'a> {
             paint(&rc, &f.painter);
         }
         f.finish();
+        if let Some((width, add)) = widgets {
+            let area = Rect::from_min_max(
+                pos2(rc.content.right() - actions_w - width, f.rect.top()),
+                pos2(rc.content.right() - actions_w, f.rect.bottom()),
+            );
+            let mut child = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(area)
+                    .layout(Layout::right_to_left(Align::Center)),
+            );
+            if !f.enabled {
+                child.disable();
+            }
+            child.spacing_mut().item_spacing.x = theme::XS;
+            add(&mut child);
+        }
         if let Some(add) = actions {
             let shown = f.enabled
                 && (rc.hover > 0.0 || self.selected || f.response.has_focus() || f.cursor);
@@ -600,7 +670,7 @@ impl<'a> ListRow<'a> {
             &f.response,
             f.enabled,
             self.selected,
-            &self.label,
+            self.accessible.as_deref().unwrap_or(&self.label),
             egui::accesskit::Role::ListItem,
         );
         with_tip(
@@ -638,12 +708,15 @@ pub struct TreeRow<'a> {
     open: Option<&'a mut bool>,
     kind: RowKind,
     icon: Option<String>,
+    icon_tone: Option<Tone>,
     label: String,
     trailing: Option<String>,
     selected: bool,
     cursor: bool,
     enabled: bool,
     toggle_on_click: bool,
+    tooltip: Option<String>,
+    disabled_reason: Option<String>,
     force: Option<ForceState>,
 }
 
@@ -665,14 +738,32 @@ impl<'a> TreeRow<'a> {
             open: None,
             kind: RowKind::Sidebar,
             icon: None,
+            icon_tone: None,
             label: String::new(),
             trailing: None,
             selected: false,
             cursor: false,
             enabled: true,
             toggle_on_click: false,
+            tooltip: None,
+            disabled_reason: None,
             force: None,
         }
+    }
+    /// Colours the icon by `tone` (a CI check's red, amber or green).
+    pub fn icon_tone(mut self, tone: Tone) -> Self {
+        self.icon_tone = Some(tone);
+        self
+    }
+    /// Shown on hover (a truncated name in full, what the row stands for).
+    pub fn tooltip(mut self, text: impl Into<String>) -> Self {
+        self.tooltip = Some(text.into());
+        self
+    }
+    /// Why the row is disabled, shown as its tooltip while it is.
+    pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
+        self.disabled_reason = Some(text.into());
+        self
     }
     /// The row has children, shown while `open`.
     pub fn open(mut self, open: &'a mut bool) -> Self {
@@ -734,6 +825,7 @@ impl<'a> TreeRow<'a> {
             enabled: self.enabled,
             joined: (false, false),
             ground: None,
+            read_only: false,
             force: self.force,
         };
         let f = frame(ui, &spec);
@@ -825,13 +917,17 @@ impl<'a> TreeRow<'a> {
             }
             let mut x = chevron_x + 12.0 + 4.0;
             if let Some(g) = &self.icon {
+                let color = match self.icon_tone {
+                    Some(t) if f.enabled => t.color(p),
+                    _ => rc.icon,
+                };
                 let glyph =
                     f.painter
-                        .layout_no_wrap(g.clone(), FontId::proportional(m.icon_md), rc.icon);
+                        .layout_no_wrap(g.clone(), FontId::proportional(m.icon_md), color);
                 f.painter.galley(
                     pos2(x, cy - glyph.size().y / 2.0),
                     Arc::clone(&glyph),
-                    rc.icon,
+                    color,
                 );
                 x += glyph.size().x + GAP;
             }
@@ -880,6 +976,12 @@ impl<'a> TreeRow<'a> {
             ui.ctx()
                 .accesskit_node_builder(response.id, |n| n.set_expanded(open_now));
         }
+        let response = with_tip(
+            response,
+            f.enabled,
+            self.tooltip.as_deref(),
+            self.disabled_reason.as_deref(),
+        );
         KitResponse {
             response,
             value: nav,
@@ -974,6 +1076,7 @@ pub struct Disclosure<'a> {
     label: String,
     open: &'a mut bool,
     icon: Option<String>,
+    icon_tone: Option<Tone>,
 }
 
 impl std::fmt::Debug for Disclosure<'_> {
@@ -995,10 +1098,16 @@ impl<'a> Disclosure<'a> {
             label: label.into(),
             open,
             icon: None,
+            icon_tone: None,
         }
     }
     pub fn icon(mut self, glyph: &str) -> Self {
         self.icon = Some(glyph.to_owned());
+        self
+    }
+    /// Colours the header's icon by `tone` (the checks header's red, amber or green).
+    pub fn icon_tone(mut self, tone: Tone) -> Self {
+        self.icon_tone = Some(tone);
         self
     }
     pub fn show<R>(self, ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> KitResponse<Option<R>> {
@@ -1011,6 +1120,9 @@ impl<'a> Disclosure<'a> {
             .open(&mut open);
         if let Some(g) = &self.icon {
             row = row.icon(g);
+        }
+        if let Some(t) = self.icon_tone {
+            row = row.icon_tone(t);
         }
         let r = row.show(ui);
         *self.open = open;
@@ -1473,6 +1585,62 @@ pub(crate) fn gallery(ui: &mut Ui) {
             );
         });
     ui.ctx().data_mut(|d| d.insert_temp(did, open));
+    let cid = ui.id().with("gallery-checks");
+    let mut checks: bool = ui.ctx().data(|d| d.get_temp(cid)).unwrap_or(false);
+    Disclosure::new("gallery-checks", "Checks: 1 failing", &mut checks)
+        .icon(icon::X_CIRCLE)
+        .icon_tone(Tone::Danger)
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new("build (ubuntu-latest) failed")
+                    .size(m.meta_size)
+                    .color(p.text_dim),
+            );
+        });
+    ui.ctx().data_mut(|d| d.insert_temp(cid, checks));
+    small(
+        ui,
+        "Rows: trailing badge and widgets, read-only and taller, a tree row with a tooltip",
+    );
+    ListRow::new("gallery-row-badge")
+        .kind(RowKind::Request)
+        .icon(icon::GIT_PULL_REQUEST)
+        .label("Retry with backoff")
+        .detail("#482")
+        .trailing_badge(Badge::new("Draft"))
+        .trailing_ui(54.0, |ui| {
+            IconButton::new(icon::ARROW_SQUARE_OUT, "Open on GitHub")
+                .size(Size::Xs)
+                .id_salt("gallery-row-open")
+                .show(ui);
+            IconButton::new(icon::COPY, "Copy link")
+                .size(Size::Xs)
+                .id_salt("gallery-row-copy")
+                .show(ui);
+        })
+        .accessible_name("Pull request 482, Retry with backoff, draft")
+        .show(ui);
+    ListRow::new("gallery-row-read-only")
+        .height(m.row_height * 1.5)
+        .icon(icon::KEY)
+        .label("SHA256:6m3U4…")
+        .detail("ed25519, added 2 days ago")
+        .read_only(true)
+        .show(ui);
+    let _ = TreeRow::new("gallery-tree-tip", 0)
+        .kind(RowKind::List)
+        .icon(icon::CLOUD)
+        .icon_tone(Tone::Accent)
+        .label("origin")
+        .tooltip("git@github.com:necturalabs/canopy.git")
+        .show(ui);
+    let _ = TreeRow::new("gallery-tree-off", 0)
+        .kind(RowKind::List)
+        .icon(icon::CLOUD_SLASH)
+        .label("backup")
+        .enabled(false)
+        .disabled_reason("This remote has no URL")
+        .show(ui);
     small(
         ui,
         "Section headers: rest, hover with action, focus, static",
@@ -1631,6 +1799,106 @@ mod tests {
             }
             assert_eq!(clicked, enabled);
         }
+    }
+
+    #[test]
+    fn a_row_speaks_its_accessible_name_once() {
+        let ctx = ctx();
+        ctx.enable_accesskit();
+        let named = |ui: &mut Ui| {
+            ListRow::new("named")
+                .label("api.md")
+                .accessible_name("api.md, added")
+                .show(ui)
+                .id
+        };
+        let mut id = Id::NULL;
+        let _ = run(&ctx, Vec::new(), |ui| id = named(ui));
+        // Tab moves focus onto the row: it says its name once, the accessible one.
+        let out = run(&ctx, vec![key(Key::Tab)], |ui| {
+            named(ui);
+        });
+        assert_eq!(ctx.memory(egui::Memory::focused), Some(id));
+        let nodes = out
+            .platform_output
+            .accesskit_update
+            .expect("accesskit")
+            .nodes;
+        let named: Vec<_> = nodes
+            .iter()
+            .filter(|(_, n)| n.role() == egui::accesskit::Role::ListItem)
+            .map(|(_, n)| n.label().map(str::to_owned))
+            .collect();
+        assert_eq!(named, vec![Some("api.md, added".to_owned())]);
+        let focus: Vec<_> = out
+            .platform_output
+            .events
+            .iter()
+            .filter(|e| matches!(e, egui::output::OutputEvent::FocusGained(_)))
+            .map(|e| e.widget_info().label.clone())
+            .collect();
+        assert_eq!(focus, vec![Some("api.md, added".to_owned())]);
+    }
+
+    #[test]
+    fn a_read_only_row_takes_focus_but_no_clicks_or_hover() {
+        let ctx = ctx();
+        let mut rect = Rect::NOTHING;
+        let mut clicked = false;
+        let _ = super::super::testkit::frame(&ctx, Vec::new(), |ui| {
+            rect = ListRow::new("ro")
+                .label("SHA256:…")
+                .read_only(true)
+                .show(ui)
+                .rect;
+        });
+        let at = rect.center();
+        super::super::testkit::click(&ctx, at, |ui| {
+            clicked |= ListRow::new("ro")
+                .label("SHA256:…")
+                .read_only(true)
+                .show(ui)
+                .clicked();
+        });
+        assert!(!clicked);
+        let p = theme::palette(&ctx);
+        let shapes = super::super::testkit::frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(rect.center())],
+            |ui| {
+                ListRow::new("ro")
+                    .label("SHA256:…")
+                    .read_only(true)
+                    .show(ui);
+            },
+        );
+        let (fills, _) = super::super::testkit::painted_colors(&shapes);
+        assert!(
+            !fills
+                .iter()
+                .any(|(_, c)| *c == p.hover() || *c == p.pressed()),
+            "{fills:?}"
+        );
+    }
+
+    #[test]
+    fn rows_take_a_height_of_their_own_and_a_trailing_slot() {
+        let ctx = ctx();
+        let m = theme::metrics();
+        let mut inside = false;
+        let mut height = 0.0;
+        let _ = super::super::testkit::frame(&ctx, Vec::new(), |ui| {
+            let r = ListRow::new("tall")
+                .label("Two lines")
+                .height(m.row_height * 2.0)
+                .trailing_ui(40.0, |ui| {
+                    inside = ui.max_rect().width() <= 40.0 + 0.5;
+                })
+                .show(ui);
+            height = r.rect.height();
+        });
+        assert_eq!(height, m.row_height * 2.0);
+        assert!(inside, "the trailing widgets get the slot they asked for");
     }
 
     #[test]
