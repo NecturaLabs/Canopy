@@ -423,6 +423,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
     fn promisor_remotes_follow_gits_order_with_the_extension_last() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo = Repository::init(dir.path()).expect("init");
@@ -440,6 +444,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
     fn a_repository_is_trusted_only_inside_a_trusted_folder() {
         let root = tempfile::tempdir().expect("tempdir");
         let work = root.path().join("work");
@@ -483,6 +491,10 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
     fn a_trusted_folder_that_is_a_link_to_the_root_trusts_nothing() {
         let dir = tempfile::tempdir().expect("tempdir");
         let repo_dir = dir.path().join("repo");
@@ -495,6 +507,10 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
     fn trust_follows_where_the_repository_really_lives() {
         let root = tempfile::tempdir().expect("tempdir");
         let trusted = root.path().join("trusted");

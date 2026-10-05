@@ -118,7 +118,7 @@ fn top_highlight_shape(ppp: f32, rect: Rect, radius: CornerRadius, alpha: u8) ->
     Some(Shape::hline(
         Rangef::new(rect.left() + inset, rect.right() - inset),
         y,
-        Stroke::new(w, Color32::from_white_alpha(alpha)),
+        Stroke::new(w, theme::highlight_line(alpha)),
     ))
 }
 
@@ -393,7 +393,7 @@ pub fn deck(painter: &Painter, rect: Rect, p: &Palette, s: &Surfaces) {
         painter.hline(
             rect.x_range(),
             rect.top() + w * 0.5,
-            Stroke::new(w, Color32::from_white_alpha(m.highlight)),
+            Stroke::new(w, theme::highlight_line(m.highlight)),
         );
     }
     seam_h(

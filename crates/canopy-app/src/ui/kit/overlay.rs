@@ -119,7 +119,7 @@ pub(crate) fn surface_shapes(painter: &Painter, rect: Rect, layer: Layer) -> Vec
         shapes.push(Shape::hline(
             Rangef::new(rect.left() + inset, rect.right() - inset),
             rect.top() + w * 0.5,
-            Stroke::new(w, Color32::from_white_alpha(material.highlight)),
+            Stroke::new(w, theme::highlight_line(material.highlight)),
         ));
     }
     shapes.push(

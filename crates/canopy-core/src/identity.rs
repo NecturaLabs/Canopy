@@ -436,6 +436,10 @@ fn parse_ident(ident: &str) -> Option<(&str, &str)> {
 mod tests {
     use super::*;
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn run_git(dir: &Path, args: &[&str]) {
         let status = std::process::Command::new("git")
             .current_dir(dir)

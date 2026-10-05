@@ -1025,6 +1025,10 @@ mod tests {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn git(dir: &Path, args: &[&str]) {
         let ok = Command::new("git")
             .current_dir(dir)
@@ -1200,6 +1204,10 @@ mod read_tests {
     /// Runs `git` in `dir` with a fixed identity and none of the developer's configuration. (The
     /// downloads the worker runs through `canopy_core::cli` inherit this process's environment,
     /// which cannot be changed per test without racing the others.)
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn git(dir: &Path, args: &[&str]) -> String {
         let root = dir
             .ancestors()

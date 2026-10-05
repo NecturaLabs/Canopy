@@ -41,6 +41,10 @@ fn isolated_home(dir: &Path) -> PathBuf {
 /// running in parallel. They only need the repository's own configuration here (the clones use
 /// `file://` URLs and carry `core.autocrlf=false`); a global setting that changes how
 /// `git fetch` behaves can still reach them.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests drive git directly to build and check repositories"
+)]
 fn git_command(dir: &Path) -> Command {
     let home = isolated_home(dir);
     let mut cmd = Command::new("git");

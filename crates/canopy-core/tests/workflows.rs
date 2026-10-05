@@ -16,6 +16,10 @@ use canopy_core::{
     SubmoduleState, Whitespace,
 };
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests drive git directly to build and check repositories"
+)]
 fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new("git")
         .current_dir(dir)

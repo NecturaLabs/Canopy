@@ -376,6 +376,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a test ground colour, not one of the theme's"
+    )]
     fn nodes_are_rings_of_the_row_ground() {
         let p = theme::ThemeId::Midnight.palette();
         let ground = Color32::from_rgb(1, 2, 3);

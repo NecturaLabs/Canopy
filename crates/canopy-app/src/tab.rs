@@ -1345,6 +1345,10 @@ mod tests {
     const TWO: &str = "a\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nb\n<<<<<<< ours\n1\n=======\n2\n>>>>>>> theirs\n";
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
     fn squash_message_prefills_a_normal_commit() -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
         let dir = tempfile::tempdir()?;

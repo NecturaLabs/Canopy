@@ -14,6 +14,10 @@
 //!
 //! It also asks the operating system for settings Canopy follows: reduced motion
 //! ([`prefers_reduced_motion`]) and reduced transparency ([`prefers_reduced_transparency`]).
+#![expect(
+    clippy::disallowed_methods,
+    reason = "this module starts the platform's own helpers (opener, file manager, editor, terminal, settings queries), never git"
+)]
 
 use std::io::Read;
 use std::path::Path;

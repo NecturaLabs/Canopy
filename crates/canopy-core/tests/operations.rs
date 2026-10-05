@@ -16,6 +16,10 @@ use canopy_core::{
     MissingObjects, PullStrategy, RefKind, Repo, RepoState, Side, Whitespace,
 };
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests drive git directly to build and check repositories"
+)]
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(dir)
@@ -595,6 +599,10 @@ fn in_isolated_git_env(test: &str) -> bool {
 
 /// [`in_isolated_git_env`], with `home_config` written to `$HOME/.gitconfig`: libgit2 reads that
 /// file as global configuration while git, told to use an empty `GIT_CONFIG_GLOBAL`, does not.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test runs itself again in a child process"
+)]
 fn in_isolated_git_env_with_home_config(test: &str, home_config: &str) -> bool {
     if std::env::var_os("CANOPY_TEST_ISOLATED_GIT").is_some_and(|v| v == "1") {
         return true;
@@ -698,6 +706,10 @@ fn identity_uses_git_scope_and_keeps_stored_history_authors() {
 /// Runs the calling test again in a child process whose git sees a throw-away global
 /// configuration and none of the identity variables except those in `env`. Returns true in the
 /// child, where the test body runs, and false in the parent once the child has passed.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the test runs itself again in a child process"
+)]
 fn in_identity_child(test: &str, env: &[(&str, &str)]) -> bool {
     if std::env::var_os("CANOPY_IDENTITY_CHILD").is_some() {
         return true;

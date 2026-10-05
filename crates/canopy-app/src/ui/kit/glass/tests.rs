@@ -1,3 +1,7 @@
+#![expect(
+    clippy::disallowed_methods,
+    reason = "test backdrops are arbitrary colours, not the theme's"
+)]
 use egui::epaint::{ClippedShape, RectShape};
 
 use super::*;

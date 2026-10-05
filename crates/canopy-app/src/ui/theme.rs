@@ -6,6 +6,10 @@
 //! [`Metrics`], one table per ([`Density`], [`Style`]) pair. The active theme, style, density and
 //! translucency are globals set by [`apply`], so views ask [`palette`], [`surfaces`], [`metrics`]
 //! and [`appearance`] without knowing which is active.
+#![expect(
+    clippy::disallowed_methods,
+    reason = "the palette: the one module that makes colours"
+)]
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -2279,6 +2283,11 @@ pub struct Material {
     pub bottom_line: u8,
     pub recess: u8,
     pub layers: &'static [ShadowLayer],
+}
+
+/// The colour of a material's top highlight line: white at `alpha` (`Material::highlight`).
+pub fn highlight_line(alpha: u8) -> Color32 {
+    Color32::from_white_alpha(alpha)
 }
 
 /// Elevation levels.

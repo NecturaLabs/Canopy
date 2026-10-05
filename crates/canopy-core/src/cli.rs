@@ -50,6 +50,10 @@ pub fn set_askpass(askpass: Option<Askpass>) {
 }
 
 /// Builds a `git` command for `workdir` with a non-interactive environment.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the one place Canopy builds a git command"
+)]
 pub fn command(workdir: Option<&Path>) -> Command {
     let mut cmd = Command::new("git");
     if let Some(dir) = workdir {
@@ -691,6 +695,10 @@ mod tests {
 
     /// A command as the user's environment might hand it to us: `inherited` pairs set, the
     /// askpass variables otherwise absent whatever the test runner's environment holds.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn user_command(inherited: &[(&str, &str)]) -> Command {
         let mut cmd = Command::new("git");
         for key in ["GIT_ASKPASS", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"] {
@@ -711,6 +719,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn a_repository_chosen_by_the_environment_does_not_reach_git() {
         let git = |dir: &Path, args: &[&str]| {
             let out = Command::new("git")

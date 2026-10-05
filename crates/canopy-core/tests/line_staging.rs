@@ -17,6 +17,10 @@ use std::process::Command;
 use canopy_core::ops::HunkAction;
 use canopy_core::{DiffSource, Error, Hunk, HunkKey, LineKind, MissingObjects, Repo, Whitespace};
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests drive git directly to build and check repositories"
+)]
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(dir)
@@ -33,6 +37,10 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 /// Raw bytes of a git command's output (index blobs may lack a final newline).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests drive git directly to build and check repositories"
+)]
 fn git_bytes(dir: &Path, args: &[&str]) -> Vec<u8> {
     let out = Command::new("git")
         .current_dir(dir)
