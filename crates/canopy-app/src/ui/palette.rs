@@ -245,167 +245,185 @@ impl<T: Clone> CommandPalette<T> {
             .pivot(Align2::CENTER_TOP)
             .fixed_pos(egui::pos2(screen.center().x, screen.min.y + top))
             .show(ctx, |ui| {
-                egui::Frame::new()
-                    .fill(p.elevated())
+                // The shadow and, with Translucent surfaces on, the blurred backdrop go under
+                // the card; its fill is decided once its size is known.
+                let under = ui.painter().add(egui::Shape::Noop);
+                let radius = CornerRadius::same(theme::RADIUS_LG);
+                let mut card = egui::Frame::new()
                     .stroke(Stroke::new(1.0, Palette::tint(p.accent, 120)))
-                    .corner_radius(CornerRadius::same(theme::RADIUS_LG))
-                    .shadow(ctx.global_style().visuals.window_shadow)
+                    .corner_radius(radius)
                     .inner_margin(egui::Margin::same(10))
-                    .show(ui, |ui| {
-                        ui.set_width(width);
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(icon::MAGNIFYING_GLASS)
-                                    .size(theme::ICON_MD)
-                                    .color(p.accent),
-                            );
-                            let edit = ui.add(
-                                egui::TextEdit::singleline(&mut self.query)
-                                    .hint_text("Type a command, branch or repository…")
-                                    .font(FontId::proportional(theme::TITLE_SIZE))
-                                    .frame(egui::Frame::NONE)
-                                    .desired_width(f32::INFINITY),
-                            );
-                            if self.just_opened {
-                                edit.request_focus();
-                                self.just_opened = false;
-                            }
-                            if edit.changed() {
-                                self.selected = 0;
-                            }
-                        });
-                        ui.add_space(6.0);
-                        ui.painter().hline(
-                            ui.min_rect().x_range(),
-                            ui.cursor().min.y,
-                            Stroke::new(1.0, p.border()),
+                    .begin(ui);
+                (|ui: &mut egui::Ui| {
+                    ui.set_width(width);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(icon::MAGNIFYING_GLASS)
+                                .size(theme::ICON_MD)
+                                .color(p.accent),
                         );
-                        ui.add_space(6.0);
-                        if ranked.is_empty() {
-                            ui.add_space(10.0);
-                            ui.vertical_centered(|ui| {
-                                ui.label(RichText::new("No matches").color(p.text_faint))
-                            });
-                            ui.add_space(10.0);
-                            return;
+                        let edit = ui.add(
+                            egui::TextEdit::singleline(&mut self.query)
+                                .hint_text("Type a command, branch or repository…")
+                                .font(FontId::proportional(theme::TITLE_SIZE))
+                                .frame(egui::Frame::NONE)
+                                .desired_width(f32::INFINITY),
+                        );
+                        if self.just_opened {
+                            edit.request_focus();
+                            self.just_opened = false;
                         }
-                        // Whole rows only, so the list never ends in a half-cut entry.
-                        let pitch = 34.0 + ui.spacing().item_spacing.y;
-                        let room =
-                            (screen.height() - top - theme::XL * 2.0 - 60.0).clamp(0.0, 380.0);
-                        let list_h = ((room + ui.spacing().item_spacing.y) / pitch)
-                            .floor()
-                            .max(1.0)
-                            * pitch
-                            - ui.spacing().item_spacing.y;
-                        // Both bounds: the area's own size comes from its last frame and would
-                        // otherwise cap the list part-way through a row.
-                        let list = egui::ScrollArea::vertical()
-                            .max_height(list_h)
-                            .min_scrolled_height(list_h)
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
-                                let mut previous_group = None;
-                                for (row, (_, i)) in ranked.iter().enumerate() {
-                                    let Some((e, _)) = self.items.get(*i) else {
-                                        continue;
-                                    };
-                                    if self.query.is_empty() {
-                                        let group = category(e).unwrap_or("Recent repositories");
-                                        if previous_group != Some(group) {
-                                            ui.add_space(theme::SM);
-                                            widgets::section_label(ui, group);
-                                            previous_group = Some(group);
-                                        }
-                                    }
-                                    let selected = row == self.selected;
-                                    let (rect, resp) = ui.allocate_exact_size(
-                                        vec2(ui.available_width(), 34.0),
-                                        Sense::click(),
-                                    );
-                                    resp.widget_info(|| {
-                                        egui::WidgetInfo::selected(
-                                            egui::WidgetType::SelectableLabel,
-                                            true,
-                                            selected,
-                                            &e.label,
-                                        )
-                                    });
-                                    if resp.hovered()
-                                        && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO)
-                                    {
-                                        self.selected = row;
-                                    }
-                                    if selected {
-                                        ui.painter().rect_filled(
-                                            rect,
-                                            CornerRadius::same(theme::RADIUS),
-                                            Palette::tint(p.accent, if p.dark { 55 } else { 35 }),
-                                        );
-                                        ui.painter().rect_filled(
-                                            egui::Rect::from_min_size(
-                                                rect.min + vec2(0.0, 8.0),
-                                                vec2(3.0, 18.0),
-                                            ),
-                                            CornerRadius::same(2),
-                                            p.accent,
-                                        );
-                                        ui.scroll_to_rect(rect, None);
-                                    }
-                                    let c = rect.left_center();
-                                    ui.painter().text(
-                                        c + vec2(16.0, 0.0),
-                                        Align2::CENTER_CENTER,
-                                        e.icon,
-                                        FontId::proportional(theme::ICON_MD),
-                                        if selected { p.accent } else { p.text_dim },
-                                    );
-                                    let shortcut_width = ui
-                                        .painter()
-                                        .layout_no_wrap(
-                                            e.shortcut.clone(),
-                                            FontId::monospace(theme::MONO_SMALL_SIZE),
-                                            p.text_faint,
-                                        )
-                                        .size()
-                                        .x;
-                                    let label_clip = egui::Rect::from_min_max(
-                                        rect.min + vec2(30.0, 0.0),
-                                        rect.max - vec2(shortcut_width + theme::XL, 0.0),
-                                    );
-                                    let painter = ui.painter().with_clip_rect(label_clip);
-                                    let label = painter.text(
-                                        c + vec2(34.0, 0.0),
-                                        Align2::LEFT_CENTER,
-                                        &e.label,
-                                        FontId::new(theme::LEAD_SIZE, theme::medium()),
-                                        p.text,
-                                    );
-                                    if !e.detail.is_empty() && category(e).is_none() {
-                                        painter.text(
-                                            egui::pos2(label.max.x + 10.0, c.y),
-                                            Align2::LEFT_CENTER,
-                                            &e.detail,
-                                            FontId::proportional(theme::META_SIZE),
-                                            p.text_faint,
-                                        );
-                                    }
-                                    if !e.shortcut.is_empty() {
-                                        ui.painter().text(
-                                            rect.right_center() - vec2(10.0, 0.0),
-                                            Align2::RIGHT_CENTER,
-                                            &e.shortcut,
-                                            FontId::monospace(theme::MONO_SMALL_SIZE),
-                                            p.text_faint,
-                                        );
-                                    }
-                                    if resp.clicked() {
-                                        chosen = Some(*i);
+                        if edit.changed() {
+                            self.selected = 0;
+                        }
+                    });
+                    ui.add_space(6.0);
+                    ui.painter().hline(
+                        ui.min_rect().x_range(),
+                        ui.cursor().min.y,
+                        Stroke::new(1.0, p.border()),
+                    );
+                    ui.add_space(6.0);
+                    if ranked.is_empty() {
+                        ui.add_space(10.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new("No matches").color(p.text_faint))
+                        });
+                        ui.add_space(10.0);
+                        return;
+                    }
+                    // Whole rows only, so the list never ends in a half-cut entry.
+                    let pitch = 34.0 + ui.spacing().item_spacing.y;
+                    let room = (screen.height() - top - theme::XL * 2.0 - 60.0).clamp(0.0, 380.0);
+                    let list_h = ((room + ui.spacing().item_spacing.y) / pitch)
+                        .floor()
+                        .max(1.0)
+                        * pitch
+                        - ui.spacing().item_spacing.y;
+                    // Both bounds: the area's own size comes from its last frame and would
+                    // otherwise cap the list part-way through a row.
+                    let list = egui::ScrollArea::vertical()
+                        .max_height(list_h)
+                        .min_scrolled_height(list_h)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            let mut previous_group = None;
+                            for (row, (_, i)) in ranked.iter().enumerate() {
+                                let Some((e, _)) = self.items.get(*i) else {
+                                    continue;
+                                };
+                                if self.query.is_empty() {
+                                    let group = category(e).unwrap_or("Recent repositories");
+                                    if previous_group != Some(group) {
+                                        ui.add_space(theme::SM);
+                                        widgets::section_label(ui, group);
+                                        previous_group = Some(group);
                                     }
                                 }
-                            });
-                        widgets::scroll_fade(ui, &list, p.elevated());
-                    });
+                                let selected = row == self.selected;
+                                let (rect, resp) = ui.allocate_exact_size(
+                                    vec2(ui.available_width(), 34.0),
+                                    Sense::click(),
+                                );
+                                resp.widget_info(|| {
+                                    egui::WidgetInfo::selected(
+                                        egui::WidgetType::SelectableLabel,
+                                        true,
+                                        selected,
+                                        &e.label,
+                                    )
+                                });
+                                if resp.hovered()
+                                    && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO)
+                                {
+                                    self.selected = row;
+                                }
+                                if selected {
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        CornerRadius::same(theme::RADIUS),
+                                        Palette::tint(p.accent, if p.dark { 55 } else { 35 }),
+                                    );
+                                    ui.painter().rect_filled(
+                                        egui::Rect::from_min_size(
+                                            rect.min + vec2(0.0, 8.0),
+                                            vec2(3.0, 18.0),
+                                        ),
+                                        CornerRadius::same(2),
+                                        p.accent,
+                                    );
+                                    ui.scroll_to_rect(rect, None);
+                                }
+                                let c = rect.left_center();
+                                ui.painter().text(
+                                    c + vec2(16.0, 0.0),
+                                    Align2::CENTER_CENTER,
+                                    e.icon,
+                                    FontId::proportional(theme::ICON_MD),
+                                    if selected { p.accent } else { p.text_dim },
+                                );
+                                let shortcut_width = ui
+                                    .painter()
+                                    .layout_no_wrap(
+                                        e.shortcut.clone(),
+                                        FontId::monospace(theme::MONO_SMALL_SIZE),
+                                        p.text_faint,
+                                    )
+                                    .size()
+                                    .x;
+                                let label_clip = egui::Rect::from_min_max(
+                                    rect.min + vec2(30.0, 0.0),
+                                    rect.max - vec2(shortcut_width + theme::XL, 0.0),
+                                );
+                                let painter = ui.painter().with_clip_rect(label_clip);
+                                let label = painter.text(
+                                    c + vec2(34.0, 0.0),
+                                    Align2::LEFT_CENTER,
+                                    &e.label,
+                                    FontId::new(theme::LEAD_SIZE, theme::medium()),
+                                    p.text,
+                                );
+                                if !e.detail.is_empty() && category(e).is_none() {
+                                    painter.text(
+                                        egui::pos2(label.max.x + 10.0, c.y),
+                                        Align2::LEFT_CENTER,
+                                        &e.detail,
+                                        FontId::proportional(theme::META_SIZE),
+                                        p.text_faint,
+                                    );
+                                }
+                                if !e.shortcut.is_empty() {
+                                    ui.painter().text(
+                                        rect.right_center() - vec2(10.0, 0.0),
+                                        Align2::RIGHT_CENTER,
+                                        &e.shortcut,
+                                        FontId::monospace(theme::MONO_SMALL_SIZE),
+                                        p.text_faint,
+                                    );
+                                }
+                                if resp.clicked() {
+                                    chosen = Some(*i);
+                                }
+                            }
+                        });
+                    widgets::scroll_fade(ui, &list, p.elevated());
+                })(&mut card.content_ui);
+                let rect = card.frame.widget_rect(card.content_ui.min_rect());
+                let shadow = ctx
+                    .global_style()
+                    .visuals
+                    .window_shadow
+                    .as_shape(rect, radius);
+                let glass = crate::ui::kit::glass::backdrop_shape(ui.painter(), rect, radius);
+                card.frame.fill = if glass.is_some() {
+                    crate::ui::kit::glass::glass_fill(ctx)
+                } else {
+                    p.elevated()
+                };
+                let under_card = std::iter::once(egui::Shape::from(shadow)).chain(glass);
+                ui.painter()
+                    .set(under, egui::Shape::Vec(under_card.collect()));
+                card.end(ui);
             });
 
         if chosen.is_some() {

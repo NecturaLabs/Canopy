@@ -54,7 +54,7 @@ These come from the owner and override anything else in the repository.
 `vendor/` (third-party code we build, with our patch); `askpass.rs`; saved tokens (`tokens.json`,
 `hosting.rs`) and all of `crates/canopy-hosting/`; crash-report scrubbing (`crash_reports.rs`); URL
 opening in `platform.rs` (web addresses only); log redaction (`logging.rs`, `cli.rs`); URL building
-in `forge.rs`; the update feed; `Cargo.toml`,
+in `forge.rs`; `ui/kit/glass/gl.rs` (the only `unsafe` code); the update feed; `Cargo.toml`,
 `Cargo.lock`, `deny.toml`; `.github/` (self-hosted runners run code). A change there gets a
 security pass (`/security-review`) before the general review. Ask the owner before storing a
 token anywhere new, contacting a new host or adding a dependency.
@@ -65,7 +65,8 @@ token anywhere new, contacting a new host or adding a dependency.
 - Lint: `cargo clippy --workspace --all-targets --locked -- -D warnings`
 - Test: `cargo test --workspace --locked` (one: `cargo test -p canopy-core <name>`)
 - Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
-- `tools/check.sh`, on this platform: `fmt --check`, clippy, workspace tests,
+- `tools/check.sh`, on this platform: `fmt --check`, clippy, the unsafe policy
+  (`crates/canopy-app/tests/unsafe_policy.rs`), workspace tests,
   `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
   paths in docs, module table and skill mirror), `tools/vendor-eframe.sh --check` (`vendor/eframe`
   is the published crate plus our patch and the build uses it; needs network access),
@@ -126,7 +127,10 @@ token anywhere new, contacting a new host or adding a dependency.
   through a confirmation dialog. Never force-push without `--force-with-lease`.
 - Errors reach the user as toasts carrying git's own stderr (or the libgit2 or server message),
   never a generic "operation failed"; log details with `tracing`.
-- Propagate `canopy_core::Result`; clippy rejects `unwrap`/`expect` outside tests; no `unsafe`.
+- Propagate `canopy_core::Result`; clippy rejects `unwrap`/`expect` outside tests. No `unsafe`
+  except in `crates/canopy-app/src/ui/kit/glass/gl.rs` (the backdrop-blur OpenGL calls, approved
+  by the owner): one operation per `unsafe` block, each with a `// SAFETY:` comment;
+  `tools/check.sh` fails on `unsafe` anywhere else.
 - Paths are `Path`/`PathBuf`, joined with `join`, never concatenated with `/`; not assumed UTF-8.
 - In the same change: a feature updates `docs/features.md` and, until the first numbered build is released,
   `CHANGELOG.md` (Unreleased; afterwards the commit subject is the release note); a

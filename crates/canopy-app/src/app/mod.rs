@@ -86,6 +86,9 @@ pub struct Launch {
     pub motion: Option<crate::ui::motion::MotionPref>,
     /// The gallery page (window heights scrolled) for `--overlay gallery`.
     pub gallery_page: usize,
+    /// `--glass-soak N` (debug builds): paint floating layers, glass when Translucent surfaces is
+    /// on, for a warm-up and then N measured frames, then report and exit.
+    pub glass_soak: Option<u64>,
 }
 
 /// Rows a Page Down / Ctrl+D moves in a list.
@@ -152,6 +155,8 @@ pub struct CanopyApp {
     applied: Option<(ThemeId, theme::Appearance)>,
     /// The gallery overlay (`--overlay gallery`) and the page it shows.
     gallery: Option<usize>,
+    /// The translucent-surfaces soak run (`--glass-soak`), if one was asked for.
+    glass_soak: Option<crate::ui::kit::glass::Soak>,
 }
 
 impl std::fmt::Debug for CanopyApp {
@@ -219,6 +224,10 @@ impl CanopyApp {
         if !shooting && settings.motion == crate::ui::motion::MotionPref::System {
             crate::ui::motion::query_system(&cc.egui_ctx);
         }
+        crate::ui::kit::glass::init(cc.gl.as_deref());
+        if !shooting {
+            crate::ui::kit::glass::query_system(&cc.egui_ctx);
+        }
         apply_zoom(&cc.egui_ctx, settings.zoom);
 
         let git_version = canopy_core::cli::version().unwrap_or_else(|_| "git not found".into());
@@ -266,6 +275,9 @@ impl CanopyApp {
             },
             applied: None,
             gallery: (launch.overlay.as_deref() == Some("gallery")).then_some(launch.gallery_page),
+            glass_soak: launch
+                .glass_soak
+                .map(|n| crate::ui::kit::glass::Soak::new(n, crate::ui::kit::glass::Soak::CYCLE)),
         };
         app.apply_look(&cc.egui_ctx);
         let restore = if launch.paths.is_empty() && !shooting {
@@ -453,7 +465,8 @@ impl CanopyApp {
         self.apply_look(ctx);
     }
 
-    /// What the settings, the system's motion answer and the graphics backend make render.
+    /// What the settings, the system's motion and transparency answers and the graphics backend
+    /// make render.
     fn look(&self) -> theme::Appearance {
         let s = &self.settings;
         theme::Appearance::resolve(
@@ -463,7 +476,7 @@ impl CanopyApp {
             s.translucent,
             s.motion.reduces(crate::ui::motion::system()),
             crate::ui::kit::glass::available(),
-            None,
+            crate::ui::kit::glass::reduced_transparency(),
         )
     }
 
@@ -500,6 +513,16 @@ impl CanopyApp {
         );
         let _ = writeln!(t, "Log detail: {}", self.settings.log_level.label());
         let _ = writeln!(t, "Theme: {}", self.settings.theme.name());
+        let _ = writeln!(
+            t,
+            "Translucent surfaces: {}, blur {}",
+            if self.settings.translucent {
+                "on"
+            } else {
+                "off"
+            },
+            crate::ui::kit::glass::describe()
+        );
         let _ = writeln!(t, "Open repositories: {}", self.tabs.len());
         let _ = writeln!(
             t,
@@ -917,12 +940,24 @@ impl eframe::App for CanopyApp {
         if let Some(page) = self.gallery {
             crate::ui::kit::gallery::show(&ctx, page);
         }
+        if let Some(soak) = &mut self.glass_soak
+            && soak.frame(&ctx)
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         self.apply(&ctx, actions);
         self.handle_screenshot(&ctx);
     }
 
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        crate::ui::kit::glass::destroy(gl);
+        if let Some(soak) = &self.glass_soak {
+            println!("{}", soak.report());
+        }
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        if self.screenshot.is_some() {
+        if self.screenshot.is_some() || self.glass_soak.is_some() {
             return;
         }
         self.settings.open_tabs = self.tabs.iter().map(|t| t.path.clone()).collect();

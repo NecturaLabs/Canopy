@@ -33,7 +33,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 tempfile = "3"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# Denied, not forbidden, so the one owner-approved module can allow it: the backdrop blur's OpenGL
+# calls in crates/canopy-app/src/ui/kit/glass/gl.rs. crates/canopy-app/tests/unsafe_policy.rs fails
+# when unsafe code or an allow for it appears anywhere else.
+unsafe_code = "deny"
 rust_2018_idioms = { level = "warn", priority = -1 }
 missing_debug_implementations = "warn"
 
@@ -43,6 +46,9 @@ dbg_macro = "warn"
 todo = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
+unnecessary_safety_comment = "warn"
 
 # eframe 0.36.2 with one patch: its glow backend never calls winit's `pre_present_notify`, so on
 # Wayland a window the compositor is not drawing blocks in the buffer swap and the application

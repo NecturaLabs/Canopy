@@ -34,6 +34,7 @@ pub const SECTIONS: &[Section] = &[
     ("People", super::avatar::gallery),
     ("Surfaces", super::surface::gallery),
     ("Graph", super::graph::gallery),
+    ("Translucent surfaces", super::glass::gallery),
 ];
 
 const MAX_WIDTH: f32 = 1360.0;

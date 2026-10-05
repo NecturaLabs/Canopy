@@ -192,7 +192,16 @@ pub fn surface(
     ring: Option<Color32>,
 ) {
     let m = p.material(style, level);
+    // A translucent floating layer's blurred backdrop goes between its shadow and its fill.
+    let backdrop = if level == Elevation::Floating {
+        super::glass::lift(painter, rect)
+    } else {
+        None
+    };
     shadow(painter, rect, radius, p, &m);
+    if let Some(backdrop) = backdrop {
+        painter.add(backdrop);
+    }
     fill(painter, rect, radius, body);
     top_highlight(painter, rect, radius, m.highlight);
     bottom_line(painter, rect, radius, p.shadow, m.bottom_line);

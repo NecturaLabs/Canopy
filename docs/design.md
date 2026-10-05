@@ -142,8 +142,16 @@ popovers, tooltips, toasts, dialogs, palette, cheatsheet) a two-layer soft shado
 danger buttons, the `Pane` shadow under cards, the field recess and the deck. Contrast has no
 highlights and rings floating layers in `control_border`.
 
-Translucent surfaces (off by default) will blur what is behind floating layers; until the blur
-lands the setting is unavailable and every layer is opaque (`kit::glass::layer_fill`).
+Translucent surfaces (off by default) blur what is behind floating layers: a layer asks
+`kit::glass::layer_fill` for its fill, which adds the blurred backdrop (dual Kawase, about 12 pt,
+saturation x1.15, luminance clamped to `glass_luminance`, dithered) and returns `overlay` at
+`glass_alpha`; `kit::paint::surface` moves the backdrop between the layer's shadow and its fill.
+The command palette uses it today (it places `kit::glass::backdrop_shape` under its egui frame
+itself); the other floating layers do as they move to the kit. At most four layers a frame are
+glass; tooltips, the settings screen and panes stay opaque. The
+setting is unavailable with the Contrast theme, when the system asks for reduced transparency
+(macOS, Windows) and when the graphics driver cannot run the blur; any failure at run time turns
+it off for the session and every layer is opaque again.
 
 ## Motion
 

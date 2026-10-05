@@ -12,8 +12,8 @@
 //!
 //! Started programs are reaped on a background thread, so none is left as a zombie.
 //!
-//! It also asks the operating system for settings Canopy follows, such as reduced motion
-//! ([`prefers_reduced_motion`]).
+//! It also asks the operating system for settings Canopy follows: reduced motion
+//! ([`prefers_reduced_motion`]) and reduced transparency ([`prefers_reduced_transparency`]).
 
 use std::io::Read;
 use std::path::Path;
@@ -285,6 +285,36 @@ pub fn prefers_reduced_motion() -> Option<bool> {
     }
 }
 
+/// Asks the operating system whether the user wants reduced transparency (macOS "Reduce
+/// transparency", Windows "Transparency effects" off). Blocks while a helper program answers, so
+/// call it off the UI thread. `None` when the system does not say; Linux desktops have no
+/// standard setting.
+pub fn prefers_reduced_transparency() -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = Command::new("defaults");
+        cmd.args(["read", "com.apple.universalaccess", "reduceTransparency"]);
+        output_within(cmd, QUERY_TIMEOUT).and_then(|out| parse_defaults(&out))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = Command::new("reg");
+        cmd.args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            "/v",
+            "EnableTransparency",
+        ]);
+        output_within(cmd, QUERY_TIMEOUT)
+            .and_then(|out| parse_reg_dword(&out, "EnableTransparency"))
+            .map(|enabled| enabled == 0)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        None
+    }
+}
+
 /// Runs `cmd` and returns its standard output when it exits successfully within `timeout`.
 /// Output is read on its own thread, so a chatty program cannot fill the pipe and stall, and a
 /// program that outlives the timeout is killed and reaped.
@@ -375,6 +405,19 @@ fn parse_windows(out: &str) -> Option<bool> {
     }
 }
 
+/// The value of `name` in `reg query` output: `    EnableTransparency    REG_DWORD    0x1`.
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+fn parse_reg_dword(out: &str, name: &str) -> Option<u32> {
+    out.lines().find_map(|line| {
+        let mut words = line.split_whitespace();
+        if words.next()? != name || words.next()? != "REG_DWORD" {
+            return None;
+        }
+        let value = words.next()?;
+        u32::from_str_radix(value.strip_prefix("0x")?, 16).ok()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,6 +451,29 @@ mod tests {
         );
         assert_eq!(parse_windows("False\r\n"), Some(true));
         assert_eq!(parse_windows("True"), Some(false));
+        let reg = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\r\n    EnableTransparency    REG_DWORD    0x0\r\n\r\n";
+        assert_eq!(parse_reg_dword(reg, "EnableTransparency"), Some(0));
+        assert_eq!(
+            parse_reg_dword(
+                "    EnableTransparency    REG_DWORD    0x1",
+                "EnableTransparency"
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            parse_reg_dword(
+                "    EnableTransparency    REG_SZ    yes",
+                "EnableTransparency"
+            ),
+            None
+        );
+        assert_eq!(
+            parse_reg_dword(
+                "ERROR: The system was unable to find the specified registry key",
+                "EnableTransparency"
+            ),
+            None
+        );
     }
 
     #[cfg(unix)]

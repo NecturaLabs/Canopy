@@ -500,7 +500,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             widgets::segmented(ui, &mut s.style, &options);
         },
     );
-    let blocked = theme::glass_blocked(s.theme, crate::ui::kit::glass::available(), None);
+    let blocked = theme::glass_blocked(
+        s.theme,
+        crate::ui::kit::glass::available(),
+        crate::ui::kit::glass::reduced_transparency(),
+    );
     row(
         ui,
         "Translucent surfaces",
