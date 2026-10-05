@@ -185,24 +185,37 @@ fn ambient(ui: &Ui, rect: egui::Rect) {
     );
 }
 
-/// A soft radial glow centred on `center`: `color` at the centre, transparent at `radius`.
+/// A soft radial glow centred on `center`: `color` at the centre, transparent at `radius`. It
+/// falls off as `(1 - t²)²` over concentric rings, flat at the centre and at the rim, so it has
+/// no visible edge or polygon corners and its 8-bit steps spread evenly instead of bunching
+/// into rings.
 fn glow(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
-    const SEGMENTS: u32 = 64;
+    const SEGMENTS: u32 = 128;
+    const RINGS: u32 = 24;
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(center, color);
-    for i in 0..=SEGMENTS {
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "at most 64 segments, exact in f32"
-        )]
-        let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
-        mesh.colored_vertex(
-            center + vec2(a.cos(), a.sin()) * radius,
-            Color32::TRANSPARENT,
-        );
+    for ring in 1..=RINGS {
+        let t = crate::ui::count_f32(ring as usize) / crate::ui::count_f32(RINGS as usize);
+        let falloff = (1.0 - t * t) * (1.0 - t * t);
+        let shade = color.gamma_multiply(falloff);
+        for i in 0..SEGMENTS {
+            let a = crate::ui::count_f32(i as usize) / crate::ui::count_f32(SEGMENTS as usize)
+                * std::f32::consts::TAU;
+            mesh.colored_vertex(center + vec2(a.cos(), a.sin()) * radius * t, shade);
+        }
     }
-    for i in 1..=SEGMENTS {
-        mesh.add_triangle(0, i, i + 1);
+    // Vertex 0 is the centre; ring `r` (1-based) holds vertices 1 + (r - 1) * SEGMENTS onwards.
+    let at = |ring: u32, i: u32| 1 + (ring - 1) * SEGMENTS + i % SEGMENTS;
+    for i in 0..SEGMENTS {
+        mesh.add_triangle(0, at(1, i), at(1, i + 1));
+    }
+    for ring in 1..RINGS {
+        for i in 0..SEGMENTS {
+            let (a, b) = (at(ring, i), at(ring, i + 1));
+            let (c, d) = (at(ring + 1, i), at(ring + 1, i + 1));
+            mesh.add_triangle(a, c, d);
+            mesh.add_triangle(a, d, b);
+        }
     }
     painter.add(mesh);
 }
