@@ -50,8 +50,6 @@ pub const SUBTITLE_SIZE: f32 = 14.0;
 pub const TITLE_SIZE: f32 = 16.0;
 /// The subject of a detail view and first-run dialog headings.
 pub const HEADLINE_SIZE: f32 = 20.0;
-/// The About dialog's name.
-pub const DISPLAY_SIZE: f32 = 24.0;
 /// The welcome screen's title.
 pub const HERO_SIZE: f32 = 38.0;
 /// Code, diffs and identifiers.
@@ -68,8 +66,6 @@ pub const ICON_SM: f32 = 14.0;
 pub const ICON_MD: f32 = 16.0;
 /// Toasts, account cards and the welcome tip.
 pub const ICON_LG: f32 = 18.0;
-/// Beside a dialog's title.
-pub const ICON_TITLE: f32 = 20.0;
 /// The welcome screen's action cards.
 pub const ICON_XL: f32 = 24.0;
 /// The centre of an empty or finished state.
@@ -78,7 +74,6 @@ pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
 /// Shared control geometry, in logical points before interface zoom.
 pub const CONTROL_HEIGHT: f32 = 30.0;
 pub const COMPACT_CONTROL_HEIGHT: f32 = 28.0;
-pub const PRIMARY_CONTROL_HEIGHT: f32 = 36.0;
 pub const CONTROL_INSET: f32 = 2.0;
 pub const CHECKBOX_SIZE: f32 = 18.0;
 pub const SWITCH_SIZE: egui::Vec2 = egui::vec2(40.0, 24.0);
@@ -3476,11 +3471,6 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, look: &Appearance) {
     style.animation_time = super::motion::time(super::motion::BASE);
     ctx.set_style_of(theme, style);
     ctx.set_theme(theme);
-}
-
-/// How long a fade takes: `seconds`, or zero with reduced motion.
-pub fn fade(_ctx: &egui::Context, seconds: f32) -> f32 {
-    super::motion::time(seconds)
 }
 
 #[cfg(test)]
