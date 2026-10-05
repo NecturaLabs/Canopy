@@ -22,7 +22,6 @@ pub const FAST_OUT: f32 = 0.12;
 /// Chevron rotation, label crossfades, tooltip in, field halo.
 pub const BASE: f32 = 0.15;
 /// Dialog and popover entrance transform.
-#[expect(dead_code, reason = "used by the component phase")]
 pub const SLOW: f32 = 0.22;
 /// Toast slide-in.
 #[expect(dead_code, reason = "used by the component phase")]
@@ -102,7 +101,6 @@ pub const SPRING_SOFT: Bezier = Bezier {
     y2: 1.0,
 };
 /// About 10% overshoot: the checkbox tick and radio dot.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by the component phase"))]
 pub const SPRING_CURVE: Bezier = Bezier {
     x1: 0.34,
     y1: 1.56,
@@ -128,7 +126,6 @@ pub const INDICATOR_TRAIL: Spring = Spring {
     zeta: 0.82,
 };
 /// The switch thumb: a slight overshoot.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by the component phase"))]
 pub const SWITCH: Spring = Spring {
     omega: 22.0,
     zeta: 0.62,

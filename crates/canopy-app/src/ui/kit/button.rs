@@ -65,7 +65,7 @@ fn blend(a: Fill, b: Fill, t: f32) -> Fill {
 
 /// The opacity a disabled control paints at, unless its `Ui` is already disabled (egui then
 /// fades the painter itself).
-fn disabled_painter(ui: &Ui, enabled: bool, alpha: f32) -> Painter {
+pub(super) fn disabled_painter(ui: &Ui, enabled: bool, alpha: f32) -> Painter {
     let mut painter = ui.painter().clone();
     if !enabled && ui.is_enabled() {
         painter.multiply_opacity(alpha);
@@ -74,7 +74,7 @@ fn disabled_painter(ui: &Ui, enabled: bool, alpha: f32) -> Painter {
 }
 
 /// The tooltip a control shows: why it is disabled, else its tooltip, with the shortcut's chord.
-fn tooltip_text(
+pub(super) fn tooltip_text(
     enabled: bool,
     tooltip: Option<&str>,
     reason: Option<&str>,
@@ -87,7 +87,7 @@ fn tooltip_text(
     })
 }
 
-fn with_tooltip(response: Response, tip: Option<String>) -> Response {
+pub(super) fn with_tooltip(response: Response, tip: Option<String>) -> Response {
     match tip {
         Some(t) => response.on_hover_text(&t).on_disabled_hover_text(&t),
         None => response,
@@ -108,7 +108,7 @@ pub(crate) fn split_glyph(text: &str) -> (Option<String>, &str) {
 }
 
 /// Text in `font` laid out on one line.
-fn galley(ui: &Ui, text: WidgetText, font: FontId) -> Arc<Galley> {
+pub(super) fn galley(ui: &Ui, text: WidgetText, font: FontId) -> Arc<Galley> {
     text.into_galley(
         ui,
         Some(TextWrapMode::Extend),
@@ -118,7 +118,7 @@ fn galley(ui: &Ui, text: WidgetText, font: FontId) -> Arc<Galley> {
 }
 
 /// Content shapes, scaled about `pivot` by `scale` (the press scale) before they are painted.
-fn paint_scaled(painter: &Painter, shapes: Vec<Shape>, pivot: Pos2, scale: f32) {
+pub(super) fn paint_scaled(painter: &Painter, shapes: Vec<Shape>, pivot: Pos2, scale: f32) {
     if (scale - 1.0).abs() < 1e-3 {
         painter.extend(shapes);
         return;
@@ -135,7 +135,7 @@ fn paint_scaled(painter: &Painter, shapes: Vec<Shape>, pivot: Pos2, scale: f32) 
 
 /// When a loading spinner may show: after `LOADING_DELAY` of loading (instantly with reduced
 /// motion, where nothing would show the wait otherwise).
-fn spinner_due(ctx: &egui::Context, id: Id, loading: bool) -> bool {
+pub(super) fn spinner_due(ctx: &egui::Context, id: Id, loading: bool) -> bool {
     let key = id.with("kit-loading-since");
     if !loading {
         ctx.data_mut(|d| d.remove::<f64>(key));
