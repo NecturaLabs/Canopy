@@ -227,13 +227,11 @@ pub fn open_terminal(dir: &Path, configured: &str) -> Result<(), String> {
 
 /// How long a settings query may take before Canopy gives up on it. PowerShell loading .NET on
 /// a cold start is the slowest case.
-#[cfg_attr(not(test), expect(dead_code, reason = "adopted by the motion pass"))]
 const QUERY_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// Asks the operating system whether the user wants reduced motion. Blocks while a helper
 /// program answers (up to a few seconds), so call it off the UI thread. `None` when the system
 /// does not say.
-#[expect(dead_code, reason = "adopted by the motion pass")]
 pub fn prefers_reduced_motion() -> Option<bool> {
     #[cfg(target_os = "linux")]
     {
@@ -290,7 +288,6 @@ pub fn prefers_reduced_motion() -> Option<bool> {
 /// Runs `cmd` and returns its standard output when it exits successfully within `timeout`.
 /// Output is read on its own thread, so a chatty program cannot fill the pipe and stall, and a
 /// program that outlives the timeout is killed and reaped.
-#[cfg_attr(not(test), expect(dead_code, reason = "adopted by the motion pass"))]
 fn output_within(mut cmd: Command, timeout: Duration) -> Option<String> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
-#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|about|toasts]
+#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|about|toasts|gallery]
+#                            [--style standard|deeper] [--density comfortable|dense] [--translucent on|off]
+#                            [--motion system|reduced|full] [--gallery-page N]
 #                            [--size WxH] [--zoom 0.8..1.6]
 #
 # <repo> may be "-" to render the welcome screen with no repository open.
@@ -31,6 +33,11 @@ while [[ $# -gt 0 ]]; do
     --view) extra+=(--view "${2:?--view needs history, changes or requests}"); shift 2 ;;
     --overlay) extra+=(--overlay "${2:?--overlay needs a name, see --help}"); shift 2 ;;
     --zoom) extra+=(--zoom "${2:?--zoom needs a factor}"); shift 2 ;;
+    --style) extra+=(--style "${2:?--style needs standard or deeper}"); shift 2 ;;
+    --density) extra+=(--density "${2:?--density needs comfortable or dense}"); shift 2 ;;
+    --translucent) extra+=(--translucent "${2:?--translucent needs on or off}"); shift 2 ;;
+    --motion) extra+=(--motion "${2:?--motion needs system, reduced or full}"); shift 2 ;;
+    --gallery-page) extra+=(--gallery-page "${2:?--gallery-page needs a number}"); shift 2 ;;
     --size) size=${2:?--size needs WxH}; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage; exit 2 ;;

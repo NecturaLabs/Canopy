@@ -246,7 +246,7 @@ impl<T: Clone> CommandPalette<T> {
             .fixed_pos(egui::pos2(screen.center().x, screen.min.y + top))
             .show(ctx, |ui| {
                 egui::Frame::new()
-                    .fill(p.elevated)
+                    .fill(p.elevated())
                     .stroke(Stroke::new(1.0, Palette::tint(p.accent, 120)))
                     .corner_radius(CornerRadius::same(theme::RADIUS_LG))
                     .shadow(ctx.global_style().visuals.window_shadow)
@@ -278,7 +278,7 @@ impl<T: Clone> CommandPalette<T> {
                         ui.painter().hline(
                             ui.min_rect().x_range(),
                             ui.cursor().min.y,
-                            Stroke::new(1.0, p.border),
+                            Stroke::new(1.0, p.border()),
                         );
                         ui.add_space(6.0);
                         if ranked.is_empty() {
@@ -404,7 +404,7 @@ impl<T: Clone> CommandPalette<T> {
                                     }
                                 }
                             });
-                        widgets::scroll_fade(ui, &list, p.elevated);
+                        widgets::scroll_fade(ui, &list, p.elevated());
                     });
             });
 

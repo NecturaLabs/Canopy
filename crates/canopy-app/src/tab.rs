@@ -2207,7 +2207,11 @@ mod perf {
     fn frame_cost() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        crate::ui::theme::apply(&ctx, crate::ui::theme::ThemeId::Midnight, true);
+        crate::ui::theme::apply(
+            &ctx,
+            crate::ui::theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let settings = crate::settings::Settings::default();
         let dir = tempfile::tempdir().expect("tempdir");
         let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 2000, DiffPrefs::default());

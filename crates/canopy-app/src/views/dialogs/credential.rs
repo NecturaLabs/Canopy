@@ -106,8 +106,8 @@ pub(super) fn credential(
         );
         ui.add_space(4.0);
         egui::Frame::new()
-            .fill(p.panel)
-            .stroke(egui::Stroke::new(1.0, p.border))
+            .fill(p.panel())
+            .stroke(egui::Stroke::new(1.0, p.border()))
             .corner_radius(egui::CornerRadius::same(theme::RADIUS))
             .inner_margin(egui::Margin::same(10))
             .show(ui, |ui| {

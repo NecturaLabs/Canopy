@@ -47,9 +47,15 @@ OPTIONS:
                               credential, host-key, merge, identity, settings-git or
                               clear-identity, update-installed, update-running,
                               trust-folder, diff-options, settings-integrations,
-                              settings-accounts, settings-updates, settings-keyboard, about or toasts
+                              settings-accounts, settings-updates, settings-keyboard, about, toasts
+                              or gallery
         --size <WxH>          Initial window size [default: 1440x900]
         --zoom <FACTOR>       Initial interface zoom, from 0.8 to 1.6
+        --style <STYLE>       Start with a style: standard or deeper
+        --density <DENSITY>   Start with a density: comfortable or dense
+        --translucent <ON>    Translucent surfaces: on or off
+        --motion <MOTION>     Motion: system, reduced or full
+        --gallery-page <N>    With --overlay gallery, scroll down N window heights
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
     -h, --help                Print help
     -V, --version             Print version
@@ -84,13 +90,45 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                     .next()
                     .ok_or("--theme needs a name")?
                     .to_string_lossy()
-                    .to_lowercase();
+                    .into_owned();
                 launch.theme = Some(
-                    ui::theme::ThemeId::ALL
-                        .into_iter()
-                        .find(|t| t.name().to_lowercase() == name)
+                    ui::theme::ThemeId::from_name(&name)
                         .ok_or_else(|| format!("unknown theme {name}; see --help"))?,
                 );
+            }
+            "--style" => {
+                let name = next_text(&mut args, "--style needs standard or deeper")?;
+                launch.style = Some(
+                    ui::theme::Style::from_name(&name).ok_or("--style takes standard or deeper")?,
+                );
+            }
+            "--density" => {
+                let name = next_text(&mut args, "--density needs comfortable or dense")?;
+                launch.density = Some(
+                    ui::theme::Density::from_name(&name)
+                        .ok_or("--density takes comfortable or dense")?,
+                );
+            }
+            "--translucent" => {
+                launch.translucent = Some(
+                    match next_text(&mut args, "--translucent needs on or off")?.as_str() {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err("--translucent takes on or off".into()),
+                    },
+                );
+            }
+            "--motion" => {
+                let name = next_text(&mut args, "--motion needs system, reduced or full")?;
+                launch.motion = Some(
+                    ui::motion::MotionPref::from_name(&name)
+                        .ok_or("--motion takes system, reduced or full")?,
+                );
+            }
+            "--gallery-page" => {
+                launch.gallery_page = next_text(&mut args, "--gallery-page needs a number")?
+                    .parse()
+                    .map_err(|_| "--gallery-page takes a whole number")?;
             }
             "--overlay" => {
                 let names = app::OVERLAYS.join(", ");
@@ -144,6 +182,16 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
         }
     }
     Ok((launch, size))
+}
+
+/// The next argument as text, or `missing` when there is none.
+fn next_text(
+    args: &mut impl Iterator<Item = std::ffi::OsString>,
+    missing: &str,
+) -> Result<String, String> {
+    args.next()
+        .map(|a| a.to_string_lossy().into_owned())
+        .ok_or_else(|| missing.to_owned())
 }
 
 fn parse_zoom(value: &str) -> Result<f32, String> {

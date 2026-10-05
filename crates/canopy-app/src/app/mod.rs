@@ -65,6 +65,7 @@ pub const OVERLAYS: &[&str] = &[
     "settings-keyboard",
     "about",
     "toasts",
+    "gallery",
 ];
 
 /// Options from the command line.
@@ -79,6 +80,12 @@ pub struct Launch {
     pub overlay: Option<String>,
     /// Side-by-side diffs.
     pub split: bool,
+    pub style: Option<theme::Style>,
+    pub density: Option<theme::Density>,
+    pub translucent: Option<bool>,
+    pub motion: Option<crate::ui::motion::MotionPref>,
+    /// The gallery page (window heights scrolled) for `--overlay gallery`.
+    pub gallery_page: usize,
 }
 
 /// Rows a Page Down / Ctrl+D moves in a list.
@@ -141,6 +148,10 @@ pub struct CanopyApp {
     askpass: Option<crate::askpass::Server>,
     /// `trust::changes()` as the tabs last saw it.
     trust_seen: u64,
+    /// The theme and appearance installed in egui, so they are re-applied only when they change.
+    applied: Option<(ThemeId, theme::Appearance)>,
+    /// The gallery overlay (`--overlay gallery`) and the page it shows.
+    gallery: Option<usize>,
 }
 
 impl std::fmt::Debug for CanopyApp {
@@ -192,7 +203,22 @@ impl CanopyApp {
         crate::trust::install_gate();
         crate::ui::fonts::install(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
-        theme::apply(&cc.egui_ctx, settings.theme, settings.reduce_motion);
+        if let Some(style) = launch.style {
+            settings.style = style;
+        }
+        if let Some(density) = launch.density {
+            settings.density = density;
+        }
+        if let Some(translucent) = launch.translucent {
+            settings.translucent = translucent;
+        }
+        if let Some(motion) = launch.motion {
+            settings.motion = motion;
+        }
+        // Screenshots stay deterministic: no system answer (motion counts as not reduced).
+        if !shooting && settings.motion == crate::ui::motion::MotionPref::System {
+            crate::ui::motion::query_system(&cc.egui_ctx);
+        }
         apply_zoom(&cc.egui_ctx, settings.zoom);
 
         let git_version = canopy_core::cli::version().unwrap_or_else(|_| "git not found".into());
@@ -238,7 +264,10 @@ impl CanopyApp {
             } else {
                 start_askpass(&cc.egui_ctx)
             },
+            applied: None,
+            gallery: (launch.overlay.as_deref() == Some("gallery")).then_some(launch.gallery_page),
         };
+        app.apply_look(&cc.egui_ctx);
         let restore = if launch.paths.is_empty() && !shooting {
             app.settings.open_tabs.clone()
         } else {
@@ -421,7 +450,32 @@ impl CanopyApp {
 
     fn set_theme(&mut self, ctx: &egui::Context, id: ThemeId) {
         self.settings.theme = id;
-        theme::apply(ctx, id, self.settings.reduce_motion);
+        self.apply_look(ctx);
+    }
+
+    /// What the settings, the system's motion answer and the graphics backend make render.
+    fn look(&self) -> theme::Appearance {
+        let s = &self.settings;
+        theme::Appearance::resolve(
+            s.theme,
+            s.style,
+            s.density,
+            s.translucent,
+            s.motion.reduces(crate::ui::motion::system()),
+            crate::ui::kit::glass::available(),
+            None,
+        )
+    }
+
+    /// Installs the theme and appearance when either changed (a setting, or the system's motion
+    /// answer arriving).
+    fn apply_look(&mut self, ctx: &egui::Context) {
+        let look = self.look();
+        let wanted = (self.settings.theme, look);
+        if self.applied != Some(wanted) {
+            theme::apply(ctx, self.settings.theme, &look);
+            self.applied = Some(wanted);
+        }
     }
 
     /// The text "Copy diagnostics" puts on the clipboard, with the home folder shown as `~`.
@@ -476,9 +530,13 @@ impl CanopyApp {
     /// Applies settings that changed in the settings screen.
     fn settings_changed(&mut self, ctx: &egui::Context, before: &Settings) {
         let s = &self.settings;
-        if s.theme != before.theme || s.reduce_motion != before.reduce_motion {
-            theme::apply(ctx, s.theme, s.reduce_motion);
+        if s.motion == crate::ui::motion::MotionPref::System
+            && before.motion != crate::ui::motion::MotionPref::System
+        {
+            crate::ui::motion::query_system(ctx);
         }
+        self.apply_look(ctx);
+        let s = &self.settings;
         if (ctx.zoom_factor() - s.zoom).abs() > f32::EPSILON {
             apply_zoom(ctx, s.zoom);
         }
@@ -571,6 +629,7 @@ impl eframe::App for CanopyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         update_window_minimum(&ctx);
+        self.apply_look(&ctx);
         let p = palette(&ctx);
         let compact = ctx.content_rect().width() < theme::COMPACT_WIDTH;
         self.poll(&ctx);
@@ -596,7 +655,7 @@ impl eframe::App for CanopyApp {
 
         egui::Panel::top("tabs")
             .exact_size(40.0)
-            .frame(egui::Frame::new().fill(p.bg))
+            .frame(egui::Frame::new().fill(p.bg()))
             .show(ui, |ui| {
                 toolbar::tabs(
                     ui,
@@ -608,11 +667,11 @@ impl eframe::App for CanopyApp {
             });
         if let Some(tab) = self.tabs.get_mut(self.active) {
             egui::Panel::top("actions")
-                .exact_size(theme::ACTION_BAR_HEIGHT)
+                .exact_size(theme::metrics().action_bar_height)
                 .frame(
                     egui::Frame::new()
-                        .fill(p.panel)
-                        .stroke(Stroke::new(1.0, p.border)),
+                        .fill(p.panel())
+                        .stroke(Stroke::new(1.0, p.border())),
                 )
                 .show(ui, |ui| {
                     if compact {
@@ -645,8 +704,8 @@ impl eframe::App for CanopyApp {
             .exact_size(26.0)
             .frame(
                 egui::Frame::new()
-                    .fill(p.panel)
-                    .stroke(Stroke::new(1.0, p.border)),
+                    .fill(p.panel())
+                    .stroke(Stroke::new(1.0, p.border())),
             )
             .show(ui, |ui| {
                 if let Some(s) = &clone_status {
@@ -676,14 +735,14 @@ impl eframe::App for CanopyApp {
                     .max_size(460.0)
                     .frame(
                         egui::Frame::new()
-                            .fill(p.panel)
-                            .stroke(Stroke::new(1.0, p.border))
+                            .fill(p.panel())
+                            .stroke(Stroke::new(1.0, p.border()))
                             .inner_margin(egui::Margin::symmetric(6, 0)),
                     )
                     .show(ui, |ui| sidebar::show(ui, tab, &mut actions));
             }
             egui::CentralPanel::default()
-                .frame(egui::Frame::new().fill(p.bg))
+                .frame(egui::Frame::new().fill(p.bg()))
                 .show(ui, |ui| match tab.view {
                     View::History => history::show(ui, tab, &self.settings, &mut actions),
                     View::Changes => changes::show(ui, tab, &mut actions),
@@ -693,7 +752,7 @@ impl eframe::App for CanopyApp {
                 });
         } else {
             egui::CentralPanel::default()
-                .frame(egui::Frame::new().fill(p.bg))
+                .frame(egui::Frame::new().fill(p.bg()))
                 .show(ui, |ui| welcome::show(ui, &self.settings, &mut actions));
         }
 
@@ -815,6 +874,9 @@ impl eframe::App for CanopyApp {
                 }
             }
         }
+        if let Some(page) = self.gallery {
+            crate::ui::kit::gallery::show(&ctx, page);
+        }
         self.apply(&ctx, actions);
         self.handle_screenshot(&ctx);
     }
@@ -828,7 +890,14 @@ impl eframe::App for CanopyApp {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        egui::Rgba::from(self.settings.theme.palette().bg).to_array()
+        egui::Rgba::from(
+            self.settings
+                .theme
+                .palette()
+                .surfaces(self.settings.style)
+                .bg,
+        )
+        .to_array()
     }
 }
 

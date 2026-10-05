@@ -7,6 +7,7 @@ use egui_phosphor::regular as icon;
 
 use canopy_core::{ChangeKind, RefKind, RefLabel};
 
+use super::kit;
 use super::theme::{self, Palette, palette};
 
 /// A painted one-line label that ends in an ellipsis instead of cutting through a glyph.
@@ -119,7 +120,7 @@ fn paint_ref_pill_with_palette(
         rect,
         CornerRadius::same(10),
         fill,
-        Stroke::new(1.0, Palette::pill_border(color, strong)),
+        Stroke::new(1.0, Palette::pill_border(color)),
         egui::StrokeKind::Inside,
     );
     ui.painter().galley(
@@ -239,29 +240,10 @@ pub fn count_badge(ui: &mut Ui, n: usize, color: Color32) {
 
 /// An icon-only button with a tooltip.
 pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
-    let p = palette(ui.ctx());
-    let response = ui
-        .add(
-            egui::Button::new(RichText::new(glyph).size(theme::ICON_MD).color(p.text_dim))
-                .frame(false)
-                .min_size(Vec2::splat(theme::CONTROL_HEIGHT)),
-        )
-        .on_hover_text(tooltip);
-    if response.has_focus() {
-        ui.painter().rect_stroke(
-            response.rect,
-            CornerRadius::same(theme::RADIUS),
-            Stroke::new(1.5, p.accent),
-            egui::StrokeKind::Inside,
-        );
-    }
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
-    });
-    response
+    kit::IconButton::new(glyph, tooltip).show(ui)
 }
 
-/// A compact toolbar action with its label kept below the icon.
+/// A toolbar action: icon over caption (Comfortable) or beside it (Dense).
 pub fn tool_button(
     ui: &mut Ui,
     glyph: &str,
@@ -269,68 +251,10 @@ pub fn tool_button(
     tooltip: &str,
     enabled: bool,
 ) -> Response {
-    let p = palette(ui.ctx());
-    let enabled = enabled && ui.is_enabled();
-    let size = vec2(
-        if ui.ctx().content_rect().width() < theme::COMPACT_WIDTH {
-            48.0
-        } else {
-            58.0
-        },
-        theme::TOOL_HEIGHT,
-    );
-    let (rect, resp) = ui.allocate_exact_size(
-        size,
-        if enabled {
-            Sense::click()
-        } else {
-            Sense::hover()
-        },
-    );
-    let hover = ui.ctx().animate_bool_with_time(
-        resp.id,
-        enabled && resp.hovered(),
-        theme::fade(ui.ctx(), 0.12),
-    );
-    if hover > 0.0 {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::same(theme::RADIUS),
-            Palette::tint(p.text, (hover * if p.dark { 14.0 } else { 18.0 }) as u8),
-        );
-    }
-    let color = if !enabled {
-        p.text_faint
-    } else if resp.is_pointer_button_down_on() {
-        p.accent
-    } else {
-        p.text_dim.lerp_to_gamma(p.text, hover)
-    };
-    ui.painter().text(
-        rect.center_top() + vec2(0.0, theme::MD),
-        Align2::CENTER_CENTER,
-        glyph,
-        FontId::proportional(theme::ICON_MD),
-        color,
-    );
-    ui.painter().text(
-        rect.center_bottom() - vec2(0.0, theme::SM),
-        Align2::CENTER_CENTER,
-        label,
-        FontId::new(theme::BODY_SIZE, theme::medium()),
-        color,
-    );
-    if resp.has_focus() {
-        ui.painter().rect_stroke(
-            rect,
-            CornerRadius::same(theme::RADIUS),
-            Stroke::new(1.5, p.accent),
-            egui::StrokeKind::Inside,
-        );
-    }
-    let name = label.to_owned();
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &name));
-    resp.on_hover_text(tooltip)
+    kit::ToolButton::new(glyph, label)
+        .tooltip(tooltip)
+        .enabled(enabled)
+        .show(ui)
 }
 
 /// Mutually exclusive options in one recessed track; the chosen one is a raised segment, the others
@@ -415,7 +339,7 @@ pub fn collapse_caret(ui: &mut Ui, openness: f32, response: &Response) {
 pub fn recessed_rail(ui: &mut Ui) {
     let p = palette(ui.ctx());
     let v = ui.visuals_mut();
-    v.widgets.inactive.bg_fill = if p.dark { p.bg } else { p.border };
+    v.widgets.inactive.bg_fill = if p.dark { p.bg() } else { p.border() };
     v.selection.bg_fill = p.accent;
 }
 
@@ -442,8 +366,8 @@ fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -
     ui.painter().rect(
         outer,
         CornerRadius::same(theme::RADIUS_SM + 1),
-        p.bg,
-        Stroke::new(1.0, p.border),
+        p.bg(),
+        Stroke::new(1.0, p.border()),
         egui::StrokeKind::Inside,
     );
     let mut chosen = None;
@@ -476,7 +400,7 @@ fn segment_track(ui: &mut Ui, segments: &[Segment<'_>], height: f32, pad: f32) -
             ui.painter().rect(
                 rect,
                 radius,
-                p.elevated,
+                p.elevated(),
                 Stroke::new(1.0, p.control_edge()),
                 egui::StrokeKind::Inside,
             );
@@ -550,15 +474,15 @@ pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> Response {
         Vec2::splat(box_size),
     );
     let off_fill = if resp.hovered() && enabled {
-        p.hover
+        p.hover()
     } else {
-        p.bg
+        p.bg()
     };
-    let fill = off_fill.lerp_to_gamma(p.button, t);
+    let fill = off_fill.lerp_to_gamma(p.button(), t);
     let stroke = if resp.hovered() && enabled && t < 1.0 {
         Palette::tint(p.accent, 200)
     } else {
-        p.control_border.lerp_to_gamma(p.button, t)
+        p.control_border.lerp_to_gamma(p.button(), t)
     };
     ui.painter().rect(
         b,
@@ -569,7 +493,7 @@ pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> Response {
     );
     if t > 0.0 {
         let c = b.shrink(4.0);
-        let ink = Palette::tint(p.on_button, (t * 255.0) as u8);
+        let ink = Palette::tint(p.on_button(), (t * 255.0) as u8);
         ui.painter().add(egui::Shape::line(
             vec![
                 pos2(c.left(), c.center().y + 0.5),
@@ -619,9 +543,9 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
         .animate_bool_with_time(resp.id, *on, super::motion::time(super::motion::FAST));
     let hovered = enabled && resp.hovered();
     let radius = CornerRadius::same(theme::RADIUS_LG);
-    let off_fill = if hovered { p.hover } else { p.bg };
-    let fill = off_fill.lerp_to_gamma(p.button, t);
-    let stroke = p.control_border.lerp_to_gamma(p.button, t);
+    let off_fill = if hovered { p.hover() } else { p.bg() };
+    let fill = off_fill.lerp_to_gamma(p.button(), t);
+    let stroke = p.control_border.lerp_to_gamma(p.button(), t);
     ui.painter().rect(
         rect,
         radius,
@@ -632,7 +556,7 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
     let r = (size.y - 2.0 * theme::CONTROL_INSET - 2.0) / 2.0;
     let cx = egui::lerp((rect.left() + 3.0 + r)..=(rect.right() - 3.0 - r), t);
     let thumb = if enabled {
-        p.text_dim.lerp_to_gamma(p.on_button, t)
+        p.text_dim.lerp_to_gamma(p.on_button(), t)
     } else {
         p.text_faint
     };
@@ -657,150 +581,52 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
 }
 
 /// Height of the buttons in a list header, so "Stage all" and a menu beside it match.
-pub const COMPACT_H: f32 = theme::COMPACT_CONTROL_HEIGHT;
-
-/// A bordered button at [`COMPACT_H`] with the standard padding: the same control as a plain
-/// button, but not as shallow as `small_button`.
-pub fn compact_button(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> Response {
-    ui.scope(|ui| {
-        ui.spacing_mut().button_padding = vec2(theme::SM, 4.0);
-        ui.spacing_mut().interact_size.y = COMPACT_H;
-        secondary_button(ui, text, vec2(0.0, COMPACT_H))
-    })
-    .inner
+pub fn compact_h() -> f32 {
+    kit::Size::Sm.height()
 }
 
-/// Neutral action with a quiet surface edge; accent is reserved for keyboard focus.
+/// A small secondary button: the buttons in list headers.
+pub fn compact_button(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> Response {
+    kit::Button::new(text).size(kit::Size::Sm).show(ui)
+}
+
+/// A neutral action: the secondary button, at least `min_size.x` wide.
 pub fn secondary_button(
     ui: &mut Ui,
     text: impl Into<egui::WidgetText>,
     min_size: Vec2,
 ) -> Response {
-    let p = palette(ui.ctx());
-    let response = ui
-        .scope(|ui| {
-            ui.style_mut().override_font_id = Some(FontId::new(theme::BODY_SIZE, theme::medium()));
-            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0, p.control_edge());
-            ui.add(egui::Button::new(text).min_size(min_size))
-        })
-        .inner;
-    if ui.is_enabled() && response.rect.width() > 2.0 * f32::from(theme::RADIUS) {
-        ui.painter().line_segment(
-            [
-                response.rect.left_top() + vec2(f32::from(theme::RADIUS), 1.0),
-                response.rect.right_top() + vec2(-f32::from(theme::RADIUS), 1.0),
-            ],
-            Stroke::new(1.0, p.control_highlight()),
-        );
-    }
-    response
+    kit::Button::new(text).min_width(min_size.x).show(ui)
 }
 
-/// A button for a dangerous action: danger-coloured label on a tinted fill, readable in every
-/// theme.
+/// A destructive action outside a confirmation: a secondary button whose icon is `danger`.
 pub fn danger_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
-    let p = palette(ui.ctx());
-    ui.add(
-        egui::Button::new(RichText::new(text).color(p.danger).strong())
-            .fill(Palette::tint(p.danger, if p.dark { 40 } else { 26 }))
-            .stroke(Stroke::new(1.0, Palette::tint(p.danger, 170)))
-            .min_size(min_size),
-    )
-}
-
-/// The primary call to action sized to its label, at least `min_size`: the same solid button as
-/// [`primary_button`], for confirmations whose width follows their text.
-pub fn accent_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
-    let label = ui
-        .painter()
-        .layout_no_wrap(text.to_owned(), primary_font(), Color32::PLACEHOLDER);
-    let size = vec2(
-        (label.size().x + 2.0 * theme::LG).max(min_size.x),
-        min_size.y.max(ui.spacing().interact_size.y),
-    );
-    primary_button_sized(ui, text, true, size)
-}
-
-fn primary_font() -> FontId {
-    FontId::new(theme::LEAD_SIZE, theme::semibold())
-}
-
-/// The primary call to action: a solid theme-coloured button.
-pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Response {
-    primary_button_sized(
-        ui,
-        text,
-        enabled,
-        vec2(width, theme::PRIMARY_CONTROL_HEIGHT),
-    )
-}
-
-fn primary_button_sized(ui: &mut Ui, text: &str, enabled: bool, size: Vec2) -> Response {
-    let p = palette(ui.ctx());
-    let enabled = enabled && ui.is_enabled();
-    let (rect, resp) = ui.allocate_exact_size(
-        size,
-        if enabled {
-            Sense::click()
-        } else {
-            Sense::hover()
-        },
-    );
-    let hover = ui.ctx().animate_bool_with_time(
-        resp.id,
-        enabled && resp.hovered(),
-        theme::fade(ui.ctx(), 0.12),
-    );
-    if enabled {
-        let radius = CornerRadius::same(theme::RADIUS);
-        if !resp.is_pointer_button_down_on() {
-            ui.painter().add(p.control_shadow().as_shape(rect, radius));
-        }
-        ui.painter().rect(
-            rect,
-            radius,
-            p.button,
-            Stroke::new(1.0, Palette::tint(p.on_button, (30.0 + 30.0 * hover) as u8)),
-            egui::StrokeKind::Inside,
-        );
-        ui.painter().line_segment(
-            [
-                rect.left_top() + vec2(f32::from(theme::RADIUS), 1.0),
-                rect.right_top() + vec2(-f32::from(theme::RADIUS), 1.0),
-            ],
-            Stroke::new(1.0, Palette::tint(p.on_button, 35)),
-        );
+    let button = kit::Button::new(text)
+        .min_width(min_size.x)
+        .icon_tone(kit::Tone::Danger);
+    let button = if kit::button::split_glyph(text).0.is_none() {
+        button.icon(icon::TRASH)
     } else {
-        // Quiet and outlined: a disabled button must not read as enabled in
-        // any theme, however close its hue is to `border`.
-        ui.painter().rect(
-            rect,
-            CornerRadius::same(theme::RADIUS),
-            Palette::tint(p.text, 12),
-            Stroke::new(1.0, Palette::tint(p.text, 36)),
-            egui::StrokeKind::Inside,
-        );
-    }
+        button
+    };
+    button.show(ui)
+}
 
-    if resp.has_focus() {
-        ui.painter().rect_stroke(
-            rect.expand(2.0),
-            CornerRadius::same(theme::RADIUS + 2),
-            Stroke::new(1.5, p.accent),
-            egui::StrokeKind::Outside,
-        );
-    }
-    let fg = if enabled { p.on_button } else { p.text_faint };
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        text,
-        primary_font(),
-        fg,
-    );
-    let label = text.to_owned();
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
-    resp
+/// The primary call to action sized to its label, at least `min_size.x` wide.
+pub fn accent_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
+    kit::Button::new(text)
+        .primary()
+        .min_width(min_size.x)
+        .show(ui)
+}
+
+/// The primary call to action, at least `width` wide.
+pub fn primary_button(ui: &mut Ui, text: &str, enabled: bool, width: f32) -> Response {
+    kit::Button::new(text)
+        .primary()
+        .enabled(enabled)
+        .min_width(width)
+        .show(ui)
 }
 
 /// Fills `rect` with a horizontal gradient from `left` to `right` and rounded corners.
@@ -837,34 +663,10 @@ pub fn gradient_rect(
     painter.add(mesh);
 }
 
-/// Fades the top and bottom edges of a vertical scroll area into `surface` where more content lies
-/// beyond them, so a row cut by the viewport reads as "scroll for more" rather than a clipping
-/// error.
+/// Fades the top and bottom edges of a vertical scroll area into `surface` where more content
+/// lies beyond them ([`kit::paint::scroll_fade`]).
 pub fn scroll_fade<R>(ui: &Ui, output: &egui::scroll_area::ScrollAreaOutput<R>, surface: Color32) {
-    let rect = output.inner_rect;
-    let hidden_above = output.state.offset.y;
-    let hidden_below = output.content_size.y - rect.height() - output.state.offset.y;
-    let painter = ui.painter_at(rect);
-    // Narrow and never opaque: a row at the edge must still read as live, not disabled.
-    let band = theme::MD.min(rect.height() / 4.0);
-    let surface = surface.gamma_multiply(0.85);
-    let clear = Color32::from_rgba_premultiplied(0, 0, 0, 0);
-    let fade = |top: f32, from: Color32, to: Color32| {
-        let mut mesh = egui::Mesh::default();
-        mesh.colored_vertex(pos2(rect.left(), top), from);
-        mesh.colored_vertex(pos2(rect.right(), top), from);
-        mesh.colored_vertex(pos2(rect.right(), top + band), to);
-        mesh.colored_vertex(pos2(rect.left(), top + band), to);
-        mesh.add_triangle(0, 1, 2);
-        mesh.add_triangle(0, 2, 3);
-        painter.add(mesh);
-    };
-    if hidden_above > 1.0 {
-        fade(rect.top(), surface, clear);
-    }
-    if hidden_below > 1.0 {
-        fade(rect.bottom() - band, clear, surface);
-    }
+    kit::paint::scroll_fade(ui, output, surface);
 }
 
 /// A soft radial glow centred on `center`, used behind the welcome screen.
@@ -1001,26 +803,12 @@ pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
     }
 }
 
-/// The destructive call to action: a solid `danger` button whose label names what it destroys.
-/// Its text is whichever of white and black reads better on the theme's `danger`.
+/// The destructive call to action in a confirmation: the solid danger button.
 pub fn danger_primary_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
-    let p = palette(ui.ctx());
-    let luminance = {
-        let c = egui::Rgba::from(p.danger);
-        0.2126 * c.r() + 0.7152 * c.g() + 0.0722 * c.b()
-    };
-    // Contrast against white is 1.05 / (L + 0.05), against black (L + 0.05) / 0.05.
-    let ink = if 1.05 / (luminance + 0.05) >= (luminance + 0.05) / 0.05 {
-        Color32::WHITE
-    } else {
-        Color32::BLACK
-    };
-    ui.add(
-        egui::Button::new(RichText::new(text).color(ink).font(primary_font()))
-            .fill(p.danger)
-            .stroke(Stroke::NONE)
-            .min_size(min_size),
-    )
+    kit::Button::new(text)
+        .danger()
+        .min_width(min_size.x)
+        .show(ui)
 }
 
 #[cfg(test)]
@@ -1033,7 +821,11 @@ mod tests {
             for enabled in [false, true] {
                 let ctx = egui::Context::default();
                 crate::ui::fonts::install(&ctx);
-                theme::apply(&ctx, theme::ThemeId::Midnight, true);
+                theme::apply(
+                    &ctx,
+                    theme::ThemeId::Midnight,
+                    &crate::ui::theme::Appearance::STILL,
+                );
                 let mut checked = false;
                 let mut activated = false;
                 let mut focused = false;
@@ -1133,10 +925,17 @@ mod tests {
         }
     }
 
+    /// Design spec 2.4: a disabled button is the whole control at `DISABLED_ALPHA`, never the
+    /// enabled fill at full strength.
     #[test]
     fn disabled_primary_controls_do_not_use_the_enabled_fill() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         for frame in 0..3 {
             let mut button_rect = egui::Rect::NOTHING;
             let output = ctx.run_ui(Default::default(), |ui| {
@@ -1153,15 +952,11 @@ mod tests {
                         _ => None,
                     })
                     .expect("painted disabled primary");
+                let limit = (255.0 * theme::DISABLED_ALPHA).ceil() as u8;
                 assert!(
-                    rectangle.stroke.width > 0.0,
-                    "disabled primaries are quiet outlined controls, not a dimmed brand fill"
-                );
-                // egui further fades a disabled container's painter. Its effective alpha
-                // may be below the quiet fill's 12, but a dimmed solid primary is much higher.
-                assert!(
-                    rectangle.fill.a() <= 12,
-                    "a disabled container must use the quiet fill, never the enabled solid primary fill"
+                    rectangle.fill.a() > 0 && rectangle.fill.a() <= limit,
+                    "a disabled primary is faded to the disabled opacity, got {:?}",
+                    rectangle.fill
                 );
             }
             output.drop_without_applying_deltas();
@@ -1260,7 +1055,7 @@ mod tests {
                         ref_color(p, kind, lane),
                         matches!(kind, RefKind::CurrentBranch | RefKind::Head),
                     );
-                    for surface in p.component_surfaces() {
+                    for surface in p.component_surfaces(p.s()) {
                         let ratio = theme::contrast(actual, theme::over(fill, surface));
                         assert!(
                             ratio >= 4.5,

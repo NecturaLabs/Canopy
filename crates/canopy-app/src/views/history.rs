@@ -39,7 +39,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         tab.history_layout.compact_details = false;
         tab.history_layout.expanded = false;
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(p.bg))
+            .frame(egui::Frame::new().fill(p.bg()))
             .show(ui, |ui| table(ui, tab, settings, actions));
         return;
     }
@@ -61,7 +61,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
             .exact_size(theme::XL + theme::SM)
             .frame(
                 egui::Frame::new()
-                    .fill(p.panel)
+                    .fill(p.panel())
                     .inner_margin(egui::Margin::symmetric(theme::MD as i8, theme::XS as i8)),
             )
             .show(ui, |ui| {
@@ -98,7 +98,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
     }
     if compact || layout.expanded {
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(p.bg))
+            .frame(egui::Frame::new().fill(p.bg()))
             .show(ui, |ui| {
                 if (layout.expanded || layout.compact_details) && selected {
                     commit_detail::show(ui, tab, settings, actions);
@@ -140,12 +140,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
             .max_size(detail_max)
             .frame(
                 egui::Frame::new()
-                    .fill(p.panel)
-                    .stroke(Stroke::new(1.0, p.border)),
+                    .fill(p.panel())
+                    .stroke(Stroke::new(1.0, p.border())),
             )
             .show(ui, |ui| commit_detail::show(ui, tab, settings, actions));
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(p.bg))
+            .frame(egui::Frame::new().fill(p.bg()))
             .show(ui, |ui| table(ui, tab, settings, actions));
     }
     tab.history_layout.compact_details = layout.compact_details || tab.history_layout.expanded;
@@ -182,8 +182,8 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                     if tab.history_filter_open {
                         let id = egui::Id::new("history-filter");
                         egui::Frame::new()
-                            .fill(p.panel)
-                            .stroke(Stroke::new(1.0, p.border))
+                            .fill(p.panel())
+                            .stroke(Stroke::new(1.0, p.border()))
                             .corner_radius(CornerRadius::same(theme::RADIUS))
                             .inner_margin(egui::Margin::symmetric(10, 4))
                             .show(ui, |ui| {
@@ -366,7 +366,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         );
     }
     ui.painter()
-        .hline(full.x_range(), hdr.max.y, Stroke::new(1.0, p.border));
+        .hline(full.x_range(), hdr.max.y, Stroke::new(1.0, p.border()));
 
     let mut clicked: Option<Oid> = None;
     let area = egui::ScrollArea::vertical()
@@ -558,7 +558,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     });
     ui.spacing_mut().item_spacing.y = row_spacing;
 
-    widgets::scroll_fade(ui, &list, p.bg);
+    widgets::scroll_fade(ui, &list, p.bg());
 
     for (oid, email) in wanted_pictures {
         tab.request_avatar(oid, &email);
@@ -716,14 +716,14 @@ fn paint_graph_row(ui: &Ui, rect: Rect, g: &GraphRow, pitch: f32, is_head: bool,
         }
     }
     let r = if is_head { 5.5 } else { 4.5 };
-    painter.circle_filled(c, r + 2.0, p.bg);
+    painter.circle_filled(c, r + 2.0, p.bg());
     if g.is_merge {
-        painter.circle_filled(c, r, p.bg);
+        painter.circle_filled(c, r, p.bg());
         painter.circle_stroke(c, r - 0.5, Stroke::new(2.0, color));
     } else {
         painter.circle_filled(c, r, color);
         if is_head {
-            painter.circle_filled(c, 2.0, p.bg);
+            painter.circle_filled(c, 2.0, p.bg());
         }
     }
 }
@@ -736,7 +736,11 @@ mod tests {
     fn resizing_preserves_visible_commit_rows_above_saved_details() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let dir = tempfile::tempdir().expect("temporary tab");
         let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
         tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
@@ -797,7 +801,11 @@ mod tests {
     fn populated_details_remain_visible_in_a_minimum_zoomed_window() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         for size in [vec2(562.5, 350.0), vec2(1440.0, 900.0), vec2(600.0, 375.0)] {
             let mut visible = Vec::new();
@@ -959,7 +967,11 @@ mod tests {
     fn truncated_history_can_scroll_to_the_load_more_control() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         std::sync::Arc::make_mut(tab.snap.as_mut().expect("snapshot")).truncated = true;
         let mut output = egui::FullOutput::default();
@@ -1000,7 +1012,11 @@ mod tests {
     fn growing_the_window_restores_readable_author_files_and_diff() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         visible_details(&ctx, &mut tab, vec2(562.5, 350.0));
         let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
@@ -1026,7 +1042,11 @@ mod tests {
     fn compact_details_show_the_author_and_a_useful_diff() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         let visible = visible_details(&ctx, &mut tab, vec2(562.5, 350.0));
         assert!(
@@ -1046,7 +1066,11 @@ mod tests {
     fn short_details_keep_unselected_changed_files_visible() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         let mut details = (**tab.details.as_ref().expect("fixture details")).clone();
         let mut other = details.files[0].clone();
@@ -1067,7 +1091,11 @@ mod tests {
         for size in [vec2(562.5, 350.0), vec2(1440.0, 900.0)] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
-            theme::apply(&ctx, theme::ThemeId::Midnight, true);
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                &crate::ui::theme::Appearance::STILL,
+            );
             let (mut tab, _dir) = populated_tab(&ctx);
             tab.history_layout.expanded = true;
             visible_details(&ctx, &mut tab, size);
@@ -1085,7 +1113,11 @@ mod tests {
     fn history_search_stays_hidden_until_invoked_and_has_no_commit_count() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         tab.history_layout.show_list();
         let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
@@ -1105,7 +1137,11 @@ mod tests {
     fn filter_shortcut_toggles_search_and_clears_its_query_on_close() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         tab.filter_history(&ctx);
         let open = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
@@ -1145,7 +1181,11 @@ mod tests {
         ] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
-            theme::apply(&ctx, theme::ThemeId::Midnight, true);
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                &crate::ui::theme::Appearance::STILL,
+            );
             let (mut tab, _dir) = populated_tab(&ctx);
             tab.filter_history(&ctx);
             tab.filter = "fix".into();
@@ -1168,7 +1208,11 @@ mod tests {
     fn opening_search_keeps_the_split_details_at_minimum_window_height() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         tab.history_layout.show_list();
         tab.filter_history(&ctx);
@@ -1185,7 +1229,11 @@ mod tests {
     fn a_short_diff_loaded_later_updates_the_automatic_inspector_height() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
         diff.hunks[0].lines.truncate(7);
@@ -1207,7 +1255,11 @@ mod tests {
     fn manual_inspector_height_survives_a_short_diff() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
         diff.hunks[0].lines.truncate(7);
@@ -1231,7 +1283,11 @@ mod tests {
         for size in [vec2(1440.0, 900.0), vec2(2560.0, 1440.0)] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
-            theme::apply(&ctx, theme::ThemeId::Midnight, true);
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                &crate::ui::theme::Appearance::STILL,
+            );
             let (mut tab, _dir) = populated_tab(&ctx);
             let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
             diff.hunks[0].lines.truncate(7);
@@ -1283,7 +1339,11 @@ mod tests {
     fn expanded_details_can_return_without_a_selected_file() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         tab.history_layout.expanded = true;
         tab.file = None;
@@ -1304,7 +1364,11 @@ mod tests {
     fn detail_expander_shares_the_commit_summary_row() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         let size = vec2(1440.0, 900.0);
         visible_details(&ctx, &mut tab, size);
@@ -1362,7 +1426,11 @@ mod tests {
     fn long_commit_messages_stop_before_the_expander() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (mut tab, _dir) = populated_tab(&ctx);
         let mut details = (**tab.details.as_ref().expect("fixture details")).clone();
         details.message = "very-long-commit-summary ".repeat(20);

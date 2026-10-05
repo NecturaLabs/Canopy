@@ -149,8 +149,8 @@ pub(super) fn update(ui: &mut Ui, a: &Available, updater: &Updater) -> Outcome {
             );
             ui.add_space(8.0);
             egui::Frame::new()
-                .fill(p.panel)
-                .stroke(egui::Stroke::new(1.0, p.border))
+                .fill(p.panel())
+                .stroke(egui::Stroke::new(1.0, p.border()))
                 .corner_radius(egui::CornerRadius::same(theme::RADIUS))
                 .inner_margin(egui::Margin::same(12))
                 .show(ui, |ui| {

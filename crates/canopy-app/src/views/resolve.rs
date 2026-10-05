@@ -100,7 +100,7 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
     let p = palette(ui.ctx());
     let width = ui.available_width();
     egui::Frame::new()
-        .fill(p.panel)
+        .fill(p.panel())
         .inner_margin(egui::Margin::symmetric(theme::LG as i8, theme::SM as i8))
         .show(ui, |ui| {
             ui.set_min_width((width - theme::LG * 2.0).max(0.0));
@@ -164,7 +164,7 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
     ui.painter().hline(
         ui.min_rect().x_range(),
         ui.min_rect().max.y,
-        Stroke::new(1.0, p.border),
+        Stroke::new(1.0, p.border()),
     );
 }
 
@@ -250,7 +250,7 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
     let n = file.conflicts();
     let done = r.resolved();
     egui::Panel::bottom(egui::Id::new(("resolve-footer", &r.path)))
-        .frame(egui::Frame::new().fill(p.panel).inner_margin(egui::Margin::symmetric(14, 10)).stroke(Stroke::new(1.0, p.border)))
+        .frame(egui::Frame::new().fill(p.panel()).inner_margin(egui::Margin::symmetric(14, 10)).stroke(Stroke::new(1.0, p.border())))
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 use crate::keymap::{Command, hint};
@@ -637,7 +637,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
         (None, false) => Palette::tint(p.warning, 160),
     };
     let resp = egui::Frame::new()
-        .fill(p.panel)
+        .fill(p.panel())
         .stroke(Stroke::new(if focused { 2.0 } else { 1.0 }, border))
         .corner_radius(egui::CornerRadius::same(theme::RADIUS))
         .inner_margin(egui::Margin::same(12))
@@ -737,7 +737,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                         .color(p.text_dim),
                 );
                 egui::Frame::new()
-                    .fill(p.hover)
+                    .fill(p.hover())
                     .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM))
                     .inner_margin(egui::Margin::same(8))
                     .show(ui, |ui| {
@@ -897,7 +897,11 @@ mod tests {
     #[test]
     fn compact_resolver_code_never_paints_over_its_footer() {
         let ctx = context();
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let mut r = Resolver::new("f".into());
         r.reload(None, Ok(Arc::new(ConflictFile::parse(&text(1, 5)))));
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 200.0));

@@ -50,7 +50,7 @@ pub fn show(
         .max_size(pane_max.min(640.0))
         .frame(
             egui::Frame::new()
-                .fill(p.panel)
+                .fill(p.panel())
                 .inner_margin(egui::Margin::same(theme::SM as i8)),
         )
         .show(ui, |ui| {
@@ -133,7 +133,7 @@ pub fn show(
                 .show(ui, |ui| files(ui, &d, tab));
         });
     egui::CentralPanel::default()
-        .frame(egui::Frame::new().fill(p.bg))
+        .frame(egui::Frame::new().fill(p.bg()))
         .show(ui, |ui| diff::show(ui, tab, actions));
 }
 
@@ -146,7 +146,7 @@ fn header(ui: &mut Ui, tab: &mut RepoTab) {
     egui::Panel::top("commit-pane-header")
         .frame(
             egui::Frame::new()
-                .fill(p.panel)
+                .fill(p.panel())
                 .inner_margin(egui::Margin::symmetric(theme::MD as i8, theme::XS as i8)),
         )
         .show(ui, |ui| {

@@ -51,7 +51,7 @@ impl Cheatsheet {
             .fixed_pos(egui::pos2(screen.center().x, screen.min.y + theme::XL))
             .show(ctx, |ui| {
                 egui::Frame::new()
-                    .fill(p.elevated)
+                    .fill(p.elevated())
                     .stroke(Stroke::new(1.0, Palette::tint(p.accent, 120)))
                     .corner_radius(CornerRadius::same(theme::RADIUS_LG))
                     .shadow(ctx.global_style().visuals.window_shadow)
@@ -130,7 +130,7 @@ impl Cheatsheet {
                                     });
                                 }
                             });
-                        widgets::scroll_fade(ui, &list, p.elevated);
+                        widgets::scroll_fade(ui, &list, p.elevated());
                     });
             });
     }
@@ -256,8 +256,8 @@ pub(crate) fn paint_keycap(ui: &egui::Ui, left: f32, center_y: f32, chord: &str)
     ui.painter().rect(
         r,
         CornerRadius::same(5),
-        p.bg,
-        Stroke::new(1.0, p.border),
+        p.bg(),
+        Stroke::new(1.0, p.border()),
         egui::StrokeKind::Inside,
     );
     ui.painter()
@@ -273,7 +273,11 @@ mod tests {
     fn alternative_shortcuts_have_separate_keycaps() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let chords = keymap::all_keys(keymap::Command::Palette);
         let mut output = ctx.run_ui(
             egui::RawInput {

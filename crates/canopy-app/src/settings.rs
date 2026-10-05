@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use canopy_core::Whitespace;
 use canopy_core::ops::PullStrategy;
 
-use crate::ui::theme::ThemeId;
+use crate::ui::motion::MotionPref;
+use crate::ui::theme::{Density, Style, ThemeId};
 
 /// Storage key.
 pub const KEY: &str = "canopy-settings-v1";
@@ -111,8 +112,17 @@ pub struct Settings {
     pub show_avatars: bool,
     /// Fetch account pictures after consent; initials remain when disabled.
     pub download_avatars: bool,
-    /// Turn off animations (hover fades, the welcome screen's drifting glow).
-    pub reduce_motion: bool,
+    /// Standard (concept 1) or Deeper (concept 4) surfaces and geometry.
+    pub style: Style,
+    /// Blurred translucent floating layers.
+    pub translucent: bool,
+    /// Row heights, radii, toolbar layout and type size.
+    pub density: Density,
+    /// Match the system, always reduce, or always animate.
+    pub motion: MotionPref,
+    /// Pre-0.3 switch, read once by `migrate` and never written again.
+    #[serde(skip_serializing)]
+    pub reduce_motion: Option<bool>,
 
     // Git.
     pub pull_mode: PullMode,
@@ -199,7 +209,11 @@ impl Default for Settings {
             iso_dates: false,
             show_avatars: true,
             download_avatars: true,
-            reduce_motion: false,
+            style: Style::Standard,
+            translucent: false,
+            density: Density::Comfortable,
+            motion: MotionPref::System,
+            reduce_motion: None,
             pull_mode: PullMode::Merge,
             prune_on_fetch: true,
             auto_fetch_minutes: 0,
@@ -241,6 +255,10 @@ impl Settings {
     pub fn migrate(&mut self) {
         if self.dark.take() == Some(false) && self.theme == ThemeId::Midnight {
             self.theme = ThemeId::Daylight;
+        }
+        // A file with `reduce_motion` predates `motion`, so this overwrites nothing chosen.
+        if self.reduce_motion.take() == Some(true) {
+            self.motion = MotionPref::Reduced;
         }
         self.zoom = self.zoom.clamp(0.8, 1.6);
         self.commit_page = self.commit_page.clamp(200, 50_000);
@@ -353,6 +371,60 @@ mod tests {
         assert_eq!(s.theme, ThemeId::Daylight);
         assert!((s.zoom - 1.2).abs() < f32::EPSILON);
         assert!(s.check_updates, "new fields take their defaults");
+    }
+
+    #[test]
+    fn old_reduce_motion_true_maps_to_reduced() {
+        let mut s: Settings = serde_json::from_str(r#"{"reduce_motion": true}"#).expect("parse");
+        s.migrate();
+        assert_eq!(s.motion, MotionPref::Reduced);
+        assert_eq!(s.reduce_motion, None);
+    }
+
+    #[test]
+    fn old_reduce_motion_false_keeps_system() {
+        let mut s: Settings = serde_json::from_str(r#"{"reduce_motion": false}"#).expect("parse");
+        s.migrate();
+        assert_eq!(s.motion, MotionPref::System);
+    }
+
+    #[test]
+    fn new_fields_default() {
+        let mut s: Settings = serde_json::from_str("{}").expect("parse");
+        s.migrate();
+        assert_eq!(s.style, Style::Standard);
+        assert!(!s.translucent);
+        assert_eq!(s.density, Density::Comfortable);
+        assert_eq!(s.motion, MotionPref::System);
+        let d = Settings::default();
+        assert_eq!(
+            (d.style, d.translucent, d.density, d.motion),
+            (
+                Style::Standard,
+                false,
+                Density::Comfortable,
+                MotionPref::System
+            )
+        );
+    }
+
+    #[test]
+    fn reduce_motion_is_never_written() {
+        let s = Settings {
+            reduce_motion: Some(true),
+            style: Style::Deeper,
+            density: Density::Dense,
+            translucent: true,
+            motion: MotionPref::Full,
+            ..Settings::default()
+        };
+        let json = serde_json::to_value(&s).expect("serialise");
+        assert!(json.get("reduce_motion").is_none(), "{json}");
+        let back: Settings = serde_json::from_value(json).expect("parse");
+        assert_eq!(
+            (back.style, back.density, back.translucent, back.motion),
+            (Style::Deeper, Density::Dense, true, MotionPref::Full)
+        );
     }
 
     #[test]

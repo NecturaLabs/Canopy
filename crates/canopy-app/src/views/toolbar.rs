@@ -87,7 +87,7 @@ pub fn tabs(
                             .ctx()
                             .animate_bool_with_time(resp.id, resp.hovered(), 0.12);
                         let fill = if selected {
-                            p.panel
+                            p.panel()
                         } else {
                             Palette::tint(p.text, (hover * 12.0) as u8)
                         };
@@ -141,7 +141,7 @@ pub fn tabs(
                         if selected || resp.hovered() || close_resp.hovered() {
                             if close_resp.hovered() {
                                 ui.painter()
-                                    .rect_filled(close, CornerRadius::same(4), p.hover);
+                                    .rect_filled(close, CornerRadius::same(4), p.hover());
                             }
                             ui.painter().text(
                                 close.center(),
@@ -215,7 +215,7 @@ pub fn tabs(
                     let tp = t.palette();
                     let resp = ui.horizontal(|ui| {
                         let (r, _) = ui.allocate_exact_size(vec2(28.0, 16.0), Sense::hover());
-                        ui.painter().rect_filled(r, CornerRadius::same(4), tp.bg);
+                        ui.painter().rect_filled(r, CornerRadius::same(4), tp.bg());
                         ui.painter().rect_filled(
                             egui::Rect::from_min_size(r.min + vec2(14.0, 0.0), vec2(14.0, 16.0)),
                             CornerRadius {
@@ -229,7 +229,7 @@ pub fn tabs(
                         ui.painter().rect_stroke(
                             r,
                             CornerRadius::same(4),
-                            Stroke::new(1.0, p.border),
+                            Stroke::new(1.0, p.border()),
                             egui::StrokeKind::Inside,
                         );
                         ui.selectable_label(t == current_theme, t.name())
@@ -259,8 +259,8 @@ pub fn tabs(
             ui.painter().rect(
                 rect,
                 CornerRadius::same(13),
-                p.bg,
-                Stroke::new(1.0, p.border.lerp_to_gamma(p.accent, hover * 0.6)),
+                p.bg(),
+                Stroke::new(1.0, p.border().lerp_to_gamma(p.accent, hover * 0.6)),
                 egui::StrokeKind::Inside,
             );
             ui.painter().text(
@@ -617,8 +617,8 @@ fn segmented(
     ui.painter().rect(
         outer,
         CornerRadius::same(10),
-        p.bg,
-        Stroke::new(1.0, p.border),
+        p.bg(),
+        Stroke::new(1.0, p.border()),
         egui::StrokeKind::Inside,
     );
     let index = items.iter().position(|item| item.0 == view).unwrap_or(0);
@@ -637,7 +637,7 @@ fn segmented(
         vec2(w, outer.height() - 6.0),
     );
     ui.painter()
-        .rect_filled(thumb, CornerRadius::same(8), p.elevated);
+        .rect_filled(thumb, CornerRadius::same(8), p.elevated());
     ui.painter().rect_stroke(
         thumb,
         CornerRadius::same(8),
@@ -688,7 +688,7 @@ fn segmented(
                 vec2(22.0, 16.0),
             );
             ui.painter()
-                .rect_filled(br, CornerRadius::same(8), p.button);
+                .rect_filled(br, CornerRadius::same(8), p.button());
             ui.painter().text(
                 br.center(),
                 Align2::CENTER_CENTER,
@@ -698,7 +698,7 @@ fn segmented(
                     count.to_string()
                 },
                 FontId::new(theme::MICRO_SIZE, theme::semibold()),
-                p.on_button,
+                p.on_button(),
             );
         }
         resp.widget_info(|| {

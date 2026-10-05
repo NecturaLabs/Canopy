@@ -64,8 +64,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .max_size(pane_max.min(700.0))
         .frame(
             egui::Frame::new()
-                .fill(p.panel)
-                .stroke(Stroke::new(1.0, p.border)),
+                .fill(p.panel())
+                .stroke(Stroke::new(1.0, p.border())),
         )
         .show(ui, |ui| {
             let list_frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 8));
@@ -86,7 +86,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                                 ui.painter().hline(
                                     rule,
                                     ui.cursor().min.y,
-                                    Stroke::new(1.0, p.border),
+                                    Stroke::new(1.0, p.border()),
                                 );
                                 ui.add_space(COMPOSER_GAP / 2.0);
                                 egui::Frame::new()
@@ -110,7 +110,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 .max_size(composer_height.min(cap))
                 .frame(
                     egui::Frame::new()
-                        .fill(p.panel)
+                        .fill(p.panel())
                         .inner_margin(egui::Margin::same(12)),
                 )
                 .show(ui, |ui| composer(ui, tab, &snap, actions, false));
@@ -125,7 +125,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 });
         });
     egui::CentralPanel::default()
-        .frame(egui::Frame::new().fill(p.bg))
+        .frame(egui::Frame::new().fill(p.bg()))
         .show(ui, |ui| {
             if snap.status_unavailable.is_none() && snap.status.is_clean() {
                 clean_home(ui, tab, &snap, actions);
@@ -153,7 +153,7 @@ fn lists_height(st: &canopy_core::WorkingStatus) -> f32 {
         } else {
             n as f32 * commit_detail::FILE_ROW_H
         };
-        widgets::COMPACT_H + 4.0 + body + 10.0
+        widgets::compact_h() + 4.0 + body + 10.0
     };
     let mut h = 16.0;
     if conflicts {
@@ -403,7 +403,7 @@ fn list(
                 ui.add_space(theme::MD);
                 ui.scope(|ui| {
                     ui.spacing_mut().button_padding = vec2(theme::SM, 4.0);
-                    ui.spacing_mut().interact_size.y = widgets::COMPACT_H;
+                    ui.spacing_mut().interact_size.y = widgets::compact_h();
                     ui.menu_button(RichText::new(icon::DOTS_THREE).size(theme::ICON_MD), |ui| {
                         ui.set_min_width(200.0);
                         if ui.button(RichText::new(format!("{}  Discard all changes…", icon::ARROW_COUNTER_CLOCKWISE)).color(p.danger)).clicked() {
@@ -488,9 +488,9 @@ fn list(
                 if bresp.hovered() {
                     Palette::tint(p.accent, 90)
                 } else {
-                    p.elevated
+                    p.elevated()
                 },
-                Stroke::new(1.0, p.border),
+                Stroke::new(1.0, p.border()),
                 egui::StrokeKind::Inside,
             );
             match label {
@@ -681,7 +681,7 @@ fn composer(
             ui.painter().hline(
                 ui.max_rect().x_range(),
                 ui.max_rect().min.y - 12.0,
-                Stroke::new(1.0, p.border),
+                Stroke::new(1.0, p.border()),
             );
             composer_fields(ui, tab, actions);
         });
@@ -929,7 +929,11 @@ mod tests {
     fn every_row_offers_its_action_under_the_pointer() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let dir = tempfile::tempdir().expect("temporary tab");
         let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
         let mut snap = unstaged_snapshot();
@@ -939,8 +943,20 @@ mod tests {
         // The first unstaged row is selected by default and shows its action; the others
         // show theirs only under the pointer.
         let rest = painted_texts(&ctx, &mut tab, None);
+        // Row actions only: the list headers' "Stage all" and "Unstage all" buttons draw the
+        // same glyphs as their icons, after a label rather than a file name.
         let shown = |texts: &[(String, egui::Rect)], glyph: &str| {
-            texts.iter().filter(|(t, _)| t == glyph).count()
+            texts
+                .iter()
+                .filter(|(t, r)| {
+                    t == glyph
+                        && texts.iter().any(|(name, at)| {
+                            name.contains('.')
+                                && at.max.x < r.min.x
+                                && (at.center().y - r.center().y).abs() < 4.0
+                        })
+                })
+                .count()
         };
         assert_eq!(shown(&rest, icon::PLUS), 1, "only the selected row");
         assert_eq!(shown(&rest, icon::MINUS), 0);
@@ -965,7 +981,11 @@ mod tests {
     fn compact_clean_summary_keeps_publish_reachable_by_scrolling() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (worker, _, _) = crate::worker::Worker::detached();
         let tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
         let snap = canopy_core::RepoSnapshot::default();
@@ -1015,7 +1035,11 @@ mod tests {
     fn the_composer_follows_a_short_list_and_pins_below_a_long_one() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let dir = tempfile::tempdir().expect("temporary tab");
         let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
         let summary_y = |tab: &mut RepoTab| {
@@ -1101,7 +1125,11 @@ mod tests {
     fn wrapped_identity_notice_does_not_overlap_commit_fields() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let dir = tempfile::tempdir().expect("temporary tab");
         let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
         let unusable = identity("", "", None, false);
@@ -1166,7 +1194,11 @@ mod tests {
         for size in [vec2(600.0, 375.0), vec2(960.0, 600.0), vec2(1440.0, 900.0)] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
-            theme::apply(&ctx, theme::ThemeId::Midnight, true);
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                &crate::ui::theme::Appearance::STILL,
+            );
             let dir = tempfile::tempdir().expect("temporary tab");
             let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
             tab.snap = Some(std::sync::Arc::new(unstaged_snapshot()));

@@ -66,12 +66,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec
         .max_size(pane_max.min(640.0))
         .frame(
             egui::Frame::new()
-                .fill(p.panel)
-                .stroke(Stroke::new(1.0, p.border)),
+                .fill(p.panel())
+                .stroke(Stroke::new(1.0, p.border())),
         )
         .show(ui, |ui| list(ui, tab, kind, actions));
     egui::CentralPanel::default()
-        .frame(egui::Frame::new().fill(p.bg))
+        .frame(egui::Frame::new().fill(p.bg()))
         .show(ui, |ui| detail(ui, tab, kind, actions));
 }
 
@@ -153,7 +153,7 @@ fn list(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Actio
         });
     let r = ui.available_rect_before_wrap();
     ui.painter()
-        .hline(r.x_range(), r.min.y, Stroke::new(1.0, p.border));
+        .hline(r.x_range(), r.min.y, Stroke::new(1.0, p.border()));
 
     match tab.requests.list.clone() {
         None => {
@@ -254,7 +254,8 @@ fn row(ui: &mut Ui, r: &RequestSummary, selected: bool, now: i64) -> egui::Respo
             p.accent,
         );
     } else if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::ZERO, p.hover);
+        ui.painter()
+            .rect_filled(rect, CornerRadius::ZERO, p.hover());
     }
     let (glyph, color, state) = state_style(p, r);
     ui.painter().text(
@@ -599,8 +600,8 @@ fn action_bar(
                 ui.end_row();
             }
             egui::Frame::new()
-                .fill(p.panel)
-                .stroke(Stroke::new(1.0, p.border))
+                .fill(p.panel())
+                .stroke(Stroke::new(1.0, p.border()))
                 .corner_radius(CornerRadius::same(theme::RADIUS_SM))
                 .inner_margin(egui::Margin::same(theme::XS as i8))
                 .show(ui, |ui| {
@@ -765,8 +766,8 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64) {
 
     // Description.
     egui::Frame::new()
-        .fill(p.panel)
-        .stroke(Stroke::new(1.0, p.border))
+        .fill(p.panel())
+        .stroke(Stroke::new(1.0, p.border()))
         .corner_radius(CornerRadius::same(theme::RADIUS))
         .inner_margin(egui::Margin::same(14))
         .show(ui, |ui| {
@@ -966,7 +967,11 @@ mod tests {
     fn merge_controls_fit_a_narrow_details_pane() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        crate::ui::theme::apply(&ctx, crate::ui::theme::ThemeId::Midnight, true);
+        crate::ui::theme::apply(
+            &ctx,
+            crate::ui::theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let (worker, _, _) = Worker::detached();
         let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
         let details = details(RequestState::Open);

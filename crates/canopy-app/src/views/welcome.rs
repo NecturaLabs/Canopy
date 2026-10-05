@@ -15,7 +15,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let rect = ui.max_rect();
     // Ambient glow.
-    let still = settings.reduce_motion;
+    let still = crate::ui::motion::reduced();
     let t = if still {
         0.0
     } else {
@@ -142,8 +142,8 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                         ui.painter().rect(
                             r,
                             CornerRadius::same(theme::RADIUS),
-                            Palette::tint(p.elevated, 200 + (hover * 55.0) as u8),
-                            Stroke::new(1.0, p.border.lerp_to_gamma(p.accent, hover * 0.7)),
+                            Palette::tint(p.elevated(), 200 + (hover * 55.0) as u8),
+                            Stroke::new(1.0, p.border().lerp_to_gamma(p.accent, hover * 0.7)),
                             egui::StrokeKind::Inside,
                         );
                         ui.painter().text(
@@ -282,8 +282,8 @@ fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) ->
     ui.painter().rect(
         r,
         CornerRadius::same(theme::RADIUS_LG),
-        p.elevated,
-        Stroke::new(1.0, p.border.lerp_to_gamma(p.accent, hover)),
+        p.elevated(),
+        Stroke::new(1.0, p.border().lerp_to_gamma(p.accent, hover)),
         egui::StrokeKind::Inside,
     );
     ui.painter().text(
@@ -332,7 +332,11 @@ mod tests {
     fn quick_action_text_fits_a_minimum_zoomed_window() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             card(
                 ui,

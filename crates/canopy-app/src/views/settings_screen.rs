@@ -15,7 +15,8 @@ use crate::action::Action;
 use crate::hosting::{self, TokenStore};
 use crate::keymap::Section as KeySection;
 use crate::settings::{CloneProtocol, PullMode, Settings, WhitespaceMode};
-use crate::ui::theme::{self, Palette, ThemeId, palette};
+use crate::ui::motion::MotionPref;
+use crate::ui::theme::{self, Density, GlassBlocked, Palette, Style, ThemeId, palette};
 use crate::ui::widgets;
 use crate::ui::widgets::forge_icon;
 use crate::updater::{self, UpdateState, Updater};
@@ -143,8 +144,8 @@ pub fn show(
     let modal = egui::Modal::new(egui::Id::new("settings"))
         .frame(
             egui::Frame::new()
-                .fill(p.elevated)
-                .stroke(Stroke::new(1.0, p.border))
+                .fill(p.elevated())
+                .stroke(Stroke::new(1.0, p.border()))
                 .corner_radius(CornerRadius::same(theme::RADIUS_LG))
                 .shadow(ctx.global_style().visuals.window_shadow)
                 .inner_margin(egui::Margin::ZERO),
@@ -157,7 +158,7 @@ pub fn show(
             ui.horizontal_top(|ui| {
                 if sidebar {
                     egui::Frame::new()
-                        .fill(p.panel)
+                        .fill(p.panel())
                         .corner_radius(CornerRadius {
                             nw: theme::RADIUS_LG,
                             sw: theme::RADIUS_LG,
@@ -309,7 +310,7 @@ fn nav_item(ui: &mut Ui, current: &mut Section, s: Section) {
         );
     } else if resp.hovered() {
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(theme::RADIUS), p.hover);
+            .rect_filled(rect, CornerRadius::same(theme::RADIUS), p.hover());
     }
     let (glyph, label) = s.label();
     ui.painter().text(
@@ -489,6 +490,51 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         }
     });
     ui.add_space(16.0);
+    heading(ui, "Look");
+    row(
+        ui,
+        "Style",
+        "Standard: flat, two-tone chrome. Deeper: floating panes, gradient controls and layered shadows.",
+        |ui| {
+            let options = Style::ALL.map(|v| (v, v.label()));
+            widgets::segmented(ui, &mut s.style, &options);
+        },
+    );
+    let blocked = theme::glass_blocked(s.theme, crate::ui::kit::glass::available(), None);
+    row(
+        ui,
+        "Translucent surfaces",
+        match blocked {
+            Some(why) => why.reason(),
+            None => "Blur what is behind menus, dialogs, toasts and the palette.",
+        },
+        |ui| {
+            ui.add_enabled_ui(blocked.is_none(), |ui| {
+                toggle(ui, &mut s.translucent, "Translucent surfaces");
+            })
+            .response
+            .on_disabled_hover_text(blocked.map_or("", GlassBlocked::reason));
+        },
+    );
+    row(
+        ui,
+        "Density",
+        "Dense fits about a quarter more history: 24-point rows, a single-row toolbar and smaller text.",
+        |ui| {
+            let options = Density::ALL.map(|v| (v, v.label()));
+            widgets::segmented(ui, &mut s.density, &options);
+        },
+    );
+    let system = match crate::ui::motion::system() {
+        Some(true) => "Your system asks for reduced motion.",
+        Some(false) => "Your system asks for full motion.",
+        None => "Your system did not say whether to reduce motion.",
+    };
+    row(ui, "Motion", system, |ui| {
+        let options = MotionPref::ALL.map(|v| (v, v.label()));
+        widgets::segmented(ui, &mut s.motion, &options);
+    });
+    ui.add_space(16.0);
     heading(ui, "Interface");
     row(
         ui,
@@ -539,14 +585,6 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             toggle(ui, &mut s.show_avatars, "Author avatars");
         },
     );
-    row(
-        ui,
-        "Reduce motion",
-        "Turns off fades and the welcome screen's drifting glow.",
-        |ui| {
-            toggle(ui, &mut s.reduce_motion, "Reduce motion");
-        },
-    );
 }
 
 fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> egui::Response {
@@ -591,7 +629,7 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> egui::Res
     let hover = resp.hovered() || resp.has_focus();
     let painter = ui.painter();
     let mock = egui::Rect::from_min_size(rect.min, vec2(rect.width(), 82.0));
-    painter.rect_filled(mock, CornerRadius::same(theme::RADIUS), tp.bg);
+    painter.rect_filled(mock, CornerRadius::same(theme::RADIUS), tp.bg());
     // Sidebar.
     let side = egui::Rect::from_min_size(mock.min, vec2(38.0, mock.height()));
     painter.rect_filled(
@@ -602,7 +640,7 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> egui::Res
             ne: 0,
             se: 0,
         },
-        tp.panel,
+        tp.panel(),
     );
     for (i, w) in [22.0, 16.0, 26.0].into_iter().enumerate() {
         let y = side.min.y + 12.0 + i as f32 * 10.0;
@@ -643,7 +681,7 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> egui::Res
         egui::pos2(mock.max.x - 46.0, mock.max.y - 16.0),
         vec2(38.0, 10.0),
     );
-    widgets::gradient_rect(painter, button, tp.button, tp.button2, 4);
+    widgets::gradient_rect(painter, button, tp.button(), tp.button2(), 4);
     // Selected: an accent ring with a halo and a tick. Hover: a neutral, brighter hairline,
     // so the two are never mistaken for each other.
     if selected {
@@ -664,7 +702,7 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> egui::Res
             } else if hover {
                 p.control_border
             } else {
-                p.border
+                p.border()
             },
         ),
         egui::StrokeKind::Outside,
@@ -677,7 +715,7 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> egui::Res
             Align2::CENTER_CENTER,
             icon::CHECK,
             FontId::proportional(theme::SMALL_SIZE),
-            p.on_button,
+            p.on_button(),
         );
     }
     let label = if selected {
@@ -703,7 +741,7 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> egui::Res
     resp.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, &name)
     });
-    resp
+    resp.on_hover_text(tp.concept)
 }
 
 fn toggle(ui: &mut Ui, on: &mut bool, label: &str) {
@@ -1241,8 +1279,8 @@ fn accounts(
         let kind = forge.kind;
         let host = forge.authority();
         egui::Frame::new()
-            .fill(p.panel)
-            .stroke(Stroke::new(1.0, p.border))
+            .fill(p.panel())
+            .stroke(Stroke::new(1.0, p.border()))
             .corner_radius(CornerRadius::same(theme::RADIUS))
             .inner_margin(egui::Margin::same(12))
             .show(ui, |ui| {
@@ -1763,7 +1801,11 @@ mod tests {
     fn settings_fit_a_compact_zoomed_window() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, ThemeId::Midnight, true);
+        theme::apply(
+            &ctx,
+            ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(562.5, 350.0));
         let mut settings = Settings::default();
         let mut tokens = TokenStore::default();

@@ -1,0 +1,1470 @@
+//! Buttons: [`Button`] (primary, secondary, ghost, danger), [`IconButton`], [`ToolButton`],
+//! [`LinkButton`] and [`SplitButton`]. Design spec 4.1.
+//!
+//! This is the reference component: the others follow its shape. A builder holds the inputs,
+//! `show` allocates the exact size, reads hover, press and focus through [`Interact`], paints the
+//! surface with [`paint::surface`] (shadow, fill, highlight, ring) and the content (optionally
+//! scaled while pressed), draws the focus ring and reports the AccessKit role and label.
+
+use std::sync::Arc;
+
+use egui::emath::TSTransform;
+use egui::{
+    Align2, Color32, CornerRadius, FontFamily, FontId, FontSelection, Galley, Id, Painter, Pos2,
+    Rect, Response, Sense, Shape, Stroke, TextWrapMode, Ui, Vec2, Widget, WidgetInfo, WidgetText,
+    WidgetType, pos2, vec2,
+};
+use egui_phosphor::regular as icon;
+
+use super::{ForceState, Interact, Size, Tone, anim, paint};
+use crate::keymap::{self, Command};
+use crate::ui::motion;
+use crate::ui::theme::{self, Elevation, Fill, Palette, Style, ToolLayout};
+
+/// What a [`Button`] is for. One primary per surface; danger confirms destruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ButtonKind {
+    Primary,
+    #[default]
+    Secondary,
+    Ghost,
+    Danger,
+}
+
+impl ButtonKind {
+    pub const ALL: [ButtonKind; 4] = [
+        ButtonKind::Primary,
+        ButtonKind::Secondary,
+        ButtonKind::Ghost,
+        ButtonKind::Danger,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ButtonKind::Primary => "Primary",
+            ButtonKind::Secondary => "Secondary",
+            ButtonKind::Ghost => "Ghost",
+            ButtonKind::Danger => "Danger",
+        }
+    }
+}
+
+/// `a` moved towards `b` by `t`, both ends.
+fn blend(a: Fill, b: Fill, t: f32) -> Fill {
+    if t <= 0.0 {
+        return a;
+    }
+    if t >= 1.0 {
+        return b;
+    }
+    Fill {
+        top: a.top.lerp_to_gamma(b.top, t),
+        bottom: a.bottom.lerp_to_gamma(b.bottom, t),
+    }
+}
+
+/// The opacity a disabled control paints at, unless its `Ui` is already disabled (egui then
+/// fades the painter itself).
+fn disabled_painter(ui: &Ui, enabled: bool, alpha: f32) -> Painter {
+    let mut painter = ui.painter().clone();
+    if !enabled && ui.is_enabled() {
+        painter.multiply_opacity(alpha);
+    }
+    painter
+}
+
+/// The tooltip a control shows: why it is disabled, else its tooltip, with the shortcut's chord.
+fn tooltip_text(
+    enabled: bool,
+    tooltip: Option<&str>,
+    reason: Option<&str>,
+    shortcut: Option<Command>,
+) -> Option<String> {
+    let text = if enabled { tooltip } else { reason.or(tooltip) }?;
+    Some(match shortcut {
+        Some(c) if enabled => format!("{text}  ({})", keymap::hint(c)),
+        _ => text.to_owned(),
+    })
+}
+
+fn with_tooltip(response: Response, tip: Option<String>) -> Response {
+    match tip {
+        Some(t) => response.on_hover_text(&t).on_disabled_hover_text(&t),
+        None => response,
+    }
+}
+
+/// Splits a leading Phosphor glyph (Private Use Area) and its spacing off `text`, so labels written
+/// as "<glyph>  Label" before the kit draw their glyph as the button's icon.
+pub(crate) fn split_glyph(text: &str) -> (Option<String>, &str) {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(c) if ('\u{E000}'..='\u{F8FF}').contains(&c) => {
+            let rest = chars.as_str().trim_start();
+            (Some(c.to_string()), rest)
+        }
+        _ => (None, text),
+    }
+}
+
+/// Text in `font` laid out on one line.
+fn galley(ui: &Ui, text: WidgetText, font: FontId) -> Arc<Galley> {
+    text.into_galley(
+        ui,
+        Some(TextWrapMode::Extend),
+        f32::INFINITY,
+        FontSelection::FontId(font),
+    )
+}
+
+/// Content shapes, scaled about `pivot` by `scale` (the press scale) before they are painted.
+fn paint_scaled(painter: &Painter, shapes: Vec<Shape>, pivot: Pos2, scale: f32) {
+    if (scale - 1.0).abs() < 1e-3 {
+        painter.extend(shapes);
+        return;
+    }
+    let p = pivot.to_vec2();
+    let tf = TSTransform::from_translation(p)
+        * TSTransform::from_scaling(scale)
+        * TSTransform::from_translation(-p);
+    painter.extend(shapes.into_iter().map(|mut s| {
+        s.transform(tf);
+        s
+    }));
+}
+
+/// When a loading spinner may show: after `LOADING_DELAY` of loading (instantly with reduced
+/// motion, where nothing would show the wait otherwise).
+fn spinner_due(ctx: &egui::Context, id: Id, loading: bool) -> bool {
+    let key = id.with("kit-loading-since");
+    if !loading {
+        ctx.data_mut(|d| d.remove::<f64>(key));
+        return false;
+    }
+    let now = ctx.input(|i| i.time);
+    let since = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(key, || now));
+    let delay = motion::time(motion::LOADING_DELAY);
+    if ((now - since) as f32) < delay {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f32(delay));
+        false
+    } else {
+        true
+    }
+}
+
+// ------------------------------------------------------------------------------------- Button
+
+/// A labelled button. `Button::new("Fetch").primary().icon(icon::ARROW_DOWN).show(ui)`.
+#[derive(Debug)]
+#[must_use = "call .show(ui) or ui.add(..)"]
+pub struct Button {
+    text: WidgetText,
+    kind: ButtonKind,
+    size: Size,
+    icon: Option<String>,
+    icon_tone: Option<Tone>,
+    trailing: Option<&'static str>,
+    enabled: bool,
+    loading: bool,
+    tooltip: Option<String>,
+    disabled_reason: Option<String>,
+    shortcut: Option<Command>,
+    show_shortcut: bool,
+    min_width: f32,
+    full_width: bool,
+    id_salt: Option<Id>,
+    force: Option<ForceState>,
+}
+
+impl Button {
+    /// A secondary button labelled `text`. A leading Phosphor glyph in `text` becomes its icon.
+    pub fn new(text: impl Into<WidgetText>) -> Self {
+        let text = text.into();
+        let (icon, text) = match &text {
+            WidgetText::Text(s) => {
+                let (glyph, rest) = split_glyph(s);
+                let rest = WidgetText::from(rest.to_owned());
+                (glyph, if s.is_empty() { text } else { rest })
+            }
+            _ => (None, text),
+        };
+        Self {
+            text,
+            kind: ButtonKind::Secondary,
+            size: Size::Md,
+            icon,
+            icon_tone: None,
+            trailing: None,
+            enabled: true,
+            loading: false,
+            tooltip: None,
+            disabled_reason: None,
+            shortcut: None,
+            show_shortcut: false,
+            min_width: 0.0,
+            full_width: false,
+            id_salt: None,
+            force: None,
+        }
+    }
+
+    pub fn kind(mut self, kind: ButtonKind) -> Self {
+        self.kind = kind;
+        self
+    }
+    pub fn primary(self) -> Self {
+        self.kind(ButtonKind::Primary)
+    }
+    pub fn secondary(self) -> Self {
+        self.kind(ButtonKind::Secondary)
+    }
+    pub fn ghost(self) -> Self {
+        self.kind(ButtonKind::Ghost)
+    }
+    pub fn danger(self) -> Self {
+        self.kind(ButtonKind::Danger)
+    }
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+    /// A leading Phosphor glyph, in the label's colour.
+    pub fn icon(mut self, glyph: &str) -> Self {
+        self.icon = Some(glyph.to_owned());
+        self
+    }
+    /// Colours the leading icon by `tone` (a destructive Secondary button's `danger` icon).
+    pub fn icon_tone(mut self, tone: Tone) -> Self {
+        self.icon_tone = Some(tone);
+        self
+    }
+    /// A trailing caret: the button opens a menu.
+    pub fn caret(mut self) -> Self {
+        self.trailing = Some(icon::CARET_DOWN);
+        self
+    }
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+    /// Busy: the spinner replaces the icon after `LOADING_DELAY`; clicks are ignored, focus and
+    /// width are kept.
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+    pub fn tooltip(mut self, text: impl Into<String>) -> Self {
+        self.tooltip = Some(text.into());
+        self
+    }
+    /// Why the button is disabled, shown as its tooltip while it is.
+    pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
+        self.disabled_reason = Some(text.into());
+        self
+    }
+    /// The command this button runs: its chord joins the tooltip.
+    pub fn shortcut(mut self, command: Command) -> Self {
+        self.shortcut = Some(command);
+        self
+    }
+    /// Also show the shortcut's chord right of the label.
+    pub fn show_shortcut(mut self, show: bool) -> Self {
+        self.show_shortcut = show;
+        self
+    }
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = width;
+        self
+    }
+    pub fn full_width(mut self) -> Self {
+        self.full_width = true;
+        self
+    }
+    pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        self.id_salt = Some(Id::new(salt));
+        self
+    }
+
+    /// Shows the button with `force`d states (the gallery and tests only).
+    pub(crate) fn show_forced(mut self, ui: &mut Ui, force: ForceState) -> Response {
+        self.force = Some(force);
+        self.show(ui)
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let style = theme::style();
+        let s = p.surfaces(style);
+        let m = theme::metrics();
+        let enabled = self.enabled && ui.is_enabled();
+        let height = self.size.height();
+        let pad = if matches!(self.size, Size::Xs | Size::Sm) {
+            m.button_pad_x_sm
+        } else {
+            m.button_pad_x
+        };
+        let font = FontId::new(m.body_size, theme::medium());
+        let accessible = self.text.text().to_owned();
+        let text = galley(ui, self.text, font.clone());
+        let icon_font = FontId::proportional(m.icon_md);
+        let spinner_slot = self.icon.is_none() && self.loading;
+        let icon = self.icon.map(|g| {
+            ui.painter()
+                .layout_no_wrap(g, icon_font.clone(), Color32::PLACEHOLDER)
+        });
+        let chord = self.shortcut.filter(|_| self.show_shortcut).map(|c| {
+            ui.painter()
+                .layout_no_wrap(keymap::hint(c), font.clone(), Color32::PLACEHOLDER)
+        });
+        let trailing = self.trailing.map(|g| {
+            ui.painter().layout_no_wrap(
+                g.to_owned(),
+                FontId::proportional(m.icon_xs),
+                Color32::PLACEHOLDER,
+            )
+        });
+        let icon_w = icon
+            .as_ref()
+            .map(|g| g.size().x)
+            .or(spinner_slot.then_some(m.icon_md));
+        let mut content = text.size().x;
+        if let Some(w) = icon_w {
+            content += w + if text.is_empty() { 0.0 } else { m.button_gap };
+        }
+        if let Some(c) = &chord {
+            content += theme::SM + c.size().x;
+        }
+        if let Some(t) = &trailing {
+            content += m.button_gap + t.size().x;
+        }
+        let mut width = (content + 2.0 * pad).max(self.min_width).max(height);
+        if self.full_width {
+            width = width.max(ui.available_width());
+        }
+        let sense = if self.loading && enabled {
+            Sense::focusable_noninteractive()
+        } else if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let (rect, mut response) = match self.id_salt {
+            Some(id) => {
+                let rect = ui.allocate_space(vec2(width, height)).1;
+                let response = ui.interact(rect, ui.id().with(id), sense);
+                (rect, response)
+            }
+            None => ui.allocate_exact_size(vec2(width, height), sense),
+        };
+        let st = Interact::of(&ctx, &response, enabled, self.force);
+        if ui.is_rect_visible(rect) {
+            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let radius = CornerRadius::same(m.radius);
+            let (fill, ring, level, label, focus) = match self.kind {
+                ButtonKind::Primary => (
+                    Some(blend(
+                        blend(s.primary, s.primary_hover, st.hover),
+                        s.primary_pressed,
+                        st.press,
+                    )),
+                    None,
+                    Some(Elevation::Primary),
+                    p.on_accent,
+                    p.focus,
+                ),
+                ButtonKind::Danger => (
+                    Some(blend(
+                        blend(s.danger_solid, s.danger_solid_hover, st.hover),
+                        s.danger_solid_pressed,
+                        st.press,
+                    )),
+                    None,
+                    Some(Elevation::Danger),
+                    p.on_danger,
+                    p.danger_base,
+                ),
+                ButtonKind::Secondary => (
+                    Some(blend(
+                        blend(s.raised, s.raised_hover, st.hover),
+                        s.raised_pressed,
+                        st.press,
+                    )),
+                    Some(s.raised_edge),
+                    Some(Elevation::Control),
+                    p.text,
+                    p.focus,
+                ),
+                ButtonKind::Ghost => {
+                    let ground = Color32::TRANSPARENT
+                        .lerp_to_gamma(p.hover_strong(), st.hover)
+                        .lerp_to_gamma(p.pressed(), st.press);
+                    (
+                        (ground.a() > 0).then_some(Fill::flat(ground)),
+                        None,
+                        None,
+                        p.text_dim.lerp_to_gamma(p.text, st.hover.max(st.press)),
+                        p.focus,
+                    )
+                }
+            };
+            match (fill, level) {
+                (Some(f), Some(level)) => {
+                    paint::surface(&painter, rect, radius, p, style, level, f, ring);
+                }
+                (Some(f), None) => paint::fill(&painter, rect, radius, f),
+                _ => {}
+            }
+            if st.focus > 0.0 {
+                paint::focus_ring(
+                    &painter,
+                    rect,
+                    radius,
+                    focus.gamma_multiply(st.focus),
+                    Color32::TRANSPARENT,
+                );
+            }
+            let scale = anim::press_scale(&ctx, response.id, st.held, 0.97);
+            let mut shapes = Vec::new();
+            let mut x = rect.center().x - content / 2.0;
+            let cy = rect.center().y;
+            if let Some(w) = icon_w {
+                let spinning = spinner_due(&ctx, response.id, self.loading);
+                let icon_color = self.icon_tone.map_or(label, |t| t.color(p));
+                if spinning {
+                    let center = pos2(x + w / 2.0, cy);
+                    let sub = painter.clone();
+                    paint::spinner(&sub, center, m.icon_md * 0.38, 1.6, icon_color);
+                } else if let Some(g) = &icon {
+                    shapes.push(Shape::galley(
+                        pos2(x, cy - g.size().y / 2.0),
+                        g.clone(),
+                        icon_color,
+                    ));
+                }
+                x += w + if text.is_empty() { 0.0 } else { m.button_gap };
+            }
+            shapes.push(Shape::galley(
+                pos2(x, cy - text.size().y / 2.0),
+                text.clone(),
+                label,
+            ));
+            x += text.size().x;
+            if let Some(c) = &chord {
+                x += theme::SM;
+                shapes.push(Shape::galley(
+                    pos2(x, cy - c.size().y / 2.0),
+                    c.clone(),
+                    label.gamma_multiply(0.4),
+                ));
+                x += c.size().x;
+            }
+            if let Some(t) = &trailing {
+                x += m.button_gap;
+                shapes.push(Shape::galley(
+                    pos2(x, cy - t.size().y / 2.0),
+                    t.clone(),
+                    label,
+                ));
+            }
+            paint_scaled(&painter, shapes, rect.center(), scale);
+        }
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &accessible));
+        let tip = tooltip_text(
+            enabled,
+            self.tooltip.as_deref(),
+            self.disabled_reason.as_deref(),
+            self.shortcut,
+        );
+        response = with_tooltip(response, tip);
+        response
+    }
+}
+
+impl Widget for Button {
+    fn ui(self, ui: &mut Ui) -> Response {
+        self.show(ui)
+    }
+}
+
+// --------------------------------------------------------------------------------- IconButton
+
+/// A square icon-only button. `label` is its tooltip and AccessKit name, in imperative form.
+#[derive(Debug)]
+#[must_use = "call .show(ui) or ui.add(..)"]
+pub struct IconButton {
+    glyph: String,
+    label: String,
+    size: Size,
+    tone: Option<Tone>,
+    active: bool,
+    enabled: bool,
+    disabled_reason: Option<String>,
+    shortcut: Option<Command>,
+    id_salt: Option<Id>,
+    force: Option<ForceState>,
+}
+
+impl IconButton {
+    pub fn new(glyph: &str, label: impl Into<String>) -> Self {
+        Self {
+            glyph: glyph.to_owned(),
+            label: label.into(),
+            size: Size::Md,
+            tone: None,
+            active: false,
+            enabled: true,
+            disabled_reason: None,
+            shortcut: None,
+            id_salt: None,
+            force: None,
+        }
+    }
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+    /// Colours the icon by `tone` at rest (a destructive action's `danger`).
+    pub fn tone(mut self, tone: Tone) -> Self {
+        self.tone = Some(tone);
+        self
+    }
+    /// Toggled on: the icon in `accent`.
+    pub fn active(mut self, active: bool) -> Self {
+        self.active = active;
+        self
+    }
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+    pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
+        self.disabled_reason = Some(text.into());
+        self
+    }
+    pub fn shortcut(mut self, command: Command) -> Self {
+        self.shortcut = Some(command);
+        self
+    }
+    pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        self.id_salt = Some(Id::new(salt));
+        self
+    }
+    pub(crate) fn show_forced(mut self, ui: &mut Ui, force: ForceState) -> Response {
+        self.force = Some(force);
+        self.show(ui)
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let m = theme::metrics();
+        let enabled = self.enabled && ui.is_enabled();
+        let (side, radius, glyph_size) = match self.size {
+            Size::Xs => (20.0, m.radius_sm, 13.0),
+            Size::Sm => (m.control_sm + 2.0, m.radius, m.icon_md),
+            Size::Md => (m.control, m.radius, m.icon_md),
+            Size::Lg => (m.control_lg, m.radius, m.icon_lg),
+        };
+        let sense = if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let (rect, response) = match self.id_salt {
+            Some(id) => {
+                let rect = ui.allocate_space(Vec2::splat(side)).1;
+                (rect, ui.interact(rect, ui.id().with(id), sense))
+            }
+            None => ui.allocate_exact_size(Vec2::splat(side), sense),
+        };
+        let st = Interact::of(&ctx, &response, enabled, self.force);
+        if ui.is_rect_visible(rect) {
+            let painter = disabled_painter(ui, enabled, theme::DISABLED_ICON_ALPHA);
+            let radius = CornerRadius::same(radius);
+            let ground = Color32::TRANSPARENT
+                .lerp_to_gamma(p.hover_strong(), st.hover)
+                .lerp_to_gamma(p.pressed(), st.press);
+            if ground.a() > 0 {
+                painter.rect_filled(rect, radius, ground);
+            }
+            if st.focus > 0.0 {
+                paint::focus_ring(
+                    &painter,
+                    rect,
+                    radius,
+                    p.focus.gamma_multiply(st.focus),
+                    Color32::TRANSPARENT,
+                );
+            }
+            let rest = if self.active {
+                p.accent
+            } else {
+                self.tone.map_or(p.text_dim, |t| t.color(p))
+            };
+            let color = if self.active || self.tone.is_some() {
+                rest
+            } else {
+                rest.lerp_to_gamma(p.text, st.hover.max(st.press))
+            };
+            let scale = anim::press_scale(&ctx, response.id, st.held, 0.94);
+            let g = painter.layout_no_wrap(self.glyph, FontId::proportional(glyph_size), color);
+            let pos = rect.center() - g.size() / 2.0;
+            paint_scaled(
+                &painter,
+                vec![Shape::galley(pos, g, color)],
+                rect.center(),
+                scale,
+            );
+        }
+        let label = self.label;
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &label));
+        let tip = tooltip_text(
+            enabled,
+            Some(&label),
+            self.disabled_reason.as_deref(),
+            self.shortcut,
+        );
+        with_tooltip(response, tip)
+    }
+}
+
+impl Widget for IconButton {
+    fn ui(self, ui: &mut Ui) -> Response {
+        self.show(ui)
+    }
+}
+
+// --------------------------------------------------------------------------------- ToolButton
+
+/// An action-bar tool: icon over caption (Comfortable) or beside its label (Dense).
+#[derive(Debug)]
+#[must_use = "call .show(ui) or ui.add(..)"]
+pub struct ToolButton {
+    glyph: String,
+    label: String,
+    tooltip: Option<String>,
+    badge: Option<String>,
+    toggled: bool,
+    running: bool,
+    enabled: bool,
+    disabled_reason: Option<String>,
+    shortcut: Option<Command>,
+    layout: Option<ToolLayout>,
+    min_width: f32,
+    force: Option<ForceState>,
+}
+
+impl ToolButton {
+    pub fn new(glyph: &str, label: impl Into<String>) -> Self {
+        Self {
+            glyph: glyph.to_owned(),
+            label: label.into(),
+            tooltip: None,
+            badge: None,
+            toggled: false,
+            running: false,
+            enabled: true,
+            disabled_reason: None,
+            shortcut: None,
+            layout: None,
+            min_width: 0.0,
+            force: None,
+        }
+    }
+    pub fn tooltip(mut self, text: impl Into<String>) -> Self {
+        self.tooltip = Some(text.into());
+        self
+    }
+    /// A short count beside the icon (`↓3`).
+    pub fn badge(mut self, text: impl Into<String>) -> Self {
+        self.badge = Some(text.into());
+        self
+    }
+    pub fn toggled(mut self, on: bool) -> Self {
+        self.toggled = on;
+        self
+    }
+    /// The tool's operation is running: a spinner replaces the icon.
+    pub fn running(mut self, running: bool) -> Self {
+        self.running = running;
+        self
+    }
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+    pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
+        self.disabled_reason = Some(text.into());
+        self
+    }
+    pub fn shortcut(mut self, command: Command) -> Self {
+        self.shortcut = Some(command);
+        self
+    }
+    /// Overrides the density's layout (the gallery shows both).
+    pub fn layout(mut self, layout: ToolLayout) -> Self {
+        self.layout = Some(layout);
+        self
+    }
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = width;
+        self
+    }
+    pub(crate) fn show_forced(mut self, ui: &mut Ui, force: ForceState) -> Response {
+        self.force = Some(force);
+        self.show(ui)
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let style = theme::style();
+        let s = p.surfaces(style);
+        let m = theme::metrics();
+        let enabled = self.enabled && ui.is_enabled();
+        let layout = self.layout.unwrap_or(m.tool_layout);
+        let stacked = layout == ToolLayout::Stacked;
+        let (icon_size, caption_size, gap) = if stacked {
+            (m.icon_tool, m.tool_caption, m.tool_gap)
+        } else {
+            (
+                crate::ui::theme::DENSE.icon_tool,
+                crate::ui::theme::DENSE.tool_caption,
+                crate::ui::theme::DENSE.tool_gap,
+            )
+        };
+        let caption_font = FontId::new(caption_size, theme::medium());
+        let caption =
+            ui.painter()
+                .layout_no_wrap(self.label.clone(), caption_font, Color32::PLACEHOLDER);
+        let glyph = ui.painter().layout_no_wrap(
+            self.glyph.clone(),
+            FontId::proportional(icon_size),
+            Color32::PLACEHOLDER,
+        );
+        let badge = self.badge.as_ref().map(|b| {
+            ui.painter().layout_no_wrap(
+                b.clone(),
+                FontId::new(11.5, FontFamily::Monospace),
+                Color32::PLACEHOLDER,
+            )
+        });
+        let badge_w = badge.as_ref().map_or(0.0, |b| b.size().x + 3.0);
+        let (size, height) = if stacked {
+            let h = m.tool_height;
+            let w = (caption.size().x.max(glyph.size().x + badge_w) + 2.0 * m.tool_pad)
+                .max(m.tool_min_width);
+            (vec2(w, h), h)
+        } else {
+            let h = crate::ui::theme::DENSE.tool_height;
+            let w = glyph.size().x + badge_w + gap + caption.size().x + 2.0 * m.tool_pad;
+            (vec2(w, h), h)
+        };
+        let size = vec2(size.x.max(self.min_width), height);
+        let sense = if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let (rect, response) = ui.allocate_exact_size(size, sense);
+        let st = Interact::of(&ctx, &response, enabled, self.force);
+        if ui.is_rect_visible(rect) {
+            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let radius = CornerRadius::same(m.radius);
+            if self.toggled {
+                painter.rect_filled(rect, radius, p.accent_tint());
+            }
+            let lit = st.hover.max(st.press);
+            if lit > 0.0 && !self.toggled {
+                if style == Style::Deeper {
+                    let body = blend(s.raised_hover, s.raised_pressed, st.press);
+                    let mut faded = painter.clone();
+                    faded.multiply_opacity(lit);
+                    paint::surface(
+                        &faded,
+                        rect,
+                        radius,
+                        p,
+                        style,
+                        Elevation::Control,
+                        body,
+                        Some(s.raised_edge),
+                    );
+                } else {
+                    let ground = Color32::TRANSPARENT
+                        .lerp_to_gamma(p.hover_strong(), st.hover)
+                        .lerp_to_gamma(p.pressed(), st.press);
+                    painter.rect_filled(rect, radius, ground);
+                }
+            }
+            if st.focus > 0.0 {
+                paint::inset_ring(&painter, rect, radius, p.focus.gamma_multiply(st.focus));
+            }
+            let text_color = p.text_dim.lerp_to_gamma(p.text, lit);
+            let icon_color = if self.toggled { p.accent } else { text_color };
+            let scale = anim::press_scale(&ctx, response.id, st.held, 0.96);
+            let mut shapes = Vec::new();
+            let (icon_pos, caption_pos) = if stacked {
+                let block = glyph.size().y + gap + caption.size().y;
+                let top = rect.center().y - block / 2.0;
+                let icon_x = rect.center().x - (glyph.size().x + badge_w) / 2.0;
+                (
+                    pos2(icon_x, top),
+                    pos2(
+                        rect.center().x - caption.size().x / 2.0,
+                        top + glyph.size().y + gap,
+                    ),
+                )
+            } else {
+                let x = rect.left() + m.tool_pad;
+                (
+                    pos2(x, rect.center().y - glyph.size().y / 2.0),
+                    pos2(
+                        x + glyph.size().x + badge_w + gap,
+                        rect.center().y - caption.size().y / 2.0,
+                    ),
+                )
+            };
+            if self.running {
+                let c = icon_pos + glyph.size() / 2.0;
+                paint::spinner(&painter, c, icon_size * 0.36, 1.6, icon_color);
+            } else {
+                shapes.push(Shape::galley(icon_pos, glyph.clone(), icon_color));
+            }
+            if let Some(b) = &badge {
+                let at = pos2(
+                    icon_pos.x + glyph.size().x + 3.0,
+                    icon_pos.y + glyph.size().y / 2.0 - b.size().y / 2.0,
+                );
+                shapes.push(Shape::galley(at, b.clone(), p.accent));
+            }
+            shapes.push(Shape::galley(caption_pos, caption.clone(), text_color));
+            paint_scaled(&painter, shapes, rect.center(), scale);
+        }
+        let name = self.label;
+        response
+            .widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, self.toggled, &name));
+        let tip = tooltip_text(
+            enabled,
+            Some(self.tooltip.as_deref().unwrap_or(&name)),
+            self.disabled_reason.as_deref(),
+            self.shortcut,
+        );
+        with_tooltip(response, tip)
+    }
+}
+
+impl Widget for ToolButton {
+    fn ui(self, ui: &mut Ui) -> Response {
+        self.show(ui)
+    }
+}
+
+/// The 1 pt divider between tool button groups (`tool_divider`).
+pub fn tool_divider(ui: &mut Ui) {
+    let m = theme::metrics();
+    let p = theme::palette(ui.ctx());
+    let s = theme::surfaces(ui.ctx());
+    let width = 2.0 * m.tool_divider_margin + paint::SEAM;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, m.tool_divider_height), Sense::hover());
+    let _ = p;
+    paint::seam_v(ui.painter(), rect.center().x, rect.y_range(), s.border);
+}
+
+// --------------------------------------------------------------------------------- LinkButton
+
+/// Text that opens something: `accent2`, underlined on hover. External links append "↗" (open
+/// web addresses through `platform.rs`).
+#[derive(Debug)]
+#[must_use = "call .show(ui) or ui.add(..)"]
+pub struct LinkButton {
+    text: String,
+    external: bool,
+    size: Option<f32>,
+    force: Option<ForceState>,
+}
+
+impl LinkButton {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            external: false,
+            size: None,
+            force: None,
+        }
+    }
+    /// Leaves Canopy (a web page): appends "↗".
+    pub fn external(mut self, external: bool) -> Self {
+        self.external = external;
+        self
+    }
+    /// Text size (defaults to `body_size`).
+    pub fn text_size(mut self, size: f32) -> Self {
+        self.size = Some(size);
+        self
+    }
+    pub(crate) fn show_forced(mut self, ui: &mut Ui, force: ForceState) -> Response {
+        self.force = Some(force);
+        self.show(ui)
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let m = theme::metrics();
+        let enabled = ui.is_enabled();
+        let text = if self.external {
+            format!("{} ↗", self.text)
+        } else {
+            self.text.clone()
+        };
+        let font = FontId::proportional(self.size.unwrap_or(m.body_size));
+        let g = ui.painter().layout_no_wrap(text, font, p.accent2);
+        let sense = if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let (rect, response) = ui.allocate_exact_size(g.size(), sense);
+        let st = Interact::of(&ctx, &response, enabled, self.force);
+        if ui.is_rect_visible(rect) {
+            let painter = ui.painter();
+            if st.focus > 0.0 {
+                paint::focus_ring(
+                    painter,
+                    rect.expand2(vec2(2.0, 0.0)),
+                    CornerRadius::same(m.radius_sm),
+                    p.focus.gamma_multiply(st.focus),
+                    Color32::TRANSPARENT,
+                );
+            }
+            let baseline = rect.top() + g.rows.first().map_or(rect.height(), |r| r.rect().bottom());
+            painter.galley(rect.min, g, p.accent2);
+            if st.hover > 0.5 {
+                paint::seam_h(painter, rect.x_range(), baseline + 1.0, p.accent2);
+            }
+        }
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Link, enabled, &self.text));
+        response
+    }
+}
+
+impl Widget for LinkButton {
+    fn ui(self, ui: &mut Ui) -> Response {
+        self.show(ui)
+    }
+}
+
+// -------------------------------------------------------------------------------- SplitButton
+
+/// An action and a choice of what it does: the main half runs the chosen option, the caret half
+/// opens a menu of options. The returned response is the main half's (`clicked` = run it).
+#[derive(Debug)]
+#[must_use = "call .show(ui)"]
+pub struct SplitButton<'a, T: PartialEq + Clone> {
+    value: &'a mut T,
+    options: &'a [(T, &'a str)],
+    kind: ButtonKind,
+    enabled: bool,
+    loading: bool,
+    min_width: f32,
+    force: Option<ForceState>,
+}
+
+impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
+    pub fn new(value: &'a mut T, options: &'a [(T, &'a str)]) -> Self {
+        Self {
+            value,
+            options,
+            kind: ButtonKind::Primary,
+            enabled: true,
+            loading: false,
+            min_width: 0.0,
+            force: None,
+        }
+    }
+    pub fn primary(mut self) -> Self {
+        self.kind = ButtonKind::Primary;
+        self
+    }
+    pub fn secondary(mut self) -> Self {
+        self.kind = ButtonKind::Secondary;
+        self
+    }
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
+        self
+    }
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = width;
+        self
+    }
+    pub(crate) fn show_forced(mut self, ui: &mut Ui, force: ForceState) -> Response {
+        self.force = Some(force);
+        self.show(ui)
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let style = theme::style();
+        let s = p.surfaces(style);
+        let m = theme::metrics();
+        let enabled = self.enabled && ui.is_enabled();
+        let label = self
+            .options
+            .iter()
+            .find(|(v, _)| v == self.value)
+            .or(self.options.first())
+            .map_or("", |(_, l)| *l);
+        let font = FontId::new(m.body_size, theme::medium());
+        let text = ui
+            .painter()
+            .layout_no_wrap(label.to_owned(), font, Color32::PLACEHOLDER);
+        let caret_w = 22.0;
+        let height = m.control;
+        let main_w = (text.size().x + 2.0 * m.button_pad_x).max(self.min_width - caret_w);
+        let (rect, _) = ui.allocate_exact_size(vec2(main_w + caret_w, height), Sense::hover());
+        let main_rect = Rect::from_min_max(rect.min, pos2(rect.left() + main_w, rect.bottom()));
+        let caret_rect = Rect::from_min_max(pos2(main_rect.right(), rect.top()), rect.max);
+        let id = ui.id().with(("kit-split", label));
+        let sense = if enabled && !self.loading {
+            Sense::click()
+        } else if enabled {
+            Sense::focusable_noninteractive()
+        } else {
+            Sense::hover()
+        };
+        let main = ui.interact(main_rect, id.with("main"), sense);
+        let caret = ui.interact(
+            caret_rect,
+            id.with("caret"),
+            if enabled {
+                Sense::click()
+            } else {
+                Sense::hover()
+            },
+        );
+        let force = self.force;
+        let a = Interact::of(&ctx, &main, enabled, force.filter(|f| !f.open));
+        let b = Interact::of(
+            &ctx,
+            &caret,
+            enabled,
+            force.filter(|f| f.open).map(|_| ForceState::HOVER),
+        );
+        let (rest, hover, pressed, on, level) = match self.kind {
+            ButtonKind::Secondary | ButtonKind::Ghost => (
+                s.raised,
+                s.raised_hover,
+                s.raised_pressed,
+                p.text,
+                Elevation::Control,
+            ),
+            _ => (
+                s.primary,
+                s.primary_hover,
+                s.primary_pressed,
+                p.on_accent,
+                Elevation::Primary,
+            ),
+        };
+        if ui.is_rect_visible(rect) {
+            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let radius = CornerRadius::same(m.radius);
+            let ring = (self.kind != ButtonKind::Primary).then_some(s.raised_edge);
+            paint::surface(&painter, rect, radius, p, style, level, rest, ring);
+            for (half, st, corners) in [
+                (
+                    main_rect,
+                    a,
+                    CornerRadius {
+                        ne: 0,
+                        se: 0,
+                        ..radius
+                    },
+                ),
+                (
+                    caret_rect,
+                    b,
+                    CornerRadius {
+                        nw: 0,
+                        sw: 0,
+                        ..radius
+                    },
+                ),
+            ] {
+                let f = blend(blend(rest, hover, st.hover), pressed, st.press);
+                if st.hover > 0.0 || st.press > 0.0 {
+                    paint::fill(
+                        &painter,
+                        half.shrink(if ring.is_some() { 1.0 } else { 0.0 }),
+                        corners,
+                        f,
+                    );
+                }
+                if st.focus > 0.0 {
+                    paint::focus_ring(
+                        &painter,
+                        half,
+                        corners,
+                        p.focus.gamma_multiply(st.focus),
+                        Color32::TRANSPARENT,
+                    );
+                }
+            }
+            let seam = Palette::tint(on, 64);
+            painter.vline(
+                caret_rect.left(),
+                egui::Rangef::new(rect.top() + 5.0, rect.bottom() - 5.0),
+                Stroke::new(1.0, seam),
+            );
+            if self.loading && spinner_due(&ctx, main.id, true) {
+                paint::spinner(
+                    &painter,
+                    pos2(
+                        main_rect.left() + m.button_pad_x / 2.0 + 4.0,
+                        main_rect.center().y,
+                    ),
+                    m.icon_md * 0.33,
+                    1.6,
+                    on,
+                );
+            }
+            painter.galley(main_rect.center() - text.size() / 2.0, text.clone(), on);
+            painter.text(
+                caret_rect.center(),
+                Align2::CENTER_CENTER,
+                icon::CARET_DOWN,
+                FontId::proportional(m.icon_xs),
+                on,
+            );
+        }
+        let popup = egui::Popup::menu(&caret)
+            .id(id.with("menu"))
+            .width(rect.width())
+            .anchor(rect)
+            .align(egui::RectAlign::BOTTOM_START);
+        let popup = if force.is_some_and(|f| f.open) {
+            popup.open(true)
+        } else {
+            popup
+        };
+        let value = self.value;
+        let options = self.options;
+        popup.show(|ui| {
+            for (v, l) in options {
+                let chosen = *v == *value;
+                let mut row = Button::new(*l).ghost().full_width();
+                if chosen {
+                    row = row.icon(icon::CHECK);
+                }
+                if row.show(ui).clicked() {
+                    *value = v.clone();
+                    ui.close();
+                }
+            }
+        });
+        main.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+        caret.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, enabled, "More options"));
+        main
+    }
+}
+
+// ------------------------------------------------------------------------------------ gallery
+
+/// The gallery's Buttons section: every variant in every state and size, then the icon, tool,
+/// link and split buttons.
+pub(crate) fn gallery(ui: &mut Ui) {
+    let states: [(&str, Option<ForceState>, bool, bool); 6] = [
+        ("Rest", None, true, false),
+        ("Hover", Some(ForceState::HOVER), true, false),
+        ("Pressed", Some(ForceState::PRESSED), true, false),
+        ("Focus", Some(ForceState::FOCUS), true, false),
+        ("Disabled", None, false, false),
+        ("Loading", None, true, true),
+    ];
+    let m = theme::metrics();
+    let p = theme::palette(ui.ctx());
+    let small = |ui: &mut Ui, text: &str| {
+        ui.label(
+            egui::RichText::new(text)
+                .size(m.small_size)
+                .color(p.text_faint),
+        );
+    };
+    for kind in ButtonKind::ALL {
+        small(ui, kind.label());
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(theme::SM, theme::SM);
+            for (i, (name, force, enabled, loading)) in states.iter().enumerate() {
+                let b = Button::new(*name)
+                    .kind(kind)
+                    .enabled(*enabled)
+                    .loading(*loading)
+                    .icon(icon::CHECK)
+                    .tooltip("Run it")
+                    .disabled_reason("Nothing to run")
+                    .id_salt(("gallery-button", kind, i));
+                match force {
+                    Some(f) => b.show_forced(ui, *f),
+                    None => b.show(ui),
+                };
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(theme::SM, theme::SM);
+            for (i, size) in [Size::Sm, Size::Md, Size::Lg].into_iter().enumerate() {
+                Button::new(format!("{size:?}"))
+                    .kind(kind)
+                    .size(size)
+                    .id_salt(("gallery-size", kind, i))
+                    .show(ui);
+            }
+            Button::new("Shortcut")
+                .kind(kind)
+                .shortcut(Command::Commit)
+                .show_shortcut(true)
+                .id_salt(("gallery-chord", kind))
+                .show(ui);
+            Button::new("Menu")
+                .kind(kind)
+                .caret()
+                .id_salt(("gallery-caret", kind))
+                .show(ui);
+        });
+        ui.add_space(theme::XS);
+    }
+    small(ui, "Secondary with a danger icon");
+    Button::new("Delete branch…")
+        .secondary()
+        .icon(icon::TRASH)
+        .icon_tone(Tone::Danger)
+        .id_salt("gallery-destructive")
+        .show(ui);
+    ui.add_space(theme::XS);
+    small(
+        ui,
+        "Icon buttons: Xs, Sm, Md, Lg, hover, pressed, focus, active, danger, disabled",
+    );
+    ui.horizontal_wrapped(|ui| {
+        for (i, size) in Size::ALL.into_iter().enumerate() {
+            IconButton::new(icon::X, "Close")
+                .size(size)
+                .id_salt(("gi", i))
+                .show(ui);
+        }
+        let gear = |salt: &str| IconButton::new(icon::GEAR, "Settings").id_salt(salt.to_owned());
+        gear("gi-h").show_forced(ui, ForceState::HOVER);
+        gear("gi-p").show_forced(ui, ForceState::PRESSED);
+        gear("gi-f").show_forced(ui, ForceState::FOCUS);
+        IconButton::new(icon::FUNNEL, "Filter")
+            .active(true)
+            .id_salt("gi-a")
+            .show(ui);
+        IconButton::new(icon::TRASH, "Delete")
+            .tone(Tone::Danger)
+            .id_salt("gi-d")
+            .show(ui);
+        gear("gi-x")
+            .enabled(false)
+            .disabled_reason("Settings are open")
+            .shortcut(Command::Settings)
+            .show(ui);
+    });
+    ui.add_space(theme::XS);
+    for layout in [ToolLayout::Stacked, ToolLayout::Inline] {
+        small(ui, &format!("Tool buttons, {layout:?}"));
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = m.toolbar_gap;
+            let tool = |glyph: &str, label: &str| ToolButton::new(glyph, label).layout(layout);
+            tool(icon::ARROW_DOWN, "Pull").badge("↓3").show(ui);
+            tool(icon::ARROW_UP, "Push").show_forced(ui, ForceState::HOVER);
+            tool(icon::ARROWS_CLOCKWISE, "Fetch").show_forced(ui, ForceState::PRESSED);
+            tool_divider(ui);
+            tool(icon::GIT_BRANCH, "Branch").show_forced(ui, ForceState::FOCUS);
+            tool(icon::STACK, "Stash").toggled(true).show(ui);
+            tool(icon::ARROWS_CLOCKWISE, "Sync").running(true).show(ui);
+            tool(icon::TAG, "Tag")
+                .enabled(false)
+                .disabled_reason("Select a commit first")
+                .shortcut(Command::Commit)
+                .min_width(m.tool_min_width)
+                .show(ui);
+        });
+    }
+    ui.add_space(theme::XS);
+    small(ui, "Links");
+    ui.horizontal_wrapped(|ui| {
+        LinkButton::new("Release notes").show(ui);
+        LinkButton::new("Open on GitHub")
+            .external(true)
+            .show_forced(ui, ForceState::HOVER);
+        LinkButton::new("Focused link").show_forced(ui, ForceState::FOCUS);
+        LinkButton::new("Small link")
+            .text_size(m.small_size)
+            .show(ui);
+    });
+    ui.add_space(theme::XS);
+    small(ui, "Split buttons: closed, open");
+    let id = ui.id().with("gallery-split");
+    let mut choice = ui.ctx().data(|d| d.get_temp::<u8>(id)).unwrap_or(0);
+    let options = [(0_u8, "Commit"), (1, "Commit and push")];
+    ui.horizontal(|ui| {
+        SplitButton::new(&mut choice, &options)
+            .primary()
+            .enabled(true)
+            .loading(false)
+            .min_width(150.0)
+            .show(ui);
+        ui.add_space(theme::LG);
+        let mut open = 1_u8;
+        SplitButton::new(&mut open, &options)
+            .secondary()
+            .show_forced(ui, ForceState::OPEN);
+    });
+    // Room for the open split button's menu.
+    ui.add_space(64.0);
+    ui.ctx().data_mut(|d| d.insert_temp(id, choice));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One frame; returns what it painted.
+    fn frame(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        mut f: impl FnMut(&mut Ui),
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| f(ui),
+        );
+        out.textures_delta.clear();
+        out.shapes
+    }
+
+    #[test]
+    fn leading_glyphs_become_icons() {
+        let label = format!("{}  Stage all", icon::PLUS);
+        let (g, rest) = split_glyph(&label);
+        assert_eq!(g.as_deref(), Some(icon::PLUS));
+        assert_eq!(rest, "Stage all");
+        assert_eq!(split_glyph("Fetch"), (None, "Fetch"));
+    }
+
+    #[test]
+    fn buttons_follow_the_metrics_and_report_their_role() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        for density in theme::Density::ALL {
+            for style in Style::ALL {
+                theme::apply(
+                    &ctx,
+                    theme::ThemeId::Midnight,
+                    &theme::Appearance {
+                        style,
+                        density,
+                        ..theme::Appearance::STILL
+                    },
+                );
+                let m = theme::metrics();
+                let mut heights = Vec::new();
+                for _ in 0..2 {
+                    heights.clear();
+                    let _ = frame(&ctx, Vec::new(), |ui| {
+                        for kind in ButtonKind::ALL {
+                            heights.push(Button::new("Fetch").kind(kind).show(ui).rect.height());
+                        }
+                        heights.push(Button::new("Fetch").size(Size::Sm).show(ui).rect.height());
+                        heights.push(IconButton::new(icon::X, "Close").show(ui).rect.height());
+                    });
+                }
+                assert_eq!(&heights[..4], &[m.control; 4], "{density:?} {style:?}");
+                assert_eq!(heights[4], m.control_sm);
+                assert_eq!(heights[5], m.control);
+            }
+        }
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+    }
+
+    #[test]
+    fn disabled_and_loading_buttons_ignore_clicks() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        for (enabled, loading, expect) in [
+            (true, false, true),
+            (false, false, false),
+            (true, true, false),
+        ] {
+            let mut clicked = false;
+            let mut rect = Rect::NOTHING;
+            for i in 0..4 {
+                let events = match i {
+                    2 => vec![
+                        egui::Event::PointerMoved(rect.center()),
+                        egui::Event::PointerButton {
+                            pos: rect.center(),
+                            button: egui::PointerButton::Primary,
+                            pressed: true,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    3 => vec![egui::Event::PointerButton {
+                        pos: rect.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Default::default(),
+                    }],
+                    _ => Vec::new(),
+                };
+                let _ = frame(&ctx, events, |ui| {
+                    let r = Button::new("Commit")
+                        .primary()
+                        .enabled(enabled)
+                        .loading(loading)
+                        .show(ui);
+                    rect = r.rect;
+                    clicked |= r.clicked();
+                });
+            }
+            assert_eq!(clicked, expect, "enabled {enabled}, loading {loading}");
+        }
+    }
+
+    #[test]
+    fn disabled_buttons_paint_at_the_disabled_opacity() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
+        let p = theme::palette(&ctx);
+        let fills = |enabled: bool| {
+            let shapes = frame(&ctx, Vec::new(), |ui| {
+                Button::new("Commit").primary().enabled(enabled).show(ui);
+            });
+            shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Rect(r) if r.blur_width == 0.0 => Some(r.fill),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(fills(true).contains(&p.standard.primary.top));
+        let dim = fills(false);
+        let expected = p.standard.primary.top.gamma_multiply(theme::DISABLED_ALPHA);
+        assert!(dim.contains(&expected), "{dim:?}");
+    }
+}

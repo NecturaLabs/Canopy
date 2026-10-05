@@ -421,7 +421,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         ui.painter().vline(
                             origin.x + gutter_w + 2.0,
                             rect.y_range(),
-                            Stroke::new(1.0, p.border),
+                            Stroke::new(1.0, p.border()),
                         );
                     }
                     Row::Pair(h, left, right) => {
@@ -469,7 +469,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         ui.painter().vline(
                             rect.center().x,
                             rect.y_range(),
-                            Stroke::new(1.0, p.border),
+                            Stroke::new(1.0, p.border()),
                         );
                     }
                 }
@@ -500,7 +500,7 @@ fn header(
     let single_row = ui.available_width() >= 720.0;
     let vertical_padding = if compact { theme::XS } else { theme::SM };
     egui::Frame::new()
-        .fill(p.panel)
+        .fill(p.panel())
         .inner_margin(egui::Margin::symmetric(
             theme::MD as i8,
             vertical_padding as i8,
@@ -641,7 +641,7 @@ fn header(
     ui.painter().hline(
         ui.min_rect().x_range(),
         ui.min_rect().max.y,
-        Stroke::new(1.0, p.border),
+        Stroke::new(1.0, p.border()),
     );
 }
 
@@ -679,8 +679,8 @@ fn line_cell(
             .iter()
             .any(|m| line.text.starts_with(m));
     let (bg, fg, sign) = match line.kind {
-        LineKind::Added => (Some(p.added_bg), p.success, "+"),
-        LineKind::Removed => (Some(p.removed_bg), p.danger, "−"),
+        LineKind::Added => (Some(p.added_bg()), p.success, "+"),
+        LineKind::Removed => (Some(p.removed_bg()), p.danger, "−"),
         LineKind::Context if marker => (Some(Palette::tint(p.warning, 40)), p.warning, "!"),
         LineKind::Context => (None, p.text_faint, " "),
     };
@@ -776,9 +776,9 @@ fn line_cell(
     let edge = painter.clip_rect().max.x;
     if text_right > edge + 0.5 {
         let under = match bg {
-            Some(bg) if cx.one_sided => p.bg.lerp_to_gamma(bg, 0.4),
+            Some(bg) if cx.one_sided => p.bg().lerp_to_gamma(bg, 0.4),
             Some(bg) => bg,
-            None => p.bg,
+            None => p.bg(),
         };
         fade_edge(painter, rect.y_range(), edge, under);
     }

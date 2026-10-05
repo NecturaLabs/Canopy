@@ -212,7 +212,7 @@ pub fn show(
     let p = palette(ctx);
     let mut outcome = Outcome::Keep;
     let modal = egui::Modal::new(Id::new("dialog"))
-        .frame(egui::Frame::new().fill(p.elevated).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS_LG)).shadow(ctx.global_style().visuals.window_shadow).inner_margin(egui::Margin::same(22)))
+        .frame(egui::Frame::new().fill(p.elevated()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS_LG)).shadow(ctx.global_style().visuals.window_shadow).inner_margin(egui::Margin::same(22)))
         .backdrop_color(p.backdrop())
         .show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - theme::XL * 4.0).clamp(0.0, 460.0));
@@ -525,7 +525,7 @@ pub fn show(
                     ui.label(RichText::new(format!("This removes user.name and user.email from {target}. Commits already made keep their authors. If the same value is also set in another file, that one stays in use.")).color(p.text_dim));
                     if let Some(values) = identity_in_scope(tab, *scope) {
                         ui.add_space(theme::SM);
-                        egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+                        egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.label(RichText::new("Removing").size(theme::META_SIZE).color(p.text_dim));
                             ui.label(RichText::new(values).font(FontId::monospace(theme::MONO_SIZE)).color(p.text));
@@ -589,7 +589,7 @@ pub fn show(
                 }
                 Dialog::WhatsNew { version, notes } => {
                     title(ui, icon::SPARKLE, &format!("What's new in Canopy {version}"));
-                    egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                    egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
                         ui.set_max_width(ui.available_width());
                         egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| crate::ui::notes::markdown(ui, notes));
                     });
@@ -614,7 +614,7 @@ pub fn show(
                     ui.label(RichText::new("Sorry about that. A crash report was saved on this computer; nothing was sent anywhere. Sharing it with the developers helps fix the problem.").color(p.text_dim));
                     if !report.message.is_empty() {
                         ui.add_space(8.0);
-                        egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+                        egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
                             ui.set_max_width(ui.available_width());
                             ui.label(RichText::new(&report.message).font(FontId::monospace(theme::MONO_SIZE)).color(p.text));
                         });
@@ -649,7 +649,7 @@ pub fn show(
                         });
                         if let Some(doc) = *reading {
                             ui.add_space(6.0);
-                            egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                            egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
                                 ui.set_max_width(ui.available_width());
                                 egui::ScrollArea::vertical().id_salt(("legal", doc.title())).max_height(260.0).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
                             });
@@ -703,7 +703,7 @@ pub fn show(
                             *reading = privacy_only;
                             if reading.is_some() {
                                 ui.add_space(6.0);
-                                egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                                egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
                                     ui.set_max_width(ui.available_width());
                                     egui::ScrollArea::vertical().id_salt("legal-privacy").max_height(240.0).show(ui, |ui| crate::ui::notes::markdown(ui, Document::Privacy.body()));
                                 });
@@ -718,7 +718,7 @@ pub fn show(
                         Document::Terms => icon::SCROLL,
                     };
                     title(ui, glyph, doc.title());
-                    egui::Frame::new().fill(p.panel).stroke(egui::Stroke::new(1.0, p.border)).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                    egui::Frame::new().fill(p.panel()).stroke(egui::Stroke::new(1.0, p.border())).corner_radius(egui::CornerRadius::same(theme::RADIUS)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
                         ui.set_max_width(ui.available_width());
                         ui.style_mut().spacing.scroll.floating = false;
                         egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 180.0).clamp(0.0, 420.0)).show(ui, |ui| crate::ui::notes::markdown(ui, doc.body()));
@@ -1141,7 +1141,11 @@ mod tests {
         use super::{Settings, show};
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        crate::ui::theme::apply(&ctx, crate::ui::theme::ThemeId::Midnight, true);
+        crate::ui::theme::apply(
+            &ctx,
+            crate::ui::theme::ThemeId::Midnight,
+            &crate::ui::theme::Appearance::STILL,
+        );
         let mut dialog = Dialog::clone_default(&Settings::default());
         if let Dialog::Clone { builder, .. } = &mut dialog {
             builder.project = "example/repository".into();
@@ -1213,7 +1217,11 @@ mod tests {
         for step in [Pending::Terms, Pending::CrashReports] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
-            crate::ui::theme::apply(&ctx, crate::ui::theme::ThemeId::Daylight, true);
+            crate::ui::theme::apply(
+                &ctx,
+                crate::ui::theme::ThemeId::Daylight,
+                &crate::ui::theme::Appearance::STILL,
+            );
             let mut dialog = Dialog::Consent {
                 step,
                 updated: false,
