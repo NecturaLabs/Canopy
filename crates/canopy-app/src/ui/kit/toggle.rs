@@ -87,7 +87,7 @@ fn paint_label(
             rect.left() + glyph_w + LABEL_GAP,
             rect.center().y - t.size().y / 2.0,
         );
-        painter.galley(pos, t.clone(), p.text);
+        painter.galley(pos, Arc::clone(t), p.text);
     }
 }
 

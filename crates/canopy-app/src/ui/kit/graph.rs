@@ -361,7 +361,7 @@ mod tests {
     /// The circles one row paints: (radius, fill, stroke colour).
     fn circles(row: &GraphRow, marks: Marks) -> Vec<(f32, Color32, Color32)> {
         let ctx = ctx();
-        let mut out = ctx.run_ui(Default::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             let rect = Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(76.0, 28.0));
             paint_row(ui.painter(), rect, &Lanes::new(1), row, &marks);
         });

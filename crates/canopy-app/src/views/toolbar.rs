@@ -1,6 +1,8 @@
 //! The tab strip and the action bar. Both sit on the top deck that `app` paints (flat chrome in
 //! Standard, one lifted surface in Deeper), so nothing here paints a background of its own.
 
+use std::sync::Arc;
+
 use egui::accesskit::Role;
 use egui::text::LayoutJob;
 use egui::{
@@ -727,8 +729,8 @@ fn view_tabs(
     let seg_h = m.control - 2.0;
     let inset = m.segment_track_pad + paint::SEAM;
     struct Laid {
-        glyph: std::sync::Arc<egui::Galley>,
-        text: Option<std::sync::Arc<egui::Galley>>,
+        glyph: Arc<egui::Galley>,
+        text: Option<Arc<egui::Galley>>,
         badge: Option<Badge>,
         width: f32,
     }
@@ -830,10 +832,14 @@ fn view_tabs(
             let parts_w = l.width - 2.0 * m.segment_pad;
             let cy = rect.center().y;
             let mut x = rect.center().x - parts_w / 2.0;
-            painter.galley(pos2(x, cy - l.glyph.size().y / 2.0), l.glyph.clone(), color);
+            painter.galley(
+                pos2(x, cy - l.glyph.size().y / 2.0),
+                Arc::clone(&l.glyph),
+                color,
+            );
             x += l.glyph.size().x + TAB_GAP;
             if let Some(g) = &l.text {
-                painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), color);
+                painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), color);
                 x += g.size().x + TAB_GAP;
             }
             if let Some(b) = &l.badge {
@@ -942,7 +948,7 @@ mod tests {
                             pos: requests.center(),
                             button: egui::PointerButton::Primary,
                             pressed,
-                            modifiers: Default::default(),
+                            modifiers: egui::Modifiers::default(),
                         },
                     ],
                     ..Default::default()

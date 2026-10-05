@@ -188,7 +188,7 @@ fn fold_reviews(raw: Vec<ReviewJson>) -> Vec<Review> {
         match out.iter_mut().find(|x| x.author == author) {
             Some(existing) => {
                 if state != "Commented" || existing.state == "Commented" {
-                    existing.state = state.to_owned();
+                    state.clone_into(&mut existing.state);
                 }
             }
             None => out.push(Review {

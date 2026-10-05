@@ -356,8 +356,8 @@ fn read_person(workdir: Option<&Path>, configured: &Configured, kind: Kind) -> R
             let value = String::from_utf8_lossy(&out.stdout);
             let (effective_name, effective_email) = parse_ident(&value)
                 .ok_or_else(|| Error::invalid("Git returned an unreadable identity."))?;
-            name.value = effective_name.to_owned();
-            email.value = effective_email.to_owned();
+            effective_name.clone_into(&mut name.value);
+            effective_email.clone_into(&mut email.value);
             name.source.get_or_insert(Source::Guessed);
             email.source.get_or_insert(Source::Guessed);
             true

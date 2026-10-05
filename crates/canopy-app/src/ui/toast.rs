@@ -259,7 +259,7 @@ mod tests {
                     unit: egui::MouseWheelUnit::Point,
                     delta: vec2(0.0, -30.0),
                     phase: egui::TouchPhase::Move,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 });
             }
             let mut output = ctx.run_ui(
@@ -356,7 +356,7 @@ mod tests {
                     pos: pointer,
                     button: egui::PointerButton::Primary,
                     pressed: frame == 3,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 });
             }
             let mut output = ctx.run_ui(
@@ -413,7 +413,7 @@ mod tests {
                     pos: pointer,
                     button: egui::PointerButton::Primary,
                     pressed: frame == 3,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 });
             }
             let mut output = ctx.run_ui(

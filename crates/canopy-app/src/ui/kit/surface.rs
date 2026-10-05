@@ -3,6 +3,8 @@
 //! (a table pane's header strip, whose top edge is its own colour in Deeper), [`Deck`] (the top
 //! bars), [`Card`], [`Banner`], [`Callout`], [`EmptyState`] and [`InsetBox`].
 
+use std::sync::Arc;
+
 use egui::{
     Align, Align2, Color32, CornerRadius, FontId, Id, Layout, Margin, Painter, Rect, Response,
     Sense, Shape, Stroke, Ui, UiBuilder, Widget, WidgetInfo, WidgetType, pos2, vec2,
@@ -745,14 +747,14 @@ impl Banner {
             let glyph = self.icon.as_deref().unwrap_or(tone_glyph(self.tone));
             let g =
                 painter.layout_no_wrap(glyph.to_owned(), FontId::proportional(m.icon_lg), tone_c);
-            painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), tone_c);
+            painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(&g), tone_c);
             x += g.size().x + theme::SM;
             let t = painter.layout_no_wrap(
                 self.title.clone(),
                 FontId::new(m.body_size, theme::semibold()),
                 p.text,
             );
-            painter.galley(pos2(x, cy - t.size().y / 2.0), t.clone(), p.text);
+            painter.galley(pos2(x, cy - t.size().y / 2.0), Arc::clone(&t), p.text);
             x += t.size().x + theme::SM;
             let mut child = ui.new_child(
                 UiBuilder::new()
@@ -1559,7 +1561,7 @@ mod tests {
                         physical_key: None,
                         pressed: true,
                         repeat: false,
-                        modifiers: Default::default(),
+                        modifiers: egui::Modifiers::default(),
                     }]
                 } else {
                     Vec::new()

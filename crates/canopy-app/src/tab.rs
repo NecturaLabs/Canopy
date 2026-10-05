@@ -118,7 +118,7 @@ impl Resolver {
             editing: None,
             expanded: HashSet::new(),
             show_base: false,
-            layout: Default::default(),
+            layout: crate::views::resolve::Layout::default(),
         }
     }
 
@@ -191,7 +191,7 @@ impl Resolver {
         self.choices = choices;
         self.kind = kind;
         self.file = Some(file);
-        self.layout = Default::default();
+        self.layout = crate::views::resolve::Layout::default();
     }
 
     /// Clears the focused conflict's choice (and any hand edit of it).
@@ -461,7 +461,7 @@ impl RepoTab {
             requests: Requests::default(),
             downloads_refused: None,
             trust_version: 0,
-            avatars: Default::default(),
+            avatars: crate::avatars::Avatars::default(),
             last_fetch: Instant::now(),
         }
     }
@@ -558,7 +558,7 @@ impl RepoTab {
             return;
         }
         self.requests = Requests::default();
-        self.avatars = Default::default();
+        self.avatars = crate::avatars::Avatars::default();
         let trusted = self.trusted_gitlab_hosts.clone();
         self.host = want.map(|f| HostWorker::spawn(f, saved_token, trusted, ctx.clone()));
         self.load_requests();
@@ -923,7 +923,7 @@ impl RepoTab {
                     {
                         self.worker.send(Job::MergeMessage);
                     }
-                    self.name = s.name.clone();
+                    self.name.clone_from(&s.name);
                     let head = s.head.oid;
                     let had = self.snap.is_some();
                     self.snap_index = SnapIndex::new(&s);
@@ -1055,8 +1055,16 @@ impl RepoTab {
                         && self.commit_body.trim().is_empty()
                     {
                         let mut parts = message.splitn(2, '\n');
-                        self.commit_summary = parts.next().unwrap_or_default().trim().to_owned();
-                        self.commit_body = parts.next().unwrap_or_default().trim().to_owned();
+                        parts
+                            .next()
+                            .unwrap_or_default()
+                            .trim()
+                            .clone_into(&mut self.commit_summary);
+                        parts
+                            .next()
+                            .unwrap_or_default()
+                            .trim()
+                            .clone_into(&mut self.commit_body);
                     }
                 }
                 Event::HeadMessage(m) => {
@@ -1071,8 +1079,16 @@ impl RepoTab {
                         continue;
                     }
                     let mut parts = m.splitn(2, '\n');
-                    self.commit_summary = parts.next().unwrap_or("").trim().to_owned();
-                    self.commit_body = parts.next().unwrap_or("").trim().to_owned();
+                    parts
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .clone_into(&mut self.commit_summary);
+                    parts
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .clone_into(&mut self.commit_body);
                 }
                 Event::SquashMessage(message) => {
                     if !self.amend
@@ -1084,8 +1100,16 @@ impl RepoTab {
                         && self.commit_body.trim().is_empty()
                     {
                         let mut parts = message.splitn(2, '\n');
-                        self.commit_summary = parts.next().unwrap_or_default().trim().to_owned();
-                        self.commit_body = parts.next().unwrap_or_default().trim().to_owned();
+                        parts
+                            .next()
+                            .unwrap_or_default()
+                            .trim()
+                            .clone_into(&mut self.commit_summary);
+                        parts
+                            .next()
+                            .unwrap_or_default()
+                            .trim()
+                            .clone_into(&mut self.commit_body);
                     }
                 }
                 Event::OpStarted(label) => {

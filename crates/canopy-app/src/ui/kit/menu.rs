@@ -18,6 +18,7 @@
 //! opacity, with their reason as a tooltip, in menus opened from a button.
 
 use std::cell::Cell;
+use std::sync::Arc;
 
 use egui::containers::menu::{MenuState, SubMenu};
 use egui::{
@@ -636,13 +637,17 @@ impl MenuItem {
                     let gap = 2.0;
                     let total = label.size().y + gap + d.size().y;
                     let top = cy - total / 2.0;
-                    painter.galley(pos2(x, top), label.clone(), text_color);
-                    painter.galley(pos2(x, top + label.size().y + gap), d.clone(), p.text_dim);
+                    painter.galley(pos2(x, top), Arc::clone(&label), text_color);
+                    painter.galley(
+                        pos2(x, top + label.size().y + gap),
+                        Arc::clone(d),
+                        p.text_dim,
+                    );
                 }
                 None => {
                     painter.galley(
                         pos2(x, cy - label.size().y / 2.0),
-                        label.clone(),
+                        Arc::clone(&label),
                         text_color,
                     );
                 }
@@ -655,7 +660,7 @@ impl MenuItem {
                 };
                 painter.galley(
                     pos2(rect.right() - ITEM_PAD - t.size().x, cy - t.size().y / 2.0),
-                    t.clone(),
+                    Arc::clone(t),
                     color,
                 );
             }
@@ -881,14 +886,14 @@ mod tests {
                     pos: at,
                     button,
                     pressed: true,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 },
             ],
             vec![egui::Event::PointerButton {
                 pos: at,
                 button,
                 pressed: false,
-                modifiers: Default::default(),
+                modifiers: egui::Modifiers::default(),
             }],
         ]
     }
@@ -968,7 +973,7 @@ mod tests {
                     physical_key: None,
                     pressed: true,
                     repeat: false,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 }]
             } else {
                 Vec::new()

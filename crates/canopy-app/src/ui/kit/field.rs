@@ -611,7 +611,7 @@ fn paint_keycap(painter: &egui::Painter, rect: Rect, chord: &Arc<Galley>, p: &Pa
     );
     painter.galley(
         rect.center() - chord.size() / 2.0,
-        chord.clone(),
+        Arc::clone(chord),
         p.text_dim,
     );
 }

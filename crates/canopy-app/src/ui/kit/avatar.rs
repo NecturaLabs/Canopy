@@ -512,7 +512,7 @@ mod tests {
                 },
             );
             let mut sizes = Vec::new();
-            let mut out = ctx.run_ui(Default::default(), |ui| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 for size in AvatarSize::ALL {
                     sizes.push(
                         Avatar::new(Person::new("Maya Chen", "maya@example.com"))
@@ -556,7 +556,7 @@ mod tests {
         let ctx = ctx();
         let tex = placeholder_picture(&ctx);
         let person = Person::new("Maya", "").picture(Some(tex));
-        let mut out = ctx.run_ui(Default::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             Avatar::new(person.clone()).id_salt("a").show(ui);
         });
         out.textures_delta.clear();

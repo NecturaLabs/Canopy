@@ -441,7 +441,7 @@ impl RefPill {
         let c = self.color(p);
         for glyph in glyphs {
             let gg = painter.layout_no_wrap(glyph.to_owned(), FontId::proportional(m.icon_xs), c);
-            painter.galley(pos2(x, cy - gg.size().y / 2.0), gg.clone(), c);
+            painter.galley(pos2(x, cy - gg.size().y / 2.0), Arc::clone(&gg), c);
             x += gg.size().x + GAP;
         }
         painter.galley(pos2(x, cy - g.size().y / 2.0), g, ink);
@@ -694,7 +694,7 @@ impl KeyChord {
                     None => {
                         ui.painter().galley(
                             pos2(x, rect.center().y - dot.size().y / 2.0),
-                            dot.clone(),
+                            Arc::clone(&dot),
                             p.text_faint,
                         );
                     }
@@ -841,7 +841,7 @@ impl DiffStat {
             ui.allocate_exact_size(vec2(g.size().x + bar_w, g.size().y), Sense::hover());
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
-            painter.galley(rect.left_top(), g.clone(), p.text);
+            painter.galley(rect.left_top(), Arc::clone(&g), p.text);
             if self.bar {
                 let (green, red, _) = blocks(self.added, self.removed);
                 let mut x = rect.left() + g.size().x + 6.0;
@@ -1029,7 +1029,7 @@ impl Chip {
             if let Some(g) = glyph {
                 shapes.push(Shape::galley(
                     pos2(x, rect.center().y - g.size().y / 2.0),
-                    g.clone(),
+                    Arc::clone(&g),
                     ink,
                 ));
                 x += g.size().x + gap;
@@ -1382,7 +1382,7 @@ mod tests {
                         physical_key: None,
                         pressed: true,
                         repeat: false,
-                        modifiers: Default::default(),
+                        modifiers: egui::Modifiers::default(),
                     }]
                 } else {
                     Vec::new()
@@ -1406,7 +1406,7 @@ mod tests {
     fn labels_reach_screen_readers() {
         let ctx = ctx();
         ctx.enable_accesskit();
-        let mut out = ctx.run_ui(Default::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             RefPill::new("main", RefKind::CurrentBranch).show(ui);
             DiffStat::new(1, 2).show(ui);
             KeyChord::new("Ctrl+K").show(ui);

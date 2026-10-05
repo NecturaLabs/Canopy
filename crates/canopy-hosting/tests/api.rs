@@ -65,7 +65,7 @@ mod server {
             let base = format!("http://{}", listener.local_addr().expect("addr"));
             let routes: Routes = Arc::default();
             let log: Arc<Mutex<Vec<Recorded>>> = Arc::default();
-            let (r, l) = (routes.clone(), log.clone());
+            let (r, l) = (Arc::clone(&routes), Arc::clone(&log));
             std::thread::spawn(move || {
                 for stream in listener.incoming() {
                     let Ok(stream) = stream else { continue };

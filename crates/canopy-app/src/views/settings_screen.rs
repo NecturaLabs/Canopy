@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crossbeam_channel::Receiver;
 use egui::epaint::CubicBezierShape;
@@ -331,7 +332,7 @@ fn navigation(ui: &mut Ui, rect: Rect, radius: u8, current: &mut Section) {
     let cy = title.center().y;
     ui.painter().galley(
         pos2(x, cy - glyph.size().y / 2.0),
-        glyph.clone(),
+        Arc::clone(&glyph),
         p.text_faint,
     );
     ui.painter().text(
@@ -1099,7 +1100,7 @@ fn identity_group(
         screen.loaded_identity = None;
     }
     if screen.identity_for != repo_path || screen.loaded_identity.as_ref() != identity {
-        screen.identity_for = repo_path.clone();
+        screen.identity_for.clone_from(&repo_path);
         screen.loaded_identity = identity.cloned();
         // Only values someone chose are offered for editing: a guess built from the user and host
         // names would be saved as if it were a choice.
@@ -2066,7 +2067,7 @@ mod tests {
                 pos,
                 button: egui::PointerButton::Primary,
                 pressed: true,
-                modifiers: Default::default(),
+                modifiers: egui::Modifiers::default(),
             },
         ]);
         assert_eq!(zoom, 1.0, "applying zoom while dragging moves the control");
@@ -2074,7 +2075,7 @@ mod tests {
             pos,
             button: egui::PointerButton::Primary,
             pressed: false,
-            modifiers: Default::default(),
+            modifiers: egui::Modifiers::default(),
         }]);
         assert!(zoom > 1.0, "released slider must apply its preview");
     }
@@ -2111,14 +2112,14 @@ mod tests {
                     pos,
                     button: egui::PointerButton::Primary,
                     pressed: true,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 },
             ]);
             draw(vec![egui::Event::PointerButton {
                 pos,
                 button: egui::PointerButton::Primary,
                 pressed: false,
-                modifiers: Default::default(),
+                modifiers: egui::Modifiers::default(),
             }]);
         }
         assert!(
@@ -2133,7 +2134,7 @@ mod tests {
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers: Default::default(),
+            modifiers: egui::Modifiers::default(),
         }]);
         assert_eq!(zoom, 1.5, "Enter must apply the complete percentage");
     }

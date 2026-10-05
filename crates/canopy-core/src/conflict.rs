@@ -274,7 +274,7 @@ fn parse_region(
         match part {
             Part::Ours => {
                 if let Some(label) = sized_marker(line, b'|', size) {
-                    region.base_label = label.to_owned();
+                    label.clone_into(&mut region.base_label);
                     part = Part::Base;
                 } else if sized_marker(line, b'=', size).is_some() {
                     part = Part::Theirs;
@@ -296,7 +296,7 @@ fn parse_region(
             }
             Part::Theirs => {
                 if let Some(label) = sized_marker(line, b'>', size) {
-                    region.theirs_label = label.to_owned();
+                    label.clone_into(&mut region.theirs_label);
                     return Some((region, i + 1));
                 }
                 region.theirs.push(line.to_owned());

@@ -150,7 +150,7 @@ fn subcommand(args: &[&str]) -> String {
 pub(crate) fn failure(args: &[&str], stdout: &[u8], stderr: &[u8]) -> Error {
     let mut msg = String::from_utf8_lossy(stderr).trim().to_owned();
     if msg.is_empty() {
-        msg = String::from_utf8_lossy(stdout).trim().to_owned();
+        String::from_utf8_lossy(stdout).trim().clone_into(&mut msg);
     }
     Error::Cli {
         command: subcommand(args),

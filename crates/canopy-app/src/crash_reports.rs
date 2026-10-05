@@ -298,7 +298,7 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
     event.server_name = None;
     event.user = None;
     event.request = None;
-    event.breadcrumbs = Default::default();
+    event.breadcrumbs = sentry::protocol::Values::default();
     event.extra.clear();
     event.tags.retain(|k, _| k == "os" || k == "release");
     event
@@ -313,7 +313,7 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
     }
     if let Some(Context::Device(device)) = event.contexts.get_mut("device") {
         let arch = device.arch.take();
-        **device = Default::default();
+        **device = sentry::protocol::DeviceContext::default();
         device.arch = arch;
     }
     let s = |t: &mut String| *t = scrub_text(t, home);
@@ -504,9 +504,10 @@ mod tests {
                 ..Default::default()
             })),
         );
-        event
-            .contexts
-            .insert("app".into(), Context::Other(Default::default()));
+        event.contexts.insert(
+            "app".into(),
+            Context::Other(std::collections::BTreeMap::default()),
+        );
         event.extra.insert("x".into(), "y".into());
         let e = scrub(event, "/home/ada");
         assert_eq!(e.server_name, None);

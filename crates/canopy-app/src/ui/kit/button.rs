@@ -432,7 +432,7 @@ impl Button {
                 } else if let Some(g) = &icon {
                     shapes.push(Shape::galley(
                         pos2(x, cy - g.size().y / 2.0),
-                        g.clone(),
+                        Arc::clone(g),
                         icon_color,
                     ));
                 }
@@ -440,7 +440,7 @@ impl Button {
             }
             shapes.push(Shape::galley(
                 pos2(x, cy - text.size().y / 2.0),
-                text.clone(),
+                Arc::clone(&text),
                 label,
             ));
             x += text.size().x;
@@ -448,7 +448,7 @@ impl Button {
                 x += theme::SM;
                 shapes.push(Shape::galley(
                     pos2(x, cy - c.size().y / 2.0),
-                    c.clone(),
+                    Arc::clone(c),
                     label.gamma_multiply(0.4),
                 ));
                 x += c.size().x;
@@ -457,7 +457,7 @@ impl Button {
                 x += m.button_gap;
                 shapes.push(Shape::galley(
                     pos2(x, cy - t.size().y / 2.0),
-                    t.clone(),
+                    Arc::clone(t),
                     label,
                 ));
             }
@@ -823,14 +823,14 @@ impl ToolButton {
                 let c = icon_pos + glyph.size() / 2.0;
                 paint::spinner(&painter, c, icon_size * 0.36, 1.6, icon_color);
             } else {
-                shapes.push(Shape::galley(icon_pos, glyph.clone(), icon_color));
+                shapes.push(Shape::galley(icon_pos, Arc::clone(&glyph), icon_color));
             }
             if let Some(b) = &badge {
                 let at = pos2(
                     icon_pos.x + glyph.size().x + 3.0,
                     icon_pos.y + glyph.size().y / 2.0 - b.size().y / 2.0,
                 );
-                shapes.push(Shape::galley(at, b.clone(), p.accent));
+                shapes.push(Shape::galley(at, Arc::clone(b), p.accent));
             }
             shapes.push(Shape::galley(caption_pos, caption, text_color));
             paint_scaled(&painter, shapes, rect.center(), scale);
@@ -1130,7 +1130,11 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                     on,
                 );
             }
-            painter.galley(main_rect.center() - text.size() / 2.0, text.clone(), on);
+            painter.galley(
+                main_rect.center() - text.size() / 2.0,
+                Arc::clone(&text),
+                on,
+            );
             painter.text(
                 caret_rect.center(),
                 Align2::CENTER_CENTER,
@@ -1412,14 +1416,14 @@ mod tests {
                             pos: rect.center(),
                             button: egui::PointerButton::Primary,
                             pressed: true,
-                            modifiers: Default::default(),
+                            modifiers: egui::Modifiers::default(),
                         },
                     ],
                     3 => vec![egui::Event::PointerButton {
                         pos: rect.center(),
                         button: egui::PointerButton::Primary,
                         pressed: false,
-                        modifiers: Default::default(),
+                        modifiers: egui::Modifiers::default(),
                     }],
                     _ => Vec::new(),
                 };

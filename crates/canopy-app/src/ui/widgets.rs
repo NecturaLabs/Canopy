@@ -34,7 +34,7 @@ pub fn dismiss_underlying_tooltips(ctx: &egui::Context) {
     ctx.graphics_mut(|graphics| {
         for layer in layers {
             if let Some(list) = graphics.get_mut(layer) {
-                *list = Default::default();
+                *list = egui::layers::PaintList::default();
             }
         }
     });
@@ -213,7 +213,7 @@ mod tests {
                             physical_key: None,
                             pressed: true,
                             repeat: false,
-                            modifiers: Default::default(),
+                            modifiers: egui::Modifiers::default(),
                         }]
                     } else {
                         Vec::new()
@@ -257,7 +257,7 @@ mod tests {
     fn blocking_overlay_hides_underlying_tooltips_and_keeps_its_own() {
         let ctx = egui::Context::default();
         for frame in 0..3 {
-            let mut output = ctx.run_ui(Default::default(), |ui| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::Tooltip::always_open(
                     ctx.clone(),
                     ui.layer_id(),
@@ -314,7 +314,7 @@ mod tests {
         theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         for frame in 0..3 {
             let mut button_rect = egui::Rect::NOTHING;
-            let output = ctx.run_ui(Default::default(), |ui| {
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 ui.add_enabled_ui(false, |ui| {
                     button_rect = primary_button(ui, "Commit", true, 120.0).rect;
                 });
@@ -345,7 +345,7 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         let mut value = 0;
         for frame in 0..2 {
-            let mut output = ctx.run_ui(Default::default(), |ui| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 kit::choice::Segmented::new(&mut value, &[(0, "One"), (1, "Two")]).show(ui);
             });
             output.textures_delta.clear();

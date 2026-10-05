@@ -509,7 +509,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
         _ => None,
     };
     let details = match &tab.requests.details {
-        Some(Ok(d)) => Some(d.clone()),
+        Some(Ok(d)) => Some(Arc::clone(d)),
         _ => None,
     };
     let Some(summary) = details.as_ref().map(|d| d.summary.clone()).or(summary) else {
@@ -1082,7 +1082,12 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let (worker, _, _) = Worker::detached();
-        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        let mut tab = RepoTab::with_worker(
+            "fixture".into(),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
         let details = details(RequestState::Open);
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -1128,7 +1133,12 @@ mod tests {
     #[test]
     fn refreshed_request_selection_preserves_action_eligibility() {
         let (worker, _, _) = Worker::detached();
-        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        let mut tab = RepoTab::with_worker(
+            "fixture".into(),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
         tab.requests.selected = Some(7);
         tab.requests.list = Some(Ok(Arc::new(vec![summary(RequestState::Open)])));
         for state in [
@@ -1167,7 +1177,12 @@ mod tests {
     #[test]
     fn request_shortcuts_use_the_displayed_state_after_details_refresh() {
         let (worker, _, _) = Worker::detached();
-        let mut tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        let mut tab = RepoTab::with_worker(
+            "fixture".into(),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
         tab.requests.selected = Some(7);
         tab.requests.list = Some(Ok(Arc::new(vec![summary(RequestState::Open)])));
         tab.requests.details = Some(Ok(Arc::new(details(RequestState::Merged))));

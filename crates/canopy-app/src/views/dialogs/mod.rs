@@ -634,7 +634,7 @@ pub fn show(
                         .id_salt("request-target")
                         .show(ui);
                     if pick != request.target && !pick.is_empty() {
-                        request.target = pick.to_owned();
+                        pick.clone_into(&mut request.target);
                     }
                     field(
                         ui,
@@ -664,7 +664,13 @@ pub fn show(
             answer(result, || {
                 if valid(request) {
                     let mut r = request.clone();
-                    r.title = r.title.trim().to_owned();
+                    #[expect(
+                        clippy::assigning_clones,
+                        reason = "the source borrows the target, so clone_into cannot take it"
+                    )]
+                    {
+                        r.title = r.title.trim().to_owned();
+                    }
                     Outcome::Run(vec![Action::Host(HostJob::Create(r))])
                 } else {
                     Outcome::Keep
@@ -1450,7 +1456,7 @@ mod tests {
                             physical_key: None,
                             pressed: true,
                             repeat: false,
-                            modifiers: Default::default(),
+                            modifiers: egui::Modifiers::default(),
                         }]
                     } else {
                         Vec::new()
@@ -1524,7 +1530,7 @@ mod tests {
                 notes: String::new(),
                 pub_date: None,
                 release_page: None,
-                platforms: Default::default(),
+                platforms: std::collections::BTreeMap::default(),
             },
         };
         for state in [
@@ -1604,7 +1610,7 @@ mod tests {
                         unit: egui::MouseWheelUnit::Point,
                         phase: egui::TouchPhase::Move,
                         delta: egui::vec2(0.0, -1000.0),
-                        modifiers: Default::default(),
+                        modifiers: egui::Modifiers::default(),
                     });
                 }
                 let mut output = ctx.run_ui(

@@ -1566,7 +1566,7 @@ mod tests {
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers: Default::default(),
+            modifiers: egui::Modifiers::default(),
         }]
     }
 
@@ -1927,7 +1927,7 @@ mod tests {
                     pos: c,
                     button: egui::PointerButton::Primary,
                     pressed: true,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 },
             ],
             &mut shown,
@@ -1938,7 +1938,7 @@ mod tests {
                 pos: c,
                 button: egui::PointerButton::Primary,
                 pressed: false,
-                modifiers: Default::default(),
+                modifiers: egui::Modifiers::default(),
             }],
             &mut shown,
             &mut anchor_rect,

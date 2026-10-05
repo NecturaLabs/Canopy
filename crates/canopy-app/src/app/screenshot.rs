@@ -1,5 +1,7 @@
 //! Headless screenshots for `--screenshot` (tools/screenshot.sh).
 
+use std::sync::Arc;
+
 use super::*;
 
 #[derive(Debug)]
@@ -55,7 +57,7 @@ impl CanopyApp {
         ctx.request_repaint();
         let image = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {
-                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                egui::Event::Screenshot { image, .. } => Some(Arc::clone(image)),
                 _ => None,
             })
         });

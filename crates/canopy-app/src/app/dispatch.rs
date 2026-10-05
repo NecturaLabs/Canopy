@@ -307,8 +307,9 @@ impl CanopyApp {
                 }
                 Action::DismissIntro => self.settings.seen_intro = true,
                 Action::AcceptTerms => {
-                    self.settings.accepted_terms = crate::ui::legal::TERMS_VERSION.to_owned();
-                    self.settings.accepted_privacy = crate::ui::legal::PRIVACY_VERSION.to_owned();
+                    crate::ui::legal::TERMS_VERSION.clone_into(&mut self.settings.accepted_terms);
+                    crate::ui::legal::PRIVACY_VERSION
+                        .clone_into(&mut self.settings.accepted_privacy);
                     // The consent dialog stays open until its actions are applied; this replaces
                     // it with the next question, or ends it.
                     self.dialogs.close_where(is_consent);

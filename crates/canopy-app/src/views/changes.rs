@@ -1175,7 +1175,12 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
-        let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
         let mut snap = unstaged_snapshot();
         snap.status.unstaged.push(entry("src/lib.rs"));
         snap.status.staged = vec![entry("README.md")];
@@ -1230,7 +1235,12 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let (worker, _, _) = crate::worker::Worker::detached();
-        let tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
+        let tab = RepoTab::with_worker(
+            "fixture".into(),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
         let snap = canopy_core::RepoSnapshot::default();
         let mut publish_visible = false;
         for frame in 0..40 {
@@ -1240,7 +1250,7 @@ mod tests {
                     unit: egui::MouseWheelUnit::Point,
                     delta: vec2(0.0, -30.0),
                     phase: egui::TouchPhase::Move,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 });
             }
             let mut output = ctx.run_ui(
@@ -1277,7 +1287,12 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
-        let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
         let summary_y = |tab: &mut RepoTab| {
             let texts = painted_texts(&ctx, tab, None);
             let (_, at) = texts
@@ -1363,7 +1378,12 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
-        let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
         let unusable = identity("", "", None, false);
         let warning = unusable.warning().expect("identity warning");
         tab.identity = Some(unusable);
@@ -1425,7 +1445,12 @@ mod tests {
             crate::ui::fonts::install(&ctx);
             theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
             let dir = tempfile::tempdir().expect("temporary tab");
-            let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
+            let mut tab = RepoTab::new(
+                dir.path().into(),
+                &ctx,
+                100,
+                crate::settings::DiffPrefs::default(),
+            );
             tab.snap = Some(std::sync::Arc::new(unstaged_snapshot()));
             let mut visible = false;
             for _ in 0..3 {

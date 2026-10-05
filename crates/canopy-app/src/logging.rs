@@ -239,7 +239,13 @@ impl tracing::field::Visit for MessageVisitor<'_> {
         if field.name() == "message" {
             let _ = write!(self.0, "{value:?}");
             if self.0.starts_with('"') {
-                *self.0 = self.0.trim_matches('"').to_owned();
+                #[expect(
+                    clippy::assigning_clones,
+                    reason = "the source borrows the target, so clone_into cannot take it"
+                )]
+                {
+                    *self.0 = self.0.trim_matches('"').to_owned();
+                }
             }
         } else {
             let _ = write!(self.0, " {}={value:?}", field.name());

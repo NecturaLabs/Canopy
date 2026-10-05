@@ -295,7 +295,7 @@ impl HostWorker {
         let (tx, events) = unbounded::<HostEvent>();
         let thread_forge = forge.clone();
         let avatars_enabled = Arc::new(AtomicBool::new(false));
-        let thread_avatars = avatars_enabled.clone();
+        let thread_avatars = Arc::clone(&avatars_enabled);
         let thread_ctx = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name(format!("hosting:{}", forge.host))

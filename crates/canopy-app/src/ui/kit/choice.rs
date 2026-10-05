@@ -374,11 +374,11 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                 let mut x = rect.center().x - content / 2.0;
                 let cy = rect.center().y;
                 if let Some(g) = &seg.icon {
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), color);
+                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), color);
                     x += g.size().x + ITEM_GAP;
                 }
                 if let Some(g) = &seg.text {
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), color);
+                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), color);
                     x += g.size().x + ITEM_GAP;
                 }
                 if let Some(g) = &seg.badge {
@@ -387,7 +387,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                         vec2(badge_width(g), m.badge_height),
                     );
                     painter.rect_filled(r, CornerRadius::same(theme::FULL), s.badge);
-                    painter.galley(r.center() - g.size() / 2.0, g.clone(), p.text);
+                    painter.galley(r.center() - g.size() / 2.0, Arc::clone(g), p.text);
                 }
                 if st.focus > 0.0 {
                     paint::inset_ring(&painter, *rect, radius, p.focus.gamma_multiply(st.focus));
@@ -662,17 +662,17 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
                 let cy = rect.center().y;
                 if let Some(g) = &tab.icon {
                     let c = if active { p.accent } else { p.text_faint };
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), c);
+                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), c);
                     x += g.size().x + ITEM_GAP;
                 }
                 painter.galley(
                     pos2(x, cy - tab.text.size().y / 2.0),
-                    tab.text.clone(),
+                    Arc::clone(&tab.text),
                     color,
                 );
                 x += tab.text.size().x + ITEM_GAP;
                 if let Some(g) = &tab.count {
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), g.clone(), p.accent);
+                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), p.accent);
                     x += g.size().x + ITEM_GAP;
                 }
                 if self.closable {

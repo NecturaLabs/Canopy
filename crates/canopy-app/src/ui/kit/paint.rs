@@ -480,7 +480,7 @@ mod tests {
         let ctx = Context::default();
         let p = theme::ThemeId::Midnight.palette();
         let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(100.0, 40.0));
-        let mut out = ctx.run_ui(Default::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             let m = p.material(Style::Standard, Elevation::Floating);
             shadow(ui.painter(), rect, CornerRadius::same(12), p, &m);
         });

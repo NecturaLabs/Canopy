@@ -239,7 +239,7 @@ impl CanopyApp {
             active: 0,
             dialogs: DialogStack::default(),
             settings_screen: None,
-            folder_picker: Default::default(),
+            folder_picker: crate::ui::folder_picker::FolderPicker::default(),
             palette: CommandPalette::default(),
             cheatsheet: Cheatsheet::default(),
             toasts: Toasts::default(),
@@ -382,7 +382,7 @@ impl CanopyApp {
                         notes: String::new(),
                         pub_date: None,
                         release_page: None,
-                        platforms: Default::default(),
+                        platforms: std::collections::BTreeMap::default(),
                     },
                 };
                 app.updater.install = if launch.overlay.as_deref() == Some("update-installed") {
@@ -435,7 +435,7 @@ impl CanopyApp {
             {
                 notices.push(d);
             }
-            app.settings.last_seen_version = version.to_owned();
+            version.clone_into(&mut app.settings.last_seen_version);
         }
         let now = chrono::Utc::now().timestamp();
         app.update_check_due = app.settings.check_updates
@@ -1079,7 +1079,7 @@ mod tests {
             pos,
             button,
             pressed,
-            modifiers: Default::default(),
+            modifiers: egui::Modifiers::default(),
         };
         draw(vec![
             egui::Event::PointerMoved(menu.center()),

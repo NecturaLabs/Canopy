@@ -554,14 +554,14 @@ mod tests {
                         pos: at,
                         button: egui::PointerButton::Primary,
                         pressed: true,
-                        modifiers: Default::default(),
+                        modifiers: egui::Modifiers::default(),
                     },
                 ],
                 2 | 5 => vec![egui::Event::PointerButton {
                     pos: at,
                     button: egui::PointerButton::Primary,
                     pressed: false,
-                    modifiers: Default::default(),
+                    modifiers: egui::Modifiers::default(),
                 }],
                 _ => Vec::new(),
             };

@@ -400,7 +400,7 @@ mod tests {
         ctx.enable_accesskit();
         crate::ui::fonts::install(&ctx);
         let mut add = add;
-        let mut out = ctx.run_ui(Default::default(), |ui| add(ui));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| add(ui));
         out.textures_delta.clear();
         out.platform_output
             .accesskit_update

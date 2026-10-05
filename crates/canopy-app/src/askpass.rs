@@ -183,8 +183,12 @@ impl Server {
                         continue;
                     }
                     open.fetch_add(1, Ordering::SeqCst);
-                    let (tx, expected, wake, slots) =
-                        (tx.clone(), expected.clone(), wake.clone(), open.clone());
+                    let (tx, expected, wake, slots) = (
+                        tx.clone(),
+                        expected.clone(),
+                        Arc::clone(&wake),
+                        Arc::clone(&open),
+                    );
                     let spawned = std::thread::Builder::new()
                         .name("askpass-prompt".into())
                         .spawn(move || {
@@ -292,7 +296,7 @@ fn serve(
         text: request.prompt.trim().to_owned(),
         kind,
         reply,
-        waiting: waiting.clone(),
+        waiting: Arc::clone(&waiting),
     };
     tracing::info!(kind = ?kind, "credential prompt");
     if prompts.send(prompt).is_err() {

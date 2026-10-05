@@ -175,7 +175,7 @@ fn cli_numstat(src: &Path, oid: Oid) -> Vec<(String, usize, usize)> {
         if path.is_empty() {
             // Rename: old and new path follow as separate fields.
             tokens.next();
-            path = tokens.next().expect("new path").to_owned();
+            tokens.next().expect("new path").clone_into(&mut path);
         }
         rows.push((path, add, del));
     }

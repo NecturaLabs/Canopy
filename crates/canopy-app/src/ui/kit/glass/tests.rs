@@ -30,7 +30,7 @@ fn setup(ctx: &egui::Context, theme: ThemeId, glass: bool, backend: Backend) {
 }
 
 fn frame(ctx: &egui::Context, f: impl FnMut(&mut Ui)) -> Vec<ClippedShape> {
-    let mut out = ctx.run_ui(Default::default(), f);
+    let mut out = ctx.run_ui(egui::RawInput::default(), f);
     out.textures_delta.clear();
     out.shapes
 }
@@ -762,7 +762,7 @@ fn the_soak_ends_after_its_frames() {
         let mut done = false;
         let mut most = 0;
         for _ in 0..18 {
-            let mut out = ctx.run_ui(Default::default(), |ui| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 done = soak.frame(ui.ctx());
             });
             out.textures_delta.clear();
@@ -774,7 +774,7 @@ fn the_soak_ends_after_its_frames() {
         // With the setting off the soak paints the same layers opaque: the baseline run.
         assert_eq!(most, if glass { usize::from(MAX_REGIONS) } else { 0 });
         // A frame after the last one changes nothing.
-        let mut out = ctx.run_ui(Default::default(), |ui| {
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             done = soak.frame(ui.ctx());
         });
         out.textures_delta.clear();

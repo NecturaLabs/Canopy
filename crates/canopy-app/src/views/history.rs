@@ -716,7 +716,12 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
-        let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
         tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
             commits: (0..10)
                 .map(|i| canopy_core::CommitSummary {
@@ -828,7 +833,12 @@ mod tests {
     }
     fn populated_tab(ctx: &egui::Context) -> (RepoTab, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("temporary tab");
-        let mut tab = RepoTab::new(dir.path().into(), ctx, 100, Default::default());
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
         let author = canopy_core::Signature {
             name: "Author".into(),
             email: "author@example.com".into(),
@@ -1411,7 +1421,7 @@ mod tests {
                         kind,
                     };
                     let pill = RefPill::from_label(&label, lane);
-                    let mut output = ctx.run_ui(Default::default(), |ui| {
+                    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                         pill.paint(ui, ui.painter(), 20.0, 30.0);
                     });
                     output.textures_delta.clear();

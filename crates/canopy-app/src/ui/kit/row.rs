@@ -6,6 +6,7 @@
 //! an inset 1.5 pt focus ring. Every row is focusable and activates with Enter or Space.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{
@@ -496,8 +497,11 @@ impl<'a> ListRow<'a> {
                 let glyph =
                     f.painter
                         .layout_no_wrap(g.clone(), FontId::proportional(m.icon_md), rc.icon);
-                f.painter
-                    .galley(pos2(x, cy - glyph.size().y / 2.0), glyph.clone(), rc.icon);
+                f.painter.galley(
+                    pos2(x, cy - glyph.size().y / 2.0),
+                    Arc::clone(&glyph),
+                    rc.icon,
+                );
                 x += glyph.size().x + GAP;
             }
             if let Some(t) = &self.trailing {
@@ -793,8 +797,11 @@ impl<'a> TreeRow<'a> {
                 let glyph =
                     f.painter
                         .layout_no_wrap(g.clone(), FontId::proportional(m.icon_md), rc.icon);
-                f.painter
-                    .galley(pos2(x, cy - glyph.size().y / 2.0), glyph.clone(), rc.icon);
+                f.painter.galley(
+                    pos2(x, cy - glyph.size().y / 2.0),
+                    Arc::clone(&glyph),
+                    rc.icon,
+                );
                 x += glyph.size().x + GAP;
             }
             let mut right = rc.content.right();
@@ -1120,7 +1127,7 @@ impl<'a> SectionHeader<'a> {
             let glyph = painter.layout_no_wrap(g.clone(), FontId::proportional(13.0), p.text_faint);
             painter.galley(
                 pos2(x, cy - glyph.size().y / 2.0),
-                glyph.clone(),
+                Arc::clone(&glyph),
                 p.text_faint,
             );
             x += glyph.size().x + 6.0;
@@ -1191,7 +1198,7 @@ impl<'a> SectionHeader<'a> {
 
 /// An uppercase label at `micro_size` semibold with 0.07 em tracking (section headers, table
 /// column headers).
-pub fn caps_galley(ui: &Ui, text: &str, color: Color32) -> std::sync::Arc<egui::Galley> {
+pub fn caps_galley(ui: &Ui, text: &str, color: Color32) -> Arc<egui::Galley> {
     let m = theme::metrics();
     let mut job = LayoutJob::default();
     job.append(
