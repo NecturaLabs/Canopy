@@ -16,6 +16,7 @@ use crate::action::Action;
 use crate::tab::{RepoTab, Resolver};
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::field::CodeArea;
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::surface::{Card, InsetBox};
 use crate::ui::kit::toggle::Switch;
@@ -291,7 +292,7 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                     hint(Command::ClearChoice),
                 );
                 ui.add(egui::Label::new(RichText::new(keys).size(m.small_size).color(p.text_faint)).truncate())
-                    .on_hover_text("Press ? for every shortcut");
+                    .kit_tooltip("Press ? for every shortcut").show();
                 ui.label(RichText::new(if done == n {
                     "All conflicts have a choice. Save the resolved file to stage it."
                 } else {
@@ -421,7 +422,7 @@ fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line
             && hover.is_some_and(|h| (top..top + row_h).contains(&h.y))
             && let Some(line) = lines.get(i)
         {
-            resp.clone().on_hover_text(line.as_str());
+            resp.clone().kit_tooltip(line.as_str()).show();
         }
         if let Some(line) = first_line {
             ui.painter().text(

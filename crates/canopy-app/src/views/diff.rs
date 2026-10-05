@@ -21,6 +21,7 @@ use crate::tab::{LineSelection, RepoTab};
 use crate::ui::kit::chip::{ChangeBadge, DiffStat};
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::overlay::Popover;
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::range::Slider;
 use crate::ui::kit::surface::EmptyState;
@@ -549,13 +550,15 @@ fn header(
                     )
                     .truncate(),
                 )
-                .on_hover_text(&sel.entry.path);
+                .kit_tooltip(&sel.entry.path)
+                .show();
                 if !dir.is_empty() {
                     ui.add(
                         egui::Label::new(RichText::new(dir).size(m.meta_size).color(p.text_faint))
                             .truncate(),
                     )
-                    .on_hover_text(dir);
+                    .kit_tooltip(dir)
+                    .show();
                 }
                 if let Some(old) = &sel.entry.old_path {
                     ui.add(
@@ -566,7 +569,8 @@ fn header(
                         )
                         .truncate(),
                     )
-                    .on_hover_text(old);
+                    .kit_tooltip(old)
+                    .show();
                 }
             };
             let mut controls = |ui: &mut Ui| {

@@ -25,6 +25,7 @@ use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::TextField;
 use crate::ui::kit::overlay;
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::paint;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::range::Slider;
@@ -1041,7 +1042,7 @@ fn in_use(ui: &mut Ui, field: &Field) {
         RichText::new(shown).size(size).color(p.text_faint),
     ));
     if cut {
-        resp.on_hover_text(source);
+        resp.kit_tooltip(source).show();
     }
 }
 
@@ -1761,7 +1762,8 @@ fn privacy(
                 )
                 .truncate(),
             )
-            .on_hover_text(folder.display().to_string());
+            .kit_tooltip(folder.display().to_string())
+            .show();
         });
     }
     if let Some(i) = remove {

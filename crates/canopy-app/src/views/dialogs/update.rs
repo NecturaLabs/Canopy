@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::selfupdate::{Install, Phase};
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Progress;
 use crate::updater::{Available, InstallState, Updater};
 
@@ -168,7 +169,8 @@ pub(super) fn update(
                         if LinkButton::new("Download it yourself")
                             .text_size(m.meta_size)
                             .show(ui)
-                            .on_hover_text(a.download())
+                            .kit_tooltip(a.download())
+                            .show()
                             .clicked()
                         {
                             extra = Some(Outcome::Run(vec![Action::OpenUrl(a.download())]));

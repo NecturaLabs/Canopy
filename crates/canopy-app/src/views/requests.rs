@@ -24,6 +24,7 @@ use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::{Badge, RefPill};
 use crate::ui::kit::choice::Segmented;
 use crate::ui::kit::field::TextArea;
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{Disclosure, ListRow, RowKind, SectionHeader};
 use crate::ui::kit::select::Select;
@@ -833,7 +834,8 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64, actions: &mut Vec<Action>) {
                     };
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(g).size(m.icon_md).color(col))
-                            .on_hover_text(word);
+                            .kit_tooltip(word)
+                            .show();
                         match &c.url {
                             Some(u) => {
                                 if LinkButton::new(&c.name).external(true).show(ui).clicked() {
@@ -866,7 +868,8 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64, actions: &mut Vec<Action>) {
                         .size(m.meta_size)
                         .color(c),
                 )
-                .on_hover_text(&r.state);
+                .kit_tooltip(&r.state)
+                .show();
             }
         });
         ui.add_space(theme::MD);

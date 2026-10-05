@@ -1,6 +1,7 @@
 //! Git's and ssh's credential prompts.
 
 use super::*;
+use crate::ui::kit::overlay::TooltipExt;
 
 /// The credential prompt: the question as git or ssh asked it, and the answer. It is answered
 /// with its buttons (or Esc, which declines through the dialog stack), never by a stray click on
@@ -152,7 +153,7 @@ pub(super) fn credential(
                             .external(true)
                             .text_size(m.meta_size)
                             .show(ui)
-                            .on_hover_text(url)
+                            .kit_tooltip(url).show()
                             .clicked()
                     {
                         extra = Some(Outcome::RunKeep(vec![Action::OpenUrl(url.to_owned())]));

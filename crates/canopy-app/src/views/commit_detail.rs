@@ -84,7 +84,8 @@ pub fn show(
                         .font(FontId::new(m.sha_size, egui::FontFamily::Monospace))
                         .color(p.accent),
                 )
-                .on_hover_text(d.oid.to_string());
+                .kit_tooltip(d.oid.to_string())
+                .show();
                 if IconButton::new(icon::COPY, "Copy SHA")
                     .size(Size::Xs)
                     .shortcut(Command::CopySha)
@@ -101,7 +102,8 @@ pub fn show(
                     .size(m.meta_size)
                     .color(p.text_dim),
                 )
-                .on_hover_text(widgets::full_date(d.author.time, d.author.offset_minutes));
+                .kit_tooltip(widgets::full_date(d.author.time, d.author.offset_minutes))
+                .show();
             });
             // Up to two whole file rows, the "N files changed" line above them (as tall as it
             // was last frame) and the gaps between them.
@@ -222,7 +224,8 @@ fn header(ui: &mut Ui, tab: &mut RepoTab) -> bool {
                 <= summary_rect.width();
             summary_ui
                 .add(egui::Label::new(RichText::new(summary).font(font).color(p.text)).truncate())
-                .on_hover_text(summary);
+                .kit_tooltip(summary)
+                .show();
             if toggle.clicked() {
                 tab.history_layout.expanded = !tab.history_layout.expanded;
                 tab.history_layout.compact_details = true;
@@ -354,7 +357,8 @@ fn author(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
             )
             .truncate(),
         )
-        .on_hover_text(format!("{} <{}>", d.author.name, d.author.email));
+        .kit_tooltip(format!("{} <{}>", d.author.name, d.author.email))
+        .show();
     });
 }
 
@@ -393,7 +397,8 @@ fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
                 if LinkButton::new(short_id(*parent))
                     .text_size(m.meta_size)
                     .show(ui)
-                    .on_hover_text(format!("Show commit {parent}"))
+                    .kit_tooltip(format!("Show commit {parent}"))
+                    .show()
                     .clicked()
                 {
                     actions.push(Action::Reveal(*parent));
@@ -433,11 +438,12 @@ fn file_stats(ui: &mut Ui, d: &CommitDetails) -> f32 {
                         .color(p.text_faint)
                         .size(m.small_size),
                 )
-                .on_hover_text(
+                .kit_tooltip(
                     "This is a partial clone: the line counts and renamed files \
                  need file contents that were not downloaded. Open a file \
                  to download it.",
-                );
+                )
+                .show();
             }
         })
     })
