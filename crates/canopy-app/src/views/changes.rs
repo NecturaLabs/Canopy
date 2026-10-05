@@ -2,7 +2,7 @@
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{
-    Align, FontFamily, FontId, Layout, Rect, Response, RichText, Stroke, Ui, UiBuilder, pos2, vec2,
+    Align, FontFamily, FontId, Layout, Rect, Response, RichText, Ui, UiBuilder, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -73,12 +73,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .default_size(pane_max.min(400.0))
         .min_size(pane_max.min(220.0))
         .max_size(pane_max.min(700.0))
-        .frame(
-            egui::Frame::new()
-                .fill(s.panel)
-                .stroke(Stroke::new(paint::SEAM, s.border)),
-        )
+        .frame(egui::Frame::new().fill(s.pane))
         .show(ui, |ui| {
+            // The seam to the diff; the pane's other edges are the card's or the window's.
+            let edge = ui.max_rect();
+            paint::seam_v(ui.painter(), edge.right() - 0.5, edge.y_range(), s.border);
             let list_frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 8));
             // The composer follows the lists while both fit; once the lists would crowd it, it
             // pins to the bottom and the lists scroll above it.
@@ -117,7 +116,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 .max_size(composer_height.min(cap))
                 .frame(
                     egui::Frame::new()
-                        .fill(s.panel)
+                        .fill(s.pane)
                         .inner_margin(egui::Margin::same(12)),
                 )
                 .show(ui, |ui| composer(ui, tab, &snap, actions, false));
