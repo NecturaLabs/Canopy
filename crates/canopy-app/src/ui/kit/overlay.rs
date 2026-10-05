@@ -567,9 +567,11 @@ pub(crate) fn split_chord(chord: &str) -> Vec<String> {
     let mut keys = Vec::new();
     let mut rest = chord;
     while !rest.is_empty() {
-        if let Some(i) = rest[1..].find('+').map(|i| i + 1) {
-            keys.push(rest[..i].to_owned());
-            rest = &rest[i + 1..];
+        // The first character is a key even when it is "+"; a "+" after it separates keys.
+        if let Some((i, _)) = rest.char_indices().skip(1).find(|&(_, c)| c == '+') {
+            let (key, tail) = rest.split_at(i);
+            keys.push(key.to_owned());
+            rest = tail.strip_prefix('+').unwrap_or(tail);
         } else {
             keys.push(rest.to_owned());
             break;
@@ -1577,6 +1579,19 @@ mod tests {
         assert_eq!(split_chord("Ctrl++"), ["Ctrl", "+"]);
         assert_eq!(split_chord("+"), ["+"]);
         assert_eq!(chord_keys(Command::Fetch), ["f"]);
+    }
+
+    #[test]
+    fn chords_with_symbol_keys_split_into_keys() {
+        // Zoom out's label is "Ctrl+−" (a minus sign), and arrows are "↓" and "↑": keys that take
+        // more than one byte.
+        assert_eq!(split_chord("Ctrl+−"), ["Ctrl", "−"]);
+        assert_eq!(split_chord("↓"), ["↓"]);
+        assert_eq!(split_chord("↑+Ctrl"), ["↑", "Ctrl"]);
+        assert_eq!(
+            chord_keys(Command::ZoomOut).last().map(String::as_str),
+            Some("−")
+        );
     }
 
     #[test]
