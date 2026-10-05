@@ -9,6 +9,7 @@ pub mod requests;
 pub mod resolve;
 pub mod settings_screen;
 pub mod sidebar;
+pub mod state_banner;
 pub mod statusbar;
 pub mod toolbar;
 pub mod welcome;

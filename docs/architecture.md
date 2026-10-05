@@ -153,6 +153,7 @@ thread.
 | `views/dialogs/stack.rs` | `DialogStack`: credentials in front, the consent never replaced, a closed prompt always answered. |
 | `views/dialogs/{url,start,credential,update,common}.rs` | The remote URL builder, where a new branch starts, credential prompts, the update dialog (what is new, installing, restarting), shared fields and buttons. |
 | `views/statusbar.rs` | Branch, ahead/behind, repository state, running job. |
+| `views/state_banner.rs` | The merge, rebase, cherry-pick or revert in progress above History, Changes and requests, with Continue and Abort. |
 
 ## Threading model
 

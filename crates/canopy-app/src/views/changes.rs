@@ -16,12 +16,11 @@ use crate::ui::kit::chip::{ChangeBadge, CountBadge, DiffStat};
 use crate::ui::kit::field::{TextArea, TextField};
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{ListRow, RowCtx, RowKind, SectionHeader, caps_galley};
-use crate::ui::kit::surface::Banner;
 use crate::ui::kit::toggle::Checkbox;
 use crate::ui::kit::{Button, IconButton, Size, Tone, anim, menu, paint};
 use crate::ui::theme::{self, palette};
 use crate::ui::{art, motion, widgets};
-use crate::views::{commit_detail, diff, resolve};
+use crate::views::{commit_detail, diff, resolve, state_banner};
 use crate::worker::Op;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -38,7 +37,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         ui.centered_and_justified(|ui| Spinner::new().label("changes").show(ui));
         return;
     };
-    state_banner(ui, tab, actions);
+    state_banner::show(ui, tab, actions);
     // Default selection: the first changed file.
     if tab
         .file
@@ -143,108 +142,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         });
 }
 
-/// The operation in progress (a merge, rebase, cherry-pick or revert) across the top of the
-/// view, with Continue and Abort.
-fn state_banner(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
-    let Some(snap) = &tab.snap else {
-        return;
-    };
-    if snap.state == canopy_core::RepoState::Clean {
-        return;
-    }
-    let state = snap.state;
-    let conflicts = snap.status.conflicted.len();
-    let busy = tab.running.is_some();
-    egui::Panel::top("repository-operation-state")
-        .frame(egui::Frame::NONE)
-        .show(ui, |ui| {
-            let left = if conflicts > 0 {
-                format!(
-                    "{conflicts} conflict{} left",
-                    if conflicts == 1 { "" } else { "s" }
-                )
-            } else {
-                "No conflicts left".to_owned()
-            };
-            let banner = Banner::new(
-                Tone::Warning,
-                format!("{} in progress on {}", state.label(), snap.head.label()),
-            )
-            .body(left)
-            .id_salt("repository-operation-state")
-            .show(ui);
-            let Some(command) = state.command() else {
-                return;
-            };
-            // The banner's own actions cannot be disabled or explain themselves, so Continue and
-            // Abort sit over its right end, where its actions would be.
-            let rect = banner.response.rect;
-            if rect.height() <= 0.0 {
-                return;
-            }
-            let full = theme::metrics().pane_header_height;
-            let row = Rect::from_min_size(
-                pos2(rect.left(), rect.bottom() - full),
-                vec2(rect.width(), full),
-            );
-            let mut child = ui.new_child(
-                UiBuilder::new()
-                    .max_rect(row.shrink2(vec2(theme::SM, 0.0)))
-                    .layout(Layout::right_to_left(Align::Center)),
-            );
-            child.set_clip_rect(rect.intersect(ui.clip_rect()));
-            child.spacing_mut().item_spacing.x = theme::SM;
-            if Button::new(format!("Abort {command}…"))
-                .ghost()
-                .size(Size::Sm)
-                .icon(icon::X_CIRCLE)
-                .icon_tone(Tone::Danger)
-                .enabled(!busy)
-                .disabled_reason("Wait for the current operation")
-                .id_salt("state-abort")
-                .show(&mut child)
-                .clicked()
-            {
-                actions.push(Action::Confirm {
-                    title: format!("Abort {command}"),
-                    body: "Return the repository to where it was before the operation \
-                           started? Resolved conflicts are discarded."
-                        .into(),
-                    confirm: "Abort".into(),
-                    danger: true,
-                    op: Op::ContinueOrAbort { state, abort: true },
-                });
-            }
-            let can_continue = conflicts == 0 && !busy;
-            let why = if busy {
-                "Wait for the current operation"
-            } else {
-                "Resolve and stage every conflicted file first"
-            };
-            if Button::new("Continue")
-                .ghost()
-                .size(Size::Sm)
-                .icon(icon::ARROW_RIGHT)
-                .enabled(can_continue)
-                .tooltip("Continue this operation using the staged resolutions")
-                .disabled_reason(why)
-                .id_salt("state-continue")
-                .show(&mut child)
-                .clicked()
-            {
-                actions.push(Action::Op(Op::ContinueOrAbort {
-                    state,
-                    abort: false,
-                }));
-            }
-        });
-}
-
 /// Gap between the last list and the composer when the composer follows the lists.
 const COMPOSER_GAP: f32 = 28.0;
 /// Gap between two file lists, and the height of an empty list's placeholder line.
 const LIST_GAP: f32 = theme::MD;
 const EMPTY_LIST: f32 = theme::XL;
+/// The clean tree's one call to action ("Push", "Pull", "Publish…") stays a proper button under
+/// the illustration however short its label.
+const CTA_MIN_WIDTH: f32 = 120.0;
 
 /// Height of the sections `lists` draws, close enough to decide whether the composer fits
 /// below them. An overestimate only pins the composer; an underestimate scrolls.
@@ -469,6 +374,7 @@ fn clean_home(
                     ui.add_space(theme::SM);
                     if Button::new(label)
                         .primary()
+                        .min_width(CTA_MIN_WIDTH)
                         .enabled(!busy)
                         .disabled_reason("Another operation is still running")
                         .show(ui)

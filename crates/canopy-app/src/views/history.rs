@@ -25,7 +25,7 @@ use crate::ui::kit::{Button, IconButton, paint};
 use crate::ui::theme::{self, palette};
 use crate::ui::widgets::forge_icon;
 use crate::ui::{art, widgets};
-use crate::views::{commit_detail, dialogs::Dialog, diff};
+use crate::views::{commit_detail, dialogs::Dialog, diff, state_banner};
 use crate::worker::Op;
 
 /// Lanes past this many are clipped off the graph column.
@@ -57,7 +57,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         loading(ui, tab);
         return;
     }
-    widgets::repository_state_banner(ui, tab, actions);
+    state_banner::show(ui, tab, actions);
     if tab
         .snap
         .as_ref()
