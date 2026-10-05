@@ -982,7 +982,7 @@ fn merge_body(
         .label("Merge or rebase")
         .id_salt("merge-kind")
         .show(ui);
-    let names: Vec<String> = tab
+    let mut names: Vec<String> = tab
         .and_then(|t| t.snap.as_ref())
         .map(|s| {
             s.branches
@@ -993,6 +993,10 @@ fn merge_body(
                 .collect()
         })
         .unwrap_or_default();
+    // A branch chosen before the dialog opened stays listed even if this list lacks it.
+    if !target.is_empty() && !names.contains(target) {
+        names.insert(0, target.clone());
+    }
     let options: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), n.as_str())).collect();
     let mut pick = names
         .iter()

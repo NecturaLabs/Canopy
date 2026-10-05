@@ -163,14 +163,23 @@ fn search_trigger(ui: &mut Ui) -> egui::Response {
         Size::Md
     };
     let mut nothing = String::new();
-    let field = SearchField::new(&mut nothing)
-        .placeholder("Search commands…")
-        .shortcut(Command::Palette)
-        .read_only(true)
-        .size(size)
-        .width(m.search_trigger.x)
-        .id_salt("title-search")
-        .show(ui);
+    // Its own slot, so the field lays out from its left edge whatever the strip's direction.
+    let field = ui
+        .allocate_ui_with_layout(
+            vec2(m.search_trigger.x, size.height()),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                SearchField::new(&mut nothing)
+                    .placeholder("Search commands…")
+                    .shortcut(Command::Palette)
+                    .read_only(true)
+                    .size(size)
+                    .width(m.search_trigger.x)
+                    .id_salt("title-search")
+                    .show(ui)
+            },
+        )
+        .inner;
     let r = ui
         .interact(
             field.rect,
