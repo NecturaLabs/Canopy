@@ -691,7 +691,8 @@ impl eframe::App for CanopyApp {
         let deeper = theme::style() == theme::Style::Deeper;
         let screen = ctx.content_rect();
         // The top deck: the tab strip and the action bar. Standard paints each as flat chrome over
-        // a seam; Deeper paints them as one lifted surface (`kit::paint::deck`).
+        // a seam. Deeper leaves the tab strip on the ground and floats the action bar as a lifted
+        // card in line with the panes below.
         let deck_height = m.tab_strip_height
             + if self.tabs.get(self.active).is_some() {
                 m.action_bar_height
@@ -701,9 +702,9 @@ impl eframe::App for CanopyApp {
         let background = ctx.layer_painter(egui::LayerId::background());
         background.rect_filled(screen, egui::CornerRadius::ZERO, s.bg);
         if deeper {
-            let deck =
-                egui::Rect::from_min_size(screen.min, egui::vec2(screen.width(), deck_height));
-            crate::ui::kit::paint::deck(&background, deck, p, s);
+            if deck_height > m.tab_strip_height {
+                action_card(&background, screen, m, p);
+            }
         } else {
             let strip = egui::Rect::from_min_size(
                 screen.min,
@@ -819,12 +820,24 @@ impl eframe::App for CanopyApp {
                     });
             }
             content_pane(ui, |ui| match tab.view {
-                View::History => history::show(ui, tab, &self.settings, &mut actions),
-                View::Changes => changes::show(ui, tab, &mut actions),
-                View::Requests => requests::show(ui, tab, self.settings.hosting_api, &mut actions),
+                View::History => {
+                    history::show(ui, tab, &self.settings, &mut actions);
+                    history_split(ui.ctx(), tab)
+                }
+                View::Changes => {
+                    changes::show(ui, tab, &mut actions);
+                    None
+                }
+                View::Requests => {
+                    requests::show(ui, tab, self.settings.hosting_api, &mut actions);
+                    None
+                }
             });
         } else {
-            content_pane(ui, |ui| welcome::show(ui, &self.settings, &mut actions));
+            content_pane(ui, |ui| {
+                welcome::show(ui, &self.settings, &mut actions);
+                None
+            });
         }
 
         // Overlays.
@@ -988,32 +1001,214 @@ impl eframe::App for CanopyApp {
     }
 }
 
-/// The central content pane: flush on the pane ground in Standard; in Deeper a floating card over
-/// the ground's gutters, with the focused-pane edge (the main pane holds the keyboard).
-fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
+/// The central content pane: flush on the pane ground in Standard. In Deeper a floating card over
+/// the ground's gutters, or two when History shows its details below the table (`content` returns
+/// the height where they meet); the card that holds the keyboard (the table, or the only card)
+/// carries the focused-pane edge.
+fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui) -> Option<f32>) {
     let m = theme::metrics();
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
-    let gutter = crate::ui::points_i8(m.pane_gutter);
-    // Concept 4's body padding: none above (the deck), the gutter at the sides and below.
-    let margin = egui::Margin {
-        left: gutter,
-        right: gutter,
-        top: 0,
-        bottom: gutter,
-    };
+    // Concept 4's body padding: the gutter all round, below the action card too (Standard: none).
+    let margin = egui::Margin::same(crate::ui::points_i8(m.pane_gutter));
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.inner_margin(margin))
         .show(ui, |ui| {
             let card = ui.max_rect();
-            let radius = crate::ui::kit::paint::pane(ui.painter(), card, p, s.pane, 1.0);
-            if radius != egui::CornerRadius::ZERO {
-                // Content stays inside the rounded card.
-                let clip = card.shrink(f32::from(radius.nw) * 0.3);
-                ui.set_clip_rect(clip.intersect(ui.clip_rect()));
+            if theme::style() == theme::Style::Standard {
+                crate::ui::kit::paint::pane(ui.painter(), card, p, s.pane, 1.0);
+                content(ui);
+                return;
             }
-            content(ui);
+            // The cards' shadows and fills go under the content, once the split is known.
+            let wide = ui.painter().clone();
+            let below = wide.add(egui::Shape::Noop);
+            let radius = egui::CornerRadius::same(m.pane_radius);
+            // Content stays inside the rounded card.
+            let clip = card.shrink(f32::from(radius.nw) * 0.3);
+            ui.set_clip_rect(clip.intersect(ui.clip_rect()));
+            let gap = m.pane_gutter;
+            let split = content(ui)
+                .filter(|y| *y - gap > card.top() + gap && *y + gap < card.bottom() - gap);
+            let cards = match split {
+                Some(y) => vec![
+                    egui::Rect::from_min_max(card.min, egui::pos2(card.right(), y - gap / 2.0)),
+                    egui::Rect::from_min_max(egui::pos2(card.left(), y + gap / 2.0), card.max),
+                ],
+                None => vec![card],
+            };
+            let mut shapes = Vec::new();
+            for c in &cards {
+                shapes.extend(crate::ui::kit::paint::surface_shapes(
+                    &wide,
+                    *c,
+                    radius,
+                    p,
+                    theme::Style::Deeper,
+                    theme::Elevation::Pane,
+                    theme::Fill::flat(s.pane),
+                    s.pane_edge,
+                ));
+            }
+            wide.set(below, egui::Shape::Vec(shapes));
+            if let Some(y) = split {
+                split_gutter(ui, &wide, &cards, radius, y);
+            }
+            // The card that holds the keyboard (the table) gets the focus edge and a lit top.
+            focused_edge(&wide, cards[0], radius, p.focus);
         });
+}
+
+/// Where History's details meet the table, when they sit below it as their own card (Deeper).
+fn history_split(ctx: &egui::Context, tab: &RepoTab) -> Option<f32> {
+    let below = theme::style() == theme::Style::Deeper
+        && !tab.history_layout.compact
+        && !tab.history_layout.expanded
+        && tab.snap.as_ref().is_some_and(|s| !s.commits.is_empty());
+    below
+        .then(|| ctx.read_response(details_handle()))
+        .flatten()
+        .map(|r| r.rect.center().y)
+}
+
+/// The resize handle of History's details panel (`Panel::bottom("details")`): egui registers it
+/// under the panel id with "__resize", centred on the panel's top edge, each frame it is shown.
+fn details_handle() -> egui::Id {
+    egui::Id::new("details").with("__resize")
+}
+
+/// The gutter between History's two cards, painted over the content that runs under it: the
+/// ground, the table card's shadow falling into it, the cards' inner corners and edges, the lower
+/// card's top highlight, and the split handle's line while it is hovered or dragged.
+fn split_gutter(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    cards: &[egui::Rect],
+    radius: egui::CornerRadius,
+    y: f32,
+) {
+    let (Some(top), Some(bottom)) = (cards.first(), cards.get(1)) else {
+        return;
+    };
+    let p = palette(ui.ctx());
+    let s = theme::surfaces(ui.ctx());
+    let band = egui::Rect::from_x_y_ranges(top.x_range(), top.bottom()..=bottom.top());
+    painter.rect_filled(band, egui::CornerRadius::ZERO, s.bg);
+    let material = p.material(theme::Style::Deeper, theme::Elevation::Pane);
+    painter
+        .with_clip_rect(band)
+        .extend(crate::ui::kit::paint::shadow_shapes(
+            *top, radius, p, &material,
+        ));
+    let r = f32::from(radius.nw);
+    let quarter = std::f32::consts::FRAC_PI_2;
+    for (corner, centre, from) in [
+        (
+            top.left_bottom(),
+            top.left_bottom() + egui::vec2(r, -r),
+            quarter,
+        ),
+        (
+            top.right_bottom(),
+            top.right_bottom() + egui::vec2(-r, -r),
+            0.0,
+        ),
+        (
+            bottom.left_top(),
+            bottom.left_top() + egui::vec2(r, r),
+            2.0 * quarter,
+        ),
+        (
+            bottom.right_top(),
+            bottom.right_top() + egui::vec2(-r, r),
+            3.0 * quarter,
+        ),
+    ] {
+        corner_mask(painter, corner, centre, r, from, s.bg);
+    }
+    if let Some(edge) = s.pane_edge {
+        crate::ui::kit::paint::rim(painter, *top, radius, edge);
+        crate::ui::kit::paint::rim(painter, *bottom, radius, edge);
+    }
+    crate::ui::kit::paint::top_highlight(painter, *bottom, radius, material.highlight);
+    if ui
+        .ctx()
+        .read_response(details_handle())
+        .is_some_and(|r| r.hovered() || r.dragged())
+    {
+        painter.hline(
+            band.x_range().shrink(r),
+            y,
+            egui::Stroke::new(2.0, theme::Palette::tint(p.focus, 150)),
+        );
+    }
+}
+
+/// Paints `color` over the part of a square corner outside its rounded arc: a fan from `corner`
+/// over the quarter arc of radius `r` around `centre` that starts at angle `from`.
+fn corner_mask(
+    painter: &egui::Painter,
+    corner: egui::Pos2,
+    centre: egui::Pos2,
+    r: f32,
+    from: f32,
+    color: egui::Color32,
+) {
+    const STEPS: u16 = 8;
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(corner, color);
+    for i in 0..=STEPS {
+        let a = from + std::f32::consts::FRAC_PI_2 * f32::from(i) / f32::from(STEPS);
+        mesh.colored_vertex(centre + r * egui::vec2(a.cos(), a.sin()), color);
+    }
+    for i in 1..=u32::from(STEPS) {
+        mesh.add_triangle(0, i, i + 1);
+    }
+    painter.add(mesh);
+}
+
+/// Deeper's focused-pane edge on `card`, its top edge lit at full strength so the pane that holds
+/// the keyboard (History's table) reads as the one in front.
+fn focused_edge(
+    painter: &egui::Painter,
+    card: egui::Rect,
+    radius: egui::CornerRadius,
+    focus: egui::Color32,
+) {
+    crate::ui::kit::paint::focus_edge(painter, card, radius, focus, 1.0);
+    let r = f32::from(radius.nw);
+    let width = 1.5;
+    painter.hline(
+        (card.left() + r)..=(card.right() - r),
+        card.top() + width / 2.0,
+        egui::Stroke::new(width, theme::Palette::tint(focus, 210)),
+    );
+}
+
+/// Deeper's action bar: a lifted card (the deck's gradient, highlight and shadow, the panes' edge)
+/// inset by the pane gutter, so the tools float in line with the cards below.
+fn action_card(
+    painter: &egui::Painter,
+    screen: egui::Rect,
+    m: &theme::Metrics,
+    p: &theme::Palette,
+) {
+    let s = p.surfaces(theme::Style::Deeper);
+    let top = screen.top() + m.tab_strip_height;
+    let card = egui::Rect::from_min_max(
+        egui::pos2(screen.left() + m.pane_gutter, top),
+        egui::pos2(screen.right() - m.pane_gutter, top + m.action_bar_height),
+    );
+    crate::ui::kit::paint::surface(
+        painter,
+        card,
+        egui::CornerRadius::same(m.pane_radius),
+        p,
+        theme::Style::Deeper,
+        theme::Elevation::Deck,
+        s.deck,
+        s.pane_edge,
+    );
 }
 
 /// The compact window's navigation: a button opening the sidebar in a popover. Its open state is
@@ -1042,6 +1237,35 @@ fn navigation_menu(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> eg
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Deeper's History split reads where the details begin from the details panel's resize
+    /// handle; this pins the egui behaviour it relies on (the handle's id and its place).
+    #[test]
+    fn the_details_handle_marks_the_top_of_the_details_panel() {
+        let ctx = egui::Context::default();
+        let (mut top, mut handle) = (None, None);
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let details = egui::Panel::bottom("details")
+                        .resizable(true)
+                        .default_size(200.0)
+                        .show(ui, |ui| ui.label("details"));
+                    top = Some(details.response.rect.top());
+                    handle = ui
+                        .ctx()
+                        .read_response(details_handle())
+                        .map(|r| r.rect.center().y);
+                });
+            });
+            output.textures_delta.clear();
+        }
+        let (top, handle) = (top.unwrap_or(f32::NAN), handle.unwrap_or(f32::NAN));
+        assert!(
+            (top - handle).abs() < 1.0,
+            "panel top {top}, handle {handle}"
+        );
+    }
 
     #[test]
     fn compact_navigation_stays_open_for_context_actions() {

@@ -10,10 +10,12 @@ commits since the previous build.
 
 ### Added
 
-- Redesigned themes and appearance options. All eight themes take the new look: quiet two-tone
-  chrome, solid indigo primary buttons in Midnight and Daylight, soft shadows only under menus
-  and dialogs. Settings → Appearance adds Style (Standard, or Deeper with floating panes and
-  gradient controls), Density (Comfortable, or Dense with 24-point rows and a one-row toolbar) and
+- Redesigned themes and appearance options. All eight themes take the new look, each with its
+  own character: quiet two-tone chrome in the theme's own tint, signature and status colours in
+  its own temperature, clean coloured banners, graph lines that never look alike, and soft
+  shadows only under menus and dialogs. Settings → Appearance adds Style (Standard, or Deeper,
+  where the action bar and panes float as cards, History splits into a commit card and a details
+  card, and the focused pane is lit along its top), Density (Comfortable, or Dense with 24-point rows and a one-row toolbar) and
   Motion (match the system, reduced or full), which replaces the Reduce motion switch; an earlier
   "reduce motion" choice carries over as Reduced.
 - Translucent surfaces in Settings → Appearance: the command palette blurs what is behind it.
@@ -86,6 +88,8 @@ commits since the previous build.
 
 ### Fixed
 
+- Scroll bars in the commit details, toasts and code boxes are a thin, quiet handle beside the
+  text instead of a thick full-colour bar. The soft glow inside the illustrations fades smoothly instead of in rings.
 - Pull uses the chosen strategy (merge, rebase or fast-forward only) whenever `git` itself has
   no `pull.rebase` setting. Canopy read the setting through libgit2, which ignores
   `GIT_CONFIG_GLOBAL`, so it could skip the strategy, and recent versions of Git refuse to

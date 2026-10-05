@@ -29,39 +29,64 @@ the shared colours with `theme::palette(ctx)`.
   lighter than the `bg` ground in dark themes, darker in light), flush panes divided by 1 pt
   `border` seams, raised `raised` secondary buttons with a 1 pt `raised_edge`, a solid `primary`,
   and soft shadows only under floating layers. Content is painted on `pane`, which equals `bg`.
-- **Deeper** is concept 4: a darker ground with the chrome on it, content panes as floating cards
-  (`pane`, `pane_edge`) over gutters, gradient fills (`Fill { top, bottom }`), stronger highlights,
-  layered shadows and a focused-pane edge in `focus`. The tab strip and action bar form one lifted
-  `deck`; the table header strip is `pane_header` with a `focus`-tinted seam, so neither reads as
-  one more neutral edge.
+- **Deeper** is concept 4, "a floating instrument": the ground recedes and what you work on floats
+  over it. The tab strip sits on the ground and the action bar is a lifted card (`deck`, with the
+  deck's gradient, highlight and shadow and a `pane_edge` ring). Content panes are cards (`pane`,
+  `pane_edge`) with the gutter on every side, gradient fills (`Fill { top, bottom }`), stronger
+  highlights and layered shadows. History splits into two cards, the commit table and the commit
+  details, at the details panel's resize handle; a hovered or dragged split shows a thin
+  `focus`-tinted line. The focused card carries the `focus` gradient edge and a lit `focus` line
+  along its top, over the `pane_header` strip with its `focus`-tinted seam.
+
+Each theme builds both styles from one surface ladder in its own neutral hue: Standard's chrome is
+at least 2.5 L* off the ground and Deeper's cards at least 4 L* (`surface_steps_are_visible`), so
+the steps read on any display without becoming boxes.
 
 Interaction states are translucent overlays of `hover_ink`: `hover()`, `hover_strong()`,
 `pressed()` and Dense's `zebra()`; selection is the `selected()` wash with no side bar. Status
-tints (`success_tint()` and so on) are 16%. `danger` is the text-grade red; `danger_base` is
-concept 1's `#e5484d` red for error rings, the danger button's focus ring and danger fills;
-`danger_solid` fills the danger button. Light themes ring the switch knob in `knob_edge`.
+tints (`success_tint()` and so on) are 16% washes of `Palette::tones`: in dark themes the status
+colours themselves, in light themes a brighter, more chromatic hue of each, so a wash reads clean
+rather than beige, khaki or lilac; text and the status colour stay readable on every wash
+(`status_washes_keep_text_readable`). `danger` is the text-grade red; `danger_base` is concept 1's
+`#e5484d` red for error rings, the danger button's focus ring and danger fills; `danger_solid`
+fills the danger button. Light themes ring the switch knob in `knob_edge`. Disabled controls use
+`Palette::disabled_text` on `Surfaces::disabled_fill` with a `disabled_edge` ring, flat in both
+styles and never dimmed again with `DISABLED_ALPHA` (`disabled_tokens_are_readable`: at least
+3:1, 4.5:1 in Contrast).
 
-Midnight and Daylight carry concept 1's values; the other six themes keep their own colour
-identities on the same lightness ladders. Every pairing (text on every surface and state, labels
-on every fill end, focus, outlines, lanes, syntax, coloured components, glass over any backdrop)
-is a test in `theme.rs`, run for every theme in both styles; `Palette::ink` keeps coloured text
-readable on its own tint.
+Each theme has one idea, carried by its ladder, signature, selection and status colours:
+
+| Theme | Idea | Ground and signature |
+|---|---|---|
+| Midnight (default) | Observatory | blue-black graphite with a cool cast, an indigo signature, starlight-blue links |
+| Daylight | Studio morning | white canvas in cool slate chrome, indigo ink, clean mint, apricot, rose and periwinkle washes |
+| Aurora | Polar night | deep marine, a polar-sky blue signature, aurora violet and teal lanes, amber caution |
+| Ember | Forge at dusk | warm charcoal and cream type, a copper signature, steel-blue links, an apricot selection glow |
+| Neon | Night city | black-violet, electric cyan with a hot magenta second voice, a true green for success |
+| Forest | Evergreen at dusk | deep green shade, a sunlit-gold signature, a lake-blue selection |
+| Paper | Letterpress | warm cream stock with whiter fields and sheets, Prussian ink, a sepia highlighter selection |
+| Contrast | Signal | pure black, white type, strong outlines, a yellow focus ring, a neutral white selection |
+
+Every pairing (text on every surface and state, labels on every fill end, focus, outlines, lanes,
+syntax, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme
+in both styles; `Palette::ink` keeps coloured text readable on its own tint.
 
 ### Lane colours
 
 Ten colours, assigned to lines of history in order and reused cyclically. Each theme has its own
-set, each at least 3:1 against the background, a hovered row and a selected row; Midnight uses the set below, Daylight uses deeper variants, and the other themes define
-their own in `theme.rs`. Ember leads with orange and gold, Forest with sunlit gold, sky blue and
-mint, and Aurora with arctic blue and muted lilac. In light themes, edges are drawn at full opacity and
-the node fill uses the panel colour.
+set in `theme.rs`, led by the theme's own voices and spread round the hue wheel at one balanced
+lightness: any two lanes of a theme are at least CIELAB ΔE 25 apart (`graph_lanes_are_distinct`),
+and each is at least 3:1 against the background, a hovered row and a selected row. Light themes
+use deeper lanes. In light themes, edges are drawn at full opacity and the node fill uses the
+panel colour. Midnight's set:
 
 | Index | Hex | | Index | Hex |
 |---|---|---|---|---|
-| 0 | `#8B5CF6` violet | | 5 | `#60A5FA` blue |
-| 1 | `#22D3EE` cyan | | 6 | `#F87171` red |
-| 2 | `#F472B6` pink | | 7 | `#A3E635` lime |
-| 3 | `#34D399` green | | 8 | `#FB923C` orange |
-| 4 | `#FBBF24` amber | | 9 | `#C084FC` purple |
+| 0 | `#A5B1FF` periwinkle | | 5 | `#F59BF0` orchid |
+| 1 | `#4CD494` green | | 6 | `#01DEDF` cyan |
+| 2 | `#ED9234` orange | | 7 | `#8EBE4F` leaf |
+| 3 | `#00BFF7` sky blue | | 8 | `#F980A0` rose |
+| 4 | `#DFC43D` gold | | 9 | `#FFAD8E` peach |
 
 Avatar backgrounds are picked from the same ten colours by a stable hash of the author's email.
 
@@ -141,7 +166,10 @@ recess and shadow layers; `kit::paint::surface` paints them. In Standard only bu
 segmented thumb and the switch knob carry a 1 to 2 px contact shadow, and floating layers (menus,
 popovers, tooltips, toasts, dialogs, palette, cheatsheet) a two-layer soft shadow with a 1 pt
 `overlay_edge` ring. Deeper adds two-layer shadows to controls, coloured glows under primary and
-danger buttons, the `Pane` shadow under cards, the field recess and the deck. Contrast has no
+danger buttons, the `Pane` shadow under cards, the field recess and the deck. Shadows take each
+theme's own tinted `shadow` colour (cool slate in Daylight, warm umber in Paper, the ground's hue
+in dark themes), and Deeper's light-theme cards add a tight contact layer under a wide soft one,
+so they lift off a light ground as clearly as off a dark one. Contrast has no
 highlights and rings floating layers in `control_border`. The top highlight line is white at the
 level's alpha, from `theme::highlight_line`.
 
@@ -368,7 +396,10 @@ when checked. Both carry their name for assistive technology and show the focus 
 Lists that scroll inside a fixed area (the command palette, the cheatsheet) fade their top and
 bottom 12 points into the surface, at 85% strength, where more content lies beyond, so a cut row reads
 as "more" (`kit::paint::scroll_fade`). The palette's list also shows whole rows only. A scrollbar's handle
-is never shorter than 32 points, so a long document's stays easy to see and grab.
+is never shorter than 32 points, so a long document's stays easy to see and grab. Scroll bars are
+a 4-point handle in the text colour: floating ones appear at 45% while the area is hovered;
+code, diff and detail boxes (`theme::solid_scroll`) keep theirs visible at 45%, with its own
+8-point lane beside the content, and every handle goes to 75% while hovered or dragged.
 
 ### Illustrations
 

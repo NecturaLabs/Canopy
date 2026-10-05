@@ -62,26 +62,43 @@ pub fn empty_error() -> Art {
     Art::Error
 }
 
-/// A soft radial halo: `color` at the centre fading to nothing at `radius`.
+/// A soft radial halo: `color` at the centre fading to nothing at `radius` along a Gaussian-like
+/// curve, laid out in rings so the falloff has no hard rim and no linear ramp to band.
 fn radial_halo(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
-    const SEGMENTS: u32 = 64;
+    const SEGMENTS: u16 = 96;
+    const RINGS: u16 = 12;
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(center, color);
-    for i in 0..=SEGMENTS {
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "at most 64 segments, exact in f32"
-        )]
-        let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
-        mesh.colored_vertex(
-            center + vec2(a.cos(), a.sin()) * radius,
-            Color32::TRANSPARENT,
-        );
+    for ring in 1..=RINGS {
+        let t = f32::from(ring) / f32::from(RINGS);
+        let c = color.gamma_multiply(halo_falloff(t));
+        for i in 0..SEGMENTS {
+            let a = f32::from(i) / f32::from(SEGMENTS) * std::f32::consts::TAU;
+            mesh.colored_vertex(center + vec2(a.cos(), a.sin()) * radius * t, c);
+        }
     }
-    for i in 1..=SEGMENTS {
-        mesh.add_triangle(0, i, i + 1);
+    let segments = u32::from(SEGMENTS);
+    let at = |ring: u32, i: u32| 1 + (ring - 1) * segments + i % segments;
+    for i in 0..segments {
+        mesh.add_triangle(0, at(1, i), at(1, i + 1));
+    }
+    for ring in 1..u32::from(RINGS) {
+        for i in 0..segments {
+            let (a, b) = (at(ring, i), at(ring, i + 1));
+            let (c, d) = (at(ring + 1, i), at(ring + 1, i + 1));
+            mesh.add_triangle(a, b, d);
+            mesh.add_triangle(a, d, c);
+        }
     }
     painter.add(mesh);
+}
+
+/// A halo's strength at `t` (0 at the centre, 1 at the rim): a Gaussian shifted to reach exactly
+/// 0 at the rim with a flat tail, so the edge never reads as a ring.
+fn halo_falloff(t: f32) -> f32 {
+    const K: f32 = 3.2;
+    let g = |x: f32| (-K * x * x).exp();
+    ((g(t) - g(1.0)) / (1.0 - g(1.0))).clamp(0.0, 1.0)
 }
 
 /// Draws `art` at `size` points (its aspect ratio is kept, centred in `size`).
