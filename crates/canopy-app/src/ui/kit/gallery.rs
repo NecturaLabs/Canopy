@@ -5,7 +5,8 @@
 //! [`SECTIONS`]. A section is drawn twice side by side, on the content ground (`pane`) and on the
 //! chrome (`panel`), so every component is seen on both. Force states with `show_forced`.
 //! `--gallery-page N` scrolls down N window heights so the screenshot script can capture a page
-//! at a time.
+//! at a time; a page past the end shows the last one, and every page says which it is ("Page 3
+//! of 15", bottom right).
 
 use egui::{
     Align2, Color32, CornerRadius, FontId, Id, Order, Rect, RichText, Sense, Stroke, StrokeKind,
@@ -40,9 +41,14 @@ pub const SECTIONS: &[Section] = &[
 
 const MAX_WIDTH: f32 = 1360.0;
 
-/// Paints the gallery over the whole window, scrolled down `page` window heights.
+/// Paints the gallery over the whole window, scrolled down `page` window heights (no further than
+/// its end).
 pub fn show(ctx: &egui::Context, page: usize) {
     let screen = ctx.content_rect();
+    // The content's and the viewport's height last frame: a page past the end is the last page.
+    let size_key = Id::new("canopy-gallery-size");
+    let size: Option<(f32, f32)> = ctx.data(|d| d.get_temp(size_key));
+    let offset = page_offset(page, size, screen.height());
     egui::Area::new(Id::new("canopy-gallery"))
         .order(Order::Foreground)
         .fixed_pos(screen.min)
@@ -51,9 +57,9 @@ pub fn show(ctx: &egui::Context, page: usize) {
             ui.painter().rect_filled(screen, CornerRadius::ZERO, s.bg);
             ui.set_min_size(screen.size());
             ui.set_max_size(screen.size());
-            egui::ScrollArea::vertical()
+            let out = egui::ScrollArea::vertical()
                 .id_salt("canopy-gallery-scroll")
-                .vertical_scroll_offset(crate::ui::count_f32(page) * screen.height())
+                .vertical_scroll_offset(offset)
                 .show(ui, |ui| {
                     let width = ui.available_width().min(MAX_WIDTH);
                     let side = (ui.available_width() - width) / 2.0;
@@ -65,7 +71,53 @@ pub fn show(ctx: &egui::Context, page: usize) {
                         });
                     });
                 });
+            let now = (out.content_size.y, out.inner_rect.height());
+            if size != Some(now) {
+                ctx.data_mut(|d| d.insert_temp(size_key, now));
+                ctx.request_repaint();
+            }
+            page_label(ui, screen, offset, now);
         });
+}
+
+/// Where page `page` starts: `page` viewports down, but no further than the last full viewport
+/// of the content (`size`: its height and the viewport's, once known).
+fn page_offset(page: usize, size: Option<(f32, f32)>, screen_height: f32) -> f32 {
+    let wanted = crate::ui::count_f32(page) * screen_height;
+    match size {
+        Some((content, viewport)) => wanted.min((content - viewport).max(0.0)),
+        None => wanted,
+    }
+}
+
+/// "Page 3 of 15" at the bottom right, so a screenshot says where in the gallery it is.
+fn page_label(ui: &Ui, screen: Rect, offset: f32, (content, viewport): (f32, f32)) {
+    if viewport <= 0.0 {
+        return;
+    }
+    let m = theme::metrics();
+    let p = theme::palette(ui.ctx());
+    let s = theme::surfaces(ui.ctx());
+    let pages = ((content - viewport).max(0.0) / viewport).ceil() + 1.0;
+    let at = (offset / viewport).ceil().min(pages - 1.0);
+    let text = format!("Page {at} of {}", pages - 1.0);
+    let g = ui
+        .painter()
+        .layout_no_wrap(text, FontId::proportional(m.small_size), p.text_dim);
+    let pad = vec2(theme::SM, theme::XS);
+    let rect = Rect::from_min_size(
+        screen.right_bottom() - g.size() - pad * 2.0 - Vec2::splat(theme::LG),
+        g.size() + pad * 2.0,
+    );
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(m.radius_sm), s.overlay);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(m.radius_sm),
+        Stroke::new(paint::SEAM, s.border),
+        StrokeKind::Inside,
+    );
+    painter.galley(rect.min + pad, g, p.text_dim);
 }
 
 fn page_content(ui: &mut Ui) {
@@ -468,5 +520,20 @@ fn motion_strip(ui: &mut Ui) {
                     .show_forced(ui, force);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pages_past_the_end_show_the_last_page() {
+        // Unknown size: as asked.
+        assert_eq!(page_offset(3, None, 900.0), 2700.0);
+        // 10000 tall in a 900 viewport: page 3 is 2700 down, page 16 stops at the end.
+        assert_eq!(page_offset(3, Some((10000.0, 900.0)), 900.0), 2700.0);
+        assert_eq!(page_offset(16, Some((10000.0, 900.0)), 900.0), 9100.0);
+        assert_eq!(page_offset(16, Some((500.0, 900.0)), 900.0), 0.0);
     }
 }
