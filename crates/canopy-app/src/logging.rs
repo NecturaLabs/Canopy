@@ -51,13 +51,13 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    pub const ALL: [LogLevel; 3] = [LogLevel::Normal, LogLevel::Detailed, LogLevel::Trace];
+    pub const ALL: [Self; 3] = [Self::Normal, Self::Detailed, Self::Trace];
 
     pub fn label(self) -> &'static str {
         match self {
-            LogLevel::Normal => "Normal",
-            LogLevel::Detailed => "Detailed",
-            LogLevel::Trace => "Everything",
+            Self::Normal => "Normal",
+            Self::Detailed => "Detailed",
+            Self::Trace => "Everything",
         }
     }
 
@@ -65,9 +65,9 @@ impl LogLevel {
     /// `canopy_hosting`.
     pub fn filter(self) -> &'static str {
         match self {
-            LogLevel::Normal => "warn,canopy=info,canopy_core=info,canopy_hosting=info",
-            LogLevel::Detailed => "info,canopy=debug,canopy_core=debug,canopy_hosting=debug",
-            LogLevel::Trace => "debug,canopy=trace,canopy_core=trace,canopy_hosting=trace",
+            Self::Normal => "warn,canopy=info,canopy_core=info,canopy_hosting=info",
+            Self::Detailed => "info,canopy=debug,canopy_core=debug,canopy_hosting=debug",
+            Self::Trace => "debug,canopy=trace,canopy_core=trace,canopy_hosting=trace",
         }
     }
 }

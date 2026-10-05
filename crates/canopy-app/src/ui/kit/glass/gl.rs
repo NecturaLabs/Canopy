@@ -80,13 +80,13 @@ enum Scalar {
 impl Scalar {
     fn name(self) -> u32 {
         match self {
-            Scalar::MaxTextureSize => glow::MAX_TEXTURE_SIZE,
-            Scalar::SampleBuffers => glow::SAMPLE_BUFFERS,
-            Scalar::ActiveTexture => glow::ACTIVE_TEXTURE,
-            Scalar::BlendSrcRgb => glow::BLEND_SRC_RGB,
-            Scalar::BlendDstRgb => glow::BLEND_DST_RGB,
-            Scalar::BlendSrcAlpha => glow::BLEND_SRC_ALPHA,
-            Scalar::BlendDstAlpha => glow::BLEND_DST_ALPHA,
+            Self::MaxTextureSize => glow::MAX_TEXTURE_SIZE,
+            Self::SampleBuffers => glow::SAMPLE_BUFFERS,
+            Self::ActiveTexture => glow::ACTIVE_TEXTURE,
+            Self::BlendSrcRgb => glow::BLEND_SRC_RGB,
+            Self::BlendDstRgb => glow::BLEND_DST_RGB,
+            Self::BlendSrcAlpha => glow::BLEND_SRC_ALPHA,
+            Self::BlendDstAlpha => glow::BLEND_DST_ALPHA,
         }
     }
 }
@@ -101,8 +101,8 @@ enum Quad {
 impl Quad {
     fn name(self) -> u32 {
         match self {
-            Quad::Viewport => glow::VIEWPORT,
-            Quad::ScissorBox => glow::SCISSOR_BOX,
+            Self::Viewport => glow::VIEWPORT,
+            Self::ScissorBox => glow::SCISSOR_BOX,
         }
     }
 }
@@ -117,8 +117,8 @@ enum Cap {
 impl Cap {
     fn name(self) -> u32 {
         match self {
-            Cap::Scissor => glow::SCISSOR_TEST,
-            Cap::Blend => glow::BLEND,
+            Self::Scissor => glow::SCISSOR_TEST,
+            Self::Blend => glow::BLEND,
         }
     }
 }
@@ -133,15 +133,15 @@ enum Target {
 impl Target {
     fn name(self) -> u32 {
         match self {
-            Target::Draw => glow::DRAW_FRAMEBUFFER,
-            Target::Read => glow::READ_FRAMEBUFFER,
+            Self::Draw => glow::DRAW_FRAMEBUFFER,
+            Self::Read => glow::READ_FRAMEBUFFER,
         }
     }
 
     fn binding(self) -> u32 {
         match self {
-            Target::Draw => glow::DRAW_FRAMEBUFFER_BINDING,
-            Target::Read => glow::READ_FRAMEBUFFER_BINDING,
+            Self::Draw => glow::DRAW_FRAMEBUFFER_BINDING,
+            Self::Read => glow::READ_FRAMEBUFFER_BINDING,
         }
     }
 }

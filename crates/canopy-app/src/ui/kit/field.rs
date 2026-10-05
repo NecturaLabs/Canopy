@@ -66,7 +66,7 @@ enum Kind {
 
 impl Kind {
     fn multiline(&self) -> bool {
-        matches!(self, Kind::Area { .. } | Kind::Code { .. })
+        matches!(self, Self::Area { .. } | Self::Code { .. })
     }
 }
 

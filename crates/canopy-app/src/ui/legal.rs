@@ -24,16 +24,16 @@ pub enum Document {
 impl Document {
     pub fn title(self) -> &'static str {
         match self {
-            Document::Terms => "Terms of Service",
-            Document::Privacy => "Privacy Policy",
+            Self::Terms => "Terms of Service",
+            Self::Privacy => "Privacy Policy",
         }
     }
 
     /// The text without its first-level title (the dialog shows that).
     pub fn body(self) -> &'static str {
         let text = match self {
-            Document::Terms => TERMS,
-            Document::Privacy => PRIVACY,
+            Self::Terms => TERMS,
+            Self::Privacy => PRIVACY,
         };
         text.split_once('\n').map_or(text, |(_, rest)| rest).trim()
     }

@@ -28,7 +28,7 @@ pub enum IgnoreTarget {
 
 impl IgnoreTarget {
     /// Every target, in menu order.
-    pub const ALL: [IgnoreTarget; 4] = [
+    pub const ALL: [Self; 4] = [
         Self::Root,
         Self::Nearest,
         Self::RepositoryExclude,

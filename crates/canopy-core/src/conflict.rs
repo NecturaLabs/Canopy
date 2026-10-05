@@ -353,7 +353,7 @@ impl ConflictFile {
     /// Parses a working file containing conflict markers. Markers are 7 characters long by
     /// default; a longer `<<<<<<<` (from `conflict-marker-size`) sets the length the rest of that
     /// region must use. Unbalanced or malformed markers are kept as ordinary text.
-    pub fn parse(text: &str) -> ConflictFile {
+    pub fn parse(text: &str) -> Self {
         let mut raw: Vec<&str> = text.split('\n').collect();
         let trailing_newline = text.ends_with('\n');
         if trailing_newline || text.is_empty() {
@@ -407,7 +407,7 @@ impl ConflictFile {
             segments.push(Segment::Common(owned(&common)));
         }
 
-        ConflictFile {
+        Self {
             segments,
             eol: if use_crlf { "\r\n" } else { "\n" }.to_owned(),
             trailing_newline,

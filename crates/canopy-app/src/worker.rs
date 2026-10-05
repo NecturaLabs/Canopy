@@ -141,10 +141,10 @@ impl Op {
     /// What finishing this operation means for the tab, whatever its label says.
     pub fn kind(&self) -> OpKind {
         match self {
-            Op::Commit { .. } => OpKind::Commit,
-            Op::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
-            Op::Fetch { .. } => OpKind::Fetch,
-            Op::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
+            Self::Commit { .. } => OpKind::Commit,
+            Self::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
+            Self::Fetch { .. } => OpKind::Fetch,
+            Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
             _ => OpKind::Other,
         }
     }
@@ -152,72 +152,72 @@ impl Op {
     /// Present-tense label shown while the operation runs.
     pub fn label(&self) -> String {
         match self {
-            Op::Stage(_) | Op::StageAll => "Staging".into(),
-            Op::Unstage(_) | Op::UnstageAll => "Unstaging".into(),
-            Op::Discard(_) => "Discarding changes".into(),
-            Op::Hunk {
+            Self::Stage(_) | Self::StageAll => "Staging".into(),
+            Self::Unstage(_) | Self::UnstageAll => "Unstaging".into(),
+            Self::Discard(_) => "Discarding changes".into(),
+            Self::Hunk {
                 action: HunkAction::Stage,
                 ..
             } => "Staging hunk".into(),
-            Op::Hunk {
+            Self::Hunk {
                 action: HunkAction::Unstage,
                 ..
             } => "Unstaging hunk".into(),
-            Op::Hunk {
+            Self::Hunk {
                 action: HunkAction::Discard,
                 ..
             } => "Discarding hunk".into(),
-            Op::Lines {
+            Self::Lines {
                 action: HunkAction::Stage,
                 ..
             } => "Staging lines".into(),
-            Op::Lines {
+            Self::Lines {
                 action: HunkAction::Unstage,
                 ..
             } => "Unstaging lines".into(),
-            Op::Lines {
+            Self::Lines {
                 action: HunkAction::Discard,
                 ..
             } => "Discarding lines".into(),
-            Op::Commit { amend: true, .. } => "Amending commit".into(),
-            Op::Commit { .. } => "Committing".into(),
-            Op::CreateBranch { name, .. } => format!("Creating branch {name}"),
-            Op::Checkout(b) => format!("Checking out {b}"),
-            Op::CheckoutRemote { remote, branch } => format!("Checking out {remote}/{branch}"),
-            Op::CheckoutDetached(o) => format!("Checking out {}", canopy_core::short_id(*o)),
-            Op::RenameBranch { new, .. } => format!("Renaming to {new}"),
-            Op::DeleteBranch { name, .. } => format!("Deleting {name}"),
-            Op::Merge(t, canopy_core::MergeMode::Squash) => format!("Squashing {t}"),
-            Op::Merge(t, _) => format!("Merging {t}"),
-            Op::Rebase(t) => format!("Rebasing onto {t}"),
-            Op::ContinueOrAbort { state, abort } => format!(
+            Self::Commit { amend: true, .. } => "Amending commit".into(),
+            Self::Commit { .. } => "Committing".into(),
+            Self::CreateBranch { name, .. } => format!("Creating branch {name}"),
+            Self::Checkout(b) => format!("Checking out {b}"),
+            Self::CheckoutRemote { remote, branch } => format!("Checking out {remote}/{branch}"),
+            Self::CheckoutDetached(o) => format!("Checking out {}", canopy_core::short_id(*o)),
+            Self::RenameBranch { new, .. } => format!("Renaming to {new}"),
+            Self::DeleteBranch { name, .. } => format!("Deleting {name}"),
+            Self::Merge(t, canopy_core::MergeMode::Squash) => format!("Squashing {t}"),
+            Self::Merge(t, _) => format!("Merging {t}"),
+            Self::Rebase(t) => format!("Rebasing onto {t}"),
+            Self::ContinueOrAbort { state, abort } => format!(
                 "{} {}",
                 if *abort { "Aborting" } else { "Continuing" },
                 state.label().to_lowercase()
             ),
-            Op::CherryPick(o) => format!("Cherry-picking {}", canopy_core::short_id(*o)),
-            Op::Revert(o) => format!("Reverting {}", canopy_core::short_id(*o)),
-            Op::Reset { mode, .. } => format!("{} reset", mode.label()),
-            Op::CreateTag { name, .. } => format!("Tagging {name}"),
-            Op::DeleteTag(t) => format!("Deleting tag {t}"),
-            Op::PushTag { tag, .. } => format!("Pushing tag {tag}"),
-            Op::StashSave { .. } => "Stashing".into(),
-            Op::StashApply { pop: true, .. } => "Popping stash".into(),
-            Op::StashApply { .. } => "Applying stash".into(),
-            Op::StashDrop(_) => "Dropping stash".into(),
-            Op::Fetch { .. } => "Fetching".into(),
-            Op::Pull { .. } => "Pulling".into(),
-            Op::Push { force: true } => "Force pushing".into(),
-            Op::Push { .. } => "Pushing".into(),
-            Op::AddRemote { name, .. } => format!("Adding remote {name}"),
-            Op::RemoveRemote(r) => format!("Removing remote {r}"),
-            Op::DeleteRemoteBranch { remote, branch } => format!("Deleting {remote}/{branch}"),
-            Op::CheckoutRequest { branch, .. } => format!("Checking out {branch}"),
-            Op::Resolve {
+            Self::CherryPick(o) => format!("Cherry-picking {}", canopy_core::short_id(*o)),
+            Self::Revert(o) => format!("Reverting {}", canopy_core::short_id(*o)),
+            Self::Reset { mode, .. } => format!("{} reset", mode.label()),
+            Self::CreateTag { name, .. } => format!("Tagging {name}"),
+            Self::DeleteTag(t) => format!("Deleting tag {t}"),
+            Self::PushTag { tag, .. } => format!("Pushing tag {tag}"),
+            Self::StashSave { .. } => "Stashing".into(),
+            Self::StashApply { pop: true, .. } => "Popping stash".into(),
+            Self::StashApply { .. } => "Applying stash".into(),
+            Self::StashDrop(_) => "Dropping stash".into(),
+            Self::Fetch { .. } => "Fetching".into(),
+            Self::Pull { .. } => "Pulling".into(),
+            Self::Push { force: true } => "Force pushing".into(),
+            Self::Push { .. } => "Pushing".into(),
+            Self::AddRemote { name, .. } => format!("Adding remote {name}"),
+            Self::RemoveRemote(r) => format!("Removing remote {r}"),
+            Self::DeleteRemoteBranch { remote, branch } => format!("Deleting {remote}/{branch}"),
+            Self::CheckoutRequest { branch, .. } => format!("Checking out {branch}"),
+            Self::Resolve {
                 path, mark: true, ..
             } => format!("Resolving {path}"),
-            Op::Resolve { path, .. } => format!("Saving {path}"),
-            Op::ResolveSide { path, side } => format!(
+            Self::Resolve { path, .. } => format!("Saving {path}"),
+            Self::ResolveSide { path, side } => format!(
                 "Taking {} for {path}",
                 match side {
                     canopy_core::Side::Ours => "ours",
@@ -231,15 +231,15 @@ impl Op {
     pub fn announce(&self) -> bool {
         !matches!(
             self,
-            Op::Stage(_)
-                | Op::StageAll
-                | Op::Unstage(_)
-                | Op::UnstageAll
-                | Op::Hunk { .. }
-                | Op::Lines { .. }
-                | Op::Resolve { .. }
-                | Op::ResolveSide { .. }
-                | Op::Fetch { quiet: true, .. }
+            Self::Stage(_)
+                | Self::StageAll
+                | Self::Unstage(_)
+                | Self::UnstageAll
+                | Self::Hunk { .. }
+                | Self::Lines { .. }
+                | Self::Resolve { .. }
+                | Self::ResolveSide { .. }
+                | Self::Fetch { quiet: true, .. }
         )
     }
 }
@@ -403,15 +403,15 @@ impl Job {
     /// A short name for logs.
     fn kind(&self) -> &'static str {
         match self {
-            Job::Refresh(_) => "refresh",
-            Job::RefreshStatus => "status",
-            Job::Details(_) => "details",
-            Job::Diff(_) => "diff",
-            Job::HeadMessage => "head-message",
-            Job::MergeMessage => "merge-message",
-            Job::SquashMessage(_) => "squash-message",
-            Job::Conflict(_) => "conflict",
-            Job::Op(_) => "operation",
+            Self::Refresh(_) => "refresh",
+            Self::RefreshStatus => "status",
+            Self::Details(_) => "details",
+            Self::Diff(_) => "diff",
+            Self::HeadMessage => "head-message",
+            Self::MergeMessage => "merge-message",
+            Self::SquashMessage(_) => "squash-message",
+            Self::Conflict(_) => "conflict",
+            Self::Op(_) => "operation",
         }
     }
 }

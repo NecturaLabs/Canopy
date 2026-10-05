@@ -161,22 +161,22 @@ pub enum MotionPref {
 }
 
 impl MotionPref {
-    pub const ALL: [MotionPref; 3] = [MotionPref::System, MotionPref::Reduced, MotionPref::Full];
+    pub const ALL: [Self; 3] = [Self::System, Self::Reduced, Self::Full];
 
     pub fn label(self) -> &'static str {
         match self {
-            MotionPref::System => "Match system",
-            MotionPref::Reduced => "Reduced",
-            MotionPref::Full => "Full",
+            Self::System => "Match system",
+            Self::Reduced => "Reduced",
+            Self::Full => "Full",
         }
     }
 
     /// The preference for a `--motion` argument.
-    pub fn from_name(name: &str) -> Option<MotionPref> {
+    pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
-            "system" => Some(MotionPref::System),
-            "reduced" => Some(MotionPref::Reduced),
-            "full" => Some(MotionPref::Full),
+            "system" => Some(Self::System),
+            "reduced" => Some(Self::Reduced),
+            "full" => Some(Self::Full),
             _ => None,
         }
     }
@@ -184,9 +184,9 @@ impl MotionPref {
     /// Whether motion is reduced, given what the system asked for (`None` when unknown).
     pub fn reduces(self, system: Option<bool>) -> bool {
         match self {
-            MotionPref::System => system.unwrap_or(false),
-            MotionPref::Reduced => true,
-            MotionPref::Full => false,
+            Self::System => system.unwrap_or(false),
+            Self::Reduced => true,
+            Self::Full => false,
         }
     }
 }

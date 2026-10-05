@@ -43,21 +43,21 @@ impl RowKind {
     pub fn height(self) -> f32 {
         let m = theme::metrics();
         match self {
-            RowKind::List | RowKind::File => m.row_height,
-            RowKind::History => m.history_row_height,
-            RowKind::Sidebar => m.sidebar_row_height,
-            RowKind::Request => m.request_row_height,
-            RowKind::Palette => m.palette_row_height,
+            Self::List | Self::File => m.row_height,
+            Self::History => m.history_row_height,
+            Self::Sidebar => m.sidebar_row_height,
+            Self::Request => m.request_row_height,
+            Self::Palette => m.palette_row_height,
         }
     }
 
     /// Tables span the full width with square ends; lists are rounded.
     fn rounded(self) -> bool {
-        self != RowKind::History
+        self != Self::History
     }
 
     fn chrome(self) -> bool {
-        self == RowKind::Sidebar
+        self == Self::Sidebar
     }
 
     /// The surface the row sits on by default.

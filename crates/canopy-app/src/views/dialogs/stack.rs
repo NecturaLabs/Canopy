@@ -12,8 +12,8 @@ impl Dialog {
     /// - 0: everything else; the newest shows first.
     pub(super) fn rank(&self) -> u8 {
         match self {
-            Dialog::Credential { .. } => 2,
-            Dialog::Consent { .. } | Dialog::Legal(_) => 1,
+            Self::Credential { .. } => 2,
+            Self::Consent { .. } | Self::Legal(_) => 1,
             _ => 0,
         }
     }

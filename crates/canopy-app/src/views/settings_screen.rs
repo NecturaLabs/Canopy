@@ -54,25 +54,25 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Section; 7] = [
-        Section::Appearance,
-        Section::Git,
-        Section::Integrations,
-        Section::Accounts,
-        Section::Updates,
-        Section::Privacy,
-        Section::Keyboard,
+    const ALL: [Self; 7] = [
+        Self::Appearance,
+        Self::Git,
+        Self::Integrations,
+        Self::Accounts,
+        Self::Updates,
+        Self::Privacy,
+        Self::Keyboard,
     ];
 
     fn label(self) -> (&'static str, &'static str) {
         match self {
-            Section::Appearance => (icon::PALETTE, "Appearance"),
-            Section::Git => (icon::GIT_BRANCH, "Git"),
-            Section::Integrations => (icon::PLUGS_CONNECTED, "Integrations"),
-            Section::Accounts => (icon::KEY, "Accounts"),
-            Section::Updates => (icon::ARROW_CIRCLE_UP, "Updates"),
-            Section::Privacy => (icon::SHIELD_CHECK, "Privacy"),
-            Section::Keyboard => (icon::KEYBOARD, "Keyboard"),
+            Self::Appearance => (icon::PALETTE, "Appearance"),
+            Self::Git => (icon::GIT_BRANCH, "Git"),
+            Self::Integrations => (icon::PLUGS_CONNECTED, "Integrations"),
+            Self::Accounts => (icon::KEY, "Accounts"),
+            Self::Updates => (icon::ARROW_CIRCLE_UP, "Updates"),
+            Self::Privacy => (icon::SHIELD_CHECK, "Privacy"),
+            Self::Keyboard => (icon::KEYBOARD, "Keyboard"),
         }
     }
 }

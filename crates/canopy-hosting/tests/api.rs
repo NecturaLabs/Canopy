@@ -57,7 +57,7 @@ mod server {
     }
 
     impl Server {
-        pub fn start() -> Server {
+        pub fn start() -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
             let base = format!("http://{}", listener.local_addr().expect("addr"));
             let routes: Routes = Arc::default();
@@ -69,7 +69,7 @@ mod server {
                     handle(stream, &r, &l);
                 }
             });
-            Server { base, routes, log }
+            Self { base, routes, log }
         }
 
         /// Answers `method target` with `status` and a JSON body. A target without `?` matches

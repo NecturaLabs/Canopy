@@ -78,18 +78,18 @@ fn default_api_base(forge: &Forge) -> String {
 impl Client {
     /// A client for `forge`'s project on its own host. `token` is the user's personal access
     /// token; without one only public projects can be read and nothing can be changed.
-    pub fn new(forge: &Forge, token: Option<String>) -> Client {
+    pub fn new(forge: &Forge, token: Option<String>) -> Self {
         Self::with_api_base(forge, token, &default_api_base(forge))
     }
 
     /// Like [`Client::new`] with an explicit API root such as `http://127.0.0.1:8080` (tests)
     /// or `https://gitlab.example.com/api/v4`.
-    pub fn with_api_base(forge: &Forge, token: Option<String>, api_base: &str) -> Client {
+    pub fn with_api_base(forge: &Forge, token: Option<String>, api_base: &str) -> Self {
         let project = match forge.kind {
             ForgeKind::GitHub => github::repo_path(&forge.path),
             ForgeKind::GitLab => gitlab::project_path(&forge.path),
         };
-        Client {
+        Self {
             http: Http::new(forge.kind, api_base, token),
             forge: forge.clone(),
             kind: forge.kind,

@@ -144,7 +144,7 @@ pub enum Whitespace {
 
 impl Whitespace {
     /// Every mode, in menu order.
-    pub const ALL: [Whitespace; 3] = [Self::Show, Self::IgnoreEol, Self::IgnoreAll];
+    pub const ALL: [Self; 3] = [Self::Show, Self::IgnoreEol, Self::IgnoreAll];
 
     /// Display name.
     pub fn label(self) -> &'static str {

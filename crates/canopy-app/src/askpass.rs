@@ -61,21 +61,21 @@ impl PromptKind {
     /// questions are plain text.
     pub fn of(prompt: &str, ssh_mode: &str) -> Self {
         match ssh_mode {
-            "confirm" => return PromptKind::Approve,
-            "none" => return PromptKind::Notice,
+            "confirm" => return Self::Approve,
+            "none" => return Self::Notice,
             _ => {}
         }
         let lower = prompt.trim_start().to_lowercase();
         if lower.contains("(yes/no") {
-            PromptKind::YesNo
+            Self::YesNo
         } else if lower.starts_with("username for ")
             || lower.starts_with("username:")
             || lower.starts_with("user name")
             || lower.starts_with("login:")
         {
-            PromptKind::Text
+            Self::Text
         } else {
-            PromptKind::Secret
+            Self::Secret
         }
     }
 }

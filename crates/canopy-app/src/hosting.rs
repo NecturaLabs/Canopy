@@ -33,9 +33,9 @@ pub enum TokenSource {
 impl TokenSource {
     pub fn label(self) -> &'static str {
         match self {
-            TokenSource::Saved => "saved in Canopy",
-            TokenSource::Environment => "from the environment",
-            TokenSource::GitCredentials => "from your git credential helper",
+            Self::Saved => "saved in Canopy",
+            Self::Environment => "from the environment",
+            Self::GitCredentials => "from your git credential helper",
         }
     }
 }
@@ -230,15 +230,15 @@ impl HostJob {
     fn label(&self, kind: ForgeKind) -> String {
         let n = kind.request_abbrev();
         match self {
-            HostJob::Avatar(..) => "Loading an author picture".into(),
-            HostJob::List(_) => format!("Loading {}s", kind.request_noun()),
-            HostJob::Details(i) => format!("Loading {n} #{i}"),
-            HostJob::Create(_) => format!("Creating {}", kind.request_noun()),
-            HostJob::Merge(i, _, _) => format!("Merging {n} #{i}"),
-            HostJob::SetOpen(i, true) => format!("Reopening {n} #{i}"),
-            HostJob::SetOpen(i, false) => format!("Closing {n} #{i}"),
-            HostJob::Comment(i, _) => format!("Commenting on {n} #{i}"),
-            HostJob::Approve(i) => format!("Approving {n} #{i}"),
+            Self::Avatar(..) => "Loading an author picture".into(),
+            Self::List(_) => format!("Loading {}s", kind.request_noun()),
+            Self::Details(i) => format!("Loading {n} #{i}"),
+            Self::Create(_) => format!("Creating {}", kind.request_noun()),
+            Self::Merge(i, _, _) => format!("Merging {n} #{i}"),
+            Self::SetOpen(i, true) => format!("Reopening {n} #{i}"),
+            Self::SetOpen(i, false) => format!("Closing {n} #{i}"),
+            Self::Comment(i, _) => format!("Commenting on {n} #{i}"),
+            Self::Approve(i) => format!("Approving {n} #{i}"),
         }
     }
 }

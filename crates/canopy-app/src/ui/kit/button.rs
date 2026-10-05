@@ -32,19 +32,14 @@ pub enum ButtonKind {
 }
 
 impl ButtonKind {
-    pub const ALL: [ButtonKind; 4] = [
-        ButtonKind::Primary,
-        ButtonKind::Secondary,
-        ButtonKind::Ghost,
-        ButtonKind::Danger,
-    ];
+    pub const ALL: [Self; 4] = [Self::Primary, Self::Secondary, Self::Ghost, Self::Danger];
 
     pub fn label(self) -> &'static str {
         match self {
-            ButtonKind::Primary => "Primary",
-            ButtonKind::Secondary => "Secondary",
-            ButtonKind::Ghost => "Ghost",
-            ButtonKind::Danger => "Danger",
+            Self::Primary => "Primary",
+            Self::Secondary => "Secondary",
+            Self::Ghost => "Ghost",
+            Self::Danger => "Danger",
         }
     }
 }

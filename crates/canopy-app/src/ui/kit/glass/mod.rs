@@ -69,19 +69,19 @@ enum Backend {
 impl Backend {
     fn code(self) -> u8 {
         match self {
-            Backend::Unprobed => 0,
-            Backend::Supported => 1,
-            Backend::Ready => 2,
-            Backend::Unavailable => 3,
+            Self::Unprobed => 0,
+            Self::Supported => 1,
+            Self::Ready => 2,
+            Self::Unavailable => 3,
         }
     }
 
     fn from_code(code: u8) -> Self {
         match code {
-            1 => Backend::Supported,
-            2 => Backend::Ready,
-            3 => Backend::Unavailable,
-            _ => Backend::Unprobed,
+            1 => Self::Supported,
+            2 => Self::Ready,
+            3 => Self::Unavailable,
+            _ => Self::Unprobed,
         }
     }
 }
@@ -122,60 +122,60 @@ pub(super) enum Reason {
 impl Reason {
     fn code(self) -> u8 {
         match self {
-            Reason::NoContext => 1,
-            Reason::OldGl => 2,
-            Reason::Multisampled => 3,
-            Reason::SmallTextures => 4,
-            Reason::Compile => 5,
-            Reason::Link => 6,
-            Reason::Uniform => 7,
-            Reason::Framebuffer => 8,
-            Reason::Gl(_) => 9,
-            Reason::ContextLost => 10,
-            Reason::Panic => 11,
-            Reason::Poisoned => 12,
-            Reason::Exited => 13,
-            Reason::Internal => 14,
+            Self::NoContext => 1,
+            Self::OldGl => 2,
+            Self::Multisampled => 3,
+            Self::SmallTextures => 4,
+            Self::Compile => 5,
+            Self::Link => 6,
+            Self::Uniform => 7,
+            Self::Framebuffer => 8,
+            Self::Gl(_) => 9,
+            Self::ContextLost => 10,
+            Self::Panic => 11,
+            Self::Poisoned => 12,
+            Self::Exited => 13,
+            Self::Internal => 14,
         }
     }
 
     fn from_code(code: u8) -> Option<Self> {
         Some(match code {
-            1 => Reason::NoContext,
-            2 => Reason::OldGl,
-            3 => Reason::Multisampled,
-            4 => Reason::SmallTextures,
-            5 => Reason::Compile,
-            6 => Reason::Link,
-            7 => Reason::Uniform,
-            8 => Reason::Framebuffer,
-            9 => Reason::Gl(0),
-            10 => Reason::ContextLost,
-            11 => Reason::Panic,
-            12 => Reason::Poisoned,
-            13 => Reason::Exited,
-            14 => Reason::Internal,
+            1 => Self::NoContext,
+            2 => Self::OldGl,
+            3 => Self::Multisampled,
+            4 => Self::SmallTextures,
+            5 => Self::Compile,
+            6 => Self::Link,
+            7 => Self::Uniform,
+            8 => Self::Framebuffer,
+            9 => Self::Gl(0),
+            10 => Self::ContextLost,
+            11 => Self::Panic,
+            12 => Self::Poisoned,
+            13 => Self::Exited,
+            14 => Self::Internal,
             _ => return None,
         })
     }
 
     fn describe(self) -> String {
         match self {
-            Reason::NoContext => "no OpenGL context".into(),
-            Reason::OldGl => "OpenGL older than 3.0 (or OpenGL ES 3.0)".into(),
-            Reason::Multisampled => "the window framebuffer is multisampled".into(),
-            Reason::SmallTextures => "the driver's textures are too small".into(),
-            Reason::Compile => "the driver rejected a blur shader".into(),
-            Reason::Link => "the driver could not link a blur program".into(),
-            Reason::Uniform => "a blur program lacks a uniform".into(),
-            Reason::Framebuffer => "a blur framebuffer is incomplete".into(),
-            Reason::Gl(0) => "OpenGL error".into(),
-            Reason::Gl(code) => format!("OpenGL error 0x{code:04X}"),
-            Reason::ContextLost => "the OpenGL context was lost".into(),
-            Reason::Panic => "the blur renderer panicked".into(),
-            Reason::Poisoned => "the blur renderer's lock is poisoned".into(),
-            Reason::Exited => "the window closed".into(),
-            Reason::Internal => "internal error".into(),
+            Self::NoContext => "no OpenGL context".into(),
+            Self::OldGl => "OpenGL older than 3.0 (or OpenGL ES 3.0)".into(),
+            Self::Multisampled => "the window framebuffer is multisampled".into(),
+            Self::SmallTextures => "the driver's textures are too small".into(),
+            Self::Compile => "the driver rejected a blur shader".into(),
+            Self::Link => "the driver could not link a blur program".into(),
+            Self::Uniform => "a blur program lacks a uniform".into(),
+            Self::Framebuffer => "a blur framebuffer is incomplete".into(),
+            Self::Gl(0) => "OpenGL error".into(),
+            Self::Gl(code) => format!("OpenGL error 0x{code:04X}"),
+            Self::ContextLost => "the OpenGL context was lost".into(),
+            Self::Panic => "the blur renderer panicked".into(),
+            Self::Poisoned => "the blur renderer's lock is poisoned".into(),
+            Self::Exited => "the window closed".into(),
+            Self::Internal => "internal error".into(),
         }
     }
 }

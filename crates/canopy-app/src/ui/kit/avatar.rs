@@ -33,21 +33,16 @@ pub enum AvatarSize {
 }
 
 impl AvatarSize {
-    pub const ALL: [AvatarSize; 4] = [
-        AvatarSize::Row,
-        AvatarSize::Detail,
-        AvatarSize::Large,
-        AvatarSize::Card,
-    ];
+    pub const ALL: [Self; 4] = [Self::Row, Self::Detail, Self::Large, Self::Card];
 
     /// The diameter in the active metrics.
     pub fn diameter(self) -> f32 {
         let m = theme::metrics();
         match self {
-            AvatarSize::Row => m.avatar_row,
-            AvatarSize::Detail => m.avatar_detail,
-            AvatarSize::Large => m.avatar_lg,
-            AvatarSize::Card => 48.0,
+            Self::Row => m.avatar_row,
+            Self::Detail => m.avatar_detail,
+            Self::Large => m.avatar_lg,
+            Self::Card => 48.0,
         }
     }
 }

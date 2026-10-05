@@ -150,29 +150,29 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 6] = [
-        Section::Anywhere,
-        Section::Navigate,
-        Section::History,
-        Section::Changes,
-        Section::Resolve,
-        Section::Repository,
+    pub const ALL: [Self; 6] = [
+        Self::Anywhere,
+        Self::Navigate,
+        Self::History,
+        Self::Changes,
+        Self::Resolve,
+        Self::Repository,
     ];
 
     pub fn title(self) -> &'static str {
         match self {
-            Section::Anywhere => "Anywhere",
-            Section::Navigate => "Lists and views",
-            Section::History => "History",
-            Section::Changes => "Changes",
-            Section::Resolve => "Resolving a conflicted file",
-            Section::Repository => "Repository actions",
+            Self::Anywhere => "Anywhere",
+            Self::Navigate => "Lists and views",
+            Self::History => "History",
+            Self::Changes => "Changes",
+            Self::Resolve => "Resolving a conflicted file",
+            Self::Repository => "Repository actions",
         }
     }
 
     /// Bindings of this section do not fire while a text field has focus.
     pub fn is_bare(self) -> bool {
-        self != Section::Anywhere
+        self != Self::Anywhere
     }
 }
 

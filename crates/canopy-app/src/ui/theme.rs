@@ -1697,28 +1697,28 @@ pub enum ThemeId {
 
 impl ThemeId {
     /// Every theme, in menu order.
-    pub const ALL: [ThemeId; 8] = [
-        ThemeId::Midnight,
-        ThemeId::Daylight,
-        ThemeId::Aurora,
-        ThemeId::Ember,
-        ThemeId::Neon,
-        ThemeId::Forest,
-        ThemeId::Paper,
-        ThemeId::Contrast,
+    pub const ALL: [Self; 8] = [
+        Self::Midnight,
+        Self::Daylight,
+        Self::Aurora,
+        Self::Ember,
+        Self::Neon,
+        Self::Forest,
+        Self::Paper,
+        Self::Contrast,
     ];
 
     /// The theme's colours.
     pub fn palette(self) -> &'static Palette {
         match self {
-            ThemeId::Midnight => &MIDNIGHT,
-            ThemeId::Daylight => &DAYLIGHT,
-            ThemeId::Aurora => &AURORA,
-            ThemeId::Ember => &EMBER,
-            ThemeId::Neon => &NEON,
-            ThemeId::Forest => &FOREST,
-            ThemeId::Paper => &PAPER,
-            ThemeId::Contrast => &CONTRAST,
+            Self::Midnight => &MIDNIGHT,
+            Self::Daylight => &DAYLIGHT,
+            Self::Aurora => &AURORA,
+            Self::Ember => &EMBER,
+            Self::Neon => &NEON,
+            Self::Forest => &FOREST,
+            Self::Paper => &PAPER,
+            Self::Contrast => &CONTRAST,
         }
     }
 
@@ -1728,14 +1728,14 @@ impl ThemeId {
     }
 
     /// The theme for a `--theme` argument: the display name or the variant name, any case.
-    pub fn from_name(name: &str) -> Option<ThemeId> {
+    pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|t| {
             t.name().eq_ignore_ascii_case(name) || format!("{t:?}").eq_ignore_ascii_case(name)
         })
     }
 
     /// The theme after this one, wrapping around.
-    pub fn next(self) -> ThemeId {
+    pub fn next(self) -> Self {
         let i = Self::ALL.iter().position(|t| *t == self).unwrap_or(0);
         Self::ALL[(i + 1) % Self::ALL.len()]
     }
@@ -1755,17 +1755,17 @@ pub enum Style {
 }
 
 impl Style {
-    pub const ALL: [Style; 2] = [Style::Standard, Style::Deeper];
+    pub const ALL: [Self; 2] = [Self::Standard, Self::Deeper];
 
     pub fn label(self) -> &'static str {
         match self {
-            Style::Standard => "Standard",
-            Style::Deeper => "Deeper",
+            Self::Standard => "Standard",
+            Self::Deeper => "Deeper",
         }
     }
 
     /// The style for a `--style` argument.
-    pub fn from_name(name: &str) -> Option<Style> {
+    pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
             .find(|s| s.label().eq_ignore_ascii_case(name))
@@ -1781,17 +1781,17 @@ pub enum Density {
 }
 
 impl Density {
-    pub const ALL: [Density; 2] = [Density::Comfortable, Density::Dense];
+    pub const ALL: [Self; 2] = [Self::Comfortable, Self::Dense];
 
     pub fn label(self) -> &'static str {
         match self {
-            Density::Comfortable => "Comfortable",
-            Density::Dense => "Dense",
+            Self::Comfortable => "Comfortable",
+            Self::Dense => "Dense",
         }
     }
 
     /// The density for a `--density` argument.
-    pub fn from_name(name: &str) -> Option<Density> {
+    pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
             .find(|d| d.label().eq_ignore_ascii_case(name))
@@ -1823,9 +1823,9 @@ pub enum GlassBlocked {
 impl GlassBlocked {
     pub fn reason(self) -> &'static str {
         match self {
-            GlassBlocked::Theme => "Not available with the Contrast theme",
-            GlassBlocked::System => "Your system asks for reduced transparency",
-            GlassBlocked::Backend => "Not supported by this graphics driver",
+            Self::Theme => "Not available with the Contrast theme",
+            Self::System => "Your system asks for reduced transparency",
+            Self::Backend => "Not supported by this graphics driver",
         }
     }
 }
@@ -1971,7 +1971,7 @@ impl Palette {
     }
 
     fn overlay_alpha(&self, dark: u8, light: u8) -> Color32 {
-        Palette::tint(self.hover_ink, if self.dark { dark } else { light })
+        Self::tint(self.hover_ink, if self.dark { dark } else { light })
     }
 
     /// Hovered rows and quiet controls: a translucent tint drawn over any surface.
@@ -1997,30 +1997,30 @@ impl Palette {
     /// Fill of the selected row in lists, the graph, the sidebar, the palette and diffs, and of
     /// egui's selected values. Every text colour stays readable on it (see the contrast test).
     pub fn selected(&self) -> Color32 {
-        Palette::tint(self.selection, self.selection_alpha)
+        Self::tint(self.selection, self.selection_alpha)
     }
 
     /// Status tints (16%): dialog glyph discs, banners, callouts.
     pub fn success_tint(&self) -> Color32 {
-        Palette::tint(self.success, 41)
+        Self::tint(self.success, 41)
     }
 
     pub fn warning_tint(&self) -> Color32 {
-        Palette::tint(self.warning, 41)
+        Self::tint(self.warning, 41)
     }
 
     /// Concept 1's danger tint, from `danger_base`: the destructive dialog's glyph disc.
     pub fn danger_tint(&self) -> Color32 {
-        Palette::tint(self.danger_base, 41)
+        Self::tint(self.danger_base, 41)
     }
 
     pub fn accent_tint(&self) -> Color32 {
-        Palette::tint(self.accent, 41)
+        Self::tint(self.accent, 41)
     }
 
     /// Highlight of a danger menu item (15% of `danger_base`).
     pub fn danger_highlight(&self) -> Color32 {
-        Palette::tint(self.danger_base, 38)
+        Self::tint(self.danger_base, 38)
     }
 
     /// The surfaces a coloured component (pill, badge, avatar) can sit on in `s`: plain surfaces,
@@ -2066,32 +2066,32 @@ impl Palette {
 
     /// Fill of a ref pill in colour `c` (15%); the current branch is stronger (26%).
     pub const fn pill_fill(c: Color32, current: bool) -> Color32 {
-        Palette::tint(c, if current { 66 } else { 38 })
+        Self::tint(c, if current { 66 } else { 38 })
     }
 
     /// The ring of a ref pill (42%), the same for the current branch.
     pub const fn pill_border(c: Color32) -> Color32 {
-        Palette::tint(c, 107)
+        Self::tint(c, 107)
     }
 
     /// Fill of an initials avatar in colour `c` (24%).
     pub fn avatar_fill(&self, c: Color32) -> Color32 {
-        Palette::tint(c, 61)
+        Self::tint(c, 61)
     }
 
     /// Fill of a count badge in colour `c` (24%).
     pub const fn badge_fill(c: Color32) -> Color32 {
-        Palette::tint(c, 61)
+        Self::tint(c, 61)
     }
 
     /// Fill of a danger count badge (22% of `danger_base`), labelled in `ink(danger, ..)`.
     pub fn danger_badge_fill(&self) -> Color32 {
-        Palette::tint(self.danger_base, 56)
+        Self::tint(self.danger_base, 56)
     }
 
     /// Fill of a file status letter in colour `c` (18%).
     pub const fn change_fill(c: Color32) -> Color32 {
-        Palette::tint(c, 46)
+        Self::tint(c, 46)
     }
 
     /// A translucent version of `c` for fills behind text (premultiplied).
@@ -2307,17 +2307,17 @@ pub enum Elevation {
 }
 
 impl Elevation {
-    pub const ALL: [Elevation; 10] = [
-        Elevation::Control,
-        Elevation::Thumb,
-        Elevation::Knob,
-        Elevation::Tab,
-        Elevation::Primary,
-        Elevation::Danger,
-        Elevation::Floating,
-        Elevation::Pane,
-        Elevation::Field,
-        Elevation::Deck,
+    pub const ALL: [Self; 10] = [
+        Self::Control,
+        Self::Thumb,
+        Self::Knob,
+        Self::Tab,
+        Self::Primary,
+        Self::Danger,
+        Self::Floating,
+        Self::Pane,
+        Self::Field,
+        Self::Deck,
     ];
 }
 

@@ -395,14 +395,14 @@ impl Ink {
     fn resolve(self, p: &Palette, y: f32, top: f32, height: f32) -> Color32 {
         let mid = p.accent.lerp_to_gamma(p.accent2, 0.5);
         match self {
-            Ink::Accent => p.accent,
-            Ink::Mid => mid,
-            Ink::Accent2 => p.accent2,
-            Ink::Success => p.success,
-            Ink::Warning => p.warning,
-            Ink::Danger => p.danger,
-            Ink::Neutral => p.text_faint,
-            Ink::Gradient(bottom, upper) => {
+            Self::Accent => p.accent,
+            Self::Mid => mid,
+            Self::Accent2 => p.accent2,
+            Self::Success => p.success,
+            Self::Warning => p.warning,
+            Self::Danger => p.danger,
+            Self::Neutral => p.text_faint,
+            Self::Gradient(bottom, upper) => {
                 let f = ((y - top) / height.max(1.0)).clamp(0.0, 1.0);
                 let t = ((bottom - f) / (bottom - upper).max(0.001)).clamp(0.0, 1.0);
                 if t < 0.55 {

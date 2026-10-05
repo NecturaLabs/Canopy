@@ -161,7 +161,7 @@ pub enum Outcome {
 impl Dialog {
     /// The dialog answering a credential prompt.
     pub fn credential(prompt: Prompt) -> Self {
-        Dialog::Credential {
+        Self::Credential {
             prompt,
             answer: String::new(),
         }
@@ -169,12 +169,12 @@ impl Dialog {
 
     /// The open-repository dialog, prefilled with the home directory.
     pub fn open() -> Self {
-        Dialog::Open { path: home() }
+        Self::Open { path: home() }
     }
 
     /// The clone dialog with the default clone folder as the destination.
     pub fn clone_default(settings: &Settings) -> Self {
-        Dialog::Clone {
+        Self::Clone {
             builder: UrlBuilder::new(settings),
             parent: settings.clone_parent(),
             pending: false,
@@ -183,7 +183,7 @@ impl Dialog {
 
     /// The add-remote dialog.
     pub fn add_remote(settings: &Settings) -> Self {
-        Dialog::AddRemote {
+        Self::AddRemote {
             name: "origin".into(),
             builder: UrlBuilder::new(settings),
             publish: false,
@@ -192,7 +192,7 @@ impl Dialog {
 
     /// Turns an add-remote dialog into "Publish": add, then push the current branch.
     pub fn publishing(mut self) -> Self {
-        if let Dialog::AddRemote { publish, .. } = &mut self {
+        if let Self::AddRemote { publish, .. } = &mut self {
             *publish = true;
         }
         self
@@ -200,7 +200,7 @@ impl Dialog {
 
     /// New branch starting at `start`.
     pub fn new_branch_at(start: Start) -> Self {
-        Dialog::NewBranch {
+        Self::NewBranch {
             name: String::new(),
             start,
             checkout: true,

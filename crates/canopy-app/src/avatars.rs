@@ -46,7 +46,7 @@ impl Budget {
     fn take(&mut self, now: i64, limit: u32) -> Result<(), i64> {
         let hour = now.div_euclid(HOUR_SECS);
         if hour != self.hour {
-            *self = Budget { hour, used: 0 };
+            *self = Self { hour, used: 0 };
         }
         if self.used >= limit {
             return Err((hour + 1) * HOUR_SECS);

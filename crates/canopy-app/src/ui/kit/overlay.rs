@@ -66,13 +66,13 @@ impl Layer {
     pub fn radius(self) -> CornerRadius {
         let m = theme::metrics();
         match self {
-            Layer::Tooltip => CornerRadius::same(m.radius_sm.saturating_add(2)),
+            Self::Tooltip => CornerRadius::same(m.radius_sm.saturating_add(2)),
             _ => CornerRadius::same(m.radius_lg),
         }
     }
 
     fn may_be_glass(self) -> bool {
-        self != Layer::Tooltip
+        self != Self::Tooltip
     }
 }
 
@@ -490,7 +490,7 @@ impl Tooltip {
     }
 
     pub fn show(self) -> Response {
-        let Tooltip {
+        let Self {
             response,
             text,
             detail,
@@ -819,9 +819,9 @@ impl DialogWidth {
     pub fn points(self) -> f32 {
         let m = theme::metrics();
         match self {
-            DialogWidth::Confirm => m.dialog_width,
-            DialogWidth::Form => m.dialog_width_form,
-            DialogWidth::Wide => m.dialog_width_wide,
+            Self::Confirm => m.dialog_width,
+            Self::Form => m.dialog_width_form,
+            Self::Wide => m.dialog_width_wide,
         }
     }
 }

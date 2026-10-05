@@ -253,7 +253,7 @@ impl Forge {
     /// ports). Returns `None` for local paths, `file://` URLs, other providers, malformed project
     /// paths and malformed ports. An `https://` or `http://` URL's non-default port is kept in
     /// [`Forge::port`].
-    pub fn parse(url: &str, gitlab_hosts: &[String]) -> Option<Forge> {
+    pub fn parse(url: &str, gitlab_hosts: &[String]) -> Option<Self> {
         let url = url.trim();
         if url.is_empty() || url.chars().any(char::is_whitespace) || url.contains('\\') {
             return None;
@@ -266,7 +266,7 @@ impl Forge {
         let host = canonical_host(&host).to_owned();
         let kind = kind_of(&host, gitlab_hosts)?;
         let path = normalise_path(kind, path)?;
-        Some(Forge {
+        Some(Self {
             kind,
             host,
             port,

@@ -27,7 +27,7 @@ pub enum FlowKind {
 
 impl FlowKind {
     /// Every kind, in menu order.
-    pub const ALL: [FlowKind; 4] = [Self::Feature, Self::Bugfix, Self::Release, Self::Hotfix];
+    pub const ALL: [Self; 4] = [Self::Feature, Self::Bugfix, Self::Release, Self::Hotfix];
 
     /// Display name.
     pub fn label(self) -> &'static str {
