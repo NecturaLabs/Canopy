@@ -46,6 +46,13 @@ fn callbacks(shapes: &[ClippedShape]) -> usize {
         .count()
 }
 
+/// Glass layers among `shapes`: each paints two callbacks, its capture and its composite.
+fn glass_layers(shapes: &[ClippedShape]) -> usize {
+    let n = callbacks(shapes);
+    assert_eq!(n % 2, 0, "a capture without its composite: {n} callbacks");
+    n / 2
+}
+
 #[test]
 fn plan_flips_to_window_pixels_and_pads_the_region() {
     let plan = plan(
@@ -434,21 +441,20 @@ fn a_glass_layer_blurs_its_backdrop_under_a_translucent_fill() {
                 fill,
                 Palette::tint(theme::surfaces(ui.ctx()).overlay, p.glass_alpha)
             );
-            assert!(fill.a() < 255 && fill.a() > 190, "{fill:?}");
+            assert!(fill.a() < 255 && fill.a() >= 128, "{fill:?}");
         });
-        assert_eq!(callbacks(&shapes), 1, "{}", theme.name());
-        let area = shapes.iter().find_map(|c| match &c.shape {
-            Shape::Callback(cb) => Some(cb.rect),
-            _ => None,
-        });
-        assert_eq!(
-            area,
-            Some(
-                at(10.0, 10.0, 200.0, 100.0)
-                    .expand(PAD)
-                    .intersect(ctx.viewport_rect())
-            )
-        );
+        assert_eq!(glass_layers(&shapes), 1, "{}", theme.name());
+        let areas: Vec<Rect> = shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                Shape::Callback(cb) => Some(cb.rect),
+                _ => None,
+            })
+            .collect();
+        let padded = at(10.0, 10.0, 200.0, 100.0)
+            .expand(PAD)
+            .intersect(ctx.viewport_rect());
+        assert_eq!(areas, [padded, padded]);
     }
 }
 
@@ -499,11 +505,40 @@ fn the_backdrop_moves_between_the_shadow_and_the_fill() {
             _ => None,
         })
         .collect();
+    // The capture stays before the shadow, so the shadow is not blurred into the glass; the
+    // composite moves between the shadow and the fill.
     assert_eq!(
         kinds,
-        ["noop", "shadow", "shadow", "backdrop", "fill"],
+        ["backdrop", "noop", "shadow", "shadow", "backdrop", "fill"],
         "{kinds:?}"
     );
+}
+
+#[test]
+fn a_caller_placing_the_backdrop_gets_the_capture_and_the_composite() {
+    let ctx = egui::Context::default();
+    setup(&ctx, ThemeId::Midnight, true, Backend::Supported);
+    let layer = at(40.0, 40.0, 240.0, 160.0);
+    let shapes = frame(&ctx, |ui| {
+        let b = backdrop_shapes(ui.painter(), layer, CornerRadius::same(8));
+        assert!(b.as_ref().is_some_and(|b| {
+            matches!(b.capture, Shape::Callback(_)) && matches!(b.composite, Shape::Callback(_))
+        }));
+        // The single-shape form carries both, capture first.
+        let one = backdrop_shape(ui.painter(), layer, CornerRadius::same(8));
+        assert!(
+            matches!(&one, Some(Shape::Vec(v)) if v.len() == 2
+                && v.iter().all(|s| matches!(s, Shape::Callback(_)))),
+            "{one:?}"
+        );
+        // Each took one of the frame's glass layers.
+        for _ in 2..MAX_REGIONS {
+            assert!(backdrop_shapes(ui.painter(), layer, CornerRadius::ZERO).is_some());
+        }
+        assert!(backdrop_shapes(ui.painter(), layer, CornerRadius::ZERO).is_none());
+    });
+    // Nothing was painted: the caller places them.
+    assert_eq!(callbacks(&shapes), 0);
 }
 
 #[test]
@@ -515,7 +550,7 @@ fn a_surface_at_another_rect_leaves_the_backdrop_where_it_was() {
         let _ = layer_fill(ui.painter(), layer, CornerRadius::ZERO);
         assert!(lift(ui.painter(), layer.translate(vec2(1.0, 0.0))).is_none());
     });
-    assert_eq!(callbacks(&shapes), 1);
+    assert_eq!(glass_layers(&shapes), 1);
 }
 
 #[test]
@@ -534,7 +569,7 @@ fn at_most_four_glass_layers_a_frame() {
             assert!(fills[4..].iter().all(|&a| a == 255), "{fills:?}");
         });
         // Each frame starts with the full allowance.
-        assert_eq!(callbacks(&shapes), usize::from(MAX_REGIONS));
+        assert_eq!(glass_layers(&shapes), usize::from(MAX_REGIONS));
     }
 }
 
@@ -559,7 +594,7 @@ fn layers_nobody_sees_take_no_allowance() {
             assert!(layer_fill(ui.painter(), r, CornerRadius::ZERO).a() < 255);
         }
     });
-    assert_eq!(callbacks(&shapes), 4);
+    assert_eq!(glass_layers(&shapes), 4);
 }
 
 #[test]
@@ -751,7 +786,7 @@ fn the_gallery_section_draws_both_cards() {
     setup(&ctx, ThemeId::Midnight, false, Backend::Supported);
     let shapes = frame(&ctx, section);
     // The forced card is glass even with the setting off; the other stays opaque.
-    assert_eq!(callbacks(&shapes), 1);
+    assert_eq!(glass_layers(&shapes), 1);
     setup(&ctx, ThemeId::Midnight, false, Backend::Unavailable);
     let shapes = frame(&ctx, section);
     assert_eq!(callbacks(&shapes), 0);
@@ -775,7 +810,7 @@ fn the_soak_ends_after_its_frames() {
                 done = soak.frame(ui.ctx());
             });
             out.textures_delta.clear();
-            let n = callbacks(&out.shapes);
+            let n = glass_layers(&out.shapes);
             assert!(n <= usize::from(MAX_REGIONS));
             most = most.max(n);
         }

@@ -1,12 +1,14 @@
 //! Translucent surfaces: the safe facade over the backdrop blur (design spec 7).
 //!
 //! Floating layers (menus, select lists, popovers, toasts, dialog cards, palette, cheatsheet) ask
-//! [`layer_fill`] for their fill. With Translucent surfaces on and the blur available, it adds an
-//! OpenGL paint callback under the layer that blurs what is already painted behind it, clamps its
-//! luminance so the theme's text stays readable, and returns the overlay at the theme's glass
-//! opacity; otherwise it returns the opaque overlay, the fallback that keeps the same layout.
-//! [`paint::surface`](super::paint::surface) moves the callback between the layer's shadow and
-//! its fill.
+//! [`layer_fill`] for their fill. With Translucent surfaces on and the blur available, it adds two
+//! OpenGL paint callbacks under the layer: the capture, which copies and blurs what is already
+//! painted behind it, and the composite, which draws that copy inside the layer with its
+//! luminance clamped so the theme's text stays readable. It returns the overlay at the theme's
+//! glass opacity; otherwise it returns the opaque overlay, the fallback that keeps the same
+//! layout. [`paint::surface`](super::paint::surface) moves the composite between the layer's
+//! shadow and its fill, and the capture stays before the shadow, so the shadow never shows
+//! through the glass.
 //!
 //! The renderer is `gl.rs`, the only module allowed to call OpenGL, and the only code in Canopy
 //! the compiler lets use raw OpenGL calls; this file decides what to draw and keeps every number
@@ -262,6 +264,9 @@ fn set_max_side(side: i32) {
     });
 }
 
+/// Numbers the frame's glass layers, so a composite knows whether the levels hold its capture.
+static NEXT_JOB: AtomicU64 = AtomicU64::new(1);
+
 /// OpenGL objects the renderer created and deleted, for the soak check.
 static CREATED: AtomicU64 = AtomicU64::new(0);
 static DELETED: AtomicU64 = AtomicU64::new(0);
@@ -378,7 +383,8 @@ pub fn query_system(ctx: &egui::Context) {
 
 /// Adds the blurred backdrop under a floating layer at `rect`, if Translucent surfaces is on and
 /// the blur can run, and returns whether it did (the caller then paints [`glass_fill`]). Call it
-/// after the layer's shadow and before its fill.
+/// before the layer's shadow; a `kit::paint::surface` at the same `rect` moves the composite
+/// between the shadow and the fill.
 #[expect(dead_code, reason = "used by the component phase")]
 pub fn backdrop(painter: &Painter, rect: Rect, radius: CornerRadius) -> bool {
     backdrop_with(painter, rect, radius, theme::appearance().glass)
@@ -393,11 +399,27 @@ pub fn layer_fill(painter: &Painter, rect: Rect, radius: CornerRadius) -> Color3
     layer_fill_with(painter, rect, radius, theme::appearance().glass)
 }
 
-/// The callback shape for a layer at `rect`, for a caller that places it itself (a reserved
-/// shape index under an egui `Frame`), or `None` when the layer is opaque. Counts towards the
-/// frame's glass layers only when it returns a shape.
+/// The paint callbacks of one glass layer, for a caller that places them itself.
+pub struct Backdrop {
+    /// Copies and blurs what is behind the layer: place it before the layer's shadow.
+    pub capture: Shape,
+    /// Draws the blurred copy inside the layer: place it after the shadow, before the fill.
+    pub composite: Shape,
+}
+
+/// The callbacks for a layer at `rect`, for a caller that places them itself (a reserved shape
+/// index under an egui `Frame`), or `None` when the layer is opaque. Counts towards the frame's
+/// glass layers only when it returns them. With the capture before the shadow and the composite
+/// after it, the shadow stays outside the glass.
+pub fn backdrop_shapes(painter: &Painter, rect: Rect, radius: CornerRadius) -> Option<Backdrop> {
+    backdrop_shapes_with(painter, rect, radius, theme::appearance().glass)
+}
+
+/// [`backdrop_shapes`] as one shape (the capture, then the composite), for a caller with one
+/// place for it. Placed after the layer's shadow, the shadow is blurred into the glass: prefer
+/// [`backdrop_shapes`].
 pub fn backdrop_shape(painter: &Painter, rect: Rect, radius: CornerRadius) -> Option<Shape> {
-    backdrop_shape_with(painter, rect, radius, theme::appearance().glass)
+    backdrop_shapes(painter, rect, radius).map(|b| Shape::Vec(vec![b.capture, b.composite]))
 }
 
 /// The translucent overlay painted over a blurred backdrop.
@@ -415,20 +437,22 @@ fn layer_fill_with(painter: &Painter, rect: Rect, radius: CornerRadius, wanted: 
 }
 
 fn backdrop_with(painter: &Painter, rect: Rect, radius: CornerRadius, wanted: bool) -> bool {
-    let Some(shape) = backdrop_shape_with(painter, rect, radius, wanted) else {
+    let Some(Backdrop { capture, composite }) = backdrop_shapes_with(painter, rect, radius, wanted)
+    else {
         return false;
     };
-    let idx = painter.add(shape.clone());
-    remember(painter, rect, idx, shape);
+    painter.add(capture);
+    let idx = painter.add(composite.clone());
+    remember(painter, rect, idx, composite);
     true
 }
 
-fn backdrop_shape_with(
+fn backdrop_shapes_with(
     painter: &Painter,
     rect: Rect,
     radius: CornerRadius,
     wanted: bool,
-) -> Option<Shape> {
+) -> Option<Backdrop> {
     if !wanted || !available() {
         return None;
     }
@@ -448,7 +472,8 @@ fn backdrop_shape_with(
     if !take_budget(ctx) {
         return None;
     }
-    let job = Job {
+    let job = Arc::new(Job {
+        id: NEXT_JOB.fetch_add(1, Ordering::Relaxed),
         layer: rect,
         radius,
         look: Look {
@@ -458,14 +483,25 @@ fn backdrop_shape_with(
         },
         fallback: theme::surfaces(ctx).overlay,
         ctx: ctx.clone(),
-    };
+    });
     let area = rect.expand(PAD).intersect(viewport);
-    Some(Shape::Callback(PaintCallback {
-        rect: area,
-        callback: Arc::new(egui_glow::CallbackFn::new(move |info, painter| {
-            run(&info, painter, &job);
-        })),
-    }))
+    let callback = |step: fn(&Job) -> gl::Step| {
+        let job = Arc::clone(&job);
+        Shape::Callback(PaintCallback {
+            rect: area,
+            callback: Arc::new(egui_glow::CallbackFn::new(move |info, painter| {
+                run(&info, painter, &job, step(&job));
+            })),
+        })
+    };
+    Some(Backdrop {
+        capture: callback(|job| gl::Step::Capture { job: job.id }),
+        composite: callback(|job| gl::Step::Composite {
+            job: job.id,
+            look: job.look,
+            fallback: job.fallback,
+        }),
+    })
 }
 
 /// The window size in pixels, as eframe paints it.
@@ -574,8 +610,10 @@ impl Look {
     }
 }
 
-/// One glass layer, as its paint callback sees it.
+/// One glass layer, as its paint callbacks see it.
 struct Job {
+    /// Unique per layer and frame: ties the composite to its capture.
+    id: u64,
     layer: Rect,
     radius: CornerRadius,
     look: Look,
@@ -584,8 +622,14 @@ struct Job {
     ctx: egui::Context,
 }
 
-/// The paint callback: never panics into egui_glow, and turns the blur off on any failure.
-fn run(info: &egui::epaint::PaintCallbackInfo, painter: &egui_glow::Painter, job: &Job) {
+/// A paint callback: never panics into egui_glow, and turns the blur off on any failure. A failed
+/// capture leaves the layer to its composite, which then covers it with the opaque overlay.
+fn run(
+    info: &egui::epaint::PaintCallbackInfo,
+    painter: &egui_glow::Painter,
+    job: &Job,
+    step: gl::Step,
+) {
     let Some(plan) = plan(
         job.layer,
         job.radius,
@@ -597,7 +641,7 @@ fn run(info: &egui::epaint::PaintCallbackInfo, painter: &egui_glow::Painter, job
         return;
     };
     let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| match SLOT.lock() {
-        Ok(mut slot) => gl::paint(&mut slot, painter, &plan, job.look, job.fallback),
+        Ok(mut slot) => gl::paint(&mut slot, painter, &plan, step),
         Err(_) => gl::Outcome::Failed {
             reason: Reason::Poisoned,
             covered: false,
@@ -616,7 +660,8 @@ fn run(info: &egui::epaint::PaintCallbackInfo, painter: &egui_glow::Painter, job
         }
         gl::Outcome::Covered => {}
         gl::Outcome::Failed { reason, covered } => {
-            if !covered && reason != Reason::ContextLost {
+            let composite = matches!(step, gl::Step::Composite { .. });
+            if composite && !covered && reason != Reason::ContextLost {
                 // The fallback restores what it touches; a panic here is caught and dropped.
                 let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
                     gl::fallback(painter, &plan, job.fallback);

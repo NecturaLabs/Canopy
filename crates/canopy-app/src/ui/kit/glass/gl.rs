@@ -35,29 +35,59 @@ use eframe::egui_glow;
 use eframe::glow::{self, HasContext as _};
 use egui::Color32;
 
-use super::{CREATED, DELETED, LEVELS, Look, MIN_TEXTURE_SIDE, Plan, PxRect, Reason, shaders};
+use super::{
+    Blur, CREATED, DELETED, LEVELS, Look, MIN_TEXTURE_SIDE, Plan, PxRect, Reason, shaders,
+};
 
 /// The renderer's place in the facade: nothing built yet, built, or off for the session.
 #[derive(Default)]
 pub(super) enum Slot {
     #[default]
     Empty,
-    Ready(GlassGl),
+    Ready(Box<GlassGl>),
     Gone,
 }
 
 /// What one paint of a glass layer did.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum Outcome {
-    /// The backdrop is drawn. `built` carries the texture limit when this paint built the
-    /// renderer.
+    /// The step is done. `built` carries the texture limit when this paint built the renderer.
     Drawn { built: Option<i32> },
-    /// The layer was covered with the opaque overlay for this frame (the region could not be
-    /// blurred, or the blur is already off).
+    /// Nothing was blurred: a composite covered the layer with the opaque overlay for this frame
+    /// (the region could not be blurred, or the blur is already off); a capture did nothing.
     Covered,
-    /// The blur failed and must be turned off; `covered` says whether the opaque overlay is
-    /// already drawn.
+    /// The blur failed and must be turned off; `covered` says whether nothing more needs
+    /// painting (a composite drew the opaque overlay, or a capture had nothing to cover).
     Failed { reason: Reason, covered: bool },
+}
+
+/// One of the two paint callbacks of a glass layer (`job` identifies the layer in this frame).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum Step {
+    /// Copies and blurs what is behind the layer into the levels. Painted before the layer's
+    /// shadow, so the shadow is not in the copy.
+    Capture { job: u64 },
+    /// Draws the blurred copy inside the layer, between its shadow and its fill. Captures first
+    /// unless the levels hold this job's capture (the capture callback did not run, or another
+    /// layer's capture came in between).
+    Composite {
+        job: u64,
+        look: Look,
+        fallback: Color32,
+    },
+}
+
+impl Step {
+    /// Covers a composite's layer with the opaque overlay; a capture has nothing to cover.
+    fn cover(self, cur: Current<'_>, plan: &Plan) {
+        if let Self::Composite { fallback, .. } = self {
+            cover(cur, plan, fallback);
+        }
+    }
+
+    fn covers(self) -> bool {
+        matches!(self, Self::Composite { .. })
+    }
 }
 
 /// The context egui_glow (or eframe at exit) has made current on this thread. Only made in
@@ -704,6 +734,19 @@ fn delete_level(cur: Current<'_>, level: Level) {
     cur.delete_texture(level.texture);
 }
 
+/// One texel of a texture of `size` pixels, in texture coordinates.
+fn texel(size: [i32; 2]) -> [f32; 2] {
+    [
+        1.0 / crate::ui::int_f32(size[0]),
+        1.0 / crate::ui::int_f32(size[1]),
+    ]
+}
+
+/// A size in pixels as shader floats.
+fn size(s: [i32; 2]) -> [f32; 2] {
+    [crate::ui::int_f32(s[0]), crate::ui::int_f32(s[1])]
+}
+
 /// The renderer: programs, an empty vertex array and the blur levels, all made in `gl`.
 pub(super) struct GlassGl {
     /// The context the objects belong to, kept alive so its address identifies it.
@@ -716,6 +759,8 @@ pub(super) struct GlassGl {
     levels: Option<[Level; LEVELS]>,
     /// The region size the levels were allocated for.
     capacity: [i32; 2],
+    /// The job and window region whose blurred copy level 0 holds, until its composite uses it.
+    captured: Option<(u64, PxRect)>,
     /// False once the objects are deleted or left to a context that went away.
     live: bool,
 }
@@ -880,6 +925,7 @@ impl GlassGl {
             vao,
             levels: None,
             capacity: [0, 0],
+            captured: None,
             live: true,
         };
         // Built: the objects now belong to `glass`.
@@ -900,6 +946,7 @@ impl GlassGl {
             }
         }
         self.capacity = [0, 0];
+        self.captured = None;
         // A bound pixel-unpack buffer would make the allocation read from it.
         let unpack = cur.unpack_buffer_binding();
         if unpack.is_some() {
@@ -937,24 +984,48 @@ impl GlassGl {
         Ok(())
     }
 
-    /// Copies, blurs and composites one layer. `saved` holds egui's framebuffer binding.
-    fn draw(&self, cur: Current<'_>, saved: &Saved, plan: &Plan, look: Look) -> Result<(), Reason> {
-        let Some(blur) = plan.blur else {
-            return Err(Reason::Internal);
-        };
+    /// Copies and blurs the region behind a layer into level 0, for the composite of `job`.
+    /// `saved` holds egui's framebuffer binding.
+    fn capture(
+        &mut self,
+        cur: Current<'_>,
+        saved: &Saved,
+        blur: Blur,
+        job: u64,
+    ) -> Result<(), Reason> {
+        self.captured = None;
+        self.ensure(cur, [blur.region.w, blur.region.h])?;
+        self.blur(cur, saved, blur)?;
+        self.captured = Some((job, blur.region));
+        Ok(())
+    }
+
+    /// Draws `job`'s blurred copy inside its layer, capturing it first unless level 0 holds it.
+    fn present(
+        &mut self,
+        cur: Current<'_>,
+        saved: &Saved,
+        plan: &Plan,
+        blur: Blur,
+        look: Look,
+        job: u64,
+    ) -> Result<(), Reason> {
+        if self.captured != Some((job, blur.region)) {
+            self.capture(cur, saved, blur, job)?;
+        }
+        // One composite per capture: the next layer copies what is behind it.
+        self.captured = None;
+        self.draw(cur, saved, plan, blur, look)
+    }
+
+    /// Copies the region at half size into level 0, then blurs it down the pyramid and back.
+    fn blur(&self, cur: Current<'_>, saved: &Saved, blur: Blur) -> Result<(), Reason> {
         let Some(levels) = &self.levels else {
             return Err(Reason::Internal);
         };
         let level = |i: usize| levels.get(i).ok_or(Reason::Internal);
         let used = super::level_sizes([blur.region.w, blur.region.h]);
         let used_at = |i: usize| used.get(i).copied().ok_or(Reason::Internal);
-        let texel = |l: &Level| {
-            [
-                1.0 / crate::ui::int_f32(l.size[0]),
-                1.0 / crate::ui::int_f32(l.size[1]),
-            ]
-        };
-        let size = |s: [i32; 2]| [crate::ui::int_f32(s[0]), crate::ui::int_f32(s[1])];
 
         cur.set_enabled(Cap::Scissor, false);
         cur.set_enabled(Cap::Blend, false);
@@ -973,7 +1044,7 @@ impl GlassGl {
             cur.bind_both(Some(dst.fbo));
             cur.viewport([0, 0, dst_used[0], dst_used[1]]);
             cur.bind_texture(Some(src.texture));
-            cur.uniform_2(p.texel, texel(src));
+            cur.uniform_2(p.texel, texel(src.size));
             cur.uniform_2(p.src_size, size(used_at(from)?));
             cur.uniform_2(p.dst_size, size(dst_used));
             cur.uniform_1(p.offset, blur.offset);
@@ -989,8 +1060,26 @@ impl GlassGl {
         for k in (0..passes).rev() {
             pass(&self.up, k + 1, k)?;
         }
+        Ok(())
+    }
 
-        // 4. Into egui's framebuffer, inside the layer's rounded rectangle.
+    /// 4. Draws level 0 into egui's framebuffer, inside the layer's rounded rectangle.
+    fn draw(
+        &self,
+        cur: Current<'_>,
+        saved: &Saved,
+        plan: &Plan,
+        blur: Blur,
+        look: Look,
+    ) -> Result<(), Reason> {
+        let Some(levels) = &self.levels else {
+            return Err(Reason::Internal);
+        };
+        let level0 = levels.first().ok_or(Reason::Internal)?;
+        let used0 = super::level_sizes([blur.region.w, blur.region.h])
+            .first()
+            .copied()
+            .ok_or(Reason::Internal)?;
         let b = plan.bounds;
         let s = plan.scissor;
         let r = blur.region;
@@ -1006,10 +1095,12 @@ impl GlassGl {
             glow::ONE_MINUS_DST_ALPHA,
             glow::ONE,
         ]);
+        cur.bind_vertex_array(Some(self.vao));
+        cur.active_texture(glow::TEXTURE0);
         cur.use_program(Some(c.program));
-        cur.bind_texture(Some(level(0)?.texture));
-        cur.uniform_2(c.texel, texel(level(0)?));
-        cur.uniform_2(c.src_size, size(used_at(0)?));
+        cur.bind_texture(Some(level0.texture));
+        cur.uniform_2(c.texel, texel(level0.size));
+        cur.uniform_2(c.src_size, size(used0));
         cur.uniform_4(
             c.region,
             [
@@ -1040,6 +1131,7 @@ impl GlassGl {
         cur.delete_program(self.up.program);
         cur.delete_program(self.composite.program);
         cur.delete_vertex_array(self.vao);
+        self.captured = None;
         self.live = false;
     }
 
@@ -1049,19 +1141,19 @@ impl GlassGl {
             tracing::debug!("translucent surfaces: blur objects left to a previous context");
         }
         self.levels = None;
+        self.captured = None;
         self.live = false;
     }
 }
 
-/// Paints one glass layer: builds the renderer on first use, then copies, blurs and composites.
-/// On any failure it deletes what it built, covers the layer with `fallback` and reports the
-/// reason; the caller turns the blur off.
+/// Runs one step of a glass layer: builds the renderer on first use, then captures (copies and
+/// blurs) or composites. On any failure it deletes what it built, covers a composite's layer with
+/// its fallback and reports the reason; the caller turns the blur off.
 pub(super) fn paint(
     slot: &mut Slot,
     painter: &egui_glow::Painter,
     plan: &Plan,
-    look: Look,
-    fallback: Color32,
+    step: Step,
 ) -> Outcome {
     let gl = painter.gl();
     let cur = Current(gl);
@@ -1076,7 +1168,7 @@ pub(super) fn paint(
         };
     }
     let Some(blur) = plan.blur else {
-        cover(cur, plan, fallback);
+        step.cover(cur, plan);
         return Outcome::Covered;
     };
     if let Slot::Ready(glass) = slot
@@ -1087,7 +1179,7 @@ pub(super) fn paint(
         *slot = Slot::Empty;
     }
     if matches!(slot, Slot::Gone) {
-        cover(cur, plan, fallback);
+        step.cover(cur, plan);
         return Outcome::Covered;
     }
 
@@ -1097,13 +1189,13 @@ pub(super) fn paint(
         match GlassGl::new(cur, gl) {
             Ok(glass) => {
                 built = Some(glass.max_side);
-                *slot = Slot::Ready(glass);
+                *slot = Slot::Ready(Box::new(glass));
             }
             Err(reason) => {
                 drop(guard);
                 *slot = Slot::Gone;
                 let _ = cur.check_errors();
-                cover(cur, plan, fallback);
+                step.cover(cur, plan);
                 return Outcome::Failed {
                     reason,
                     covered: true,
@@ -1113,18 +1205,21 @@ pub(super) fn paint(
     }
     let Slot::Ready(glass) = slot else {
         drop(guard);
-        cover(cur, plan, fallback);
+        step.cover(cur, plan);
         return Outcome::Covered;
     };
     // A region over the driver's limit, seen before the limit was known: opaque this frame.
     if super::grow([blur.region.w, blur.region.h], [0, 0], glass.max_side).is_none() {
         drop(guard);
-        cover(cur, plan, fallback);
+        step.cover(cur, plan);
         return Outcome::Covered;
     }
-    let drawn = glass
-        .ensure(cur, [blur.region.w, blur.region.h])
-        .and_then(|()| glass.draw(cur, &guard.saved, plan, look));
+    let drawn = match step {
+        Step::Capture { job } => glass.capture(cur, &guard.saved, blur, job),
+        Step::Composite { job, look, .. } => {
+            glass.present(cur, &guard.saved, plan, blur, look, job)
+        }
+    };
     drop(guard);
     match drawn.and_then(|()| cur.check_errors()) {
         Ok(()) => Outcome::Drawn { built },
@@ -1136,9 +1231,9 @@ pub(super) fn paint(
                 let _ = cur.check_errors();
             }
             *slot = Slot::Gone;
-            let covered = reason != Reason::ContextLost;
-            if covered {
-                cover(cur, plan, fallback);
+            let covered = reason != Reason::ContextLost || !step.covers();
+            if reason != Reason::ContextLost {
+                step.cover(cur, plan);
             }
             Outcome::Failed { reason, covered }
         }
