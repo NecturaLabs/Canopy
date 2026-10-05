@@ -1524,7 +1524,7 @@ mod read_tests {
                 Err(not_downloaded(Some("origin")))
             },
         );
-        assert!(r.is_err());
+        r.unwrap_err();
         assert_eq!(*modes.borrow(), [MissingObjects::Fail]);
         assert_eq!(asked.get(), 2, "asked again right before the download");
 

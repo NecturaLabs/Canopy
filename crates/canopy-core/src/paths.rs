@@ -212,7 +212,7 @@ mod tests {
             );
         }
         #[cfg(unix)]
-        assert!(safe_join(root, "/etc/passwd").is_err());
+        safe_join(root, "/etc/passwd").unwrap_err();
         #[cfg(windows)]
         for bad in [
             "C:\\x",
@@ -259,7 +259,7 @@ mod tests {
             );
         }
         assert!(refuse_link(&dir.path().join("file-link")).is_err());
-        assert!(refuse_link(&dir.path().join("missing")).is_ok());
+        refuse_link(&dir.path().join("missing")).unwrap();
     }
 
     #[test]

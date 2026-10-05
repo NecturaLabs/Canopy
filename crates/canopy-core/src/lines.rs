@@ -560,7 +560,7 @@ mod tests {
         let e = edit(&h, &[3], true).expect("reverse +c");
         assert_eq!(body(&e), [" a", " b", "+c"]);
         // Selecting both versions of the last line is fine.
-        assert!(edit(&h, &[1, 2, 3], false).is_ok());
+        edit(&h, &[1, 2, 3], false).unwrap();
     }
 
     #[test]

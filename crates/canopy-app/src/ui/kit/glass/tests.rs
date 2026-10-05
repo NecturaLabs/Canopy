@@ -624,7 +624,10 @@ fn reasons_survive_their_code() {
         Reason::Internal,
     ] {
         assert_eq!(Reason::from_code(reason.code()), Some(reason));
-        assert!(!reason.describe().is_empty());
+        assert!(
+            !reason.describe().is_empty(),
+            "{reason:?} has no description"
+        );
     }
     assert_eq!(Reason::from_code(0), None);
     assert_eq!(Reason::Gl(0x0505).describe(), "OpenGL error 0x0505");

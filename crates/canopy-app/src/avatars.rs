@@ -620,12 +620,12 @@ mod tests {
             image.write_to(&mut bytes, format).unwrap();
             assert_eq!(decode(bytes.get_ref()).unwrap().size, [64, 64]);
         }
-        assert!(decode(b"not a picture").is_err());
+        decode(b"not a picture").unwrap_err();
         let mut bytes = Cursor::new(Vec::new());
         image::DynamicImage::new_rgb8(2049, 1)
             .write_to(&mut bytes, image::ImageFormat::Png)
             .unwrap();
-        assert!(decode(bytes.get_ref()).is_err());
-        assert!(decode(&vec![0; 2 * 1024 * 1024 + 1]).is_err());
+        decode(bytes.get_ref()).unwrap_err();
+        decode(&vec![0; 2 * 1024 * 1024 + 1]).unwrap_err();
     }
 }

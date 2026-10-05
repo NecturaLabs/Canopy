@@ -261,13 +261,13 @@ fn mode_only_change_shows_in_status_and_diff() {
             MissingObjects::Fail,
         )
         .unwrap();
-    assert!(d.hunks.is_empty());
+    assert!(d.hunks.is_empty(), "{:?}", d.hunks);
     assert_eq!(d.mode_change(), Some((0o100644, 0o100755)));
 
     // Staged, and then in the commit.
     repo.stage(&["a.txt".to_owned()]).unwrap();
     let st = canopy_core::status::collect(repo.git()).unwrap();
-    assert!(st.unstaged.is_empty());
+    assert!(st.unstaged.is_empty(), "{:?}", st.unstaged);
     assert_eq!(st.staged[0].mode_change(), Some((0o100644, 0o100755)));
     let d = repo
         .file_diff(
@@ -398,7 +398,7 @@ fn small_untracked_folders_list_every_file() {
             "new/deep/f2.js"
         ]
     );
-    assert!(st.untracked_dirs.is_empty());
+    assert!(st.untracked_dirs.is_empty(), "{:?}", st.untracked_dirs);
     assert_eq!(st.unstaged[0].new_mode, Some(0o100644));
 }
 
@@ -438,7 +438,7 @@ fn many_untracked_files_collapse_to_folders_and_expand_one_level() {
     // The default limit lists them all.
     let st = canopy_core::status::collect(repo.git()).unwrap();
     assert_eq!(st.unstaged.len(), 13);
-    assert!(st.untracked_dirs.is_empty());
+    assert!(st.untracked_dirs.is_empty(), "{:?}", st.untracked_dirs);
     assert!(matches!(
         repo.untracked_children("../outside"),
         Err(Error::UnsafePath { .. })
@@ -653,7 +653,7 @@ fn why_ignored_covers_tracked_files_and_negation() {
     let keep = repo.why_ignored("keep.txt").unwrap().expect("negation");
     assert!(keep.negated());
     assert_eq!(keep.line, 2);
-    assert!(repo.why_ignored("../x").is_err());
+    repo.why_ignored("../x").unwrap_err();
 }
 
 #[test]

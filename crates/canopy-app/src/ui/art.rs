@@ -929,7 +929,7 @@ mod tests {
                 }
             });
             output.textures_delta.clear();
-            assert!(!output.shapes.is_empty());
+            assert!(!output.shapes.is_empty(), "the art painted nothing");
         }
         assert!(!growing(&ctx), "still growing after the animation's length");
     }

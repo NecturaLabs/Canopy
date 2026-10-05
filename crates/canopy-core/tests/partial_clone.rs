@@ -263,7 +263,8 @@ fn full_clone_is_not_partial_and_reads_offline() {
     let dir = fx.clone("full", &[]);
     let repo = Repo::open(&dir).expect("open");
     assert!(!repo.is_partial_clone());
-    assert!(missing(&dir).is_empty());
+    let absent = missing(&dir);
+    assert!(absent.is_empty(), "{absent:?}");
     assert_history_matches_cli(&fx, &repo, Fail);
 }
 
@@ -484,7 +485,7 @@ fn the_download_gate_stops_the_fetch_itself() {
     let denied = fx.clone("denied-by-gate", &["--filter=blob:none"]);
     let repo = Repo::open(&denied).expect("open");
     let before = missing(&denied);
-    assert!(!before.is_empty());
+    assert!(!before.is_empty(), "the partial clone has every blob");
     let err = repo
         .commit_details(fx.commits[0], Download)
         .expect_err("the gate refuses the fetch");
@@ -787,7 +788,7 @@ fn unreachable_remote_reports_git_error_and_recovers() {
     else {
         panic!("expected NotDownloaded with a reason, got {err:?}");
     };
-    assert!(!reason.is_empty());
+    assert!(!reason.is_empty(), "the error gives no reason");
     assert_not_downloaded(err, Some("origin"), true);
     assert!(fs::read_dir(dir.join(".git")).is_ok(), "repository intact");
 

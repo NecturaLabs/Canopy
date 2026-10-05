@@ -962,7 +962,10 @@ mod tests {
 
     #[test]
     fn every_command_with_a_hint() {
-        assert!(!hint(Command::Palette).is_empty());
+        assert!(
+            !hint(Command::Palette).is_empty(),
+            "the palette has no hint"
+        );
         assert_eq!(hint(Command::Fetch), format!("{}+Shift+F · f", mod_label()));
         assert_eq!(hint(Command::TakeOurs), "h");
         assert_eq!(hint(Command::First), "gg");
@@ -1002,22 +1005,24 @@ mod tests {
 
     #[test]
     fn super_combinations_never_reach_bare_keys() {
-        assert!(!fire(vec![press(Key::J)]).is_empty());
+        assert!(!fire(vec![press(Key::J)]).is_empty(), "j fires nothing");
         let held = fire(vec![press(Key::SuperLeft), press(Key::J)]);
         if cfg!(target_os = "macos") {
-            assert!(!held.is_empty());
+            assert!(!held.is_empty(), "Cmd+J fires nothing");
         } else {
-            assert!(held.is_empty());
+            assert!(held.is_empty(), "{held:?}");
         }
     }
 
     #[test]
     fn gg_needs_two_presses() {
-        assert!(fire(vec![press(Key::G)]).is_empty());
+        let fired = fire(vec![press(Key::G)]);
+        assert!(fired.is_empty(), "{fired:?}");
         let both = fire(vec![press(Key::G), release(Key::G), press(Key::G)]);
         assert_eq!(both.first().map(|f| f.command), Some(Command::First));
         // Held down, the key repeats: that is not a double press.
-        assert!(fire(vec![press(Key::G), press(Key::G)]).is_empty());
+        let fired = fire(vec![press(Key::G), press(Key::G)]);
+        assert!(fired.is_empty(), "{fired:?}");
         assert!(
             fire(vec![
                 press(Key::G),

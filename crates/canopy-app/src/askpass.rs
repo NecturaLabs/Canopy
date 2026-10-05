@@ -506,8 +506,8 @@ mod tests {
     #[test]
     fn a_wrong_token_gets_no_prompt() -> std::io::Result<()> {
         let server = Server::start(|| {})?;
-        assert!(ask(server.port, "not-the-token", "Password: ", "").is_err());
-        assert!(server.prompts.try_recv().is_err());
+        ask(server.port, "not-the-token", "Password: ", "").unwrap_err();
+        server.prompts.try_recv().unwrap_err();
         Ok(())
     }
 
@@ -542,7 +542,7 @@ mod tests {
             (a, l.accept()?.0)
         };
         let err = read_request(&b, Instant::now() + Duration::from_millis(200));
-        assert!(err.is_err());
+        err.unwrap_err();
         drop(a);
         Ok(())
     }

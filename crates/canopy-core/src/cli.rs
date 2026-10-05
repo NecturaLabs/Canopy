@@ -613,7 +613,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let out = run_unchecked(dir.path(), &["rev-parse", "--git-dir"]).expect("git runs");
         assert_ne!(out.code, Some(0));
-        assert!(!out.stderr.is_empty());
+        assert!(!out.stderr.is_empty(), "git explained nothing");
         let out = run_unchecked(dir.path(), &["--version"]).expect("git runs");
         assert_eq!(out.code, Some(0));
     }
@@ -813,7 +813,7 @@ mod tests {
         let quick = output_within(command(None), &["--version"], Duration::from_secs(30))
             .expect("a quick command finishes");
         assert_eq!(quick.code, Some(0));
-        assert!(!quick.stdout.is_empty());
+        assert!(!quick.stdout.is_empty(), "git printed no version");
     }
 
     #[test]

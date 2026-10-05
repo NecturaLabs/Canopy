@@ -825,7 +825,7 @@ mod tests {
         let (a, _) = shapes_at(0.0);
         let (b, _) = shapes_at(0.7);
         assert_eq!(a, b, "the indeterminate fill stands still");
-        assert!(!a.is_empty());
+        assert!(!a.is_empty(), "the indeterminate bar painted nothing");
         // The indeterminate bar says it is working when it cannot move.
         let out = frame(&ctx, 0.0, |ui| {
             Progress::indeterminate().width(200.0).show(ui);

@@ -195,9 +195,9 @@ fn a_plan_accepts_canopys_own_release_and_nothing_else() {
         );
     }
     let no_platform = UpdateManifest::parse(br#"{"version":"412"}"#).expect("manifest");
-    assert!(Plan::from_manifest(&no_platform, base).is_err());
+    Plan::from_manifest(&no_platform, base).unwrap_err();
     let semver = UpdateManifest::parse(br#"{"version":"0.2.1-beta.1"}"#).expect("manifest");
-    assert!(Plan::from_manifest(&semver, base).is_err());
+    Plan::from_manifest(&semver, base).unwrap_err();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1071,7 +1071,7 @@ fn the_installer_fallback_reports_a_failure_and_refuses_a_foreign_script() {
     assert!(err.contains("is not Canopy's installer"), "{err}");
 
     let missing = serve(vec![], 1);
-    assert!(install_with_installer(&missing, 413, &mut |_| {}).is_err());
+    install_with_installer(&missing, 413, &mut |_| {}).unwrap_err();
 }
 
 #[test]

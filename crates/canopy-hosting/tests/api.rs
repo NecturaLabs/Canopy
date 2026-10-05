@@ -842,7 +842,7 @@ fn gitlab_details_collects_parts_and_tolerates_failures() {
         r#"{"message":"500 Internal Server Error"}"#,
     );
     let d = gitlab(&server, Some(TOKEN)).details(4).expect("details");
-    assert!(d.reviews.is_empty());
+    assert!(d.reviews.is_empty(), "{:?}", d.reviews);
     let checks: Vec<(&str, CheckState)> = d
         .checks
         .iter()
@@ -924,7 +924,7 @@ fn gitlab_writes() {
     assert_eq!(writes[3].json(), json!({ "state_event": "close" }));
     assert_eq!(writes[4].json(), json!({ "state_event": "reopen" }));
     assert_eq!(writes[5].json(), json!({ "body": "Thanks!" }));
-    assert!(writes[6].body.is_empty());
+    assert!(writes[6].body.is_empty(), "{:?}", writes[6].body);
     for w in &writes {
         assert_eq!(w.header("authorization"), Some(&*format!("Bearer {TOKEN}")));
     }
@@ -1277,7 +1277,7 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
     let external = format!("{}/stolen", other.base);
     let client = github(&server, Some(TOKEN));
     server.route_with_headers("GET", &path, 302, &[("Location", &external)], "");
-    assert!(client.author_avatar(sha, "a@example.com").is_err());
+    client.author_avatar(sha, "a@example.com").unwrap_err();
     assert!(other.requests().is_empty());
     server.route(
         "GET",
@@ -1299,14 +1299,12 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
         &json!([{"sha":sha,"author":{"avatar_url":own}}]).to_string(),
     );
     server.route_with_headers("GET", "/picture", 302, &[("Location", &external)], "");
-    assert!(
-        client
-            .author_avatar(sha, "a@example.com")
-            .unwrap()
-            .unwrap()
-            .download()
-            .is_err()
-    );
+    client
+        .author_avatar(sha, "a@example.com")
+        .unwrap()
+        .unwrap()
+        .download()
+        .unwrap_err();
     assert!(other.requests().is_empty());
 }
 
@@ -1330,26 +1328,22 @@ fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
     );
     assert!(server.requests()[0].header("authorization").is_none());
     let count = server.requests().len();
-    assert!(
-        client
-            .author_avatar("../../users", "a@example.com")
-            .is_err()
-    );
+    client
+        .author_avatar("../../users", "a@example.com")
+        .unwrap_err();
     assert_eq!(server.requests().len(), count);
     for status in [401, 403, 404, 429, 500] {
         server.route("GET", &path, status, r#"{"message":"Unavailable"}"#);
-        assert!(client.author_avatar(sha, "a@example.com").is_err());
+        client.author_avatar(sha, "a@example.com").unwrap_err();
         server.route(
             "GET",
             "/api/v4/avatar",
             status,
             r#"{"message":"Unavailable"}"#,
         );
-        assert!(
-            gitlab(&server, None)
-                .author_avatar(sha, "a@example.com")
-                .is_err()
-        );
+        gitlab(&server, None)
+            .author_avatar(sha, "a@example.com")
+            .unwrap_err();
     }
     // No commit, or a different one than asked for, never yields someone else's picture.
     server.route("GET", &path, 200, "[]");
@@ -1390,12 +1384,10 @@ fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
             .to_string(),
     );
     server.route("GET", "/oversized", 200, &"x".repeat(2 * 1024 * 1024 + 1));
-    assert!(
-        client
-            .author_avatar(sha, "a@example.com")
-            .unwrap()
-            .unwrap()
-            .download()
-            .is_err()
-    );
+    client
+        .author_avatar(sha, "a@example.com")
+        .unwrap()
+        .unwrap()
+        .download()
+        .unwrap_err();
 }

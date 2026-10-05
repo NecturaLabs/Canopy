@@ -343,8 +343,8 @@ mod tests {
         assert_eq!(m.build(), Some(412));
         assert_eq!(m.platforms.len(), 2);
         assert_eq!(m.platforms["windows-x86_64"].sha256, None);
-        assert!(UpdateManifest::parse(b"not json").is_err());
-        assert!(UpdateManifest::parse(br#"{"notes":"no version"}"#).is_err());
+        UpdateManifest::parse(b"not json").unwrap_err();
+        UpdateManifest::parse(br#"{"notes":"no version"}"#).unwrap_err();
         let minimal = UpdateManifest::parse(br#"{"version":"1"}"#).expect("minimal");
         assert!(minimal.platforms.is_empty() && minimal.notes.is_empty());
     }
@@ -500,8 +500,8 @@ mod tests {
             resolve_location("http://127.0.0.1:9", "/z").expect("no path in base"),
             "http://127.0.0.1:9/z"
         );
-        assert!(resolve_location("https://a.example/x", "z").is_err());
-        assert!(resolve_location("https://a.example/x", "//evil.example/z").is_err());
+        resolve_location("https://a.example/x", "z").unwrap_err();
+        resolve_location("https://a.example/x", "//evil.example/z").unwrap_err();
     }
 
     #[test]

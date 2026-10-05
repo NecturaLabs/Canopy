@@ -444,7 +444,7 @@ mod tests {
         assert!(highlight(&diff("notes.unknownext", &[(LineKind::Added, "hello")])).is_none());
         let long = "x".repeat(MAX_LINE_BYTES + 1);
         let h = highlight(&diff("a.rs", &[(LineKind::Added, &long)])).expect("rust");
-        assert!(h.lines[0][0].is_empty());
+        assert!(h.lines[0][0].is_empty(), "{:?}", h.lines[0][0]);
     }
 
     #[test]
@@ -489,7 +489,7 @@ mod tests {
             ],
         );
         let h = highlight(&d).expect("rust");
-        assert!(!h.lines[0][1].is_empty());
+        assert!(!h.lines[0][1].is_empty(), "the comment has no spans");
         assert!(h.lines[0][1].iter().all(|s| s.token == Token::Comment));
     }
 

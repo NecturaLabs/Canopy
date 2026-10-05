@@ -219,7 +219,7 @@ mod tests {
         assert!(!add(&mut list, PathBuf::from("/..")));
         assert!(!add(&mut list, PathBuf::from("/a/../..")));
         assert!(!add(&mut list, PathBuf::from("/./")));
-        assert!(list.is_empty());
+        assert!(list.is_empty(), "{list:?}");
         assert!(add(&mut list, PathBuf::from("/a/../b")));
     }
 }
