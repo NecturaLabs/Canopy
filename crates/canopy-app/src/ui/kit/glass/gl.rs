@@ -10,8 +10,11 @@
 //!
 //! - **The context is current on this thread.** A [`Current`] is only made from egui_glow's
 //!   painter inside its paint callback (egui_glow paints with its context current and hands the
-//!   callback that painter) and from the context eframe passes to `App::on_exit`, which it keeps
-//!   current to delete its own objects right after.
+//!   callback that painter) and in [`destroy`], from the context eframe passes to `App::on_exit`,
+//!   which it keeps current to delete its own objects right after. `destroy` makes one only for
+//!   the context the objects were made in and only on the thread that made them (the thread that
+//!   owns the context); called anywhere else it makes no OpenGL call and leaves the objects to
+//!   their context.
 //! - **No memory is shared with the driver except fixed-size outputs.** State queries write into
 //!   values glow sizes for them, and each query names its state through an enum here whose every
 //!   variant has exactly that many values ([`Scalar`], [`Quad`]). Textures are allocated without
@@ -30,6 +33,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::thread::ThreadId;
 
 use eframe::egui_glow;
 use eframe::glow::{self, HasContext as _};
@@ -751,6 +755,8 @@ fn size(s: [i32; 2]) -> [f32; 2] {
 pub(super) struct GlassGl {
     /// The context the objects belong to, kept alive so its address identifies it.
     gl: Arc<glow::Context>,
+    /// The thread that made the objects: the one on which their context is current.
+    thread: ThreadId,
     max_side: i32,
     down: BlurProgram,
     up: BlurProgram,
@@ -910,6 +916,7 @@ impl GlassGl {
         // Sampler uniforms start at 0, texture unit 0, which is the unit every pass uses.
         let glass = Self {
             gl: Arc::clone(gl),
+            thread: std::thread::current().id(),
             max_side,
             down: blur_program(cur, down)?,
             up: blur_program(cur, up)?,
@@ -1266,13 +1273,31 @@ fn cover(cur: Current<'_>, plan: &Plan, color: Color32) {
     cur.set_enabled(Cap::Scissor, scissor);
 }
 
-/// Deletes the renderer's objects at exit, if they belong to `gl`, and marks the blur gone.
+/// Deletes the renderer's objects at exit and marks the blur gone. Deletes only when `gl` is the
+/// context the objects were made in and this is the thread that made them; otherwise it makes no
+/// OpenGL call and leaves them to their context (they die with it).
 pub(super) fn destroy(slot: &mut Slot, gl: Option<&glow::Context>) {
     if let Slot::Ready(glass) = slot {
         match gl {
-            Some(gl) if std::ptr::eq(gl, Arc::as_ptr(&glass.gl)) => glass.delete(Current(gl)),
+            Some(gl)
+                if owns(
+                    (Arc::as_ptr(&glass.gl), glass.thread),
+                    (gl, std::thread::current().id()),
+                ) =>
+            {
+                glass.delete(Current(gl));
+            }
             _ => glass.abandon(),
         }
     }
     *slot = Slot::Gone;
+}
+
+/// Whether objects made in context `made.0` on thread `made.1` may be deleted from context
+/// `here.0` on thread `here.1`: only in their own context, on the thread that made them.
+pub(super) fn owns(
+    made: (*const glow::Context, ThreadId),
+    here: (*const glow::Context, ThreadId),
+) -> bool {
+    std::ptr::eq(made.0, here.0) && made.1 == here.1
 }

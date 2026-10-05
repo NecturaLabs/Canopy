@@ -318,8 +318,16 @@ pub fn counters() -> (u64, u64) {
     )
 }
 
-/// Deletes the blur's OpenGL objects (`App::on_exit`, while eframe keeps the context current).
-pub fn destroy(gl: Option<&glow::Context>) {
+/// Deletes the blur's OpenGL objects and turns the blur off for good.
+///
+/// # Contract
+///
+/// Call it only from `App::on_exit`, with the context eframe passes there: eframe keeps that
+/// context current on its thread while it deletes its own objects right after. Elsewhere it is
+/// harmless but leaks: the objects are deleted only for the context they were made in and on the
+/// thread that made them; any other call makes no OpenGL call and leaves them to their context.
+/// A second call does nothing.
+pub(crate) fn destroy(gl: Option<&glow::Context>) {
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         if let Ok(mut slot) = SLOT.lock() {
             gl::destroy(&mut slot, gl);

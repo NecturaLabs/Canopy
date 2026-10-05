@@ -830,3 +830,28 @@ fn the_soak_ends_after_its_frames() {
         );
     }
 }
+
+#[test]
+fn objects_are_deleted_only_in_their_context_on_their_thread() {
+    let ours = std::thread::current().id();
+    let other = std::thread::spawn(|| std::thread::current().id())
+        .join()
+        .unwrap_or(ours);
+    assert_ne!(ours, other);
+    // Addresses only: never dereferenced.
+    let made_in = std::ptr::dangling::<glow::Context>();
+    let elsewhere = made_in.wrapping_byte_add(64);
+    assert!(gl::owns((made_in, ours), (made_in, ours)));
+    assert!(!gl::owns((made_in, ours), (made_in, other)));
+    assert!(!gl::owns((made_in, ours), (elsewhere, ours)));
+}
+
+#[test]
+fn destroying_twice_is_harmless_and_turns_glass_off() {
+    let ctx = egui::Context::default();
+    setup(&ctx, ThemeId::Midnight, true, Backend::Supported);
+    destroy(None);
+    destroy(None);
+    assert!(!available());
+    assert!(describe().contains("window closed"), "{}", describe());
+}
