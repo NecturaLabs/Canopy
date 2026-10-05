@@ -49,7 +49,10 @@ ImageMagick's `import` do the rest, and `tools/screenshot.sh` already prefers `x
    `xdotool mousemove X Y click 1`, `xdotool type --delay 40 -- TEXT` and `xdotool key ctrl+a`
    (clicks, typing and Ctrl chords all reach the window). Single keys are app shortcuts, so type
    text only after clicking into a field.
-4. Look: `import -window root out.png`, then read the PNG (1440x900, scale 1).
+4. Look: `import -window root out.png`, then read the PNG (1440x900, scale 1). For the
+   pull and merge requests view use `tools/screenshot.sh FIXTURE out.png --demo-requests SCENARIO`
+   (it implies `--view requests`): invented requests, no network, only under `--screenshot`, in a
+   repository without a GitHub or GitLab remote. Scenarios are in `tools/README.md`.
 5. Settings are `$XDG_DATA_HOME/io.necturalabs.canopy/app.ron`, written on a graceful close
    (`xdotool key ctrl+q`) and by the periodic autosave. A fresh scratch folder starts at the real
    first-launch path: terms ("I agree"), crash reports ("Don't send"), then the Git identity

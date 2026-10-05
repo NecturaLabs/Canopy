@@ -29,6 +29,7 @@ use crate::worker::{Job, Op};
 
 mod background;
 mod clone;
+pub mod demo_requests;
 mod dispatch;
 mod input;
 mod open;

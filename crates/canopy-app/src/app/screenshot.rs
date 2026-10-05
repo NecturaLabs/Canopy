@@ -16,7 +16,34 @@ pub(super) struct Screenshot {
 }
 
 impl CanopyApp {
+    /// Makes the active tab show the `--demo-requests` scenario (see `demo_requests`), and the
+    /// settings the requests view needs to draw it. Whether the picture may be taken yet.
+    fn show_demo_requests(
+        &mut self,
+        ctx: &egui::Context,
+        scenario: demo_requests::Scenario,
+    ) -> bool {
+        let now = chrono::Utc::now().timestamp();
+        let shown = match self.tabs.get_mut(self.active) {
+            Some(tab) => scenario.show(ctx, tab, now),
+            // Nothing is open (the welcome screen): there is nothing to wait for.
+            None => return true,
+        };
+        // The view draws only when pull and merge requests are on. That is switched on only once
+        // the tab holds the demo's API thread, so the next frame has no reason to start a real
+        // one; the pictures it would fetch from the host stay off.
+        self.settings.hosting_api = shown;
+        self.settings.download_avatars = false;
+        shown
+    }
+
     pub(super) fn handle_screenshot(&mut self, ctx: &egui::Context) {
+        if self.screenshot.is_none() {
+            return;
+        }
+        // `--demo-requests`: the active tab shows invented requests instead of loading them.
+        let demo = demo_requests::chosen();
+        let demo_shown = demo.is_none_or(|scenario| self.show_demo_requests(ctx, scenario));
         let Some(shot) = &mut self.screenshot else {
             return;
         };
@@ -24,10 +51,13 @@ impl CanopyApp {
         if shot.started == 0.0 {
             shot.started = now;
         }
-        let ready = self.pending_opens == 0
+        let ready = demo_shown
+            && self.pending_opens == 0
             && !crate::ui::art::growing(ctx)
             && self.tabs.iter().all(|t| {
-                let requests_ready = t.view != View::Requests
+                // A demo scene may be a loading or an error state on purpose: it is final.
+                let requests_ready = demo.is_some()
+                    || t.view != View::Requests
                     || t.host.is_none()
                     || (!t.requests.loading
                         && !t.requests.details_loading

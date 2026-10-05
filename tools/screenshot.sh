@@ -3,9 +3,15 @@
 #                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|about|toasts|gallery]
 #                            [--style standard|deeper] [--density comfortable|dense] [--translucent on|off]
 #                            [--motion system|reduced|full] [--gallery-page N]
-#                            [--size WxH] [--zoom 0.8..1.6]
+#                            [--demo-requests SCENARIO] [--size WxH] [--zoom 0.8..1.6]
 #
 # <repo> may be "-" to render the welcome screen with no repository open.
+#
+# --demo-requests fills the pull/merge requests view with invented requests, with no network:
+# list, list-all, list-closed, a request number (428, 427, 425, 422, 420, ...), busy, loading,
+# details-loading, details-error, error, no-token or empty; prefix gitlab: for merge requests.
+# It implies --view requests and needs a repository without a GitHub or GitLab remote (the
+# fixtures have none).
 #
 # Renders Canopy headlessly on a virtual X server (Xvfb, software OpenGL via Mesa llvmpipe) with
 # <repo> open, saves one frame to <out.png> once the repository has loaded, and prints the output
@@ -38,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     --translucent) extra+=(--translucent "${2:?--translucent needs on or off}"); shift 2 ;;
     --motion) extra+=(--motion "${2:?--motion needs system, reduced or full}"); shift 2 ;;
     --gallery-page) extra+=(--gallery-page "${2:?--gallery-page needs a number}"); shift 2 ;;
+    --demo-requests) extra+=(--demo-requests "${2:?--demo-requests needs a scenario, see --help}"); shift 2 ;;
     --size) size=${2:?--size needs WxH}; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage; exit 2 ;;
