@@ -76,6 +76,8 @@ too_many_lines = "allow"
 many_single_char_names = "allow"
 # Widget options and settings are independent switches, not states of one enum (12).
 struct_excessive_bools = "allow"
+# A git client's own words are near each other: path and patch, rest and reset, list and last (13).
+similar_names = "allow"
 
 # Nursery lints that are sound on this toolchain. Left out, with findings when this was set up:
 # missing_const_for_fn (301; `const` would be a promise nothing needs), suboptimal_flops (174) and
