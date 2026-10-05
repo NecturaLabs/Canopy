@@ -3439,14 +3439,15 @@ fn floating_scroll() -> egui::style::ScrollStyle {
 /// to grab (egui's default is 12).
 const SCROLL_HANDLE_MIN: f32 = 32.0;
 
-/// Solid scrollbars use foreground ink so they remain visible on raised light surfaces (code and
-/// diff panes, for position awareness).
+/// Always-visible scroll bars for code, diff and detail boxes, for position awareness (section
+/// 4.21): the floating bars' thin handle in the text colour at 45% (75% while hovered or dragged),
+/// with its room kept beside the content so the handle never covers text.
 pub fn solid_scroll() -> egui::style::ScrollStyle {
     egui::style::ScrollStyle {
-        foreground_color: true,
-        bar_width: SM,
-        handle_min_length: SCROLL_HANDLE_MIN,
-        ..egui::style::ScrollStyle::solid()
+        floating_allocated_width: SM,
+        dormant_handle_opacity: 0.45,
+        active_handle_opacity: 0.45,
+        ..floating_scroll()
     }
 }
 
@@ -4087,6 +4088,24 @@ mod tests {
     /// Structure you can see (QA wave 1: every ladder was one uniform 1 to 2 L* step): Standard's
     /// chrome sits at least 2.5 L* off the content ground, and Deeper's cards at least 4 L* off
     /// their ground (Contrast outlines its cards instead).
+    #[test]
+    fn solid_scroll_bars_stay_thin_and_quiet() {
+        let solid = solid_scroll();
+        let floating = floating_scroll();
+        assert!(solid.floating, "a solid bar is the thin floating handle");
+        assert_eq!(solid.floating_width, floating.floating_width);
+        assert!(
+            solid.floating_allocated_width > 0.0,
+            "the bar keeps its room beside the content"
+        );
+        assert!(
+            solid.dormant_handle_opacity > 0.0 && solid.dormant_handle_opacity < 1.0,
+            "the handle is always visible but never a solid slab"
+        );
+        assert_eq!(solid.dormant_handle_opacity, solid.active_handle_opacity);
+        assert!(solid.interact_handle_opacity > solid.active_handle_opacity);
+    }
+
     #[test]
     fn surface_steps_are_visible() {
         for id in ThemeId::ALL {
