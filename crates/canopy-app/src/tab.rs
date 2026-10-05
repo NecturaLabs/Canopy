@@ -143,7 +143,14 @@ impl Resolver {
             return;
         }
         let start = self.focus.min(n - 1);
-        let step = |i: usize| (i as isize + delta).rem_euclid(n as isize) as usize;
+        let shift = delta.unsigned_abs() % n;
+        let step = |i: usize| {
+            if delta < 0 {
+                (i + n - shift) % n
+            } else {
+                (i + shift) % n
+            }
+        };
         let mut i = step(start);
         for _ in 0..n {
             if self.choices.get(i).is_some_and(Option::is_none) {
@@ -2027,7 +2034,7 @@ mod perf {
         Signature {
             name: format!("Author {}", i % 37),
             email: format!("a{}@example.com", i % 37),
-            time: 1_700_000_000 - i as i64 * 600,
+            time: 1_700_000_000 - i64::try_from(i).expect("a small index") * 600,
             offset_minutes: 0,
         }
     }
@@ -2182,6 +2189,7 @@ mod perf {
     }
 
     /// Mean milliseconds per frame over `frames` frames, scrolling at `pointer`.
+    #[expect(clippy::cast_precision_loss, reason = "a frame count far below 2^52")]
     fn measure(
         ctx: &egui::Context,
         frames: usize,

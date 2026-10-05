@@ -10,6 +10,10 @@
     clippy::disallowed_methods,
     reason = "the palette: the one module that makes colours"
 )]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "colours are written 0xRRGGBB, as design tools show them"
+)]
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 

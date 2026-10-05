@@ -219,7 +219,7 @@ pub fn redact_url(text: &str) -> String {
 
 /// Logs a finished git command: at debug level always, at warn level when it failed.
 fn record(args: &[&str], started: Instant, status: Option<i32>, stderr: &[u8]) {
-    let ms = started.elapsed().as_millis() as u64;
+    let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let command = subcommand(args);
     let shown = loggable(args);
     if status == Some(0) {
@@ -489,7 +489,7 @@ pub fn run_streaming(
     let status = child.wait()?;
     record(args, started, status.code(), &stderr_all);
     if status.success() {
-        tracing::info!(command = %subcommand(args), ms = started.elapsed().as_millis() as u64, "git succeeded");
+        tracing::info!(command = %subcommand(args), ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX), "git succeeded");
     }
     let stdout = stdout_reader.join().unwrap_or_default();
     if status.success() {

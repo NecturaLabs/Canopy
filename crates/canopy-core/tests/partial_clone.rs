@@ -342,8 +342,8 @@ fn blobless_clone_fail_mode_stays_offline() {
             additions: 0,
             deletions: 0,
             lfs: false,
-            old_mode: Some(0o100644),
-            new_mode: Some(0o100644),
+            old_mode: Some(0o100_644),
+            new_mode: Some(0o100_644),
         }]
     );
     let err = repo

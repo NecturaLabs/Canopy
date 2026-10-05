@@ -42,14 +42,14 @@ pub fn dismiss_underlying_tooltips(ctx: &egui::Context) {
 
 /// A stable colour for a displayed identity, shared by names and matching host handles.
 pub fn person_color(p: &Palette, identity: &str) -> Color32 {
-    let mut h: u32 = 2166136261;
+    let mut h: u32 = 2_166_136_261;
     let key: String = identity
         .chars()
         .filter(|c| c.is_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect();
     for b in key.bytes() {
-        h = (h ^ u32::from(b)).wrapping_mul(16777619);
+        h = (h ^ u32::from(b)).wrapping_mul(16_777_619);
     }
     p.lanes[(h as usize) % p.lanes.len()]
 }

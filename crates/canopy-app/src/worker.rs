@@ -609,7 +609,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     emit(Event::OpStarted(label.clone()));
                     let progress = |line: &str| emit(Event::Progress(line.to_owned()));
                     let result = perform(&repo, op, progress).map_err(|e| e.to_string());
-                    let ms = started.elapsed().as_millis() as u64;
+                    let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                     match &result {
                         Ok(_) => tracing::info!(operation = %label, ms, "operation succeeded"),
                         Err(e) => {
@@ -628,7 +628,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             }
             tracing::debug!(
                 job = kind,
-                ms = started.elapsed().as_millis() as u64,
+                ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 "job done"
             );
         }
@@ -642,7 +642,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 Ok(s) => {
                     tracing::debug!(
                         commits = s.commits.len(),
-                        ms = started.elapsed().as_millis() as u64,
+                        ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                         "snapshot"
                     );
                     emit(Event::Snapshot(Arc::new(s)));

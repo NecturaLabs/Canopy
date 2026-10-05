@@ -329,7 +329,7 @@ fn run(req: Request, cache: &Mutex<Cache>) {
         };
         tracing::debug!(
             lines = req.diff.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
-            ms = started.elapsed().as_millis() as u64,
+            ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             "highlighted"
         );
         let h = Arc::new(h);

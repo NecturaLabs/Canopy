@@ -186,12 +186,12 @@ impl Http {
             Method::Patch => self.send_with_body(self.agent.patch(&url), payload.as_deref()),
         };
         let mut response = result.map_err(|e| {
-            let ms = started.elapsed().as_millis() as u64;
+            let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             tracing::warn!(method = method.as_str(), path, ms, error = %e, "hosting request failed");
             Error::Network(e.to_string())
         })?;
         let status = response.status().as_u16();
-        let ms = started.elapsed().as_millis() as u64;
+        let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let remaining = response
             .headers()
             .get("x-ratelimit-remaining")

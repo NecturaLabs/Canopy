@@ -658,6 +658,10 @@ fn start_askpass(ctx: &egui::Context) -> Option<crate::askpass::Server> {
 }
 
 impl eframe::App for CanopyApp {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "egui margins are whole points in an i8; theme::metrics keeps them small"
+    )]
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         update_window_minimum(&ctx);
@@ -983,6 +987,10 @@ impl eframe::App for CanopyApp {
 
 /// The central content pane: flush on the pane ground in Standard; in Deeper a floating card over
 /// the ground's gutters, with the focused-pane edge (the main pane holds the keyboard).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "egui margins are whole points in an i8; theme::metrics keeps them small"
+)]
 fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     let m = theme::metrics();
     let p = palette(ui.ctx());

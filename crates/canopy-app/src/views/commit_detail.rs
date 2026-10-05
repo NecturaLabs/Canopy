@@ -626,8 +626,8 @@ mod tests {
             additions: 12,
             deletions: 3,
             lfs: false,
-            old_mode: Some(0o100644),
-            new_mode: Some(0o100644),
+            old_mode: Some(0o100_644),
+            new_mode: Some(0o100_644),
         }
     }
 

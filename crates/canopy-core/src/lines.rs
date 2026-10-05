@@ -569,7 +569,7 @@ mod tests {
             old_path: b"n.txt".to_vec(),
             new_path: b"n.txt".to_vec(),
             old_mode: 0,
-            new_mode: 0o100644,
+            new_mode: 0o100_644,
             old_absent: true,
             new_absent: false,
         };

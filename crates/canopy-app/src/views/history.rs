@@ -865,7 +865,7 @@ mod tests {
             deletions: 0,
             lfs: false,
             old_mode: None,
-            new_mode: Some(0o100644),
+            new_mode: Some(0o100_644),
         };
         tab.selected_commit = Some(oid);
         tab.details = Some(std::sync::Arc::new(canopy_core::CommitDetails {

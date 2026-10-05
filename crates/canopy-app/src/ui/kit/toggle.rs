@@ -452,8 +452,12 @@ pub(super) fn step(from: usize, delta: isize, len: usize) -> usize {
     if len == 0 {
         return 0;
     }
-    let len = len as isize;
-    (((from as isize + delta) % len + len) % len) as usize
+    let (from, shift) = (from % len, delta.unsigned_abs() % len);
+    if delta < 0 {
+        (from + len - shift) % len
+    } else {
+        (from + shift) % len
+    }
 }
 
 /// The arrow key pressed this frame, as a step: Down and Right forward, Up and Left back.
