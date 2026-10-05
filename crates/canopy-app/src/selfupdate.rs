@@ -760,11 +760,15 @@ struct Lock(PathBuf);
 impl Lock {
     fn take(root: &Path) -> Result<Self, String> {
         let path = root.join(".lock");
-        fs::create_dir(&path).map_err(|_| {
-            format!(
-                "another Canopy install or update is running (remove {} if it is not)",
-                path.display()
-            )
+        fs::create_dir(&path).map_err(|e| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                format!(
+                    "another Canopy install or update is running (remove {} if it is not)",
+                    path.display()
+                )
+            } else {
+                io_err("could not create", &path, &e)
+            }
         })?;
         Ok(Self(path))
     }

@@ -468,6 +468,21 @@ fn the_lock_is_exclusive_and_released() {
 }
 
 #[test]
+fn a_lock_that_cannot_be_made_says_why() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let missing = tmp.path().join("not-installed");
+    let err = Lock::take(&missing).map(|_| ()).expect_err("no folder");
+    assert!(
+        !err.contains("another Canopy install or update is running"),
+        "{err}"
+    );
+    assert!(
+        err.contains(&missing.join(".lock").display().to_string()),
+        "{err}"
+    );
+}
+
+#[test]
 fn the_receipt_is_read_and_registered_copies_follow_the_new_files() {
     let tmp = tempfile::tempdir().expect("tmp");
     let root = tmp.path().join("root");
