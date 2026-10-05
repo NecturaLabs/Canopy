@@ -15,6 +15,7 @@ use crate::tab::{DetailsError, FileSelection, RepoTab};
 use crate::ui::kit::avatar::{Avatar, AvatarSize, Person};
 use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::{ChangeBadge, DiffStat};
+use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{ListRow, RowKind, TreeRow, tree_children};
 use crate::ui::kit::{Button, IconButton, Size, paint};
@@ -102,13 +103,24 @@ pub fn show(
                 )
                 .on_hover_text(widgets::full_date(d.author.time, d.author.offset_minutes));
             });
+            // Up to two whole file rows, the "N files changed" line above them (as tall as it
+            // was last frame) and the gaps between them.
+            let stats_key = ui.id().with("commit-file-stats-height");
+            let stats_h = ui
+                .data(|data| data.get_temp::<f32>(stats_key))
+                .unwrap_or(ui.spacing().interact_size.y);
             let files_min = file_row_height() * crate::ui::count_f32(d.files.len().min(2))
-                + ui.spacing().interact_size.y * 2.0
-                + theme::XS * 3.0;
-            // Measured here: the body has no height limit of its own.
-            let info_room =
-                (ui.available_height() - files_min - RowKind::List.height() - theme::XS * 2.0)
-                    .max(0.0);
+                + stats_h
+                + theme::XS * 2.0
+                + ui.spacing().item_spacing.y * 3.0;
+            // What is left for the body under the disclosure row, less the body's padding and
+            // the gaps around it.
+            let info_room = (ui.available_height()
+                - files_min
+                - RowKind::List.height()
+                - theme::XS * 2.0
+                - ui.spacing().item_spacing.y * 2.0)
+                .max(0.0);
             let mut open = tab.history_layout.information_open;
             // The pane header already shows a summary that fits it; the block then starts with
             // the rest of the message.
@@ -135,7 +147,11 @@ pub fn show(
             });
             tab.history_layout.information_open = open;
             ui.add_space(theme::XS);
-            file_stats(ui, &d);
+            let measured = file_stats(ui, &d);
+            if (measured - stats_h).abs() > 0.5 {
+                ui.data_mut(|data| data.insert_temp(stats_key, measured));
+                ui.ctx().request_repaint();
+            }
             ui.add_space(theme::XS);
             let list = egui::ScrollArea::vertical()
                 .id_salt("commit-file-list")
@@ -238,11 +254,11 @@ pub(super) fn paint_header_strip(ui: &Ui, rect: Rect) {
     );
 }
 
-/// The "Commit information" disclosure: open by default in every density (it keeps the user's
-/// choice), its body flush with the author row. The body takes its natural height up to `room`
-/// (what the changed files leave), never less than one headline line, and scrolls beyond that
-/// with a faded edge instead of cutting a line through its glyphs. It is never shorter than the
-/// body's `first_line`, so opening it always shows the start of the message.
+/// The "Commit information" disclosure, one rule in every density: it keeps the user's choice
+/// (open by default) and shows its body whenever `room` (what the changed files' reserved rows
+/// leave) holds the body's `first_line`. The body sits flush with the author row, takes its
+/// natural height up to that room and scrolls past it behind a faded edge, so no line is cut
+/// through its glyphs. Without that room it stays shut and its tooltip says how to make room.
 fn information(
     ui: &mut Ui,
     open: &mut bool,
@@ -253,25 +269,35 @@ fn information(
     const LABEL: &str = "Commit information";
     let s = palette(ui.ctx()).s();
     let id = ui.id().with("commit-information");
+    let fits = room >= first_line;
+    let mut shown = *open && fits;
     let row = TreeRow::new("commit-information", 0)
         .kind(RowKind::List)
         .label(LABEL)
         .toggle_on_click(true)
-        .open(open)
+        .enabled(fits)
+        .open(&mut shown)
         .show(ui)
         .response;
-    let shown = *open;
+    if fits {
+        *open = shown;
+    }
     // A disclosure is a collapsing header, not an item of a tree.
-    row.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::CollapsingHeader, true, LABEL));
+    row.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::CollapsingHeader, fits, LABEL));
     ui.ctx().accesskit_node_builder(row.id, |n| {
         n.clear_selected();
         n.set_expanded(shown);
     });
+    if !fits {
+        row.kit_tooltip("No room for it under the changed files")
+            .detail("Make the details pane taller, or choose Expand")
+            .show();
+    }
     tree_children(ui, id, shown, 0, |ui| {
         ui.add_space(theme::XS);
         let out = egui::ScrollArea::vertical()
             .id_salt("commit-metadata")
-            .max_height(room.max(first_line))
+            .max_height(room)
             .min_scrolled_height(0.0)
             .auto_shrink([false, true])
             .show(ui, body);
@@ -377,39 +403,47 @@ fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
     }
 }
 
-fn file_stats(ui: &mut Ui, d: &CommitDetails) {
+/// The "N files changed" line and its line counts; returns the height it took.
+fn file_stats(ui: &mut Ui, d: &CommitDetails) -> f32 {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let (adds, dels) = d
         .files
         .iter()
         .fold((0, 0), |(a, r), f| (a + f.additions, r + f.deletions));
-    ui.horizontal_wrapped(|ui| {
-        ui.label(
-            RichText::new(format!(
-                "{} file{} changed",
-                d.files.len(),
-                if d.files.len() == 1 { "" } else { "s" }
-            ))
-            .size(m.meta_size)
-            .color(p.text_dim),
-        );
-        if d.stats_known {
-            DiffStat::new(adds, dels).show(ui);
-        } else {
-            // A partial clone that has not downloaded the file contents.
+    ui.scope(|ui| {
+        // As tall as its text: the height of a control would only push the files down.
+        ui.spacing_mut().interact_size.y = 0.0;
+        ui.horizontal_wrapped(|ui| {
             ui.label(
-                RichText::new("line counts not downloaded")
-                    .color(p.text_faint)
-                    .size(m.small_size),
-            )
-            .on_hover_text(
-                "This is a partial clone: the line counts and renamed files \
+                RichText::new(format!(
+                    "{} file{} changed",
+                    d.files.len(),
+                    if d.files.len() == 1 { "" } else { "s" }
+                ))
+                .size(m.meta_size)
+                .color(p.text_dim),
+            );
+            if d.stats_known {
+                DiffStat::new(adds, dels).show(ui);
+            } else {
+                // A partial clone that has not downloaded the file contents.
+                ui.label(
+                    RichText::new("line counts not downloaded")
+                        .color(p.text_faint)
+                        .size(m.small_size),
+                )
+                .on_hover_text(
+                    "This is a partial clone: the line counts and renamed files \
                  need file contents that were not downloaded. Open a file \
                  to download it.",
-            );
-        }
-    });
+                );
+            }
+        })
+    })
+    .response
+    .rect
+    .height()
 }
 
 fn files(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
@@ -767,38 +801,55 @@ mod tests {
         assert!(nodes.iter().any(|(l, _)| l == "src/views/history.rs"));
     }
 
-    /// qa-a F1/F15, qa-b F2: one rule in every density. The block opens even when the pane has
-    /// no room to spare (it showed open in Dense and shut in Comfortable), shows at least a whole
-    /// headline line, and its body starts at the column's edge, not under the disclosure label.
+    /// One frame-settled draw of the commit information block with `room` to spare: the body's
+    /// rectangle (None while shut), the column's left edge, the height used and the user's
+    /// choice afterwards.
+    fn information_at(ctx: &egui::Context, room: f32) -> (Option<egui::Rect>, f32, f32, bool) {
+        let mut body = None;
+        let mut column = 0.0;
+        let mut used = 0.0;
+        let mut open = true;
+        for _ in 0..3 {
+            body = None;
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                column = ui.max_rect().left();
+                let line = ui.text_style_height(&egui::TextStyle::Body);
+                super::information(ui, &mut open, room, line, |ui| {
+                    body = Some(ui.label("fix(retry): tune defaults").rect);
+                });
+                used = ui.min_rect().height();
+            });
+            out.textures_delta.clear();
+        }
+        (body, column, used, open)
+    }
+
+    /// qa-a F1/F15, qa-b F2: one rule in every density. With room for its first line the block
+    /// is open, shows that line whole and starts at the column's edge, not under the disclosure
+    /// label; without it the block stays shut, the changed files keep their rows, and the user's
+    /// choice is kept for a taller pane.
     #[test]
-    fn commit_information_opens_in_every_density_flush_with_the_column() {
+    fn commit_information_follows_one_rule_flush_with_the_column() {
         for density in [Density::Comfortable, Density::Dense] {
             let ctx = ctx(density);
-            let mut body = None;
-            let mut column = 0.0;
-            let mut shown = 0.0;
-            for _ in 0..3 {
-                let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
-                    column = ui.max_rect().left();
-                    let mut open = true;
-                    let line = ui.text_style_height(&egui::TextStyle::Body);
-                    super::information(ui, &mut open, 0.0, line, |ui| {
-                        body = Some(ui.label("fix(retry): tune defaults").rect);
-                    });
-                    shown = ui.min_rect().height();
-                });
-                out.textures_delta.clear();
-            }
-            let body = body.unwrap_or_else(|| panic!("{density:?}: open with no room to spare"));
+            let (body, column, used, _) = information_at(&ctx, 80.0);
+            let body = body.unwrap_or_else(|| panic!("{density:?}: open with room for a line"));
             assert!(
                 (body.left() - column).abs() < 0.5,
                 "{density:?}: body at {} against the column at {column}",
                 body.left()
             );
             assert!(
-                shown >= super::RowKind::List.height() + body.height(),
-                "{density:?}: the row and a whole first line show, got {shown}"
+                used >= super::RowKind::List.height() + body.height(),
+                "{density:?}: the row and a whole first line show, got {used}"
             );
+            let (body, _, used, open) = information_at(&ctx, 0.0);
+            assert!(body.is_none(), "{density:?}: no room, no body");
+            assert!(
+                used <= super::RowKind::List.height() + 0.5,
+                "{density:?}: only the row, got {used}"
+            );
+            assert!(open, "{density:?}: the choice survives a short pane");
         }
     }
 
