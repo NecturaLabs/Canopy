@@ -1,15 +1,26 @@
 //! The staging area: conflicted, unstaged and staged files, the commit composer and the diff.
 
-use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Ui, vec2};
+use egui::text::{LayoutJob, TextFormat};
+use egui::{
+    Align, FontFamily, FontId, Layout, Rect, Response, RichText, Stroke, Ui, UiBuilder, pos2, vec2,
+};
 use egui_phosphor::regular as icon;
 
 use canopy_core::identity::Identity;
 use canopy_core::{DiffSource, FileEntry};
 
 use crate::action::Action;
+use crate::keymap::Command;
 use crate::tab::{FileSelection, RepoTab};
-use crate::ui::theme::{self, Palette, palette};
-use crate::ui::{art, widgets};
+use crate::ui::kit::chip::{ChangeBadge, CountBadge, DiffStat};
+use crate::ui::kit::field::{TextArea, TextField};
+use crate::ui::kit::progress::Spinner;
+use crate::ui::kit::row::{ListRow, RowCtx, RowKind, SectionHeader, caps_galley};
+use crate::ui::kit::surface::Banner;
+use crate::ui::kit::toggle::Checkbox;
+use crate::ui::kit::{Button, IconButton, Size, Tone, anim, menu, paint};
+use crate::ui::theme::{self, palette};
+use crate::ui::{art, motion, widgets};
 use crate::views::{commit_detail, diff, resolve};
 use crate::worker::Op;
 
@@ -22,12 +33,12 @@ enum List {
 
 /// Draws the changes view.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
-    let p = palette(ui.ctx());
+    let s = theme::surfaces(ui.ctx());
     let Some(snap) = tab.snap.clone() else {
-        ui.centered_and_justified(|ui| ui.spinner());
+        ui.centered_and_justified(|ui| Spinner::new().label("changes").show(ui));
         return;
     };
-    widgets::repository_state_banner(ui, tab, actions);
+    state_banner(ui, tab, actions);
     // Default selection: the first changed file.
     if tab
         .file
@@ -64,8 +75,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         .max_size(pane_max.min(700.0))
         .frame(
             egui::Frame::new()
-                .fill(p.panel())
-                .stroke(Stroke::new(1.0, p.border())),
+                .fill(s.panel)
+                .stroke(Stroke::new(paint::SEAM, s.border)),
         )
         .show(ui, |ui| {
             let list_frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 8));
@@ -83,11 +94,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                                 lists(ui, tab, &snap, actions);
                                 ui.add_space(COMPOSER_GAP / 2.0);
                                 let rule = ui.max_rect().x_range();
-                                ui.painter().hline(
-                                    rule,
-                                    ui.cursor().min.y,
-                                    Stroke::new(1.0, p.border()),
-                                );
+                                paint::seam_h(ui.painter(), rule, ui.cursor().min.y, s.border);
                                 ui.add_space(COMPOSER_GAP / 2.0);
                                 egui::Frame::new()
                                     .inner_margin(egui::Margin::symmetric(4, 0))
@@ -110,7 +117,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 .max_size(composer_height.min(cap))
                 .frame(
                     egui::Frame::new()
-                        .fill(p.panel())
+                        .fill(s.panel)
                         .inner_margin(egui::Margin::same(12)),
                 )
                 .show(ui, |ui| composer(ui, tab, &snap, actions, false));
@@ -125,7 +132,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 });
         });
     egui::CentralPanel::default()
-        .frame(egui::Frame::new().fill(p.bg()))
+        .frame(egui::Frame::new().fill(s.pane))
         .show(ui, |ui| {
             if snap.status_unavailable.is_none() && snap.status.is_clean() {
                 clean_home(ui, tab, &snap, actions);
@@ -137,8 +144,108 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         });
 }
 
+/// The operation in progress (a merge, rebase, cherry-pick or revert) across the top of the
+/// view, with Continue and Abort.
+fn state_banner(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
+    let Some(snap) = &tab.snap else {
+        return;
+    };
+    if snap.state == canopy_core::RepoState::Clean {
+        return;
+    }
+    let state = snap.state;
+    let conflicts = snap.status.conflicted.len();
+    let busy = tab.running.is_some();
+    egui::Panel::top("repository-operation-state")
+        .frame(egui::Frame::NONE)
+        .show(ui, |ui| {
+            let left = if conflicts > 0 {
+                format!(
+                    "{conflicts} conflict{} left",
+                    if conflicts == 1 { "" } else { "s" }
+                )
+            } else {
+                "No conflicts left".to_owned()
+            };
+            let banner = Banner::new(
+                Tone::Warning,
+                format!("{} in progress on {}", state.label(), snap.head.label()),
+            )
+            .body(left)
+            .id_salt("repository-operation-state")
+            .show(ui);
+            let Some(command) = state.command() else {
+                return;
+            };
+            // The banner's own actions cannot be disabled or explain themselves, so Continue and
+            // Abort sit over its right end, where its actions would be.
+            let rect = banner.response.rect;
+            if rect.height() <= 0.0 {
+                return;
+            }
+            let full = theme::metrics().pane_header_height;
+            let row = Rect::from_min_size(
+                pos2(rect.left(), rect.bottom() - full),
+                vec2(rect.width(), full),
+            );
+            let mut child = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(row.shrink2(vec2(theme::SM, 0.0)))
+                    .layout(Layout::right_to_left(Align::Center)),
+            );
+            child.set_clip_rect(rect.intersect(ui.clip_rect()));
+            child.spacing_mut().item_spacing.x = theme::SM;
+            if Button::new(format!("Abort {command}…"))
+                .ghost()
+                .size(Size::Sm)
+                .icon(icon::X_CIRCLE)
+                .icon_tone(Tone::Danger)
+                .enabled(!busy)
+                .disabled_reason("Wait for the current operation")
+                .id_salt("state-abort")
+                .show(&mut child)
+                .clicked()
+            {
+                actions.push(Action::Confirm {
+                    title: format!("Abort {command}"),
+                    body: "Return the repository to where it was before the operation \
+                           started? Resolved conflicts are discarded."
+                        .into(),
+                    confirm: "Abort".into(),
+                    danger: true,
+                    op: Op::ContinueOrAbort { state, abort: true },
+                });
+            }
+            let can_continue = conflicts == 0 && !busy;
+            let why = if busy {
+                "Wait for the current operation"
+            } else {
+                "Resolve and stage every conflicted file first"
+            };
+            if Button::new("Continue")
+                .ghost()
+                .size(Size::Sm)
+                .icon(icon::ARROW_RIGHT)
+                .enabled(can_continue)
+                .tooltip("Continue this operation using the staged resolutions")
+                .disabled_reason(why)
+                .id_salt("state-continue")
+                .show(&mut child)
+                .clicked()
+            {
+                actions.push(Action::Op(Op::ContinueOrAbort {
+                    state,
+                    abort: false,
+                }));
+            }
+        });
+}
+
 /// Gap between the last list and the composer when the composer follows the lists.
 const COMPOSER_GAP: f32 = 28.0;
+/// Gap between two file lists, and the height of an empty list's placeholder line.
+const LIST_GAP: f32 = theme::MD;
+const EMPTY_LIST: f32 = theme::XL;
 
 /// Height of the sections `lists` draws, close enough to decide whether the composer fits
 /// below them. An overestimate only pins the composer; an underestimate scrolls.
@@ -147,13 +254,11 @@ fn lists_height(st: &canopy_core::WorkingStatus) -> f32 {
         return 40.0;
     }
     let (conflicts, unstaged, staged) = visible_lists(st);
+    let header = theme::metrics().section_header_height;
+    let row_h = RowKind::File.height();
     let section = |n: usize| {
-        let body = if n == 0 {
-            24.0
-        } else {
-            n as f32 * commit_detail::FILE_ROW_H
-        };
-        widgets::compact_h() + 4.0 + body + 10.0
+        let body = if n == 0 { EMPTY_LIST } else { n as f32 * row_h };
+        header + theme::XS + body + LIST_GAP
     };
     let mut h = 16.0;
     if conflicts {
@@ -181,6 +286,31 @@ fn composer_height(ui: &Ui, tab: &RepoTab, snap: &canopy_core::RepoSnapshot) -> 
     h + 24.0
 }
 
+/// A list's header: the uppercase title, its count in a badge beside it, and `trailing`
+/// controls laid out right to left at its end.
+fn list_header(ui: &mut Ui, title: &str, count: usize, tone: Tone, trailing: impl FnOnce(&mut Ui)) {
+    let p = palette(ui.ctx());
+    let rect = SectionHeader::new(title).first(true).show(ui).response.rect;
+    // The section header insets its title by 6.
+    let title_w = caps_galley(ui, title, p.text_faint).size().x;
+    let mut badge = ui.new_child(
+        UiBuilder::new()
+            .max_rect(Rect::from_min_max(
+                pos2(rect.left() + 6.0 + title_w + theme::SM, rect.top()),
+                rect.max,
+            ))
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    CountBadge::new(count).tone(tone).show(&mut badge);
+    let mut end = ui.new_child(
+        UiBuilder::new()
+            .max_rect(rect)
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    end.spacing_mut().item_spacing.x = theme::XS;
+    trailing(&mut end);
+}
+
 /// The sections of the file column: the not-available notice, the clean placeholder, or the
 /// conflicted, unstaged and staged lists.
 fn lists(
@@ -190,6 +320,7 @@ fn lists(
     actions: &mut Vec<Action>,
 ) {
     let p = palette(ui.ctx());
+    let m = theme::metrics();
     let spacing = ui.spacing().item_spacing.y;
     let row_height = ui.spacing().interact_size.y;
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -206,17 +337,18 @@ fn lists(
             ui.add_space(6.0);
             ui.label(
                 RichText::new("Changes not available")
-                    .font(FontId::new(theme::TITLE_SIZE, theme::semibold())),
+                    .font(FontId::new(m.subtitle_size, theme::semibold())),
             );
             ui.label(
                 RichText::new(&u.message)
                     .color(p.text_dim)
-                    .size(theme::META_SIZE),
+                    .size(m.meta_size),
             );
             if u.can_download {
-                ui.add_space(8.0);
-                if ui
-                    .button(format!("{}  Retry", icon::ARROWS_CLOCKWISE))
+                ui.add_space(theme::SM);
+                if Button::new("Retry")
+                    .icon(icon::ARROWS_CLOCKWISE)
+                    .show(ui)
                     .clicked()
                 {
                     actions.push(Action::Refresh);
@@ -226,20 +358,16 @@ fn lists(
     } else if st.is_clean() {
         // The illustration and the summary live in the main pane (`clean_home`); here the
         // column only says there is nothing to list.
-        ui.horizontal(|ui| {
-            ui.add_space(6.0);
-            widgets::section_label(ui, "Changes");
-            widgets::count_badge(ui, 0, p.text_faint);
-        });
+        list_header(ui, "Changes", 0, Tone::Neutral, |_| {});
     } else {
         let (conflicts, unstaged, staged) = visible_lists(st);
         if conflicts {
             list(ui, tab, List::Conflicted, &st.conflicted, actions);
-            ui.add_space(10.0);
+            ui.add_space(LIST_GAP);
         }
         if unstaged {
             list(ui, tab, List::Unstaged, &st.unstaged, actions);
-            ui.add_space(10.0);
+            ui.add_space(LIST_GAP);
         }
         if staged {
             list(ui, tab, List::Staged, &st.staged, actions);
@@ -258,6 +386,7 @@ fn clean_home(
     actions: &mut Vec<Action>,
 ) {
     let p = palette(ui.ctx());
+    let m = theme::metrics();
     let busy = tab.running.is_some();
     let branch = snap
         .head
@@ -268,7 +397,6 @@ fn clean_home(
         .head
         .oid
         .and_then(|oid| snap.commits.iter().find(|c| c.oid == oid));
-    let width = ui.available_width().min(420.0);
     let top = ((ui.available_height() - 380.0) / 2.0).max(24.0);
     egui::ScrollArea::vertical()
         .id_salt("clean-summary")
@@ -278,10 +406,10 @@ fn clean_home(
             ui.vertical_centered(|ui| {
                 ui.add_space(top);
                 art::show(ui, art::empty_clean(), vec2(200.0, 150.0));
-                ui.add_space(8.0);
+                ui.add_space(theme::SM);
                 ui.label(
                     RichText::new("Working tree clean")
-                        .font(FontId::new(theme::HEADLINE_SIZE, theme::semibold())),
+                        .font(FontId::new(m.display_size, theme::semibold())),
                 );
                 ui.add_space(2.0);
                 ui.label(
@@ -290,7 +418,7 @@ fn clean_home(
                         snap.head.label()
                     ))
                     .color(p.text_dim)
-                    .size(theme::META_SIZE),
+                    .size(m.meta_size),
                 );
                 ui.add_space(theme::LG);
                 let (status, next) = match (branch, snap.remotes.is_empty()) {
@@ -333,10 +461,16 @@ fn clean_home(
                     ),
                     (None, false) => (format!("{}  {}", icon::GIT_BRANCH, snap.head.label()), None),
                 };
-                ui.label(RichText::new(status).size(theme::BODY_SIZE).color(p.text));
+                ui.label(RichText::new(status).size(m.body_size).color(p.text));
                 if let Some((label, action)) = next {
                     ui.add_space(theme::SM);
-                    if widgets::primary_button(ui, label, !busy, 160.0_f32.min(width)).clicked() {
+                    if Button::new(label)
+                        .primary()
+                        .enabled(!busy)
+                        .disabled_reason("Another operation is still running")
+                        .show(ui)
+                        .clicked()
+                    {
                         actions.push(action);
                     }
                 }
@@ -349,13 +483,13 @@ fn clean_home(
                             canopy_core::short_id(c.oid),
                             widgets::relative_time(c.author.time, now)
                         ))
-                        .size(theme::SMALL_SIZE)
+                        .size(m.small_size)
                         .color(p.text_faint),
                     );
                     ui.add(
                         egui::Label::new(
                             RichText::new(&c.summary)
-                                .size(theme::META_SIZE)
+                                .size(m.meta_size)
                                 .color(p.text_dim),
                         )
                         .truncate(),
@@ -383,62 +517,99 @@ fn list(
     actions: &mut Vec<Action>,
 ) {
     let p = palette(ui.ctx());
-    let (title, color) = match which {
-        List::Conflicted => ("Conflicts", p.danger),
-        List::Unstaged => ("Unstaged", p.warning),
-        List::Staged => ("Staged", p.success),
+    let m = theme::metrics();
+    let (title, tone) = match which {
+        List::Conflicted => ("Conflicts", Tone::Danger),
+        List::Unstaged => ("Unstaged", Tone::Warning),
+        List::Staged => ("Staged", Tone::Success),
+    };
+    // An empty list is not news: its count stays neutral instead of taking the section colour.
+    let tone = if files.is_empty() {
+        Tone::Neutral
+    } else {
+        tone
     };
     let compact = ui.available_width() < 280.0;
-    ui.horizontal(|ui| {
-        ui.add_space(6.0);
-        widgets::section_label(ui, title);
-        // An empty list is not news: its count stays neutral instead of taking the section colour.
-        widgets::count_badge(ui, files.len(), if files.is_empty() { p.text_faint } else { color });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| match which {
-            List::Unstaged if !files.is_empty() => {
-                if widgets::compact_button(ui, if compact { icon::PLUS.to_owned() } else { format!("{}  Stage all", icon::PLUS) }).on_hover_text(format!("Stage all files  ({})", crate::keymap::hint(crate::keymap::Command::StageAll))).clicked() {
-                    actions.push(Action::Op(Op::StageAll));
-                }
-                // Discarding everything lives in an overflow menu, a gap away from Stage.
-                ui.add_space(theme::MD);
-                ui.scope(|ui| {
-                    ui.spacing_mut().button_padding = vec2(theme::SM, 4.0);
-                    ui.spacing_mut().interact_size.y = widgets::compact_h();
-                    ui.menu_button(RichText::new(icon::DOTS_THREE).size(theme::ICON_MD), |ui| {
-                        ui.set_min_width(200.0);
-                        if ui.button(RichText::new(format!("{}  Discard all changes…", icon::ARROW_COUNTER_CLOCKWISE)).color(p.danger)).clicked() {
-                            actions.push(Action::Confirm { title: "Discard all changes".into(), body: format!("Throw away every unstaged change in {} files, including untracked files? This cannot be undone.", files.len()), confirm: "Discard all".into(), danger: true, op: Op::Discard(files.to_vec()) });
-                            ui.close();
-                        }
-                    })
-                    .response
-                    .on_hover_text("More actions");
-                });
+    list_header(ui, title, files.len(), tone, |ui| match which {
+        List::Unstaged if !files.is_empty() => {
+            let stage = if compact {
+                IconButton::new(icon::PLUS, "Stage all files")
+                    .size(Size::Sm)
+                    .shortcut(Command::StageAll)
+                    .show(ui)
+            } else {
+                Button::new("Stage all")
+                    .icon(icon::PLUS)
+                    .size(Size::Sm)
+                    .tooltip("Stage all files")
+                    .shortcut(Command::StageAll)
+                    .show(ui)
+            };
+            if stage.clicked() {
+                actions.push(Action::Op(Op::StageAll));
             }
-            List::Staged if !files.is_empty()
-                && widgets::compact_button(ui, if compact { icon::MINUS.to_owned() } else { format!("{}  Unstage all", icon::MINUS) }).on_hover_text(format!("Unstage all files  ({})", crate::keymap::hint(crate::keymap::Command::UnstageAll))).clicked() => {
-                    actions.push(Action::Op(Op::UnstageAll));
+            // Discarding everything lives in an overflow menu, a gap away from Stage.
+            ui.add_space(theme::MD);
+            let more = IconButton::new(icon::DOTS_THREE, "More actions")
+                .size(Size::Sm)
+                .show(ui);
+            menu::menu(&more, |m| {
+                if m.item(icon::ARROW_COUNTER_CLOCKWISE, "Discard all changes…")
+                    .danger()
+                    .show(m.ui)
+                    .clicked()
+                {
+                    actions.push(Action::Confirm {
+                        title: "Discard all changes".into(),
+                        body: format!(
+                            "Throw away every unstaged change in {} files, including untracked \
+                             files? This cannot be undone.",
+                            files.len()
+                        ),
+                        confirm: "Discard all".into(),
+                        danger: true,
+                        op: Op::Discard(files.to_vec()),
+                    });
                 }
-            _ => {}
-        });
+            });
+        }
+        List::Staged if !files.is_empty() => {
+            let unstage = if compact {
+                IconButton::new(icon::MINUS, "Unstage all files")
+                    .size(Size::Sm)
+                    .shortcut(Command::UnstageAll)
+                    .show(ui)
+            } else {
+                Button::new("Unstage all")
+                    .icon(icon::MINUS)
+                    .size(Size::Sm)
+                    .tooltip("Unstage all files")
+                    .shortcut(Command::UnstageAll)
+                    .show(ui)
+            };
+            if unstage.clicked() {
+                actions.push(Action::Op(Op::UnstageAll));
+            }
+        }
+        _ => {}
     });
-    ui.add_space(4.0);
+    ui.add_space(theme::XS);
     if files.is_empty() {
         ui.horizontal(|ui| {
-            ui.add_space(12.0);
+            ui.add_space(theme::MD);
             ui.label(
                 RichText::new(if which == List::Staged {
                     "Nothing staged yet"
                 } else {
                     "No unstaged changes"
                 })
-                .size(theme::META_SIZE)
+                .size(m.meta_size)
                 .color(p.text_faint),
             );
         });
         return;
     }
-    commit_detail::virtual_rows(ui, files.len(), commit_detail::FILE_ROW_H, |ui, i| {
+    commit_detail::virtual_rows(ui, files.len(), RowKind::File.height(), |ui, i| {
         let f = &files[i];
         let source = if which == List::Staged {
             DiffSource::Staged
@@ -449,10 +620,9 @@ fn list(
         let selected = tab.file.as_ref().is_some_and(|s| {
             s.entry.path == f.path && s.source == source && s.conflicted == conflicted
         });
-        let id = ui.id().with(("change", which as u8, &f.path));
-        let resp = commit_detail::file_row(ui, f, selected, id);
-        // Hover action button on the right. A conflicted file's is a labelled "Resolve conflicts",
-        // shown only under the pointer: a bare check would read as "already done".
+        // The row's action, revealed under the pointer. A conflicted file's is a labelled
+        // "Resolve conflicts…", shown only under the pointer: a bare check would read as
+        // "already done". The selected row keeps its Stage or Unstage button.
         let (glyph, tip) = if which == List::Staged {
             (icon::MINUS, "Unstage")
         } else if conflicted {
@@ -460,55 +630,13 @@ fn list(
         } else {
             (icon::PLUS, "Stage")
         };
-        let label = conflicted.then(|| {
-            ui.painter().layout_no_wrap(
-                tip.to_owned(),
-                FontId::new(theme::SMALL_SIZE, theme::medium()),
-                p.text,
-            )
-        });
-        let btn = match &label {
-            Some(g) => egui::Rect::from_center_size(
-                resp.rect.right_center() - vec2(8.0 + (g.size().x + 16.0) / 2.0, 0.0),
-                vec2(g.size().x + 16.0, 22.0),
-            ),
-            None => egui::Rect::from_center_size(
-                resp.rect.right_center() - vec2(18.0, 0.0),
-                vec2(24.0, 22.0),
-            ),
+        let action = RowAction {
+            glyph,
+            tip,
+            labelled: conflicted,
+            pinned: selected && !conflicted,
         };
-        let bresp = ui.interact(btn, resp.id.with("act"), Sense::click());
-        bresp.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{tip} {}", f.path))
-        });
-        if resp.hovered() || bresp.hovered() || (selected && !conflicted) {
-            ui.painter().rect(
-                btn,
-                CornerRadius::same(theme::RADIUS_SM),
-                if bresp.hovered() {
-                    Palette::tint(p.accent, 90)
-                } else {
-                    p.elevated()
-                },
-                Stroke::new(1.0, p.border()),
-                egui::StrokeKind::Inside,
-            );
-            match label {
-                Some(g) => {
-                    ui.painter()
-                        .galley(btn.center() - g.size() / 2.0, g, p.text);
-                }
-                None => {
-                    ui.painter().text(
-                        btn.center(),
-                        Align2::CENTER_CENTER,
-                        glyph,
-                        FontId::proportional(theme::BODY_SIZE),
-                        p.text,
-                    );
-                }
-            }
-        }
+        let (resp, acted) = file_row(ui, f, selected, ("change", which as u8, &f.path), action);
         let toggle = || {
             if which == List::Staged {
                 Op::Unstage(vec![f.path.clone()])
@@ -516,7 +644,7 @@ fn list(
                 Op::Stage(vec![f.path.clone()])
             }
         };
-        if bresp.on_hover_text(tip).clicked() || resp.double_clicked() {
+        if acted || resp.double_clicked() {
             if conflicted {
                 tab.select_file(FileSelection {
                     source: source.clone(),
@@ -534,9 +662,14 @@ fn list(
             });
         }
         let entry = f.clone();
-        resp.context_menu(|ui| {
-            ui.set_min_width(200.0);
-            if ui.button(format!("{}  {}", glyph, tip)).clicked() {
+        menu::context(&resp, |m| {
+            let first = m.item(glyph, tip);
+            let first = if conflicted {
+                first
+            } else {
+                first.shortcut(Command::ToggleStage)
+            };
+            if first.show(m.ui).clicked() {
                 if conflicted {
                     tab.select_file(FileSelection {
                         source: source.clone(),
@@ -547,40 +680,166 @@ fn list(
                     actions.push(Action::Op(toggle()));
                 }
             }
-            if which == List::Unstaged
-                && ui
-                    .button(
-                        RichText::new(format!(
-                            "{}  Discard changes…",
-                            icon::ARROW_COUNTER_CLOCKWISE
-                        ))
-                        .color(p.danger),
-                    )
-                    .clicked()
-            {
-                actions.push(Action::Confirm {
-                    title: "Discard changes".into(),
-                    body: format!(
-                        "Throw away the unstaged changes to {}? This cannot be undone.",
-                        entry.path
-                    ),
-                    confirm: "Discard".into(),
-                    danger: true,
-                    op: Op::Discard(vec![entry.clone()]),
-                });
-            }
-            ui.separator();
-            if ui
-                .button(format!("{}  Open file", icon::ARROW_SQUARE_OUT))
+            m.separator();
+            if m.item(icon::ARROW_SQUARE_OUT, "Open file")
+                .show(m.ui)
                 .clicked()
             {
                 actions.push(Action::OpenInEditor(tab.path.join(&entry.path)));
             }
-            if ui.button(format!("{}  Copy path", icon::COPY)).clicked() {
+            if m.item(icon::COPY, "Copy path").show(m.ui).clicked() {
                 actions.push(Action::Copy(entry.path.clone()));
+            }
+            if which == List::Unstaged {
+                m.separator();
+                if m.item(icon::ARROW_COUNTER_CLOCKWISE, "Discard changes…")
+                    .shortcut(Command::Discard)
+                    .danger()
+                    .show(m.ui)
+                    .clicked()
+                {
+                    actions.push(Action::Confirm {
+                        title: "Discard changes".into(),
+                        body: format!(
+                            "Throw away the unstaged changes to {}? This cannot be undone.",
+                            entry.path
+                        ),
+                        confirm: "Discard".into(),
+                        danger: true,
+                        op: Op::Discard(vec![entry.clone()]),
+                    });
+                }
             }
         });
     });
+}
+
+/// The button a file row reveals at its right end.
+#[derive(Clone, Copy)]
+struct RowAction {
+    glyph: &'static str,
+    /// Its tooltip, and its label when `labelled`.
+    tip: &'static str,
+    /// A Ghost button with the label instead of an icon button.
+    labelled: bool,
+    /// Shown without the pointer too (the selected row).
+    pinned: bool,
+}
+
+/// A changed file: its status badge, name, folder and line counts, and `action` revealed left of
+/// the counts while the row is hovered (or pinned). Returns the row and whether the action was
+/// clicked.
+fn file_row(
+    ui: &mut Ui,
+    f: &FileEntry,
+    selected: bool,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    action: RowAction,
+) -> (Response, bool) {
+    let ctx = ui.ctx().clone();
+    let p = palette(&ctx);
+    let m = theme::metrics();
+    let height = RowKind::File.height();
+    // The row lands at the cursor, full width (as `ListRow` allocates it).
+    let ahead = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), height));
+    let hovered = ui.rect_contains_pointer(ahead);
+    let mut state: Option<RowCtx> = None;
+    let row = ListRow::new(id_salt)
+        .kind(RowKind::File)
+        .selected(selected)
+        .show_with(ui, |rc, _| state = Some(*rc));
+    row.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &f.path)
+    });
+    let reveal = anim::ease_bool(
+        &ctx,
+        row.id.with("file-row-action"),
+        hovered || action.pinned,
+        motion::FAST,
+        motion::FAST,
+    );
+    let mut acted = false;
+    if let Some(rc) = state {
+        let cy = rc.rect.center().y;
+        let badge_rect =
+            Rect::from_center_size(pos2(rc.content.left() + 8.5, cy), vec2(17.0, 17.0));
+        let mut badge = ui.new_child(UiBuilder::new().max_rect(badge_rect));
+        ChangeBadge::new(f.kind).show(&mut badge);
+        let mut end = ui.new_child(
+            UiBuilder::new()
+                .max_rect(Rect::from_min_max(
+                    pos2(badge_rect.right(), rc.rect.top()),
+                    pos2(rc.content.right(), rc.rect.bottom()),
+                ))
+                .layout(Layout::right_to_left(Align::Center)),
+        );
+        end.spacing_mut().item_spacing.x = theme::SM;
+        if f.additions + f.deletions > 0 {
+            DiffStat::new(f.additions, f.deletions).show(&mut end);
+        }
+        if reveal > 0.0 {
+            end.scope(|ui| {
+                ui.multiply_opacity(reveal);
+                let r = if action.labelled {
+                    Button::new(action.tip)
+                        .ghost()
+                        .size(Size::Sm)
+                        .id_salt(("file-row-action", &f.path))
+                        .show(ui)
+                } else {
+                    IconButton::new(action.glyph, action.tip)
+                        .size(Size::Sm)
+                        .id_salt(("file-row-action", &f.path))
+                        .show(ui)
+                };
+                r.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        true,
+                        format!("{} {}", action.tip, f.path),
+                    )
+                });
+                acted = r.clicked();
+            });
+        }
+        let right = end.min_rect().left() - theme::SM;
+        let left = badge_rect.right() + theme::SM;
+        if right > left {
+            let painter = ui.painter().with_clip_rect(
+                Rect::from_x_y_ranges(left..=right, rc.rect.y_range()).intersect(ui.clip_rect()),
+            );
+            let (name, dir) = widgets::split_path(&f.path);
+            let name = painter.layout_no_wrap(
+                name.to_owned(),
+                FontId::new(m.body_size, theme::medium()),
+                rc.text,
+            );
+            let name_w = name.size().x;
+            painter.galley(pos2(left, cy - name.size().y / 2.0), name, rc.text);
+            if !dir.is_empty() {
+                let mut job = LayoutJob::default();
+                job.append(
+                    dir,
+                    0.0,
+                    TextFormat::simple(
+                        FontId::new(m.meta_size, FontFamily::Proportional),
+                        p.text_faint,
+                    ),
+                );
+                let dir = painter.layout_job(job);
+                painter.galley(
+                    pos2(left + name_w + theme::SM, cy - dir.size().y / 2.0),
+                    dir,
+                    p.text_faint,
+                );
+            }
+        }
+    }
+    let tip = match &f.old_path {
+        Some(old) => format!("{} → {}", old, f.path),
+        None => f.path.clone(),
+    };
+    (row.on_hover_text(tip), acted)
 }
 
 /// The commit composer. `follows` is true when it sits under the file lists in their scroll
@@ -594,6 +853,8 @@ fn composer(
     follows: bool,
 ) {
     let p = palette(ui.ctx());
+    let s = theme::surfaces(ui.ctx());
+    let m = theme::metrics();
     ui.style_mut().spacing.scroll.floating = false;
     if composer_is_quiet(tab, snap) {
         quiet_composer(ui, tab, snap, actions);
@@ -626,8 +887,8 @@ fn composer(
         "Stage files to commit".to_owned()
     };
     let warning = identity_notice(tab.identity.as_ref(), tab.identity_error.is_some());
-    let hint = warning.map_or_else(
-        || crate::keymap::hint(crate::keymap::Command::Commit).to_owned(),
+    let tip = warning.map_or_else(
+        || "Commit the staged changes".to_owned(),
         |w| format!("{w} Open Settings → Git to correct it. Git's own error will appear if you commit without a usable identity."),
     );
     let footer = |ui: &mut Ui, actions: &mut Vec<Action>| {
@@ -637,29 +898,36 @@ fn composer(
                     egui::Label::new(
                         RichText::new(format!("{}  {warning}", icon::WARNING))
                             .color(p.warning)
-                            .size(theme::SMALL_SIZE),
+                            .size(m.small_size),
                     )
                     .wrap(),
                 );
-                if ui.small_button("Edit identity").clicked() {
+                if Button::new("Edit identity")
+                    .size(Size::Sm)
+                    .show(ui)
+                    .clicked()
+                {
                     actions.push(Action::IdentitySettings);
                 }
             });
             ui.add_space(theme::XS);
         }
         if let Some(reason) = blocker {
-            ui.label(
-                RichText::new(reason)
-                    .size(theme::SMALL_SIZE)
-                    .color(p.text_dim),
-            );
+            ui.label(RichText::new(reason).size(m.small_size).color(p.text_dim));
             ui.add_space(theme::XS);
         }
-        if widgets::primary_button(ui, &label, can, ui.available_width())
-            .on_hover_text(hint)
-            .clicked()
-            && can
-        {
+        let mut commit = Button::new(&label)
+            .primary()
+            .icon(icon::CHECK)
+            .full_width()
+            .enabled(can)
+            .tooltip(tip.as_str())
+            .shortcut(Command::Commit)
+            .show_shortcut(true);
+        if let Some(reason) = blocker {
+            commit = commit.disabled_reason(reason);
+        }
+        if commit.show(ui).clicked() && can {
             actions.push(Action::Commit);
         }
     };
@@ -678,10 +946,11 @@ fn composer(
         .min_scrolled_height(0.0)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.painter().hline(
+            paint::seam_h(
+                ui.painter(),
                 ui.max_rect().x_range(),
                 ui.max_rect().min.y - 12.0,
-                Stroke::new(1.0, p.border()),
+                s.border,
             );
             composer_fields(ui, tab, actions);
         });
@@ -704,20 +973,22 @@ fn quiet_composer(
     actions: &mut Vec<Action>,
 ) {
     let p = palette(ui.ctx());
+    let m = theme::metrics();
     // Nothing to commit yet, so a pending request to focus the summary would fire later,
     // when files appear.
     tab.focus_summary = false;
-    widgets::section_label(ui, "Commit");
-    ui.add_space(4.0);
+    let _ = SectionHeader::new("Commit").first(true).show(ui);
+    ui.add_space(theme::XS);
     ui.label(
         RichText::new("Nothing to commit")
-            .size(theme::META_SIZE)
+            .size(m.meta_size)
             .color(p.text_faint),
     );
     if snap.head.oid.is_some() {
-        ui.add_space(8.0);
-        widgets::checkbox(ui, &mut tab.amend, "Amend last commit")
-            .on_hover_text("Replace the last commit with a new message");
+        ui.add_space(theme::SM);
+        Checkbox::new(&mut tab.amend, "Amend last commit")
+            .tooltip("Replace the last commit with a new message")
+            .show(ui);
         if tab.amend {
             actions.push(Action::PrefillAmend);
         }
@@ -725,70 +996,47 @@ fn quiet_composer(
 }
 
 fn composer_fields(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
-    let p = palette(ui.ctx());
-    ui.horizontal(|ui| {
-        widgets::section_label(ui, "Commit");
-        let n = tab.commit_summary.chars().count();
-        // Counted from the first character: an empty field has nothing to measure.
-        if n > 0 {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let color = if n > 72 {
-                    p.danger
-                } else if n > 50 {
-                    p.warning
-                } else {
-                    p.text_faint
-                };
-                ui.label(
-                    RichText::new(format!("{n}/72"))
-                        .size(theme::SMALL_SIZE)
-                        .color(color),
-                )
-                .on_hover_text("Keep the summary under 50 characters; 72 at most.");
-            });
-        }
-    });
-    ui.add_space(4.0);
-    let summary = ui.add(
-        egui::TextEdit::singleline(&mut tab.commit_summary)
-            .id(egui::Id::new("commit-summary"))
-            .hint_text("Summary (required)")
-            .font(FontId::new(theme::LEAD_SIZE, theme::medium()))
-            .desired_width(f32::INFINITY)
-            .margin(theme::FIELD_MARGIN),
-    );
+    let _ = SectionHeader::new("Commit").first(true).show(ui);
+    ui.add_space(theme::XS);
+    let summary = TextField::new(&mut tab.commit_summary)
+        .placeholder("Summary (required)")
+        .name("Commit summary")
+        .counter(true)
+        .tooltip("Keep the summary under 50 characters; 72 at most.")
+        .id_salt("commit-summary")
+        .show(ui);
     if tab.focus_summary {
         summary.request_focus();
         tab.focus_summary = false;
     }
     ui.add_space(6.0);
-    ui.add(
-        egui::TextEdit::multiline(&mut tab.commit_body)
-            .hint_text("Description")
-            .desired_rows(if ui.ctx().content_rect().height() < 600.0 {
-                2
-            } else {
-                4
-            })
-            .desired_width(f32::INFINITY)
-            .margin(theme::FIELD_MARGIN),
-    );
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        let was = tab.amend;
-        let clean = tab
-            .snap
-            .as_ref()
-            .is_some_and(|snap| snap.state == canopy_core::RepoState::Clean);
-        ui.add_enabled_ui(clean, |ui| {
-            widgets::checkbox(ui, &mut tab.amend, "Amend last commit")
-                .on_hover_text("Replace the last commit with the staged changes and this message")
-        });
-        if tab.amend && !was && tab.commit_summary.is_empty() {
-            actions.push(Action::PrefillAmend);
-        }
-    });
-    ui.add_space(8.0);
+    let rows = if ui.ctx().content_rect().height() < 600.0 {
+        2..=6
+    } else {
+        3..=12
+    };
+    TextArea::new(&mut tab.commit_body)
+        .placeholder("Description")
+        .name("Commit description")
+        .rows(rows)
+        .guide(72)
+        .id_salt("commit-body")
+        .show(ui);
+    ui.add_space(theme::SM);
+    let was = tab.amend;
+    let clean = tab
+        .snap
+        .as_ref()
+        .is_some_and(|snap| snap.state == canopy_core::RepoState::Clean);
+    Checkbox::new(&mut tab.amend, "Amend last commit")
+        .enabled(clean)
+        .tooltip("Replace the last commit with the staged changes and this message")
+        .disabled_reason("Finish or abort the operation in progress first")
+        .show(ui);
+    if tab.amend && !was && tab.commit_summary.is_empty() {
+        actions.push(Action::PrefillAmend);
+    }
+    ui.add_space(theme::SM);
 }
 
 /// Why the commit button is disabled, when its label does not already say ("Stage files to
