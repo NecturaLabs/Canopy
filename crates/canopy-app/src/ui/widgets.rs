@@ -214,20 +214,6 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
     kit::IconButton::new(glyph, tooltip).show(ui)
 }
 
-/// A toolbar action: icon over caption (Comfortable) or beside it (Dense).
-pub fn tool_button(
-    ui: &mut Ui,
-    glyph: &str,
-    label: &str,
-    tooltip: &str,
-    enabled: bool,
-) -> Response {
-    kit::ToolButton::new(glyph, label)
-        .tooltip(tooltip)
-        .enabled(enabled)
-        .show(ui)
-}
-
 /// Mutually exclusive options in one recessed track; the chosen one is a raised segment, the others
 /// stay quiet but still read as options. `options` are in visual order, left to right, whatever the
 /// surrounding layout's direction. Returns whether the value changed.
@@ -683,14 +669,6 @@ pub fn forge_icon(kind: canopy_core::forge::ForgeKind) -> &'static str {
     }
 }
 
-/// The destructive call to action in a confirmation: the solid danger button.
-pub fn danger_primary_button(ui: &mut Ui, text: &str, min_size: Vec2) -> Response {
-    kit::Button::new(text)
-        .danger()
-        .min_width(min_size.x)
-        .show(ui)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -731,7 +709,9 @@ mod tests {
                                 let response = match kind {
                                     0 => checkbox(ui, &mut checked, "Checkbox"),
                                     1 => primary_button(ui, "Primary", true, 120.0),
-                                    2 => tool_button(ui, icon::CHECK, "Tool", "Tool action", true),
+                                    2 => crate::ui::kit::ToolButton::new(icon::CHECK, "Tool")
+                                        .tooltip("Tool action")
+                                        .show(ui),
                                     _ => icon_button(ui, icon::CHECK, "Icon action"),
                                 };
                                 if frame == 0 && enabled {

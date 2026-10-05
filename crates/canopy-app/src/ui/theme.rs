@@ -50,8 +50,6 @@ pub const SUBTITLE_SIZE: f32 = 14.0;
 pub const TITLE_SIZE: f32 = 16.0;
 /// The subject of a detail view and first-run dialog headings.
 pub const HEADLINE_SIZE: f32 = 20.0;
-/// The About dialog's name.
-pub const DISPLAY_SIZE: f32 = 24.0;
 /// Code, diffs and identifiers.
 pub const MONO_SIZE: f32 = 12.5;
 /// Short identifiers and key chords beside proportional text.
@@ -64,14 +62,11 @@ pub const ICON_XS: f32 = 11.5;
 pub const ICON_SM: f32 = 14.0;
 /// Glyphs on buttons, in palette rows, settings navigation and request status.
 pub const ICON_MD: f32 = 16.0;
-/// Beside a dialog's title.
-pub const ICON_TITLE: f32 = 20.0;
 /// The centre of an empty or finished state.
 pub const ICON_HERO: f32 = 32.0;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
 /// Shared control geometry, in logical points before interface zoom.
 pub const COMPACT_CONTROL_HEIGHT: f32 = 28.0;
-pub const PRIMARY_CONTROL_HEIGHT: f32 = 36.0;
 pub const CONTROL_INSET: f32 = 2.0;
 pub const CHECKBOX_SIZE: f32 = 18.0;
 /// Inner margin of every framed text field, matching the standard control height.
@@ -3463,11 +3458,6 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, look: &Appearance) {
     style.animation_time = super::motion::time(super::motion::BASE);
     ctx.set_style_of(theme, style);
     ctx.set_theme(theme);
-}
-
-/// How long a fade takes: `seconds`, or zero with reduced motion.
-pub fn fade(_ctx: &egui::Context, seconds: f32) -> f32 {
-    super::motion::time(seconds)
 }
 
 #[cfg(test)]

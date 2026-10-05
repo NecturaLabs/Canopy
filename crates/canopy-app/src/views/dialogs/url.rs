@@ -50,19 +50,18 @@ impl UrlBuilder {
 
     pub(super) fn ui(&mut self, ui: &mut Ui, focus: bool) {
         let p = palette(ui.ctx());
-        let github = format!("{}  GitHub", icon::GITHUB_LOGO);
-        let gitlab = format!("{}  GitLab", icon::GITLAB_LOGO_SIMPLE);
-        let url = format!("{}  URL", icon::LINK);
-        widgets::segmented(
-            ui,
+        let m = theme::metrics();
+        Segmented::with_icons(
             &mut self.source,
             &[
-                (UrlSource::GitHub, github.as_str()),
-                (UrlSource::GitLab, gitlab.as_str()),
-                (UrlSource::Url, url.as_str()),
+                (UrlSource::GitHub, icon::GITHUB_LOGO, "GitHub"),
+                (UrlSource::GitLab, icon::GITLAB_LOGO_SIMPLE, "GitLab"),
+                (UrlSource::Url, icon::LINK, "URL"),
             ],
-        );
-        ui.add_space(8.0);
+        )
+        .label("Where the repository is")
+        .id_salt("url-source")
+        .show(ui);
         match self.source {
             UrlSource::Url => {
                 field(
@@ -89,23 +88,24 @@ impl UrlBuilder {
                     "group/subgroup/project"
                 };
                 field(ui, "Project", &mut self.project, hint, focus);
-                widgets::segmented(ui, &mut self.ssh, &[(false, "HTTPS"), (true, "SSH")]);
-                ui.add_space(4.0);
+                Segmented::new(&mut self.ssh, &[(false, "HTTPS"), (true, "SSH")])
+                    .label("Protocol")
+                    .id_salt("url-protocol")
+                    .show(ui);
                 match self.resolve() {
                     Some(u) => ui.label(
                         RichText::new(u)
                             .monospace()
-                            .size(theme::SMALL_SIZE)
+                            .size(m.small_size)
                             .color(p.text_faint),
                     ),
                     None if !self.project.trim().is_empty() => ui.label(
                         RichText::new("Use the form owner/repository")
-                            .size(theme::META_SIZE)
+                            .size(m.meta_size)
                             .color(p.danger),
                     ),
                     None => ui.label(""),
                 };
-                ui.add_space(4.0);
             }
         }
     }

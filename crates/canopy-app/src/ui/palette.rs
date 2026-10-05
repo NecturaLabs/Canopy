@@ -1,10 +1,16 @@
 //! The command palette (Ctrl+K): fuzzy search over every command, branch and recent repository.
 
-use egui::{Align2, CornerRadius, FontId, Id, Key, Order, RichText, Sense, Stroke, vec2};
+use egui::{Align2, FontId, Id, Key, Order, RichText, Sense, vec2};
 use egui_phosphor::regular as icon;
 
-use super::theme::{self, Palette, palette};
-use super::widgets;
+use super::kit::chip::Keycap;
+use super::kit::overlay::{self, Layer};
+use super::kit::row::{ListRow, RowKind};
+use super::kit::{menu, paint};
+use super::theme::{self, palette};
+
+/// Space between two shortcut keycaps (alternatives).
+pub(crate) const KEY_GAP: f32 = 6.0;
 
 /// One entry the palette can run.
 #[derive(Debug, Clone)]
@@ -177,6 +183,7 @@ impl<T: Clone> CommandPalette<T> {
             return None;
         }
         let p = palette(ctx);
+        let s = theme::surfaces(ctx);
         if self.ranked_for.as_deref() != Some(self.query.as_str()) {
             self.ranked = rank(&self.query, &self.haystacks);
             self.ranked_for = Some(self.query.clone());
@@ -231,13 +238,13 @@ impl<T: Clone> CommandPalette<T> {
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
                 let resp = ui.allocate_rect(screen, Sense::click());
-                ui.painter()
-                    .rect_filled(screen, CornerRadius::ZERO, p.backdrop());
+                overlay::scrim(ui.painter(), screen, 1.0);
                 if resp.clicked() {
                     self.open = false;
                 }
             });
 
+        let m = theme::metrics();
         let width = 620.0_f32.min(screen.width() - theme::XL * 2.0).max(0.0);
         let top = theme::XL.min(screen.height() * 0.08);
         egui::Area::new(Id::new("palette"))
@@ -245,185 +252,82 @@ impl<T: Clone> CommandPalette<T> {
             .pivot(Align2::CENTER_TOP)
             .fixed_pos(egui::pos2(screen.center().x, screen.min.y + top))
             .show(ctx, |ui| {
-                // The shadow and, with Translucent surfaces on, the blurred backdrop go under
-                // the card; its fill is decided once its size is known.
-                let under = ui.painter().add(egui::Shape::Noop);
-                let radius = CornerRadius::same(theme::RADIUS_LG);
-                let mut card = egui::Frame::new()
-                    .stroke(Stroke::new(1.0, Palette::tint(p.accent, 120)))
-                    .corner_radius(radius)
-                    .inner_margin(egui::Margin::same(10))
-                    .begin(ui);
-                (|ui: &mut egui::Ui| {
+                // The overlay surface (glass with Translucent surfaces on) under the card.
+                overlay::floating(ui, Layer::Popover, egui::Margin::ZERO, |ui| {
                     ui.set_width(width);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(icon::MAGNIFYING_GLASS)
-                                .size(theme::ICON_MD)
-                                .color(p.accent),
-                        );
-                        let edit = ui.add(
-                            egui::TextEdit::singleline(&mut self.query)
-                                .hint_text("Type a command, branch or repository…")
-                                .font(FontId::proportional(theme::TITLE_SIZE))
-                                .frame(egui::Frame::NONE)
-                                .desired_width(f32::INFINITY),
-                        );
-                        if self.just_opened {
-                            edit.request_focus();
-                            self.just_opened = false;
-                        }
-                        if edit.changed() {
-                            self.selected = 0;
-                        }
-                    });
-                    ui.add_space(6.0);
-                    ui.painter().hline(
-                        ui.min_rect().x_range(),
-                        ui.cursor().min.y,
-                        Stroke::new(1.0, p.border()),
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let edit = surface_search(
+                        ui,
+                        &mut self.query,
+                        "Type a command, branch or repository…",
+                        m.palette_input_height,
                     );
-                    ui.add_space(6.0);
+                    if self.just_opened {
+                        edit.request_focus();
+                        self.just_opened = false;
+                    }
+                    if edit.changed() {
+                        self.selected = 0;
+                    }
                     if ranked.is_empty() {
-                        ui.add_space(10.0);
+                        ui.add_space(theme::MD);
                         ui.vertical_centered(|ui| {
                             ui.label(RichText::new("No matches").color(p.text_faint))
                         });
-                        ui.add_space(10.0);
+                        ui.add_space(theme::MD);
                         return;
                     }
+                    let list_margin = m.menu_pad;
+                    let row_h = m.palette_row_height;
                     // Whole rows only, so the list never ends in a half-cut entry.
-                    let pitch = 34.0 + ui.spacing().item_spacing.y;
-                    let room = (screen.height() - top - theme::XL * 2.0 - 60.0).clamp(0.0, 380.0);
-                    let list_h = ((room + ui.spacing().item_spacing.y) / pitch)
-                        .floor()
-                        .max(1.0)
-                        * pitch
-                        - ui.spacing().item_spacing.y;
+                    let room = (screen.height() - top - theme::XL * 2.0 - m.palette_input_height)
+                        .clamp(0.0, 400.0);
+                    let list_h = (room / row_h).floor().max(1.0) * row_h;
                     // Both bounds: the area's own size comes from its last frame and would
                     // otherwise cap the list part-way through a row.
-                    let list = egui::ScrollArea::vertical()
-                        .max_height(list_h)
-                        .min_scrolled_height(list_h)
-                        .auto_shrink([false, true])
+                    let list = egui::Frame::NONE
+                        .inner_margin(egui::Margin::same(list_margin as i8))
                         .show(ui, |ui| {
-                            let mut previous_group = None;
-                            for (row, (_, i)) in ranked.iter().enumerate() {
-                                let Some((e, _)) = self.items.get(*i) else {
-                                    continue;
-                                };
-                                if self.query.is_empty() {
-                                    let group = category(e).unwrap_or("Recent repositories");
-                                    if previous_group != Some(group) {
-                                        ui.add_space(theme::SM);
-                                        widgets::section_label(ui, group);
-                                        previous_group = Some(group);
+                            egui::ScrollArea::vertical()
+                                .max_height(list_h)
+                                .min_scrolled_height(list_h)
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    ui.spacing_mut().item_spacing.y = 0.0;
+                                    let mut previous_group = None;
+                                    for (row, (_, i)) in ranked.iter().enumerate() {
+                                        let Some((e, _)) = self.items.get(*i) else {
+                                            continue;
+                                        };
+                                        if self.query.is_empty() {
+                                            let group =
+                                                category(e).unwrap_or("Recent repositories");
+                                            if previous_group != Some(group) {
+                                                menu::heading(ui, group);
+                                                previous_group = Some(group);
+                                            }
+                                        }
+                                        let selected = row == self.selected;
+                                        let resp = entry_row(ui, row, e, selected);
+                                        if resp.hovered()
+                                            && ui.input(|inp| {
+                                                inp.pointer.delta() != egui::Vec2::ZERO
+                                            })
+                                        {
+                                            self.selected = row;
+                                        }
+                                        if selected {
+                                            ui.scroll_to_rect(resp.rect, None);
+                                        }
+                                        if resp.clicked() {
+                                            chosen = Some(*i);
+                                        }
                                     }
-                                }
-                                let selected = row == self.selected;
-                                let (rect, resp) = ui.allocate_exact_size(
-                                    vec2(ui.available_width(), 34.0),
-                                    Sense::click(),
-                                );
-                                resp.widget_info(|| {
-                                    egui::WidgetInfo::selected(
-                                        egui::WidgetType::SelectableLabel,
-                                        true,
-                                        selected,
-                                        &e.label,
-                                    )
-                                });
-                                if resp.hovered()
-                                    && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO)
-                                {
-                                    self.selected = row;
-                                }
-                                if selected {
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        CornerRadius::same(theme::RADIUS),
-                                        Palette::tint(p.accent, if p.dark { 55 } else { 35 }),
-                                    );
-                                    ui.painter().rect_filled(
-                                        egui::Rect::from_min_size(
-                                            rect.min + vec2(0.0, 8.0),
-                                            vec2(3.0, 18.0),
-                                        ),
-                                        CornerRadius::same(2),
-                                        p.accent,
-                                    );
-                                    ui.scroll_to_rect(rect, None);
-                                }
-                                let c = rect.left_center();
-                                ui.painter().text(
-                                    c + vec2(16.0, 0.0),
-                                    Align2::CENTER_CENTER,
-                                    e.icon,
-                                    FontId::proportional(theme::ICON_MD),
-                                    if selected { p.accent } else { p.text_dim },
-                                );
-                                let shortcut_width = ui
-                                    .painter()
-                                    .layout_no_wrap(
-                                        e.shortcut.clone(),
-                                        FontId::monospace(theme::MONO_SMALL_SIZE),
-                                        p.text_faint,
-                                    )
-                                    .size()
-                                    .x;
-                                let label_clip = egui::Rect::from_min_max(
-                                    rect.min + vec2(30.0, 0.0),
-                                    rect.max - vec2(shortcut_width + theme::XL, 0.0),
-                                );
-                                let painter = ui.painter().with_clip_rect(label_clip);
-                                let label = painter.text(
-                                    c + vec2(34.0, 0.0),
-                                    Align2::LEFT_CENTER,
-                                    &e.label,
-                                    FontId::new(theme::LEAD_SIZE, theme::medium()),
-                                    p.text,
-                                );
-                                if !e.detail.is_empty() && category(e).is_none() {
-                                    painter.text(
-                                        egui::pos2(label.max.x + 10.0, c.y),
-                                        Align2::LEFT_CENTER,
-                                        &e.detail,
-                                        FontId::proportional(theme::META_SIZE),
-                                        p.text_faint,
-                                    );
-                                }
-                                if !e.shortcut.is_empty() {
-                                    ui.painter().text(
-                                        rect.right_center() - vec2(10.0, 0.0),
-                                        Align2::RIGHT_CENTER,
-                                        &e.shortcut,
-                                        FontId::monospace(theme::MONO_SMALL_SIZE),
-                                        p.text_faint,
-                                    );
-                                }
-                                if resp.clicked() {
-                                    chosen = Some(*i);
-                                }
-                            }
-                        });
-                    widgets::scroll_fade(ui, &list, p.elevated());
-                })(&mut card.content_ui);
-                let rect = card.frame.widget_rect(card.content_ui.min_rect());
-                let shadow = ctx
-                    .global_style()
-                    .visuals
-                    .window_shadow
-                    .as_shape(rect, radius);
-                let glass = crate::ui::kit::glass::backdrop_shape(ui.painter(), rect, radius);
-                card.frame.fill = if glass.is_some() {
-                    crate::ui::kit::glass::glass_fill(ctx)
-                } else {
-                    p.elevated()
-                };
-                let under_card = std::iter::once(egui::Shape::from(shadow)).chain(glass);
-                ui.painter()
-                    .set(under, egui::Shape::Vec(under_card.collect()));
-                card.end(ui);
+                                })
+                        })
+                        .inner;
+                    paint::scroll_fade(ui, &list, s.overlay);
+                });
             });
 
         if chosen.is_some() {
@@ -431,6 +335,134 @@ impl<T: Clone> CommandPalette<T> {
         }
         chosen.and_then(|i| self.items.get(i).map(|(_, t)| t.clone()))
     }
+}
+
+/// Gap between a palette row's icon, label and detail, and before its keys.
+const ROW_GAP: f32 = 10.0;
+
+/// "The field that is the surface": the palette's and cheatsheet's search, with no ring and no
+/// border of its own, only a seam under it. A magnifier leads; `height` tall, full width.
+pub(crate) fn surface_search(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    placeholder: &str,
+    height: f32,
+) -> egui::Response {
+    let p = palette(ui.ctx());
+    let s = theme::surfaces(ui.ctx());
+    let m = theme::metrics();
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    let left = m.field_pad_x + m.icon_md + ROW_GAP;
+    let glyph = ui.painter().layout_no_wrap(
+        icon::MAGNIFYING_GLASS.to_owned(),
+        FontId::proportional(m.icon_md),
+        p.text_faint,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            rect.left() + m.field_pad_x + theme::XS,
+            rect.center().y - glyph.size().y / 2.0,
+        ),
+        glyph,
+        p.text_faint,
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    {
+        let v = child.visuals_mut();
+        v.weak_text_color = Some(p.text_faint);
+        v.selection.bg_fill = p.selected();
+    }
+    let edit = egui::TextEdit::singleline(text)
+        .hint_text(placeholder)
+        .font(FontId::proportional(m.title_size))
+        .text_color(p.text)
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+            left: (left + theme::XS) as i8,
+            right: m.field_pad_x as i8,
+            top: 0,
+            bottom: 0,
+        }))
+        .min_size(vec2(rect.width(), height))
+        .vertical_align(egui::Align::Center)
+        .desired_width(rect.width())
+        .show(&mut child)
+        .response
+        .response;
+    paint::seam_h(ui.painter(), rect.x_range(), rect.bottom() - 0.5, s.border);
+    edit
+}
+
+/// One palette entry as a list row: icon, label, detail, and its shortcut as keycaps. The
+/// selection is the row's wash; the pointer moving over a row selects it.
+fn entry_row(ui: &mut egui::Ui, row: usize, e: &Entry, selected: bool) -> egui::Response {
+    let m = theme::metrics();
+    let s = theme::surfaces(ui.ctx());
+    let keys: Vec<Keycap> = e
+        .shortcut
+        .split('·')
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .map(Keycap::new)
+        .collect();
+    let sizes: Vec<egui::Vec2> = keys.iter().map(|k| k.measure(ui)).collect();
+    let keys_w: f32 = sizes.iter().map(|s| s.x + KEY_GAP).sum();
+    let detail = (!e.detail.is_empty() && category(e).is_none()).then_some(e.detail.as_str());
+    let r = ListRow::new(("palette-row", row))
+        .kind(RowKind::Palette)
+        .selected(selected)
+        .ground(s.overlay)
+        .show_with(ui, |rc, painter| {
+            let cy = rc.rect.center().y;
+            let right = rc.content.right() - keys_w - ROW_GAP;
+            let glyph =
+                painter.layout_no_wrap(e.icon.to_owned(), FontId::proportional(m.icon_md), rc.icon);
+            let mut x = rc.content.left();
+            painter.galley(egui::pos2(x, cy - glyph.size().y / 2.0), glyph, rc.icon);
+            x += m.icon_md + ROW_GAP;
+            let clip = painter.with_clip_rect(egui::Rect::from_min_max(
+                egui::pos2(x, rc.rect.top()),
+                egui::pos2(right.max(x), rc.rect.bottom()),
+            ));
+            let label = clip.layout_no_wrap(
+                e.label.clone(),
+                FontId::new(m.body_size, theme::medium()),
+                rc.text,
+            );
+            let label_w = label.size().x;
+            clip.galley(egui::pos2(x, cy - label.size().y / 2.0), label, rc.text);
+            if let Some(d) = detail {
+                let g =
+                    clip.layout_no_wrap(d.to_owned(), FontId::proportional(m.meta_size), rc.dim);
+                clip.galley(
+                    egui::pos2(x + label_w + ROW_GAP, cy - g.size().y / 2.0),
+                    g,
+                    rc.dim,
+                );
+            }
+        });
+    // The row paints its label itself; it is still the row's accessible name.
+    r.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &e.label)
+    });
+    ui.ctx().accesskit_node_builder(r.id, |n| {
+        n.set_role(egui::accesskit::Role::ListItem);
+        n.clear_toggled();
+        n.set_selected(selected);
+    });
+    if ui.is_rect_visible(r.rect) {
+        let mut x = r.rect.right() - theme::SM - keys_w + KEY_GAP;
+        for (k, size) in keys.iter().zip(&sizes) {
+            let at =
+                egui::Rect::from_min_size(egui::pos2(x, r.rect.center().y - size.y / 2.0), *size);
+            k.paint(ui, at);
+            x += size.x + KEY_GAP;
+        }
+    }
+    r
 }
 
 #[cfg(test)]

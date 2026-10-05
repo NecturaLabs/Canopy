@@ -727,18 +727,11 @@ impl eframe::App for CanopyApp {
                 .show(ui, |ui| {
                     if compact {
                         ui.horizontal_centered(|ui| {
-                            let menu = navigation_menu(ui, |ui| {
-                                ui.set_width(240.0);
+                            ui.add_space(theme::SM);
+                            navigation_menu(ui, |ui| {
+                                ui.set_width(m.sidebar_width);
                                 ui.set_max_height(ctx.content_rect().height() * 0.7);
                                 sidebar::show(ui, tab, &mut actions);
-                            })
-                            .on_hover_text("Branches, remotes, tags and stashes");
-                            menu.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::WidgetType::Button,
-                                    true,
-                                    "Branches, remotes, tags and stashes",
-                                )
                             });
                             toolbar::actions_bar(ui, tab, &mut actions);
                         });
@@ -769,9 +762,12 @@ impl eframe::App for CanopyApp {
                 }
                 if let Some(s) = &clone_status {
                     ui.horizontal_centered(|ui| {
-                        ui.add_space(10.0);
-                        ui.add(egui::Spinner::new().size(theme::META_SIZE).color(p.accent));
-                        ui.label(RichText::new(s).size(theme::META_SIZE).color(p.accent));
+                        ui.add_space(theme::SM);
+                        crate::ui::kit::progress::Spinner::new()
+                            .size(crate::ui::kit::Size::Xs)
+                            .label("the clone")
+                            .show(ui);
+                        ui.label(RichText::new(s).size(m.meta_size).color(p.accent));
                     });
                 } else {
                     statusbar::show(
@@ -1006,16 +1002,19 @@ fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
         });
 }
 
+/// The compact window's navigation: a button opening the sidebar in a popover. Its open state is
+/// kept here, so a context menu opened from a row inside does not close it.
 fn navigation_menu(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> egui::Response {
-    let button = ui.button(RichText::new(icon::LIST).size(theme::TITLE_SIZE));
+    let button = crate::ui::kit::IconButton::new(icon::LIST, "Branches, remotes, tags and stashes")
+        .id_salt("navigation-menu")
+        .show(ui);
     let id = button.id.with("navigation-open");
     let mut open = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
     if button.clicked() {
         open = !open;
     }
-    let shown = egui::Popup::menu(&button)
-        .open_bool(&mut open)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+    let shown = crate::ui::kit::overlay::Popover::new("navigation", &button)
+        .open(&mut open)
         .show(content)
         .is_some();
     // Context menus use egui's single popup slot; the navigation must keep their rows alive.
@@ -1052,10 +1051,11 @@ mod tests {
                         let response = ui.button("main");
                         branch = response.rect;
                         let navigation_layer = response.layer_id;
-                        if let Some(menu) = crate::ui::widgets::context_menu(&response, |ui| {
-                            ui.label("Rename branch");
+                        if let Some(Some(rect)) = crate::ui::kit::menu::context(&response, |m| {
+                            let item = m.item("", "Rename branch").show(m.ui);
+                            (item.rect.is_positive()).then_some((item.rect, item.layer_id))
                         }) {
-                            nested = Some((menu.response.rect.center(), menu.response.layer_id));
+                            nested = Some((rect.0.center(), rect.1));
                         }
                         ctx.move_to_top(navigation_layer);
                     })

@@ -696,7 +696,6 @@ impl<'a> Popover<'a> {
         self
     }
     /// Keeps the open state in `open` instead of toggling on anchor clicks.
-    #[expect(dead_code, reason = "used by the view migration")]
     pub fn open(mut self, open: &'a mut bool) -> Self {
         self.open = Some(open);
         self
@@ -857,6 +856,8 @@ pub struct Footer {
     confirm_loading: bool,
     confirm_reason: Option<String>,
     hint: Option<String>,
+    /// Two equal choices ([`Footer::choice`]): both Secondary, and Enter picks neither.
+    neutral: bool,
 }
 
 impl Footer {
@@ -883,14 +884,12 @@ impl Footer {
         self
     }
     /// Disables the confirming button, saying why in its tooltip.
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by the view migration"))]
     pub fn confirm_disabled(&mut self, reason: impl Into<String>) -> &mut Self {
         self.confirm_enabled = false;
         self.confirm_reason = Some(reason.into());
         self
     }
     /// The confirmed operation is running.
-    #[expect(dead_code, reason = "used by the view migration")]
     pub fn confirm_loading(&mut self, loading: bool) -> &mut Self {
         self.confirm_loading = loading;
         self
@@ -898,6 +897,16 @@ impl Footer {
     /// A short left-aligned hint ("Esc cancels").
     pub fn hint(&mut self, text: impl Into<String>) -> &mut Self {
         self.hint = Some(text.into());
+        self
+    }
+    /// Two equal answers to a question with no safe default (consent): both Secondary, the same
+    /// size, neither focused unless [`Dialog::initial_focus`] says so, and Enter picks neither.
+    /// `first` (rightmost) answers `Confirm`, `second` answers `Cancel`.
+    pub fn choice(&mut self, first: impl Into<String>, second: impl Into<String>) -> &mut Self {
+        self.confirm = Some(first.into());
+        self.confirm_enabled = true;
+        self.cancel = Some(second.into());
+        self.neutral = true;
         self
     }
 }
@@ -924,6 +933,7 @@ pub struct Dialog<'a> {
     footer: Footer,
     width: DialogWidth,
     closable: bool,
+    blocking: bool,
     initial_focus: Option<InitialFocus>,
     force: Option<ForceState>,
 }
@@ -940,6 +950,7 @@ impl<'a> Dialog<'a> {
             footer: Footer::default(),
             width: DialogWidth::Confirm,
             closable: false,
+            blocking: false,
             initial_focus: None,
             force: None,
         }
@@ -987,6 +998,12 @@ impl<'a> Dialog<'a> {
         self.initial_focus = Some(focus);
         self
     }
+    /// Must be answered with its buttons: a click on the scrim (or Esc reaching the modal) does
+    /// not cancel it (the start-up consent, git's credential prompts).
+    pub fn blocking(mut self) -> Self {
+        self.blocking = true;
+        self
+    }
     /// Shows the card where the cursor is, without the modal layer, scrim or focus handling, with
     /// forced states (the gallery only).
     pub(crate) fn show_inline(mut self, ui: &mut Ui, force: ForceState) -> DialogResult {
@@ -1000,6 +1017,7 @@ impl<'a> Dialog<'a> {
     /// it returns `Cancel` or `Confirm`.
     pub fn show(self, ctx: &Context) -> DialogResult {
         let id = self.id;
+        let blocking = self.blocking;
         let screen = ctx.content_rect();
         let (_, fresh) = presence(ctx, id);
         if fresh {
@@ -1043,7 +1061,7 @@ impl<'a> Dialog<'a> {
                 result
             });
         let mut result = modal.inner;
-        if result == DialogResult::Open && modal.should_close() {
+        if result == DialogResult::Open && !blocking && modal.should_close() {
             result = DialogResult::Cancel;
         }
         if result != DialogResult::Open {
@@ -1070,6 +1088,7 @@ impl<'a> Dialog<'a> {
             footer,
             width,
             closable,
+            blocking: _,
             initial_focus,
             force,
         } = self;
@@ -1216,7 +1235,13 @@ impl<'a> Dialog<'a> {
                                 .enabled(footer.confirm_enabled)
                                 .loading(footer.confirm_loading)
                                 .id_salt(id.with("confirm"));
-                            b = if destructive { b.danger() } else { b.primary() };
+                            b = if footer.neutral {
+                                b.secondary()
+                            } else if destructive {
+                                b.danger()
+                            } else {
+                                b.primary()
+                            };
                             if let Some(g) = &footer.confirm_icon {
                                 b = b.icon(g);
                             }
@@ -1248,7 +1273,9 @@ impl<'a> Dialog<'a> {
                             }
                             cancel_focus = r.has_focus();
                             if fresh {
-                                let want = initial_focus.unwrap_or(if destructive {
+                                let want = initial_focus.unwrap_or(if footer.neutral {
+                                    InitialFocus::Body
+                                } else if destructive {
                                     InitialFocus::Cancel
                                 } else {
                                     InitialFocus::Confirm
@@ -1274,6 +1301,7 @@ impl<'a> Dialog<'a> {
                 if result == DialogResult::Open
                     && force.is_none()
                     && !destructive
+                    && !footer.neutral
                     && enter
                     && footer.confirm.is_some()
                     && footer.confirm_enabled
@@ -1773,6 +1801,48 @@ mod tests {
             let _ = run(&ctx, key(k), |ui| result = show(ui.ctx()));
             assert_eq!(result, expect, "{k:?}");
         }
+    }
+
+    #[test]
+    fn a_neutral_choice_ignores_enter_and_a_blocking_dialog_ignores_esc() {
+        let ctx = context();
+        let show = |ctx: &Context| {
+            Dialog::new("consent")
+                .title("Send crash reports?")
+                .blocking()
+                .footer(|f| {
+                    f.choice("Send crash reports", "Don't send");
+                })
+                .show(ctx)
+        };
+        let mut result = DialogResult::Open;
+        for _ in 0..3 {
+            let _ = run(&ctx, Vec::new(), |ui| result = show(ui.ctx()));
+        }
+        assert_eq!(
+            ctx.memory(|m| m.focused()),
+            None,
+            "neither choice is focused"
+        );
+        for k in [Key::Enter, Key::Escape] {
+            let _ = run(&ctx, key(k), |ui| result = show(ui.ctx()));
+            assert_eq!(result, DialogResult::Open, "{k:?}");
+        }
+        // Both choices are drawn alike: two Secondary buttons, no primary fill.
+        let out = run(&ctx, Vec::new(), |ui| result = show(ui.ctx()));
+        let p = theme::palette(&ctx);
+        let primary = p.surfaces(theme::style()).primary.ends()[0];
+        let fills_primary = out.shapes.iter().any(|c| {
+            fn has(shape: &Shape, c: Color32) -> bool {
+                match shape {
+                    Shape::Vec(v) => v.iter().any(|s| has(s, c)),
+                    Shape::Rect(r) => r.fill == c,
+                    _ => false,
+                }
+            }
+            has(&c.shape, primary)
+        });
+        assert!(!fills_primary, "no choice is drawn as the primary button");
     }
 
     #[test]
