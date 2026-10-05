@@ -87,6 +87,7 @@ thread.
 | `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. |
 | `app/clone.rs`, `app/request_flow.rs` | Cloning on a background thread; creating and checking out pull and merge requests. |
 | `app/screenshot.rs` | Headless screenshots for `--screenshot`. |
+| `app/demo_requests.rs` | Invented pull and merge requests the requests view shows under `--screenshot --demo-requests`; never reachable in a normal run, no network. |
 | `tab.rs` | `RepoTab`: one open repository's snapshot, selections, in-flight work and the state a failed or superseded job leaves behind. |
 | `worker.rs` | Reads Git's pending merge message off the UI thread, applied only to an empty composer still in a merge. One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; debounced file watcher. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it, but only in a trusted folder; elsewhere it sends `Event::DownloadsRefused` and fails the read with a message that says why. |
 | `identity_worker.rs` | One background thread shared by tabs and first launch. It reads Git's effective author and committer through `canopy-core::identity`, writes `user.*` configuration only after a user action, and returns results for Settings and the commit warning. |

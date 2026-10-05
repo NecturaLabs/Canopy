@@ -57,6 +57,11 @@ OPTIONS:
         --motion <MOTION>     Motion: system, reduced or full
         --gallery-page <N>    With --overlay gallery, scroll down N window heights
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
+        --demo-requests <V>   With --screenshot, show invented pull requests (no network) in a
+                              repository without a GitHub or GitLab remote: list, list-all,
+                              list-closed, a request number such as 428, busy, loading,
+                              details-loading, details-error, error, no-token or empty;
+                              prefix gitlab: for merge requests. Implies --view requests
     -h, --help                Print help
     -V, --version             Print version
 
@@ -76,6 +81,7 @@ FILES:
 fn parse_args() -> Result<(Launch, [f32; 2]), String> {
     let mut launch = Launch::default();
     let mut size = [1440.0, 900.0];
+    let mut demo_requests = None;
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
         let text = arg.to_string_lossy().into_owned();
@@ -166,6 +172,13 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 let value = args.next().ok_or("--zoom needs a factor from 0.8 to 1.6")?;
                 launch.zoom = Some(parse_zoom(&value.to_string_lossy())?);
             }
+            "--demo-requests" => {
+                let spec = next_text(&mut args, "--demo-requests needs a scenario, see --help")?;
+                if demo_requests.is_some() {
+                    return Err("--demo-requests was given twice".into());
+                }
+                demo_requests = Some(app::demo_requests::Scenario::parse(&spec)?);
+            }
             "--screenshot" => {
                 launch.screenshot = Some(args.next().ok_or("--screenshot needs a file")?.into());
             }
@@ -205,6 +218,10 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
             s if s.starts_with('-') => return Err(format!("unknown option {s}; see --help")),
             _ => launch.paths.push(PathBuf::from(arg)),
         }
+    }
+    if let Some(scenario) = demo_requests {
+        app::demo_requests::enable(scenario, launch.screenshot.is_some())?;
+        launch.view.get_or_insert(tab::View::Requests);
     }
     Ok((launch, size))
 }
