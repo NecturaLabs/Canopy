@@ -2188,9 +2188,14 @@ impl Palette {
     // Accessors kept for views written before the component library; the migration moves them
     // onto `s()` and the kit, then deletes these.
 
-    /// Window background in the active style (`Surfaces::bg`).
+    /// The ground views painted their content on before the kit (`Surfaces::pane`: the window
+    /// ground in Standard, the floating card in Deeper).
+    #[expect(
+        clippy::misnamed_getters,
+        reason = "views say bg for their content ground until the migration"
+    )]
     pub fn bg(&self) -> Color32 {
-        self.s().bg
+        self.s().pane
     }
 
     /// Chrome in the active style (`Surfaces::panel`).

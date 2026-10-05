@@ -95,17 +95,23 @@ pub fn band(ui: &mut Ui, name: &str, draw: fn(&mut Ui)) {
     ui.horizontal_top(|ui| {
         for (i, ground) in [s.pane, s.panel].into_iter().enumerate() {
             ui.push_id((name, i), |ui| {
-                let frame = egui::Frame::new()
-                    .fill(ground)
-                    .stroke(Stroke::new(1.0, s.border))
-                    .corner_radius(CornerRadius::same(theme::metrics().radius_lg))
-                    .inner_margin(egui::Margin::same(theme::LG as i8));
-                frame.show(ui, |ui| {
-                    ui.set_width(half - 2.0 * theme::LG - 2.0);
-                    caption(ui, if i == 0 { "ON CONTENT" } else { "ON CHROME" });
-                    ui.add_space(theme::SM);
-                    draw(ui);
-                });
+                ui.allocate_ui_with_layout(
+                    vec2(half, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        egui::Frame::new()
+                            .fill(ground)
+                            .stroke(Stroke::new(1.0, s.border))
+                            .corner_radius(CornerRadius::same(theme::metrics().radius_lg))
+                            .inner_margin(egui::Margin::same(theme::LG as i8))
+                            .show(ui, |ui| {
+                                ui.set_width(half - 2.0 * theme::LG - 2.0);
+                                caption(ui, if i == 0 { "ON CONTENT" } else { "ON CHROME" });
+                                ui.add_space(theme::SM);
+                                draw(ui);
+                            });
+                    },
+                );
             });
         }
     });
@@ -241,6 +247,7 @@ fn header(ui: &mut Ui, p: &Palette) {
     caption(ui, "METRICS");
     let rows = m.rows();
     let cols = 3;
+    ui.spacing_mut().interact_size.y = m.small_size + theme::XS;
     egui::Grid::new("gallery-metrics")
         .num_columns(cols * 2)
         .spacing(vec2(theme::MD, 2.0))
@@ -301,42 +308,44 @@ fn elevation(ui: &mut Ui) {
     let style = theme::style();
     let s = p.surfaces(style);
     let m = theme::metrics();
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(theme::LG, theme::LG);
-        for level in Elevation::ALL {
-            let (body, ring, size) = match level {
-                Elevation::Control => (s.raised, Some(s.raised_edge), vec2(84.0, m.control)),
-                Elevation::Thumb => (s.thumb, None, vec2(84.0, m.control - 4.0)),
-                Elevation::Knob => (s.knob, s.knob_edge, Vec2::splat(m.switch_knob)),
-                Elevation::Tab => (s.tab, Some(s.tab_edge), vec2(84.0, m.doc_tab_height)),
-                Elevation::Primary => (s.primary, None, vec2(84.0, m.control)),
-                Elevation::Danger => (s.danger_solid, None, vec2(84.0, m.control)),
-                Elevation::Floating => (
-                    Fill::flat(s.overlay),
-                    Some(p.floating_ring(s)),
-                    vec2(84.0, 56.0),
-                ),
-                Elevation::Pane => (Fill::flat(s.pane), s.pane_edge, vec2(84.0, 56.0)),
-                Elevation::Field => (
-                    Fill::flat(s.field),
-                    Some(p.control_border),
-                    vec2(84.0, m.control),
-                ),
-                Elevation::Deck => (s.deck, None, vec2(84.0, 40.0)),
-            };
-            ui.vertical(|ui| {
-                let (slot, _) = ui.allocate_exact_size(vec2(96.0, 64.0), Sense::hover());
-                let rect = Rect::from_center_size(slot.center(), size);
-                let radius = if level == Elevation::Knob {
-                    CornerRadius::same(u8::MAX)
-                } else {
-                    CornerRadius::same(m.radius)
+    for row in Elevation::ALL.chunks(5) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = vec2(theme::SM, theme::SM);
+            for &level in row {
+                let (body, ring, size) = match level {
+                    Elevation::Control => (s.raised, Some(s.raised_edge), vec2(84.0, m.control)),
+                    Elevation::Thumb => (s.thumb, None, vec2(84.0, m.control - 4.0)),
+                    Elevation::Knob => (s.knob, s.knob_edge, Vec2::splat(m.switch_knob)),
+                    Elevation::Tab => (s.tab, Some(s.tab_edge), vec2(84.0, m.doc_tab_height)),
+                    Elevation::Primary => (s.primary, None, vec2(84.0, m.control)),
+                    Elevation::Danger => (s.danger_solid, None, vec2(84.0, m.control)),
+                    Elevation::Floating => (
+                        Fill::flat(s.overlay),
+                        Some(p.floating_ring(s)),
+                        vec2(84.0, 56.0),
+                    ),
+                    Elevation::Pane => (Fill::flat(s.pane), s.pane_edge, vec2(84.0, 56.0)),
+                    Elevation::Field => (
+                        Fill::flat(s.field),
+                        Some(p.control_border),
+                        vec2(84.0, m.control),
+                    ),
+                    Elevation::Deck => (s.deck, None, vec2(84.0, 40.0)),
                 };
-                paint::surface(ui.painter(), rect, radius, p, style, level, body, ring);
-                caption(ui, &format!("{level:?}"));
-            });
-        }
-    });
+                ui.vertical(|ui| {
+                    let (slot, _) = ui.allocate_exact_size(vec2(96.0, 64.0), Sense::hover());
+                    let rect = Rect::from_center_size(slot.center(), size);
+                    let radius = if level == Elevation::Knob {
+                        CornerRadius::same(u8::MAX)
+                    } else {
+                        CornerRadius::same(m.radius)
+                    };
+                    paint::surface(ui.painter(), rect, radius, p, style, level, body, ring);
+                    caption(ui, &format!("{level:?}"));
+                });
+            }
+        });
+    }
 }
 
 /// The same slice (chrome bar, a row, a primary and a secondary button, a floating surface) in

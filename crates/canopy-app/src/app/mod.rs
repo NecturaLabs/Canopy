@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, unbounded};
-use egui::{RichText, Stroke};
+use egui::RichText;
 use egui_phosphor::regular as icon;
 
 use canopy_core::Repo;
@@ -653,9 +653,41 @@ impl eframe::App for CanopyApp {
             self.request_identity(IdentityJob::ReadRepo(t.path.clone()));
         }
 
+        let m = theme::metrics();
+        let s = theme::surfaces(&ctx);
+        let deeper = theme::style() == theme::Style::Deeper;
+        let screen = ctx.content_rect();
+        // The top deck: the tab strip and the action bar. Standard paints each as flat chrome over
+        // a seam; Deeper paints them as one lifted surface (`kit::paint::deck`).
+        let deck_height = m.tab_strip_height
+            + if self.tabs.get(self.active).is_some() {
+                m.action_bar_height
+            } else {
+                0.0
+            };
+        let background = ctx.layer_painter(egui::LayerId::background());
+        background.rect_filled(screen, egui::CornerRadius::ZERO, s.bg);
+        if deeper {
+            let deck =
+                egui::Rect::from_min_size(screen.min, egui::vec2(screen.width(), deck_height));
+            crate::ui::kit::paint::deck(&background, deck, p, s);
+        } else {
+            let strip = egui::Rect::from_min_size(
+                screen.min,
+                egui::vec2(screen.width(), m.tab_strip_height),
+            );
+            crate::ui::kit::paint::deck(&background, strip, p, s);
+            if deck_height > m.tab_strip_height {
+                let bar = egui::Rect::from_min_size(
+                    egui::pos2(screen.left(), strip.bottom()),
+                    egui::vec2(screen.width(), m.action_bar_height),
+                );
+                crate::ui::kit::paint::deck(&background, bar, p, s);
+            }
+        }
         egui::Panel::top("tabs")
-            .exact_size(40.0)
-            .frame(egui::Frame::new().fill(p.bg()))
+            .exact_size(m.tab_strip_height)
+            .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 toolbar::tabs(
                     ui,
@@ -667,12 +699,8 @@ impl eframe::App for CanopyApp {
             });
         if let Some(tab) = self.tabs.get_mut(self.active) {
             egui::Panel::top("actions")
-                .exact_size(theme::metrics().action_bar_height)
-                .frame(
-                    egui::Frame::new()
-                        .fill(p.panel())
-                        .stroke(Stroke::new(1.0, p.border())),
-                )
+                .exact_size(m.action_bar_height)
+                .frame(egui::Frame::NONE)
                 .show(ui, |ui| {
                     if compact {
                         ui.horizontal_centered(|ui| {
@@ -701,13 +729,21 @@ impl eframe::App for CanopyApp {
             .as_ref()
             .map(|(url, _, s)| format!("Cloning {url}  ·  {s}"));
         egui::Panel::bottom("status")
-            .exact_size(26.0)
-            .frame(
-                egui::Frame::new()
-                    .fill(p.panel())
-                    .stroke(Stroke::new(1.0, p.border())),
-            )
+            .exact_size(m.status_bar_height)
+            .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                // Standard: chrome with a top seam. Deeper: on the ground, no seam.
+                let bar = ui.max_rect();
+                if !deeper {
+                    ui.painter()
+                        .rect_filled(bar, egui::CornerRadius::ZERO, s.panel);
+                    crate::ui::kit::paint::seam_h(
+                        ui.painter(),
+                        bar.x_range(),
+                        bar.top() + 0.5,
+                        s.border,
+                    );
+                }
                 if let Some(s) = &clone_status {
                     ui.horizontal_centered(|ui| {
                         ui.add_space(10.0);
@@ -730,30 +766,34 @@ impl eframe::App for CanopyApp {
             if !compact {
                 egui::Panel::left("sidebar")
                     .resizable(true)
-                    .default_size(250.0)
+                    .default_size(m.sidebar_width)
                     .min_size(190.0)
                     .max_size(460.0)
                     .frame(
                         egui::Frame::new()
-                            .fill(p.panel())
-                            .stroke(Stroke::new(1.0, p.border()))
-                            .inner_margin(egui::Margin::symmetric(6, 0)),
+                            .fill(s.panel)
+                            .inner_margin(egui::Margin::symmetric(m.sidebar_pad as i8, 0)),
                     )
-                    .show(ui, |ui| sidebar::show(ui, tab, &mut actions));
+                    .show(ui, |ui| {
+                        if !deeper {
+                            let r = ui.max_rect().expand2(egui::vec2(m.sidebar_pad, 0.0));
+                            crate::ui::kit::paint::seam_v(
+                                ui.painter(),
+                                r.right() - 0.5,
+                                r.y_range(),
+                                s.border,
+                            );
+                        }
+                        sidebar::show(ui, tab, &mut actions)
+                    });
             }
-            egui::CentralPanel::default()
-                .frame(egui::Frame::new().fill(p.bg()))
-                .show(ui, |ui| match tab.view {
-                    View::History => history::show(ui, tab, &self.settings, &mut actions),
-                    View::Changes => changes::show(ui, tab, &mut actions),
-                    View::Requests => {
-                        requests::show(ui, tab, self.settings.hosting_api, &mut actions)
-                    }
-                });
+            content_pane(ui, |ui| match tab.view {
+                View::History => history::show(ui, tab, &self.settings, &mut actions),
+                View::Changes => changes::show(ui, tab, &mut actions),
+                View::Requests => requests::show(ui, tab, self.settings.hosting_api, &mut actions),
+            });
         } else {
-            egui::CentralPanel::default()
-                .frame(egui::Frame::new().fill(p.bg()))
-                .show(ui, |ui| welcome::show(ui, &self.settings, &mut actions));
+            content_pane(ui, |ui| welcome::show(ui, &self.settings, &mut actions));
         }
 
         // Overlays.
@@ -899,6 +939,36 @@ impl eframe::App for CanopyApp {
         )
         .to_array()
     }
+}
+
+/// The central content pane: flush on the pane ground in Standard; in Deeper a floating card over
+/// the ground's gutters, with the focused-pane edge (the main pane holds the keyboard).
+fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
+    let m = theme::metrics();
+    let p = palette(ui.ctx());
+    let s = theme::surfaces(ui.ctx());
+    let gutter = m.pane_gutter;
+    // Concept 4's body padding: none above (the deck), the gutter at the sides and below.
+    let margin = egui::Margin {
+        left: gutter as i8,
+        right: gutter as i8,
+        top: 0,
+        bottom: gutter as i8,
+    };
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE.inner_margin(margin))
+        .show(ui, |ui| {
+            let card = ui.max_rect();
+            let radius = crate::ui::kit::paint::pane(ui.painter(), card, p, s.pane, 1.0);
+            if radius == egui::CornerRadius::ZERO {
+                content(ui);
+            } else {
+                // Content stays inside the rounded card.
+                let clip = card.shrink(f32::from(radius.nw) * 0.3);
+                ui.set_clip_rect(clip.intersect(ui.clip_rect()));
+                content(ui);
+            }
+        });
 }
 
 fn navigation_menu(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> egui::Response {

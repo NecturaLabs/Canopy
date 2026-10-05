@@ -725,15 +725,14 @@ impl ToolButton {
         let enabled = self.enabled && ui.is_enabled();
         let layout = self.layout.unwrap_or(m.tool_layout);
         let stacked = layout == ToolLayout::Stacked;
-        let (icon_size, caption_size, gap) = if stacked {
-            (m.icon_tool, m.tool_caption, m.tool_gap)
+        // Tool anatomy follows the layout: Comfortable's for stacked tools, Dense's for inline
+        // ones, whichever density is active (the gallery shows both).
+        let t = if stacked {
+            &theme::COMFORTABLE
         } else {
-            (
-                crate::ui::theme::DENSE.icon_tool,
-                crate::ui::theme::DENSE.tool_caption,
-                crate::ui::theme::DENSE.tool_gap,
-            )
+            &theme::DENSE
         };
+        let (icon_size, caption_size, gap) = (t.icon_tool, t.tool_caption, t.tool_gap);
         let caption_font = FontId::new(caption_size, theme::medium());
         let caption =
             ui.painter()
@@ -752,13 +751,13 @@ impl ToolButton {
         });
         let badge_w = badge.as_ref().map_or(0.0, |b| b.size().x + 3.0);
         let (size, height) = if stacked {
-            let h = m.tool_height;
-            let w = (caption.size().x.max(glyph.size().x + badge_w) + 2.0 * m.tool_pad)
-                .max(m.tool_min_width);
+            let h = t.tool_height;
+            let w = (caption.size().x.max(glyph.size().x + badge_w) + 2.0 * t.tool_pad)
+                .max(t.tool_min_width);
             (vec2(w, h), h)
         } else {
-            let h = crate::ui::theme::DENSE.tool_height;
-            let w = glyph.size().x + badge_w + gap + caption.size().x + 2.0 * m.tool_pad;
+            let h = t.tool_height;
+            let w = glyph.size().x + badge_w + gap + caption.size().x + 2.0 * t.tool_pad;
             (vec2(w, h), h)
         };
         let size = vec2(size.x.max(self.min_width), height);
@@ -817,7 +816,7 @@ impl ToolButton {
                     ),
                 )
             } else {
-                let x = rect.left() + m.tool_pad;
+                let x = rect.left() + t.tool_pad;
                 (
                     pos2(x, rect.center().y - glyph.size().y / 2.0),
                     pos2(
@@ -1151,7 +1150,7 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
             .width(rect.width())
             .anchor(rect)
             .align(egui::RectAlign::BOTTOM_START);
-        let popup = if force.is_some_and(|f| f.open) {
+        let popup = if force.is_some_and(|f| f.open) && ui.is_rect_visible(rect) {
             popup.open(true)
         } else {
             popup
