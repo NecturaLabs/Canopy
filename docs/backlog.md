@@ -74,6 +74,9 @@ yet true, then correctness and the features people meet first, then polish. Take
       when `git-lfs` is missing (the status fix needs `sha2`: owner's call).
 - [ ] Feature-branch workflows UI: git-flow dialogs, branch folders by prefix, merged and
       squash-merged indicators, delete merged, "Update from base".
+      The core (`flow.rs`) always finishes with `--no-ff` (AVH fast-forwards a single-commit
+      feature), offers no rebase-before-finish or hotfix into an open release, and refuses on git
+      older than 2.38.
 - [ ] .gitignore UI: ignore file/extension/folder/pattern, local exclude, stop tracking, show
       ignored, "why ignored", templates on init.
 - [ ] Submodules UI: sidebar list, open in a tab, init/update/sync/add/remove, pointer diffs,
@@ -167,8 +170,12 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] Diff settings, syntax highlighting, side-by-side diffs.
 - [ ] Three-way conflict resolver.
 - [ ] GitHub and GitLab pull and merge requests.
-- [ ] Seven themes.
+- [ ] Eight themes (Midnight, Daylight, Aurora, Ember, Neon, Forest, Paper, Contrast).
 - [ ] Partial clones on real `--filter=blob:none` and `--filter=tree:0` clones.
+- [ ] Checks the development machine cannot make, left open by the visual polish review (PR #5,
+      merged 4 Oct 2026): real hosting credentials and account persistence, external links and
+      update downloads, hardware HiDPI, Wayland, screen readers, macOS and Windows. Do not report
+      any of them as verified until someone has run them.
 
 ## Owner to-dos
 

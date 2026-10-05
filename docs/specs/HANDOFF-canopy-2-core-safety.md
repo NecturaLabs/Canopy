@@ -2,7 +2,7 @@
 
 **Status: merged, kept as the reference for wiring the app.** The branch was merged into `main` as
 `d0782bf` (commits `51c58a7`, `329293c`, `76b160d`); the session, its local branch and its
-worktree are gone (`origin/canopy-2/core-safety` still exists). The app has taken up only part of
+worktree are gone, and so is its remote branch. The app has taken up only part of
 it: branch delete asks `git branch -d` first (section 1, `7003ef0`), and `51c58a7` and
 `paths::safe_join` are live. The rest still sits behind compatibility wrappers, and each piece of
 UI work is a `docs/backlog.md` entry (`.gitignore`, file and directory links, research bugs, and
@@ -181,7 +181,7 @@ worker to the new ones, then delete the wrappers.
   have a commit checked out", which surfaces as an error toast. Nothing is staged.
 - macOS HFS+ ignorable-Unicode `.git` spellings and Windows alternate data streams are not checked
   by `safe_join`. git's own path checks cover checkout.
-- Now a backlog entry ("Pull reads `pull.rebase` through libgit2"): `tests/operations.rs` pull
+- Now part of the backlog entry "Pull strategy": `tests/operations.rs` pull
   tests read the developer's global git config through libgit2 (`Repo::pull` checks
   `pull.rebase`). With `pull.rebase=true` in `~/.config/git/config`,
   `pull_merge_creates_a_merge_commit` and `pull_fast_forward_only_refuses_diverged_branches`

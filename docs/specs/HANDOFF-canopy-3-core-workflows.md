@@ -1,13 +1,14 @@
 # Handoff: canopy-3/core-workflows
 
 **Status: merged, kept as the reference for wiring the app.** The branch was merged into `main` as
-`4556dfb`; the session, its local branch and its worktree are gone (`origin/canopy-3/core-workflows` still exists). The app does not call this code
-yet: the git-flow, merged-branch, LFS and submodule work are the backlog entries "Feature-branch
-workflows", "Git LFS" and "Submodules", and the review of this core is owed when they start. The
-"Not done" list below moved into the backlog (the SHA-256 step and the `flow_finish` limits into
-the LFS and Feature-branch entries, the `pull.rebase` bug into its own entry; the installer
-test's unbuffered start is fixed, `7d79afc`; a host-dependent failure of that test is a backlog
-entry of its own). Delete this file when the UI work has landed.
+`4556dfb`; the session, its local branch, its worktree and its remote branch are gone. The app does
+not call this code yet: the git-flow, merged-branch, LFS and submodule work are the backlog entries
+"Feature-branch workflows UI", "Git LFS UI" and "Submodules UI", and the review of this core is
+owed when they start. The "Not done" list below moved into the backlog (the SHA-256 step into the
+LFS entry, the `flow_finish` limits into the Feature-branch entry, the `pull.rebase` bug into
+"Pull strategy"). The installer test's failures on a desktop host are fixed: the unbuffered start
+in `7d79afc`, and `install.sh` runs `update-desktop-database` only when a `mimeinfo.cache`
+already exists. Delete this file when the UI work has landed.
 
 Branch `canopy-3/core-workflows`: the canopy-core half of `lfs-flow-spec.md` parts A, B1 and D1
 (brief: `parallel-sessions.md`, "canopy-3"). Only `crates/canopy-core/` and this file changed. The
@@ -151,7 +152,7 @@ failures stay `Error::Cli` with git's stderr.
      `check.sh`'s isolation, `pull_merge_creates_a_merge_commit` and
      `pull_fast_forward_only_refuses_diverged_branches` fail on the same machine.
    - Fix: read the value with `git config --get pull.rebase` through `cli`.
-5. **`packaging/test-install.sh` fails on a desktop Linux host.**
+5. **`packaging/test-install.sh` failed on a desktop Linux host (fixed, see the status line).**
    - `update-desktop-database` writes `~/.local/share/applications/mimeinfo.cache`, which trips
      the "nothing else written" and "home is empty" checks.
    - With Python 3.14, `http.server`'s start-up line is buffered, so "the test server did not
