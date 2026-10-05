@@ -24,6 +24,13 @@ pub const INSET_FOCUS_WIDTH: f32 = 1.5;
 /// A negative spread shrinks the rect (egui's `Shadow::spread` is unsigned); a blur wider than the
 /// rect's shorter side is cut to it, as egui's tessellator would.
 pub fn shadow(painter: &Painter, rect: Rect, radius: CornerRadius, p: &Palette, m: &Material) {
+    painter.extend(shadow_shapes(rect, radius, p, m));
+}
+
+/// The shapes [`shadow`] paints, for surfaces painted into a reserved slot once their size is
+/// known (floating layers).
+pub fn shadow_shapes(rect: Rect, radius: CornerRadius, p: &Palette, m: &Material) -> Vec<Shape> {
+    let mut shapes = Vec::with_capacity(m.layers.len());
     for l in m.layers {
         let r = rect
             .translate(vec2(0.0, f32::from(l.dy)))
@@ -39,8 +46,13 @@ pub fn shadow(painter: &Painter, rect: Rect, radius: CornerRadius, p: &Palette, 
             shrink_radius(radius, -spread)
         };
         let color = Palette::tint(p.shadow_color(l.tint), l.alpha);
-        painter.add(RectShape::filled(r, corner, color).with_blur_width(blur));
+        shapes.push(
+            RectShape::filled(r, corner, color)
+                .with_blur_width(blur)
+                .into(),
+        );
     }
+    shapes
 }
 
 fn shrink_radius(r: CornerRadius, by: f32) -> CornerRadius {

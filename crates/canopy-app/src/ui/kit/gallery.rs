@@ -12,14 +12,19 @@ use egui::{
     Ui, Vec2, pos2, vec2,
 };
 
-use super::{ButtonKind, ForceState, button, paint};
+use super::{ButtonKind, ForceState, button, menu, overlay, paint, progress};
 use crate::ui::theme::{self, Elevation, Fill, Palette, Style};
 
 /// A gallery section: its title and the function that draws its components.
 pub type Section = (&'static str, fn(&mut Ui));
 
 /// The sections, in the spec's order (design spec 9). Component modules append theirs here.
-pub const SECTIONS: &[Section] = &[("Buttons", button::gallery)];
+pub const SECTIONS: &[Section] = &[
+    ("Buttons", button::gallery),
+    ("Progress", progress::gallery),
+    ("Menus", menu::gallery),
+    ("Overlays", overlay::gallery),
+];
 
 const MAX_WIDTH: f32 = 1360.0;
 

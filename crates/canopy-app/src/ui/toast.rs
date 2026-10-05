@@ -1,12 +1,17 @@
-//! Bottom-right notifications, with a bounded scroll stack when several need attention.
+//! Bottom-right notifications, with a bounded scroll stack when several need attention: the queue,
+//! its timers and recovery actions. Each card is a `kit::toast::ToastCard`.
 
-use egui::{Align2, CornerRadius, FontId, Id, Order, RichText, Stroke, vec2};
-use egui_phosphor::regular as icon;
+#[cfg(test)]
+use egui::CornerRadius;
+use egui::{Align2, Id, Order, vec2};
 
 use std::path::PathBuf;
+use std::time::Duration;
 
-use super::theme::{self, Palette, palette};
-use super::widgets;
+use super::kit::Tone;
+use super::kit::toast::ToastCard;
+use super::motion;
+use super::theme;
 
 /// Severity of a toast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,19 +143,24 @@ impl Toasts {
             return Vec::new();
         }
         let mut actions = Vec::new();
-        let p = palette(ctx);
+        let m = theme::metrics();
         let screen = ctx.content_rect();
         let mut dismiss = None;
+        // Bottom-right, 16 from the window's right edge and above the status bar.
+        let corner = screen.right_bottom() - vec2(theme::LG, m.status_bar_height + theme::LG);
         egui::Area::new(Id::new("notifications"))
             .order(Order::Tooltip)
             .pivot(Align2::RIGHT_BOTTOM)
-            .fixed_pos(screen.right_bottom() - vec2(theme::LG, theme::XL + theme::LG))
+            .fixed_pos(corner)
             .interactable(true)
             .show(ctx, |ui| {
-                ui.set_width(theme::TOAST_WIDTH.min((screen.width() - 2.0 * theme::XL).max(0.0)));
+                ui.set_width(
+                    m.toast_width
+                        .min((screen.width() - 2.0 * theme::XL).max(0.0)),
+                );
                 // An Area begins with its previous frame's size. Do not feed that shrunken
                 // height back into the scroll viewport: arrivals and disclosures must grow.
-                let max_height = (screen.height() - theme::XL - 2.0 * theme::LG).max(0.0);
+                let max_height = (screen.height() - m.status_bar_height - 2.0 * theme::LG).max(0.0);
                 ui.set_max_height(max_height);
                 ui.spacing_mut().item_spacing.y = theme::SM;
                 ui.spacing_mut().scroll = theme::solid_scroll();
@@ -160,149 +170,46 @@ impl Toasts {
                     .min_scrolled_height(0.0)
                     .max_height(max_height)
                     .show(ui, |ui| {
-                        for t in self.items.iter().rev() {
-                            let age = now - t.born;
-                            let enter_time = f64::from(theme::fade(ctx, 0.25));
-                            let leave_time = f64::from(theme::fade(ctx, 0.35));
-                            let enter = if enter_time > 0.0 {
-                                (age / enter_time).min(1.0) as f32
-                            } else {
-                                1.0
+                        for (index, t) in self.items.iter().enumerate().rev() {
+                            // Toasts that arrived together enter one after another.
+                            let stagger = self.items[..index]
+                                .iter()
+                                .rev()
+                                .take_while(|o| t.born - o.born < f64::from(motion::TOAST_STAGGER))
+                                .count();
+                            let tone = match t.kind {
+                                ToastKind::Info => Tone::Accent,
+                                ToastKind::Success => Tone::Success,
+                                ToastKind::Error => Tone::Danger,
                             };
-                            let leave = if leave_time > 0.0 {
-                                ((t.ttl - age) / leave_time).clamp(0.0, 1.0) as f32
-                            } else {
-                                1.0
-                            };
-                            let ease = 1.0 - (1.0 - enter).powi(3);
-                            let alpha = ease.min(leave);
-                            let (glyph, color) = match t.kind {
-                                ToastKind::Info => (icon::INFO, p.accent2),
-                                ToastKind::Success => (icon::CHECK_CIRCLE, p.success),
-                                ToastKind::Error => (icon::WARNING_CIRCLE, p.danger),
-                            };
-                            let resp = ui
-                                .push_id(t.id, |ui| {
-                                    ui.set_opacity(alpha);
-                                    egui::Frame::new()
-                                        .fill(p.elevated())
-                                        .stroke(Stroke::new(1.0, Palette::tint(color, 120)))
-                                        .corner_radius(CornerRadius::same(theme::RADIUS_LG))
-                                        .shadow(ctx.global_style().visuals.popup_shadow)
-                                        .inner_margin(egui::Margin::symmetric(14, 10))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.horizontal(|ui| {
-                                                ui.label(
-                                                    RichText::new(glyph)
-                                                        .size(theme::ICON_LG)
-                                                        .color(color),
-                                                );
-                                                ui.add_sized(
-                                                    vec2(
-                                                        (ui.available_width()
-                                                            - theme::CONTROL_HEIGHT
-                                                            - ui.spacing().item_spacing.x)
-                                                            .max(0.0),
-                                                        theme::CONTROL_HEIGHT,
-                                                    ),
-                                                    egui::Label::new(
-                                                        RichText::new(&t.title)
-                                                            .font(FontId::new(
-                                                                theme::LEAD_SIZE,
-                                                                theme::semibold(),
-                                                            ))
-                                                            .color(p.text),
-                                                    )
-                                                    .truncate(),
-                                                );
-                                                ui.allocate_ui_with_layout(
-                                                    vec2(ui.available_width(), 26.0),
-                                                    egui::Layout::right_to_left(
-                                                        egui::Align::Center,
-                                                    ),
-                                                    |ui| {
-                                                        if widgets::icon_button(
-                                                            ui,
-                                                            icon::X,
-                                                            "Dismiss notification",
-                                                        )
-                                                        .clicked()
-                                                        {
-                                                            dismiss = Some(t.id);
-                                                        }
-                                                    },
-                                                );
-                                            });
-                                            if t.kind == ToastKind::Error {
-                                                if let Some(help) = t.help {
-                                                    ui.add(
-                                                        egui::Label::new(
-                                                            RichText::new(help)
-                                                                .size(theme::META_SIZE)
-                                                                .color(p.text),
-                                                        )
-                                                        .wrap(),
-                                                    );
-                                                }
-                                                if let Some(recovery) = &t.recovery {
-                                                    let label = match recovery {
-                                                        Recovery::Pull(_) => "Pull",
-                                                        Recovery::Accounts => "Open Accounts",
-                                                    };
-                                                    if widgets::compact_button(ui, label).clicked()
-                                                    {
-                                                        actions.push(recovery.clone());
-                                                        dismiss = Some(t.id);
-                                                    }
-                                                }
-                                                egui::CollapsingHeader::new("Details")
-                                                    .id_salt(t.id)
-                                                    .show(ui, |ui| {
-                                                        egui::ScrollArea::vertical()
-                                                            .max_height(theme::TOAST_DETAILS_HEIGHT)
-                                                            .show(ui, |ui| {
-                                                                ui.add(
-                                                    egui::Label::new(
-                                                        RichText::new(&t.body)
-                                                            .font(FontId::monospace(
-                                                                theme::MONO_SMALL_SIZE,
-                                                            ))
-                                                            .color(p.text_dim),
-                                                    )
-                                                    .wrap(),
-                                                );
-                                                            });
-                                                        if ui
-                                                            .button(format!(
-                                                                "{}  Copy output",
-                                                                icon::COPY
-                                                            ))
-                                                            .clicked()
-                                                        {
-                                                            ctx.copy_text(t.body.clone());
-                                                        }
-                                                    });
-                                            } else if !t.body.is_empty() {
-                                                ui.add(
-                                                    egui::Label::new(
-                                                        RichText::new(&t.body)
-                                                            .size(theme::META_SIZE)
-                                                            .color(p.text_dim),
-                                                    )
-                                                    .wrap(),
-                                                );
-                                            }
-                                        })
-                                        .response
-                                        .interact(if t.kind == ToastKind::Error {
-                                            egui::Sense::hover()
-                                        } else {
-                                            egui::Sense::click()
-                                        })
-                                })
-                                .inner;
-                            if t.kind != ToastKind::Error && resp.clicked() {
+                            let mut card =
+                                ToastCard::new(Id::new(("notification", t.id)), tone, &t.title)
+                                    .born(t.born)
+                                    .stagger(u8::try_from(stagger).unwrap_or(u8::MAX))
+                                    .clickable(t.kind != ToastKind::Error);
+                            if t.kind == ToastKind::Error {
+                                if let Some(help) = t.help {
+                                    card = card.body(help).body_strong(true);
+                                }
+                                if let Some(recovery) = &t.recovery {
+                                    let label = match recovery {
+                                        Recovery::Pull(_) => "Pull",
+                                        Recovery::Accounts => "Open Accounts",
+                                    };
+                                    card = card.action(label, None);
+                                }
+                                card = card.details(&t.body);
+                            } else if !t.body.is_empty() {
+                                card = card.body(&t.body);
+                            }
+                            let out = ui.push_id(t.id, |ui| card.show(ui)).inner;
+                            if out.dismissed || out.clicked {
+                                dismiss = Some(t.id);
+                            }
+                            if out.action.is_some()
+                                && let Some(recovery) = &t.recovery
+                            {
+                                actions.push(recovery.clone());
                                 dismiss = Some(t.id);
                             }
                         }
@@ -311,13 +218,15 @@ impl Toasts {
         if let Some(id) = dismiss {
             self.items.retain(|t| t.id != id);
         }
-
-        if self
+        // Wake when the next toast expires; nothing repaints in between.
+        if let Some(next) = self
             .items
             .iter()
-            .any(|toast| toast.kind != ToastKind::Error || now - toast.born < 0.25)
+            .map(|t| t.born + t.ttl - now)
+            .filter(|left| left.is_finite())
+            .reduce(f64::min)
         {
-            ctx.request_repaint();
+            ctx.request_repaint_after(Duration::from_secs_f64(next.max(0.0)));
         }
         actions
     }
