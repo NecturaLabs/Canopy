@@ -8,7 +8,6 @@
 //! pointer animates in; opening from the keyboard is instant.
 
 use egui::accesskit::Role;
-use egui::emath::TSTransform;
 use egui::epaint::TextShape;
 use egui::{
     Align2, Color32, CornerRadius, Event, FontFamily, FontId, Id, Key, Modifiers, PointerButton,
@@ -18,6 +17,7 @@ use egui::{
 use egui_phosphor::regular as icon;
 
 use super::button::{disabled_painter, tooltip_text, with_tooltip};
+use super::overlay::{self, Entrance, ExitMotion};
 use super::toggle::{component_id, gallery_caption, gallery_row, remembered};
 use super::{ForceState, Interact, Size, anim, glass, paint};
 use crate::ui::motion;
@@ -36,11 +36,6 @@ const LIST_ROWS: f32 = 8.5;
 const LIST_MIN_WIDTH: f32 = 200.0;
 /// Menu items: inner padding and the gap before the check.
 const ITEM_PAD: f32 = 8.0;
-/// Pointer-opened lists: fade in over 0.16 s while scaling from 0.95 and dropping 4 pt on
-/// `SPRING_CURVE` over `SLOW`.
-const FADE_IN: f32 = 0.16;
-const SCALE_FROM: f32 = 0.95;
-const DROP: f32 = 4.0;
 /// Type-ahead: the buffer clears this long after the last key.
 const TYPE_AHEAD_RESET: f64 = 1.0;
 
@@ -48,8 +43,10 @@ const TYPE_AHEAD_RESET: f64 = 1.0;
 #[derive(Debug, Clone, Default)]
 struct ListState {
     highlight: Option<usize>,
+    /// The last highlight came from the keyboard (scroll it into view).
     by_keyboard: bool,
-    opened_at: f64,
+    /// The list was opened from the keyboard: it shows and closes at once.
+    opened_by_keyboard: bool,
     typed: String,
     typed_at: f64,
 }
@@ -229,7 +226,6 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 st = ListState {
                     highlight: None,
                     by_keyboard: false,
-                    opened_at: now,
                     ..ListState::default()
                 };
             } else if trigger.has_focus() {
@@ -247,7 +243,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                     st = ListState {
                         highlight: chosen.or(Some(0)),
                         by_keyboard: true,
-                        opened_at: now,
+                        opened_by_keyboard: true,
                         ..ListState::default()
                     };
                 } else if open {
@@ -399,22 +395,14 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
 
         // The list.
         if open {
-            let reveal = if forced_open || st.by_keyboard || motion::reduced() {
-                1.0
-            } else {
-                (crate::ui::to_f32(now - st.opened_at) / motion::SLOW).clamp(0.0, 1.0)
-            };
-            let fade = if forced_open || st.by_keyboard || motion::reduced() {
-                1.0
-            } else {
-                (crate::ui::to_f32(now - st.opened_at) / FADE_IN).clamp(0.0, 1.0)
-            };
-            if reveal < 1.0 || fade < 1.0 {
-                ctx.request_repaint();
-            }
             if forced_open && force.is_some_and(|f| f.hover) {
                 st.highlight = (0..self.options.len()).find(|i| Some(*i) != chosen);
             }
+            // A pointer-opened list grows in from the trigger and fades out when it closes (spec
+            // 4.12 motion); a keyboard-opened one comes and goes at once, as does every list with
+            // reduced motion.
+            let keyboard = st.opened_by_keyboard;
+            let progress = forced_open.then(|| force.and_then(|f| f.progress).unwrap_or(1.0));
             let anchor = rect.expand2(vec2(LIST_OVERHANG, 0.0));
             let item_h = m.menu_item_height;
             let rows = crate::ui::count_f32(self.options.len());
@@ -438,7 +426,17 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             };
             let options = self.options;
             let shown = popup.show(|ui| {
-                ui.multiply_opacity(fade);
+                let layer = ui.layer_id();
+                let e = Entrance::of(
+                    ui.ctx(),
+                    popup_id,
+                    motion::BASE,
+                    motion::SLOW,
+                    keyboard,
+                    progress,
+                );
+                ui.multiply_opacity(e.fade);
+                let start = overlay::next_shape(ui.ctx(), layer);
                 let (list, _) = ui.allocate_exact_size(vec2(list_w, list_h), Sense::hover());
                 let radius = CornerRadius::same(m.radius_lg);
                 let painter = ui.painter();
@@ -517,18 +515,27 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                         }
                     });
                 paint::scroll_fade(ui, &out, fill);
+                let (origin, drop) = overlay::popup_origin(list, anchor);
+                overlay::transform_since(
+                    ui.ctx(),
+                    layer,
+                    start,
+                    e.transform(origin, overlay::POPUP_SCALE, drop),
+                );
+                if !keyboard && !forced_open {
+                    let end = overlay::next_shape(ui.ctx(), layer);
+                    overlay::record_exit(
+                        ui.ctx(),
+                        popup_id,
+                        layer,
+                        0..0,
+                        start.0..end.0,
+                        ExitMotion::popup(origin),
+                    );
+                }
                 chose
             });
             if let Some(inner) = shown {
-                let layer = inner.response.layer_id;
-                let k = motion::SPRING_CURVE.at(reveal);
-                let scale = SCALE_FROM + (1.0 - SCALE_FROM) * k;
-                let origin = inner.response.rect.center_top();
-                let tf = TSTransform::from_translation(vec2(0.0, -DROP * (1.0 - k)))
-                    * TSTransform::from_translation(origin.to_vec2())
-                    * TSTransform::from_scaling(scale)
-                    * TSTransform::from_translation(-origin.to_vec2());
-                ctx.set_transform_layer(layer, tf);
                 if let Some(i) = inner.inner {
                     picked = Some(i);
                     Popup::close_id(&ctx, popup_id);
@@ -795,6 +802,98 @@ mod tests {
             show(ui, &mut v);
         });
         assert!(!open_id(&ctx));
+    }
+
+    /// Whether a frame painted the option `label` (the list, open or leaving).
+    fn painted(shapes: &[egui::epaint::ClippedShape], label: &str) -> bool {
+        fn walk(shape: &egui::Shape, label: &str) -> bool {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().any(|s| walk(s, label)),
+                egui::Shape::Text(t) => t.galley.text() == label,
+                _ => false,
+            }
+        }
+        shapes.iter().any(|c| walk(&c.shape, label))
+    }
+
+    #[test]
+    fn a_pointer_opened_list_fades_out_and_a_keyboard_one_vanishes() {
+        let ctx = testkit::ctx();
+        motion::set_reduced(false);
+        let last = STRATEGIES[2].1;
+        let mut v = 0_u8;
+        let mut rect = egui::Rect::NOTHING;
+        frame(&ctx, Vec::new(), |ui| rect = show(ui, &mut v).rect);
+        testkit::click(&ctx, rect.center(), |ui| {
+            show(ui, &mut v);
+        });
+        for _ in 0..12 {
+            frame(&ctx, Vec::new(), |ui| {
+                show(ui, &mut v);
+            });
+        }
+        assert!(open_id(&ctx));
+        // A click outside closes it; the list keeps painting for a moment as it leaves.
+        testkit::click(
+            &ctx,
+            pos2(rect.right() + 300.0, rect.bottom() + 300.0),
+            |ui| {
+                show(ui, &mut v);
+            },
+        );
+        let leaving = frame(&ctx, Vec::new(), |ui| {
+            show(ui, &mut v);
+        });
+        assert!(!open_id(&ctx), "the click outside closed the list");
+        assert!(painted(&leaving, last), "the closed list fades out");
+        let mut gone = false;
+        for _ in 0..30 {
+            gone = !painted(
+                &frame(&ctx, Vec::new(), |ui| {
+                    show(ui, &mut v);
+                }),
+                last,
+            );
+        }
+        assert!(gone, "and is gone once its exit has run");
+
+        // Opened and closed from the keyboard: no exit.
+        let mut id = Id::NULL;
+        frame(&ctx, Vec::new(), |ui| id = show(ui, &mut v).id);
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(&ctx, Vec::new(), |ui| id = show(ui, &mut v).id);
+        frame(&ctx, key(Key::ArrowDown), |ui| id = show(ui, &mut v).id);
+        frame(&ctx, Vec::new(), |ui| id = show(ui, &mut v).id);
+        assert!(open_id(&ctx), "Down opened it");
+        frame(&ctx, key(Key::Escape), |ui| id = show(ui, &mut v).id);
+        let after = frame(&ctx, Vec::new(), |ui| id = show(ui, &mut v).id);
+        motion::set_reduced(true);
+        assert!(!open_id(&ctx));
+        assert!(
+            !painted(&after, last),
+            "a keyboard-opened list closes at once"
+        );
+    }
+
+    #[test]
+    fn unsalted_selects_keep_their_own_list() {
+        let ctx = testkit::ctx();
+        let (mut a, mut b) = (0_u8, 0_u8);
+        let show = |ui: &mut Ui, a: &mut u8, b: &mut u8| {
+            Select::new(a, &STRATEGIES).name("First").show(ui);
+            Select::new(b, &STRATEGIES).name("Second").show(ui).rect
+        };
+        let mut second = egui::Rect::NOTHING;
+        frame(&ctx, Vec::new(), |ui| second = show(ui, &mut a, &mut b));
+        testkit::click(&ctx, second.center(), |ui| {
+            show(ui, &mut a, &mut b);
+        });
+        let nodes = spoken(&ctx, |ui| {
+            show(ui, &mut a, &mut b);
+        });
+        let expanded = |name: &str| testkit::find(&nodes, name).and_then(|n| n.expanded);
+        assert_eq!(expanded("Second"), Some(true), "the clicked select opens");
+        assert_eq!(expanded("First"), Some(false), "its neighbour stays shut");
     }
 
     #[test]
