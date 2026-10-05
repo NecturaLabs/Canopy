@@ -6,6 +6,13 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Now
 
+- [ ] Repository config can run code: Canopy's git calls (`canopy_core::cli`, `cli.rs:52-100`)
+      set no `core.fsmonitor` override, so a cloned repository's `.git/config` could name a
+      command that git runs on `git status` (the GitSpawn class, September 2026). Pass
+      `-c core.fsmonitor=false` on every call, add a poisoned-repository regression test, and
+      review `core.sshCommand`, `diff.external` and `core.pager` in the same pass, then
+      `/security-review`. Found by the AI and monetization research (5 Oct 2026); exploitability
+      not yet demonstrated.
 - [ ] Request content updates: thoroughly investigate stale pull/merge request content in the
       app across GitHub and GitLab; trace refreshes, caching, selection/tab changes, responses
       arriving out of order, and edits/actions; compare displayed content with host API data.
@@ -181,6 +188,10 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 Things only the owner can do; agents remind, never act.
 
+- [ ] Decide D1-D7 of the AI, agent access and pricing research (5 Oct 2026): the private
+      artifact "Canopy AI & Pricing" on claude.ai saves the choices with the page; the reports
+      are kept outside the repository. Nothing there is built until decided; two of its findings
+      also touch the Terms (lines 11 and 19 conflict with a paid tier).
 - [ ] Sentry: turn off IP address storage, set 90-day retention.
 - [ ] Legal: add the legal name and postal address to `docs/legal/privacy-policy.md`; confirm the
       Terms assumptions (the app is free; the governing law is the registered office's).
