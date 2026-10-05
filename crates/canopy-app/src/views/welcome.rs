@@ -48,7 +48,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                 ui.add_space(theme::XS);
                 ui.label(
                     RichText::new("Canopy")
-                        .font(FontId::new(theme::HERO_SIZE, theme::semibold()))
+                        .font(FontId::new(m.hero_size, theme::semibold()))
                         .color(p.text),
                 );
                 ui.label(
@@ -304,7 +304,7 @@ fn card(
             ui.set_min_height(CARD_HEIGHT - 2.0 * m.card_pad);
             ui.spacing_mut().item_spacing.y = theme::XS;
             ui.horizontal(|ui| {
-                ui.label(RichText::new(glyph).size(theme::ICON_XL).color(p.accent));
+                ui.label(RichText::new(glyph).size(m.icon_xl).color(p.accent));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     KeyChord::command(command).show(ui);
                 });
