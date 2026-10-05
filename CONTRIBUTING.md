@@ -5,8 +5,10 @@ agent; [AGENTS.md](AGENTS.md) has the full conventions.
 
 ## Setup
 
-1. Install Rust with [rustup](https://rustup.rs); `rust-toolchain.toml` selects stable with
-   rustfmt and clippy. The minimum supported Rust version is 1.91.
+1. Install Rust with [rustup](https://rustup.rs); `rust-toolchain.toml` pins the exact release
+   the lints are fitted to, with rustfmt and clippy, and rustup installs it on first use. The
+   minimum supported Rust version is 1.91. To move to a newer release, change the channel there
+   and fix what the new clippy reports in the same commit.
 2. Install `git` 2.30 or newer and, on Linux, the runtime libraries listed in the
    [README](README.md#install-from-source).
 3. Optional: `cargo install cargo-deny` to run the licence and advisory checks locally, and

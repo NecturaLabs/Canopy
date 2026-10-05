@@ -141,8 +141,8 @@ macOS on Apple silicon and Windows x64; Linux arm64 and Intel Macs are being add
 
 Requirements:
 
-- A Rust toolchain (stable, 1.91 or newer) from [rustup](https://rustup.rs). `rust-toolchain.toml`
-  selects the stable channel with rustfmt and clippy.
+- A Rust toolchain (1.91 or newer) from [rustup](https://rustup.rs). `rust-toolchain.toml` pins
+  the exact release Canopy is checked with, and rustup installs it on first use.
 - `git` 2.30 or newer on `PATH` at runtime.
 - A C compiler (libgit2 is built from source by the `git2` crate). No OpenSSL or libssh2 is needed.
 - Linux: a Wayland or X11 session with OpenGL 3.3 or OpenGL ES 3.0, plus an XDG desktop portal for

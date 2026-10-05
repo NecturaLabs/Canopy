@@ -115,10 +115,6 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Next
 
-- [ ] Pin the Rust toolchain to an exact release (`rust-toolchain.toml` says `stable`): a newer
-      clippy can stop firing at a site and turn its `#[expect]` into a `-D warnings` failure with
-      no code change. Pin `1.99.0` (the version the lint configuration was fitted to) and bump it
-      deliberately; each machine then downloads that toolchain once (owner's call).
 - [ ] A project check for what clippy cannot enforce from the quality standard: numeric literals
       without a named constant or comment, and a header comment on every source file.
 - [ ] Errors that drop their cause (found by `clippy::map_err_ignore`): the merged-branches base
