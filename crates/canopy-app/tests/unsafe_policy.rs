@@ -4,6 +4,19 @@
 //! attribute naming the lint, appears in any other Rust file under `crates/`, and when the
 //! workspace or a crate stops denying it. Comments and string literals are ignored, so messages
 //! such as "the archive has an unsafe path" are not code.
+//!
+//! What is scanned: every `.rs` file under each crate except that crate's own top-level `target`
+//! directory (a directory named `target` anywhere else is scanned). A directory that cannot be
+//! read, or a symbolic link, fails the scan instead of being skipped.
+//!
+//! Code that reaches the compiler from outside those files is rejected, so it cannot hide from
+//! the scan: `include!` is refused anywhere (`gl.rs` included), and `#[path = "..."]` must name a
+//! `.rs` file inside the crate as a plain string literal. That also covers a build script's
+//! output: generated Rust in `OUT_DIR` can only be compiled through `include!` or `#[path]`, and
+//! both are refused. `include_str!` and `include_bytes!` yield data, never code; one that names a
+//! `.rs` file fails anyway. Behind all of this the compiler's own `unsafe_code = "deny"` rejects
+//! unsafe code in any file, scanned or not, unless a suppression reaches it, and a suppression in
+//! a scanned file is exactly what these tests report.
 
 use std::path::{Path, PathBuf};
 
@@ -16,21 +29,91 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
+/// Every `.rs` file under `dir`, appended to `out`; whatever cannot be scanned (an unreadable
+/// directory, a symbolic link) is appended to `problems`. `crate_root` is true for a crate's own
+/// directory, whose top-level `target` directory (build output) is the only one skipped.
+fn collect_rust_files(
+    dir: &Path,
+    crate_root: bool,
+    out: &mut Vec<PathBuf>,
+    problems: &mut Vec<String>,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            problems.push(format!("{}: cannot read directory: {err}", relative(dir)));
+            return;
+        }
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if path.file_name().is_some_and(|n| n == "target") {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                problems.push(format!("{}: cannot read an entry: {err}", relative(dir)));
                 continue;
             }
-            rust_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
+        };
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(err) => {
+                problems.push(format!("{}: cannot stat: {err}", relative(&path)));
+                continue;
+            }
+        };
+        if file_type.is_symlink() {
+            problems.push(format!(
+                "{}: symbolic link (the scan does not follow links)",
+                relative(&path)
+            ));
+        } else if file_type.is_dir() {
+            if crate_root && path.file_name().is_some_and(|n| n == "target") {
+                continue;
+            }
+            collect_rust_files(&path, false, out, problems);
+        } else if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("rs"))
+        {
             out.push(path);
         }
     }
+}
+
+/// Every `.rs` file of every crate under `crates`, with the problems met on the way.
+fn rust_files(crates: &Path) -> (Vec<PathBuf>, Vec<String>) {
+    let mut files = Vec::new();
+    let mut problems = Vec::new();
+    match std::fs::read_dir(crates) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                match entry.file_type() {
+                    Ok(kind) if kind.is_symlink() => problems.push(format!(
+                        "{}: symbolic link (the scan does not follow links)",
+                        relative(&path)
+                    )),
+                    Ok(kind) if kind.is_dir() => {
+                        collect_rust_files(&path, true, &mut files, &mut problems);
+                    }
+                    Ok(_)
+                        if path
+                            .extension()
+                            .is_some_and(|e| e.eq_ignore_ascii_case("rs")) =>
+                    {
+                        files.push(path);
+                    }
+                    Ok(_) => {}
+                    Err(err) => problems.push(format!("{}: cannot stat: {err}", relative(&path))),
+                }
+            }
+        }
+        Err(err) => problems.push(format!(
+            "{}: cannot read directory: {err}",
+            relative(crates)
+        )),
+    }
+    (files, problems)
 }
 
 /// `src` with every comment, string and character literal blanked out (line breaks kept, so line
@@ -167,6 +250,162 @@ fn words(code: &str) -> Vec<(usize, String)> {
     out
 }
 
+/// The first non-whitespace position at or after `from`.
+fn skip_space(chars: &[char], mut from: usize) -> usize {
+    while chars.get(from).is_some_and(|c| c.is_whitespace()) {
+        from += 1;
+    }
+    from
+}
+
+/// The string literal (`"..."`) starting at `at`, without its quotes, or `None` when what starts
+/// there is anything else (a raw string, a macro call, an identifier).
+fn plain_string(src: &[char], at: usize) -> Option<String> {
+    if src.get(at) != Some(&'"') {
+        return None;
+    }
+    let mut out = String::new();
+    let mut i = at + 1;
+    while let Some(&c) = src.get(i) {
+        match c {
+            '"' => return Some(out),
+            '\\' => {
+                out.push(c);
+                i += 1;
+                if let Some(&escaped) = src.get(i) {
+                    out.push(escaped);
+                }
+            }
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Whether a `#[path = "..."]` value names a `.rs` file inside the crate (no absolute path, no
+/// `..`, nothing under a `target` directory, which the scan skips).
+fn path_attribute_is_scanned(path: &str) -> bool {
+    let p = Path::new(path);
+    p.extension().is_some_and(|e| e == "rs")
+        && !path.contains('\\')
+        && p.components().all(|c| match c {
+            std::path::Component::Normal(part) => part != "target",
+            std::path::Component::CurDir => true,
+            _ => false,
+        })
+}
+
+/// The character ranges inside `#[...]` and `#![...]` in `code` (comments and strings blanked).
+fn attribute_bodies(code: &[char]) -> Vec<std::ops::Range<usize>> {
+    let mut bodies = Vec::new();
+    for (at, &c) in code.iter().enumerate() {
+        if c != '#' {
+            continue;
+        }
+        let mut open = skip_space(code, at + 1);
+        if code.get(open) == Some(&'!') {
+            open = skip_space(code, open + 1);
+        }
+        if code.get(open) != Some(&'[') {
+            continue;
+        }
+        let mut depth = 0_usize;
+        let mut close = open;
+        while let Some(&ch) = code.get(close) {
+            if ch == '[' {
+                depth += 1;
+            } else if ch == ']' {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            close += 1;
+        }
+        bodies.push(open..close);
+    }
+    bodies
+}
+
+/// How `src` pulls in code from places the scan does not read: `include!`, a `#[path]` that is not
+/// a plain string literal naming a `.rs` file inside the crate, and `include_str!` or
+/// `include_bytes!` of a `.rs` file. Each entry is a 1-based line and a reason.
+fn code_from_outside(src: &str) -> Vec<(usize, String)> {
+    let orig: Vec<char> = src.chars().collect();
+    let code: Vec<char> = code_only(src).chars().collect();
+    if orig.len() != code.len() {
+        return vec![(1, "the scanner lost track of the source".to_owned())];
+    }
+    let line_of = |at: usize| orig[..at].iter().filter(|&&c| c == '\n').count() + 1;
+    let attributes = attribute_bodies(&code);
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at < code.len() {
+        if !ident(code[at]) {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while code.get(at).is_some_and(|&c| ident(c)) {
+            at += 1;
+        }
+        let word: String = code[start..at].iter().collect();
+        let after = skip_space(&code, at);
+        let is_macro = code.get(after) == Some(&'!');
+        match word.as_str() {
+            "include" if is_macro => found.push((
+                line_of(start),
+                "`include!` compiles code the scan cannot read".to_owned(),
+            )),
+            "include_str" | "include_bytes" if is_macro => {
+                // Data, not code; but a Rust source file named in the call is not data.
+                let mut end = after;
+                let mut depth = 0_usize;
+                while let Some(&ch) = code.get(end) {
+                    if matches!(ch, '(' | '[' | '{') {
+                        depth += 1;
+                    } else if matches!(ch, ')' | ']' | '}') {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    end += 1;
+                }
+                let call: String = orig[after..end.min(orig.len())].iter().collect();
+                if call.to_ascii_lowercase().contains(".rs\"") {
+                    found.push((
+                        line_of(start),
+                        format!("`{word}!` names a Rust source file: {call}"),
+                    ));
+                }
+            }
+            "path"
+                if attributes.iter().any(|a| a.contains(&start))
+                    && code.get(after) == Some(&'=')
+                    && code.get(after + 1) != Some(&'=') =>
+            {
+                let value = skip_space(&orig, after + 1);
+                match plain_string(&orig, value) {
+                    Some(path) if path_attribute_is_scanned(&path) => {}
+                    Some(path) => found.push((
+                        line_of(start),
+                        format!("`path = \"{path}\"` is not a `.rs` file inside the crate"),
+                    )),
+                    None => found.push((
+                        line_of(start),
+                        "`path = ...` is not a plain string literal".to_owned(),
+                    )),
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
 fn relative(path: &Path) -> String {
     let root = root().canonicalize().unwrap_or_else(|_| root());
     let path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
@@ -178,10 +417,8 @@ fn relative(path: &Path) -> String {
 
 #[test]
 fn only_the_glass_renderer_is_unsafe() {
-    let mut files = Vec::new();
-    rust_files(&root().join("crates"), &mut files);
+    let (files, mut found) = rust_files(&root().join("crates"));
     assert!(files.len() > 50, "found only {} Rust files", files.len());
-    let mut found = Vec::new();
     let mut allowed_seen = false;
     for path in &files {
         let rel = relative(path);
@@ -189,6 +426,9 @@ fn only_the_glass_renderer_is_unsafe() {
             found.push(format!("{rel}: unreadable"));
             continue;
         };
+        for (line, reason) in code_from_outside(&src) {
+            found.push(format!("{rel}:{line}: {reason}"));
+        }
         if rel == ALLOWED {
             allowed_seen = true;
             let squash = |s: &str| s.split_whitespace().collect::<String>();
@@ -209,7 +449,7 @@ fn only_the_glass_renderer_is_unsafe() {
     assert!(allowed_seen, "{ALLOWED} is missing");
     assert!(
         found.is_empty(),
-        "unsafe code outside {ALLOWED}:\n{}",
+        "unsafe code, or code the scan cannot read, outside {ALLOWED}:\n{}",
         found.join("\n")
     );
 }
@@ -367,4 +607,152 @@ unsafe { real() }
 fn a_string_continued_over_lines_stays_a_string() {
     let src = "let _ = \"unsafe \\\n   unsafe\";\nunsafe { real() }\n";
     assert_eq!(unsafe_lines(src), [3]);
+}
+
+#[test]
+fn code_from_outside_the_scanned_files_is_rejected() {
+    let rejected = [
+        r#"include!("generated.in");"#,
+        r#"include !("generated.in");"#,
+        r#"core::include!("generated.in");"#,
+        r#"include!(concat!(env!("OUT_DIR"), "/generated.rs"));"#,
+        "include!(\n    \"generated.rs\"\n);",
+        r#"#[path = "generated.txt"] mod generated;"#,
+        r#"#[path = "../vendor/x.rs"] mod x;"#,
+        r#"#[path = "/etc/x.rs"] mod x;"#,
+        r#"#[path = "target/x.rs"] mod x;"#,
+        r#"#[path = "src\\x.rs"] mod x;"#,
+        r#"#[path = r"x.rs"] mod x;"#,
+        r#"#![path = "x.in"]"#,
+        r#"#[cfg_attr(unix, path = "x.txt")] mod x;"#,
+        "#[\n    path\n        = \"x.txt\"\n] mod x;",
+        "macro_rules! m { ($p:literal) => { #[path = $p] mod x; }; }",
+        r#"const S: &str = include_str!("lib.rs");"#,
+        r#"const S: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/x.rs"));"#,
+    ];
+    for src in rejected {
+        let found = code_from_outside(src);
+        assert_eq!(found.len(), 1, "{src}: {found:?}");
+    }
+    // The reported line is the line of the offending call.
+    assert_eq!(
+        code_from_outside("fn a() {}\n\ninclude!(\"x.in\");\n")[0].0,
+        3
+    );
+    assert_eq!(
+        code_from_outside("fn a() {}\n#[path = \"x.in\"]\nmod x;\n")[0].0,
+        2
+    );
+}
+
+#[test]
+fn ordinary_code_is_not_rejected() {
+    let fine = [
+        r#"#[path = "generated.rs"] mod generated;"#,
+        r#"#[path = "./nested/generated.rs"] mod generated;"#,
+        r#"#[cfg_attr(unix, path = "unix.rs")] mod platform;"#,
+        r#"const S: &str = include_str!("../../docs/legal/terms.md");"#,
+        r#"const S: &str = include_str!(concat!(env!("OUT_DIR"), "/release-notes.md"));"#,
+        r#"const F: &[u8] = include_bytes!("../assets/Inter-Regular.ttf");"#,
+        r#"let path = "x.txt"; let path = path; assert!(path == "y.txt");"#,
+        r##"let _ = "include!(x)"; let _ = "#[path = \"x.txt\"]";"##,
+        "// include!(\"x.in\");\n/* #[path = \"x.txt\"] */\n/// include!(x)\n",
+        "#[derive(Debug)] struct Include; fn include() {} fn r#path() {}",
+        r#"#[cfg(feature = "path")] fn f() { let _ = include; }"#,
+        "#[serde(path)] struct S;",
+    ];
+    for src in fine {
+        assert_eq!(code_from_outside(src), [], "{src}");
+    }
+}
+
+/// A scratch directory under cargo's per-target test directory, emptied first.
+fn scratch(name: &str) -> std::io::Result<PathBuf> {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("unsafe_policy_{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+fn write(path: &Path, text: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, text)
+}
+
+#[test]
+fn only_a_crates_own_target_directory_is_skipped() -> std::io::Result<()> {
+    let crates = scratch("target")?;
+    write(&crates.join("a/src/lib.rs"), "")?;
+    write(&crates.join("a/target/debug/build/gen.rs"), "unsafe {}")?;
+    write(&crates.join("a/src/target/evil.rs"), "unsafe {}")?;
+    write(&crates.join("a/tests/target/evil.rs"), "unsafe {}")?;
+    write(&crates.join("a/src/deep/er/target/evil.rs"), "unsafe {}")?;
+    write(&crates.join("b/build.rs"), "")?;
+    write(&crates.join("b/src/SHOUT.RS"), "unsafe {}")?;
+    let (files, problems) = rust_files(&crates);
+    assert_eq!(problems, Vec::<String>::new());
+    let mut names: Vec<String> = files
+        .iter()
+        .map(|f| {
+            f.strip_prefix(&crates)
+                .expect("under the scratch directory")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "a/src/deep/er/target/evil.rs",
+            "a/src/lib.rs",
+            "a/src/target/evil.rs",
+            "a/tests/target/evil.rs",
+            "b/build.rs",
+            "b/src/SHOUT.RS",
+        ]
+    );
+    let _ = std::fs::remove_dir_all(&crates);
+    Ok(())
+}
+
+#[test]
+fn a_directory_that_cannot_be_read_fails_the_scan() -> std::io::Result<()> {
+    let crates = scratch("unreadable")?;
+    let (files, problems) = rust_files(&crates.join("missing"));
+    assert_eq!(files, Vec::<PathBuf>::new());
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].contains("cannot read directory"),
+        "{problems:?}"
+    );
+    let mut problems = Vec::new();
+    collect_rust_files(&crates.join("nope"), false, &mut Vec::new(), &mut problems);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    let _ = std::fs::remove_dir_all(&crates);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn symbolic_links_fail_the_scan() -> std::io::Result<()> {
+    let crates = scratch("links")?;
+    write(&crates.join("a/src/lib.rs"), "")?;
+    write(&crates.join("elsewhere/hidden.rs"), "unsafe {}")?;
+    std::os::unix::fs::symlink(crates.join("elsewhere"), crates.join("a/src/linked"))?;
+    std::os::unix::fs::symlink(
+        crates.join("elsewhere/hidden.rs"),
+        crates.join("a/src/h.rs"),
+    )?;
+    std::os::unix::fs::symlink(crates.join("elsewhere"), crates.join("c"))?;
+    let (_, problems) = rust_files(&crates);
+    let linked = problems
+        .iter()
+        .filter(|p| p.contains("symbolic link"))
+        .count();
+    assert_eq!(linked, 3, "{problems:?}");
+    let _ = std::fs::remove_dir_all(&crates);
+    Ok(())
 }
