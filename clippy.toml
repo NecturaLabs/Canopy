@@ -11,7 +11,14 @@ allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-print-in-tests = true
 
-doc-valid-idents = ["GitHub", "GitLab", "OpenGL", "WebGL", "macOS", "..", "libgit2", "egui", "eframe", "egui_glow", "Wayland"]
+# Names doc comments use as prose, not code (`..` keeps clippy's own list).
+doc-valid-idents = [
+  "..", "AltGr", "GitKraken", "JetBrains", "NecturaLabs", "OpenGL", "TextEdit", "Wayland",
+  "libgit2", "egui", "eframe", "egui_glow",
+]
+# `use super::*` is how a file continues its parent module (app/*.rs extend CanopyApp, the dialogs
+# share their module's imports); spelling those lists out would differ between test and normal builds.
+allowed-wildcard-imports = ["super"]
 
 # AGENTS.md, "Conventions": every repository mutation and all Git network traffic run the git
 # executable through canopy_core::cli. The few other programs Canopy starts (the platform's URL
