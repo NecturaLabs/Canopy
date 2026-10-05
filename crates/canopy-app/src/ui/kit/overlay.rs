@@ -1327,14 +1327,41 @@ impl<'a> Dialog<'a> {
                             p.text_faint,
                         );
                     }
+                    // The buttons sit at the right but are made left to right, Cancel first,
+                    // so Tab meets them in reading order (the row is placed by its width last
+                    // frame).
+                    let width_key = id.with("kit-footer-width");
+                    let last_w: f32 = ctx.data(|d| d.get_temp(width_key)).unwrap_or(0.0);
+                    let slot = Rect::from_min_max(
+                        pos2((row.right() - last_w).max(row.left()), row.top()),
+                        row.max,
+                    );
                     let mut cancel_focus = false;
-                    ui.scope_builder(
+                    let mut cancel_id = None;
+                    let mut confirm_id = None;
+                    let buttons = ui.scope_builder(
                         UiBuilder::new()
-                            .max_rect(row)
-                            .layout(Layout::right_to_left(Align::Center)),
+                            .max_rect(slot)
+                            .layout(Layout::left_to_right(Align::Center)),
                         |ui| {
                             ui.spacing_mut().item_spacing.x = theme::SM;
-                            let confirm_id = if let Some(label) = &footer.confirm {
+                            if let Some(label) = &footer.cancel {
+                                let b = Button::new(label.as_str())
+                                    .secondary()
+                                    .size(Size::Md)
+                                    .id_salt(id.with("cancel"));
+                                let forced = force.filter(|f| f.focus && destructive);
+                                let r = match forced {
+                                    Some(f) => b.show_forced(ui, f),
+                                    None => b.show(ui),
+                                };
+                                if r.clicked() {
+                                    result = DialogResult::Cancel;
+                                }
+                                cancel_focus = r.has_focus();
+                                cancel_id = Some(r.id);
+                            }
+                            if let Some(label) = &footer.confirm {
                                 let mut b = Button::new(label.as_str())
                                     .size(Size::Md)
                                     .enabled(footer.confirm_enabled)
@@ -1361,51 +1388,32 @@ impl<'a> Dialog<'a> {
                                 if r.clicked() {
                                     result = DialogResult::Confirm;
                                 }
-                                Some(r.id)
-                            } else {
-                                None
-                            };
-                            if let Some(label) = &footer.cancel {
-                                let b = Button::new(label.as_str())
-                                    .secondary()
-                                    .size(Size::Md)
-                                    .id_salt(id.with("cancel"));
-                                let forced = force.filter(|f| f.focus && destructive);
-                                let r = match forced {
-                                    Some(f) => b.show_forced(ui, f),
-                                    None => b.show(ui),
-                                };
-                                if r.clicked() {
-                                    result = DialogResult::Cancel;
-                                }
-                                cancel_focus = r.has_focus();
-                                if fresh {
-                                    let want = initial_focus.unwrap_or(if footer.neutral {
-                                        InitialFocus::Body
-                                    } else if destructive {
-                                        InitialFocus::Cancel
-                                    } else {
-                                        InitialFocus::Confirm
-                                    });
-                                    match (want, confirm_id) {
-                                        (InitialFocus::Cancel, _)
-                                        | (InitialFocus::Confirm, None) => {
-                                            r.request_focus();
-                                        }
-                                        (InitialFocus::Confirm, Some(c)) => {
-                                            ctx.memory_mut(|m| m.request_focus(c));
-                                        }
-                                        (InitialFocus::Body, _) => {}
-                                    }
-                                }
-                            } else if fresh
-                                && let Some(c) = confirm_id
-                                && initial_focus != Some(InitialFocus::Body)
-                            {
-                                ctx.memory_mut(|m| m.request_focus(c));
+                                confirm_id = Some(r.id);
                             }
                         },
                     );
+                    let width = buttons.response.rect.width();
+                    if (width - last_w).abs() > 0.5 {
+                        ctx.data_mut(|d| d.insert_temp(width_key, width));
+                        ctx.request_repaint();
+                    }
+                    if fresh {
+                        let want = initial_focus.unwrap_or(if footer.neutral {
+                            InitialFocus::Body
+                        } else if destructive {
+                            InitialFocus::Cancel
+                        } else {
+                            InitialFocus::Confirm
+                        });
+                        let target = match want {
+                            InitialFocus::Cancel => cancel_id.or(confirm_id),
+                            InitialFocus::Confirm => confirm_id.or(cancel_id),
+                            InitialFocus::Body => None,
+                        };
+                        if let Some(t) = target {
+                            ctx.memory_mut(|m| m.request_focus(t));
+                        }
+                    }
                     if result == DialogResult::Open
                         && force.is_none()
                         && !destructive
@@ -2229,5 +2237,56 @@ mod tests {
                 .collect();
             assert!(fills.contains(&s.tooltip.top), "{id:?} {fills:?}");
         }
+    }
+
+    #[test]
+    fn a_choice_footer_takes_focus_in_reading_order() {
+        let ctx = context();
+        let mut texts: Vec<(String, Rect)> = Vec::new();
+        let mut focused = Vec::new();
+        for frame in 0..6 {
+            let events = if frame >= 3 {
+                key(Key::Tab)
+            } else {
+                Vec::new()
+            };
+            let out = run(&ctx, events, |ui| {
+                let _ = Dialog::new("consent")
+                    .title("Send crash reports?")
+                    .footer(|f| {
+                        f.choice("Send crash reports", "Don't send");
+                    })
+                    .show(ui.ctx());
+            });
+            texts = out
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Text(t) => Some((t.galley.text().to_owned(), t.visual_bounding_rect())),
+                    _ => None,
+                })
+                .collect();
+            if frame >= 3
+                && let Some(id) = ctx.memory(egui::Memory::focused)
+                && let Some(r) = ctx.read_response(id)
+            {
+                focused.push(r.rect);
+            }
+        }
+        let at = |label: &str| {
+            texts
+                .iter()
+                .find(|(t, _)| t == label)
+                .map(|(_, r)| r.center())
+                .expect(label)
+        };
+        let (send, dont) = (at("Send crash reports"), at("Don't send"));
+        assert!(dont.x < send.x, "Don't send is on the left");
+        assert!(focused.len() >= 2, "{focused:?}");
+        assert!(
+            focused[0].contains(dont),
+            "Tab reaches the left answer first: {focused:?}"
+        );
+        assert!(focused[1].contains(send), "then the right one: {focused:?}");
     }
 }
