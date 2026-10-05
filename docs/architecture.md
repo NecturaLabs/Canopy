@@ -112,7 +112,7 @@ thread.
 | `ui/kit/paint.rs` | Shadows, gradient fills, highlights, recesses, focus rings, pixel-snapped seams, Deeper panes and deck, spinners and scroll fades. |
 | `ui/kit/button.rs` | `Button` (primary, secondary, ghost, danger), `IconButton`, `ToolButton`, `LinkButton`, `SplitButton`: the reference component. |
 | `ui/kit/glass/mod.rs` | Translucent surfaces: decides which floating layers get the backdrop blur (the setting, the theme, the driver, at most four a frame), plans each in validated window pixels, queries the system's reduce-transparency answer off the UI thread, and falls back to the opaque overlay. |
-| `ui/kit/glass/gl.rs` | The blur's OpenGL renderer, an `egui_glow` paint callback: copies the region behind a layer, dual-Kawase blurs it, clamps its luminance and composites it inside the layer. The only `unsafe` code in Canopy (ADR 0010). |
+| `ui/kit/glass/gl.rs` | The blur's OpenGL renderer, two `egui_glow` paint callbacks per layer: the capture copies and dual-Kawase blurs the region behind it, before its shadow; the composite keeps the backdrop's luminance in the theme's band (scaled down in dark themes, lifted towards white in light ones) and draws it inside the layer. GL objects are deleted only on the thread that owns the context. The only `unsafe` code in Canopy (ADR 0010). |
 | `ui/kit/glass/shaders.rs` | The blur's GLSL and the dialect chosen for the context (OpenGL 3.0+, OpenGL ES 3.0+). |
 | `ui/kit/gallery.rs` | The component gallery (`--overlay gallery`) with a section per kit module, plus token, elevation, style and motion strips. |
 | `ui/kit/field.rs` | `TextField`, `SearchField`, `TextArea` and `CodeArea`: frameless `TextEdit`s inside the kit's fill, border, focus and error halo. |

@@ -136,8 +136,8 @@ token anywhere new, contacting a new host or adding a dependency.
   by the owner): one operation per `unsafe` block, each with a `// SAFETY:` comment;
   `tools/check.sh` fails on `unsafe` anywhere else.
 - Paths are `Path`/`PathBuf`, joined with `join`, never concatenated with `/`; not assumed UTF-8.
-- In the same change: a feature updates `docs/features.md` and, until the first numbered build is released,
-  `CHANGELOG.md` (Unreleased; afterwards the commit subject is the release note); a
+- In the same change: a feature updates `docs/features.md` and, until the first numbered build is
+  released, `CHANGELOG.md` (Unreleased; afterwards the commit subject is the release note); a
   module, `docs/architecture.md`; a token or component, `docs/design.md`. A consequential,
   hard-to-reverse decision gets an ADR in `docs/adr/` (`project-docs` skill).
 - Bundled fonts and assets need a licence row (fonts: `crates/canopy-app/assets/fonts/README.md`)
