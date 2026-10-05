@@ -1,5 +1,6 @@
-//! The tab strip and the action bar. Both sit on the top deck that `app` paints (flat chrome in
-//! Standard, one lifted surface in Deeper), so nothing here paints a background of its own.
+//! The tab strip and the action bar. `app` paints what they sit on (Standard: flat chrome over a
+//! seam each; Deeper: the tab strip on the ground and the action bar on a lifted card), so nothing
+//! here paints a background of its own.
 
 use std::sync::Arc;
 
