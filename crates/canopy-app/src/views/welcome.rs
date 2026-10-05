@@ -1,6 +1,6 @@
 //! The start screen: brand, quick actions and recent repositories.
 
-use egui::{Color32, FontId, Id, Pos2, RichText, Ui, vec2};
+use egui::{FontId, Id, RichText, Ui, vec2};
 use egui_phosphor::regular as icon;
 
 use crate::action::Action;
@@ -9,7 +9,7 @@ use crate::settings::Settings;
 use crate::ui::kit::chip::KeyChord;
 use crate::ui::kit::row::{ListRow, SectionHeader};
 use crate::ui::kit::surface::{Callout, Card};
-use crate::ui::kit::{Button, IconButton, Size, Tone, anim};
+use crate::ui::kit::{Button, IconButton, Size, Tone, anim, paint};
 use crate::ui::theme::{self, Palette, palette};
 use crate::ui::{art, motion};
 use crate::views::dialogs::Dialog;
@@ -171,53 +171,18 @@ fn ambient(ui: &Ui, rect: egui::Rect) {
     let settle = vec2(30.0, 20.0) * (1.0 - t);
     let accent = p.accent_tint();
     let accent2 = Palette::tint(p.accent2, accent.a());
-    glow(
+    paint::glow(
         ui.painter(),
         rect.center_top() + vec2(-260.0, 220.0) - settle,
         520.0,
         accent.gamma_multiply(t),
     );
-    glow(
+    paint::glow(
         ui.painter(),
         rect.center_top() + vec2(300.0, 360.0) + settle,
         480.0,
         accent2.gamma_multiply(t),
     );
-}
-
-/// A soft radial glow centred on `center`: `color` at the centre, transparent at `radius`. It
-/// falls off as `(1 - t²)²` over concentric rings, flat at the centre and at the rim, so it has
-/// no visible edge or polygon corners and its 8-bit steps spread evenly instead of bunching
-/// into rings.
-fn glow(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
-    const SEGMENTS: u32 = 128;
-    const RINGS: u32 = 24;
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(center, color);
-    for ring in 1..=RINGS {
-        let t = crate::ui::count_f32(ring as usize) / crate::ui::count_f32(RINGS as usize);
-        let falloff = (1.0 - t * t) * (1.0 - t * t);
-        let shade = color.gamma_multiply(falloff);
-        for i in 0..SEGMENTS {
-            let a = crate::ui::count_f32(i as usize) / crate::ui::count_f32(SEGMENTS as usize)
-                * std::f32::consts::TAU;
-            mesh.colored_vertex(center + vec2(a.cos(), a.sin()) * radius * t, shade);
-        }
-    }
-    // Vertex 0 is the centre; ring `r` (1-based) holds vertices 1 + (r - 1) * SEGMENTS onwards.
-    let at = |ring: u32, i: u32| 1 + (ring - 1) * SEGMENTS + i % SEGMENTS;
-    for i in 0..SEGMENTS {
-        mesh.add_triangle(0, at(1, i), at(1, i + 1));
-    }
-    for ring in 1..RINGS {
-        for i in 0..SEGMENTS {
-            let (a, b) = (at(ring, i), at(ring, i + 1));
-            let (c, d) = (at(ring + 1, i), at(ring + 1, i + 1));
-            mesh.add_triangle(a, c, d);
-            mesh.add_triangle(a, d, b);
-        }
-    }
-    painter.add(mesh);
 }
 
 /// A recent repository: opens on click, with a button to forget it.

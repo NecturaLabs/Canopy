@@ -1,7 +1,8 @@
 //! Painting primitives the kit's components share: layered shadows, gradient fills clipped to a
 //! rounded rect, the inner top highlight and bottom line, the field recess, focus rings, 1 pt
-//! seams snapped to the pixel grid, Deeper's floating panes with their focus edge and top deck, and
-//! scroll fades. Colours come in from the caller, which reads them from the theme.
+//! seams snapped to the pixel grid, Deeper's floating panes with their focus edge and top deck,
+//! scroll fades and soft radial glows. Colours come in from the caller, which reads them from the
+//! theme.
 
 use egui::epaint::tessellator::path::rounded_rectangle;
 use egui::epaint::{CornerRadiusF32, PathShape, PathStroke, RectShape};
@@ -442,6 +443,67 @@ pub fn scroll_fade<R>(
     }
 }
 
+// ---------------------------------------------------------------------------------------- glow
+
+/// Texels across the glow texture. It is magnified with linear filtering, so even a glow hundreds
+/// of points wide follows its curve in steps of a few pixels, far below any visible crease.
+const GLOW_TEXELS: usize = 256;
+
+/// A glow's strength at `t` (0 at the centre, 1 at the rim): `(1 - t²)²`. Flat at the centre and
+/// meeting the rim with zero slope, so a glow has no hot spot and no visible edge.
+pub fn glow_falloff(t: f32) -> f32 {
+    let u = (1.0 - t * t).max(0.0);
+    u * u
+}
+
+/// The glow's falloff as a white texture at full strength, uploaded once per context. Its alpha
+/// spans all 255 steps, so a faint glow's colour is never rounded in the texture: the tint carries
+/// the strength in floating point, and the renderer's output dither (egui's interleaved-gradient
+/// noise, on in eframe by default) turns the final 8-bit rounding into noise instead of rings.
+fn glow_texture(ctx: &Context) -> TextureHandle {
+    let id = Id::new("canopy-kit-glow");
+    if let Some(t) = ctx.data(|d| d.get_temp::<TextureHandle>(id)) {
+        return t;
+    }
+    let handle = ctx.load_texture("canopy-kit-glow", glow_image(), TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, handle.clone()));
+    handle
+}
+
+fn glow_image() -> egui::ColorImage {
+    let half = crate::ui::count_f32(GLOW_TEXELS) / 2.0;
+    let pixels = (0..GLOW_TEXELS * GLOW_TEXELS)
+        .map(|i| {
+            let x = crate::ui::count_f32(i % GLOW_TEXELS) + 0.5 - half;
+            let y = crate::ui::count_f32(i / GLOW_TEXELS) + 0.5 - half;
+            let t = x.hypot(y) / half;
+            Palette::tint(Color32::WHITE, crate::ui::saturate_u8(glow_falloff(t) * 255.0))
+        })
+        .collect();
+    egui::ColorImage::new([GLOW_TEXELS, GLOW_TEXELS], pixels)
+}
+
+/// The shape of a soft radial glow: `color` (premultiplied; its alpha is the glow's strength) at
+/// `center`, falling off along [`glow_falloff`] to nothing at `radius`.
+pub fn glow_shape(ctx: &Context, center: Pos2, radius: f32, color: Color32) -> Shape {
+    if radius <= 0.0 || color == Color32::TRANSPARENT {
+        return Shape::Noop;
+    }
+    let mut mesh = egui::Mesh::with_texture(glow_texture(ctx).id());
+    mesh.add_rect_with_uv(
+        Rect::from_center_size(center, egui::Vec2::splat(radius * 2.0)),
+        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+        color,
+    );
+    Shape::mesh(mesh)
+}
+
+/// Paints a soft radial glow (see [`glow_shape`]): the welcome backdrop and the illustrations'
+/// halos.
+pub fn glow(painter: &Painter, center: Pos2, radius: f32, color: Color32) {
+    painter.add(glow_shape(painter.ctx(), center, radius, color));
+}
+
 /// A spinner: a 270 degree arc turning once a second around `center`, `color` at full strength
 /// over a faint full circle. Repaints itself while painted; still (one fixed arc) with reduced
 /// motion.
@@ -479,6 +541,79 @@ mod tests {
         assert_eq!(focus_edge_alpha(0.7), 0.0);
         assert_eq!(focus_edge_alpha(1.0), 0.0);
         assert!(focus_edge_alpha(0.2) < 191.0 && focus_edge_alpha(0.2) > 46.0);
+    }
+
+    #[test]
+    fn the_glow_falls_off_without_a_hot_spot_or_an_edge() {
+        assert!((glow_falloff(0.0) - 1.0).abs() < f32::EPSILON);
+        assert!(glow_falloff(1.0).abs() < f32::EPSILON);
+        assert!(glow_falloff(1.5).abs() < f32::EPSILON);
+        // Zero slope at the centre and at the rim.
+        let h = 1e-3;
+        assert!((glow_falloff(h) - glow_falloff(0.0)).abs() / h < 0.01);
+        assert!((glow_falloff(1.0 - h) - glow_falloff(1.0)).abs() / h < 0.01);
+        let mut last = 1.0;
+        for i in 1..=100 {
+            let v = glow_falloff(crate::ui::int_f32(i) / 100.0);
+            assert!(v <= last, "rises at {i}");
+            last = v;
+        }
+    }
+
+    /// The texture behind every glow: full strength at the centre, nothing at its edge, and no
+    /// step between neighbouring texels large enough to show as a ring when magnified.
+    #[test]
+    fn the_glow_texture_is_one_smooth_curve() {
+        let image = glow_image();
+        let n = GLOW_TEXELS;
+        let alpha = |x: usize, y: usize| i32::from(image.pixels[y * n + x].a());
+        assert!(alpha(n / 2, n / 2) >= 254);
+        for i in 0..n {
+            for (x, y) in [(i, 0), (0, i), (i, n - 1), (n - 1, i)] {
+                assert!(alpha(x, y) <= 1, "edge texel ({x}, {y}) is {}", alpha(x, y));
+            }
+        }
+        let row = n / 2;
+        for x in n / 2..n - 1 {
+            let step = alpha(x, row) - alpha(x + 1, row);
+            assert!((0..=4).contains(&step), "step {step} at {x}");
+        }
+        // White, premultiplied: every channel equals the alpha.
+        assert!(
+            image
+                .pixels
+                .iter()
+                .all(|c| c.r() == c.a() && c.b() == c.a())
+        );
+    }
+
+    #[test]
+    fn a_glow_is_one_tinted_quad_on_the_glow_texture() {
+        let ctx = Context::default();
+        let color = Palette::tint(theme::ThemeId::Midnight.palette().accent, 40);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            glow(ui.painter(), pos2(300.0, 200.0), 250.0, color);
+            glow(ui.painter(), pos2(10.0, 10.0), 0.0, color);
+        });
+        out.textures_delta.clear();
+        let meshes: Vec<&egui::Mesh> = out
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                Shape::Mesh(m) => Some(&**m),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(meshes.len(), 1, "an empty glow paints nothing");
+        let mesh = meshes[0];
+        assert_eq!(mesh.vertices.len(), 4);
+        assert_ne!(mesh.texture_id, egui::TextureId::default());
+        assert!(mesh.vertices.iter().all(|v| v.color == color));
+        let bounds = mesh.calc_bounds();
+        assert_eq!(
+            bounds,
+            Rect::from_center_size(pos2(300.0, 200.0), egui::Vec2::splat(500.0))
+        );
     }
 
     #[test]
