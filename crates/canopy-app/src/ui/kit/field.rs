@@ -128,9 +128,8 @@ impl<'t> Core<'t> {
         let enabled = self.enabled && ui.is_enabled();
         let id = component_id(ui, "kit-field", self.id_salt);
         ui.scope(|ui| {
-            if !enabled {
-                ui.disable();
-            }
+            // A disabled field is not `Ui::disable`d (that fades its text past reading): its
+            // surfaces dim and its text paints in `disabled_text`, and the edit stops taking input.
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.with_layout(Layout::top_down(Align::Min), |ui| {
                 self.show_inner(ui, id, enabled)
@@ -151,14 +150,21 @@ impl<'t> Core<'t> {
             .unwrap_or_else(|| ui.available_width())
             .max(m.control * 2.0);
 
+        let ink = super::content_painter(ui);
+        let off = super::disabled_text(p, style);
+        let (label_color, faint, text_dim) = if enabled {
+            (p.text_dim, p.text_faint, p.text_dim)
+        } else {
+            (off, off, off)
+        };
         let label_id = self.label.as_ref().map(|text| {
-            let g = ui.painter().layout_no_wrap(
+            let g = ink.layout_no_wrap(
                 text.clone(),
                 FontId::new(LABEL_SIZE, theme::medium()),
-                p.text_dim,
+                label_color,
             );
             let (rect, _) = ui.allocate_exact_size(vec2(width, g.size().y), Sense::hover());
-            ui.painter().galley(rect.min, g, p.text_dim);
+            ink.galley(rect.min, g, label_color);
             let r = ui.interact(rect, id.with("label"), Sense::hover());
             r.widget_info(|| WidgetInfo::labeled(WidgetType::Label, enabled, text));
             ui.add_space(m.field_label_gap);
@@ -190,7 +196,7 @@ impl<'t> Core<'t> {
         };
         let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
         let radius = CornerRadius::same(m.radius);
-        let painter = ui.painter().clone();
+        let painter = super::button::disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
         painter.rect_filled(rect, radius, s.field);
         let material = p.material(style, Elevation::Field);
         if material.recess > 0 {
@@ -297,11 +303,20 @@ impl<'t> Core<'t> {
         );
         {
             let v = child.visuals_mut();
-            v.weak_text_color = Some(p.text_faint);
+            v.weak_text_color = Some(faint);
             v.selection.bg_fill = p.selected();
         }
+        if !enabled {
+            child.set_opacity(ink.opacity());
+        }
         let interactive = enabled && !self.read_only;
-        let text_color = if self.read_only { p.text_dim } else { p.text };
+        let text_color = if !enabled {
+            off
+        } else if self.read_only {
+            p.text_dim
+        } else {
+            p.text
+        };
         let margin = Margin {
             left: crate::ui::points_i8(left.round()),
             right: crate::ui::points_i8(right.round()),
@@ -421,13 +436,13 @@ impl<'t> Core<'t> {
         );
 
         if let Some(glyph) = icon_glyph {
-            let g = painter.layout_no_wrap(glyph, FontId::proportional(m.icon_md), p.text_faint);
+            let g = ink.layout_no_wrap(glyph, FontId::proportional(m.icon_md), faint);
             let y = if multiline {
                 rect.top() + pad_y + (line_h - g.size().y) / 2.0
             } else {
                 rect.center().y - g.size().y / 2.0
             };
-            painter.galley(pos2(rect.left() + m.field_pad_x, y), g, p.text_faint);
+            ink.galley(pos2(rect.left() + m.field_pad_x, y), g, faint);
         }
         if let Some(gutter) = gutter {
             paint_line_numbers(&painter, rect, gutter, &galley, galley_pos, &font, p);
@@ -525,7 +540,8 @@ impl<'t> Core<'t> {
             x -= m.icon_md + ICON_GAP;
         }
         if let Some((g, color)) = counter {
-            painter.galley(pos2(x - g.size().x, cy - g.size().y / 2.0), g, color);
+            let color = if enabled { color } else { off };
+            ink.galley(pos2(x - g.size().x, cy - g.size().y / 2.0), g, color);
         }
 
         // Helper or error below.
@@ -534,10 +550,14 @@ impl<'t> Core<'t> {
             .or(self.helper.as_deref().map(|h| (h, false)));
         if let Some((text, is_error)) = message {
             ui.add_space(MESSAGE_GAP);
-            let color = if is_error { p.danger } else { p.text_dim };
+            let color = if is_error && enabled {
+                p.danger
+            } else {
+                text_dim
+            };
             let mut job_x = 0.0;
             let icon_g = is_error.then(|| {
-                painter.layout_no_wrap(
+                ink.layout_no_wrap(
                     icon::WARNING_CIRCLE.to_owned(),
                     FontId::proportional(MESSAGE_ICON),
                     color,
@@ -546,7 +566,7 @@ impl<'t> Core<'t> {
             if let Some(g) = &icon_g {
                 job_x = g.size().x + MESSAGE_GAP;
             }
-            let g = painter.layout(
+            let g = ink.layout(
                 text.to_owned(),
                 FontId::new(LABEL_SIZE, FontFamily::Proportional),
                 color,
@@ -555,13 +575,13 @@ impl<'t> Core<'t> {
             let (row, _) = ui.allocate_exact_size(vec2(width, g.size().y), Sense::hover());
             if let Some(ig) = icon_g {
                 let first_row = g.rows.first().map_or(g.size().y, |r| r.rect().height());
-                painter.galley(
+                ink.galley(
                     pos2(row.left(), row.top() + (first_row - ig.size().y) / 2.0),
                     ig,
                     color,
                 );
             }
-            painter.galley(pos2(row.left() + job_x, row.top()), g, color);
+            ink.galley(pos2(row.left() + job_x, row.top()), g, color);
         }
 
         if let Some(label_id) = label_id {

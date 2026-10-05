@@ -15,11 +15,13 @@ use egui::{
 use egui_phosphor::regular as icon;
 
 use super::button::{disabled_painter, tooltip_text, with_tooltip};
+use super::chip::{Badge, count_text};
 use super::toggle::{
     arrow_step, claim_arrows, component_id, gallery_caption, gallery_row, group_node, remembered,
     step,
 };
 use super::{ForceState, IconButton, Interact, KitResponse, Size, anim, paint};
+use crate::keymap::Command;
 use crate::ui::motion;
 use crate::ui::theme::{self, Elevation};
 
@@ -57,26 +59,6 @@ fn slide(
     r.translate(origin.to_vec2())
 }
 
-/// The number badge on a segment (concept 1's neutral count).
-fn badge_galley(ui: &Ui, n: usize) -> Arc<Galley> {
-    let m = theme::metrics();
-    let text = if n > 99 {
-        "99+".to_owned()
-    } else {
-        n.to_string()
-    };
-    ui.painter().layout_no_wrap(
-        text,
-        FontId::new(m.small_size, theme::medium()),
-        Color32::PLACEHOLDER,
-    )
-}
-
-fn badge_width(g: &Galley) -> f32 {
-    let m = theme::metrics();
-    (g.size().x + 10.0).max(m.badge_height)
-}
-
 // ----------------------------------------------------------------------------------- Segmented
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,11 +76,17 @@ pub struct Segmented<'a, T: PartialEq + Clone> {
     options: Vec<(T, Option<&'a str>, &'a str)>,
     content: Content,
     badges: Vec<(usize, usize)>,
+    strong_badges: bool,
     label: String,
     equal: bool,
+    compact: bool,
     size: Size,
     enabled: bool,
     disabled_reason: Option<String>,
+    /// Options that cannot be chosen, with why.
+    off: Vec<(usize, Option<String>)>,
+    tips: Vec<(usize, String)>,
+    shortcuts: Vec<(usize, Command)>,
     id_salt: Option<Id>,
     force: Option<(usize, ForceState)>,
 }
@@ -134,11 +122,16 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
             options,
             content: c,
             badges: Vec::new(),
+            strong_badges: false,
             label: String::new(),
             equal: false,
+            compact: false,
             size: Size::Md,
             enabled: true,
             disabled_reason: None,
+            off: Vec::new(),
+            tips: Vec::new(),
+            shortcuts: Vec::new(),
             id_salt: None,
             force: None,
         }
@@ -149,6 +142,36 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
         if n > 0 {
             self.badges.push((index, n));
         }
+        self
+    }
+    /// Count badges on the `primary` fill (the view switcher's counts, spec 4.18 `strong`).
+    pub fn strong_badges(mut self, strong: bool) -> Self {
+        self.strong_badges = strong;
+        self
+    }
+    /// Only the chosen option shows its label; the others keep their icon (and count), with
+    /// their name as a tooltip. For icon-and-label segments in a narrow window.
+    pub fn compact(mut self, compact: bool) -> Self {
+        self.compact = compact;
+        self
+    }
+    /// Whether option `index` can be chosen; `reason` says why not (its tooltip). The rest of
+    /// the control stays live.
+    pub fn option_enabled(mut self, index: usize, enabled: bool, reason: Option<&str>) -> Self {
+        self.off.retain(|(i, _)| *i != index);
+        if !enabled {
+            self.off.push((index, reason.map(str::to_owned)));
+        }
+        self
+    }
+    /// A tooltip on option `index` (an icon-only option's tooltip is its name otherwise).
+    pub fn option_tooltip(mut self, index: usize, text: impl Into<String>) -> Self {
+        self.tips.push((index, text.into()));
+        self
+    }
+    /// The command option `index` stands for: its keys join that option's tooltip.
+    pub fn option_shortcut(mut self, index: usize, command: Command) -> Self {
+        self.shortcuts.push((index, command));
         self
     }
     /// The group's accessible name (what the options choose).
@@ -191,7 +214,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
         struct Seg {
             icon: Option<Arc<Galley>>,
             text: Option<Arc<Galley>>,
-            badge: Option<Arc<Galley>>,
+            badge: Option<Badge>,
             width: f32,
         }
 
@@ -201,6 +224,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
         let s = p.surfaces(style);
         let m = theme::metrics();
         let enabled = self.enabled && ui.is_enabled();
+        let live = |i: usize| enabled && !self.off.iter().any(|(at, _)| *at == i);
         let group_id = component_id(ui, "kit-segmented", self.id_salt);
         let seg_h = self.size.height() - 2.0;
         let inset = m.segment_track_pad + paint::SEAM;
@@ -211,6 +235,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
         } else {
             m.segment_pad - 3.0
         };
+        let chosen = self.options.iter().position(|(v, _, _)| v == self.value);
 
         let segs: Vec<Seg> = self
             .options
@@ -224,27 +249,32 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                         Color32::PLACEHOLDER,
                     )
                 });
-                let text = (self.content != Content::IconOnly).then(|| {
+                // Compact: only the chosen option keeps its name.
+                let named = match self.content {
+                    Content::IconOnly => false,
+                    Content::IconAndText => !self.compact || chosen == Some(i),
+                    Content::Text => true,
+                };
+                let text = named.then(|| {
                     ui.painter().layout_no_wrap(
                         (*label).to_owned(),
                         font.clone(),
                         Color32::PLACEHOLDER,
                     )
                 });
-                let badge = self
-                    .badges
-                    .iter()
-                    .find(|(at, _)| *at == i)
-                    .map(|(_, n)| badge_galley(ui, *n));
+                let badge = self.badges.iter().find(|(at, _)| *at == i).map(|(_, n)| {
+                    let b = Badge::new(count_text(*n)).mono();
+                    if self.strong_badges { b.strong() } else { b }
+                });
                 let parts = [
                     icon.as_ref().map(|g| g.size().x),
                     text.as_ref().map(|g| g.size().x),
-                    badge.as_ref().map(|g| badge_width(g)),
+                    badge.as_ref().map(|b| b.measure(ui).x),
                 ];
                 let n = parts.iter().flatten().count();
                 let content: f32 = parts.iter().flatten().sum::<f32>()
                     + ITEM_GAP * crate::ui::count_f32(n.saturating_sub(1));
-                let width = if self.content == Content::IconOnly && badge.is_none() {
+                let width = if text.is_none() && badge.is_none() {
                     (content + 2.0 * (pad - 3.0)).max(seg_h + 4.0)
                 } else {
                     content + 2.0 * pad
@@ -276,8 +306,11 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
             ));
             x += w;
         }
-        let chosen = self.options.iter().position(|(v, _, _)| v == self.value);
 
+        // One Tab stop: the chosen option, or the first that can be chosen.
+        let stop = chosen
+            .filter(|i| live(*i))
+            .or_else(|| (0..rects.len()).find(|i| live(*i)));
         let mut responses = Vec::with_capacity(rects.len());
         let inner = ui.new_child(
             UiBuilder::new()
@@ -285,7 +318,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                 .accessibility_parent(group_id),
         );
         for (i, rect) in rects.iter().enumerate() {
-            let sense = match (enabled, chosen.unwrap_or(0) == i) {
+            let sense = match (live(i), stop == Some(i)) {
                 (false, _) => Sense::hover(),
                 (true, true) => Sense::click(),
                 (true, false) => Sense::CLICK,
@@ -309,17 +342,35 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
             && let Some(at) = focused
             && let Some(delta) = arrow_step(ui, false, true)
         {
-            let next = step(at, delta, responses.len());
-            now = Some(next);
-            responses[next].request_focus();
-            changed = true;
+            // Arrows skip the options that cannot be chosen.
+            let len = responses.len();
+            let mut next = at;
+            for _ in 0..len {
+                next = step(next, delta, len);
+                if live(next) {
+                    break;
+                }
+            }
+            if live(next) && next != at {
+                now = Some(next);
+                responses[next].request_focus();
+                changed = true;
+            }
         }
         if changed && let Some(i) = now {
             *self.value = self.options[i].0.clone();
         }
 
         if ui.is_rect_visible(track) {
+            // A disabled control dims its track; the thumb (the value) and the labels stay
+            // readable.
             let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let ink = if enabled {
+                painter.clone()
+            } else {
+                super::content_painter(ui)
+            };
+            let off_text = super::disabled_text(p, style);
             let radius = CornerRadius::same(m.radius);
             paint::fill(
                 &painter,
@@ -344,7 +395,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                     force,
                 );
                 paint::surface(
-                    &painter,
+                    &ink,
                     thumb,
                     radius,
                     p,
@@ -356,18 +407,22 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
             }
             for (i, (seg, rect)) in segs.iter().zip(&rects).enumerate() {
                 let force = self.force.filter(|(at, _)| *at == i).map(|(_, f)| f);
-                let st = Interact::of(&ctx, &responses[i], enabled, force);
+                let st = Interact::of(&ctx, &responses[i], live(i), force);
                 let selected = anim::ease(
                     &ctx,
                     group_id.with(("kit-seg-on", i)),
                     now == Some(i),
                     motion::BASE,
                 );
-                let color = p.text_dim.lerp_to_gamma(p.text, selected.max(st.hover));
+                let color = match (live(i), now == Some(i)) {
+                    (true, _) => p.text_dim.lerp_to_gamma(p.text, selected.max(st.hover)),
+                    (false, true) => p.text_dim,
+                    (false, false) => off_text,
+                };
                 let parts = [
                     seg.icon.as_ref().map(|g| g.size().x),
                     seg.text.as_ref().map(|g| g.size().x),
-                    seg.badge.as_ref().map(|g| badge_width(g)),
+                    seg.badge.as_ref().map(|b| b.measure(ui).x),
                 ];
                 let n = parts.iter().flatten().count();
                 let content: f32 = parts.iter().flatten().sum::<f32>()
@@ -375,20 +430,16 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                 let mut x = rect.center().x - content / 2.0;
                 let cy = rect.center().y;
                 if let Some(g) = &seg.icon {
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), color);
+                    ink.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), color);
                     x += g.size().x + ITEM_GAP;
                 }
                 if let Some(g) = &seg.text {
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), color);
+                    ink.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), color);
                     x += g.size().x + ITEM_GAP;
                 }
-                if let Some(g) = &seg.badge {
-                    let r = Rect::from_min_size(
-                        pos2(x, cy - m.badge_height / 2.0),
-                        vec2(badge_width(g), m.badge_height),
-                    );
-                    painter.rect_filled(r, CornerRadius::same(theme::FULL), s.badge);
-                    painter.galley(r.center() - g.size() / 2.0, Arc::clone(g), p.text);
+                if let Some(b) = &seg.badge {
+                    let size = b.measure(ui);
+                    b.paint(ui, Rect::from_min_size(pos2(x, cy - size.y / 2.0), size));
                 }
                 if st.focus > 0.0 {
                     paint::inset_ring(&painter, *rect, radius, p.focus.gamma_multiply(st.focus));
@@ -399,13 +450,27 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
         for (i, r) in responses.into_iter().enumerate() {
             let label = self.options[i].2;
             let on = now == Some(i);
-            r.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, enabled, on, label));
-            if self.content == Content::IconOnly {
-                let tip = tooltip_text(enabled, Some(label), self.disabled_reason.as_deref(), None);
-                with_tooltip(r, tip);
-            } else if !enabled {
-                with_tooltip(r, self.disabled_reason.clone());
-            }
+            let ok = live(i);
+            r.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, ok, on, label));
+            let named = segs[i].text.is_some();
+            let tip = self
+                .tips
+                .iter()
+                .find(|(at, _)| *at == i)
+                .map(|(_, t)| t.as_str())
+                .or((!named).then_some(label));
+            let reason = self
+                .off
+                .iter()
+                .find(|(at, _)| *at == i)
+                .and_then(|(_, r)| r.as_deref())
+                .or(self.disabled_reason.as_deref());
+            let shortcut = self
+                .shortcuts
+                .iter()
+                .find(|(at, _)| *at == i)
+                .map(|(_, c)| *c);
+            with_tooltip(r, tooltip_text(ok, tip, reason, shortcut));
         }
         let mut group = group_node(ui, group_id, track, &self.label, enabled);
         if changed {
@@ -636,6 +701,12 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
 
         if ui.is_rect_visible(row) {
             let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let ink = if enabled {
+                painter.clone()
+            } else {
+                super::content_painter(ui)
+            };
+            let off_text = super::disabled_text(p, theme::style());
             paint::seam_h(
                 &painter,
                 row.x_range(),
@@ -655,26 +726,31 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
                 if st.hover > 0.0 {
                     painter.rect_filled(*rect, top_radius, p.hover().gamma_multiply(st.hover));
                 }
-                let color = if active {
-                    p.text
-                } else {
-                    p.text_dim.lerp_to_gamma(p.text, st.hover)
+                // Disabled: the labels stay readable (the active one in `text_dim`).
+                let (color, icon_color, count_color) = match (enabled, active) {
+                    (true, true) => (p.text, p.accent, p.accent),
+                    (true, false) => (
+                        p.text_dim.lerp_to_gamma(p.text, st.hover),
+                        p.text_faint,
+                        p.accent,
+                    ),
+                    (false, true) => (p.text_dim, p.text_dim, p.text_dim),
+                    (false, false) => (off_text, off_text, off_text),
                 };
                 let mut x = rect.left() + TAB_PAD_LEFT;
                 let cy = rect.center().y;
                 if let Some(g) = &tab.icon {
-                    let c = if active { p.accent } else { p.text_faint };
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), c);
+                    ink.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), icon_color);
                     x += g.size().x + ITEM_GAP;
                 }
-                painter.galley(
+                ink.galley(
                     pos2(x, cy - tab.text.size().y / 2.0),
                     Arc::clone(&tab.text),
                     color,
                 );
                 x += tab.text.size().x + ITEM_GAP;
                 if let Some(g) = &tab.count {
-                    painter.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), p.accent);
+                    ink.galley(pos2(x, cy - g.size().y / 2.0), Arc::clone(g), count_color);
                     x += g.size().x + ITEM_GAP;
                 }
                 if self.closable {
@@ -782,6 +858,50 @@ pub(crate) fn gallery(ui: &mut Ui) {
         .badge(1, 4)
         .label("View")
         .id_salt("g-seg1")
+        .show(ui);
+    });
+    ui.add_space(theme::XS);
+    gallery_caption(
+        ui,
+        "View tabs, compact: strong count, shortcuts, one option off with its reason",
+    );
+    remembered(ui, "seg-view-compact", 1_u8, |ui, v| {
+        ViewTabs::with_icons(
+            v,
+            &[
+                (0, icon::CLOCK_COUNTER_CLOCKWISE, "History"),
+                (1, icon::PENCIL_SIMPLE, "Changes"),
+                (2, icon::GIT_PULL_REQUEST, "Requests"),
+            ],
+        )
+        .badge(1, 12)
+        .strong_badges(true)
+        .compact(true)
+        .option_shortcut(0, Command::History)
+        .option_shortcut(1, Command::Changes)
+        .option_enabled(2, false, Some("No GitHub or GitLab remote"))
+        .label("View")
+        .id_salt("g-seg1c")
+        .show(ui);
+    });
+    ui.add_space(theme::XS);
+    gallery_caption(
+        ui,
+        "Diff layout on a new file: Side by side off, Unified still chosen",
+    );
+    remembered(ui, "seg-one-column", 0_u8, |ui, v| {
+        Segmented::with_icons(
+            v,
+            &[
+                (0, icon::ROWS, "Unified"),
+                (1, icon::COLUMNS, "Side by side"),
+            ],
+        )
+        .size(Size::Sm)
+        .option_enabled(1, false, Some("A new file has nothing to set beside it"))
+        .option_tooltip(0, "One column")
+        .label("Diff layout")
+        .id_salt("g-seg-one-col")
         .show(ui);
     });
     ui.add_space(theme::XS);
@@ -971,6 +1091,61 @@ mod tests {
             Segmented::new(&mut v, &OPTS).enabled(false).show(ui);
         });
         assert_eq!(v, 0);
+    }
+
+    #[test]
+    fn an_option_that_is_off_cannot_be_chosen_and_arrows_skip_it() {
+        let ctx = testkit::ctx();
+        let mut v = 0_u8;
+        let show = |ui: &mut Ui, v: &mut u8| {
+            Segmented::new(v, &OPTS)
+                .option_enabled(1, false, Some("Not here"))
+                .show(ui)
+        };
+        let mut track = Rect::NOTHING;
+        frame(&ctx, Vec::new(), |ui| track = show(ui, &mut v).rect);
+        // Changes, the middle third, is off: a click there leaves History chosen.
+        testkit::click(&ctx, track.center(), |ui| {
+            show(ui, &mut v);
+        });
+        assert_eq!(v, 0);
+        frame(&ctx, key(Key::Tab), |ui| {
+            show(ui, &mut v);
+        });
+        frame(&ctx, key(Key::ArrowRight), |ui| {
+            show(ui, &mut v);
+        });
+        assert_eq!(v, 2, "the arrow skips the option that is off");
+        let nodes = spoken(&ctx, |ui| {
+            show(ui, &mut v);
+        });
+        assert!(find(&nodes, "Changes").expect("spoken").disabled);
+        assert!(!find(&nodes, "Requests").expect("spoken").disabled);
+    }
+
+    #[test]
+    fn compact_segments_name_only_the_chosen_option() {
+        let ctx = testkit::ctx();
+        let opts = [(0_u8, icon::ROWS, "History"), (1, icon::COLUMNS, "Changes")];
+        let texts = |compact: bool| {
+            let shapes = frame(&ctx, Vec::new(), |ui| {
+                Segmented::with_icons(&mut 1_u8, &opts)
+                    .compact(compact)
+                    .show(ui);
+            });
+            let mut out = Vec::new();
+            for c in &shapes {
+                if let egui::Shape::Text(t) = &c.shape {
+                    out.push(t.galley.text().to_owned());
+                }
+            }
+            out
+        };
+        let full = texts(false);
+        assert!(full.iter().any(|t| t == "History") && full.iter().any(|t| t == "Changes"));
+        let compact = texts(true);
+        assert!(compact.iter().any(|t| t == "Changes"), "{compact:?}");
+        assert!(!compact.iter().any(|t| t == "History"), "{compact:?}");
     }
 
     #[test]

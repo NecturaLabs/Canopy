@@ -75,8 +75,11 @@ fn label_galley(ui: &Ui, label: &str) -> Option<Arc<Galley>> {
     })
 }
 
+/// A disabled control's label stays readable: opaque, in `disabled_text`.
 fn paint_label(
+    ui: &Ui,
     painter: &Painter,
+    enabled: bool,
     rect: Rect,
     glyph_w: f32,
     text: Option<&Arc<Galley>>,
@@ -87,7 +90,12 @@ fn paint_label(
             rect.left() + glyph_w + LABEL_GAP,
             rect.center().y - t.size().y / 2.0,
         );
-        painter.galley(pos, Arc::clone(t), p.text);
+        if enabled {
+            painter.galley(pos, Arc::clone(t), p.text);
+        } else {
+            let color = super::disabled_text(p, theme::style());
+            super::content_painter(ui).galley(pos, Arc::clone(t), color);
+        }
     }
 }
 
@@ -294,7 +302,7 @@ impl<'a> Checkbox<'a> {
                     Color32::TRANSPARENT,
                 );
             }
-            paint_label(&painter, rect, side, text.as_ref(), p);
+            paint_label(ui, &painter, enabled, rect, side, text.as_ref(), p);
         }
         let (label, indeterminate) = (self.label, self.indeterminate);
         response.widget_info(|| {
@@ -425,7 +433,7 @@ impl Radio {
                     Color32::TRANSPARENT,
                 );
             }
-            paint_label(&painter, rect, side, text.as_ref(), p);
+            paint_label(ui, &painter, enabled, rect, side, text.as_ref(), p);
         }
         let (label, selected) = (self.label, self.selected);
         response.widget_info(|| {
@@ -597,17 +605,23 @@ impl<'a, T: PartialEq + Clone> RadioGroup<'a, T> {
                                 };
                                 ui.horizontal(|ui| {
                                     ui.add_space(m.radio + LABEL_GAP);
-                                    let painter =
-                                        disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+                                    let (painter, color) = if enabled {
+                                        (ui.painter().clone(), p.text_dim)
+                                    } else {
+                                        (
+                                            super::content_painter(ui),
+                                            super::disabled_text(p, theme::style()),
+                                        )
+                                    };
                                     let g = painter.layout(
                                         (*d).to_owned(),
                                         FontId::new(m.meta_size, FontFamily::Proportional),
-                                        p.text_dim,
+                                        color,
                                         ui.available_width().max(1.0),
                                     );
                                     let (rect, _) =
                                         ui.allocate_exact_size(g.size(), Sense::hover());
-                                    painter.galley(rect.min, g, p.text_dim);
+                                    painter.galley(rect.min, g, color);
                                 });
                                 r
                             })
@@ -774,7 +788,7 @@ impl<'a> Switch<'a> {
                     Color32::TRANSPARENT,
                 );
             }
-            paint_label(&painter, rect, m.switch.x, text.as_ref(), p);
+            paint_label(ui, &painter, enabled, rect, m.switch.x, text.as_ref(), p);
         }
         let label = self.label;
         response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, on, &label));

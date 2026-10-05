@@ -202,11 +202,19 @@ fn frame(ui: &mut Ui, spec: &FrameSpec) -> Frame {
         sw: if spec.joined.1 { 0 } else { r },
         se: if spec.joined.1 { 0 } else { r },
     };
-    let mut painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-    if !enabled && ui.is_enabled() {
-        painter.multiply_opacity(theme::DISABLED_ALPHA);
-    }
+    let clip = rect.intersect(ui.clip_rect());
+    // A disabled row's grounds dim; its content stays readable in `disabled_text`.
+    let painter = if enabled {
+        ui.painter().with_clip_rect(clip)
+    } else {
+        super::content_painter(ui).with_clip_rect(clip)
+    };
     if ui.is_rect_visible(rect) {
+        let mut ground_painter = painter.clone();
+        if !enabled {
+            ground_painter.multiply_opacity(theme::DISABLED_ALPHA);
+        }
+        let painter = &ground_painter;
         if spec.zebra {
             painter.rect_filled(rect, radius, p.zebra());
         }
@@ -223,24 +231,39 @@ fn frame(ui: &mut Ui, spec: &FrameSpec) -> Frame {
     }
     let lit = hover.max(f32::from(u8::from(spec.selected)));
     let rest_text = if strong { p.text_dim } else { p.text };
-    let ctx = RowCtx {
-        rect,
-        content: rect.shrink2(vec2(PAD, 0.0)),
-        hover,
-        selected: spec.selected,
-        ground,
-        text: rest_text.lerp_to_gamma(p.text, lit),
-        dim: p.text_dim,
-        icon: if spec.selected {
-            p.accent
-        } else {
-            p.text_faint.lerp_to_gamma(p.text, hover)
-        },
-        accent: if spec.selected {
-            p.accent
-        } else {
-            p.text_faint
-        },
+    let ctx = if enabled {
+        RowCtx {
+            rect,
+            content: rect.shrink2(vec2(PAD, 0.0)),
+            hover,
+            selected: spec.selected,
+            ground,
+            text: rest_text.lerp_to_gamma(p.text, lit),
+            dim: p.text_dim,
+            icon: if spec.selected {
+                p.accent
+            } else {
+                p.text_faint.lerp_to_gamma(p.text, hover)
+            },
+            accent: if spec.selected {
+                p.accent
+            } else {
+                p.text_faint
+            },
+        }
+    } else {
+        let off = super::disabled_text(p, theme::style());
+        RowCtx {
+            rect,
+            content: rect.shrink2(vec2(PAD, 0.0)),
+            hover,
+            selected: spec.selected,
+            ground,
+            text: off,
+            dim: off,
+            icon: off,
+            accent: off,
+        }
     };
     Frame {
         rect,
@@ -793,7 +816,11 @@ impl<'a> TreeRow<'a> {
         if ui.is_rect_visible(f.rect) {
             let cy = f.rect.center().y;
             if has_children {
-                let color = p.text_faint.lerp_to_gamma(p.text_dim, rc.hover);
+                let color = if f.enabled {
+                    p.text_faint.lerp_to_gamma(p.text_dim, rc.hover)
+                } else {
+                    rc.dim
+                };
                 paint_chevron(&f.painter, chevron.center(), turn, color);
             }
             let mut x = chevron_x + 12.0 + 4.0;
@@ -810,14 +837,15 @@ impl<'a> TreeRow<'a> {
             }
             let mut right = rc.content.right();
             if let Some(t) = &self.trailing {
+                let color = if f.enabled { p.text_faint } else { rc.dim };
                 let g = f.painter.layout_no_wrap(
                     t.clone(),
                     FontId::new(m.micro_size, FontFamily::Monospace),
-                    p.text_faint,
+                    color,
                 );
                 right -= g.size().x;
                 f.painter
-                    .galley(pos2(right, cy - g.size().y / 2.0), g, p.text_faint);
+                    .galley(pos2(right, cy - g.size().y / 2.0), g, color);
                 right -= GAP;
             }
             let family = match (self.selected, self.kind.chrome()) {

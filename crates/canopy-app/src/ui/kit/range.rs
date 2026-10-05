@@ -173,12 +173,19 @@ impl<'a, T: Numeric> Slider<'a, T> {
         if let Some((label, value)) = &header {
             let h = label.size().y.max(value.size().y);
             let (row, _) = ui.allocate_exact_size(vec2(width, h), Sense::hover());
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
-            painter.galley(row.left_top(), Arc::clone(label), p.text);
+            let (painter, color) = if enabled {
+                (ui.painter().clone(), p.text)
+            } else {
+                (
+                    super::content_painter(ui),
+                    super::disabled_text(p, theme::style()),
+                )
+            };
+            painter.galley(row.left_top(), Arc::clone(label), color);
             painter.galley(
                 pos2(row.right() - value.size().x, row.top()),
                 Arc::clone(value),
-                p.text,
+                color,
             );
         }
         let sense = if enabled {

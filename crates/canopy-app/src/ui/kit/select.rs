@@ -165,7 +165,12 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 p.text_dim,
             );
             let (rect, _) = ui.allocate_exact_size(vec2(width, g.size().y), Sense::hover());
-            disabled_painter(ui, enabled, theme::DISABLED_ALPHA).galley(rect.min, g, p.text_dim);
+            if enabled {
+                ui.painter().galley(rect.min, g, p.text_dim);
+            } else {
+                let color = super::disabled_text(p, style);
+                super::content_painter(ui).galley(rect.min, g, color);
+            }
             ui.add_space(m.field_label_gap);
         }
 
@@ -304,16 +309,22 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 ist.press,
             );
             let ring = s.raised_edge.lerp_to_gamma(p.focus, open_t);
-            paint::surface(
-                &painter,
-                rect,
-                radius,
-                p,
-                style,
-                Elevation::Control,
-                body,
-                Some(ring),
-            );
+            if enabled {
+                paint::surface(
+                    &painter,
+                    rect,
+                    radius,
+                    p,
+                    style,
+                    Elevation::Control,
+                    body,
+                    Some(ring),
+                );
+            } else {
+                // Disabled like a button: dimmed and flat, the text readable.
+                paint::fill(&painter, rect, radius, body);
+                paint::rim(&painter, rect, radius, ring);
+            }
             if ist.focus > 0.0 {
                 paint::focus_ring(
                     &painter,
@@ -323,6 +334,12 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                     Color32::TRANSPARENT,
                 );
             }
+            let (painter, faint, text_color) = if enabled {
+                (painter, p.text_faint, p.text)
+            } else {
+                let c = super::disabled_text(p, style);
+                (super::content_painter(ui), c, c)
+            };
             let caret_x = rect.right() - PAD_RIGHT - m.icon_md / 2.0;
             if self.loading {
                 paint::spinner(
@@ -330,24 +347,24 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                     pos2(caret_x, rect.center().y),
                     m.icon_md * 0.33,
                     1.6,
-                    p.text_faint,
+                    faint,
                 );
             } else {
                 let g = painter.layout_no_wrap(
                     icon::CARET_DOWN.to_owned(),
                     FontId::proportional(m.icon_md),
-                    p.text_faint,
+                    faint,
                 );
                 let pos = pos2(caret_x, rect.center().y) - g.size() / 2.0;
                 let angle = std::f32::consts::PI * open_t;
                 painter.add(
-                    TextShape::new(pos, g, p.text_faint)
+                    TextShape::new(pos, g, faint)
                         .with_angle_and_anchor(angle, Align2::CENTER_CENTER),
                 );
             }
             let (text, color) = match chosen {
-                Some(i) => (self.options[i].1.to_owned(), p.text),
-                None => (self.placeholder.clone(), p.text_faint),
+                Some(i) => (self.options[i].1.to_owned(), text_color),
+                None => (self.placeholder.clone(), faint),
             };
             let max = (caret_x - m.icon_md / 2.0 - GAP - rect.left() - PAD_LEFT).max(0.0);
             let mut job = egui::text::LayoutJob::simple_singleline(

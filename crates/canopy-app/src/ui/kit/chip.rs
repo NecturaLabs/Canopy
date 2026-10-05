@@ -1026,10 +1026,15 @@ impl Chip {
                     Color32::TRANSPARENT,
                 );
             }
-            let ink = if self.tone == Tone::Neutral {
-                ink.lerp_to_gamma(p.text, st.hover.max(st.press))
+            let (painter, ink) = if !enabled {
+                (
+                    super::content_painter(ui),
+                    super::disabled_text(p, theme::style()),
+                )
+            } else if self.tone == Tone::Neutral {
+                (painter, ink.lerp_to_gamma(p.text, st.hover.max(st.press)))
             } else {
-                ink
+                (painter, ink)
             };
             let mut x = rect.left() + theme::SM;
             let mut shapes: Vec<Shape> = Vec::new();
