@@ -335,6 +335,21 @@ pub(crate) fn transform_since(ctx: &Context, layer: LayerId, start: ShapeIdx, tf
     });
 }
 
+/// Transforms the shapes painted on `layer` from `start` up to (not including) `end`: one card
+/// of several laid out in a row or a stack.
+pub(crate) fn transform_range(
+    ctx: &Context,
+    layer: LayerId,
+    start: ShapeIdx,
+    end: ShapeIdx,
+    tf: TSTransform,
+) {
+    if tf == TSTransform::IDENTITY {
+        return;
+    }
+    ctx.graphics_mut(|g| g.entry(layer).transform_range(start, end, tf));
+}
+
 /// How a closed layer leaves: fade over `seconds` while its moving part scales towards `scale`
 /// about `origin` and slides by `offset`; its fixed part (a scrim) only fades.
 #[derive(Debug, Clone, Copy, PartialEq)]

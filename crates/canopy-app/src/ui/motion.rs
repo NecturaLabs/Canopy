@@ -37,6 +37,8 @@ pub const LOADING_DELAY: f32 = 0.15;
 pub const LOADING_MIN: f32 = 0.40;
 /// The second of two toasts arriving together enters this much later.
 pub const TOAST_STAGGER: f32 = 0.09;
+/// Toasts beside one that arrives or leaves slide to their new place over this long.
+pub const TOAST_SHIFT: f32 = 0.2;
 /// Tooltip exit fade.
 pub const TOOLTIP_OUT: f32 = 0.06;
 /// A submenu opens after the pointer rests on its item this long.
