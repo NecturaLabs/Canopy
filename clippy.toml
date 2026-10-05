@@ -266,6 +266,66 @@ reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
 path = "git2::Config::remove_multivar"
 reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
 [[disallowed-methods]]
+path = "git2::Repository::reset_default"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::set_head_bytes"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::reflog_delete"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::reflog_rename"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::submodule_set_ignore"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::submodule_set_update"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::submodule_set_url"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::submodule_set_branch"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Odb::write"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Odb::writer"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Reflog::append"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Reflog::remove"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Reflog::write"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Submodule::clone"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Submodule::init"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Submodule::repo_init"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Submodule::sync"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Submodule::add_to_index"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Submodule::add_finalize"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Submodule::update"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
 path = "git2::Remote::download"
 reason = "Git network traffic runs the git CLI through canopy_core::cli (AGENTS.md)"
 [[disallowed-methods]]
@@ -277,6 +337,7 @@ reason = "Git network traffic runs the git CLI through canopy_core::cli (AGENTS.
 
 # AGENTS.md, "Conventions": colours come only from crates/canopy-app/src/ui/theme.rs.
 # egui::hex_color! is not listed: it needs ecolor's `color-hex` feature, which nothing enables.
+# Hsva and HsvaGamma also have public fields, so a struct literal is not caught here.
 [[disallowed-methods]]
 path = "egui::Color32::from_rgb"
 reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
@@ -327,4 +388,37 @@ path = "egui::Rgba::from_black_alpha"
 reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
 [[disallowed-methods]]
 path = "egui::Rgba::from_white_alpha"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Rgba::from_srgba_premultiplied"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::Rgba::from_srgba_unmultiplied"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::ecolor::Hsva::new"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::ecolor::Hsva::from_srgba_premultiplied"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::ecolor::Hsva::from_srgba_unmultiplied"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::ecolor::Hsva::from_rgba_premultiplied"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::ecolor::Hsva::from_rgba_unmultiplied"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::ecolor::Hsva::from_additive_rgb"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::ecolor::Hsva::from_additive_srgb"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::ecolor::Hsva::from_rgb"
+reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
+[[disallowed-methods]]
+path = "egui::ecolor::Hsva::from_srgb"
 reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
