@@ -113,7 +113,22 @@ thread.
 | `ui/kit/glass/gl.rs` | The blur's OpenGL renderer, an `egui_glow` paint callback: copies the region behind a layer, dual-Kawase blurs it, clamps its luminance and composites it inside the layer. The only `unsafe` code in Canopy (ADR 0010). |
 | `ui/kit/glass/shaders.rs` | The blur's GLSL and the dialect chosen for the context (OpenGL 3.0+, OpenGL ES 3.0+). |
 | `ui/kit/gallery.rs` | The component gallery (`--overlay gallery`) with a section per kit module, plus token, elevation, style and motion strips. |
-| `ui/kit/avatar.rs`, `ui/kit/chip.rs`, `ui/kit/choice.rs`, `ui/kit/field.rs`, `ui/kit/graph.rs`, `ui/kit/menu.rs`, `ui/kit/overlay.rs`, `ui/kit/progress.rs`, `ui/kit/range.rs`, `ui/kit/row.rs`, `ui/kit/select.rs`, `ui/kit/split.rs`, `ui/kit/surface.rs`, `ui/kit/toast.rs`, `ui/kit/toggle.rs` | Placeholders for the remaining components (avatars, chips, choices, fields, the graph row, menus, overlays, progress, sliders, rows, selects, split handles, surfaces, toast painting, toggles), filled module by module. |
+| `ui/kit/field.rs` | `TextField`, `SearchField`, `TextArea` and `CodeArea`: frameless `TextEdit`s inside the kit's fill, border, focus and error halo. |
+| `ui/kit/select.rs` | `Select`, which replaces `ComboBox`: a Secondary trigger and a floating list driven from the keyboard. |
+| `ui/kit/toggle.rs` | `Checkbox` (with indeterminate), `Radio`, `RadioGroup` (arrow keys, one Tab stop) and `Switch`. |
+| `ui/kit/choice.rs` | `Segmented` with its sliding thumb, `ViewTabs` and `UnderlineTabs` with a sliding indicator. |
+| `ui/kit/range.rs` | `Slider`, which replaces `egui::Slider`: keyboard steps and a value bubble while dragged. |
+| `ui/kit/progress.rs` | `Progress` (determinate, indeterminate, line), `Spinner` and `Skeleton`; all static under reduced motion. |
+| `ui/kit/menu.rs` | Menus and context menus: items with icon, shortcut, check, danger, disabled-with-reason and second line, headings, separators and delayed submenus. |
+| `ui/kit/overlay.rs` | The floating surface every layer shares (shadow, glass backdrop, fill, ring), `Tooltip`, `Popover`, `Dialog` and its scrim, entrances and exit fades. |
+| `ui/kit/toast.rs` | `ToastCard`, the toast's painting; the queue and timers stay in `ui/toast.rs`. |
+| `ui/kit/row.rs` | `ListRow`, `TreeRow`, `Disclosure`, `SectionHeader` and the Shift/Ctrl `Selection`. |
+| `ui/kit/chip.rs` | `Badge`, `CountBadge`, `ChangeBadge`, `RefPill`, `RefOverflow`, `Keycap`, `KeyChord`, `StatusDot`, `DiffStat` and the status `Chip`. |
+| `ui/kit/avatar.rs` | `Avatar` and `AvatarStack` with the picture crossfade. |
+| `ui/kit/surface.rs` | `PaneFrame`, `PaneHeader`, `Deck` (the top bars), `Card`, `Banner`, `Callout`, `EmptyState` and `InsetBox`. |
+| `ui/kit/graph.rs` | The history row painter: circle nodes, hollow merges, the HEAD halo, a dashed WIP node and lane spacing by density. |
+| `ui/kit/split.rs` | Placeholder for `SplitHandle` (custom split handles), not built yet. |
+| `ui/kit/testkit.rs` | Test-only helpers for the kit's tests: a themed context, frames with input events and the AccessKit nodes a frame produced. |
 | `ui/fonts.rs` | Registers the bundled Inter, JetBrains Mono and Phosphor fonts. |
 | `ui/art.rs` | The illustrations (logo mark, welcome canopy, empty-state spots) drawn with the painter in the active theme's colours; each grows in once when it appears. |
 | `ui/widgets.rs` | Ref pills, avatars, badges, segmented controls, switches, checkboxes, and the older button helpers, which now draw `ui::kit` buttons. |
