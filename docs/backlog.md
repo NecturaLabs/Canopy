@@ -115,6 +115,10 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Next
 
+- [ ] `canopy --screenshot` run directly (not through `tools/screenshot.sh`) opens a real window on
+      the desktop session and writes logs into the user's own data folder; isolation lives only in
+      the script. Make the binary refuse `--screenshot` unless the isolated environment is set, or
+      move the isolation into the binary.
 - [ ] A project check for what clippy cannot enforce from the quality standard: numeric literals
       without a named constant or comment, and a header comment on every source file.
 - [ ] Errors that drop their cause (found by `clippy::map_err_ignore`): the merged-branches base
