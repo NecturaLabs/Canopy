@@ -30,6 +30,16 @@ macOS. It must pass before
 you merge; a failure already listed in `docs/backlog.md` is reported, not hidden. Keep `TMPDIR` on
 a filesystem that accepts non-UTF-8 file names (the default `/tmp` does; NTFS does not).
 
+## Lints
+
+The workspace `Cargo.toml` sets the lint levels for every crate: clippy's `all`, `pedantic` and
+`cargo` groups, the nursery and restriction lints that fit this code, and extra rustc lints, each
+lint left out with its reason beside it. `clippy.toml` turns project rules into disallowed
+methods: git runs through `canopy_core::cli`, libgit2 only reads, and colours come only from
+`ui/theme.rs`. When a finding is deliberate, put `#[expect(lint, reason = "...")]` on the
+narrowest item or statement that covers it; `allow` is itself a warning, and an `expect` fails
+once its finding is gone.
+
 ## Commit messages
 
 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):

@@ -127,6 +127,10 @@ token anywhere new, contacting a new host or adding a dependency.
   through a confirmation dialog. Never force-push without `--force-with-lease`.
 - Errors reach the user as toasts carrying git's own stderr (or the libgit2 or server message),
   never a generic "operation failed"; log details with `tracing`.
+- Lints live in the workspace `Cargo.toml` (`[workspace.lints]`: pedantic, cargo and chosen
+  nursery and restriction lints) and `clippy.toml`, which turns rules on this page into disallowed
+  methods. Silence a finding only with `#[expect(lint, reason = "...")]` at the narrowest scope,
+  never `allow`.
 - Propagate `canopy_core::Result`; clippy rejects `unwrap`/`expect` outside tests. No `unsafe`
   except in `crates/canopy-app/src/ui/kit/glass/gl.rs` (the backdrop-blur OpenGL calls, approved
   by the owner): one operation per `unsafe` block, each with a `// SAFETY:` comment;

@@ -311,7 +311,8 @@ Canopy-specific folders.
   stderr unchanged, because git's own message is usually the most useful one.
 - The worker converts errors into `Event` errors; the UI shows them as toasts and logs them
   with `tracing`. Nothing in the app panics on a Git error.
-- `unwrap()` and `expect()` are not used outside tests (clippy `unwrap_used` is enabled) and
+- `unwrap()`, `expect()`, `panic!` and printing are not used outside tests (clippy `unwrap_used`,
+  `expect_used`, `panic`, `print_stdout` and `print_stderr`; `clippy.toml` exempts tests), and
   `unsafe` is denied everywhere except the backdrop blur's OpenGL calls in `ui/kit/glass/gl.rs`
   (ADR 0010; `crates/canopy-app/tests/unsafe_policy.rs` enforces it).
 
