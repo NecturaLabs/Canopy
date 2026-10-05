@@ -409,7 +409,7 @@ impl CanopyApp {
 
 #[cfg(test)]
 mod tests {
-    use canopy_core::identity::{Field, Person, Source};
+    use canopy_core::identity::{Field, Person};
 
     use super::*;
 

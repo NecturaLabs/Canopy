@@ -1041,7 +1041,6 @@ fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Ac
 mod tests {
     use super::*;
     use crate::worker::Worker;
-    use std::sync::Arc;
 
     fn summary(state: RequestState) -> RequestSummary {
         RequestSummary {

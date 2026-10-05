@@ -1,5 +1,3 @@
-use std::io::{Read, Write};
-
 use super::*;
 
 fn write(path: &Path, text: &str) {

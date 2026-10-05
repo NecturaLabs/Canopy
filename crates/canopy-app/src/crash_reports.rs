@@ -374,7 +374,7 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sentry::protocol::{DeviceContext, Exception, User};
+    use sentry::protocol::{DeviceContext, User};
 
     #[test]
     fn hides_user_folders() {

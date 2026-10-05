@@ -22,6 +22,7 @@
 //! one is set ([`crate::cli::set_askpass`]), and uses the user's credential helpers and SSH setup. libgit2 rescans the pack directory
 //! when an object is not found, so the retried read sees the new pack.
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use git2::{ErrorClass, ErrorCode, OdbLookupFlags, Oid, Repository};
@@ -285,7 +286,10 @@ pub(crate) fn download(repo: &Repository, workdir: &Path, oids: &[Oid]) -> Resul
                 reason: Some("The repository is not in a folder trusted for downloads.".into()),
             });
         }
-        let input: String = wanted.iter().map(|o| format!("{o}\n")).collect();
+        let input = wanted.iter().fold(String::new(), |mut out, o| {
+            let _ = writeln!(out, "{o}");
+            out
+        });
         let args = [
             "-c",
             "fetch.negotiationAlgorithm=noop",

@@ -896,6 +896,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
     use std::sync::Arc;
 
     use canopy_core::ConflictFile;
@@ -904,14 +905,14 @@ mod tests {
     fn text(n: usize, lines: usize) -> String {
         let mut s = String::new();
         for c in 0..n {
-            s.push_str(&format!("common {c}\n"));
+            let _ = writeln!(s, "common {c}");
             s.push_str("<<<<<<< HEAD\n");
             for l in 0..lines {
-                s.push_str(&format!("ours {c}.{l}\n"));
+                let _ = writeln!(s, "ours {c}.{l}");
             }
             s.push_str("=======\n");
             for l in 0..lines {
-                s.push_str(&format!("theirs {c}.{l}\n"));
+                let _ = writeln!(s, "theirs {c}.{l}");
             }
             s.push_str(">>>>>>> topic\n");
         }

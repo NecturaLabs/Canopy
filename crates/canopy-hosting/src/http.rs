@@ -2,6 +2,7 @@
 //! to [`Error`] with the server's own message.
 
 use std::fmt;
+use std::fmt::Write as _;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -419,7 +420,7 @@ pub(crate) fn encode(s: &str) -> String {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
             out.push(char::from(b));
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
     }
     out

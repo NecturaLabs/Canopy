@@ -263,9 +263,14 @@ impl tracing::field::Visit for MessageVisitor<'_> {
 }
 
 fn run_id() -> String {
+    use std::fmt::Write as _;
+
     let mut bytes = [0u8; 4];
     let _ = getrandom::fill(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 /// Installs the loggers and the crash-report hook. `level` applies unless `CANOPY_LOG` or

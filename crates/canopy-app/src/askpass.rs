@@ -15,6 +15,7 @@
 //! [`REQUEST_DEADLINE`], and a prompt whose git process went away closes its dialog. Answers are
 //! never logged.
 
+use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
@@ -221,7 +222,10 @@ impl Server {
 fn random_token() -> std::io::Result<String> {
     let mut bytes = [0u8; 24];
     getrandom::fill(&mut bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    Ok(bytes.iter().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    }))
 }
 
 /// Equal-time comparison, so the token cannot be guessed byte by byte from response times.

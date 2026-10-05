@@ -2020,9 +2020,10 @@ mod perf {
     use super::*;
     use canopy_core::diff::{DiffLine, Hunk};
     use canopy_core::{
-        BranchInfo, ChangeKind, CommitDetails, ConflictFile, GraphRow, LineEnd, LineKind,
-        RemoteBranchInfo, RemoteInfo, Signature, TagInfo, WorkingStatus,
+        BranchInfo, ChangeKind, ConflictFile, GraphRow, LineEnd, LineKind, RemoteBranchInfo,
+        RemoteInfo, Signature, TagInfo, WorkingStatus,
     };
+    use std::fmt::Write as _;
 
     fn oid(i: usize) -> Oid {
         let mut b = [0u8; 20];
@@ -2173,15 +2174,15 @@ mod perf {
         let mut s = String::new();
         for c in 0..400 {
             for l in 0..20 {
-                s.push_str(&format!("common line {c}.{l}\n"));
+                let _ = writeln!(s, "common line {c}.{l}");
             }
             s.push_str("<<<<<<< HEAD\n");
             for l in 0..8 {
-                s.push_str(&format!("ours {c}.{l}\n"));
+                let _ = writeln!(s, "ours {c}.{l}");
             }
             s.push_str("=======\n");
             for l in 0..8 {
-                s.push_str(&format!("theirs {c}.{l}\n"));
+                let _ = writeln!(s, "theirs {c}.{l}");
             }
             s.push_str(">>>>>>> feature\n");
         }

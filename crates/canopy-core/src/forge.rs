@@ -6,6 +6,8 @@
 //! (`https://user:token@host/…`) are dropped while parsing and never appear in any URL built
 //! here.
 
+use std::fmt::Write as _;
+
 /// A supported hosting provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ForgeKind {
@@ -235,7 +237,7 @@ fn encode(s: &str, keep_slash: bool) -> String {
         {
             out.push(char::from(b));
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
     }
     out

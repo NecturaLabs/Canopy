@@ -21,6 +21,7 @@
 //! ```
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
@@ -143,7 +144,10 @@ fn is_loopback_url(url: &str) -> bool {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 /// Lower-case hex SHA-256 of `bytes`.
@@ -329,7 +333,6 @@ pub fn download_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
 
     const SAMPLE: &str = r#"{
         "version": "412",

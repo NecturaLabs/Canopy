@@ -1,5 +1,6 @@
 //! Author account pictures, restricted to the repository's forge and GitHub's avatar CDN.
 
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use canopy_core::forge::{Forge, ForgeKind};
@@ -17,10 +18,10 @@ pub fn cache_key(forge: &Forge, email: &str) -> String {
     hash.update(forge.authority().as_bytes());
     hash.update([0]);
     hash.update(email.as_bytes());
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hash.finalize().iter().fold(String::new(), |mut out, byte| {
+        let _ = write!(out, "{byte:02x}");
+        out
+    })
 }
 
 /// Maximum compressed picture size; the application also bounds decoded dimensions.

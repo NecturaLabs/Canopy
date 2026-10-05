@@ -16,6 +16,7 @@ mod server {
     //! A tiny HTTP/1.1 server: one request per connection, responses keyed by method and target.
 
     use std::collections::HashMap;
+    use std::fmt::Write as _;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::sync::{Arc, Mutex};
@@ -171,7 +172,7 @@ mod server {
             canned.body.len()
         );
         for (k, v) in &canned.headers {
-            out.push_str(&format!("{k}: {v}\r\n"));
+            let _ = write!(out, "{k}: {v}\r\n");
         }
         out.push_str("\r\n");
         out.push_str(&canned.body);
