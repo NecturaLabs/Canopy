@@ -210,7 +210,7 @@ impl Menu<'_> {
                     .unwrap_or(false);
                 let r = body(ui, sub_id, parent_kind, focus_first, add);
                 let rect = ui.min_rect().expand(m.menu_pad);
-                let shapes = overlay::surface_shapes(&ctx, rect, Layer::Menu);
+                let shapes = overlay::surface_shapes(ui.painter(), rect, Layer::Menu);
                 ui.painter().set(slot, Shape::Vec(shapes));
                 // Left goes back to the parent item.
                 if ctx.input(|i| i.key_pressed(Key::ArrowLeft))

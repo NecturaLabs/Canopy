@@ -5,12 +5,14 @@
 //!
 //! **Glass.** [`backdrop`] is the one place the backdrop blur plugs in: every floating layer except
 //! tooltips asks it for the blurred backdrop between its shadow and its fill, and paints the
-//! translucent overlay over it when it gets one. Until the blur renderer exists it returns `None`
-//! and every layer is opaque, which is also the fallback whenever glass is off or unavailable.
+//! translucent overlay over it when it gets one. With Translucent surfaces off, or the blur
+//! unavailable, it returns `None` and the layer is opaque.
 //!
 //! **Exits.** A floating layer records what it painted each frame it is open ([`record_exit`]);
 //! the frame it is no longer shown, an egui plugin keeps painting that snapshot as it fades (and
-//! shrinks or slides) for the exit's duration. Nothing is recorded with reduced motion.
+//! shrinks or slides) for the exit's duration. Nothing is recorded with reduced motion. A snapshot
+//! drops the glass backdrop: the blur callback cannot fade or move with it, so a closing layer
+//! fades out as its translucent fill alone.
 
 use std::sync::Arc;
 
@@ -19,8 +21,9 @@ use egui::epaint::{ClippedShape, RectShape};
 use egui::layers::ShapeIdx;
 use egui::{
     Align, Align2, Color32, Context, CornerRadius, FontId, Frame, Id, InnerResponse, Key, LayerId,
-    Layout, Margin, Order, Popup, PopupCloseBehavior, PopupKind, Pos2, Rangef, Rect, RectAlign,
-    Response, RichText, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2, vec2,
+    Layout, Margin, Order, Painter, Popup, PopupCloseBehavior, PopupKind, Pos2, Rangef, Rect,
+    RectAlign, Response, RichText, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2,
+    vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -77,16 +80,17 @@ impl Layer {
 
 /// The glass hook: what the backdrop blur paints under a floating layer at `rect`, between the
 /// layer's shadow and its fill (design spec 7.4: a `Shape::Callback` into `glass/gl.rs`), or
-/// `None` for an opaque layer. The blur renderer is not built yet, so this is always `None`;
-/// the glass builder fills it in here and every floating layer picks it up.
-pub(crate) fn backdrop(_ctx: &Context, _rect: Rect, _radius: CornerRadius) -> Option<Shape> {
-    None
+/// `None` for an opaque layer (Translucent surfaces off, the blur unavailable, or the frame's
+/// glass layers used up).
+pub(crate) fn backdrop(painter: &Painter, rect: Rect, radius: CornerRadius) -> Option<Shape> {
+    super::glass::backdrop_shape(painter, rect, radius)
 }
 
 /// Everything a floating surface of `layer` paints at `rect`, bottom first: the `Floating`
 /// shadow, the glass backdrop (if any), the fill (translucent over glass), the top highlight
 /// (Deeper dark) and the 1 pt ring.
-pub(crate) fn surface_shapes(ctx: &Context, rect: Rect, layer: Layer) -> Vec<Shape> {
+pub(crate) fn surface_shapes(painter: &Painter, rect: Rect, layer: Layer) -> Vec<Shape> {
+    let ctx = painter.ctx();
     let p = theme::palette(ctx);
     let style = theme::style();
     let s = p.surfaces(style);
@@ -98,7 +102,7 @@ pub(crate) fn surface_shapes(ctx: &Context, rect: Rect, layer: Layer) -> Vec<Sha
     } else {
         let glass = layer
             .may_be_glass()
-            .then(|| backdrop(ctx, rect, radius))
+            .then(|| backdrop(painter, rect, radius))
             .flatten();
         match glass {
             Some(b) => {
@@ -141,7 +145,7 @@ pub fn floating<R>(
 ) -> InnerResponse<R> {
     let slot = ui.painter().add(Shape::Noop);
     let r = Frame::new().inner_margin(margin).show(ui, add);
-    let shapes = surface_shapes(ui.ctx(), r.response.rect, layer);
+    let shapes = surface_shapes(ui.painter(), r.response.rect, layer);
     ui.painter().set(slot, Shape::Vec(shapes));
     InnerResponse::new(r.inner, r.response)
 }
@@ -351,7 +355,10 @@ pub(crate) fn record_exit(
                 l.all_entries()
                     .skip(r.start)
                     .take(r.end.saturating_sub(r.start))
-                    .cloned()
+                    .map(|c| ClippedShape {
+                        clip_rect: c.clip_rect,
+                        shape: without_callbacks(c.shape.clone()),
+                    })
                     .collect()
             })
         })
@@ -370,6 +377,16 @@ pub(crate) fn record_exit(
         e.leaving.retain(|x| x.snap.key != key);
         e.open.push(snap);
     });
+}
+
+/// `shape` with every paint callback (the glass backdrop) taken out: a callback paints at the
+/// place and opacity it was made with, so it could neither fade nor move with an exit.
+fn without_callbacks(shape: Shape) -> Shape {
+    match shape {
+        Shape::Callback(_) => Shape::Noop,
+        Shape::Vec(shapes) => Shape::Vec(shapes.into_iter().map(without_callbacks).collect()),
+        other => other,
+    }
 }
 
 /// Starts the exits of layers not shown this pass and paints the ones still leaving.
@@ -1578,11 +1595,40 @@ mod tests {
     }
 
     #[test]
-    fn the_glass_hook_is_opaque_until_the_blur_exists() {
+    fn exit_snapshots_drop_the_glass_backdrop() {
+        let callback = || {
+            Shape::Callback(egui::PaintCallback {
+                rect: Rect::from_min_size(Pos2::ZERO, Vec2::splat(10.0)),
+                callback: Arc::new(()),
+            })
+        };
+        let fill = Shape::rect_filled(
+            Rect::from_min_size(Pos2::ZERO, Vec2::splat(10.0)),
+            0.0,
+            Color32::RED,
+        );
+        let out = without_callbacks(Shape::Vec(vec![
+            callback(),
+            fill.clone(),
+            Shape::Vec(vec![callback()]),
+        ]));
+        let Shape::Vec(out) = out else {
+            panic!("a list stays a list");
+        };
+        assert!(matches!(out[0], Shape::Noop));
+        assert!(matches!(out[1], Shape::Rect(_)));
+        assert!(matches!(&out[2], Shape::Vec(v) if matches!(v[0], Shape::Noop)));
+        assert!(matches!(without_callbacks(callback()), Shape::Noop));
+        assert!(matches!(without_callbacks(fill), Shape::Rect(_)));
+    }
+
+    #[test]
+    fn the_glass_hook_is_opaque_without_the_blur() {
+        // No OpenGL context in tests, so the blur is unavailable whatever the setting says.
         let ctx = context();
         let _ = run(&ctx, Vec::new(), |ui| {
             let rect = Rect::from_min_size(Pos2::ZERO, Vec2::splat(50.0));
-            assert!(backdrop(ui.ctx(), rect, CornerRadius::ZERO).is_none());
+            assert!(backdrop(ui.painter(), rect, CornerRadius::ZERO).is_none());
         });
     }
 
@@ -1653,7 +1699,8 @@ mod tests {
                         layer = ui.layer_id();
                         let start = next_shape(ctx, layer);
                         let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(100.0, 60.0));
-                        ui.painter().extend(surface_shapes(ctx, rect, Layer::Menu));
+                        ui.painter()
+                            .extend(surface_shapes(ui.painter(), rect, Layer::Menu));
                         let end = next_shape(ctx, layer);
                         record_exit(
                             ctx,
