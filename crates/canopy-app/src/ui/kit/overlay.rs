@@ -44,12 +44,17 @@ const TOOLTIP_WIDTH: f32 = 260.0;
 /// Pointer-opened popups grow from this scale and drop this far from the anchor edge.
 pub(crate) const POPUP_SCALE: f32 = 0.95;
 const POPUP_DROP: f32 = 4.0;
-/// Dialogs grow from this scale and exit towards the second.
-const DIALOG_SCALE: f32 = 0.94;
-const DIALOG_EXIT_SCALE: f32 = 0.97;
+/// Dialogs (and the settings screen, a dialog-sized shell) grow from this scale and exit towards
+/// the second.
+pub const DIALOG_SCALE: f32 = 0.94;
+pub const DIALOG_EXIT_SCALE: f32 = 0.97;
 /// Tooltips grow from this scale and rise this far.
 const TOOLTIP_SCALE: f32 = 0.96;
 const TOOLTIP_RISE: f32 = 3.0;
+/// Room after the last line of a scrolling body, so its end never sits on the card's edge.
+pub const SCROLL_END_ROOM: f32 = theme::SM;
+/// A scrolling body's bar stands this far in from the edge of the card (spec 4.21's 2 pt margin).
+const BAR_INSET: f32 = 2.0;
 
 /// What a floating surface is: decides its radius, fill and whether it may be glass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -84,6 +89,67 @@ impl Layer {
 /// glass layers used up).
 pub(crate) fn backdrop(painter: &Painter, rect: Rect, radius: CornerRadius) -> Option<Shape> {
     super::glass::backdrop_shape(painter, rect, radius)
+}
+
+/// What a floating layer of `layer` is filled with this frame: the overlay at the theme's glass
+/// opacity when its backdrop is blurred (Translucent surfaces on and the blur running), else the
+/// opaque overlay (tooltips: the `tooltip` fill). Content that paints over the layer's ground (row
+/// washes, scroll fades) uses this, so it matches the surface in both paths. A layer past the
+/// frame's glass budget falls back to opaque; its content then fades into a slightly lighter tint
+/// of the same overlay, which reads the same.
+pub fn ground(ctx: &Context, layer: Layer) -> Color32 {
+    let p = theme::palette(ctx);
+    let s = theme::surfaces(ctx);
+    if layer == Layer::Tooltip {
+        s.tooltip.top
+    } else if theme::appearance().glass && super::glass::available() && p.glass_alpha > 0 {
+        Palette::tint(s.overlay, p.glass_alpha)
+    } else {
+        s.overlay
+    }
+}
+
+/// A vertical scrolling body for an overlay, a dialog or a settings page: at most `max_height`
+/// tall, its scrollbar inset from the card's edge, and edge fades into `ground` (see [`ground`])
+/// wherever more is scrolled out of sight, so a body never ends on a line cut through its glyphs
+/// without a cue. When the content overflows, `SCROLL_END_ROOM` follows it, so its last line
+/// scrolls clear of the card's edge; a body that fits keeps its own height.
+pub fn scroll_body<R>(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    max_height: f32,
+    ground: Color32,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> egui::scroll_area::ScrollAreaOutput<R> {
+    let id = ui.make_persistent_id(id_salt);
+    let overflow_key = id.with("kit-scroll-body-overflows");
+    let overflowed = ui.data(|d| d.get_temp::<bool>(overflow_key).unwrap_or(false));
+    let out = ui
+        .scope(|ui| {
+            ui.spacing_mut().scroll.bar_outer_margin = BAR_INSET;
+            egui::ScrollArea::vertical()
+                .id_salt(id)
+                .max_height(max_height)
+                // A scrolling body takes all of `max_height`, whatever size its area had last
+                // frame.
+                .min_scrolled_height(max_height)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    let r = add(ui);
+                    if overflowed {
+                        ui.add_space(SCROLL_END_ROOM);
+                    }
+                    r
+                })
+        })
+        .inner;
+    let overflows = out.content_size.y > out.inner_rect.height() + 0.5;
+    if overflows != overflowed {
+        ui.data_mut(|d| d.insert_temp(overflow_key, overflows));
+        ui.ctx().request_repaint();
+    }
+    paint::scroll_fade(ui, &out, ground);
+    out
 }
 
 /// Everything a floating surface of `layer` paints at `rect`, bottom first: the `Floating`
@@ -148,6 +214,23 @@ pub fn floating<R>(
     let shapes = surface_shapes(ui.painter(), r.response.rect, layer);
     ui.painter().set(slot, Shape::Vec(shapes));
     InnerResponse::new(r.inner, r.response)
+}
+
+/// The room a modal card (a dialog, the settings screen) may fill: the window inside `XL` at the
+/// sides, below the title bar's tab strip and above the status bar, `SM` clear of each, so the
+/// card never covers the tab strip or the status line however small the window.
+pub fn modal_room(ctx: &Context) -> Rect {
+    let m = theme::metrics();
+    let screen = ctx.content_rect();
+    let top = (screen.top() + m.tab_strip_height + theme::SM).min(screen.center().y);
+    let bottom = (screen.bottom() - m.status_bar_height - theme::SM).max(top);
+    Rect::from_min_max(
+        pos2(screen.left() + theme::XL, top),
+        pos2(
+            (screen.right() - theme::XL).max(screen.left() + theme::XL),
+            bottom,
+        ),
+    )
 }
 
 /// The scrim behind dialogs, at `alpha` of its strength (its fade).
@@ -268,6 +351,21 @@ pub(crate) fn transform_since(ctx: &Context, layer: LayerId, start: ShapeIdx, tf
         let end = list.next_idx();
         list.transform_range(start, end, tf);
     });
+}
+
+/// Transforms the shapes painted on `layer` from `start` up to (not including) `end`: one card
+/// of several laid out in a row or a stack.
+pub(crate) fn transform_range(
+    ctx: &Context,
+    layer: LayerId,
+    start: ShapeIdx,
+    end: ShapeIdx,
+    tf: TSTransform,
+) {
+    if tf == TSTransform::IDENTITY {
+        return;
+    }
+    ctx.graphics_mut(|g| g.entry(layer).transform_range(start, end, tf));
 }
 
 /// How a closed layer leaves: fade over `seconds` while its moving part scales towards `scale`
@@ -702,11 +800,8 @@ impl<'a> Popover<'a> {
         self.open = Some(open);
         self
     }
-    /// Shows it with forced states (`OPEN` keeps it open; the gallery and tests only).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the kit's own tests force it open")
-    )]
+    /// Shows it with forced states (`OPEN` keeps it open; the kit's tests only).
+    #[cfg(test)]
     pub(crate) fn force(mut self, force: ForceState) -> Self {
         self.force = Some(force);
         self
@@ -807,14 +902,12 @@ pub(crate) fn popup_origin(rect: Rect, anchor: Rect) -> (Pos2, Vec2) {
 
 // ---------------------------------------------------------------------------------- dialog
 
-/// A dialog's width: confirmations, forms, or wide content (spec 2.5).
+/// A dialog's width: confirmations or forms (spec 2.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DialogWidth {
     #[default]
     Confirm,
     Form,
-    #[expect(dead_code, reason = "used by the view migration")]
-    Wide,
 }
 
 impl DialogWidth {
@@ -823,7 +916,6 @@ impl DialogWidth {
         match self {
             Self::Confirm => m.dialog_width,
             Self::Form => m.dialog_width_form,
-            Self::Wide => m.dialog_width_wide,
         }
     }
 }
@@ -1028,7 +1120,11 @@ impl<'a> Dialog<'a> {
         }
         let e = Entrance::of(ctx, id, motion::SLOW, motion::SLOW, false, None);
         let fade = e.fade;
-        let max_h = (screen.height() - DIALOG_MARGIN).max(120.0);
+        // Centred on the window, as tall as fits between the tab strip and the status bar.
+        let room = modal_room(ctx);
+        let max_h = (2.0 * (screen.center().y - room.top()).min(room.bottom() - screen.center().y))
+            .min(screen.height() - DIALOG_MARGIN)
+            .max(120.0);
         let modal = egui::Modal::new(id.with("modal"))
             .backdrop_color(theme::palette(ctx).scrim.gamma_multiply(fade))
             .frame(Frame::NONE)
@@ -1183,11 +1279,12 @@ impl<'a> Dialog<'a> {
                     let room = (max_h - 2.0 * pad - used - footer_h - m.dialog_gap).max(48.0);
                     let has_body = description.is_some() || body.is_some();
                     let scrolled = if has_body {
-                        let out = egui::ScrollArea::vertical()
-                            .id_salt(id.with("body"))
-                            .max_height(room)
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
+                        let out = scroll_body(
+                            ui,
+                            id.with("body"),
+                            room,
+                            ground(&ctx, Layer::Dialog),
+                            |ui| {
                                 ui.spacing_mut().item_spacing.y = m.dialog_gap;
                                 if let Some(d) = &description {
                                     ui.add(
@@ -1203,7 +1300,8 @@ impl<'a> Dialog<'a> {
                                 if let Some(b) = body {
                                     b(ui);
                                 }
-                            });
+                            },
+                        );
                         out.content_size.y > out.inner_rect.height() + 0.5
                     } else {
                         false
@@ -1229,14 +1327,41 @@ impl<'a> Dialog<'a> {
                             p.text_faint,
                         );
                     }
+                    // The buttons sit at the right but are made left to right, Cancel first,
+                    // so Tab meets them in reading order (the row is placed by its width last
+                    // frame).
+                    let width_key = id.with("kit-footer-width");
+                    let last_w: f32 = ctx.data(|d| d.get_temp(width_key)).unwrap_or(0.0);
+                    let slot = Rect::from_min_max(
+                        pos2((row.right() - last_w).max(row.left()), row.top()),
+                        row.max,
+                    );
                     let mut cancel_focus = false;
-                    ui.scope_builder(
+                    let mut cancel_id = None;
+                    let mut confirm_id = None;
+                    let buttons = ui.scope_builder(
                         UiBuilder::new()
-                            .max_rect(row)
-                            .layout(Layout::right_to_left(Align::Center)),
+                            .max_rect(slot)
+                            .layout(Layout::left_to_right(Align::Center)),
                         |ui| {
                             ui.spacing_mut().item_spacing.x = theme::SM;
-                            let confirm_id = if let Some(label) = &footer.confirm {
+                            if let Some(label) = &footer.cancel {
+                                let b = Button::new(label.as_str())
+                                    .secondary()
+                                    .size(Size::Md)
+                                    .id_salt(id.with("cancel"));
+                                let forced = force.filter(|f| f.focus && destructive);
+                                let r = match forced {
+                                    Some(f) => b.show_forced(ui, f),
+                                    None => b.show(ui),
+                                };
+                                if r.clicked() {
+                                    result = DialogResult::Cancel;
+                                }
+                                cancel_focus = r.has_focus();
+                                cancel_id = Some(r.id);
+                            }
+                            if let Some(label) = &footer.confirm {
                                 let mut b = Button::new(label.as_str())
                                     .size(Size::Md)
                                     .enabled(footer.confirm_enabled)
@@ -1263,51 +1388,32 @@ impl<'a> Dialog<'a> {
                                 if r.clicked() {
                                     result = DialogResult::Confirm;
                                 }
-                                Some(r.id)
-                            } else {
-                                None
-                            };
-                            if let Some(label) = &footer.cancel {
-                                let b = Button::new(label.as_str())
-                                    .secondary()
-                                    .size(Size::Md)
-                                    .id_salt(id.with("cancel"));
-                                let forced = force.filter(|f| f.focus && destructive);
-                                let r = match forced {
-                                    Some(f) => b.show_forced(ui, f),
-                                    None => b.show(ui),
-                                };
-                                if r.clicked() {
-                                    result = DialogResult::Cancel;
-                                }
-                                cancel_focus = r.has_focus();
-                                if fresh {
-                                    let want = initial_focus.unwrap_or(if footer.neutral {
-                                        InitialFocus::Body
-                                    } else if destructive {
-                                        InitialFocus::Cancel
-                                    } else {
-                                        InitialFocus::Confirm
-                                    });
-                                    match (want, confirm_id) {
-                                        (InitialFocus::Cancel, _)
-                                        | (InitialFocus::Confirm, None) => {
-                                            r.request_focus();
-                                        }
-                                        (InitialFocus::Confirm, Some(c)) => {
-                                            ctx.memory_mut(|m| m.request_focus(c));
-                                        }
-                                        (InitialFocus::Body, _) => {}
-                                    }
-                                }
-                            } else if fresh
-                                && let Some(c) = confirm_id
-                                && initial_focus != Some(InitialFocus::Body)
-                            {
-                                ctx.memory_mut(|m| m.request_focus(c));
+                                confirm_id = Some(r.id);
                             }
                         },
                     );
+                    let width = buttons.response.rect.width();
+                    if (width - last_w).abs() > 0.5 {
+                        ctx.data_mut(|d| d.insert_temp(width_key, width));
+                        ctx.request_repaint();
+                    }
+                    if fresh {
+                        let want = initial_focus.unwrap_or(if footer.neutral {
+                            InitialFocus::Body
+                        } else if destructive {
+                            InitialFocus::Cancel
+                        } else {
+                            InitialFocus::Confirm
+                        });
+                        let target = match want {
+                            InitialFocus::Cancel => cancel_id.or(confirm_id),
+                            InitialFocus::Confirm => confirm_id.or(cancel_id),
+                            InitialFocus::Body => None,
+                        };
+                        if let Some(t) = target {
+                            ctx.memory_mut(|m| m.request_focus(t));
+                        }
+                    }
                     if result == DialogResult::Open
                         && force.is_none()
                         && !destructive
@@ -1996,5 +2102,191 @@ mod tests {
             });
         }
         assert!(shown);
+    }
+
+    #[test]
+    fn a_scrolling_body_fades_where_it_hides_more_and_ends_clear_of_the_edge() {
+        let ctx = context();
+        let ground = ground(&ctx, Layer::Dialog);
+        assert_eq!(
+            ground,
+            theme::surfaces(&ctx).overlay,
+            "opaque without glass"
+        );
+        let mut sizes = Vec::new();
+        let mut faded = false;
+        for _ in 0..3 {
+            let out = run(&ctx, Vec::new(), |ui| {
+                let o = scroll_body(ui, "body", 100.0, ground, |ui| {
+                    for i in 0..40 {
+                        ui.label(format!("line {i}"));
+                    }
+                });
+                sizes.push((o.content_size.y, o.inner_rect.height()));
+            });
+            let edge = ground.gamma_multiply(0.85);
+            faded = out.shapes.iter().any(|c| {
+                matches!(&c.shape, Shape::Mesh(m) if m.vertices.iter().any(|v| v.color == edge))
+            });
+        }
+        assert!(faded, "the bottom edge fades into the ground");
+        assert_eq!(sizes[2].1, 100.0, "a scrolling body takes all its room");
+        // The room, plus the item gap egui puts before any space.
+        let gap = ctx.global_style().spacing.item_spacing.y;
+        assert_eq!(
+            sizes[2].0 - sizes[0].0,
+            SCROLL_END_ROOM + gap,
+            "room after the last line once it overflows: {sizes:?}"
+        );
+        // A body that fits keeps its own height and fades nowhere.
+        let mut fit = Vec::new();
+        for _ in 0..3 {
+            let out = run(&ctx, Vec::new(), |ui| {
+                let o = scroll_body(ui, "short", 100.0, ground, |ui| {
+                    ui.label("one line");
+                });
+                fit.push(o.content_size.y);
+            });
+            assert!(!out.shapes.iter().any(|c| matches!(c.shape, Shape::Mesh(_))));
+        }
+        assert_eq!(fit[0], fit[2]);
+    }
+
+    #[test]
+    fn a_tall_dialog_keeps_clear_of_the_tab_strip_and_the_status_bar() {
+        let ctx = context();
+        let m = theme::metrics();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1024.0, 520.0));
+        let mut card = Rect::NOTHING;
+        for frame in 0..4 {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    time: Some(f64::from(frame)),
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = Dialog::new("tall")
+                        .title("A long list")
+                        .body(|ui| {
+                            for i in 0..80 {
+                                ui.label(format!("line {i}"));
+                            }
+                        })
+                        .footer(|f| {
+                            f.cancel().confirm("Done");
+                        })
+                        .show(ui.ctx());
+                },
+            );
+            out.textures_delta.clear();
+            for c in &out.shapes {
+                if let Shape::Vec(v) = &c.shape {
+                    for s in v {
+                        if let Shape::Rect(r) = s
+                            && r.stroke.width > 0.0
+                            && r.corner_radius == CornerRadius::same(m.radius_lg)
+                        {
+                            card = r.rect;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(card.is_positive(), "the card was painted");
+        assert!(card.top() >= m.tab_strip_height, "{card:?}");
+        assert!(
+            card.bottom() <= screen.bottom() - m.status_bar_height,
+            "{card:?}"
+        );
+    }
+
+    #[test]
+    fn light_themes_get_the_dark_opaque_tooltip() {
+        for id in [theme::ThemeId::Daylight, theme::ThemeId::Paper] {
+            let ctx = Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, id, theme::Appearance::STILL);
+            let s = theme::surfaces(&ctx);
+            let p = theme::palette(&ctx);
+            assert!(!p.dark);
+            assert_eq!(s.tooltip.top.a(), 255, "opaque");
+            assert!(
+                theme::contrast(s.tooltip.top, Color32::BLACK)
+                    < theme::contrast(s.tooltip.top, Color32::WHITE),
+                "dark on a light theme"
+            );
+            assert!(
+                theme::contrast(p.on_tooltip, s.tooltip.top) >= 4.5,
+                "readable"
+            );
+            let out = run(&ctx, Vec::new(), |ui| {
+                tooltip_body(ui, "Fetch from all remotes", None, None);
+            });
+            let fills: Vec<Color32> = out
+                .shapes
+                .iter()
+                .flat_map(|c| match &c.shape {
+                    Shape::Vec(v) => v.clone(),
+                    other => vec![other.clone()],
+                })
+                .filter_map(|sh| match sh {
+                    Shape::Rect(r) if r.fill != Color32::TRANSPARENT => Some(r.fill),
+                    _ => None,
+                })
+                .collect();
+            assert!(fills.contains(&s.tooltip.top), "{id:?} {fills:?}");
+        }
+    }
+
+    #[test]
+    fn a_choice_footer_takes_focus_in_reading_order() {
+        let ctx = context();
+        let mut texts: Vec<(String, Rect)> = Vec::new();
+        let mut focused = Vec::new();
+        for frame in 0..6 {
+            let events = if frame >= 3 {
+                key(Key::Tab)
+            } else {
+                Vec::new()
+            };
+            let out = run(&ctx, events, |ui| {
+                let _ = Dialog::new("consent")
+                    .title("Send crash reports?")
+                    .footer(|f| {
+                        f.choice("Send crash reports", "Don't send");
+                    })
+                    .show(ui.ctx());
+            });
+            texts = out
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Text(t) => Some((t.galley.text().to_owned(), t.visual_bounding_rect())),
+                    _ => None,
+                })
+                .collect();
+            if frame >= 3
+                && let Some(id) = ctx.memory(egui::Memory::focused)
+                && let Some(r) = ctx.read_response(id)
+            {
+                focused.push(r.rect);
+            }
+        }
+        let at = |label: &str| {
+            texts
+                .iter()
+                .find(|(t, _)| t == label)
+                .map(|(_, r)| r.center())
+                .expect(label)
+        };
+        let (send, dont) = (at("Send crash reports"), at("Don't send"));
+        assert!(dont.x < send.x, "Don't send is on the left");
+        assert!(focused.len() >= 2, "{focused:?}");
+        assert!(
+            focused[0].contains(dont),
+            "Tab reaches the left answer first: {focused:?}"
+        );
+        assert!(focused[1].contains(send), "then the right one: {focused:?}");
     }
 }

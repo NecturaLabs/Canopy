@@ -420,6 +420,7 @@ pub struct Card {
     enabled: bool,
     ring: Option<Tone>,
     width: Option<f32>,
+    compact: bool,
     label: Option<String>,
     tooltip: Option<String>,
     disabled_reason: Option<String>,
@@ -435,6 +436,7 @@ impl Card {
             enabled: true,
             ring: None,
             width: None,
+            compact: false,
             label: None,
             tooltip: None,
             disabled_reason: None,
@@ -462,6 +464,12 @@ impl Card {
     /// The card's outer width (default: what its content needs).
     pub fn width(mut self, width: f32) -> Self {
         self.width = Some(width);
+        self
+    }
+    /// Tight padding (`SM` instead of `card_pad`) for small cards that hold a picture more than
+    /// text: the settings theme cards, swatches.
+    pub fn compact(mut self, compact: bool) -> Self {
+        self.compact = compact;
         self
     }
     /// The AccessKit name of an interactive card.
@@ -504,7 +512,7 @@ impl Card {
         if let Some(id) = self.id_salt {
             builder = builder.id_salt(id);
         }
-        let pad = m.card_pad;
+        let pad = if self.compact { theme::SM } else { m.card_pad };
         let inner = ui.scope_builder(builder, |ui| {
             if !enabled && ui.is_enabled() && self.interactive {
                 ui.multiply_opacity(theme::DISABLED_ALPHA);
@@ -657,9 +665,82 @@ fn tone_glyph(tone: Tone) -> &'static str {
     }
 }
 
+/// One action of a [`Banner`] or a [`Callout`]: a ghost button with an optional glyph, which may
+/// be unavailable for a reason its tooltip gives ("Resolve the 2 conflicts first").
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+pub struct NoticeAction {
+    label: String,
+    icon: Option<String>,
+    icon_tone: Option<Tone>,
+    enabled: bool,
+    disabled_reason: Option<String>,
+}
+
+impl NoticeAction {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            icon: None,
+            icon_tone: None,
+            enabled: true,
+            disabled_reason: None,
+        }
+    }
+    pub fn icon(mut self, glyph: &str) -> Self {
+        self.icon = Some(glyph.to_owned());
+        self
+    }
+    /// The glyph in a tone's colour (`Danger` for "Abort merge…").
+    pub fn icon_tone(mut self, tone: Tone) -> Self {
+        self.icon_tone = Some(tone);
+        self
+    }
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+    /// Why it is unavailable, shown on hover while disabled.
+    pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
+        self.disabled_reason = Some(text.into());
+        self
+    }
+    /// The ghost button, `Sm`, salted by `salt`.
+    fn show(&self, ui: &mut Ui, salt: Id) -> Response {
+        let mut b = Button::new(self.label.clone())
+            .ghost()
+            .size(Size::Sm)
+            .enabled(self.enabled)
+            .id_salt(salt);
+        if let Some(g) = &self.icon {
+            b = b.icon(g);
+        }
+        if let Some(t) = self.icon_tone {
+            b = b.icon_tone(t);
+        }
+        if let Some(r) = &self.disabled_reason {
+            b = b.disabled_reason(r.as_str());
+        }
+        b.show(ui)
+    }
+}
+
+impl From<&str> for NoticeAction {
+    fn from(label: &str) -> Self {
+        Self::new(label)
+    }
+}
+
+impl From<String> for NoticeAction {
+    fn from(label: String) -> Self {
+        Self::new(label)
+    }
+}
+
 /// A full-width notice at the top of a view (a merge or rebase in progress): the tone's tint
-/// over the chrome, a seam in the tone below, icon, title, body and up to two ghost actions. It
-/// grows in over `BASE` when it appears.
+/// over the chrome, a seam in the tone below, icon, title, body and up to two ghost actions at
+/// the right, each of which may be disabled with a reason. It grows in over `BASE` when it
+/// appears. Every view shows a repository state with this one layout.
 #[derive(Debug, Clone)]
 #[must_use = "call .show(ui)"]
 pub struct Banner {
@@ -667,7 +748,7 @@ pub struct Banner {
     title: String,
     body: Option<String>,
     icon: Option<String>,
-    actions: Vec<String>,
+    actions: Vec<NoticeAction>,
     id_salt: Id,
     force: Option<ForceState>,
 }
@@ -693,10 +774,11 @@ impl Banner {
         self.icon = Some(glyph.to_owned());
         self
     }
-    /// An action button at the right (at most two; the first is the main one).
-    pub fn action(mut self, label: impl Into<String>) -> Self {
+    /// An action button at the right (at most two; the first is the main one, rightmost): a
+    /// label, or a [`NoticeAction`] with a glyph or a reason it is unavailable.
+    pub fn action(mut self, action: impl Into<NoticeAction>) -> Self {
         if self.actions.len() < 2 {
-            self.actions.push(label.into());
+            self.actions.push(action.into());
         }
         self
     }
@@ -761,12 +843,8 @@ impl Banner {
                     .layout(Layout::right_to_left(Align::Center)),
             );
             child.set_clip_rect(rect.intersect(ui.clip_rect()));
-            for (i, label) in self.actions.iter().enumerate().rev() {
-                let b = Button::new(label.clone())
-                    .ghost()
-                    .size(Size::Sm)
-                    .id_salt((self.id_salt, i));
-                if b.show(&mut child).clicked() {
+            for (i, action) in self.actions.iter().enumerate() {
+                if action.show(&mut child, self.id_salt.with(i)).clicked() {
                     clicked = Some(i);
                 }
             }
@@ -796,8 +874,8 @@ impl Banner {
 
 // ------------------------------------------------------------------------------------ Callout
 
-/// An inline note in a pane or dialog: the tone's tint, an icon, optional title and wrapped
-/// text. No side bar.
+/// An inline note in a pane or dialog: the tone's tint, an icon, optional title, wrapped text and
+/// up to two ghost actions under it, their labels in line with the text. No side bar.
 #[derive(Debug, Clone)]
 #[must_use = "call .show(ui)"]
 pub struct Callout {
@@ -805,6 +883,8 @@ pub struct Callout {
     text: String,
     title: Option<String>,
     icon: Option<String>,
+    actions: Vec<NoticeAction>,
+    id_salt: Option<Id>,
 }
 
 impl Callout {
@@ -814,7 +894,20 @@ impl Callout {
             text: text.into(),
             title: None,
             icon: None,
+            actions: Vec::new(),
+            id_salt: None,
         }
+    }
+    /// An action under the text (at most two; the first is the main one, leftmost).
+    pub fn action(mut self, action: impl Into<NoticeAction>) -> Self {
+        if self.actions.len() < 2 {
+            self.actions.push(action.into());
+        }
+        self
+    }
+    pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        self.id_salt = Some(Id::new(salt));
+        self
     }
     pub fn title(mut self, title: impl Into<String>) -> Self {
         self.title = Some(title.into());
@@ -826,6 +919,11 @@ impl Callout {
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
+        self.show_actions(ui).response
+    }
+
+    /// Shows the callout; the value is the index of the action clicked.
+    pub fn show_actions(self, ui: &mut Ui) -> KitResponse<Option<usize>> {
         let p = theme::palette(ui.ctx());
         let m = theme::metrics();
         let tone_c = self.tone.color(p);
@@ -833,6 +931,10 @@ impl Callout {
             .icon
             .clone()
             .unwrap_or_else(|| tone_glyph(self.tone).to_owned());
+        let salt = self
+            .id_salt
+            .unwrap_or_else(|| Id::new(("kit-callout", &self.text)));
+        let mut clicked = None;
         let response = egui::Frame::new()
             .fill(self.tone.tint(p))
             .corner_radius(CornerRadius::same(m.radius))
@@ -858,6 +960,26 @@ impl Callout {
                             )
                             .wrap(),
                         );
+                        if !self.actions.is_empty() {
+                            ui.add_space(theme::XS);
+                            // Ghost buttons pulled left so their labels line up with the text.
+                            let mut row = ui.available_rect_before_wrap();
+                            row.min.x -= m.button_pad_x_sm - 2.0;
+                            row.set_height(Size::Sm.height());
+                            ui.scope_builder(
+                                UiBuilder::new()
+                                    .max_rect(row)
+                                    .layout(Layout::left_to_right(Align::Center)),
+                                |ui| {
+                                    ui.spacing_mut().item_spacing.x = 2.0;
+                                    for (i, action) in self.actions.iter().enumerate() {
+                                        if action.show(ui, salt.with(i)).clicked() {
+                                            clicked = Some(i);
+                                        }
+                                    }
+                                },
+                            );
+                        }
                     });
                 });
             })
@@ -867,7 +989,10 @@ impl Callout {
             None => self.text.clone(),
         };
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &spoken));
-        response
+        KitResponse {
+            response,
+            value: clicked,
+        }
     }
 }
 
@@ -1194,33 +1319,83 @@ pub(crate) fn gallery(ui: &mut Ui) {
             .body("A merge is in progress on main.")
             .id_salt(("gallery-banner", tone));
         if tone == Tone::Warning {
-            b = b.action("Continue").action("Abort");
+            b = b
+                .action(
+                    NoticeAction::new("Continue")
+                        .enabled(false)
+                        .disabled_reason("Resolve the 2 conflicts first"),
+                )
+                .action(
+                    NoticeAction::new("Abort merge…")
+                        .icon(icon::X_CIRCLE)
+                        .icon_tone(Tone::Danger),
+                );
         }
         b.show(ui);
     }
-    small(ui, "Banner growing in (0.5), custom icon");
-    Banner::new(Tone::Accent, "Rebasing feature/auth")
-        .icon(icon::GIT_PULL_REQUEST)
-        .body("Step 2 of 5")
-        .id_salt("gallery-banner-grow")
-        .force(ForceState {
-            progress: Some(0.5),
-            ..ForceState::default()
-        })
-        .show(ui);
+    small(
+        ui,
+        "Banner growing in (0.5, its full height outlined), custom icon",
+    );
+    {
+        // The half-grown banner sits in a slot of its full height, outlined, so it reads as
+        // growing rather than cut by the caption above.
+        let full = m.pane_header_height;
+        let (slot, _) = ui.allocate_exact_size(vec2(ui.available_width(), full), Sense::hover());
+        let s = theme::surfaces(ui.ctx());
+        ui.painter().rect_stroke(
+            slot,
+            CornerRadius::ZERO,
+            Stroke::new(paint::SEAM, s.border),
+            egui::StrokeKind::Inside,
+        );
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .max_rect(slot)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        let _ = Banner::new(Tone::Accent, "Rebasing feature/auth")
+            .icon(icon::GIT_PULL_REQUEST)
+            .body("Step 2 of 5")
+            .id_salt("gallery-banner-grow")
+            .force(ForceState {
+                progress: Some(0.5),
+                ..ForceState::default()
+            })
+            .show(&mut child);
+    }
     small(ui, "Callouts per tone");
     for tone in [Tone::Accent, Tone::Success, Tone::Warning, Tone::Danger] {
         let c = Callout::new(
             tone,
             "Canopy signs commits with the key your Git configuration names.",
         )
-        .title(tone.label());
-        if tone == Tone::Accent {
-            c.icon(icon::SEAL_CHECK).show(ui);
-        } else {
-            c.show(ui);
+        .title(tone.label())
+        .id_salt(("gallery-callout", tone));
+        match tone {
+            Tone::Accent => {
+                c.icon(icon::SEAL_CHECK).show(ui);
+            }
+            Tone::Warning => {
+                let _ = c
+                    .action("Open settings")
+                    .action(
+                        NoticeAction::new("Sign now")
+                            .enabled(false)
+                            .disabled_reason("No signing key is set"),
+                    )
+                    .show_actions(ui);
+            }
+            _ => {
+                c.show(ui);
+            }
         }
     }
+    small(ui, "Compact card");
+    Card::new()
+        .compact(true)
+        .width(132.0)
+        .show(ui, |ui| card_body(ui, "Compact"));
     small(ui, "Inset box, skeleton rows");
     InsetBox::new().show(ui, |ui| {
         ui.label(

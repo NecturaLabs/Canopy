@@ -44,7 +44,7 @@ const ICON_GAP: f32 = 9.0;
 /// Least room between the label and the shortcut, caret or check.
 const TRAILING_GAP: f32 = 24.0;
 /// Heading row height.
-const HEADING_HEIGHT: f32 = 24.0;
+pub(crate) const HEADING_HEIGHT: f32 = 24.0;
 /// Room above and below a separator.
 const SEPARATOR_SPACE: f32 = 4.0;
 /// Letter spacing of headings, in em.
