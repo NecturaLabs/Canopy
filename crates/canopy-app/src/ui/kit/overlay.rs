@@ -2192,4 +2192,42 @@ mod tests {
             "{card:?}"
         );
     }
+
+    #[test]
+    fn light_themes_get_the_dark_opaque_tooltip() {
+        for id in [theme::ThemeId::Daylight, theme::ThemeId::Paper] {
+            let ctx = Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, id, theme::Appearance::STILL);
+            let s = theme::surfaces(&ctx);
+            let p = theme::palette(&ctx);
+            assert!(!p.dark);
+            assert_eq!(s.tooltip.top.a(), 255, "opaque");
+            assert!(
+                theme::contrast(s.tooltip.top, Color32::BLACK)
+                    < theme::contrast(s.tooltip.top, Color32::WHITE),
+                "dark on a light theme"
+            );
+            assert!(
+                theme::contrast(p.on_tooltip, s.tooltip.top) >= 4.5,
+                "readable"
+            );
+            let out = run(&ctx, Vec::new(), |ui| {
+                tooltip_body(ui, "Fetch from all remotes", None, None);
+            });
+            let fills: Vec<Color32> = out
+                .shapes
+                .iter()
+                .flat_map(|c| match &c.shape {
+                    Shape::Vec(v) => v.clone(),
+                    other => vec![other.clone()],
+                })
+                .filter_map(|sh| match sh {
+                    Shape::Rect(r) if r.fill != Color32::TRANSPARENT => Some(r.fill),
+                    _ => None,
+                })
+                .collect();
+            assert!(fills.contains(&s.tooltip.top), "{id:?} {fills:?}");
+        }
+    }
 }
