@@ -1266,7 +1266,7 @@ mod tests {
                 .show(ui)
                 .rect
         };
-        let mut rect = egui::Rect::NOTHING;
+        let mut rect = Rect::NOTHING;
         frame(&ctx, Vec::new(), |ui| rect = show(ui, &mut text));
         let nodes = spoken(&ctx, |ui| {
             show(ui, &mut text);
@@ -1276,7 +1276,7 @@ mod tests {
             "the toggle offers to show it"
         );
         let m = theme::metrics();
-        let at = egui::pos2(
+        let at = pos2(
             rect.right() - m.field_pad_x - Size::Xs.height() / 2.0,
             rect.center().y,
         );

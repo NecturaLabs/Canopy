@@ -51,12 +51,12 @@ impl IdentityWorker {
                 for job in jobs {
                     let event = match job {
                         Job::ReadRepo(path) => Event::Repo {
-                            result: identity::Identity::read(&path).map_err(|e| e.to_string()),
+                            result: Identity::read(&path).map_err(|e| e.to_string()),
                             path,
                         },
-                        Job::ReadGlobal => Event::Global(
-                            identity::Identity::read_global().map_err(|e| e.to_string()),
-                        ),
+                        Job::ReadGlobal => {
+                            Event::Global(Identity::read_global().map_err(|e| e.to_string()))
+                        }
                         Job::Set {
                             repo,
                             scope,

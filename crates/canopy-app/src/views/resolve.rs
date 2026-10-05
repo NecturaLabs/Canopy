@@ -941,11 +941,7 @@ mod tests {
     #[test]
     fn compact_resolver_code_never_paints_over_its_footer() {
         let ctx = context();
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let mut r = Resolver::new("f".into());
         r.reload(None, Ok(Arc::new(ConflictFile::parse(&text(1, 5)))));
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 200.0));

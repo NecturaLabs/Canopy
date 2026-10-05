@@ -315,13 +315,13 @@ impl CanopyApp {
             Some("toasts") => {
                 app.toasts.push(
                     &cc.egui_ctx,
-                    crate::ui::toast::ToastKind::Error,
+                    ToastKind::Error,
                     "Push failed",
                     "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
                 );
                 app.toasts.push(
                     &cc.egui_ctx,
-                    crate::ui::toast::ToastKind::Success,
+                    ToastKind::Success,
                     "Committed",
                     "docs: add API reference",
                 );
@@ -372,7 +372,7 @@ impl CanopyApp {
                 pending: false,
             }),
             Some("update-installed" | "update-running") => {
-                let available = crate::updater::Available {
+                let available = updater::Available {
                     build: 1001,
                     manifest: canopy_hosting::updates::UpdateManifest {
                         version: "1001".into(), notes: String::new(), pub_date: None,
@@ -380,13 +380,13 @@ impl CanopyApp {
                     },
                 };
                 app.updater.install = if launch.overlay.as_deref() == Some("update-installed") {
-                    crate::updater::InstallState::Done {
+                    updater::InstallState::Done {
                         build: 1001, installed: crate::selfupdate::Installed {
                             exe: Some("canopy".into()), notes: Vec::new(),
                         },
                     }
                 } else {
-                    crate::updater::InstallState::Running {
+                    updater::InstallState::Running {
                         build: 1001, phase: crate::selfupdate::Phase::Installing,
                     }
                 };
@@ -538,7 +538,7 @@ impl CanopyApp {
         for line in problems {
             let _ = writeln!(t, "{line}");
         }
-        let home = crate::settings::home_dir().display().to_string();
+        let home = settings::home_dir().display().to_string();
         crate::crash_reports::scrub_text(&t, &home)
     }
 

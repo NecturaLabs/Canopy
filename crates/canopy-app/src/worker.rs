@@ -430,7 +430,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     let diff_generation = Arc::new(AtomicU64::new(0));
     // The last diff sent. A refresh that finds the same content sends the same `Arc` again, so
     // the view keeps its layout and highlighting instead of rebuilding them on the UI thread.
-    let mut last_diff: Option<(DiffKey, Arc<canopy_core::FileDiff>)> = None;
+    let mut last_diff: Option<(DiffKey, Arc<FileDiff>)> = None;
     while let Ok(first) = jobs.recv() {
         // Coalesce queued refreshes: only the latest matters.
         let mut batch = vec![first];

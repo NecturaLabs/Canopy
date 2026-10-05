@@ -872,10 +872,7 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    vec2(1200.0, 100.0),
-                )),
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 100.0))),
                 ..Default::default()
             },
             |ui| {
@@ -918,7 +915,7 @@ mod tests {
     fn requests_without_a_forge_cannot_be_chosen() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 100.0));
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 100.0));
         let mut actions = Vec::new();
         for events in [Vec::new(), Vec::new()] {
             let mut out = ctx.run_ui(

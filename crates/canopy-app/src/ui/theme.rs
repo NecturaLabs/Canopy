@@ -31,7 +31,7 @@ pub const DISABLED_ALPHA: f32 = 0.42;
 /// A disabled icon-only button's opacity.
 pub const DISABLED_ICON_ALPHA: f32 = 0.40;
 
-pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
+pub const MIN_WINDOW_SIZE: egui::Vec2 = vec2(900.0, 560.0);
 /// Shared control geometry, in logical points before interface zoom.
 pub const CONTROL_INSET: f32 = 2.0;
 /// Tallest raw-output viewport of a notification card.

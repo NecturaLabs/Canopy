@@ -468,7 +468,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                                         .as_ref()
                                         .is_some_and(|s| s.hunk == h && s.lines.contains(&l));
                                     let clip = ui.painter().clip_rect().intersect(r);
-                                    let mut cell = ui.new_child(egui::UiBuilder::new().max_rect(r));
+                                    let mut cell = ui.new_child(UiBuilder::new().max_rect(r));
                                     cell.set_clip_rect(clip);
                                     if let Some(m) = line_cell(
                                         &mut cell,
@@ -1284,11 +1284,7 @@ mod tests {
     fn themed() -> egui::Context {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         ctx
     }
 
@@ -1513,7 +1509,7 @@ mod tests {
 
     #[test]
     fn code_job_colours_spans_and_expands_tabs() {
-        let syntax = crate::ui::theme::MIDNIGHT.syntax;
+        let syntax = theme::MIDNIGHT.syntax;
         let spans = [Span {
             start: 1,
             end: 3,

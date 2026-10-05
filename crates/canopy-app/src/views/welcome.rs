@@ -31,7 +31,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
         .show(ui, |ui| {
             // Sit the whole stack a little above the middle, from its height last frame; a tall
             // window otherwise leaves everything in its upper half.
-            let height_id = egui::Id::new("welcome-content-height");
+            let height_id = Id::new("welcome-content-height");
             let last: f32 = ui.ctx().data(|d| d.get_temp(height_id)).unwrap_or(0.0);
             let top = if rect.height() < 400.0 {
                 theme::XS
@@ -335,11 +335,7 @@ mod tests {
     fn quick_action_text_fits_a_minimum_zoomed_window() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let mut card_rect = egui::Rect::NOTHING;
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             card_rect = card(
@@ -372,7 +368,7 @@ mod tests {
         theme::apply(
             &ctx,
             theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::default(),
+            &theme::Appearance::default(),
         );
         let mut input = egui::RawInput::default();
         let mut repaint = std::time::Duration::ZERO;

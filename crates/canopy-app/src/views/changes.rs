@@ -1142,16 +1142,13 @@ mod tests {
         ctx: &egui::Context,
         tab: &mut RepoTab,
         pointer: Option<egui::Pos2>,
-    ) -> Vec<(String, egui::Rect)> {
+    ) -> Vec<(String, Rect)> {
         let mut texts = Vec::new();
         for _ in 0..3 {
             let events = pointer.map(egui::Event::PointerMoved).into_iter().collect();
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(960.0, 600.0),
-                    )),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(960.0, 600.0))),
                     events,
                     ..Default::default()
                 },
@@ -1176,11 +1173,7 @@ mod tests {
     fn every_row_offers_its_action_under_the_pointer() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
         let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
         let mut snap = unstaged_snapshot();
@@ -1198,7 +1191,7 @@ mod tests {
             .find(|(t, _)| t == "Stage all")
             .map(|(_, r)| r.max.x + theme::LG)
             .expect("painted list header");
-        let shown = |texts: &[(String, egui::Rect)], glyph: &str| {
+        let shown = |texts: &[(String, Rect)], glyph: &str| {
             texts
                 .iter()
                 .filter(|(t, r)| {
@@ -1219,7 +1212,7 @@ mod tests {
                 .iter()
                 .find(|(t, _)| t == name)
                 .expect("painted row name");
-            let pointer = egui::pos2(at.min.x + 20.0, at.center().y);
+            let pointer = pos2(at.min.x + 20.0, at.center().y);
             let hovered = painted_texts(&ctx, &mut tab, Some(pointer));
             assert!(
                 hovered
@@ -1227,7 +1220,7 @@ mod tests {
                     .any(|(t, r)| t == glyph && (r.center().y - at.center().y).abs() < 4.0),
                 "hovering {name} must show {glyph} on its row"
             );
-            painted_texts(&ctx, &mut tab, Some(egui::pos2(5.0, 595.0)));
+            painted_texts(&ctx, &mut tab, Some(pos2(5.0, 595.0)));
         }
     }
 
@@ -1235,17 +1228,13 @@ mod tests {
     fn compact_clean_summary_keeps_publish_reachable_by_scrolling() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let (worker, _, _) = crate::worker::Worker::detached();
         let tab = RepoTab::with_worker("fixture".into(), 100, Default::default(), worker);
         let snap = canopy_core::RepoSnapshot::default();
         let mut publish_visible = false;
         for frame in 0..40 {
-            let mut events = vec![egui::Event::PointerMoved(egui::pos2(180.0, 100.0))];
+            let mut events = vec![egui::Event::PointerMoved(pos2(180.0, 100.0))];
             if frame > 5 {
                 events.push(egui::Event::MouseWheel {
                     unit: egui::MouseWheelUnit::Point,
@@ -1256,10 +1245,7 @@ mod tests {
             }
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(360.0, 200.0),
-                    )),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(360.0, 200.0))),
                     events,
                     ..Default::default()
                 },
@@ -1289,11 +1275,7 @@ mod tests {
     fn the_composer_follows_a_short_list_and_pins_below_a_long_one() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
         let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
         let summary_y = |tab: &mut RepoTab| {
@@ -1379,11 +1361,7 @@ mod tests {
     fn wrapped_identity_notice_does_not_overlap_commit_fields() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         let dir = tempfile::tempdir().expect("temporary tab");
         let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
         let unusable = identity("", "", None, false);
@@ -1393,10 +1371,7 @@ mod tests {
         for _ in 0..3 {
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(562.5, 350.0),
-                    )),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(562.5, 350.0))),
                     ..Default::default()
                 },
                 |ui| {
@@ -1448,11 +1423,7 @@ mod tests {
         for size in [vec2(600.0, 375.0), vec2(960.0, 600.0), vec2(1440.0, 900.0)] {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
-            theme::apply(
-                &ctx,
-                theme::ThemeId::Midnight,
-                &crate::ui::theme::Appearance::STILL,
-            );
+            theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
             let dir = tempfile::tempdir().expect("temporary tab");
             let mut tab = RepoTab::new(dir.path().into(), &ctx, 100, Default::default());
             tab.snap = Some(std::sync::Arc::new(unstaged_snapshot()));
@@ -1460,7 +1431,7 @@ mod tests {
             for _ in 0..3 {
                 let mut output = ctx.run_ui(
                     egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, size)),
                         ..Default::default()
                     },
                     |ui| {

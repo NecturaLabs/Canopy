@@ -721,7 +721,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
                 .show(ui);
         },
     );
-    let system = match crate::ui::motion::system() {
+    let system = match motion::system() {
         Some(true) => "Your system asks for reduced motion.",
         Some(false) => "Your system asks for full motion.",
         None => "Your system did not say whether to reduce motion.",
@@ -1040,7 +1040,7 @@ fn in_use(ui: &mut Ui, field: &Field) {
 fn elide_middle(ui: &Ui, text: &str, font: FontId, max_width: f32) -> String {
     let width = |t: &str| {
         ui.painter()
-            .layout_no_wrap(t.to_owned(), font.clone(), egui::Color32::WHITE)
+            .layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE)
             .size()
             .x
     };
@@ -1844,9 +1844,7 @@ fn privacy(
                 .show(ui)
                 .clicked()
             {
-                actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Legal(
-                    Document::Privacy,
-                )));
+                actions.push(Action::OpenDialog(Dialog::Legal(Document::Privacy)));
             }
         },
     );
@@ -1864,9 +1862,7 @@ fn privacy(
                 .show(ui)
                 .clicked()
             {
-                actions.push(Action::OpenDialog(crate::views::dialogs::Dialog::Legal(
-                    Document::Terms,
-                )));
+                actions.push(Action::OpenDialog(Dialog::Legal(Document::Terms)));
             }
         },
     );
@@ -2004,10 +2000,7 @@ mod tests {
         let mut row_bottom = 0.0;
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    vec2(500.0, 800.0),
-                )),
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(500.0, 800.0))),
                 ..Default::default()
             },
             |ui| {
@@ -2042,14 +2035,11 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         let mut settings = Settings::default();
         let mut draft = None;
-        let mut rect = egui::Rect::NOTHING;
+        let mut rect = Rect::NOTHING;
         let mut draw = |events| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(600.0, 400.0),
-                    )),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(600.0, 400.0))),
                     events,
                     ..Default::default()
                 },
@@ -2092,7 +2082,7 @@ mod tests {
         let mut time = 1.0;
         let mut draw = |events| {
             time += 0.05;
-            let mut rect = egui::Rect::NOTHING;
+            let mut rect = Rect::NOTHING;
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     time: Some(time),
@@ -2146,12 +2136,8 @@ mod tests {
     fn settings_fit_a_compact_zoomed_window() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
-        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(562.5, 350.0));
+        theme::apply(&ctx, ThemeId::Midnight, &theme::Appearance::STILL);
+        let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(562.5, 350.0));
         let mut settings = Settings::default();
         let mut tokens = TokenStore::default();
         for section in Section::ALL {
@@ -2273,7 +2259,7 @@ mod tests {
                 assert!(cut.contains('…') && cut.starts_with("From") && cut.ends_with("gitconfig"));
                 let width = ui
                     .painter()
-                    .layout_no_wrap(cut, font.clone(), egui::Color32::WHITE)
+                    .layout_no_wrap(cut, font.clone(), Color32::WHITE)
                     .size()
                     .x;
                 assert!(width <= 200.0, "{width}");
@@ -2301,7 +2287,7 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         let mut settings = Settings::default();
         let mut screen = SettingsScreen::default();
-        let repo = std::path::PathBuf::from("/repo");
+        let repo = PathBuf::from("/repo");
         let mut draw = |screen: &mut SettingsScreen, repo: Option<&Path>, id: &Identity| {
             let mut actions = Vec::new();
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {

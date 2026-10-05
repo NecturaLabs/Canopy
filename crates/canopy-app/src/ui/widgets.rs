@@ -202,11 +202,7 @@ mod tests {
             for enabled in [false, true] {
                 let ctx = egui::Context::default();
                 crate::ui::fonts::install(&ctx);
-                theme::apply(
-                    &ctx,
-                    theme::ThemeId::Midnight,
-                    &crate::ui::theme::Appearance::STILL,
-                );
+                theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
                 let mut checked = false;
                 let mut activated = false;
                 let mut focused = false;
@@ -230,19 +226,13 @@ mod tests {
                         |ui| {
                             ui.add_enabled_ui(enabled, |ui| {
                                 let response = match kind {
-                                    0 => crate::ui::kit::toggle::Checkbox::new(
-                                        &mut checked,
-                                        "Checkbox",
-                                    )
-                                    .show(ui),
+                                    0 => kit::toggle::Checkbox::new(&mut checked, "Checkbox")
+                                        .show(ui),
                                     1 => primary_button(ui, "Primary", true, 120.0),
-                                    2 => crate::ui::kit::ToolButton::new(icon::CHECK, "Tool")
+                                    2 => kit::ToolButton::new(icon::CHECK, "Tool")
                                         .tooltip("Tool action")
                                         .show(ui),
-                                    _ => {
-                                        crate::ui::kit::IconButton::new(icon::CHECK, "Icon action")
-                                            .show(ui)
-                                    }
+                                    _ => kit::IconButton::new(icon::CHECK, "Icon action").show(ui),
                                 };
                                 if frame == 0 && enabled {
                                     response.request_focus();
@@ -321,11 +311,7 @@ mod tests {
     fn disabled_primary_controls_do_not_use_the_enabled_fill() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(
-            &ctx,
-            theme::ThemeId::Midnight,
-            &crate::ui::theme::Appearance::STILL,
-        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, &theme::Appearance::STILL);
         for frame in 0..3 {
             let mut button_rect = egui::Rect::NOTHING;
             let output = ctx.run_ui(Default::default(), |ui| {
@@ -360,8 +346,7 @@ mod tests {
         let mut value = 0;
         for frame in 0..2 {
             let mut output = ctx.run_ui(Default::default(), |ui| {
-                crate::ui::kit::choice::Segmented::new(&mut value, &[(0, "One"), (1, "Two")])
-                    .show(ui);
+                kit::choice::Segmented::new(&mut value, &[(0, "One"), (1, "Two")]).show(ui);
             });
             output.textures_delta.clear();
             if frame == 0 {

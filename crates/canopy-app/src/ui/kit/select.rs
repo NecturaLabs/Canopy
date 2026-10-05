@@ -726,7 +726,7 @@ mod tests {
             show(ui, &mut v);
         });
         let m = theme::metrics();
-        let row = egui::pos2(
+        let row = pos2(
             rect.center().x,
             rect.bottom() + LIST_GAP + m.menu_pad + 2.5 * m.menu_item_height,
         );

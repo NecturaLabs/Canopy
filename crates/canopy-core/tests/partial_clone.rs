@@ -996,7 +996,7 @@ fn remote_named_like_an_option_is_refused_and_never_run() {
 }
 
 /// `A\tpath`-style lines for a status list, sorted, to compare with `git diff --name-status`.
-fn name_status(files: &[canopy_core::FileEntry]) -> Vec<String> {
+fn name_status(files: &[FileEntry]) -> Vec<String> {
     let mut out: Vec<String> = files
         .iter()
         .map(|f| {

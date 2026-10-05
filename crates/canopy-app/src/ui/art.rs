@@ -63,7 +63,7 @@ pub fn empty_error() -> Art {
 }
 
 /// A soft radial halo: `color` at the centre fading to nothing at `radius`.
-fn radial_halo(painter: &egui::Painter, center: Pos2, radius: f32, color: egui::Color32) {
+fn radial_halo(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
     const SEGMENTS: u32 = 64;
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(center, color);
@@ -71,7 +71,7 @@ fn radial_halo(painter: &egui::Painter, center: Pos2, radius: f32, color: egui::
         let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
         mesh.colored_vertex(
             center + vec2(a.cos(), a.sin()) * radius,
-            egui::Color32::TRANSPARENT,
+            Color32::TRANSPARENT,
         );
     }
     for i in 1..=SEGMENTS {

@@ -230,7 +230,7 @@ fn sample() -> Vec<GraphRow> {
         (13, vec![14]),
         (14, vec![]),
     ];
-    let ids: Vec<(canopy_core::Oid, Vec<canopy_core::Oid>)> = graph
+    let ids: Vec<(Oid, Vec<Oid>)> = graph
         .iter()
         .map(|(id, parents)| (oid(*id), parents.iter().map(|p| oid(*p)).collect()))
         .collect();

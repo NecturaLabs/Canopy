@@ -151,7 +151,7 @@ pub fn floating<R>(
 }
 
 /// The scrim behind dialogs, at `alpha` of its strength (its fade).
-pub fn scrim(painter: &egui::Painter, rect: Rect, alpha: f32) {
+pub fn scrim(painter: &Painter, rect: Rect, alpha: f32) {
     let p = theme::palette(painter.ctx());
     painter.rect_filled(rect, CornerRadius::ZERO, p.scrim.gamma_multiply(alpha));
 }

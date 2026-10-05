@@ -1598,7 +1598,7 @@ mod tests {
         let (worker, events, _jobs) = Worker::detached();
         tab.worker = worker;
         let key = DiffKey {
-            source: canopy_core::DiffSource::Unstaged,
+            source: DiffSource::Unstaged,
             path: "a.rs".into(),
             old_path: None,
             conflicted: false,
@@ -1608,14 +1608,14 @@ mod tests {
         };
         tab.pending_diff = Some(key.clone());
         let diff = |additions| {
-            Arc::new(canopy_core::FileDiff {
+            Arc::new(FileDiff {
                 path: "a.rs".into(),
                 additions,
                 ..Default::default()
             })
         };
         let (old, new) = (diff(1), diff(2));
-        let highlights = Arc::new(crate::highlight::Highlights {
+        let highlights = Arc::new(Highlights {
             lines: Vec::new(),
             language: "Rust".into(),
         });
@@ -1905,7 +1905,7 @@ mod tests {
         tab.file = Some(open_unstaged_file());
         tab.downloads_refused = Some("origin".into());
         let key = DiffKey {
-            source: canopy_core::DiffSource::Unstaged,
+            source: DiffSource::Unstaged,
             path: "a.rs".into(),
             old_path: None,
             conflicted: false,
@@ -1924,7 +1924,7 @@ mod tests {
             tab.downloads_refused.is_some(),
             "the diff error still needs the chip"
         );
-        let diff = Arc::new(canopy_core::FileDiff {
+        let diff = Arc::new(FileDiff {
             path: "a.rs".into(),
             ..Default::default()
         });
