@@ -17,8 +17,8 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use super::button::{tooltip_text, with_tooltip};
-use super::toggle::{gallery_caption, remembered};
+use super::button::{spinner_due, tooltip_text, with_tooltip};
+use super::toggle::{component_id, gallery_caption, remembered};
 use super::{ForceState, IconButton, KitResponse, Size, anim, paint};
 use crate::keymap::{self, Command};
 use crate::ui::motion;
@@ -82,6 +82,7 @@ struct Core<'t> {
     error: Option<String>,
     icon: Option<String>,
     password: bool,
+    loading: bool,
     read_only: bool,
     enabled: bool,
     tooltip: Option<String>,
@@ -107,6 +108,7 @@ impl<'t> Core<'t> {
             error: None,
             icon: None,
             password: false,
+            loading: false,
             read_only: false,
             enabled: true,
             tooltip: None,
@@ -124,26 +126,26 @@ impl<'t> Core<'t> {
     /// Shows the field; returns the edit's response and whether Ctrl+Enter submitted it.
     fn show(self, ui: &mut Ui) -> (Response, bool) {
         let enabled = self.enabled && ui.is_enabled();
+        let id = component_id(ui, "kit-field", self.id_salt);
         ui.scope(|ui| {
             if !enabled {
                 ui.disable();
             }
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                self.show_inner(ui, enabled)
+                self.show_inner(ui, id, enabled)
             })
             .inner
         })
         .inner
     }
 
-    fn show_inner(self, ui: &mut Ui, enabled: bool) -> (Response, bool) {
+    fn show_inner(self, ui: &mut Ui, id: Id, enabled: bool) -> (Response, bool) {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
         let style = theme::style();
         let s = p.surfaces(style);
         let m = theme::metrics();
-        let id = ui.make_persistent_id(("kit-field", self.id_salt));
         let width = self
             .width
             .unwrap_or_else(|| ui.available_width())
@@ -276,6 +278,15 @@ impl<'t> Core<'t> {
         if let Some((g, _)) = &counter {
             right += g.size().x + ICON_GAP;
         }
+        if self.password {
+            right += clear_side + ICON_GAP;
+        }
+        if self.loading {
+            right += m.icon_md + ICON_GAP;
+        }
+        let reveal_id = id.with("kit-field-reveal");
+        let revealed =
+            self.password && ctx.data(|d| d.get_temp::<bool>(reveal_id)).unwrap_or(false);
 
         // The edit itself, in a frameless child over the reserved rect.
         let mut child = ui.new_child(
@@ -309,7 +320,7 @@ impl<'t> Core<'t> {
         .text_color(text_color)
         .hint_text(self.placeholder.clone())
         .interactive(interactive)
-        .password(self.password)
+        .password(self.password && !revealed)
         .desired_width(width);
         if let Kind::Code { .. } = self.kind {
             edit = edit.code_editor();
@@ -438,7 +449,8 @@ impl<'t> Core<'t> {
             }
         }
 
-        // Trailing slot, right to left: counter, then the search keycap or clear button.
+        // Trailing slot, right to left: the search keycap or clear button, the show-password
+        // toggle, the spinner, then the counter.
         let mut x = rect.right()
             - if self.kind == Kind::Search {
                 SEARCH_PAD_RIGHT
@@ -483,6 +495,33 @@ impl<'t> Core<'t> {
                 }
                 x = at.left() - ICON_GAP;
             }
+        }
+        if self.password {
+            let at = Rect::from_min_size(
+                pos2(x - clear_side, cy - clear_side / 2.0),
+                Vec2::splat(clear_side),
+            );
+            let (glyph, name) = if revealed {
+                (icon::EYE_SLASH, "Hide secret")
+            } else {
+                (icon::EYE, "Show secret")
+            };
+            let toggle = ui.put(
+                at,
+                IconButton::new(glyph, name)
+                    .size(Size::Xs)
+                    .enabled(enabled)
+                    .id_salt(id.with("kit-field-reveal-button")),
+            );
+            if toggle.clicked() {
+                ctx.data_mut(|d| d.insert_temp(reveal_id, !revealed));
+            }
+            x = at.left() - ICON_GAP;
+        }
+        if spinner_due(&ctx, id, self.loading) {
+            let r = m.icon_md / 2.0;
+            paint::spinner(&painter, pos2(x - r, cy), r * 0.66, 1.6, p.text_faint);
+            x -= m.icon_md + ICON_GAP;
         }
         if let Some((g, color)) = counter {
             painter.galley(pos2(x - g.size().x, cy - g.size().y / 2.0), g, color);
@@ -731,9 +770,14 @@ impl<'t> TextField<'t> {
         self.core.icon = Some(glyph.to_owned());
         self
     }
-    /// Hides the text (secrets).
+    /// Hides the text (secrets), with a button that shows it.
     pub fn password(mut self, password: bool) -> Self {
         self.core.password = password;
+        self
+    }
+    /// Busy (checking the value): a spinner in the trailing slot after `LOADING_DELAY`.
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.core.loading = loading;
         self
     }
     /// `Sm` for compact fields; `Md` by default.
@@ -776,6 +820,11 @@ impl<'t> SearchField<'t> {
         }
     }
     common_setters!();
+    /// Busy (results are loading): a spinner in the trailing slot after `LOADING_DELAY`.
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.core.loading = loading;
+        self
+    }
     /// The command that focuses this field; its chord shows as a keycap while the field is empty.
     pub fn shortcut(mut self, command: Command) -> Self {
         self.core.shortcut = Some(command);
@@ -940,7 +989,8 @@ pub(crate) fn gallery(ui: &mut Ui) {
                 .id_salt("g-f6")
                 .show(ui);
             TextField::new(&mut "hunter2".to_owned())
-                .label("Secret, small")
+                .label("Secret, small, checking")
+                .loading(true)
                 .password(true)
                 .size(Size::Sm)
                 .id_salt("g-f7")
@@ -975,6 +1025,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
             SearchField::new(&mut "auth".to_owned())
                 .placeholder("Filter branches…")
                 .size(Size::Sm)
+                .loading(true)
                 .id_salt("g-s3")
                 .show(ui);
         }
@@ -1183,6 +1234,63 @@ mod tests {
             find(&nodes, "Resolved text").map(|n| n.role),
             Some(Role::MultilineTextInput)
         );
+    }
+
+    #[test]
+    fn unsalted_fields_keep_their_own_state() {
+        let ctx = testkit::ctx();
+        let (mut a, mut b) = (String::new(), String::new());
+        let show = |ui: &mut Ui, a: &mut String, b: &mut String| {
+            let first = TextField::new(a).show(ui).id;
+            let second = TextField::new(b).show(ui).id;
+            (first, second)
+        };
+        let mut ids = (Id::NULL, Id::NULL);
+        frame(&ctx, Vec::new(), |ui| ids = show(ui, &mut a, &mut b));
+        assert_ne!(ids.0, ids.1);
+        ctx.memory_mut(|m| m.request_focus(ids.1));
+        frame(&ctx, Vec::new(), |ui| ids = show(ui, &mut a, &mut b));
+        frame(&ctx, type_text("x"), |ui| ids = show(ui, &mut a, &mut b));
+        assert_eq!((a.as_str(), b.as_str()), ("", "x"));
+    }
+
+    #[test]
+    fn a_secret_can_be_shown_and_hidden_again() {
+        let ctx = testkit::ctx();
+        let mut text = "hunter2".to_owned();
+        let show = |ui: &mut Ui, text: &mut String| {
+            TextField::new(text)
+                .password(true)
+                .width(240.0)
+                .id_salt("p")
+                .show(ui)
+                .rect
+        };
+        let mut rect = egui::Rect::NOTHING;
+        frame(&ctx, Vec::new(), |ui| rect = show(ui, &mut text));
+        let nodes = spoken(&ctx, |ui| {
+            show(ui, &mut text);
+        });
+        assert!(
+            find(&nodes, "Show secret").is_some(),
+            "the toggle offers to show it"
+        );
+        let m = theme::metrics();
+        let at = egui::pos2(
+            rect.right() - m.field_pad_x - Size::Xs.height() / 2.0,
+            rect.center().y,
+        );
+        testkit::click(&ctx, at, |ui| {
+            show(ui, &mut text);
+        });
+        let nodes = spoken(&ctx, |ui| {
+            show(ui, &mut text);
+        });
+        assert!(
+            find(&nodes, "Hide secret").is_some(),
+            "a click shows the secret"
+        );
+        assert_eq!(text, "hunter2", "the toggle never edits the text");
     }
 
     #[test]

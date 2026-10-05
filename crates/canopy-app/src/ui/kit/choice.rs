@@ -16,7 +16,8 @@ use egui_phosphor::regular as icon;
 
 use super::button::{disabled_painter, tooltip_text, with_tooltip};
 use super::toggle::{
-    arrow_step, claim_arrows, gallery_caption, gallery_row, group_node, remembered, step,
+    arrow_step, claim_arrows, component_id, gallery_caption, gallery_row, group_node, remembered,
+    step,
 };
 use super::{ForceState, IconButton, Interact, KitResponse, Size, anim, paint};
 use crate::ui::motion;
@@ -193,7 +194,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
         let s = p.surfaces(style);
         let m = theme::metrics();
         let enabled = self.enabled && ui.is_enabled();
-        let group_id = ui.id().with(("kit-segmented", self.id_salt));
+        let group_id = component_id(ui, "kit-segmented", self.id_salt);
         let seg_h = self.size.height() - 2.0;
         let inset = m.segment_track_pad + paint::SEAM;
         let font = FontId::new(m.body_size, theme::medium());
@@ -510,7 +511,7 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
         let s = theme::surfaces(&ctx);
         let m = theme::metrics();
         let enabled = self.enabled && ui.is_enabled();
-        let list_id = ui.id().with(("kit-underline-tabs", self.id_salt));
+        let list_id = component_id(ui, "kit-underline-tabs", self.id_salt);
         let h = m.underline_tab_height;
         let font = FontId::new(m.body_size, theme::medium());
         let icon_font = FontId::proportional(m.icon_md);
@@ -863,7 +864,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
     ui.add_space(theme::XS);
     gallery_caption(
         ui,
-        "Text tabs: rest, hover on the second, focus on the third, disabled",
+        "Text tabs: hover on the second, focus on the first, disabled",
     );
     UnderlineTabs::new(&mut 0_u8, &[(0, "Privacy"), (1, "Terms"), (2, "Notices")])
         .id_salt("g-tabs1")
@@ -932,6 +933,22 @@ mod tests {
         assert_eq!(v, 0, "focus followed the choice");
         press(Key::ArrowRight, &mut v);
         assert_eq!(v, 1);
+    }
+
+    #[test]
+    fn unsalted_segmented_controls_keep_their_own_choice() {
+        let ctx = testkit::ctx();
+        let (mut a, mut b) = (0_u8, 0_u8);
+        let mut second = Rect::NOTHING;
+        let show = |ui: &mut Ui, a: &mut u8, b: &mut u8| {
+            Segmented::new(a, &OPTS).show(ui);
+            Segmented::new(b, &OPTS).show(ui).rect
+        };
+        frame(&ctx, Vec::new(), |ui| second = show(ui, &mut a, &mut b));
+        testkit::click(&ctx, pos2(second.right() - 8.0, second.center().y), |ui| {
+            show(ui, &mut a, &mut b);
+        });
+        assert_eq!((a, b), (0, 2));
     }
 
     #[test]

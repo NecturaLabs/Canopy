@@ -488,6 +488,15 @@ pub(super) fn claim_arrows(ui: &Ui, id: Id, horizontal: bool, vertical: bool) {
     });
 }
 
+/// The id a component keeps its state under: from its salt when it has one, else from its place
+/// in `ui` (stable while the layout is), so two unsalted components never share state.
+pub(super) fn component_id(ui: &Ui, kind: &str, salt: Option<Id>) -> Id {
+    match salt {
+        Some(salt) => ui.id().with((kind, salt)),
+        None => ui.next_auto_id().with(kind),
+    }
+}
+
 /// Reports `id` (covering `rect`) as an AccessKit radio group named `label`.
 pub(super) fn group_node(ui: &Ui, id: Id, rect: Rect, label: &str, enabled: bool) -> Response {
     let response = ui.interact(rect, id, Sense::hover());
@@ -550,7 +559,7 @@ impl<'a, T: PartialEq + Clone> RadioGroup<'a, T> {
         let m = theme::metrics();
         let p = theme::palette(ui.ctx());
         let enabled = self.enabled && ui.is_enabled();
-        let group_id = ui.id().with(("kit-radio-group", self.id_salt));
+        let group_id = component_id(ui, "kit-radio-group", self.id_salt);
         let chosen = self.options.iter().position(|(v, _, _)| v == self.value);
         let mut responses = Vec::with_capacity(self.options.len());
         let layout = if self.horizontal {

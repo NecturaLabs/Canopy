@@ -409,7 +409,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
                 let slider = Slider::new(&mut v, 0..=25)
                     .label(name)
                     .value_text(lines)
-                    .width(120.0)
+                    .width(96.0)
                     .enabled(enabled)
                     .disabled_reason("Diff options are locked while comparing")
                     .id_salt(("g-sl", i));
@@ -436,7 +436,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
     gallery_row(ui, |ui| {
         for (i, t) in [0.0_f32, 0.5, 1.0].into_iter().enumerate() {
             Slider::new(&mut 5_u32, 0..=10)
-                .width(120.0)
+                .width(96.0)
                 .id_salt(("g-sl-m", i))
                 .show_forced(
                     ui,

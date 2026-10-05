@@ -18,7 +18,7 @@ use egui::{
 use egui_phosphor::regular as icon;
 
 use super::button::{disabled_painter, tooltip_text, with_tooltip};
-use super::toggle::{gallery_caption, gallery_row, remembered};
+use super::toggle::{component_id, gallery_caption, gallery_row, remembered};
 use super::{ForceState, Interact, Size, anim, glass, paint};
 use crate::ui::motion;
 use crate::ui::theme::{self, Elevation, Fill};
@@ -152,7 +152,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
         let s = p.surfaces(style);
         let m = theme::metrics();
         let enabled = self.enabled && ui.is_enabled();
-        let id = ui.make_persistent_id(("kit-select", self.id_salt));
+        let id = component_id(ui, "kit-select", self.id_salt);
         let popup_id = id.with("kit-select-list");
         let state_id = id.with("kit-select-state");
         let width = self.width.unwrap_or_else(|| ui.available_width());
