@@ -151,6 +151,10 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// A redirect's target: an absolute URL as it is, an absolute path on the same host. Anything
 /// else (a relative path, a protocol-relative `//host`) is refused rather than guessed.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn resolve_location(from: &str, location: &str) -> Result<String> {
     if location.contains("://") {
         return Ok(location.to_owned());

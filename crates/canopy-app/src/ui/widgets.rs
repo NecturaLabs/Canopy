@@ -124,10 +124,8 @@ pub fn repository_state_banner(
 
 /// Splits a path into (file name, parent directory).
 pub fn split_path(path: &str) -> (&str, &str) {
-    match path.rfind('/') {
-        Some(i) => (&path[i + 1..], &path[..i]),
-        None => (path, ""),
-    }
+    path.rsplit_once('/')
+        .map_or((path, ""), |(parent, name)| (name, parent))
 }
 
 /// A short relative time such as "3 hours ago".

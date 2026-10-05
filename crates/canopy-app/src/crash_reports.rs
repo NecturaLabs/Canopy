@@ -143,6 +143,10 @@ fn name_char(c: char) -> bool {
 
 /// Whether `text[at..at + len]` is a whole path: not inside a longer path before it, and
 /// followed by a separator or a character that cannot be part of a name.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn whole_path(text: &str, at: usize, len: usize) -> bool {
     let before = text[..at].chars().next_back();
     let after = text[at + len..].chars().next();
@@ -152,6 +156,10 @@ fn whole_path(text: &str, at: usize, len: usize) -> bool {
 }
 
 /// Replaces each whole-path occurrence of `path` in `text` with `with`.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn replace_path(text: &str, path: &str, with: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
@@ -177,6 +185,10 @@ fn replace_home(text: &str, home: &str) -> String {
 }
 
 /// Replaces `scheme://user:password@` with `scheme://<redacted>@` in every URL in `text`.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn redact_url_credentials(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -230,6 +242,10 @@ fn token_char(c: char) -> bool {
 }
 
 /// Replaces access tokens and secret values in `text` with `<token>`.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn redact_tokens(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
@@ -270,6 +286,10 @@ fn redact_tokens(text: &str) -> String {
 }
 
 /// Hides the user-name part of home folders other than the user's own.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn hide_user_folders(text: &str) -> String {
     let mut out = replace_path(text, "/root", "~root");
     for prefix in ["/home/", "/Users/", "\\Users\\", "/var/home/"] {

@@ -243,9 +243,8 @@ pub(crate) fn missing_blobs(
 /// accepts shorter hex strings, which are not objects to fetch.
 fn oid_in_message(e: &git2::Error) -> Option<Oid> {
     let msg = e.message();
-    let start = msg.rfind('(')? + 1;
-    let end = start + msg[start..].find(')')?;
-    let id = &msg[start..end];
+    let (_, after) = msg.rsplit_once('(')?;
+    let (id, _) = after.split_once(')')?;
     let full = matches!(id.len(), 40 | 64) && id.bytes().all(|b| b.is_ascii_hexdigit());
     if full { Oid::from_str(id).ok() } else { None }
 }
@@ -406,6 +405,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::string_slice, reason = "object IDs are ASCII hex")]
     fn only_a_full_object_id_in_a_message_is_taken() {
         let full = "0123456789abcdef0123456789abcdef01234567";
         let named = |id: &str| {

@@ -277,6 +277,7 @@ fn full_clone_is_not_partial_and_reads_offline() {
 }
 
 #[test]
+#[expect(clippy::string_slice, reason = "object IDs are ASCII hex")]
 fn missing_object_in_full_repository_stays_a_libgit2_error() {
     // Corruption in a repository that is not a partial clone must not be reported as
     // "not downloaded", and must not trigger a download.

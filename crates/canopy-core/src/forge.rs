@@ -166,6 +166,10 @@ struct Parts<'a> {
 /// unknown schemes and malformed ports. Credentials are removed. Only `https://` and `http://`
 /// URLs yield a port (SSH and `git://` ports are not web ports); a non-numeric port, or an
 /// out-of-range or zero port on a web URL, rejects the URL.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn split_url(url: &str) -> Option<Parts<'_>> {
     if let Some((scheme, rest)) = url.split_once("://") {
         let scheme = scheme.to_ascii_lowercase();

@@ -205,6 +205,10 @@ pub fn loggable(args: &[&str]) -> Vec<String> {
 }
 
 /// Removes the `user:password@` part of a URL inside `text`.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 pub fn redact_url(text: &str) -> String {
     let Some(scheme_end) = text.find("://") else {
         return text.to_owned();

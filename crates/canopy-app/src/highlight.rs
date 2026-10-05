@@ -384,6 +384,10 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::string_slice,
+        reason = "syntect's spans fall between characters"
+    )]
     fn tokens(h: &Highlights, line: usize, text: &str) -> Vec<(String, Token)> {
         h.lines[0][line]
             .iter()
@@ -459,6 +463,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::string_slice,
+        reason = "syntect's spans fall between characters"
+    )]
     fn every_hunk_starts_with_a_fresh_parser() {
         // The first hunk opens a block comment whose end lies outside the diff; the second hunk
         // is ordinary code and must not be coloured as a comment.

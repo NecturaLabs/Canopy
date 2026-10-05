@@ -213,6 +213,10 @@ pub fn has_conflict_markers(text: &str) -> bool {
 
 /// If `line` is a marker made of `ch` (at least 7 of them, then nothing or a space and a label),
 /// returns its length and label.
+#[expect(
+    clippy::string_slice,
+    reason = "`ch` is ASCII, so `size` falls between characters"
+)]
 fn marker(line: &str, ch: u8) -> Option<(usize, &str)> {
     let line = line.strip_suffix('\r').unwrap_or(line);
     let size = line.bytes().take_while(|&b| b == ch).count();
