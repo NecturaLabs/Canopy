@@ -64,8 +64,6 @@ pub const ICON_XS: f32 = 11.5;
 pub const ICON_SM: f32 = 14.0;
 /// Glyphs on buttons, in palette rows, settings navigation and request status.
 pub const ICON_MD: f32 = 16.0;
-/// Toasts, account cards and the welcome tip.
-pub const ICON_LG: f32 = 18.0;
 /// Beside a dialog's title.
 pub const ICON_TITLE: f32 = 20.0;
 /// The centre of an empty or finished state.

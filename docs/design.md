@@ -191,7 +191,6 @@ in `theme.rs`:
 | `ICON_XS` | 11.5px | Disclosure chevrons, close crosses on tabs and recent repositories |
 | `ICON_SM` | 14px | Sidebar row glyphs, tab and segmented-control icons |
 | `ICON_MD` | 16px | Buttons, palette rows, settings navigation, request status |
-| `ICON_LG` | 18px | Toasts, account cards, the welcome tip |
 | `ICON_TITLE` | 20px | Beside a dialog's title |
 | `metrics().icon_xl` | 24px (Dense 22) | The welcome screen's action cards |
 | `ICON_HERO` | 32px | The centre of an empty or finished state |
