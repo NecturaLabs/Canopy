@@ -44,9 +44,10 @@ const TOOLTIP_WIDTH: f32 = 260.0;
 /// Pointer-opened popups grow from this scale and drop this far from the anchor edge.
 pub(crate) const POPUP_SCALE: f32 = 0.95;
 const POPUP_DROP: f32 = 4.0;
-/// Dialogs grow from this scale and exit towards the second.
-const DIALOG_SCALE: f32 = 0.94;
-const DIALOG_EXIT_SCALE: f32 = 0.97;
+/// Dialogs (and the settings screen, a dialog-sized shell) grow from this scale and exit towards
+/// the second.
+pub const DIALOG_SCALE: f32 = 0.94;
+pub const DIALOG_EXIT_SCALE: f32 = 0.97;
 /// Tooltips grow from this scale and rise this far.
 const TOOLTIP_SCALE: f32 = 0.96;
 const TOOLTIP_RISE: f32 = 3.0;
@@ -213,6 +214,23 @@ pub fn floating<R>(
     let shapes = surface_shapes(ui.painter(), r.response.rect, layer);
     ui.painter().set(slot, Shape::Vec(shapes));
     InnerResponse::new(r.inner, r.response)
+}
+
+/// The room a modal card (a dialog, the settings screen) may fill: the window inside `XL` at the
+/// sides, below the title bar's tab strip and above the status bar, `SM` clear of each, so the
+/// card never covers the tab strip or the status line however small the window.
+pub fn modal_room(ctx: &Context) -> Rect {
+    let m = theme::metrics();
+    let screen = ctx.content_rect();
+    let top = (screen.top() + m.tab_strip_height + theme::SM).min(screen.center().y);
+    let bottom = (screen.bottom() - m.status_bar_height - theme::SM).max(top);
+    Rect::from_min_max(
+        pos2(screen.left() + theme::XL, top),
+        pos2(
+            (screen.right() - theme::XL).max(screen.left() + theme::XL),
+            bottom,
+        ),
+    )
 }
 
 /// The scrim behind dialogs, at `alpha` of its strength (its fade).
@@ -1102,7 +1120,11 @@ impl<'a> Dialog<'a> {
         }
         let e = Entrance::of(ctx, id, motion::SLOW, motion::SLOW, false, None);
         let fade = e.fade;
-        let max_h = (screen.height() - DIALOG_MARGIN).max(120.0);
+        // Centred on the window, as tall as fits between the tab strip and the status bar.
+        let room = modal_room(ctx);
+        let max_h = (2.0 * (screen.center().y - room.top()).min(room.bottom() - screen.center().y))
+            .min(screen.height() - DIALOG_MARGIN)
+            .max(120.0);
         let modal = egui::Modal::new(id.with("modal"))
             .backdrop_color(theme::palette(ctx).scrim.gamma_multiply(fade))
             .frame(Frame::NONE)
@@ -2120,5 +2142,54 @@ mod tests {
             assert!(!out.shapes.iter().any(|c| matches!(c.shape, Shape::Mesh(_))));
         }
         assert_eq!(fit[0], fit[2]);
+    }
+
+    #[test]
+    fn a_tall_dialog_keeps_clear_of_the_tab_strip_and_the_status_bar() {
+        let ctx = context();
+        let m = theme::metrics();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1024.0, 520.0));
+        let mut card = Rect::NOTHING;
+        for frame in 0..4 {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    time: Some(f64::from(frame)),
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = Dialog::new("tall")
+                        .title("A long list")
+                        .body(|ui| {
+                            for i in 0..80 {
+                                ui.label(format!("line {i}"));
+                            }
+                        })
+                        .footer(|f| {
+                            f.cancel().confirm("Done");
+                        })
+                        .show(ui.ctx());
+                },
+            );
+            out.textures_delta.clear();
+            for c in &out.shapes {
+                if let Shape::Vec(v) = &c.shape {
+                    for s in v {
+                        if let Shape::Rect(r) = s
+                            && r.stroke.width > 0.0
+                            && r.corner_radius == CornerRadius::same(m.radius_lg)
+                        {
+                            card = r.rect;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(card.is_positive(), "the card was painted");
+        assert!(card.top() >= m.tab_strip_height, "{card:?}");
+        assert!(
+            card.bottom() <= screen.bottom() - m.status_bar_height,
+            "{card:?}"
+        );
     }
 }
