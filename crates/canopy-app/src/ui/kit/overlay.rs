@@ -696,7 +696,6 @@ impl<'a> Popover<'a> {
         self
     }
     /// Keeps the open state in `open` instead of toggling on anchor clicks.
-    #[expect(dead_code, reason = "used by the view migration")]
     pub fn open(mut self, open: &'a mut bool) -> Self {
         self.open = Some(open);
         self
