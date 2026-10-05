@@ -123,11 +123,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
                     _ => {}
                 }
                 if layout.compact_details && selected {
-                    let summary = tab
-                        .details
-                        .as_ref()
-                        .map(|d| d.message.lines().next().unwrap_or("").trim())
-                        .unwrap_or("Commit details");
+                    let summary = tab.details.as_ref().map_or("Commit details", |d| {
+                        d.message.lines().next().unwrap_or("").trim()
+                    });
                     row.add_space(theme::SM);
                     row.add(egui::Label::new(RichText::new(summary).color(p.text_dim)).truncate())
                         .on_hover_text(summary);
@@ -431,19 +429,15 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             let g = snap.graph.get(ci);
             let is_head = snap.head.oid == Some(c.oid);
             let lane = g.map_or(0, |g| g.color);
-            let picture = if avatars && show_author {
+            let picture = (avatars && show_author).then(|| {
                 // Copied only for an author whose lookup is due, not for every row every frame.
                 if tab.avatars.wants_now(&c.author.email) {
                     wanted_pictures.push((c.oid, c.author.email.clone()));
                 }
-                Some(
-                    tab.avatars
-                        .get(&c.author.email)
-                        .map(egui::TextureHandle::id),
-                )
-            } else {
-                None
-            };
+                tab.avatars
+                    .get(&c.author.email)
+                    .map(egui::TextureHandle::id)
+            });
 
             // Ref pills, then the summary after them.
             let desc_right = author_x - CELL_PAD;
@@ -801,7 +795,7 @@ mod tests {
                         egui::CentralPanel::default()
                             .frame(egui::Frame::new())
                             .show(ui, |ui| {
-                                show(ui, &mut tab, &Settings::default(), &mut Vec::new())
+                                show(ui, &mut tab, &Settings::default(), &mut Vec::new());
                             });
                     },
                 );
@@ -1058,7 +1052,7 @@ mod tests {
             tab.filter_history(&ctx);
             visible_details(&ctx, &mut tab, size);
             assert_eq!(
-                ctx.memory(|memory| memory.focused()),
+                ctx.memory(egui::Memory::focused),
                 filter_field(&ctx),
                 "the filter command must restore and focus the list at {size:?}"
             );
@@ -1097,7 +1091,7 @@ mod tests {
             open.iter().any(|text| text.contains("Filter by message")),
             "the shortcut must reveal the search field: {open:?}"
         );
-        assert_eq!(ctx.memory(|memory| memory.focused()), filter_field(&ctx));
+        assert_eq!(ctx.memory(egui::Memory::focused), filter_field(&ctx));
         tab.filter = "Commit 3".into();
         tab.filter_history(&ctx);
         let closed = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
@@ -1112,7 +1106,7 @@ mod tests {
             "closing search must restore all rows"
         );
         assert_ne!(
-            ctx.memory(|memory| memory.focused()),
+            ctx.memory(egui::Memory::focused),
             filter_field(&ctx),
             "closing search must return keyboard focus to History"
         );
@@ -1138,7 +1132,7 @@ mod tests {
             assert_eq!(tab.filter, "fix", "the query must survive at {size:?}");
             let visible = visible_details(&ctx, &mut tab, size);
             assert!(visible.iter().any(|text| text == "fix"), "{visible:?}");
-            assert_eq!(ctx.memory(|memory| memory.focused()), filter_field(&ctx));
+            assert_eq!(ctx.memory(egui::Memory::focused), filter_field(&ctx));
         }
     }
 

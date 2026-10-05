@@ -85,11 +85,11 @@ impl CanopyApp {
             .as_ref()
             .is_some_and(|s| s.branches.iter().any(|b| b.name == r.source_branch));
         let op = if same_repo_branch && local_exists {
-            Op::Checkout(r.source_branch.clone())
+            Op::Checkout(r.source_branch)
         } else if same_repo_branch {
             Op::CheckoutRemote {
                 remote,
-                branch: r.source_branch.clone(),
+                branch: r.source_branch,
             }
         } else {
             let prefix = match forge.kind {

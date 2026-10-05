@@ -51,12 +51,7 @@ impl Person {
 
     pub fn looks_like_placeholder(&self) -> bool {
         let name = self.name.value.trim();
-        let domain = self
-            .email
-            .value
-            .rsplit_once('@')
-            .map(|(_, d)| d)
-            .unwrap_or("");
+        let domain = self.email.value.rsplit_once('@').map_or("", |(_, d)| d);
         name.chars().count() < 2
             || domain.is_empty()
             || !domain.contains('.')

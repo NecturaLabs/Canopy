@@ -1030,7 +1030,7 @@ mod tests {
         let mut rects = [Rect::NOTHING; 2];
         let mut id = Id::NULL;
         frame(&ctx, Vec::new(), |ui| {
-            (rects, id) = show(ui, &mut c, &mut s)
+            (rects, id) = show(ui, &mut c, &mut s);
         });
         for rect in rects {
             testkit::click(&ctx, rect.center(), |ui| {

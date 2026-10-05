@@ -177,7 +177,7 @@ impl Current<'_> {
         // has room for four.
         unsafe {
             self.0
-                .get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut out)
+                .get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut out);
         };
         out
     }
@@ -290,7 +290,7 @@ impl Current<'_> {
         // SAFETY: the context is current; the factors are blend factor enums.
         unsafe {
             self.0
-                .blend_func_separate(src_rgb, dst_rgb, src_alpha, dst_alpha)
+                .blend_func_separate(src_rgb, dst_rgb, src_alpha, dst_alpha);
         }
     }
 

@@ -199,8 +199,7 @@ fn highlight_until(diff: &FileDiff, cancelled: &dyn Fn() -> bool) -> Option<High
         .hunks
         .first()
         .and_then(|h| h.lines.first())
-        .map(|l| l.text.as_str())
-        .unwrap_or("");
+        .map_or("", |l| l.text.as_str());
     let syntax = syntax_for(set, &diff.path, first)?;
     let mut lines = Vec::with_capacity(diff.hunks.len());
     for hunk in &diff.hunks {
@@ -321,24 +320,23 @@ fn run(req: Request, cache: &Mutex<Cache>) {
     }
     let key = fingerprint(&req.diff);
     let cached = cache.lock().ok().and_then(|c| c.lookup(key));
-    let h = match cached {
-        Some(h) => h,
-        None => {
-            let started = std::time::Instant::now();
-            let Some(h) = highlight_until(&req.diff, &*req.stale) else {
-                return;
-            };
-            tracing::debug!(
-                lines = req.diff.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
-                ms = started.elapsed().as_millis() as u64,
-                "highlighted"
-            );
-            let h = Arc::new(h);
-            if let Ok(mut c) = cache.lock() {
-                c.insert(key, Arc::clone(&h));
-            }
-            h
+    let h = if let Some(h) = cached {
+        h
+    } else {
+        let started = std::time::Instant::now();
+        let Some(h) = highlight_until(&req.diff, &*req.stale) else {
+            return;
+        };
+        tracing::debug!(
+            lines = req.diff.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
+            ms = started.elapsed().as_millis() as u64,
+            "highlighted"
+        );
+        let h = Arc::new(h);
+        if let Ok(mut c) = cache.lock() {
+            c.insert(key, Arc::clone(&h));
         }
+        h
     };
     if !(req.stale)() {
         (req.deliver)(h);

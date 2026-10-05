@@ -160,7 +160,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             virtual_rows(ui, snap.branches.len(), row_h, |ui, i| {
                 let b = &snap.branches[i];
                 let glyph = if b.is_head { icon::CHECK_CIRCLE } else { icon::GIT_BRANCH };
-                let hint = b.upstream.as_ref().map(|u| format!("Tracks {u}")).unwrap_or_else(|| "No upstream".to_owned());
+                let hint = b.upstream.as_ref().map_or_else(|| "No upstream".to_owned(), |u| format!("Tracks {u}"));
                 let resp = row(ui, Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, current: b.is_head, ahead: b.ahead, behind: b.behind, hint: Some(&hint) });
                 if resp.clicked()
                     && let Some(t) = b.target {

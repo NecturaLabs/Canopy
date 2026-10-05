@@ -234,19 +234,25 @@ pub fn show(
                             ui.spacing_mut().item_spacing.x = theme::SM;
                             match screen.section {
                                 Section::Appearance => {
-                                    appearance(ui, settings, &mut screen.zoom_preview)
+                                    appearance(ui, settings, &mut screen.zoom_preview);
                                 }
                                 Section::Git => git(ui, screen, settings, &data.identity, actions),
                                 Section::Integrations => {
-                                    integrations(ui, settings, &mut screen.picker)
+                                    integrations(ui, settings, &mut screen.picker);
                                 }
                                 Section::Accounts => {
-                                    result.tokens_changed |=
-                                        accounts(ui, screen, settings, tokens, data.forges, actions)
+                                    result.tokens_changed |= accounts(
+                                        ui,
+                                        screen,
+                                        settings,
+                                        tokens,
+                                        data.forges,
+                                        actions,
+                                    );
                                 }
                                 Section::Updates => updates(ui, settings, data.update, actions),
                                 Section::Privacy => {
-                                    privacy(ui, settings, actions, &mut screen.picker)
+                                    privacy(ui, settings, actions, &mut screen.picker);
                                 }
                                 Section::Keyboard => keyboard(ui),
                             }
@@ -481,7 +487,7 @@ fn row_layout(
                 Layout::right_to_left(Align::Center).with_main_wrap(true),
                 |ui| {
                     ui.add_space(theme::SM);
-                    control(ui)
+                    control(ui);
                 },
             );
         } else {
@@ -502,7 +508,7 @@ fn row_layout(
                     |ui| {
                         // Keeps controls clear of the scroll bar.
                         ui.add_space(theme::SM);
-                        control(ui)
+                        control(ui);
                     },
                 );
             });

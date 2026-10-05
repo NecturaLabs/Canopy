@@ -252,7 +252,10 @@ impl Entrance {
 
 /// Where the next shape on `layer` will go.
 pub(crate) fn next_shape(ctx: &Context, layer: LayerId) -> ShapeIdx {
-    ctx.graphics(|g| g.get(layer).map_or(ShapeIdx(0), |l| l.next_idx()))
+    ctx.graphics(|g| {
+        g.get(layer)
+            .map_or(ShapeIdx(0), egui::layers::PaintList::next_idx)
+    })
 }
 
 /// Transforms every shape painted on `layer` since `start`.
@@ -564,15 +567,12 @@ pub(crate) fn split_chord(chord: &str) -> Vec<String> {
     let mut keys = Vec::new();
     let mut rest = chord;
     while !rest.is_empty() {
-        match rest[1..].find('+').map(|i| i + 1) {
-            Some(i) => {
-                keys.push(rest[..i].to_owned());
-                rest = &rest[i + 1..];
-            }
-            None => {
-                keys.push(rest.to_owned());
-                break;
-            }
+        if let Some(i) = rest[1..].find('+').map(|i| i + 1) {
+            keys.push(rest[..i].to_owned());
+            rest = &rest[i + 1..];
+        } else {
+            keys.push(rest.to_owned());
+            break;
         }
     }
     keys
@@ -1021,7 +1021,7 @@ impl<'a> Dialog<'a> {
         let screen = ctx.content_rect();
         let (_, fresh) = presence(ctx, id);
         if fresh {
-            let trigger = ctx.memory(|m| m.focused());
+            let trigger = ctx.memory(egui::Memory::focused);
             ctx.data_mut(|d| d.insert_temp(id.with("kit-trigger"), trigger));
         }
         let e = Entrance::of(ctx, id, motion::SLOW, motion::SLOW, false, None);
@@ -1771,7 +1771,7 @@ mod tests {
             let _ = run(&ctx, Vec::new(), |ui| result = show(ui.ctx()));
         }
         assert_eq!(result, DialogResult::Open);
-        let focused = ctx.memory(|m| m.focused());
+        let focused = ctx.memory(egui::Memory::focused);
         let _ = run(&ctx, key(Key::Enter), |ui| result = show(ui.ctx()));
         // Enter clicked the focused Cancel button, never Delete.
         assert_ne!(result, DialogResult::Confirm, "focus {focused:?}");
@@ -1820,7 +1820,7 @@ mod tests {
             let _ = run(&ctx, Vec::new(), |ui| result = show(ui.ctx()));
         }
         assert_eq!(
-            ctx.memory(|m| m.focused()),
+            ctx.memory(egui::Memory::focused),
             None,
             "neither choice is focused"
         );

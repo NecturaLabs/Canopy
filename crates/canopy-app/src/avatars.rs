@@ -26,7 +26,7 @@ const HOUR_SECS: i64 = 60 * 60;
 const LOOKUPS_PER_HOUR_ANONYMOUS: u32 = 30;
 const LOOKUPS_PER_HOUR_SIGNED_IN: u32 = 500;
 /// A cache file nobody refreshed for this long belongs to an author not seen for a month.
-const PRUNE_AFTER: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const PRUNE_AFTER: Duration = Duration::from_hours(30 * 24);
 const PIXEL_BYTES: usize = 64 * 64 * 4;
 const MAX_RECORD_BYTES: u64 = 128 * 1024;
 // Tabs may have separate picture threads. Serialize cache misses so they never fetch an author
@@ -325,7 +325,11 @@ fn load_at(
         };
         let bytes = avatar.download().map_err(|_| Miss::Failed)?;
         let image = decode(&bytes).map_err(|_| Miss::Failed)?;
-        Ok(image.pixels.iter().flat_map(|p| p.to_array()).collect())
+        Ok(image
+            .pixels
+            .iter()
+            .flat_map(egui::Color32::to_array)
+            .collect())
     });
     if due
         && record.checked_at == now

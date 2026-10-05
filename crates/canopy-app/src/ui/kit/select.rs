@@ -668,7 +668,7 @@ mod tests {
         assert_eq!(v, 0, "moving the highlight does not choose");
         let mut changed = false;
         frame(&ctx, key(Key::Enter), |ui| {
-            changed = show(ui, &mut v).changed()
+            changed = show(ui, &mut v).changed();
         });
         assert!(changed);
         assert_eq!(v, 1, "Enter chooses the highlighted option");

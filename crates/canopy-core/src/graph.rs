@@ -83,21 +83,21 @@ where
         let waiting = lanes.iter().position(|l| l.is_some_and(|l| l.oid == oid));
         let node_lane = match waiting {
             Some(i) => i,
-            None => match lanes.iter().position(Option::is_none) {
-                Some(i) => i,
-                None => {
+            None => {
+                if let Some(i) = lanes.iter().position(Option::is_none) {
+                    i
+                } else {
                     lanes.push(None);
                     lanes.len() - 1
                 }
-            },
-        };
-        let node_color = match waiting.and_then(|i| lanes[i]) {
-            Some(l) => l.color,
-            None => {
-                let c = next_color;
-                next_color = next_color.wrapping_add(1);
-                c
             }
+        };
+        let node_color = if let Some(l) = waiting.and_then(|i| lanes[i]) {
+            l.color
+        } else {
+            let c = next_color;
+            next_color = next_color.wrapping_add(1);
+            c
         };
 
         let mut segments = Vec::with_capacity(before.len() + parents.len() + 1);
@@ -114,7 +114,7 @@ where
             }
         }
 
-        for lane in lanes.iter_mut() {
+        for lane in &mut lanes {
             if lane.is_some_and(|l| l.oid == oid) {
                 *lane = None;
             }
@@ -136,12 +136,11 @@ where
                 parent_lanes.push(k);
                 continue;
             }
-            let k = match lanes.iter().position(Option::is_none) {
-                Some(k) => k,
-                None => {
-                    lanes.push(None);
-                    lanes.len() - 1
-                }
+            let k = if let Some(k) = lanes.iter().position(Option::is_none) {
+                k
+            } else {
+                lanes.push(None);
+                lanes.len() - 1
             };
             lanes[k] = Some(Lane {
                 oid: parent,

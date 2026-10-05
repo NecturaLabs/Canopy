@@ -409,10 +409,10 @@ impl RepoTab {
         diff_prefs: DiffPrefs,
         worker: Worker,
     ) -> Self {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
         Self {
             path,
             identity: None,
@@ -2243,12 +2243,12 @@ mod perf {
             entry: file.clone(),
             conflicted: false,
         });
-        tab.diff = Some(diff.clone().into());
+        tab.diff = Some(diff.into());
         let history = measure(&ctx, frames, egui::pos2(900.0, 200.0), |ui| {
-            layout(ui, &mut tab, &settings)
+            layout(ui, &mut tab, &settings);
         });
         let history_diff = measure(&ctx, frames, egui::pos2(1100.0, 700.0), |ui| {
-            layout(ui, &mut tab, &settings)
+            layout(ui, &mut tab, &settings);
         });
 
         // Changes: 5000 unstaged files and the 50k-line diff, unified then side by side.
@@ -2259,11 +2259,11 @@ mod perf {
             conflicted: false,
         });
         let unified = measure(&ctx, frames, egui::pos2(1100.0, 500.0), |ui| {
-            layout(ui, &mut tab, &settings)
+            layout(ui, &mut tab, &settings);
         });
         tab.split_diff = true;
         let split = measure(&ctx, frames, egui::pos2(1100.0, 500.0), |ui| {
-            layout(ui, &mut tab, &settings)
+            layout(ui, &mut tab, &settings);
         });
         tab.split_diff = false;
 
@@ -2279,7 +2279,7 @@ mod perf {
             conflicted: true,
         });
         let resolver = measure(&ctx, frames, egui::pos2(1100.0, 500.0), |ui| {
-            layout(ui, &mut tab, &settings)
+            layout(ui, &mut tab, &settings);
         });
 
         println!(

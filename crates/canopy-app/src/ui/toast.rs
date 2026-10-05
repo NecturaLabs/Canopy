@@ -265,7 +265,7 @@ mod tests {
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(screen),
-                    time: Some(0.4 + frame as f64 * 0.01),
+                    time: Some(0.4 + f64::from(frame) * 0.01),
                     events,
                     ..Default::default()
                 },
@@ -365,7 +365,7 @@ mod tests {
                         egui::Pos2::ZERO,
                         vec2(1024.0, 640.0),
                     )),
-                    time: Some(0.4 + frame as f64 * 0.01),
+                    time: Some(0.4 + f64::from(frame) * 0.01),
                     events,
                     ..Default::default()
                 },
@@ -422,7 +422,7 @@ mod tests {
                         egui::Pos2::ZERO,
                         vec2(1024.0, 640.0),
                     )),
-                    time: Some(0.4 + frame as f64 * 0.01),
+                    time: Some(0.4 + f64::from(frame) * 0.01),
                     events,
                     ..Default::default()
                 },
@@ -465,7 +465,7 @@ mod tests {
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(screen),
-                    time: Some(0.4 + frame as f64 * 0.01),
+                    time: Some(0.4 + f64::from(frame) * 0.01),
                     ..Default::default()
                 },
                 |_| {

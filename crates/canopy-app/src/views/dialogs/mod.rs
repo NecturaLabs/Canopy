@@ -36,7 +36,10 @@ mod start;
 mod update;
 mod url;
 
-use common::*;
+use common::{
+    answer, bullet, confirm, document, field, field_with_error, folder_row, home,
+    identity_in_scope, note, swallow_enter, valid_ref_name,
+};
 use credential::credential;
 pub use stack::DialogStack;
 pub use start::Start;
@@ -386,8 +389,7 @@ pub fn show(
             let ok = valid_ref_name(name.trim());
             let from = start.label(|| {
                 tab.and_then(|t| t.snap.as_ref())
-                    .map(|s| s.head.label())
-                    .unwrap_or_else(|| "HEAD".into())
+                    .map_or_else(|| "HEAD".into(), |s| s.head.label())
             });
             let result = KitDialog::new(salt)
                 .title("New branch")
@@ -989,7 +991,11 @@ fn merge_body(
                 .iter()
                 .filter(|b| !b.is_head)
                 .map(|b| b.name.clone())
-                .chain(s.remote_branches.iter().map(|b| b.full_name()))
+                .chain(
+                    s.remote_branches
+                        .iter()
+                        .map(canopy_core::RemoteBranchInfo::full_name),
+                )
                 .collect()
         })
         .unwrap_or_default();
@@ -1139,7 +1145,7 @@ fn read(ui: &mut Ui, doc: Document, reading: &mut Option<Document>, height: f32)
     Disclosure::new(("read", doc.title()), doc.title(), &mut open)
         .icon(icon::SCROLL)
         .show(ui, |ui| {
-            document(ui, ("legal", doc.title()), height, doc.body())
+            document(ui, ("legal", doc.title()), height, doc.body());
         });
     if open != was {
         *reading = open.then_some(doc);

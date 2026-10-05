@@ -1328,7 +1328,7 @@ fn checkout_request_fetches_and_fast_forwards_the_request_branch() {
     repo.checkout_branch("main").expect("switch to main");
     repo.checkout_request("origin", "refs/pull/1/head", "pr/1", |_| {})
         .expect("update request");
-    assert_eq!(head(&repo), (Some("pr/1".into()), Some(second.clone())));
+    assert_eq!(head(&repo), (Some("pr/1".into()), Some(second)));
     assert_eq!(
         fs::read_to_string(dest.join("pr.txt")).expect("read"),
         "two\n"
@@ -1881,7 +1881,7 @@ fn write_resolution_keeps_the_executable_bit() {
     assert_eq!(mode & 0o777, 0o755);
     let leftovers = fs::read_dir(p)
         .expect("ls")
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
         .count();
     assert_eq!(leftovers, 0);

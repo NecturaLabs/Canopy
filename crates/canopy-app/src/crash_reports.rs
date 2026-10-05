@@ -323,7 +323,7 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
     if let Some(l) = event.logentry.as_mut() {
         s(&mut l.message);
     }
-    for exc in event.exception.values.iter_mut() {
+    for exc in &mut event.exception.values {
         if let Some(v) = exc.value.as_mut() {
             s(v);
         }
@@ -337,7 +337,7 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
             }
         }
     }
-    for thread in event.threads.values.iter_mut() {
+    for thread in &mut event.threads.values {
         if let Some(st) = thread.stacktrace.as_mut() {
             for f in &mut st.frames {
                 for field in [&mut f.abs_path, &mut f.filename] {

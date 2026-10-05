@@ -558,8 +558,8 @@ impl Card {
             (false, None) => Some(rest_ring.lerp_to_gamma(s.edge, lit)),
         };
         let painter = ui.painter();
-        let mut shapes = match level {
-            Some(level) => paint::surface_shapes(
+        let mut shapes = if let Some(level) = level {
+            paint::surface_shapes(
                 painter,
                 rect,
                 radius,
@@ -568,19 +568,18 @@ impl Card {
                 level,
                 Fill::flat(fill),
                 ring,
-            ),
-            None => {
-                let mut v = vec![Shape::rect_filled(rect, radius, fill)];
-                if let Some(c) = ring {
-                    v.push(Shape::rect_stroke(
-                        rect,
-                        radius,
-                        Stroke::new(paint::SEAM, c),
-                        egui::StrokeKind::Inside,
-                    ));
-                }
-                v
+            )
+        } else {
+            let mut v = vec![Shape::rect_filled(rect, radius, fill)];
+            if let Some(c) = ring {
+                v.push(Shape::rect_stroke(
+                    rect,
+                    radius,
+                    Stroke::new(paint::SEAM, c),
+                    egui::StrokeKind::Inside,
+                ));
             }
+            v
         };
         if self.selected {
             shapes.push(Shape::rect_stroke(
@@ -1734,13 +1733,10 @@ mod tests {
                 },
             );
             out.textures_delta.clear();
-            out.shapes
-                .iter()
-                .filter_map(|c| match &c.shape {
-                    Shape::Text(t) => Some(t.pos.y),
-                    _ => None,
-                })
-                .next()
+            out.shapes.iter().find_map(|c| match &c.shape {
+                Shape::Text(t) => Some(t.pos.y),
+                _ => None,
+            })
         };
         let first = title_y();
         let settled = title_y();

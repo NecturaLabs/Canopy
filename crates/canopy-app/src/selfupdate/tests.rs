@@ -544,7 +544,7 @@ fn the_receipt_is_read_and_registered_copies_follow_the_new_files() {
         assert!(is_symlink(&svg), "a symlink is never removed");
     }
     let receipt = parse_receipt(&read(&root.join(RECEIPT)));
-    assert_eq!(receipt.desktops, vec![entry.clone()]);
+    assert_eq!(receipt.desktops, vec![entry]);
     assert_eq!(receipt.icons.len(), 1);
     assert_eq!(receipt.icons[0].0, png);
     #[cfg(unix)]
@@ -793,7 +793,7 @@ fn an_update_replaces_the_install_and_everything_registered_with_it() {
     );
     let mut phases = Vec::new();
     let done = install_managed(&old.root, &plan_for(&base, &bytes, None), &mut |p| {
-        phases.push(p)
+        phases.push(p);
     })
     .expect("update");
     let root = fs::canonicalize(&old.root).expect("root");

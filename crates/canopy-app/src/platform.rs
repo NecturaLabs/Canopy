@@ -345,17 +345,14 @@ fn output_within(mut cmd: Command, timeout: Duration) -> Option<String> {
         let _ = child.wait();
         return None;
     }
-    match rx.recv_timeout(timeout) {
-        Ok(out) => {
-            let status = child.wait().ok()?;
-            out.filter(|_| status.success())
-        }
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            tracing::debug!("system settings query timed out");
-            None
-        }
+    if let Ok(out) = rx.recv_timeout(timeout) {
+        let status = child.wait().ok()?;
+        out.filter(|_| status.success())
+    } else {
+        let _ = child.kill();
+        let _ = child.wait();
+        tracing::debug!("system settings query timed out");
+        None
     }
 }
 

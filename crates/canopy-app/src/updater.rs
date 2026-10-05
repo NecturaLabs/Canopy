@@ -58,8 +58,7 @@ impl Available {
     pub fn download(&self) -> String {
         self.manifest
             .artifact()
-            .map(|a| a.url.clone())
-            .unwrap_or_else(|| self.page())
+            .map_or_else(|| self.page(), |a| a.url.clone())
     }
 }
 

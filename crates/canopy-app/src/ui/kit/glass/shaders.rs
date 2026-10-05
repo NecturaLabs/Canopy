@@ -18,7 +18,7 @@ pub(super) fn header(major: u32, minor: u32, embedded: bool) -> Option<&'static 
 
 /// One triangle that covers the whole viewport; no vertex buffer, the corners come from
 /// `gl_VertexID`.
-pub(super) const VERTEX: &str = r"
+pub(super) const VERTEX: &str = "
 void main() {
     vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
@@ -28,7 +28,7 @@ void main() {
 /// Shared by the two blur passes: `tap` reads the source level at a position in its pixels,
 /// clamped to the part of the texture this frame filled (textures are sized for the largest
 /// region seen, so the rest holds older content).
-const TAP: &str = r"
+const TAP: &str = "
 #ifdef GLASS_ES
 layout(location = 0) out vec4 o_color;
 #else
@@ -50,7 +50,7 @@ vec4 tap(vec2 p) {
 pub(super) fn down() -> String {
     format!(
         "{TAP}{}",
-        r"
+        "
 void main() {
     vec2 p = gl_FragCoord.xy * (u_src_size / u_dst_size);
     float d = u_offset;
@@ -70,7 +70,7 @@ void main() {
 pub(super) fn up() -> String {
     format!(
         "{TAP}{}",
-        r"
+        "
 void main() {
     vec2 p = gl_FragCoord.xy * (u_src_size / u_dst_size);
     float u = u_offset;
@@ -89,7 +89,7 @@ void main() {
 /// `u_cap` in dark themes, lifted towards white to at least `u_cap` in light ones, in linear
 /// light), dithered by half a step, inside the layer's rounded rectangle with one pixel of
 /// anti-aliasing, premultiplied and faded with the layer's opacity.
-pub(super) const COMPOSITE: &str = r"
+pub(super) const COMPOSITE: &str = "
 #ifdef GLASS_ES
 layout(location = 0) out vec4 o_color;
 #else

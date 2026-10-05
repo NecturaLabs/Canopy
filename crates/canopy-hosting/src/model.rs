@@ -99,7 +99,7 @@ pub enum CheckState {
 }
 
 /// One row of a request list.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestSummary {
     /// GitHub's pull request number, GitLab's merge request iid.
     pub number: u64,
@@ -129,7 +129,7 @@ pub struct RequestSummary {
 }
 
 /// A CI check on the request's head commit.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
     /// Check run, status context, pipeline or job name.
     pub name: String,
@@ -140,7 +140,7 @@ pub struct Check {
 }
 
 /// A reviewer's verdict.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Review {
     /// Reviewer's login or username.
     pub author: String,
@@ -149,7 +149,7 @@ pub struct Review {
 }
 
 /// A conversation comment (not an inline review comment, not a system note).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Comment {
     /// Author's login or username.
     pub author: String,
@@ -160,7 +160,7 @@ pub struct Comment {
 }
 
 /// Everything the request detail view shows.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestDetails {
     /// The list row.
     pub summary: RequestSummary,
@@ -188,7 +188,7 @@ pub struct RequestDetails {
 }
 
 /// What [`crate::Client::create`] opens.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewRequest {
     /// Title.
     pub title: String,

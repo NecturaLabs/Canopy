@@ -3391,7 +3391,7 @@ mod tests {
         }
     }
 
-    /// (text, text_dim, text_faint, outline and focus) minimums: Contrast is stricter.
+    /// (`text`, `text_dim`, `text_faint`, `outline` and `focus`) minimums: Contrast is stricter.
     fn targets(p: &Palette) -> (f64, f64, f64, f64) {
         if p.strict {
             (10.0, 7.0, 5.5, 4.5)

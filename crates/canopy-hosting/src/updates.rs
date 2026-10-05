@@ -186,7 +186,7 @@ fn get(
         .max_redirects(0)
         .max_redirects_will_error(false)
         .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_secs(30 * 60)))
+        .timeout_global(Some(Duration::from_mins(30)))
         .user_agent(crate::http::user_agent())
         .tls_config(tls);
     if is_loopback_url(url) {

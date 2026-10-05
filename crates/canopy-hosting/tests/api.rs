@@ -153,7 +153,7 @@ mod server {
         let canned = {
             let routes = routes.lock().expect("routes");
             routes
-                .get(&(method.clone(), target.clone()))
+                .get(&(method.clone(), target))
                 .or_else(|| routes.get(&(method, path)))
                 .cloned()
         }
@@ -1255,11 +1255,11 @@ fn author_pictures_resolve_both_providers_and_download_without_tokens() {
     );
     assert_eq!(
         requests[0].header("authorization"),
-        Some(&format!("Bearer {TOKEN}")[..])
+        Some(&*format!("Bearer {TOKEN}"))
     );
     assert_eq!(
         requests[2].header("authorization"),
-        Some(&format!("Bearer {TOKEN}")[..])
+        Some(&*format!("Bearer {TOKEN}"))
     );
     for request in [&requests[1], &requests[3]] {
         assert!(request.header("authorization").is_none());

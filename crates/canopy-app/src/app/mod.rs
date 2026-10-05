@@ -299,17 +299,17 @@ impl CanopyApp {
         match launch.overlay.as_deref() {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
             Some("settings-git") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git));
             }
             Some("settings-integrations") => {
                 app.settings_screen =
-                    Some(SettingsScreen::at(settings_screen::Section::Integrations))
+                    Some(SettingsScreen::at(settings_screen::Section::Integrations));
             }
             Some("settings-accounts") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Accounts))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Accounts));
             }
             Some("settings-updates") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates));
             }
             Some("about") => app.dialogs.open(Dialog::About),
             Some("toasts") => {
@@ -327,44 +327,47 @@ impl CanopyApp {
                 );
             }
             Some("settings-keyboard") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard));
             }
             Some("cheatsheet") => app.cheatsheet.open = true,
             Some("palette") => app.palette.open(),
             Some("privacy") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Privacy))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Privacy));
             }
             Some("consent") => {
                 app.dialogs.open(Dialog::Consent {
                     step: crate::ui::legal::Pending::Terms,
                     updated: false,
                     reading: None,
-                })
+                });
             }
             Some("crash-consent") => {
                 app.dialogs.open(Dialog::Consent {
                     step: crate::ui::legal::Pending::CrashReports,
                     updated: false,
                     reading: None,
-                })
+                });
             }
-            Some("legal") => app.dialogs.open(Dialog::Legal(crate::ui::legal::Document::Privacy)),
+            Some("legal") => app
+                .dialogs
+                .open(Dialog::Legal(crate::ui::legal::Document::Privacy)),
             Some("credential") => {
-                app.dialogs.open(Dialog::credential(crate::askpass::Prompt::preview(
-                    "Enter passphrase for key '/home/ada/.ssh/id_ed25519': ",
-                )))
+                app.dialogs
+                    .open(Dialog::credential(crate::askpass::Prompt::preview(
+                        "Enter passphrase for key '/home/ada/.ssh/id_ed25519': ",
+                    )));
             }
             Some("host-key") => {
                 app.dialogs.open(Dialog::credential(crate::askpass::Prompt::preview(
                     "The authenticity of host 'github.com (140.82.121.4)' can't be established.\nED25519 key fingerprint is SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU.\nThis key is not known by any other names.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ",
-                )))
+                )));
             }
             Some("merge") => {
                 app.dialogs.open(Dialog::Merge {
                     target: "feature/search".into(),
                     rebase: false,
                     mode: canopy_core::MergeMode::Squash,
-                })
+                });
             }
             Some("identity") => app.dialogs.open(Dialog::Identity {
                 name: String::new(),
@@ -375,19 +378,25 @@ impl CanopyApp {
                 let available = updater::Available {
                     build: 1001,
                     manifest: canopy_hosting::updates::UpdateManifest {
-                        version: "1001".into(), notes: String::new(), pub_date: None,
-                        release_page: None, platforms: Default::default(),
+                        version: "1001".into(),
+                        notes: String::new(),
+                        pub_date: None,
+                        release_page: None,
+                        platforms: Default::default(),
                     },
                 };
                 app.updater.install = if launch.overlay.as_deref() == Some("update-installed") {
                     updater::InstallState::Done {
-                        build: 1001, installed: crate::selfupdate::Installed {
-                            exe: Some("canopy".into()), notes: Vec::new(),
+                        build: 1001,
+                        installed: crate::selfupdate::Installed {
+                            exe: Some("canopy".into()),
+                            notes: Vec::new(),
                         },
                     }
                 } else {
                     updater::InstallState::Running {
-                        build: 1001, phase: crate::selfupdate::Phase::Installing,
+                        build: 1001,
+                        phase: crate::selfupdate::Phase::Installing,
                     }
                 };
                 app.dialogs.open(Dialog::Update(Box::new(available)));
@@ -718,7 +727,7 @@ impl eframe::App for CanopyApp {
                     self.active,
                     self.settings.theme,
                     &mut actions,
-                )
+                );
             });
         if let Some(tab) = self.tabs.get_mut(self.active) {
             egui::Panel::top("actions")
@@ -803,7 +812,7 @@ impl eframe::App for CanopyApp {
                                 s.border,
                             );
                         }
-                        sidebar::show(ui, tab, &mut actions)
+                        sidebar::show(ui, tab, &mut actions);
                     });
             }
             content_pane(ui, |ui| match tab.view {
@@ -1138,7 +1147,7 @@ mod tests {
                 "zoom {from} -> {to}"
             );
             let mut next = ctx.run_ui(egui::RawInput::default(), |ui| {
-                update_window_minimum(ui.ctx())
+                update_window_minimum(ui.ctx());
             });
             next.textures_delta.clear();
             assert_eq!(ctx.zoom_factor(), to);
@@ -1164,7 +1173,7 @@ mod tests {
             apply_zoom(&ctx, from);
             for _ in 0..2 {
                 let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                    update_window_minimum(ui.ctx())
+                    update_window_minimum(ui.ctx());
                 });
                 output.textures_delta.clear();
             }
@@ -1201,7 +1210,7 @@ mod tests {
         for zoom in [0.8, 1.0, 1.6] {
             apply_zoom(&ctx, zoom);
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                update_window_minimum(ui.ctx())
+                update_window_minimum(ui.ctx());
             });
             output.textures_delta.clear();
             let minimum = output.viewport_output[&egui::ViewportId::ROOT]

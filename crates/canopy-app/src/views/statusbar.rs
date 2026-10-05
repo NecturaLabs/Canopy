@@ -173,7 +173,7 @@ pub fn show(
                         .tooltip("See what's new and download it"),
                     &label,
                 );
-                let version = v.to_string();
+                let version = v;
                 let page = a.page();
                 menu::context(&resp, |m| {
                     if m.item(icon::ARROW_SQUARE_OUT, "Release notes and downloads")

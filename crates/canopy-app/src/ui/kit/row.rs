@@ -1258,7 +1258,7 @@ impl Selection {
 
 // ------------------------------------------------------------------------------------ gallery
 
-/// The gallery's Lists section: every ListRow state, tree rows open and closed at three depths, a
+/// The gallery's Lists section: every `ListRow` state, tree rows open and closed at three depths, a
 /// disclosure and section headers.
 pub(crate) fn gallery(ui: &mut Ui) {
     let m = theme::metrics();
@@ -1756,8 +1756,7 @@ mod tests {
                 .nodes
                 .iter()
                 .find(|(_, n)| n.label() == Some(label))
-                .map(|(_, n)| n.clone())
-                .unwrap_or_else(|| panic!("no node {label}"))
+                .map_or_else(|| panic!("no node {label}"), |(_, n)| n.clone())
         };
         let row = node("main.rs");
         assert_eq!(row.role(), egui::accesskit::Role::ListItem);

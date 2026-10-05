@@ -1336,7 +1336,7 @@ mod tests {
             "still reading: no warning yet"
         );
 
-        let placeholder = identity("t", "t@t", configured.clone(), true);
+        let placeholder = identity("t", "t@t", configured, true);
         assert_eq!(
             identity_notice(Some(&placeholder), false),
             Some("This identity looks like a placeholder.")

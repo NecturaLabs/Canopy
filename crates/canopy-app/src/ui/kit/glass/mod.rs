@@ -258,7 +258,7 @@ fn max_side() -> i32 {
 fn set_max_side(side: i32) {
     status(|s| {
         s.max_side
-            .store(side.clamp(0, MAX_SIDE_CAP), Ordering::Relaxed)
+            .store(side.clamp(0, MAX_SIDE_CAP), Ordering::Relaxed);
     });
 }
 
@@ -315,9 +315,12 @@ pub fn counters() -> (u64, u64) {
 
 /// Deletes the blur's OpenGL objects (`App::on_exit`, while eframe keeps the context current).
 pub fn destroy(gl: Option<&glow::Context>) {
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| match SLOT.lock() {
-        Ok(mut slot) => gl::destroy(&mut slot, gl),
-        Err(_) => tracing::debug!("translucent surfaces: lock poisoned at exit; objects left"),
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        if let Ok(mut slot) = SLOT.lock() {
+            gl::destroy(&mut slot, gl);
+        } else {
+            tracing::debug!("translucent surfaces: lock poisoned at exit; objects left");
+        }
     }));
     if result.is_err() {
         tracing::warn!("translucent surfaces: panic while deleting the blur's objects");

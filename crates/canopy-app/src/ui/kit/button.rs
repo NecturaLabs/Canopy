@@ -428,8 +428,7 @@ impl Button {
                 let icon_color = self.icon_tone.map_or(label, |t| t.color(p));
                 if spinning {
                     let center = pos2(x + w / 2.0, cy);
-                    let sub = painter.clone();
-                    paint::spinner(&sub, center, m.icon_md * 0.38, 1.6, icon_color);
+                    paint::spinner(&painter, center, m.icon_md * 0.38, 1.6, icon_color);
                 } else if let Some(g) = &icon {
                     shapes.push(Shape::galley(
                         pos2(x, cy - g.size().y / 2.0),
@@ -802,7 +801,7 @@ impl ToolButton {
             let (icon_pos, caption_pos) = if stacked {
                 let block = glyph.size().y + gap + caption.size().y;
                 let top = rect.center().y - block / 2.0;
-                let icon_x = rect.center().x - (glyph.size().x + badge_w) / 2.0;
+                let icon_x = rect.center().x - f32::midpoint(glyph.size().x, badge_w);
                 (
                     pos2(icon_x, top),
                     pos2(
@@ -833,7 +832,7 @@ impl ToolButton {
                 );
                 shapes.push(Shape::galley(at, b.clone(), p.accent));
             }
-            shapes.push(Shape::galley(caption_pos, caption.clone(), text_color));
+            shapes.push(Shape::galley(caption_pos, caption, text_color));
             paint_scaled(&painter, shapes, rect.center(), scale);
         }
         let name = self.label;

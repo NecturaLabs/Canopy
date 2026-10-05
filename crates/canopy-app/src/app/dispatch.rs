@@ -222,7 +222,7 @@ impl CanopyApp {
                     });
                 }
                 Action::ClearIdentity { repo, scope } => {
-                    self.request_identity(IdentityJob::Clear { repo, scope })
+                    self.request_identity(IdentityJob::Clear { repo, scope });
                 }
                 Action::TrustFolder(folder) => {
                     let shown = folder.display().to_string();

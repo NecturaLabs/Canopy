@@ -154,7 +154,7 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 launch.zoom = Some(parse_zoom(&value.to_string_lossy())?);
             }
             "--screenshot" => {
-                launch.screenshot = Some(args.next().ok_or("--screenshot needs a file")?.into())
+                launch.screenshot = Some(args.next().ok_or("--screenshot needs a file")?.into());
             }
             "--view" => {
                 launch.view = Some(

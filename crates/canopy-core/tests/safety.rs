@@ -340,7 +340,7 @@ fn file_to_symlink_is_one_typechange_entry_with_both_modes() {
     assert_eq!(d.mode_change(), Some((0o100644, 0o120000)));
 
     // Hunk staging refuses a type change instead of applying half of it.
-    let key = d.hunks.first().map(|h| h.key()).unwrap_or((0, 0, 0, 0));
+    let key = d.hunks.first().map_or((0, 0, 0, 0), canopy_core::Hunk::key);
     for result in [
         repo.apply_hunk(canopy_core::HunkAction::Stage, "a.txt", 0, key, 3),
         repo.apply_lines(canopy_core::HunkAction::Stage, "a.txt", 0, key, &[0], 3),

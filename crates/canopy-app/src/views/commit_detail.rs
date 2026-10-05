@@ -192,11 +192,9 @@ fn header(ui: &mut Ui, tab: &mut RepoTab) {
                     .layout(Layout::left_to_right(Align::Center)),
             );
             summary_ui.set_clip_rect(summary_rect.intersect(ui.clip_rect()));
-            let summary = tab
-                .details
-                .as_ref()
-                .map(|d| d.message.lines().next().unwrap_or("").trim())
-                .unwrap_or("Commit details");
+            let summary = tab.details.as_ref().map_or("Commit details", |d| {
+                d.message.lines().next().unwrap_or("").trim()
+            });
             summary_ui
                 .add(
                     egui::Label::new(
@@ -498,12 +496,12 @@ fn row_actions_width() -> f32 {
 /// A file row's hover-revealed actions.
 type RowActions<'a> = Box<dyn FnOnce(&mut Ui) + 'a>;
 
-fn file_list_row_inner<'a>(
+fn file_list_row_inner(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
     id: egui::Id,
-    actions: Option<RowActions<'a>>,
+    actions: Option<RowActions<'_>>,
 ) -> egui::Response {
     let p = palette(ui.ctx());
     let m = theme::metrics();

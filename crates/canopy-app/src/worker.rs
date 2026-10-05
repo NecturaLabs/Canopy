@@ -474,9 +474,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             // Line counts need blobs: fetch them after the list is on screen,
                             // unless the user already moved on (a newer job is waiting).
                             if wants_counts && jobs.is_empty() {
-                                if !allowed() {
-                                    download_refused(&emit, repo.promisor_remote());
-                                } else {
+                                if allowed() {
                                     match with_progress(&emit, repo.promisor_remote(), || {
                                         if allowed() {
                                             let result =
@@ -495,9 +493,11 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                                         Ok(_) => {}
                                         // The list stays; only the counts are missing.
                                         Err(e) => {
-                                            tracing::warn!(error = %redacted(&e), "line counts not downloaded")
+                                            tracing::warn!(error = %redacted(&e), "line counts not downloaded");
                                         }
                                     }
+                                } else {
+                                    download_refused(&emit, repo.promisor_remote());
                                 }
                             }
                         }
@@ -613,7 +613,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     match &result {
                         Ok(_) => tracing::info!(operation = %label, ms, "operation succeeded"),
                         Err(e) => {
-                            tracing::warn!(operation = %label, ms, error = %canopy_core::cli::redact_url(e), "operation failed")
+                            tracing::warn!(operation = %label, ms, error = %canopy_core::cli::redact_url(e), "operation failed");
                         }
                     }
                     emit(Event::OpFinished {
@@ -1308,7 +1308,7 @@ mod read_tests {
     fn an_untrusted_partial_clone_downloads_nothing_and_says_why() {
         // Blobless: the file list is offline, the line counts would need a download.
         let (_root, _src, copy, _oldest, middle) = partial_clone("--filter=blob:none");
-        let worker = Worker::spawn(copy.clone(), egui::Context::default());
+        let worker = Worker::spawn(copy, egui::Context::default());
         worker.send(Job::Details(middle));
         let events = events_until(&worker, |e| matches!(e, Event::DownloadsRefused { .. }));
         assert!(

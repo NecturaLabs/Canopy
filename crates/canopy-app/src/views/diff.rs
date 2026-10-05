@@ -423,7 +423,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 let rect = Rect::from_min_size(origin + vec2(0.0, y), vec2(content_w, rh));
                 match layout.rows[i] {
                     Row::Hunk(h) => {
-                        hunk_header(ui, &cx, &d, h, rect, origin, viewport, line_sel, actions)
+                        hunk_header(ui, &cx, &d, h, rect, origin, viewport, line_sel, actions);
                     }
                     Row::Line(h, l) => {
                         let hunk = &d.hunks[h];

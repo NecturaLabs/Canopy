@@ -61,7 +61,7 @@ pub fn column_width(count: u16) -> f32 {
 }
 
 /// How a row's node and edges are marked beyond its layout.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Marks {
     /// The opaque background of the row (pane, or hover, zebra or selection over it): the node's
     /// ring and a merge's hollow take it, so the ring always matches the row.
@@ -99,7 +99,7 @@ fn anchor(rect: Rect, lanes: &Lanes, lane: u16, end: LineEnd) -> Pos2 {
 /// control points sit at the vertical midpoint above `b` and below `a`, so it leaves and enters
 /// vertically.
 pub fn edge_points(a: Pos2, b: Pos2) -> [Pos2; 4] {
-    let my = (a.y + b.y) / 2.0;
+    let my = f32::midpoint(a.y, b.y);
     [a, pos2(a.x, my), pos2(b.x, my), b]
 }
 
@@ -396,7 +396,7 @@ mod tests {
         );
         let merge = GraphRow {
             is_merge: true,
-            ..row.clone()
+            ..row
         };
         let hollow = circles(&merge, Marks::new(ground));
         assert_eq!(hollow[1].1, ground, "a merge is hollow");

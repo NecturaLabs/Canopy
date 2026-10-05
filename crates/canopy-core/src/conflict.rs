@@ -698,7 +698,7 @@ mod tests {
         let text = "<<<<<<< HEAD\nO\n||||||| 2ec4c1a\nB1\nB2\n=======\nT\n>>>>>>> other\n";
         let f = ConflictFile::parse(text);
         let r = f.regions().next().expect("region");
-        assert_eq!(r.base.as_deref(), Some(&v(&["B1", "B2"])[..]));
+        assert_eq!(r.base.as_deref(), Some(&*v(&["B1", "B2"])));
         assert_eq!(r.base_label, "2ec4c1a");
         assert_eq!(f.render(&[Some(Choice::Base)]), "B1\nB2\n");
         assert_eq!(f.render(&[None]), text);

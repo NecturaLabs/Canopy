@@ -452,7 +452,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = m.toolbar_gap;
                 ui.add_space(theme::SM);
-                let changes = snap.map(|s| s.status.len()).unwrap_or(0);
+                let changes = snap.map_or(0, |s| s.status.len());
                 let open_requests = match &tab.requests.list {
                     Some(Ok(l)) if tab.requests.filter == canopy_hosting::StateFilter::Open => {
                         l.len()
@@ -478,7 +478,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 {
                     actions.push(Action::Fetch);
                 }
-                let behind = branch.map(|b| b.behind).unwrap_or(0);
+                let behind = branch.map_or(0, |b| b.behind);
                 let mut pull = ToolButton::new(icon::ARROW_FAT_LINE_DOWN, "Pull")
                     .tooltip("Pull the current branch")
                     .shortcut(Command::Pull)
@@ -490,7 +490,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 if pull.show(ui).clicked() {
                     actions.push(Action::Pull);
                 }
-                let ahead = branch.map(|b| b.ahead).unwrap_or(0);
+                let ahead = branch.map_or(0, |b| b.ahead);
                 if local_only {
                     if ToolButton::new(icon::CLOUD_ARROW_UP, "Publish")
                         .tooltip(
@@ -882,7 +882,7 @@ mod tests {
                     123,
                     Some((canopy_core::forge::ForgeKind::GitLab, 123)),
                     &mut Vec::new(),
-                )
+                );
             },
         );
         output.textures_delta.clear();

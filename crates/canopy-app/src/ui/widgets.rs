@@ -46,7 +46,7 @@ pub fn person_color(p: &Palette, identity: &str) -> Color32 {
     let key: String = identity
         .chars()
         .filter(|c| c.is_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
+        .flat_map(char::to_lowercase)
         .collect();
     for b in key.bytes() {
         h = (h ^ u32::from(b)).wrapping_mul(16777619);

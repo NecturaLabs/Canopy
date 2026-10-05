@@ -21,7 +21,7 @@ impl CanopyApp {
                     thread_ctx.request_repaint();
                 };
                 let result = clone_repository(&thread_url, &dest, |l| {
-                    send(CloneMsg::Progress(l.to_owned()))
+                    send(CloneMsg::Progress(l.to_owned()));
                 });
                 send(CloneMsg::Done(result));
             });

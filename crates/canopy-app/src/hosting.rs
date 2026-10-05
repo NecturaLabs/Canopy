@@ -308,7 +308,7 @@ impl HostWorker {
                     tx,
                     thread_ctx,
                     thread_avatars,
-                )
+                );
             });
         if let Err(e) = &spawned {
             tracing::error!("could not start the hosting thread: {e}");
@@ -414,7 +414,7 @@ fn run(
                 }
             }
             HostJob::List(filter) => {
-                emit(HostEvent::List(filter, client.list(filter, 100).map_err(s)))
+                emit(HostEvent::List(filter, client.list(filter, 100).map_err(s)));
             }
             HostJob::Details(n) => emit(HostEvent::Details(
                 n,

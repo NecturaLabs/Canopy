@@ -214,7 +214,7 @@ impl Menu<'_> {
                 ui.painter().set(slot, Shape::Vec(shapes));
                 // Left goes back to the parent item.
                 if ctx.input(|i| i.key_pressed(Key::ArrowLeft))
-                    && ctx.memory(|mem| mem.focused()).is_some_and(|f| {
+                    && ctx.memory(egui::Memory::focused).is_some_and(|f| {
                         ctx.read_response(f).is_some_and(|fr| fr.layer_id == layer)
                     })
                 {
@@ -593,7 +593,7 @@ impl MenuItem {
         let keyboard = focus_visible(&ctx);
         let other_focused = keyboard
             && ctx
-                .memory(|mem| mem.focused())
+                .memory(egui::Memory::focused)
                 .is_some_and(|id| id != response.id);
         let highlight = enabled
             && (f.hover

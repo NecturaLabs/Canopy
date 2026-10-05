@@ -191,8 +191,7 @@ impl CanopyApp {
                             .requests
                             .selected
                             .and_then(|n| list.iter().find(|r| r.number == n))
-                            .map(|r| r.web_url.clone())
-                            .unwrap_or_else(|| forge.web_url()),
+                            .map_or_else(|| forge.web_url(), |r| r.web_url.clone()),
                         (View::History, Some(oid), _) => forge.commit_url(&oid.to_string()),
                         _ => forge.web_url(),
                     };

@@ -196,14 +196,13 @@ pub(crate) fn legacy_extension(path: &Path) -> Option<String> {
 /// many objects after one [`refresh`].
 pub(crate) fn has_object(repo: &Repository, oid: Oid) -> bool {
     repo.odb()
-        .map(|odb| odb.exists_ext(oid, OdbLookupFlags::NO_REFRESH))
-        .unwrap_or(false)
+        .is_ok_and(|odb| odb.exists_ext(oid, OdbLookupFlags::NO_REFRESH))
 }
 
 /// Whether the object database has `oid`, rescanning the pack directory when it seems missing,
 /// in case `git` added a pack after this handle listed them.
 fn has_object_fresh(repo: &Repository, oid: Oid) -> bool {
-    repo.odb().map(|odb| odb.exists(oid)).unwrap_or(false)
+    repo.odb().is_ok_and(|odb| odb.exists(oid))
 }
 
 /// Makes libgit2 see packs `git` wrote since this handle listed them.
