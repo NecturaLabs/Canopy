@@ -528,8 +528,13 @@ fn heading(ui: &mut Ui, text: &str) {
 /// Lays `add` out in a `width`-wide column, so a kit field sits where a right-to-left row puts
 /// it (a field lays itself out top-down from the left of what is left).
 fn fixed_width(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> Response) -> Response {
-    ui.allocate_ui_with_layout(vec2(width, 0.0), Layout::top_down(Align::Min), add)
-        .inner
+    // A field's height, so a centred row centres the field with its neighbours.
+    ui.allocate_ui_with_layout(
+        vec2(width, Size::Md.height()),
+        Layout::top_down(Align::Min),
+        add,
+    )
+    .inner
 }
 
 /// A switch whose name is its row's title, so it draws no label of its own.
