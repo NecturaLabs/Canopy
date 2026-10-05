@@ -146,12 +146,21 @@ highlights and rings floating layers in `control_border`. The top highlight line
 level's alpha, from `theme::highlight_line`.
 
 Translucent surfaces (off by default) blur what is behind floating layers: a layer asks
-`kit::glass::layer_fill` for its fill, which adds the blurred backdrop (dual Kawase, about 12 pt,
-saturation x1.15, luminance clamped to `glass_luminance`, dithered) and returns `overlay` at
-`glass_alpha`; `kit::paint::surface` moves the backdrop between the layer's shadow and its fill.
-The command palette uses it today (it places `kit::glass::backdrop_shape` under its egui frame
-itself); the other floating layers do as they move to the kit. At most four layers a frame are
-glass; tooltips, the settings screen and panes stay opaque. The
+`kit::glass::layer_fill` for its fill, which adds two paint callbacks and returns `overlay` at
+`glass_alpha`. The capture copies and blurs what is behind the layer (dual Kawase, about 12 pt)
+and stays before the layer's shadow, so the shadow never shows through the glass;
+`kit::paint::surface` moves the composite between the shadow and the fill. The composite raises
+saturation x1.15, keeps the backdrop's luminance in the band the contrast checks assume
+(`glass_luminance`: in dark themes anything brighter is scaled down to it; in light themes every
+colour is lifted that share of the way to white, so the floor holds and what lies behind keeps
+its shapes), dithers and masks to the layer's rounded rectangle. A caller that places shapes
+itself takes both from `kit::glass::backdrop_shapes`: the capture before its shadow, the
+composite after it (`backdrop_shape` gives them as one shape, which blurs a shadow placed before
+it into the glass). The command palette and menus still place the one shape after their shadow
+(`kit::overlay::surface_shapes`), so their shadow darkens the glass until they take the two; the
+other floating layers get glass as they move to the kit. At most four layers a frame are glass; tooltips, the settings
+screen and panes stay opaque. Dark themes leave glass little room: the dimmest text on it must
+keep 4.5:1, so the backdrop shows as soft light and dark shapes rather than colour. The
 setting is unavailable with the Contrast theme, when the system asks for reduced transparency
 (macOS, Windows) and when the graphics driver cannot run the blur; any failure at run time turns
 it off for the session and every layer is opaque again.

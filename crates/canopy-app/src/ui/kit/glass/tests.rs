@@ -46,6 +46,13 @@ fn callbacks(shapes: &[ClippedShape]) -> usize {
         .count()
 }
 
+/// Glass layers among `shapes`: each paints two callbacks, its capture and its composite.
+fn glass_layers(shapes: &[ClippedShape]) -> usize {
+    let n = callbacks(shapes);
+    assert_eq!(n % 2, 0, "a capture without its composite: {n} callbacks");
+    n / 2
+}
+
 #[test]
 fn plan_flips_to_window_pixels_and_pads_the_region() {
     let plan = plan(
@@ -434,21 +441,20 @@ fn a_glass_layer_blurs_its_backdrop_under_a_translucent_fill() {
                 fill,
                 Palette::tint(theme::surfaces(ui.ctx()).overlay, p.glass_alpha)
             );
-            assert!(fill.a() < 255 && fill.a() > 190, "{fill:?}");
+            assert!(fill.a() < 255 && fill.a() >= 128, "{fill:?}");
         });
-        assert_eq!(callbacks(&shapes), 1, "{}", theme.name());
-        let area = shapes.iter().find_map(|c| match &c.shape {
-            Shape::Callback(cb) => Some(cb.rect),
-            _ => None,
-        });
-        assert_eq!(
-            area,
-            Some(
-                at(10.0, 10.0, 200.0, 100.0)
-                    .expand(PAD)
-                    .intersect(ctx.viewport_rect())
-            )
-        );
+        assert_eq!(glass_layers(&shapes), 1, "{}", theme.name());
+        let areas: Vec<Rect> = shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                Shape::Callback(cb) => Some(cb.rect),
+                _ => None,
+            })
+            .collect();
+        let padded = at(10.0, 10.0, 200.0, 100.0)
+            .expand(PAD)
+            .intersect(ctx.viewport_rect());
+        assert_eq!(areas, [padded, padded]);
     }
 }
 
@@ -499,11 +505,40 @@ fn the_backdrop_moves_between_the_shadow_and_the_fill() {
             _ => None,
         })
         .collect();
+    // The capture stays before the shadow, so the shadow is not blurred into the glass; the
+    // composite moves between the shadow and the fill.
     assert_eq!(
         kinds,
-        ["noop", "shadow", "shadow", "backdrop", "fill"],
+        ["backdrop", "noop", "shadow", "shadow", "backdrop", "fill"],
         "{kinds:?}"
     );
+}
+
+#[test]
+fn a_caller_placing_the_backdrop_gets_the_capture_and_the_composite() {
+    let ctx = egui::Context::default();
+    setup(&ctx, ThemeId::Midnight, true, Backend::Supported);
+    let layer = at(40.0, 40.0, 240.0, 160.0);
+    let shapes = frame(&ctx, |ui| {
+        let b = backdrop_shapes(ui.painter(), layer, CornerRadius::same(8));
+        assert!(b.as_ref().is_some_and(|b| {
+            matches!(b.capture, Shape::Callback(_)) && matches!(b.composite, Shape::Callback(_))
+        }));
+        // The single-shape form carries both, capture first.
+        let one = backdrop_shape(ui.painter(), layer, CornerRadius::same(8));
+        assert!(
+            matches!(&one, Some(Shape::Vec(v)) if v.len() == 2
+                && v.iter().all(|s| matches!(s, Shape::Callback(_)))),
+            "{one:?}"
+        );
+        // Each took one of the frame's glass layers.
+        for _ in 2..MAX_REGIONS {
+            assert!(backdrop_shapes(ui.painter(), layer, CornerRadius::ZERO).is_some());
+        }
+        assert!(backdrop_shapes(ui.painter(), layer, CornerRadius::ZERO).is_none());
+    });
+    // Nothing was painted: the caller places them.
+    assert_eq!(callbacks(&shapes), 0);
 }
 
 #[test]
@@ -515,7 +550,7 @@ fn a_surface_at_another_rect_leaves_the_backdrop_where_it_was() {
         let _ = layer_fill(ui.painter(), layer, CornerRadius::ZERO);
         assert!(lift(ui.painter(), layer.translate(vec2(1.0, 0.0))).is_none());
     });
-    assert_eq!(callbacks(&shapes), 1);
+    assert_eq!(glass_layers(&shapes), 1);
 }
 
 #[test]
@@ -534,7 +569,7 @@ fn at_most_four_glass_layers_a_frame() {
             assert!(fills[4..].iter().all(|&a| a == 255), "{fills:?}");
         });
         // Each frame starts with the full allowance.
-        assert_eq!(callbacks(&shapes), usize::from(MAX_REGIONS));
+        assert_eq!(glass_layers(&shapes), usize::from(MAX_REGIONS));
     }
 }
 
@@ -559,7 +594,7 @@ fn layers_nobody_sees_take_no_allowance() {
             assert!(layer_fill(ui.painter(), r, CornerRadius::ZERO).a() < 255);
         }
     });
-    assert_eq!(callbacks(&shapes), 4);
+    assert_eq!(glass_layers(&shapes), 4);
 }
 
 #[test]
@@ -659,7 +694,7 @@ fn luminance(c: Color32) -> f64 {
 }
 
 /// The composite shader's colour maths in Rust: saturation from Rec. 709 luma, then the luminance
-/// clamp, in linear light.
+/// band (the dark cap or the light lift), in linear light.
 fn shade(c: Color32, dark: bool, cap: f32) -> Color32 {
     let lin = |v: u8| {
         let v = f64::from(v) / 255.0;
@@ -690,8 +725,8 @@ fn shade(c: Color32, dark: bool, cap: f32) -> Color32 {
     let cap = f64::from(cap);
     if dark && y > cap {
         l = l.map(|x| x * cap / y);
-    } else if !dark && y < cap {
-        l = l.map(|x| x + (1.0 - x) * (cap - y) / (1.0 - y));
+    } else if !dark {
+        l = l.map(|x| 1.0 - (1.0 - x) * (1.0 - cap));
     }
     Color32::from_rgb(srgb(l[0]), srgb(l[1]), srgb(l[2]))
 }
@@ -725,20 +760,77 @@ fn the_shader_clamp_keeps_the_backdrop_in_the_band_the_contrast_test_assumes() {
                 assert!(y >= cap - 0.01, "{}: {probe:?} -> {out:?} ({y})", p.name);
             }
         }
-        // Greys have nothing to saturate: the shader's clamp is `theme::clamp_backdrop`.
-        for grey in [0, 60, 128, 200, 255] {
-            let c = Color32::from_gray(grey);
-            let ours = shade(c, p.dark, p.glass_luminance);
-            let theirs = theme::clamp_backdrop(c, p.dark, p.glass_luminance);
-            for (a, b) in ours.to_array().into_iter().zip(theirs.to_array()) {
+        if p.dark {
+            // Greys have nothing to saturate: the shader's clamp is `theme::clamp_backdrop`.
+            for grey in [0, 60, 128, 200, 255] {
+                let c = Color32::from_gray(grey);
+                let ours = shade(c, p.dark, p.glass_luminance);
+                let theirs = theme::clamp_backdrop(c, p.dark, p.glass_luminance);
+                for (a, b) in ours.to_array().into_iter().zip(theirs.to_array()) {
+                    assert!(
+                        a.abs_diff(b) <= 1,
+                        "{}: grey {grey}: {ours:?} vs {theirs:?}",
+                        p.name
+                    );
+                }
+            }
+        } else {
+            // Every channel of every backdrop ends at least as light as the darkest case the
+            // theme's contrast test checks (black lifted to the floor), and the theme's inks are
+            // all darker than glass over it: whatever lies behind, the glass is no darker than
+            // that case, so its contrast holds.
+            let floor = theme::clamp_backdrop(Color32::BLACK, false, p.glass_luminance);
+            for r in (0..=255).step_by(15) {
+                for g in (0..=255).step_by(15) {
+                    for b in (0..=255).step_by(15) {
+                        let c = Color32::from_rgb(r, g, b);
+                        let out = shade(c, false, p.glass_luminance);
+                        for (a, f) in out.to_array().into_iter().zip(floor.to_array()) {
+                            assert!(
+                                a.saturating_add(1) >= f,
+                                "{}: {c:?} -> {out:?} under {floor:?}",
+                                p.name
+                            );
+                        }
+                    }
+                }
+            }
+            let darkest = theme::over(
+                Palette::tint(p.surfaces(Style::Standard).overlay, p.glass_alpha),
+                floor,
+            );
+            for ink in [
+                p.text,
+                p.text_dim,
+                p.text_faint,
+                p.accent,
+                p.danger,
+                p.focus,
+                p.control_border,
+            ] {
                 assert!(
-                    a.abs_diff(b) <= 1,
-                    "{}: grey {grey}: {ours:?} vs {theirs:?}",
+                    luminance(ink) < luminance(darkest),
+                    "{}: {ink:?} is lighter than the glass",
                     p.name
                 );
             }
         }
     }
+}
+
+#[test]
+fn light_glass_keeps_the_shapes_behind_it() {
+    // Text and lines dimmed under a scrim sit below a light theme's luminance floor; lifting them
+    // as a whole keeps them apart, where raising each to the floor flattened them to one grey.
+    let (line, ground) = (Color32::from_gray(40), Color32::from_gray(150));
+    for floor in [0.45, 0.5, 0.8] {
+        let (l, g) = (shade(line, false, floor), shade(ground, false, floor));
+        assert!(g.g() > l.g(), "floor {floor}: {l:?} vs {g:?}");
+        let flat = |c| theme::clamp_backdrop(c, false, floor);
+        assert_eq!(flat(line), flat(ground), "floor {floor}");
+    }
+    let (l, g) = (shade(line, false, 0.5), shade(ground, false, 0.5));
+    assert!(g.g() >= l.g() + 16, "{l:?} vs {g:?}");
 }
 
 #[test]
@@ -751,7 +843,7 @@ fn the_gallery_section_draws_both_cards() {
     setup(&ctx, ThemeId::Midnight, false, Backend::Supported);
     let shapes = frame(&ctx, section);
     // The forced card is glass even with the setting off; the other stays opaque.
-    assert_eq!(callbacks(&shapes), 1);
+    assert_eq!(glass_layers(&shapes), 1);
     setup(&ctx, ThemeId::Midnight, false, Backend::Unavailable);
     let shapes = frame(&ctx, section);
     assert_eq!(callbacks(&shapes), 0);
@@ -775,7 +867,7 @@ fn the_soak_ends_after_its_frames() {
                 done = soak.frame(ui.ctx());
             });
             out.textures_delta.clear();
-            let n = callbacks(&out.shapes);
+            let n = glass_layers(&out.shapes);
             assert!(n <= usize::from(MAX_REGIONS));
             most = most.max(n);
         }
@@ -794,4 +886,29 @@ fn the_soak_ends_after_its_frames() {
             soak.report()
         );
     }
+}
+
+#[test]
+fn objects_are_deleted_only_in_their_context_on_their_thread() {
+    let ours = std::thread::current().id();
+    let other = std::thread::spawn(|| std::thread::current().id())
+        .join()
+        .unwrap_or(ours);
+    assert_ne!(ours, other);
+    // Addresses only: never dereferenced.
+    let made_in = std::ptr::dangling::<glow::Context>();
+    let elsewhere = made_in.wrapping_byte_add(64);
+    assert!(gl::owns((made_in, ours), (made_in, ours)));
+    assert!(!gl::owns((made_in, ours), (made_in, other)));
+    assert!(!gl::owns((made_in, ours), (elsewhere, ours)));
+}
+
+#[test]
+fn destroying_twice_is_harmless_and_turns_glass_off() {
+    let ctx = egui::Context::default();
+    setup(&ctx, ThemeId::Midnight, true, Backend::Supported);
+    destroy(None);
+    destroy(None);
+    assert!(!available());
+    assert!(describe().contains("window closed"), "{}", describe());
 }

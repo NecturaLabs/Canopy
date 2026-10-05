@@ -85,10 +85,13 @@ void main() {
 }
 
 /// The composite, drawn into egui's framebuffer over the layer: the blurred backdrop with its
-/// saturation raised, its luminance clamped as `theme::clamp_backdrop` does (scaled down to at most
-/// `u_cap` in dark themes, lifted towards white to at least `u_cap` in light ones, in linear
-/// light), dithered by half a step, inside the layer's rounded rectangle with one pixel of
-/// anti-aliasing, premultiplied and faded with the layer's opacity.
+/// saturation raised and its luminance kept in the band the theme's contrast checks assume, in
+/// linear light: in dark themes scaled down to at most the cap where it is brighter (as
+/// `theme::clamp_backdrop` does); in light themes lifted towards white as a whole, every channel
+/// moved the cap's share of the way to white, so the floor holds and what lies behind keeps its
+/// shapes instead of flattening to one tone. Then dithered by half a step, masked to the layer's
+/// rounded rectangle with one pixel of anti-aliasing, premultiplied and faded with the layer's
+/// opacity.
 pub(super) const COMPOSITE: &str = "
 #ifdef GLASS_ES
 layout(location = 0) out vec4 o_color;
@@ -137,8 +140,8 @@ void main() {
         if (y > u_look.y) {
             lin *= u_look.y / y;
         }
-    } else if (y < u_look.y) {
-        lin += (1.0 - lin) * ((u_look.y - y) / (1.0 - y));
+    } else {
+        lin = 1.0 - (1.0 - lin) * (1.0 - u_look.y);
     }
     vec3 g = clamp(to_srgb(clamp(lin, 0.0, 1.0)) + (noise(frag) - 0.5) / 255.0, 0.0, 1.0);
     // u_rect: centre and half size in window pixels; u_radii: corner radii, top-left, top-right,
