@@ -583,12 +583,15 @@ fn row_actions_width() -> f32 {
     (theme::metrics().control_sm + 2.0) * 2.0
 }
 
+/// A file row's hover-revealed actions.
+type RowActions<'a> = Box<dyn FnOnce(&mut Ui) + 'a>;
+
 fn file_list_row_inner<'a>(
     ui: &mut Ui,
     f: &FileEntry,
     selected: bool,
     id: egui::Id,
-    actions: Option<Box<dyn FnOnce(&mut Ui) + 'a>>,
+    actions: Option<RowActions<'a>>,
 ) -> egui::Response {
     let p = palette(ui.ctx());
     let m = theme::metrics();
