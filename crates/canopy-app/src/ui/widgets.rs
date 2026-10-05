@@ -42,7 +42,9 @@ pub fn dismiss_underlying_tooltips(ctx: &egui::Context) {
     });
 }
 
-/// Shows context actions above their containing navigation popup.
+/// Shows context actions above their containing navigation popup. Views use `kit::menu::context`
+/// now; only app/mod.rs's compact-navigation test still calls this.
+#[cfg(test)]
 pub fn context_menu(
     response: &Response,
     content: impl FnOnce(&mut Ui),
@@ -205,26 +207,6 @@ pub fn change_badge(ui: &mut Ui, kind: ChangeKind) -> Response {
         ChangeKind::Untracked => "Untracked: a new file Git does not track yet",
         _ => kind.label(),
     })
-}
-
-/// A rounded count badge.
-pub fn count_badge(ui: &mut Ui, n: usize, color: Color32) {
-    let p = palette(ui.ctx());
-    let fill = Palette::badge_fill(color);
-    let text = n.to_string();
-    let galley = ui.painter().layout_no_wrap(
-        text,
-        FontId::new(theme::SMALL_SIZE, theme::semibold()),
-        p.ink(color, fill),
-    );
-    let w = (galley.size().x + 12.0).max(20.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(9), fill);
-    ui.painter().galley(
-        rect.center() - galley.size() / 2.0,
-        galley,
-        Color32::PLACEHOLDER,
-    );
 }
 
 /// An icon-only button with a tooltip.
@@ -567,16 +549,6 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state, &name)
     });
     flipped
-}
-
-/// Height of the buttons in a list header, so "Stage all" and a menu beside it match.
-pub fn compact_h() -> f32 {
-    kit::Size::Sm.height()
-}
-
-/// A small secondary button: the buttons in list headers.
-pub fn compact_button(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> Response {
-    kit::Button::new(text).size(kit::Size::Sm).show(ui)
 }
 
 /// A neutral action: the secondary button, at least `min_size.x` wide.

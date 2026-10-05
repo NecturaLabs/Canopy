@@ -77,7 +77,7 @@ are sized for their optical weight and are not part of the scale.
 
 | Token | Font | Size (pt) | Use |
 |---|---|---|---|
-| `HERO_SIZE` | Inter SemiBold | 38 | Welcome screen title |
+| `metrics().hero_size` | Inter SemiBold | 38 | Welcome screen title |
 | `DISPLAY_SIZE` | Inter SemiBold | 24 | The About dialog's name |
 | `HEADLINE_SIZE` | Inter SemiBold | 20 | Pull request title in details, first-run dialog headings |
 | `TITLE_SIZE` | Inter SemiBold | 16 | View and dialog titles, the palette query |
@@ -193,7 +193,7 @@ in `theme.rs`:
 | `ICON_MD` | 16px | Buttons, palette rows, settings navigation, request status |
 | `ICON_LG` | 18px | Toasts, account cards, the welcome tip |
 | `ICON_TITLE` | 20px | Beside a dialog's title |
-| `ICON_XL` | 24px | The welcome screen's action cards |
+| `metrics().icon_xl` | 24px (Dense 22) | The welcome screen's action cards |
 | `ICON_HERO` | 32px | The centre of an empty or finished state |
 
 ## Layout

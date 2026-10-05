@@ -7,14 +7,20 @@
 use std::collections::HashMap;
 
 use egui::text::LayoutJob;
-use egui::{FontId, RichText, Sense, Stroke, Ui, vec2};
+use egui::{FontId, RichText, Sense, Ui, vec2};
 use egui_phosphor::regular as icon;
 
 use canopy_core::{Choice, ConflictKind, ConflictRegion, Segment, Side};
 
 use crate::action::Action;
 use crate::tab::{RepoTab, Resolver};
-use crate::ui::theme::{self, Palette, palette};
+use crate::ui::kit::chip::Badge;
+use crate::ui::kit::field::CodeArea;
+use crate::ui::kit::progress::Spinner;
+use crate::ui::kit::surface::{Card, InsetBox};
+use crate::ui::kit::toggle::Switch;
+use crate::ui::kit::{Button, Size, Tone, menu, paint};
+use crate::ui::theme::{self, palette};
 use crate::ui::widgets;
 use crate::views::commit_detail;
 use crate::worker::Op;
@@ -38,6 +44,7 @@ fn choice_label(c: &Choice) -> &'static str {
 /// Draws the resolver for the selected conflicted file.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let m = theme::metrics();
     let rebasing = tab
         .snap
         .as_ref()
@@ -48,12 +55,12 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     let abs = tab.path.join(&r.path);
     header(ui, r, &abs, actions);
     if rebasing {
-        ui.add(egui::Label::new(RichText::new("During a rebase, Current is the version being rebased onto; Incoming is the commit being replayed.").size(theme::SMALL_SIZE).color(p.text_dim)).wrap());
+        ui.add(egui::Label::new(RichText::new("During a rebase, Current is the version being rebased onto; Incoming is the commit being replayed.").size(m.small_size).color(p.text_dim)).wrap());
     }
     match &r.file {
         None => {
             ui.add_space(30.0);
-            ui.vertical_centered(|ui| ui.spinner());
+            ui.vertical_centered(|ui| Spinner::new().label("the conflicted file").show(ui));
         }
         Some(Err(e)) => {
             let e = e.clone();
@@ -72,19 +79,19 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             ui.vertical_centered(|ui| {
                 ui.label(
                     RichText::new(icon::CHECK_CIRCLE)
-                        .size(theme::ICON_HERO)
+                        .size(m.icon_hero)
                         .color(p.success),
                 );
                 ui.label(
                     RichText::new("No conflict markers left")
-                        .font(FontId::new(theme::TITLE_SIZE, theme::semibold())),
+                        .font(FontId::new(m.subtitle_size, theme::semibold())),
                 );
                 ui.label(
                     RichText::new("The file looks resolved. Mark it resolved to stage it.")
                         .color(p.text_dim),
                 );
-                ui.add_space(8.0);
-                if widgets::primary_button(ui, "Mark resolved", true, 150.0).clicked() {
+                ui.add_space(theme::SM);
+                if Button::new("Mark resolved").primary().show(ui).clicked() {
                     actions.push(Action::Op(Op::Stage(vec![r.path.clone()])));
                 }
             });
@@ -98,43 +105,38 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
 
 fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let s = theme::surfaces(ui.ctx());
+    let m = theme::metrics();
     let width = ui.available_width();
     egui::Frame::new()
-        .fill(p.panel())
+        .fill(s.pane_header)
         .inner_margin(egui::Margin::symmetric(theme::LG as i8, theme::SM as i8))
         .show(ui, |ui| {
             ui.set_min_width((width - theme::LG * 2.0).max(0.0));
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(icon::GIT_DIFF)
-                        .size(theme::ICON_MD)
+                        .size(m.icon_md)
                         .color(p.warning),
                 );
                 let (name, dir) = widgets::split_path(&r.path);
                 ui.label(
                     RichText::new(name)
-                        .font(FontId::new(theme::LEAD_SIZE, theme::semibold()))
+                        .font(FontId::new(m.body_size, theme::semibold()))
                         .color(p.text),
                 );
                 if !dir.is_empty() {
-                    ui.label(
-                        RichText::new(dir)
-                            .size(theme::META_SIZE)
-                            .color(p.text_faint),
-                    );
+                    ui.label(RichText::new(dir).size(m.meta_size).color(p.text_faint));
                 }
                 if let Some(kind) = r.kind {
-                    ui.label(
-                        RichText::new(kind.label())
-                            .size(theme::SMALL_SIZE)
-                            .color(p.warning)
-                            .background_color(Palette::tint(p.warning, 30)),
-                    );
+                    Badge::new(kind.label()).tone(Tone::Warning).show(ui);
                 }
                 ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .button(format!("{}  Open in editor", icon::ARROW_SQUARE_OUT))
-                        .on_hover_text("Open the file in your editor (Settings → Integrations)")
+                    if Button::new("Open in editor")
+                        .icon(icon::ARROW_SQUARE_OUT)
+                        .size(Size::Sm)
+                        .tooltip("Open the file in your editor (Settings → Integrations)")
+                        .show(ui)
                         .clicked()
                     {
                         actions.push(Action::OpenInEditor(abs.to_path_buf()));
@@ -145,32 +147,33 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
                             f.as_ref()
                                 .is_ok_and(|f| f.regions().any(|c| c.base.is_some()))
                         }) {
-                            ui.toggle_value(&mut r.show_base, "Show ancestor")
-                                .on_hover_text(
-                                    "Show the common ancestor's version of each conflict",
-                                );
+                            Switch::new(&mut r.show_base, "Show ancestor")
+                                .tooltip("Show the common ancestor's version of each conflict")
+                                .show(ui);
                         }
                         let done = r.resolved();
                         let color = if done == n { p.success } else { p.text_dim };
                         ui.label(
                             RichText::new(format!("{done} of {n} resolved"))
-                                .size(theme::META_SIZE)
+                                .size(m.meta_size)
                                 .color(color),
                         );
                     }
                 });
             });
         });
-    ui.painter().hline(
+    paint::seam_h(
+        ui.painter(),
         ui.min_rect().x_range(),
-        ui.min_rect().max.y,
-        Stroke::new(1.0, p.border()),
+        ui.min_rect().max.y - 0.5,
+        s.pane_header_seam,
     );
 }
 
 /// Whole-file choice: binary or non-UTF-8 files, and deleted-on-one-side conflicts.
 fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let m = theme::metrics();
     let path = r.path.clone();
     let (title, body, ours, theirs) = match (r.kind, error) {
         (Some(ConflictKind::DeletedByThem), _) => (
@@ -218,19 +221,29 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
     };
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
-        ui.label(RichText::new(icon::GIT_DIFF).size(theme::ICON_HERO).color(p.warning));
-        ui.label(RichText::new(title).font(FontId::new(theme::TITLE_SIZE, theme::semibold())));
+        ui.label(RichText::new(icon::GIT_DIFF).size(m.icon_hero).color(p.warning));
+        ui.label(RichText::new(title).font(FontId::new(m.subtitle_size, theme::semibold())));
         if !body.is_empty() {
             ui.label(RichText::new(body).color(p.text_dim));
         }
         if let Some(e) = error {
-            ui.label(RichText::new(e).size(theme::SMALL_SIZE).color(p.text_faint));
+            ui.label(RichText::new(e).size(m.small_size).color(p.text_faint));
         }
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.add_space((ui.available_width() - 340.0).max(0.0) / 2.0);
+        ui.add_space(theme::MD);
+        // The two choices side by side, centred by the width they took last frame.
+        let width_id = ui.id().with("whole-file-choices");
+        let last: f32 = ui.ctx().data(|d| d.get_temp(width_id)).unwrap_or(0.0);
+        let row = ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = theme::SM;
+            ui.add_space(((ui.available_width() - last) / 2.0).max(0.0));
+            let start = ui.cursor().left();
             for (side, label) in [(Side::Ours, ours), (Side::Theirs, theirs)] {
-                if ui.add_sized([165.0, 34.0], egui::Button::new(label)).clicked() {
+                if Button::new(label)
+                    .size(Size::Lg)
+                    .id_salt(("whole-file", label))
+                    .show(ui)
+                    .clicked()
+                {
                     actions.push(Action::Confirm {
                         title: format!("{label}?"),
                         body: format!("This replaces {path} in the working tree with that version and marks it resolved. Edits you made to the file are lost."),
@@ -240,18 +253,28 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
                     });
                 }
             }
+            ui.min_rect().right() - start
         });
+        let used = row.inner;
+        if (used - last).abs() > 0.5 {
+            ui.ctx().data_mut(|d| d.insert_temp(width_id, used));
+            ui.ctx().request_repaint();
+        }
     });
 }
 
 fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let s = theme::surfaces(ui.ctx());
+    let m = theme::metrics();
     let Some(Ok(file)) = &r.file else { return };
     let n = file.conflicts();
     let done = r.resolved();
     egui::Panel::bottom(egui::Id::new(("resolve-footer", &r.path)))
-        .frame(egui::Frame::new().fill(p.panel()).inner_margin(egui::Margin::symmetric(14, 10)).stroke(Stroke::new(1.0, p.border())))
+        .frame(egui::Frame::new().fill(s.panel).inner_margin(egui::Margin::symmetric(14, 10)))
         .show(ui, |ui| {
+            let top = ui.max_rect().top() - 10.0;
+            paint::seam_h(ui.painter(), ui.max_rect().expand2(vec2(14.0, 0.0)).x_range(), top + 0.5, s.border);
             ui.vertical(|ui| {
                 use crate::keymap::{Command, hint};
                 let keys = format!(
@@ -264,27 +287,45 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                     hint(Command::TakeBoth),
                     hint(Command::ClearChoice),
                 );
-                ui.add(egui::Label::new(RichText::new(keys).size(theme::SMALL_SIZE).color(p.text_faint)).truncate())
+                ui.add(egui::Label::new(RichText::new(keys).size(m.small_size).color(p.text_faint)).truncate())
                     .on_hover_text("Press ? for every shortcut");
                 ui.label(RichText::new(if done == n {
                     "All conflicts have a choice. Save the resolved file to stage it."
                 } else {
                     "Choose a version for each conflict. Save progress keeps markers for unresolved parts."
-                }).size(theme::SMALL_SIZE).color(p.text_dim));
+                }).size(m.small_size).color(p.text_dim));
+                ui.add_space(theme::XS);
                 ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = theme::SM;
                     let all = done == n;
-                    let mark = widgets::primary_button(ui, "Save resolved file", all, 180.0)
-                        .on_hover_text(if all { "Write this file and stage it as resolved" } else { "Choose a resolution for every conflict first" });
-                    if mark.clicked() {
+                    if Button::new("Save resolved file")
+                        .primary()
+                        .icon(icon::CHECK)
+                        .enabled(all)
+                        .tooltip("Write this file and stage it as resolved")
+                        .disabled_reason("Choose a resolution for every conflict first")
+                        .show(ui)
+                        .clicked()
+                    {
                         actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: true, expected: file.fingerprint() }));
                     }
-                    if ui.add_enabled(done > 0, egui::Button::new(format!("{}  Save progress", icon::FLOPPY_DISK)))
-                        .on_hover_text("Write the chosen resolutions to the file; unresolved conflicts keep their markers")
+                    if Button::new("Save progress")
+                        .icon(icon::FLOPPY_DISK)
+                        .enabled(done > 0)
+                        .tooltip("Write the chosen resolutions to the file; unresolved conflicts keep their markers")
+                        .disabled_reason("Choose a resolution for a conflict first")
+                        .show(ui)
                         .clicked()
                     {
                         actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: false, expected: file.fingerprint() }));
                     }
-                    if done > 0 && ui.button("Undo all choices").on_hover_text("Clear every choice before saving").clicked() {
+                    if done > 0
+                        && Button::new("Undo all choices")
+                            .ghost()
+                            .tooltip("Clear every choice before saving")
+                            .show(ui)
+                            .clicked()
+                    {
                         r.choices.iter_mut().for_each(|c| *c = None);
                         r.editing = None;
                     }
@@ -294,7 +335,12 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
 }
 
 fn code_font() -> FontId {
-    FontId::monospace(theme::MONO_SIZE)
+    FontId::monospace(theme::metrics().mono_size)
+}
+
+/// The line numbers beside code lines.
+fn number_font() -> FontId {
+    FontId::monospace(theme::metrics().small_size)
 }
 
 /// Height of one laid-out code line: what a label of it takes (the galley's height, rounded the
@@ -324,7 +370,7 @@ fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line
     if lines.is_empty() {
         ui.label(
             RichText::new("(nothing)")
-                .size(theme::SMALL_SIZE)
+                .size(theme::metrics().small_size)
                 .italics()
                 .color(palette(ui.ctx()).text_faint),
         );
@@ -338,7 +384,7 @@ fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line
         ui.painter()
             .layout_no_wrap(
                 (line + lines.len()).to_string(),
-                FontId::monospace(theme::MONO_SMALL_SIZE),
+                number_font(),
                 palette(ui.ctx()).text_faint,
             )
             .size()
@@ -353,10 +399,9 @@ fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line
         Sense::click(),
     );
     // The lines are painted, not labels, so copying goes through the context menu.
-    resp.context_menu(|ui| {
-        if ui.button("Copy lines").clicked() {
-            ui.ctx().copy_text(lines.join("\n"));
-            ui.close();
+    menu::context(&resp, |m| {
+        if m.item(icon::COPY, "Copy lines").show(m.ui).clicked() {
+            m.ui.ctx().copy_text(lines.join("\n"));
         }
     });
     let clip = ui.clip_rect();
@@ -380,7 +425,7 @@ fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line
                 egui::pos2(rect.min.x + gutter - theme::SM, top + row_h / 2.0),
                 egui::Align2::RIGHT_CENTER,
                 (line + i).to_string(),
-                FontId::monospace(theme::MONO_SMALL_SIZE),
+                number_font(),
                 palette(ui.ctx()).text_faint,
             );
         }
@@ -600,15 +645,12 @@ fn common(
         }
         let hidden = lines.len() - first.len() - last.len();
         ui.add_space(2.0);
-        if ui
-            .add(
-                egui::Button::new(
-                    RichText::new(format!("{}  {hidden} unchanged lines", icon::DOTS_THREE))
-                        .size(theme::SMALL_SIZE)
-                        .color(p.text_faint),
-                )
-                .frame(false),
-            )
+        if Button::new(format!("{hidden} unchanged lines"))
+            .ghost()
+            .size(Size::Sm)
+            .icon(icon::DOTS_THREE)
+            .tooltip("Show the unchanged lines")
+            .show(ui)
             .clicked()
         {
             r.expanded.insert(i);
@@ -627,46 +669,51 @@ fn common(
     }
 }
 
+/// The button that picks (or, when it is already picked, clears) one choice: a check in front of
+/// the chosen one.
+fn choice_button(label: &str, on: bool, salt: impl std::hash::Hash + std::fmt::Debug) -> Button {
+    let b = Button::new(label).size(Size::Sm).id_salt(salt);
+    if on { b.icon(icon::CHECK) } else { b }
+}
+
 fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegion) {
     let p = palette(ui.ctx());
+    let m = theme::metrics();
     let focused = r.focus == k;
     let choice = r.choices.get(k).cloned().flatten();
-    let border = match (&choice, focused) {
-        (_, true) => p.accent,
-        (Some(_), false) => Palette::tint(p.success, 160),
-        (None, false) => Palette::tint(p.warning, 160),
+    let tone = if choice.is_some() {
+        Tone::Success
+    } else {
+        Tone::Warning
     };
-    let resp = egui::Frame::new()
-        .fill(p.panel())
-        .stroke(Stroke::new(if focused { 2.0 } else { 1.0 }, border))
-        .corner_radius(egui::CornerRadius::same(theme::RADIUS))
-        .inner_margin(egui::Margin::same(12))
+    let small =
+        |text: String, color: egui::Color32| RichText::new(text).size(m.small_size).color(color);
+    let resp = Card::new()
+        .ring(tone)
+        .selected(focused)
+        .id_salt(("conflict-card", k))
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.spacing_mut().item_spacing.y = theme::XS;
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(format!("Conflict {}", k + 1))
-                        .font(FontId::new(theme::BODY_SIZE, theme::semibold())),
+                        .font(FontId::new(m.body_size, theme::semibold())),
                 );
                 match &choice {
-                    Some(c) => ui.label(
-                        RichText::new(format!("{}  {}", icon::CHECK, choice_label(c)))
-                            .size(theme::SMALL_SIZE)
-                            .color(p.success),
-                    ),
-                    None => ui.label(
-                        RichText::new(format!("{}  Unresolved", icon::WARNING))
-                            .size(theme::SMALL_SIZE)
-                            .color(p.warning),
-                    ),
+                    Some(c) => ui.label(small(
+                        format!("{}  {}", icon::CHECK, choice_label(c)),
+                        p.success,
+                    )),
+                    None => ui.label(small(format!("{}  Unresolved", icon::WARNING), p.warning)),
                 };
             });
-            ui.add_space(4.0);
+            ui.add_space(theme::XS);
             let mut picked: Option<Option<Choice>> = None;
             // Both sides next to each other.
-            let w = (ui.available_width() - 12.0) / 2.0;
+            let w = (ui.available_width() - theme::MD) / 2.0;
             ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = theme::MD;
                 for (title, label, lines, color, side, command) in [
                     (
                         "Current version",
@@ -687,42 +734,37 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 ] {
                     ui.vertical(|ui| {
                         ui.set_width(w);
-                        ui.label(
-                            RichText::new(if label.is_empty() || label == "HEAD" {
+                        ui.label(small(
+                            if label.is_empty() || label == "HEAD" {
                                 title.to_owned()
                             } else {
                                 format!("Version from {label}")
-                            })
-                            .size(theme::SMALL_SIZE)
-                            .color(color),
-                        );
-                        ui.label(
-                            RichText::new(format!(
+                            },
+                            color,
+                        ));
+                        ui.label(small(
+                            format!(
                                 "Git: {} · {label}",
                                 if side == Choice::Ours {
                                     "ours"
                                 } else {
                                     "theirs"
                                 }
-                            ))
-                            .size(theme::SMALL_SIZE)
-                            .color(p.text_faint),
-                        );
-                        egui::Frame::new()
-                            .fill(Palette::tint(color, if p.dark { 22 } else { 16 }))
-                            .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM))
-                            .inner_margin(egui::Margin::same(8))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                code_lines(ui, lines, p.text);
-                            });
+                            ),
+                            p.text_faint,
+                        ));
+                        InsetBox::new().show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            code_lines(ui, lines, p.text);
+                        });
                         let on = choice.as_ref() == Some(&side);
-                        let label = format!(
-                            "{}Keep this version  ({})",
-                            if on { "✓ " } else { "" },
-                            crate::keymap::hint(command)
-                        );
-                        if widgets::compact_button(ui, label).clicked() {
+                        if choice_button("Keep this version", on, ("keep", title))
+                            .tooltip("Keep this version")
+                            .shortcut(command)
+                            .show_shortcut(true)
+                            .show(ui)
+                            .clicked()
+                        {
                             picked = Some(if on { None } else { Some(side) });
                         }
                     });
@@ -731,23 +773,19 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
             if r.show_base
                 && let Some(base) = &region.base
             {
-                ui.label(
-                    RichText::new(format!("Ancestor · {}", region.base_label))
-                        .size(theme::SMALL_SIZE)
-                        .color(p.text_dim),
-                );
-                egui::Frame::new()
-                    .fill(p.hover())
-                    .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM))
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        code_lines(ui, base, p.text_dim);
-                    });
+                ui.label(small(
+                    format!("Ancestor · {}", region.base_label),
+                    p.text_dim,
+                ));
+                InsetBox::new().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    code_lines(ui, base, p.text_dim);
+                });
             }
-            ui.add_space(4.0);
+            ui.add_space(theme::XS);
             // Combined and custom choices.
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = theme::SM;
                 let mut options = vec![
                     (Choice::OursThenTheirs, "Both: current first"),
                     (Choice::TheirsThenOurs, "Both: incoming first"),
@@ -757,21 +795,27 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 }
                 for (c, label) in options {
                     let on = choice.as_ref() == Some(&c);
-                    if widgets::compact_button(ui, format!("{}{label}", if on { "✓ " } else { "" }))
+                    if choice_button(label, on, ("combine", label))
+                        .show(ui)
                         .clicked()
                     {
                         picked = Some(if on { None } else { Some(c) });
                     }
                 }
                 let editing = r.editing.as_ref().is_some_and(|(i, _)| *i == k);
-                if ui
-                    .selectable_label(
-                        editing || matches!(choice, Some(Choice::Custom(_))),
-                        format!("{}  Edit", icon::PENCIL_SIMPLE),
-                    )
-                    .clicked()
-                    && !editing
-                {
+                let custom = matches!(choice, Some(Choice::Custom(_)));
+                let edit = Button::new("Edit")
+                    .size(Size::Sm)
+                    .icon(if custom {
+                        icon::CHECK
+                    } else {
+                        icon::PENCIL_SIMPLE
+                    })
+                    .tooltip("Write the result by hand")
+                    .id_salt("edit")
+                    .enabled(!editing)
+                    .disabled_reason("Editing below");
+                if edit.show(ui).clicked() && !editing {
                     let start = match &choice {
                         Some(c) => region.resolve(c),
                         None => region.resolve(&Choice::OursThenTheirs),
@@ -792,22 +836,30 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
             if let Some((i, text)) = r.editing.as_mut()
                 && *i == k
             {
-                ui.add_space(4.0);
-                let rows = text.lines().count().clamp(3, 16);
-                ui.add(
-                    egui::TextEdit::multiline(text)
-                        .code_editor()
-                        .desired_rows(rows)
-                        .desired_width(f32::INFINITY)
-                        .margin(theme::FIELD_MARGIN),
-                );
+                ui.add_space(theme::XS);
+                let submitted = CodeArea::new(text)
+                    .rows(3..=16)
+                    .name("Resolved text")
+                    .id_salt(("hand-edit", k))
+                    .show(ui)
+                    .value;
                 ui.horizontal(|ui| {
-                    if widgets::accent_button(ui, "Use this text", egui::vec2(120.0, 28.0))
+                    ui.spacing_mut().item_spacing.x = theme::SM;
+                    if Button::new("Use this text")
+                        .primary()
+                        .size(Size::Sm)
+                        .show(ui)
                         .clicked()
+                        || submitted
                     {
                         apply = Some(text.clone());
                     }
-                    if ui.button("Cancel").clicked() {
+                    if Button::new("Cancel")
+                        .ghost()
+                        .size(Size::Sm)
+                        .show(ui)
+                        .clicked()
+                    {
                         cancel = true;
                     }
                 });
@@ -824,20 +876,12 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
             if let Some(c) = r.choices.get(k).cloned().flatten()
                 && r.editing.as_ref().is_none_or(|(i, _)| *i != k)
             {
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new("Result")
-                        .size(theme::SMALL_SIZE)
-                        .color(p.success),
-                );
-                egui::Frame::new()
-                    .fill(Palette::tint(p.success, if p.dark { 18 } else { 14 }))
-                    .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM))
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        code_lines(ui, &region.resolve(&c), p.text);
-                    });
+                ui.add_space(theme::XS);
+                ui.label(small("Result".to_owned(), p.success));
+                InsetBox::new().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    code_lines(ui, &region.resolve(&c), p.text);
+                });
             }
         });
     if resp.response.clicked() {

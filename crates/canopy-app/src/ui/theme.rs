@@ -52,8 +52,6 @@ pub const TITLE_SIZE: f32 = 16.0;
 pub const HEADLINE_SIZE: f32 = 20.0;
 /// The About dialog's name.
 pub const DISPLAY_SIZE: f32 = 24.0;
-/// The welcome screen's title.
-pub const HERO_SIZE: f32 = 38.0;
 /// Code, diffs and identifiers.
 pub const MONO_SIZE: f32 = 12.5;
 /// Short identifiers and key chords beside proportional text.
@@ -70,8 +68,6 @@ pub const ICON_MD: f32 = 16.0;
 pub const ICON_LG: f32 = 18.0;
 /// Beside a dialog's title.
 pub const ICON_TITLE: f32 = 20.0;
-/// The welcome screen's action cards.
-pub const ICON_XL: f32 = 24.0;
 /// The centre of an empty or finished state.
 pub const ICON_HERO: f32 = 32.0;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = egui::vec2(900.0, 560.0);
