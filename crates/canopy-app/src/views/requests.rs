@@ -44,12 +44,14 @@ const BRANCH_PILL_MAX: f32 = 240.0;
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec<Action>) {
     state_banner::show(ui, tab, actions);
     let Some((_, forge)) = tab.forge().cloned() else {
+        let local = tab.snap.as_ref().is_some_and(|s| s.remotes.is_empty());
+        let (body, button) = no_forge(local);
         empty(
             ui,
             art::local_only(),
             "No GitHub or GitLab remote",
-            "Pull and merge requests appear here for repositories hosted on GitHub or GitLab.",
-            None,
+            body,
+            Some(button),
             actions,
         );
         return;
@@ -128,6 +130,23 @@ fn empty(
         && let Some((_, action)) = button
     {
         actions.push(action);
+    }
+}
+
+/// What the requests view says, and offers, for a repository with no GitHub or GitLab remote:
+/// with no remote at all, publishing it; otherwise, adding a GitHub or GitLab remote.
+fn no_forge(local: bool) -> (&'static str, (String, Action)) {
+    // The empty state shows two lines of body text: keep each sentence inside them.
+    if local {
+        (
+            "Publish it to GitHub or GitLab to work with its pull and merge requests here.",
+            ("Publish…".to_owned(), Action::Publish),
+        )
+    } else {
+        (
+            "Add a GitHub or GitLab remote to see its pull and merge requests here.",
+            ("Add remote…".to_owned(), Action::AddRemoteDialog),
+        )
     }
 }
 
@@ -956,6 +975,17 @@ mod tests {
 
     use super::*;
     use crate::worker::Worker;
+
+    /// qa-a F13: the empty state without a forge offers the way out, not only an explanation.
+    #[test]
+    fn without_a_forge_the_view_offers_publish_or_add_remote() {
+        let (_, (label, action)) = no_forge(true);
+        assert_eq!(label, "Publish…");
+        assert!(matches!(action, Action::Publish));
+        let (_, (label, action)) = no_forge(false);
+        assert_eq!(label, "Add remote…");
+        assert!(matches!(action, Action::AddRemoteDialog));
+    }
 
     fn summary(state: RequestState) -> RequestSummary {
         RequestSummary {
