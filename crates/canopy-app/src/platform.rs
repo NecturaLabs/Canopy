@@ -14,10 +14,6 @@
 //!
 //! It also asks the operating system for settings Canopy follows: reduced motion
 //! ([`prefers_reduced_motion`]) and reduced transparency ([`prefers_reduced_transparency`]).
-#![expect(
-    clippy::disallowed_methods,
-    reason = "this module starts the platform's own helpers (opener, file manager, editor, terminal, settings queries), never git"
-)]
 
 use std::io::Read;
 use std::path::Path;
@@ -51,6 +47,13 @@ pub fn web_address(url: &str) -> bool {
 }
 
 /// Opens a web page in the default browser.
+#[cfg_attr(
+    any(target_os = "linux", target_os = "macos", target_os = "windows"),
+    expect(
+        clippy::disallowed_methods,
+        reason = "starts the platform's URL opener, never git"
+    )
+)]
 pub fn open_url(url: &str) -> Result<(), String> {
     if !web_address(url) {
         tracing::warn!("refused to open a non-web address");
@@ -81,6 +84,13 @@ pub fn open_url(url: &str) -> Result<(), String> {
 }
 
 /// Shows `dir` in the file manager.
+#[cfg_attr(
+    any(target_os = "linux", target_os = "macos", target_os = "windows"),
+    expect(
+        clippy::disallowed_methods,
+        reason = "starts the platform's file manager, never git"
+    )
+)]
 pub fn open_folder(dir: &Path) -> Result<(), String> {
     if !dir.is_dir() {
         return Err(format!("{} is not a folder", dir.display()));
@@ -138,6 +148,10 @@ fn launchable(file: &Path) -> bool {
 /// Opens `file` for editing: with the editor configured in Settings when there is one,
 /// otherwise with the platform's text editor (TextEdit's default on macOS, Notepad on Windows,
 /// the desktop's handler on Linux unless it could run the file, in which case the folder opens).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "starts the configured or the platform's editor, never git"
+)]
 pub fn open_in_editor(file: &Path, configured: &str) -> Result<(), String> {
     if let Some((program, args)) = split_command(configured.trim()) {
         let mut cmd = Command::new(&program);
@@ -180,6 +194,10 @@ pub fn open_in_editor(file: &Path, configured: &str) -> Result<(), String> {
 }
 
 /// Opens a terminal in `dir`: the configured command first, then the platform's usual ones.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "starts the configured or the platform's terminal, never git"
+)]
 pub fn open_terminal(dir: &Path, configured: &str) -> Result<(), String> {
     if let Some((program, args)) = split_command(configured.trim()) {
         let mut cmd = Command::new(&program);
@@ -242,6 +260,13 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(6);
 /// Asks the operating system whether the user wants reduced motion. Blocks while a helper
 /// program answers (up to a few seconds), so call it off the UI thread. `None` when the system
 /// does not say.
+#[cfg_attr(
+    any(target_os = "linux", target_os = "macos", target_os = "windows"),
+    expect(
+        clippy::disallowed_methods,
+        reason = "asks the platform's settings tools, never git"
+    )
+)]
 pub fn prefers_reduced_motion() -> Option<bool> {
     #[cfg(target_os = "linux")]
     {
@@ -299,6 +324,13 @@ pub fn prefers_reduced_motion() -> Option<bool> {
 /// transparency", Windows "Transparency effects" off). Blocks while a helper program answers, so
 /// call it off the UI thread. `None` when the system does not say; Linux desktops have no
 /// standard setting.
+#[cfg_attr(
+    any(target_os = "macos", target_os = "windows"),
+    expect(
+        clippy::disallowed_methods,
+        reason = "asks the platform's settings tools, never git"
+    )
+)]
 pub fn prefers_reduced_transparency() -> Option<bool> {
     #[cfg(target_os = "macos")]
     {
@@ -500,6 +532,10 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test runs sh to stand in for a settings tool"
+    )]
     fn slow_or_failing_queries_give_up() {
         let mut ok = Command::new("sh");
         ok.args(["-c", "echo hello"]);

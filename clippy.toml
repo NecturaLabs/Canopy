@@ -166,8 +166,117 @@ reason = "libgit2 only reads; write configuration with the git CLI through canop
 [[disallowed-methods]]
 path = "git2::Config::remove"
 reason = "libgit2 only reads; write configuration with the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::init_bare"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::init_opts"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::clone"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::branch_from_annotated_commit"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::commit_signed"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::tag_annotation_create"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::reference_matching"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::reference_symbolic_matching"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::remote_add_fetch"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::remote_add_push"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::remote_set_pushurl"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::note"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::note_delete"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::stash_save2"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::stash_save_ext"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::blob"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::blob_path"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::treebuilder"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::submodule"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::worktree"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Repository::set_workdir"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::build::RepoBuilder::clone"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Index::add"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Index::add_frombuffer"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Index::remove"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Index::remove_all"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Index::update_all"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Index::clear"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Index::write_tree"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Commit::amend"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Reference::rename"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Reference::symbolic_set_target"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Config::remove_multivar"
+reason = "libgit2 only reads; mutate through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Remote::download"
+reason = "Git network traffic runs the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Remote::update_tips"
+reason = "Git network traffic runs the git CLI through canopy_core::cli (AGENTS.md)"
+[[disallowed-methods]]
+path = "git2::Remote::prune"
+reason = "Git network traffic runs the git CLI through canopy_core::cli (AGENTS.md)"
 
 # AGENTS.md, "Conventions": colours come only from crates/canopy-app/src/ui/theme.rs.
+# egui::hex_color! is not listed: it needs ecolor's `color-hex` feature, which nothing enables.
 [[disallowed-methods]]
 path = "egui::Color32::from_rgb"
 reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
@@ -218,8 +327,4 @@ path = "egui::Rgba::from_black_alpha"
 reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
 [[disallowed-methods]]
 path = "egui::Rgba::from_white_alpha"
-reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
-
-[[disallowed-macros]]
-path = "egui::hex_color"
 reason = "colours come only from ui/theme.rs (AGENTS.md, Conventions)"
