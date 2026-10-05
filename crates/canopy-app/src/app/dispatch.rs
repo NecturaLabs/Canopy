@@ -181,6 +181,7 @@ impl CanopyApp {
                     }
                 }
                 Action::SetTheme(id) => self.set_theme(ctx, id),
+                Action::SetAppearance(choice) => self.set_appearance(ctx, choice),
                 Action::NextTheme => {
                     let next = self.settings.theme.next();
                     self.set_theme(ctx, next);

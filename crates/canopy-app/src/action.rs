@@ -9,9 +9,19 @@ use canopy_hosting::RequestSummary;
 use crate::hosting::HostJob;
 use crate::keymap::Command;
 use crate::tab::View;
-use crate::ui::theme::ThemeId;
+use crate::ui::motion::MotionPref;
+use crate::ui::theme::{Density, Style, ThemeId};
 use crate::views::dialogs::Dialog;
 use crate::worker::Op;
+
+/// An Appearance option the command palette can set, as Settings → Appearance sets it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppearanceChoice {
+    Style(Style),
+    Density(Density),
+    Translucent(bool),
+    Motion(MotionPref),
+}
 
 /// Something the user asked for, collected during a frame and applied after it.
 #[derive(Debug, Clone)]
@@ -45,6 +55,8 @@ pub enum Action {
     PrefillAmend,
     SetTheme(ThemeId),
     NextTheme,
+    /// One of Settings → Appearance's options, from the command palette.
+    SetAppearance(AppearanceChoice),
     Palette,
     Cheatsheet,
     Settings,

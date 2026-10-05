@@ -1,9 +1,84 @@
 //! The command palette's entries.
 
 use super::*;
+use crate::action::AppearanceChoice;
+use crate::ui::motion::MotionPref;
+use crate::ui::theme::{Density, Style};
 use crate::ui::widgets::forge_icon;
 
 impl CanopyApp {
+    /// Sets an Appearance option the way Settings → Appearance does: the setting changes and the
+    /// look follows on this frame (and is saved with the settings). Choosing "Match system" asks
+    /// the system again, as its answer may have changed.
+    pub(super) fn set_appearance(&mut self, ctx: &egui::Context, choice: AppearanceChoice) {
+        let s = &mut self.settings;
+        match choice {
+            AppearanceChoice::Style(v) => s.style = v,
+            AppearanceChoice::Density(v) => s.density = v,
+            AppearanceChoice::Translucent(on) => s.translucent = on,
+            AppearanceChoice::Motion(v) => {
+                s.motion = v;
+                if v == MotionPref::System {
+                    crate::ui::motion::query_system(ctx);
+                }
+            }
+        }
+        self.apply_look(ctx);
+    }
+
+    /// The palette's Appearance entries: Style, Density, Translucent surfaces and Motion (spec
+    /// 6.2). Turning translucency on is offered only where it can work.
+    fn appearance_entries(&self) -> Vec<(Entry, Action)> {
+        let e = |icon: &'static str, label: String, choice: AppearanceChoice| {
+            (
+                Entry {
+                    icon,
+                    label,
+                    detail: "Appearance".to_owned(),
+                    shortcut: String::new(),
+                },
+                Action::SetAppearance(choice),
+            )
+        };
+        let mut v = Vec::new();
+        for style in Style::ALL {
+            v.push(e(
+                icon::STACK,
+                format!("Style: {}", style.label()),
+                AppearanceChoice::Style(style),
+            ));
+        }
+        for density in Density::ALL {
+            v.push(e(
+                icon::ROWS,
+                format!("Density: {}", density.label()),
+                AppearanceChoice::Density(density),
+            ));
+        }
+        let blocked = theme::glass_blocked(
+            self.settings.theme,
+            crate::ui::kit::glass::available(),
+            crate::ui::kit::glass::reduced_transparency(),
+        );
+        for on in [true, false] {
+            if on && blocked.is_some() {
+                continue;
+            }
+            v.push(e(
+                icon::DROP_HALF,
+                format!("Translucent surfaces: {}", if on { "On" } else { "Off" }),
+                AppearanceChoice::Translucent(on),
+            ));
+        }
+        for motion in MotionPref::ALL {
+            v.push(e(
+                icon::WAVE_SINE,
+                format!("Motion: {}", motion.label()),
+                AppearanceChoice::Motion(motion),
+            ));
+        }
+        v
+    }
     /// A digest of what [`Self::palette_entries`] depends on that can change while the palette
     /// is open (it is rebuilt on every opening anyway).
     pub(super) fn palette_inputs(&self) -> u64 {
@@ -123,6 +198,7 @@ impl CanopyApp {
                 Action::SetTheme(t),
             ));
         }
+        v.extend(self.appearance_entries());
         let app_entries = v;
         let mut v = Vec::new();
         if let Some(tab) = self.tabs.get(self.active) {
