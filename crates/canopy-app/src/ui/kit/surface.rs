@@ -911,6 +911,12 @@ impl Banner {
 /// What [`Callout::show_with`] draws between the text and the actions.
 type CalloutContent<'a> = Box<dyn FnOnce(&mut Ui) + 'a>;
 
+/// Padding inside a callout (spec 4.20: 10 x 12) and an inset box (8 x 10).
+const CALLOUT_PAD: Margin = Margin::symmetric(12, 10);
+const INSET_PAD: Margin = Margin::symmetric(10, 8);
+/// Gap between an empty state's keys and what they do (as between two chords of a sequence).
+const HINT_GAP: f32 = 6.0;
+
 /// An inline note in a pane or dialog: the tone's tint, an icon, optional title, wrapped text and
 /// up to two ghost actions under it, their labels in line with the text. No side bar.
 #[derive(Debug, Clone)]
@@ -989,7 +995,7 @@ impl Callout {
         let response = egui::Frame::new()
             .fill(self.tone.tint(p))
             .corner_radius(CornerRadius::same(m.radius))
-            .inner_margin(Margin::symmetric(12, 10))
+            .inner_margin(CALLOUT_PAD)
             .show(ui, |ui| {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = theme::SM;
@@ -1081,7 +1087,7 @@ impl InsetBox {
             .fill(s.field)
             .stroke(Stroke::new(paint::SEAM, s.border))
             .corner_radius(CornerRadius::same(m.radius_sm))
-            .inner_margin(Margin::symmetric(10, 8))
+            .inner_margin(INSET_PAD)
             .show(ui, add);
         KitResponse {
             response: r.response,
@@ -1259,7 +1265,7 @@ impl EmptyState {
         }
         for (command, what) in &self.hints {
             child.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.spacing_mut().item_spacing.x = HINT_GAP;
                 KeyChord::command(*command).show(ui);
                 ui.label(
                     egui::RichText::new(what)

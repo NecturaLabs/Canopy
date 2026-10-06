@@ -171,7 +171,7 @@ pub fn band(ui: &mut Ui, name: &str, draw: fn(&mut Ui)) {
                     |ui| {
                         egui::Frame::new()
                             .fill(ground)
-                            .stroke(Stroke::new(1.0, s.border))
+                            .stroke(Stroke::new(paint::SEAM, s.border))
                             .corner_radius(CornerRadius::same(theme::metrics().radius_lg))
                             .inner_margin(egui::Margin::same(crate::ui::points_i8(theme::LG)))
                             .show(ui, |ui| {
@@ -341,11 +341,11 @@ fn swatches<'a>(ui: &mut Ui, items: impl Iterator<Item = (&'a str, Fill)>) {
         for (name, fill) in items {
             let (rect, _) = ui.allocate_exact_size(vec2(118.0, 40.0), Sense::hover());
             let chip = Rect::from_min_size(rect.min, vec2(28.0, rect.height()));
-            paint::fill(ui.painter(), chip, CornerRadius::same(4), fill);
+            paint::fill(ui.painter(), chip, CornerRadius::same(m.radius_sm), fill);
             ui.painter().rect_stroke(
                 chip,
-                CornerRadius::same(4),
-                Stroke::new(1.0, s.border),
+                CornerRadius::same(m.radius_sm),
+                Stroke::new(paint::SEAM, s.border),
                 StrokeKind::Inside,
             );
             let hex = |c: Color32| format!("{:02X}{:02X}{:02X}", c.r(), c.g(), c.b());

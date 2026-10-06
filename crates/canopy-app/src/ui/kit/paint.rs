@@ -613,6 +613,9 @@ pub fn glow(painter: &Painter, center: Pos2, radius: f32, color: Color32) {
     painter.add(glow_shape(painter.ctx(), center, radius, color));
 }
 
+/// How strongly a spinner's full circle shows under its turning arc.
+pub const SPINNER_TRACK: f32 = 0.25;
+
 /// A spinner: a 270 degree arc turning once a second around `center`, `color` at full strength
 /// over a faint full circle. Repaints itself while painted; still (one fixed arc) with reduced
 /// motion.
@@ -628,7 +631,7 @@ pub fn spinner(painter: &Painter, center: Pos2, radius: f32, width: f32, color: 
     painter.circle_stroke(
         center,
         radius,
-        Stroke::new(width, color.gamma_multiply(0.25)),
+        Stroke::new(width, color.gamma_multiply(SPINNER_TRACK)),
     );
     let points: Vec<Pos2> = (0..=24)
         .map(|i| {

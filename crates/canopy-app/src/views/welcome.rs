@@ -66,7 +66,6 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                         .font(FontId::new(m.hero_size, theme::semibold()))
                         .color(p.text),
                 );
-                ui.add_space(2.0);
                 ui.label(
                     RichText::new("A fast, beautiful, Linux-first Git client")
                         .size(m.title_size)
