@@ -106,3 +106,39 @@ fn credentials_are_recognised_in_urls() {
     assert!(!url_has_credentials("https://github.com/o/r@v2"));
     assert!(!url_has_credentials("/srv/git/r.git"));
 }
+
+/// Git and libcurl skip extra slashes after `://`, and git takes everything before the first `@`
+/// ahead of the first slash as the user name and password.
+#[test]
+fn credentials_are_recognised_in_every_spelling_git_accepts() {
+    for url in [
+        "https:///user:secret@github.com/o/r.git",
+        "https:////token@github.com/o/r",
+        "HTTPS://u%3Asecret@host/r",
+        "https://user:pa?ss@host/r",
+        "https://user:pa#ss@host/r",
+        " https://token@host/r",
+        "ssh:///git:pw@host/r",
+        "ftps://u:p@host/r",
+        "http::https://token@host/r",
+    ] {
+        assert!(url_has_credentials(url), "{url}");
+    }
+    // The URL forms of the git-clone documentation, without credentials.
+    for url in [
+        "ssh://user@host.xz:22/path/to/repo.git/",
+        "ssh://user@host.xz/~user/path/to/repo.git/",
+        "git://host.xz:9418/path/to/repo.git/",
+        "git://host.xz/~user/path/to/repo.git/",
+        "https://host.xz:443/path/to/repo.git/",
+        "http://host.xz/path/to/repo.git/",
+        "ftp://host.xz/path/to/repo.git/",
+        "user@host.xz:path/to/repo.git/",
+        "host.xz:/path/to/repo.git/",
+        "file:///path/to/repo.git/",
+        "/path/to/repo.git/",
+        "https://host.xz/path/a@b",
+    ] {
+        assert!(!url_has_credentials(url), "{url}");
+    }
+}

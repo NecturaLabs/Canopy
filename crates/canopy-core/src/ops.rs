@@ -191,20 +191,26 @@ pub fn clone(url: &str, dest: &Path, progress: impl FnMut(&str)) -> Result<()> {
 ///
 /// Any user name in an `http(s)://` URL counts (it is usually a token), and a password
 /// (`user:secret@`) in any other URL with a scheme. An ssh user such as `git@github.com:o/r.git`
-/// or `ssh://git@host/r` is not a credential.
+/// or `ssh://git@host/r` is not a credential. Every spelling git accepts counts: extra slashes
+/// after `://` (`https:///token@host`), a `?` or `#` in the password, and a remote helper prefix
+/// (`http::https://token@host`).
+#[expect(
+    clippy::string_slice,
+    reason = "the range comes from cli::userinfo over the same text"
+)]
 pub fn url_has_credentials(url: &str) -> bool {
-    let Some((scheme, rest)) = url.split_once("://") else {
+    let Some((scheme, rest)) = url.trim().split_once("://") else {
         return false;
     };
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-    let Some((user_info, _)) = authority.rsplit_once('@') else {
+    let Some(user) = cli::userinfo(rest, char::is_whitespace) else {
         return false;
     };
+    let scheme = scheme.rsplit("::").next().unwrap_or(scheme);
     let web = matches!(
         scheme.to_ascii_lowercase().as_str(),
         "http" | "https" | "ftp" | "ftps"
     );
-    web || user_info.contains(':')
+    web || rest[user].contains(':')
 }
 
 /// Where [`Repo::checkout_request`] keeps the head of `remote_ref` (a full ref such as
