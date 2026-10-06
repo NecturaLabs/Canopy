@@ -13,8 +13,9 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
 use serde::{Deserialize, Serialize};
 
 use canopy_core::forge::{Forge, ForgeKind};
@@ -452,6 +453,11 @@ fn run(
 
 /// Runs `jobs` against `client` until the tab drops its end of the queue. `emit` reports an event
 /// to the tab and says whether it got there; author pictures go to `avatar_jobs`.
+///
+/// A loaded list's checks and reviews (one query that can take seconds) wait for
+/// [`ROLLUP_DELAY`] and for every job queued by then, such as the details of the request the list
+/// selected or an action the user started, so those are not held up behind it. A newer list
+/// replaces a waiting one.
 fn serve(
     client: &Client,
     forge: &Forge,
@@ -464,7 +470,29 @@ fn serve(
     };
     // Until when (unix seconds) the list goes without checks and reviews after a rate limit.
     let mut rollup_paused = 0;
-    while let Ok(job) = jobs.recv() {
+    // A list shown without its checks and reviews, and when they may be asked for.
+    let mut waiting: Option<(StateFilter, Vec<RequestSummary>, Instant)> = None;
+    loop {
+        let next = match &waiting {
+            None => jobs.recv().map_err(RecvTimeoutError::from),
+            Some((.., due)) => jobs.recv_deadline(*due),
+        };
+        let job = match next {
+            Ok(job) => job,
+            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some((filter, mut list, _)) = waiting.take() {
+                    let now = chrono::Utc::now().timestamp();
+                    let has_token = client.has_token();
+                    if add_rollup(&mut list, has_token, &mut rollup_paused, now, |n| {
+                        client.rollup(n)
+                    }) {
+                        send(HostEvent::List(filter, Ok(list)));
+                    }
+                }
+                continue;
+            }
+        };
         let label = job.label(forge.kind);
         tracing::debug!(host = %forge.host, job = %label, "hosting job");
         let s = |e: canopy_hosting::Error| e.to_string();
@@ -477,24 +505,20 @@ fn serve(
                     send(HostEvent::Avatar { oid, email, result });
                 }
             }
-            HostJob::List(filter) => match client.list(filter, 100) {
-                Ok(mut list) => {
+            HostJob::List(filter) => {
+                waiting = None;
+                match client.list(filter, 100) {
                     // The list shows at once; its checks and reviews follow in a second event
                     // for the same filter, which replaces it (the selection stays). A list the
                     // tab no longer takes was let go with its thread: nothing more is asked.
-                    if !emit(HostEvent::List(filter, Ok(list.clone()))) {
-                        continue;
+                    Ok(list) => {
+                        if emit(HostEvent::List(filter, Ok(list.clone()))) {
+                            waiting = Some((filter, list, Instant::now() + ROLLUP_DELAY));
+                        }
                     }
-                    let now = chrono::Utc::now().timestamp();
-                    let has_token = client.has_token();
-                    if add_rollup(&mut list, has_token, &mut rollup_paused, now, |n| {
-                        client.rollup(n)
-                    }) {
-                        send(HostEvent::List(filter, Ok(list)));
-                    }
+                    Err(e) => send(HostEvent::List(filter, Err(s(e)))),
                 }
-                Err(e) => send(HostEvent::List(filter, Err(s(e)))),
-            },
+            }
             HostJob::Details(n) => send(HostEvent::Details(
                 n,
                 Box::new(client.details(n).map_err(s)),
@@ -527,6 +551,10 @@ fn serve(
         }
     }
 }
+
+/// How long a list's checks and reviews wait for jobs the list itself sets off (the tab opens the
+/// request it selects as soon as the list arrives).
+const ROLLUP_DELAY: Duration = Duration::from_millis(250);
 
 /// How long the list goes without checks and reviews after a rate limit that named no reset.
 const ROLLUP_PAUSE_SECS: i64 = 60;
@@ -831,24 +859,22 @@ mod tests {
         (base, log)
     }
 
+    fn pull(n: u64) -> serde_json::Value {
+        serde_json::json!({
+            "number": n,
+            "title": format!("PR {n}"),
+            "user": { "login": "ann" },
+            "state": "open",
+            "head": { "ref": "topic", "sha": "abc", "repo": { "full_name": "o/r" } },
+            "base": { "ref": "main", "sha": "def", "repo": { "full_name": "o/r" } },
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-01T00:00:00Z",
+            "html_url": format!("https://github.com/o/r/pull/{n}"),
+        })
+    }
+
     fn pulls(numbers: &[u64]) -> String {
-        let rows: Vec<_> = numbers
-            .iter()
-            .map(|n| {
-                serde_json::json!({
-                    "number": n,
-                    "title": format!("PR {n}"),
-                    "user": { "login": "ann" },
-                    "state": "open",
-                    "head": { "ref": "topic", "sha": "abc", "repo": { "full_name": "o/r" } },
-                    "base": { "ref": "main", "sha": "def", "repo": { "full_name": "o/r" } },
-                    "created_at": "2024-01-01T00:00:00Z",
-                    "updated_at": "2024-01-01T00:00:00Z",
-                    "html_url": format!("https://github.com/o/r/pull/{n}"),
-                })
-            })
-            .collect();
-        serde_json::Value::Array(rows).to_string()
+        serde_json::Value::Array(numbers.iter().map(|&n| pull(n)).collect()).to_string()
     }
 
     const ROLLUP_ANSWER: &str = r#"{"data":{"repository":{"p1":{"number":1,"statusCheckRollup":{"state":"SUCCESS"},"reviewDecision":"APPROVED"}}}}"#;
@@ -908,6 +934,46 @@ mod tests {
         let log = log.lock().expect("log").clone();
         assert_eq!(log.len(), 1, "only the list was sent: {log:?}");
         assert!(log[0].starts_with("GET /repos/o/r/pulls?"), "{log:?}");
+    }
+
+    #[test]
+    fn a_lists_checks_wait_for_the_jobs_queued_behind_it() {
+        // The tab opens the request the list selected, and the user may act on it at once: the
+        // list's checks and reviews (one query that can take seconds) go after those jobs.
+        let (base, log) = stub(Box::new(|target| {
+            if target.starts_with("/repos/o/r/pulls?") {
+                pulls(&[1])
+            } else if target == "/repos/o/r/pulls/1" {
+                pull(1).to_string()
+            } else if target == "/graphql" {
+                ROLLUP_ANSWER.to_owned()
+            } else {
+                "[]".to_owned()
+            }
+        }));
+        let (worker, thread) = worker_for(&base);
+        worker.send(HostJob::List(StateFilter::Open));
+        worker.send(HostJob::Details(1));
+        worker.send(HostJob::Comment(1, "Looks good".into()));
+        let mut lists = 0;
+        while lists < 2 {
+            match worker.events.recv_timeout(Duration::from_secs(20)) {
+                Ok(HostEvent::List(..)) => lists += 1,
+                Ok(_) => {}
+                Err(e) => panic!("no second list: {e}"),
+            }
+        }
+        drop(worker);
+        thread.join().expect("hosting thread");
+        let log = log.lock().expect("log").clone();
+        let query = log.iter().position(|l| l == "POST /graphql");
+        assert_eq!(query, Some(log.len() - 1), "the query goes last: {log:?}");
+        assert!(log.iter().any(|l| l == "GET /repos/o/r/pulls/1"), "{log:?}");
+        assert!(
+            log.iter()
+                .any(|l| l.starts_with("POST /repos/o/r/issues/1/comments")),
+            "{log:?}"
+        );
     }
 
     #[test]
