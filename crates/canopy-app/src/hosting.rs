@@ -530,12 +530,16 @@ fn serve(
 
 /// How long the list goes without checks and reviews after a rate limit that named no reset.
 const ROLLUP_PAUSE_SECS: i64 = 60;
+/// The longest the list goes without them, however far off a server puts its reset (an hour,
+/// GitHub's longest window): a wrong or hostile reset cannot switch them off for the session.
+const ROLLUP_PAUSE_MAX_SECS: i64 = 3_600;
 
 /// Gives each row of a freshly loaded `list` its checks and reviews ([`Client::rollup`]: one
 /// query for the page), only when a token is set and no rate limit asked to wait (`paused`, unix
-/// seconds, moved to the limit's reset when one answers). Without them a row shows what the
-/// request's details said when they were opened, as before. A failure is logged like any skipped
-/// part of a request and leaves the rows as they are. Returns whether any row got a rollup.
+/// seconds, moved to the limit's reset when one answers, an hour ahead at most). Without them a
+/// row shows what the request's details said when they were opened, as before. A failure is
+/// logged like any skipped part of a request and leaves the rows as they are. Returns whether any
+/// row got a rollup.
 fn add_rollup(
     list: &mut [RequestSummary],
     has_token: bool,
@@ -562,7 +566,9 @@ fn add_rollup(
             if let canopy_hosting::Error::RateLimited { reset } = &e {
                 *paused = reset
                     .filter(|&r| r > now)
-                    .unwrap_or(now + ROLLUP_PAUSE_SECS);
+                    .map_or(now + ROLLUP_PAUSE_SECS, |r| {
+                        r.min(now + ROLLUP_PAUSE_MAX_SECS)
+                    });
             }
             tracing::warn!(error = %e, "skipping the checks and reviews of the request list");
             false
@@ -767,6 +773,15 @@ mod tests {
             });
         }
         assert_eq!(other, 2);
+        // However far off the server puts its reset, the list waits an hour at most.
+        add_rollup(
+            &mut list,
+            true,
+            &mut paused,
+            5_000,
+            limited(Some(32_503_680_000)),
+        );
+        assert_eq!(paused, 5_000 + ROLLUP_PAUSE_MAX_SECS);
     }
 
     type Answer = Box<dyn Fn(&str) -> String + Send>;
