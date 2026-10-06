@@ -591,7 +591,8 @@ impl Repo {
 
     /// Fetches `remote`, or every remote when `None`, with tags. `prune` also deletes
     /// remote-tracking branches whose branch no longer exists on the remote (`--prune`); without
-    /// it, `fetch.prune` / `remote.<name>.prune` from the configuration still apply.
+    /// it `--no-prune` is passed, so `fetch.prune` / `remote.<name>.prune` in the configuration
+    /// do not prune either.
     pub fn fetch(
         &self,
         remote: Option<&str>,
@@ -599,9 +600,7 @@ impl Repo {
         progress: impl FnMut(&str),
     ) -> Result<String> {
         let mut args = vec!["fetch", "--progress", "--tags"];
-        if prune {
-            args.push("--prune");
-        }
+        args.push(if prune { "--prune" } else { "--no-prune" });
         match remote {
             Some(r) => args.push(r),
             None => args.push("--all"),

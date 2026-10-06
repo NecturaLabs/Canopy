@@ -1193,23 +1193,25 @@ fn pull_note(facts: &GitFacts, mode: PullMode) -> Option<Note> {
     })
 }
 
-/// What git's configuration says about pruning, against Canopy's choice. Canopy passes
-/// `--prune` when on; when off it passes nothing, so `fetch.prune = true` still prunes.
+/// What git's configuration says about pruning, against Canopy's choice. Canopy always passes
+/// `--prune` or `--no-prune`, so a `fetch.prune` that differs does not apply to its fetches.
 fn prune_note(facts: &GitFacts, prune: bool) -> Option<Note> {
     let v = facts.fetch_prune.as_ref()?;
     let git_prunes = v.as_bool().unwrap_or(false);
-    Some(if git_prunes && !prune {
+    Some(if git_prunes == prune {
         Note {
-            text: format!(
-                "Your git configuration sets {}, so fetches prune anyway.",
-                config_phrase(v)
-            ),
-            warn: true,
+            text: format!("Matches your git configuration: {}.", config_phrase(v)),
+            warn: false,
         }
     } else {
         Note {
-            text: format!("Your git configuration: {}.", config_phrase(v)),
-            warn: false,
+            text: format!(
+                "Canopy passes {}, so your git configuration's {} does not apply to fetches \
+                 from Canopy.",
+                if prune { "--prune" } else { "--no-prune" },
+                config_phrase(v)
+            ),
+            warn: true,
         }
     })
 }
@@ -4646,15 +4648,26 @@ mod tests {
         );
     }
 
+    /// Canopy passes its pruning choice, so a configuration that differs is reported as not
+    /// applying, either way round.
     #[test]
-    fn notes_say_when_git_prunes_anyway() {
+    fn notes_say_when_the_prune_choice_overrides_git() {
         let mut facts = GitFacts::default();
         assert_eq!(prune_note(&facts, false), None);
         facts.fetch_prune = Some(fact("fetch.prune", "true"));
-        assert!(prune_note(&facts, false).unwrap().warn);
+        let off = prune_note(&facts, false).unwrap();
+        assert!(off.warn);
+        assert!(
+            off.text.starts_with("Canopy passes --no-prune"),
+            "{}",
+            off.text
+        );
         assert!(!prune_note(&facts, true).unwrap().warn);
         facts.fetch_prune = Some(fact("fetch.prune", "false"));
         assert!(!prune_note(&facts, false).unwrap().warn);
+        let on = prune_note(&facts, true).unwrap();
+        assert!(on.warn);
+        assert!(on.text.starts_with("Canopy passes --prune"), "{}", on.text);
     }
 
     #[test]
