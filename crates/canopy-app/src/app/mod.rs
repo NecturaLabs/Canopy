@@ -650,6 +650,13 @@ impl CanopyApp {
     }
 }
 
+/// Names the window for assistive technology: the active repository and the app, as a window
+/// title reads ("showcase — Canopy"), or just "Canopy" with none open.
+fn name_window(ctx: &egui::Context, repository: Option<&str>) {
+    let name = repository.map_or_else(|| "Canopy".to_owned(), |r| format!("{r} — Canopy"));
+    ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(name));
+}
+
 /// The settings whose change needs more than a repaint, as they were before Settings drew a
 /// frame: compared after it, without copying the whole settings every frame Settings is open.
 #[derive(Debug, Clone, Copy)]
@@ -735,6 +742,7 @@ fn start_askpass(ctx: &egui::Context) -> Option<crate::askpass::Server> {
 impl eframe::App for CanopyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        name_window(&ctx, self.tabs.get(self.active).map(|t| t.name.as_str()));
         update_window_minimum(&ctx);
         self.apply_look(&ctx);
         let p = palette(&ctx);
@@ -1394,6 +1402,28 @@ pub(super) fn test_tab(snap: canopy_core::RepoSnapshot) -> RepoTab {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A11Y-13: the window has an accessible name, with the repository it shows.
+    #[test]
+    fn the_window_is_named_for_screen_readers() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let root = |repository: Option<&str>| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                name_window(ui.ctx(), repository);
+            });
+            out.textures_delta.clear();
+            let update = out.platform_output.accesskit_update.expect("a tree");
+            let root = update.tree.expect("its root").root;
+            update
+                .nodes
+                .into_iter()
+                .find(|(id, _)| *id == root)
+                .and_then(|(_, n)| n.label().map(str::to_owned))
+        };
+        assert_eq!(root(None).as_deref(), Some("Canopy"));
+        assert_eq!(root(Some("showcase")).as_deref(), Some("showcase — Canopy"));
+    }
 
     /// review-views-9: Settings is compared by the few values whose change needs work, not by a
     /// copy of every setting each frame; a changed GitLab host list still reaches the tabs.
