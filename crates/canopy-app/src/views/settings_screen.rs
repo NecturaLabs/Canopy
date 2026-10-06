@@ -22,19 +22,19 @@ use crate::action::Action;
 use crate::hosting::{self, TokenStore};
 use crate::keymap::{Command, Section as KeySection};
 use crate::repo_config::{ConfigValue, GitFacts};
-use crate::settings::{CloneProtocol, DiffPrefs, PullMode, Settings, WhitespaceMode};
+use crate::settings::{CloneProtocol, DiffPrefs, PullChoice, PullMode, Settings, WhitespaceMode};
 use crate::system_apps::Kind;
 use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::choice::Segmented;
-use crate::ui::kit::field::{SearchField, TextField};
+use crate::ui::kit::field::{NumberField as KitNumber, SearchField, TextField};
 use crate::ui::kit::overlay;
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::paint;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::range::Slider;
 use crate::ui::kit::row::{ListRow, RowKind};
-use crate::ui::kit::select::Select;
+use crate::ui::kit::select::{self, Select};
 use crate::ui::kit::surface::{Callout, Card, EmptyAction, EmptyState, column_label};
 use crate::ui::kit::toggle::Switch;
 use crate::ui::kit::{Button, IconButton, Size, Tone};
@@ -142,6 +142,9 @@ pub struct SettingsScreen {
     file_task: Option<crate::settings_file::FileTask>,
     /// What the last export, import or reset did: `(failed, message)`.
     file_status: Option<(bool, String)>,
+    /// Stay on This repository until a repository is open (the screenshot overlay opens
+    /// Settings before its repository's tab); cleared once one is.
+    awaiting_repository: bool,
 }
 
 /// Why the active repository's authors show initials instead of pictures
@@ -285,14 +288,17 @@ impl SettingsScreen {
         }
     }
 
+    /// The screen opened at This repository, staying there until the repository's tab opens
+    /// (the settings-repository screenshot).
+    pub fn awaiting_repository() -> Self {
+        Self {
+            section: Section::Repository,
+            awaiting_repository: true,
+            ..Self::default()
+        }
+    }
+
     /// The screen showing what `query` finds (screenshots and tests).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "for the settings-search screenshot overlay the integrator adds (contracts/settings.md)"
-        )
-    )]
     pub fn searching(query: &str) -> Self {
         let mut screen = Self::default();
         query.clone_into(&mut screen.search.query);
@@ -377,7 +383,10 @@ pub fn show(
     let (width, height) = shell_size(ctx);
     let sidebar = width >= NAV_MIN_WIDTH;
     let repo = data.identity.repo;
-    if screen.section == Section::Repository && repo.is_none() {
+    if repo.is_some() {
+        screen.awaiting_repository = false;
+    }
+    if screen.section == Section::Repository && repo.is_none() && !screen.awaiting_repository {
         // The repository's tab was closed while its page was open.
         screen.section = Section::Appearance;
     }
@@ -689,6 +698,7 @@ fn synonyms(title: &str) -> &'static str {
             "identity user author git config user.name user.email"
         }
         "Pull strategy" => "pull rebase merge fast-forward ff only",
+        "Follow my git config" => "pull rebase pull.rebase pull.ff configuration follow default",
         "Prune on fetch" => "prune stale remote branches delete",
         "Fetch in the background" => "auto fetch automatic interval minutes",
         "Add Signed-off-by" => "signoff sign-off dco trailer",
@@ -1155,61 +1165,73 @@ fn config_phrase(v: &ConfigValue) -> String {
     )
 }
 
-/// What git's configuration says about pulls, against Canopy's `mode`. Git follows its own
-/// `branch.<name>.rebase` or `pull.rebase` when one is set, whatever Canopy chose
-/// (`canopy_core::Repo::pull`).
-fn pull_note(facts: &GitFacts, mode: PullMode) -> Option<Note> {
-    if let Some(v) = facts.pull_rebase_setting() {
-        let rebases = v.as_bool().is_none_or(|b| b);
-        let agrees = matches!(
-            (mode, rebases),
-            (PullMode::Rebase, true) | (PullMode::Merge, false)
-        );
-        return Some(if agrees {
-            Note {
-                text: format!("Matches your git configuration: {}.", config_phrase(v)),
-                warn: false,
-            }
-        } else {
-            Note {
-                text: format!(
-                    "Your git configuration sets {}; git follows it for pulls, so pulls {}.",
-                    config_phrase(v),
-                    if rebases { "rebase" } else { "merge" }
-                ),
-                warn: true,
-            }
+/// What git's configuration says about pulls, against Canopy's `choice`. Canopy always passes a
+/// strategy (`canopy_core::Repo::pull`): the configuration's when it follows it and one is set,
+/// else its own, and then a configuration that differs does not apply.
+fn pull_note(facts: &GitFacts, choice: PullChoice) -> Option<Note> {
+    let config = facts.pull.as_ref()?;
+    let ours = choice.mode.strategy();
+    let Some((configured, described)) = config.strategy.zip(config.describe()) else {
+        return choice.follow_config.then(|| Note {
+            text: format!(
+                "Your git configuration sets no pull strategy, so pulls use {}.",
+                lowercase_label(ours.label())
+            ),
+            warn: false,
         });
-    }
-    let ff = facts.pull_ff.as_ref()?;
-    (ff.value.trim().eq_ignore_ascii_case("only") && mode != PullMode::FastForwardOnly).then(|| {
+    };
+    Some(if choice.follow_config {
         Note {
             text: format!(
-                "Your git configuration sets {}: git refuses a pull that is not a fast-forward.",
-                config_phrase(ff)
+                "From your git configuration: {described}, so pulls use {}.",
+                lowercase_label(configured.label())
+            ),
+            warn: false,
+        }
+    } else if configured == ours {
+        Note {
+            text: format!("Matches your git configuration: {described}."),
+            warn: false,
+        }
+    } else {
+        Note {
+            text: format!(
+                "Canopy passes {}, so your git configuration's {described} does not apply to \
+                 pulls from Canopy.",
+                ours.git_args().join(" ")
             ),
             warn: true,
         }
     })
 }
 
-/// What git's configuration says about pruning, against Canopy's choice. Canopy passes
-/// `--prune` when on; when off it passes nothing, so `fetch.prune = true` still prunes.
+/// A strategy's label inside a sentence: "Rebase, keeping merges" -> "rebase, keeping merges".
+fn lowercase_label(label: &str) -> String {
+    let mut chars = label.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_lowercase().chain(chars).collect()
+    })
+}
+
+/// What git's configuration says about pruning, against Canopy's choice. Canopy always passes
+/// `--prune` or `--no-prune`, so a `fetch.prune` that differs does not apply to its fetches.
 fn prune_note(facts: &GitFacts, prune: bool) -> Option<Note> {
     let v = facts.fetch_prune.as_ref()?;
     let git_prunes = v.as_bool().unwrap_or(false);
-    Some(if git_prunes && !prune {
+    Some(if git_prunes == prune {
         Note {
-            text: format!(
-                "Your git configuration sets {}, so fetches prune anyway.",
-                config_phrase(v)
-            ),
-            warn: true,
+            text: format!("Matches your git configuration: {}.", config_phrase(v)),
+            warn: false,
         }
     } else {
         Note {
-            text: format!("Your git configuration: {}.", config_phrase(v)),
-            warn: false,
+            text: format!(
+                "Canopy passes {}, so your git configuration's {} does not apply to fetches \
+                 from Canopy.",
+                if prune { "--prune" } else { "--no-prune" },
+                config_phrase(v)
+            ),
+            warn: true,
         }
     })
 }
@@ -1481,105 +1503,9 @@ fn switch_with(switch: Switch<'_>, ui: &mut Ui, on: bool, name: &str) -> Respons
     response
 }
 
-/// Text typed into a number field that has not been applied yet, and the error it showed.
-#[derive(Debug, Clone, Default)]
-struct NumberDraft {
-    text: String,
-    error: Option<String>,
-}
-
-/// Where a [`number_field`] keeps its draft, what it accepts, how wide it is and its name.
-struct NumberField<'a> {
-    salt: &'a str,
-    range: RangeInclusive<f64>,
-    width: f32,
-    name: &'a str,
-}
-
-/// A number typed into a field: what is typed applies on Enter or when the field loses focus
-/// (clamped to `range`), Esc restores the value, and text that is not a number shows an error.
-/// A click selects the whole value, so typing replaces it. Returns the new value once applied.
-fn number_field(
-    ui: &mut Ui,
-    field: NumberField<'_>,
-    value: f64,
-    shown: impl Fn(f64) -> String,
-    parse: impl Fn(&str) -> Option<f64>,
-) -> Option<f64> {
-    let NumberField {
-        salt,
-        range,
-        width,
-        name,
-    } = field;
-    let key = ui.id().with(("settings-number", salt));
-    let draft: Option<NumberDraft> = ui.data(|d| d.get_temp(key));
-    let mut text = draft
-        .as_ref()
-        .map_or_else(|| shown(value), |d| d.text.clone());
-    let error = draft.as_ref().and_then(|d| d.error.clone());
-    let response = fixed_width(ui, width, |ui| {
-        TextField::new(&mut text)
-            .width(width)
-            .name(name)
-            .error(error.as_deref())
-            .id_salt(("settings-number", salt))
-            .show(ui)
-    });
-    if response.gained_focus() || response.clicked() {
-        let ctx = ui.ctx();
-        if let Some(mut state) = egui::text_edit::TextEditState::load(ctx, response.id) {
-            let all = egui::text::CCursorRange::two(
-                egui::text::CCursor::new(0),
-                egui::text::CCursor::new(text.chars().count()),
-            );
-            state.cursor.set_char_range(Some(all));
-            state.store(ctx, response.id);
-        }
-    }
-    let mut applied = None;
-    let mut next = None;
-    if response.lost_focus() {
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            next = None;
-        } else {
-            match parse(text.trim()) {
-                Some(v) if v.is_finite() => {
-                    applied = Some(v.clamp(*range.start(), *range.end()));
-                }
-                _ => {
-                    next = Some(NumberDraft {
-                        text: text.clone(),
-                        error: Some(format!(
-                            "Enter a number from {} to {}.",
-                            shown(*range.start()),
-                            shown(*range.end())
-                        )),
-                    });
-                }
-            }
-        }
-    } else if response.has_focus() {
-        next = Some(NumberDraft {
-            text: text.clone(),
-            // The error stays until the text is applied again.
-            error,
-        });
-    } else {
-        next = draft;
-    }
-    ui.data_mut(|d| match next {
-        Some(n) => {
-            d.insert_temp(key, n);
-        }
-        None => d.remove::<NumberDraft>(key),
-    });
-    applied
-}
-
 /// The fewest and most commits a history page loads, and the stepper's step.
 const COMMIT_PAGE: RangeInclusive<f64> = 200.0..=50_000.0;
-const COMMIT_PAGE_STEP: usize = 100;
+const COMMIT_PAGE_STEP: f64 = 100.0;
 
 fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     heading(ui, "Theme");
@@ -1792,26 +1718,26 @@ fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> Respon
                 }
                 *draft = None;
             }
-            let typed = number_field(
-                ui,
-                NumberField {
-                    salt: "zoom",
-                    range: f64::from(*ZOOM.start())..=f64::from(*ZOOM.end()),
-                    width: ZOOM_FIELD_WIDTH,
-                    name: "Zoom percentage",
-                },
-                f64::from(draft.unwrap_or(s.zoom)),
-                percent,
-                |text| {
-                    text.trim_end_matches('%')
-                        .trim()
-                        .parse::<f64>()
-                        .ok()
-                        .map(|v| v / 100.0)
-                },
-            );
-            if let Some(v) = typed {
-                s.zoom = crate::ui::to_f32(v);
+            // The slider steps; the field takes a typed percentage, so it has no steppers.
+            let mut typed = f64::from(draft.unwrap_or(s.zoom));
+            let field = KitNumber::new(
+                &mut typed,
+                f64::from(*ZOOM.start())..=f64::from(*ZOOM.end()),
+            )
+            .step(0.0)
+            .format(percent, |text| {
+                text.trim_end_matches('%')
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .map(|v| v / 100.0)
+            })
+            .name("Zoom percentage")
+            .width(ZOOM_FIELD_WIDTH)
+            .id_salt("zoom")
+            .show(ui);
+            if field.changed() {
+                s.zoom = crate::ui::to_f32(typed);
                 *draft = None;
             }
         },
@@ -2048,8 +1974,15 @@ fn elide_middle(ui: &Ui, text: &str, font: &FontId, max_width: f32) -> String {
 const FIELD_WIDTH: f32 = 280.0;
 /// The width of a select in a settings row.
 const SELECT_WIDTH: f32 = 220.0;
-/// The width of the commits-per-page field between its steppers.
-const COUNT_FIELD_WIDTH: f32 = 96.0;
+
+/// A select's width in a settings row: [`SELECT_WIDTH`], so a column of rows lines up, or wider
+/// when its longest option needs it (`kit::select::fit_width`).
+fn select_width<'l>(ui: &Ui, labels: impl IntoIterator<Item = &'l str>) -> f32 {
+    SELECT_WIDTH.max(select::fit_width(ui, labels))
+}
+
+/// The width of the commits-per-page field, its steppers included.
+const COUNT_FIELD_WIDTH: f32 = 160.0;
 
 /// What is wrong with the identity, or that it is still being read.
 fn identity_status(ui: &mut Ui, identity: Option<&Identity>, error: Option<&str>) {
@@ -2247,16 +2180,33 @@ fn git(
     facts_error(ui, facts.as_ref());
     default_row(
         ui,
-        "Pull strategy",
-        "How a pull brings in the remote's commits: a merge commit, a rebase of yours on top, or only a fast-forward.",
+        "Follow my git config",
+        "Pull with the strategy your git configuration sets (branch.<name>.rebase, pull.rebase, pull.ff) when it sets one.",
         facts
             .as_ref()
-            .and_then(|f| pull_note(f, s.pull_mode))
+            .and_then(|f| pull_note(f, s.pull_default()))
             .as_ref(),
         |ui| {
+            switch(ui, &mut s.pull_follow_config, "Follow my git config");
+            revert(
+                ui,
+                &mut s.pull_follow_config,
+                &DEFAULTS.pull_follow_config,
+                "Follow my git config",
+            );
+        },
+    );
+    default_row(
+        ui,
+        "Pull strategy",
+        "How a pull brings in the remote's commits: a merge commit, a rebase of yours on top, or only a fast-forward. While Follow my git config is on, only where your git configuration sets none.",
+        None,
+        |ui| {
             let options = PullMode::ALL.map(|m| (m, m.label()));
-            Segmented::new(&mut s.pull_mode, &options)
-                .label("Pull strategy")
+            Select::new(&mut s.pull_mode, &options)
+                .width(select_width(ui, options.iter().map(|(_, l)| *l)))
+                .name("Pull strategy")
+                .id_salt("pull-strategy")
                 .show(ui);
             revert(ui, &mut s.pull_mode, &DEFAULTS.pull_mode, "Pull strategy");
         },
@@ -2453,12 +2403,28 @@ fn repository(
     let mut own = s.repo(path);
     group_gap(ui, theme::LG);
     heading(ui, "Pull and fetch");
-    let pull = own.pull_mode.unwrap_or(s.pull_mode);
+    let pull = s.pull_for(path);
+    repo_row(
+        ui,
+        "Follow my git config",
+        "Pull with the strategy this repository's git configuration sets, when it sets one.",
+        facts.as_ref().and_then(|f| pull_note(f, pull)).as_ref(),
+        |ui| {
+            override_select(
+                ui,
+                "repo-pull-follow",
+                "Follow my git config",
+                &mut own.pull_follow_config,
+                s.pull_follow_config,
+                &on_off(),
+            );
+        },
+    );
     repo_row(
         ui,
         "Pull strategy",
-        "How a pull brings in the remote's commits.",
-        facts.as_ref().and_then(|f| pull_note(f, pull)).as_ref(),
+        "How a pull brings in the remote's commits; while it follows the git configuration, only where that sets none.",
+        None,
         |ui| {
             override_select(
                 ui,
@@ -2841,7 +2807,7 @@ fn override_select<T: PartialEq + Copy>(
             .collect();
     let refs: Vec<(Option<T>, &str)> = items.iter().map(|(v, l)| (*v, l.as_str())).collect();
     Select::new(value, &refs)
-        .width(SELECT_WIDTH)
+        .width(select_width(ui, refs.iter().map(|(_, l)| *l)))
         .name(name)
         .id_salt(salt)
         .show(ui);
@@ -3159,60 +3125,31 @@ fn repo_identity(
     );
 }
 
-/// Commits per page: a number field between − and + steppers.
+/// Commits per page: the kit's number field, with − and + steppers of [`COMMIT_PAGE_STEP`].
 fn commit_page(ui: &mut Ui, s: &mut Settings) {
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "the range's ends are the whole numbers 200 and 50 000"
-    )]
-    let (lo, hi) = (*COMMIT_PAGE.start() as usize, *COMMIT_PAGE.end() as usize);
-    // The steppers stand a gap away from the field and as tall as it, like the other rows'
-    // controls, rather than pressed against it.
-    ui.spacing_mut().item_spacing.x = theme::SM;
-    // Right to left: +, the field, −.
-    if IconButton::new(icon::PLUS, "More commits per page")
-        .size(Size::Md)
-        .enabled(s.commit_page < hi)
-        .id_salt("commit-page-more")
-        .show(ui)
-        .clicked()
-    {
-        s.commit_page = (s.commit_page + COMMIT_PAGE_STEP).min(hi);
-    }
     #[expect(
         clippy::cast_precision_loss,
         reason = "a page size of at most 50 000, exact in f64"
     )]
-    let current = s.commit_page as f64;
-    if let Some(v) = number_field(
-        ui,
-        NumberField {
-            salt: "commit-page",
-            range: COMMIT_PAGE,
-            width: COUNT_FIELD_WIDTH,
-            name: "Commits per page",
-        },
-        current,
-        |v| format!("{v:.0}"),
-        |text| text.replace([',', '_', ' '], "").parse::<f64>().ok(),
-    ) {
+    let mut page = s.commit_page as f64;
+    let changed = fixed_width(ui, COUNT_FIELD_WIDTH, |ui| {
+        KitNumber::new(&mut page, COMMIT_PAGE)
+            .step(COMMIT_PAGE_STEP)
+            .name("Commits per page")
+            .step_names("Fewer commits per page", "More commits per page")
+            .width(COUNT_FIELD_WIDTH)
+            .id_salt("commit-page")
+            .show(ui)
+    })
+    .changed();
+    if changed {
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
-            reason = "number_field clamps the value to COMMIT_PAGE, so it is a whole positive count once rounded"
+            reason = "the field clamps the value to COMMIT_PAGE, so it is a whole positive count once rounded"
         )]
-        let page = v.round() as usize;
+        let page = page.round() as usize;
         s.commit_page = page;
-    }
-    if IconButton::new(icon::MINUS, "Fewer commits per page")
-        .size(Size::Md)
-        .enabled(s.commit_page > lo)
-        .id_salt("commit-page-fewer")
-        .show(ui)
-        .clicked()
-    {
-        s.commit_page = s.commit_page.saturating_sub(COMMIT_PAGE_STEP).max(lo);
     }
 }
 
@@ -4516,28 +4453,53 @@ mod tests {
         );
     }
 
+    /// ST-F1, Override O3: pulls pass a strategy, so the note says which one applies and, when
+    /// Canopy's own choice differs from the configuration, that the configuration does not.
     #[test]
-    fn notes_say_when_git_will_pull_otherwise() {
-        let mut facts = GitFacts::default();
-        assert_eq!(pull_note(&facts, PullMode::Merge), None);
-        facts.pull_rebase = Some(fact("pull.rebase", "true"));
-        let merge = pull_note(&facts, PullMode::Merge).unwrap();
-        assert!(merge.warn, "{merge:?}");
-        assert!(merge.text.contains("pull.rebase = true"), "{merge:?}");
-        assert!(!pull_note(&facts, PullMode::Rebase).unwrap().warn);
-        // The branch's own setting comes first, as in git.
-        facts.branch_rebase = Some(fact("branch.main.rebase", "false"));
-        assert!(pull_note(&facts, PullMode::Rebase).unwrap().warn);
-        assert!(!pull_note(&facts, PullMode::Merge).unwrap().warn);
-        // pull.ff = only refuses what is not a fast-forward.
-        let mut ff = GitFacts {
-            pull_ff: Some(fact("pull.ff", "only")),
-            ..GitFacts::default()
+    fn notes_say_which_pull_strategy_applies() {
+        use canopy_core::{ConfigScope, ConfigSource, PullConfig, PullStrategy};
+        let follow = PullChoice::default();
+        let own = |mode| PullChoice {
+            mode,
+            follow_config: false,
         };
-        assert!(pull_note(&ff, PullMode::Merge).unwrap().warn);
-        assert_eq!(pull_note(&ff, PullMode::FastForwardOnly), None);
-        ff.pull_ff = Some(fact("pull.ff", "true"));
-        assert_eq!(pull_note(&ff, PullMode::Merge), None);
+        let mut facts = GitFacts::default();
+        assert_eq!(pull_note(&facts, follow), None, "not read");
+        facts.pull = Some(PullConfig::default());
+        let nothing = pull_note(&facts, follow).unwrap();
+        assert!(!nothing.warn);
+        assert!(
+            nothing.text.contains("sets no pull strategy"),
+            "{nothing:?}"
+        );
+        assert_eq!(pull_note(&facts, own(PullMode::Rebase)), None);
+
+        facts.pull = Some(PullConfig {
+            strategy: Some(PullStrategy::Rebase),
+            sources: vec![ConfigSource {
+                key: "pull.rebase".into(),
+                value: "true".into(),
+                scope: ConfigScope::Global,
+                origin: "file:/home/me/.gitconfig".into(),
+                file: None,
+            }],
+            invalid: Vec::new(),
+        });
+        let followed = pull_note(&facts, follow).unwrap();
+        assert!(!followed.warn);
+        assert_eq!(
+            followed.text,
+            "From your git configuration: pull.rebase=true (your global git config), so pulls \
+             use rebase."
+        );
+        assert!(!pull_note(&facts, own(PullMode::Rebase)).unwrap().warn);
+        let overridden = pull_note(&facts, own(PullMode::Merge)).unwrap();
+        assert!(overridden.warn);
+        assert_eq!(
+            overridden.text,
+            "Canopy passes --no-rebase --ff, so your git configuration's pull.rebase=true (your \
+             global git config) does not apply to pulls from Canopy."
+        );
     }
 
     #[test]
@@ -4646,15 +4608,26 @@ mod tests {
         );
     }
 
+    /// Canopy passes its pruning choice, so a configuration that differs is reported as not
+    /// applying, either way round.
     #[test]
-    fn notes_say_when_git_prunes_anyway() {
+    fn notes_say_when_the_prune_choice_overrides_git() {
         let mut facts = GitFacts::default();
         assert_eq!(prune_note(&facts, false), None);
         facts.fetch_prune = Some(fact("fetch.prune", "true"));
-        assert!(prune_note(&facts, false).unwrap().warn);
+        let off = prune_note(&facts, false).unwrap();
+        assert!(off.warn);
+        assert!(
+            off.text.starts_with("Canopy passes --no-prune"),
+            "{}",
+            off.text
+        );
         assert!(!prune_note(&facts, true).unwrap().warn);
         facts.fetch_prune = Some(fact("fetch.prune", "false"));
         assert!(!prune_note(&facts, false).unwrap().warn);
+        let on = prune_note(&facts, true).unwrap();
+        assert!(on.warn);
+        assert!(on.text.starts_with("Canopy passes --prune"), "{}", on.text);
     }
 
     #[test]

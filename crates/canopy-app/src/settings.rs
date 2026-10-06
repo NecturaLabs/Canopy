@@ -16,28 +16,69 @@ use crate::ui::theme::{Density, Style, ThemeId};
 /// Storage key.
 pub const KEY: &str = "canopy-settings-v1";
 
-/// How `git pull` integrates when `pull.rebase` is not configured.
+/// How a pull integrates: Canopy's own choice, passed to git explicitly (a serialisable mirror of
+/// [`PullStrategy`]). Variants are only ever added, so saved settings keep loading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PullMode {
     #[default]
     Merge,
     Rebase,
     FastForwardOnly,
+    MergeNoFastForward,
+    RebaseMerges,
 }
 
 impl PullMode {
-    pub const ALL: [Self; 3] = [Self::Merge, Self::Rebase, Self::FastForwardOnly];
+    /// In the order of [`PullStrategy::ALL`].
+    pub const ALL: [Self; 5] = [
+        Self::Merge,
+        Self::MergeNoFastForward,
+        Self::Rebase,
+        Self::RebaseMerges,
+        Self::FastForwardOnly,
+    ];
 
     pub fn strategy(self) -> PullStrategy {
         match self {
             Self::Merge => PullStrategy::Merge,
+            Self::MergeNoFastForward => PullStrategy::MergeNoFastForward,
             Self::Rebase => PullStrategy::Rebase,
+            Self::RebaseMerges => PullStrategy::RebaseMerges,
             Self::FastForwardOnly => PullStrategy::FastForwardOnly,
         }
     }
 
     pub fn label(self) -> &'static str {
         self.strategy().label()
+    }
+}
+
+/// How a repository pulls: Canopy's strategy, and whether a strategy the user's git configuration
+/// sets wins over it (the default: Canopy starts from the user's git configuration).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PullChoice {
+    pub mode: PullMode,
+    /// Follow my git config: pull with what `branch.<name>.rebase`, `pull.rebase` or `pull.ff`
+    /// ask for, and with `mode` only when they ask for nothing.
+    pub follow_config: bool,
+}
+
+impl PullChoice {
+    /// The strategy a pull uses, given what the git configuration asks for (`None`: nothing).
+    pub fn resolve(self, configured: Option<PullStrategy>) -> PullStrategy {
+        match configured {
+            Some(s) if self.follow_config => s,
+            _ => self.mode.strategy(),
+        }
+    }
+}
+
+impl Default for PullChoice {
+    fn default() -> Self {
+        Self {
+            mode: PullMode::default(),
+            follow_config: true,
+        }
     }
 }
 
@@ -69,6 +110,7 @@ pub const MAX_TAB_NAME: usize = 60;
 #[serde(default)]
 pub struct RepoSettings {
     pub pull_mode: Option<PullMode>,
+    pub pull_follow_config: Option<bool>,
     pub prune_on_fetch: Option<bool>,
     /// Minutes between background fetches; `Some(0)` turns them off for this repository.
     pub auto_fetch_minutes: Option<u32>,
@@ -160,7 +202,13 @@ pub struct Settings {
     pub reduce_motion: Option<bool>,
 
     // Git.
+    /// Canopy's pull strategy; while `pull_follow_config` is on, only where the git
+    /// configuration sets none.
     pub pull_mode: PullMode,
+    /// Follow my git config: a pull strategy the git configuration sets wins over `pull_mode`.
+    /// On by default, and for settings saved before it existed (pulls then already followed
+    /// `pull.rebase`).
+    pub pull_follow_config: bool,
     /// `--prune` on fetch: drop remote-tracking branches deleted on the remote.
     pub prune_on_fetch: bool,
     /// Fetch in the background every N minutes (0 = off).
@@ -256,6 +304,7 @@ impl Default for Settings {
             motion: MotionPref::System,
             reduce_motion: None,
             pull_mode: PullMode::Merge,
+            pull_follow_config: true,
             prune_on_fetch: true,
             auto_fetch_minutes: 0,
             signoff: false,
@@ -343,6 +392,25 @@ impl Settings {
     /// How a pull integrates in the repository at `path`.
     pub fn pull_mode_for(&self, path: &Path) -> PullMode {
         self.own(path, |r| r.pull_mode).unwrap_or(self.pull_mode)
+    }
+
+    /// The default for repositories: [`Settings::pull_mode`] and whether the git configuration's
+    /// own strategy wins.
+    pub fn pull_default(&self) -> PullChoice {
+        PullChoice {
+            mode: self.pull_mode,
+            follow_config: self.pull_follow_config,
+        }
+    }
+
+    /// How the repository at `path` pulls: its own choices, else the default for repositories.
+    pub fn pull_for(&self, path: &Path) -> PullChoice {
+        PullChoice {
+            mode: self.pull_mode_for(path),
+            follow_config: self
+                .own(path, |r| r.pull_follow_config)
+                .unwrap_or(self.pull_follow_config),
+        }
     }
 
     /// Whether fetching in the repository at `path` prunes.
@@ -583,6 +651,50 @@ mod tests {
         s.pull_mode = PullMode::Merge;
         assert_eq!(s.pull_mode_for(&other), PullMode::Merge);
         assert_eq!(s.pull_mode_for(&repo), PullMode::FastForwardOnly);
+    }
+
+    /// Override O3: following the git configuration is the default, for new and old settings
+    /// files; a repository can follow it or not on its own, and Canopy's strategy applies only
+    /// where the configuration sets none or is not followed.
+    #[test]
+    fn pulls_follow_the_git_config_by_default_and_per_repository() {
+        let repo = PathBuf::from("/home/ada/src/canopy");
+        let other = PathBuf::from("/home/ada/src/other");
+        let mut s = Settings::default();
+        assert_eq!(s.pull_for(&repo), PullChoice::default());
+        assert!(s.pull_for(&repo).follow_config);
+        let old: Settings =
+            serde_json::from_str(r#"{"pull_mode": "Rebase"}"#).expect("an old settings file");
+        assert_eq!(
+            old.pull_for(&repo),
+            PullChoice {
+                mode: PullMode::Rebase,
+                follow_config: true
+            },
+            "pulls kept following pull.rebase before the switch existed"
+        );
+
+        s.repo_mut(&repo).pull_follow_config = Some(false);
+        s.repo_mut(&repo).pull_mode = Some(PullMode::RebaseMerges);
+        let own = s.pull_for(&repo);
+        assert!(!own.follow_config);
+        assert_eq!(
+            own.resolve(Some(PullStrategy::Merge)),
+            PullStrategy::RebaseMerges,
+            "an explicit choice beats the git config"
+        );
+        let followed = s.pull_for(&other);
+        assert_eq!(
+            followed.resolve(Some(PullStrategy::Rebase)),
+            PullStrategy::Rebase
+        );
+        assert_eq!(followed.resolve(None), PullStrategy::Merge, "the fallback");
+        // Every strategy git can be asked for is offered, in the core's order.
+        assert_eq!(
+            PullMode::ALL.map(PullMode::strategy),
+            PullStrategy::ALL,
+            "one PullMode per PullStrategy"
+        );
     }
 
     #[cfg(unix)]

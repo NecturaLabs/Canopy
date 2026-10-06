@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
-#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|about|toasts|gallery]
+#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-search|about|toasts|gallery|<dialog>]
 #                            [--style standard|deeper] [--density comfortable|dense] [--translucent on|off]
 #                            [--motion system|reduced|full] [--gallery-page N]
 #                            [--demo-requests SCENARIO] [--size WxH] [--zoom 0.8..1.6]
+#
+# <dialog> is any dialog overlay the app lists in its own --help (open, clone-error, confirm, terms,
+# approve, ...).
 #
 # <repo> may be "-" to render the welcome screen with no repository open.
 #
@@ -18,7 +21,7 @@
 # path. Builds the release binary first (a no-op when it is up to date); set CANOPY_BIN to use a
 # different binary and skip the build. Uses Xvfb when available, else a native Hyprland window
 # on CANOPY_WORKSPACE (default 3). Output and native-run temporary files stay beside <out.png>.
-# On Xvfb the app gets private data, config and cache folders and a fixed Git identity, so the
+# On Xvfb the app gets private home, data, config and cache folders and a fixed Git identity, so the
 # image never depends on your own Canopy state or Git configuration.
 set -euo pipefail
 
@@ -72,13 +75,15 @@ out_abs="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
 rm -f "$out_abs"
 
 if command -v xvfb-run >/dev/null; then
-  # Private data, config and cache folders and a fixed Git identity: the image must not depend on
-  # (or write to) your own Canopy state, such as its saved window size, or your Git configuration.
+  # Private home, data, config and cache folders and a fixed Git identity: the image must not
+  # depend on (or write to) your own Canopy state, such as its saved window size, or your Git
+  # configuration, and a path under "~" must not show your own home folder.
   isolated=$(mktemp -d)
   trap 'rm -rf "$isolated"' EXIT
+  mkdir -p "$isolated/home"
   printf '[user]\n\tname = Showcase Author\n\temail = author@example.com\n' > "$isolated/gitconfig"
   # Force X11 inside Xvfb even when called from a Wayland session.
-  env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 \
+  env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 HOME="$isolated/home" \
     XDG_DATA_HOME="$isolated/data" XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache" \
     GIT_CONFIG_GLOBAL="$isolated/gitconfig" GIT_CONFIG_NOSYSTEM=1 \
     timeout 60 xvfb-run -a -s "-screen 0 ${size}x24" \

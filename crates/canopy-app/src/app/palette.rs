@@ -127,9 +127,7 @@ impl CanopyApp {
                     "Repository",
                     Some(C::Init),
                 ),
-                Action::OpenDialog(Dialog::Init {
-                    path: String::new(),
-                }),
+                Action::OpenDialog(Dialog::new_repository(String::new())),
             ),
             (
                 e(icon::PALETTE, "Next theme", "Appearance", None),
@@ -374,7 +372,7 @@ impl CanopyApp {
                     (e(icon::ARROWS_CLOCKWISE, "Fetch all remotes", "Remote", Some(C::Fetch)), Action::Fetch),
                     (e(icon::ARROW_FAT_LINE_DOWN, "Pull", "Remote", Some(C::Pull)), Action::Pull),
                     (e(icon::ARROW_FAT_LINE_UP, "Push", "Remote", Some(C::Push)), Action::Push),
-                    (e(icon::WARNING, "Force push (with lease)…", "Remote", None), Action::Confirm { title: "Force push".into(), body: "Overwrite the remote branch with your local one? --force-with-lease refuses if someone else pushed in the meantime.".into(), confirm: "Force push".into(), danger: true, op: Op::Push { force: true } }),
+                    (e(icon::WARNING, "Force push (with lease)…", "Remote", None), Action::Confirm { title: "Force push the current branch?".into(), body: "The remote branch is overwritten with your local one. --force-with-lease refuses if someone else pushed in the meantime.".into(), confirm: "Force push branch".into(), danger: true, op: Op::Push { force: true } }),
                 ]);
             }
             if let Some((_, forge)) = tab.forge() {

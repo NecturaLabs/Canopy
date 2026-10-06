@@ -1476,6 +1476,10 @@ fn pull_config_names_the_setting_its_value_and_where_it_is_set() {
     git(workdir, &["config", "pull.rebase", "false"]);
     let config = copy.pull_config().expect("pull_config");
     assert_eq!(config.strategy, Some(PullStrategy::Merge));
+    // The global configuration alone, read even from inside the repository, ignores it.
+    let global = canopy_core::global_pull_config(workdir).expect("global_pull_config");
+    assert_eq!(global.strategy, Some(PullStrategy::RebaseMerges));
+    assert_eq!(global.sources[0].scope, ConfigScope::Global);
     let source = &config.sources[0];
     assert_eq!(source.scope, ConfigScope::Local);
     assert_eq!(source.value, "false");
@@ -1644,6 +1648,32 @@ fn fetch_prunes_only_when_asked() {
     copy.fetch(None, true, |_| {}).expect("fetch --prune");
     assert!(!has("refs/remotes/origin/doomed"), "pruned");
     assert!(has("refs/remotes/origin/main"));
+}
+
+/// Canopy's choice is passed to git: with pruning off, `fetch.prune` and `remote.<name>.prune`
+/// in the user's configuration do not prune anyway.
+#[test]
+fn fetch_without_prune_keeps_branches_even_when_the_config_prunes() {
+    let (up_dir, _up, _c, copy) = upstream_and_clone();
+    let up = up_dir.path();
+    let p = copy.workdir().to_path_buf();
+    git(&p, &["config", "fetch.prune", "true"]);
+    git(&p, &["config", "remote.origin.prune", "true"]);
+    git(up, &["branch", "doomed"]);
+    copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+    let has = |name: &str| copy.git().find_reference(name).is_ok();
+    assert!(has("refs/remotes/origin/doomed"));
+
+    git(up, &["branch", "-D", "doomed"]);
+    copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+    assert!(
+        has("refs/remotes/origin/doomed"),
+        "the configuration pruned although Canopy asked not to"
+    );
+    copy.fetch(None, false, |_| {}).expect("fetch --all");
+    assert!(has("refs/remotes/origin/doomed"), "--all pruned too");
+    copy.fetch(None, true, |_| {}).expect("fetch --prune");
+    assert!(!has("refs/remotes/origin/doomed"), "pruned when asked");
 }
 
 #[test]

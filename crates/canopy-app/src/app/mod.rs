@@ -64,9 +64,40 @@ pub const OVERLAYS: &[&str] = &[
     "settings-accounts",
     "settings-updates",
     "settings-keyboard",
+    "settings-backup",
+    "settings-repository",
+    "settings-search",
     "about",
     "toasts",
     "gallery",
+    "open",
+    "open-error",
+    "clone",
+    "clone-running",
+    "clone-error",
+    "init",
+    "new-branch",
+    "rename",
+    "new-tag",
+    "stash",
+    "add-remote",
+    "publish",
+    "new-request",
+    "confirm",
+    "confirm-danger",
+    "confirm-host",
+    "confirm-merge-risky",
+    "whats-new",
+    "crash",
+    "update-available",
+    "update-failed",
+    "terms",
+    "consent-reading",
+    "crash-reading",
+    "username",
+    "password",
+    "approve",
+    "notice",
 ];
 
 /// Options from the command line.
@@ -330,6 +361,15 @@ impl CanopyApp {
             Some("settings-keyboard") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard));
             }
+            Some("settings-backup") => {
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Data));
+            }
+            Some("settings-repository") => {
+                app.settings_screen = Some(SettingsScreen::awaiting_repository());
+            }
+            Some("settings-search") => {
+                app.settings_screen = Some(SettingsScreen::searching("pull"));
+            }
             Some("cheatsheet") => app.cheatsheet.open = true,
             Some("palette") => app.palette.open(),
             Some("privacy") => {
@@ -411,7 +451,8 @@ impl CanopyApp {
                 repo: None,
                 scope: canopy_core::identity::Scope::Global,
             }),
-            _ => {}
+            Some(other) => app.open_dialog_overlay(other),
+            None => {}
         }
         if git_version_missing(&app.git_version) {
             app.toasts.push(&cc.egui_ctx, ToastKind::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
@@ -818,10 +859,8 @@ impl eframe::App for CanopyApp {
                 }
                 View::Changes => changes::show(ui, tab, &mut actions)
                     .and_then(|list| PaneSplit::beside(list, changes::LIST_PANEL)),
-                View::Requests => {
-                    requests::show(ui, tab, self.settings.hosting_api, &mut actions);
-                    None
-                }
+                View::Requests => requests::show(ui, tab, self.settings.hosting_api, &mut actions)
+                    .and_then(|list| PaneSplit::beside(list, requests::LIST_PANEL)),
             });
         } else {
             // Nothing on the welcome screen holds the keyboard as a pane: no focused-pane edge.

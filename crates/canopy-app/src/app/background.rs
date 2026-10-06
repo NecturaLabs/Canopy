@@ -317,19 +317,7 @@ impl CanopyApp {
         }
         if let Some(r) = finished {
             self.clone = None;
-            self.dialogs.finish_clone(r.is_ok());
-            match r {
-                Ok(p) => {
-                    self.toasts.push(
-                        ctx,
-                        ToastKind::Success,
-                        "Clone complete",
-                        p.display().to_string(),
-                    );
-                    self.open_repo(ctx, p);
-                }
-                Err(e) => self.toasts.push(ctx, ToastKind::Error, "Clone failed", e),
-            }
+            self.clone_finished(ctx, r);
         }
         self.poll_prompts(ctx);
         if self.updater.poll_install() {

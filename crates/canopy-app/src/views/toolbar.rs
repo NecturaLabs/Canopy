@@ -4,8 +4,8 @@
 
 use std::fmt::Write as _;
 use std::sync::Arc;
-use std::time::Duration;
 
+use canopy_core::PullStrategy;
 use canopy_core::forge::ForgeKind;
 use canopy_hosting::{RequestState, RequestSummary, StateFilter};
 use egui::{
@@ -18,7 +18,7 @@ use crate::action::Action;
 use crate::keymap::Command;
 use crate::tab::{Finished, RepoTab, View};
 use crate::ui::art;
-use crate::ui::kit::button::tool_divider;
+use crate::ui::kit::button::{Operation, tool_divider};
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::choice::ViewTabs;
 use crate::ui::kit::field::SearchField;
@@ -260,7 +260,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
     let full_w: f32 = ui.data(|d| d.get_temp(full_id)).unwrap_or(0.0);
     let narrow_window = ui.ctx().content_rect().width() < theme::COMPACT_WIDTH;
     let squeezed = full_w > width + 0.5;
-    egui::ScrollArea::horizontal()
+    let output = egui::ScrollArea::horizontal()
         .id_salt("toolbar-actions")
         .auto_shrink([false, false])
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
@@ -290,8 +290,9 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     actions.push(Action::Fetch);
                 }
                 let behind = branch.map_or(0, |b| b.behind);
+                let (strategy, _) = tab.pull_default();
                 let mut pull = ToolButton::new(icon::ARROW_FAT_LINE_DOWN, "Pull")
-                    .tooltip("Pull the current branch")
+                    .tooltip(format!("Pull the current branch: {}", strategy.label()))
                     .enabled(has_remote && !busy)
                     .disabled_reason(reason(true));
                 if behind > 0 {
@@ -300,6 +301,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 if running.show(ui, pull, Tool::Pull, Some(Command::Pull)) {
                     actions.push(Action::Pull);
                 }
+                pull_menu(ui, tab, has_remote && !busy, reason(true), actions);
                 let ahead = branch.map_or(0, |b| b.ahead);
                 if local_only {
                     let publish = ToolButton::new(icon::CLOUD_ARROW_UP, "Publish")
@@ -461,6 +463,81 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 }
             });
         });
+    // Tools scrolled out of sight fade at the edge they hide behind, on the bar's own ground (the
+    // deck, flat in Standard, the action card's gradient in Deeper).
+    let s = theme::surfaces(ui.ctx());
+    let ground = if theme::style() == theme::Style::Deeper {
+        s.deck
+    } else {
+        theme::Fill::flat(s.deck.top)
+    };
+    paint::scroll_fade_x(ui, &output, ground);
+}
+
+/// The caret beside Pull: a menu of every pull strategy, the one the Pull tool uses checked and
+/// marked with where it comes from (the git configuration or Canopy's settings). Picking one
+/// pulls with exactly that strategy.
+fn pull_menu(
+    ui: &mut Ui,
+    tab: &RepoTab,
+    enabled: bool,
+    disabled_reason: &str,
+    actions: &mut Vec<Action>,
+) {
+    // Close to the tool it belongs to, like the caret half of a split button.
+    ui.add_space(-theme::metrics().toolbar_gap * 0.75);
+    let caret = IconButton::new(icon::CARET_DOWN, "Pull with…")
+        .size(Size::Sm)
+        .enabled(enabled)
+        .disabled_reason(disabled_reason)
+        .id_salt("pull-menu")
+        .show(ui);
+    if caret.clicked() {
+        // The configuration may have changed outside Canopy since it was last read.
+        actions.push(Action::ReadPullConfig);
+    }
+    let (default, _) = tab.pull_default();
+    let marker = pull_marker(tab);
+    if let Some(Some(strategy)) = menu::menu(&caret, |m| {
+        m.heading("Pull with");
+        let mut picked = None;
+        for s in PullStrategy::ALL {
+            let mut item = m.item("", s.label()).checked(s == default);
+            if s == default {
+                item = item.description(marker.clone());
+            }
+            if item.show(m.ui).clicked() {
+                picked = Some(s);
+            }
+        }
+        picked
+    }) {
+        actions.push(Action::Op(Op::Pull {
+            strategy,
+            follow_config: false,
+        }));
+    }
+}
+
+/// Where the Pull tool's strategy comes from, for its menu entry: "from your git config:
+/// branch.main.rebase=true (repository)", or Canopy's settings, saying which setting of the
+/// configuration they override.
+fn pull_marker(tab: &RepoTab) -> String {
+    let (default, from_config) = tab.pull_default();
+    if let Some(described) = from_config.and_then(canopy_core::PullConfig::describe) {
+        return format!("from your git config: {described}");
+    }
+    match tab
+        .pull_config
+        .as_ref()
+        .and_then(|c| c.contradicted_by(default))
+    {
+        Some(source) => format!(
+            "from Canopy's settings, over your git config: {}",
+            source.describe()
+        ),
+        None => "from Canopy's settings".to_owned(),
+    }
 }
 
 /// The History / Changes / Requests switcher (design spec 4.8 ViewTabs): the kit's view tabs with
@@ -575,32 +652,26 @@ fn tool_of(label: &str) -> Option<Tool> {
     })
 }
 
-/// How long a tool shows how its operation ended before that fades.
-const OUTCOME_HOLD: f32 = 1.6;
-
 /// How a tool's operation ended, while the tool still shows it.
 #[derive(Debug, Clone, PartialEq)]
 struct Outcome {
     tool: Tool,
     ok: bool,
-    /// 1 while it holds, easing to 0 as it fades.
-    strength: f32,
+    /// When it ended, on the context's clock (`InputState::time`), as the kit's
+    /// [`Operation::finished`] takes it.
+    at: f64,
     /// "Fetching — done", "Pushing failed".
     tip: String,
 }
 
 impl Outcome {
-    /// The outcome `finished` still shows `seconds` after it, or `None` once it has faded.
-    fn after(finished: &Finished, seconds: f32) -> Option<Self> {
+    /// The outcome `finished` still shows `seconds` after it, at `now` on the context's clock,
+    /// or `None` once [`motion::OUTCOME_HOLD`] has passed.
+    fn after(finished: &Finished, seconds: f32, now: f64) -> Option<Self> {
         let tool = tool_of(&finished.label)?;
-        let fade = motion::time(motion::BASE);
-        let strength = if seconds <= OUTCOME_HOLD {
-            1.0
-        } else if seconds < OUTCOME_HOLD + fade {
-            1.0 - motion::EASE_OUT.at((seconds - OUTCOME_HOLD) / fade)
-        } else {
+        if seconds >= motion::OUTCOME_HOLD {
             return None;
-        };
+        }
         let tip = if finished.ok {
             format!("{} — done", finished.label)
         } else {
@@ -609,14 +680,18 @@ impl Outcome {
         Some(Self {
             tool,
             ok: finished.ok,
-            strength,
+            at: now - f64::from(seconds),
             tip,
         })
+    }
+
+    fn operation(&self) -> Operation {
+        Operation::finished(self.ok, self.at)
     }
 }
 
 /// The operation the action bar is running, or how the last one ended, as its tools show it
-/// (busy, then success or failure, in place).
+/// through the kit's [`Operation`] (a spinner, then a check or a warning mark, in place).
 struct Running {
     tool: Option<Tool>,
     /// "Fetching…  Receiving objects: 45%".
@@ -631,20 +706,12 @@ impl Running {
         if let Some(progress) = tab.progress.as_deref().filter(|_| job.is_some()) {
             let _ = write!(tip, "  {progress}");
         }
+        let now = ctx.input(|i| i.time);
         let outcome = tab
             .finished
             .as_ref()
             .filter(|_| job.is_none())
-            .and_then(|f| {
-                let seconds = f.at.elapsed().as_secs_f32();
-                let shown = Outcome::after(f, seconds)?;
-                if seconds < OUTCOME_HOLD {
-                    ctx.request_repaint_after(Duration::from_secs_f32(OUTCOME_HOLD - seconds));
-                } else {
-                    ctx.request_repaint();
-                }
-                Some(shown)
-            });
+            .and_then(|f| Outcome::after(f, f.at.elapsed().as_secs_f32(), now));
         Self {
             tool: job.and_then(tool_of),
             tip,
@@ -654,13 +721,13 @@ impl Running {
 
     /// Shows `button`, the `tool` with `shortcut`; returns whether it was clicked. While the
     /// tool's own operation runs it spins on the accent ground, its tooltip is the progress, and a
-    /// click does nothing. Just after, its ground and a dot say how it ended, then fade.
+    /// click does nothing. Just after, the kit shows how it ended in the icon's place.
     fn show(&self, ui: &mut Ui, button: ToolButton, tool: Tool, shortcut: Option<Command>) -> bool {
         if self.tool == Some(tool) {
             let _ = button
                 .enabled(true)
                 .toggled(true)
-                .running(true)
+                .operation(Operation::Running)
                 .tooltip(self.tip.clone())
                 .show(ui);
             return false;
@@ -669,33 +736,14 @@ impl Running {
             Some(c) => button.shortcut(c),
             None => button,
         };
-        let Some(outcome) = self.outcome.as_ref().filter(|o| o.tool == tool) else {
-            return button.show(ui).clicked();
-        };
-        let ground = ui.painter().add(egui::Shape::Noop);
-        let response = button.tooltip(outcome.tip.clone()).show(ui);
-        let p = palette(ui.ctx());
-        let m = theme::metrics();
-        let (tint, mark) = if outcome.ok {
-            (p.success_tint(), p.success)
-        } else {
-            (p.danger_tint(), p.danger)
-        };
-        let rect = response.rect;
-        ui.painter().set(
-            ground,
-            egui::epaint::RectShape::filled(
-                rect,
-                egui::CornerRadius::same(m.radius),
-                tint.gamma_multiply(outcome.strength),
-            ),
-        );
-        ui.painter().circle_filled(
-            pos2(rect.right() - theme::SM, rect.top() + theme::SM),
-            theme::XS * 0.75,
-            mark.gamma_multiply(outcome.strength),
-        );
-        response.clicked()
+        match self.outcome.as_ref().filter(|o| o.tool == tool) {
+            Some(outcome) => button
+                .operation(outcome.operation())
+                .tooltip(outcome.tip.clone())
+                .show(ui)
+                .clicked(),
+            None => button.show(ui).clicked(),
+        }
     }
 }
 
@@ -725,10 +773,20 @@ mod tests {
         events: Vec<egui::Event>,
         add: impl FnMut(&mut Ui),
     ) -> (Vec<egui::epaint::ClippedShape>, Vec<Node>) {
+        frame_in(ctx, SCREEN, events, add)
+    }
+
+    /// [`frame`] on a `screen` of its own (room for a menu under the bar).
+    fn frame_in(
+        ctx: &egui::Context,
+        screen: Rect,
+        events: Vec<egui::Event>,
+        add: impl FnMut(&mut Ui),
+    ) -> (Vec<egui::epaint::ClippedShape>, Vec<Node>) {
         let mut add = add;
         let mut out = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(SCREEN),
+                screen_rect: Some(screen),
                 events,
                 ..Default::default()
             },
@@ -1066,7 +1124,8 @@ mod tests {
         );
     }
 
-    /// Override O1: how an operation ended holds on its tool, then is gone.
+    /// Override O1: how an operation ended holds on its tool for `motion::OUTCOME_HOLD`, as
+    /// the kit's operation state, then is gone.
     #[test]
     fn an_outcome_holds_on_its_tool_then_ends() {
         let done = Finished {
@@ -1074,26 +1133,34 @@ mod tests {
             ok: true,
             at: std::time::Instant::now(),
         };
-        let held = Outcome::after(&done, OUTCOME_HOLD / 2.0).expect("held");
+        let held = Outcome::after(&done, motion::OUTCOME_HOLD / 2.0, 10.0).expect("held");
         assert_eq!(held.tool, Tool::Fetch);
-        assert!(held.ok);
-        assert!((held.strength - 1.0).abs() < f32::EPSILON);
+        assert_eq!(
+            held.operation(),
+            Operation::Succeeded {
+                at: 10.0 - f64::from(motion::OUTCOME_HOLD / 2.0)
+            }
+        );
         assert_eq!(held.tip, "Fetching — done");
-        assert!(Outcome::after(&done, OUTCOME_HOLD + 1.0).is_none(), "gone");
+        assert!(
+            Outcome::after(&done, motion::OUTCOME_HOLD, 10.0).is_none(),
+            "gone"
+        );
         let failed = Finished {
             label: "Pushing".into(),
             ok: false,
             ..done
         };
-        let shown = Outcome::after(&failed, 0.0).expect("shown");
-        assert_eq!((shown.tool, shown.ok), (Tool::Push, false));
+        let shown = Outcome::after(&failed, 0.0, 3.0).expect("shown");
+        assert_eq!(shown.tool, Tool::Push);
+        assert_eq!(shown.operation(), Operation::Failed { at: 3.0 });
         assert_eq!(shown.tip, "Pushing failed");
         let other = Finished {
             label: "Committing".into(),
             ok: true,
             at: std::time::Instant::now(),
         };
-        assert!(Outcome::after(&other, 0.0).is_none(), "not a tool");
+        assert!(Outcome::after(&other, 0.0, 0.0).is_none(), "not a tool");
     }
 
     /// Override O1, end to end from the worker's events: busy while it runs, then failed on the
@@ -1124,7 +1191,8 @@ mod tests {
         let after = Running::of(&ctx, &tab);
         assert_eq!(after.tool, None);
         let outcome = after.outcome.expect("outcome");
-        assert_eq!((outcome.tool, outcome.ok), (Tool::Fetch, false));
+        assert_eq!(outcome.tool, Tool::Fetch);
+        assert!(matches!(outcome.operation(), Operation::Failed { .. }));
 
         let (worker, events, _jobs) = Worker::detached();
         let mut quiet =
@@ -1139,6 +1207,112 @@ mod tests {
             .expect("finished");
         quiet.poll(&[]);
         assert!(Running::of(&ctx, &quiet).outcome.is_none());
+    }
+
+    fn rebase_config() -> canopy_core::PullConfig {
+        canopy_core::PullConfig {
+            strategy: Some(PullStrategy::Rebase),
+            sources: vec![canopy_core::ConfigSource {
+                key: "branch.main.rebase".into(),
+                value: "true".into(),
+                scope: canopy_core::ConfigScope::Local,
+                origin: "file:.git/config".into(),
+                file: None,
+            }],
+            invalid: Vec::new(),
+        }
+    }
+
+    /// PS-F1: the Pull menu's default is the git configuration's strategy while Canopy follows
+    /// it, else Canopy's, and its entry says which (and what it overrides).
+    #[test]
+    fn the_pull_menu_marks_where_its_default_comes_from() {
+        use crate::settings::{PullChoice, PullMode};
+        let mut tab = repo_tab("alpha");
+        assert_eq!(tab.pull_default().0, PullStrategy::Merge);
+        assert_eq!(pull_marker(&tab), "from Canopy's settings");
+        tab.pull_config = Some(rebase_config());
+        assert_eq!(tab.pull_default().0, PullStrategy::Rebase);
+        assert_eq!(
+            pull_marker(&tab),
+            "from your git config: branch.main.rebase=true (repository)"
+        );
+        tab.pull = PullChoice {
+            mode: PullMode::FastForwardOnly,
+            follow_config: false,
+        };
+        assert_eq!(tab.pull_default().0, PullStrategy::FastForwardOnly);
+        assert_eq!(
+            pull_marker(&tab),
+            "from Canopy's settings, over your git config: branch.main.rebase=true (repository)"
+        );
+        tab.pull.mode = PullMode::Rebase;
+        assert_eq!(pull_marker(&tab), "from Canopy's settings", "they agree");
+    }
+
+    /// PS-F1: opening the menu reads the configuration again, and an entry pulls with exactly
+    /// that strategy, whatever the configuration says.
+    #[test]
+    fn a_pull_menu_entry_pulls_with_exactly_that_strategy() {
+        let ctx = context();
+        let mut tab = repo_tab("alpha");
+        tab.snap = Some(Arc::new(canopy_core::RepoSnapshot {
+            remotes: vec![canopy_core::RemoteInfo {
+                name: "origin".into(),
+                url: None,
+                default_branch: None,
+            }],
+            ..Default::default()
+        }));
+        tab.pull_config = Some(rebase_config());
+        let mut actions = Vec::new();
+        let screen = Rect::from_min_max(egui::Pos2::ZERO, pos2(1200.0, 600.0));
+        let run = |events: Vec<egui::Event>, actions: &mut Vec<Action>| {
+            frame_in(&ctx, screen, events, |ui| {
+                let slot = Rect::from_min_size(egui::Pos2::ZERO, vec2(1150.0, 60.0));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                    actions_bar(ui, &tab, actions);
+                });
+            })
+            .1
+        };
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = run(Vec::new(), &mut actions);
+        }
+        let caret = node_rect(node(&nodes, Role::Button, "Pull with…")).center();
+        let _ = run(click(caret), &mut actions);
+        assert!(
+            matches!(actions.as_slice(), [Action::ReadPullConfig]),
+            "{actions:?}"
+        );
+        actions.clear();
+        for _ in 0..3 {
+            nodes = run(Vec::new(), &mut actions);
+        }
+        let entry = nodes
+            .iter()
+            .find(|n| n.label() == Some("Fast-forward only"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "no menu entry in {:?}",
+                    nodes.iter().map(Node::label).collect::<Vec<_>>()
+                )
+            });
+        // A popup's item takes the pointer's move, press and release on frames of their own.
+        for event in click(node_rect(entry).center()) {
+            let _ = run(vec![event], &mut actions);
+        }
+        assert!(
+            matches!(
+                actions.as_slice(),
+                [Action::Op(Op::Pull {
+                    strategy: PullStrategy::FastForwardOnly,
+                    follow_config: false
+                })]
+            ),
+            "{actions:?}"
+        );
     }
 
     /// Override O2: an action bar too narrow for every tool names only the active view and drops

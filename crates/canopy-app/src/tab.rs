@@ -6,12 +6,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use canopy_core::forge::Forge;
-use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, RepoSnapshot};
+use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, PullConfig, RepoSnapshot};
 use canopy_hosting::{MergeMethod, RequestDetails, RequestSummary, StateFilter};
 
 use crate::highlight::Highlights;
 use crate::hosting::{HostAction, HostEvent, HostJob, HostWorker, TokenSource};
-use crate::settings::DiffPrefs;
+use crate::settings::{DiffPrefs, PullChoice};
 use crate::worker::{DiffKey, Event, Job, Op, OpKind, Worker};
 
 /// The main views of a repository.
@@ -428,6 +428,14 @@ pub struct RepoTab {
     pub focus_summary: bool,
     pub running: Option<String>,
     pub finished: Option<Finished>,
+    /// How this repository pulls by Canopy's settings (kept current by the app every frame).
+    pub pull: PullChoice,
+    /// What the repository's configuration asks a pull to do on the current branch; `None` until
+    /// it is read, or when it cannot be.
+    pub pull_config: Option<PullConfig>,
+    /// The branch `pull_config` was last asked for (`None`: detached or unborn), once asked.
+    pull_config_asked: bool,
+    pull_config_branch: Option<String>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
     pub progress: Option<String>,
@@ -513,6 +521,10 @@ impl RepoTab {
             focus_summary: false,
             running: None,
             finished: None,
+            pull: PullChoice::default(),
+            pull_config: None,
+            pull_config_asked: false,
+            pull_config_branch: None,
             force_delete_offer: None,
             progress: None,
             commit_limit,
@@ -551,6 +563,15 @@ impl RepoTab {
     /// Requests a full refresh.
     pub fn refresh(&self) {
         self.worker.send(Job::Refresh(self.commit_limit));
+    }
+
+    /// The strategy the Pull tool uses, and the configuration it came from when Canopy follows
+    /// a strategy the user's git configuration sets.
+    pub fn pull_default(&self) -> (canopy_core::PullStrategy, Option<&PullConfig>) {
+        let configured = self.pull_config.as_ref().filter(|c| c.strategy.is_some());
+        let strategy = self.pull.resolve(configured.and_then(|c| c.strategy));
+        let from_config = configured.filter(|_| self.pull.follow_config);
+        (strategy, from_config)
     }
 
     /// The repository has no remote at all.
@@ -986,6 +1007,13 @@ impl RepoTab {
                     {
                         self.worker.send(Job::MergeMessage);
                     }
+                    // The pull settings depend on the current branch: read them again when it
+                    // changes (and for the first snapshot).
+                    if !self.pull_config_asked || self.pull_config_branch != s.head.branch {
+                        self.pull_config_asked = true;
+                        self.pull_config_branch.clone_from(&s.head.branch);
+                        self.worker.send(Job::PullConfig);
+                    }
                     self.name.clone_from(&s.name);
                     let head = s.head.oid;
                     let had = self.snap.is_some();
@@ -1130,6 +1158,13 @@ impl RepoTab {
                             .clone_into(&mut self.commit_body);
                     }
                 }
+                Event::PullConfig(result) => match result {
+                    Ok(config) => self.pull_config = Some(config),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "pull settings not read");
+                        self.pull_config = None;
+                    }
+                },
                 Event::HeadMessage(m) => {
                     if !self.amend
                         || self

@@ -87,13 +87,9 @@ impl DialogStack {
         });
     }
 
-    /// Keeps a failed clone's input, or closes its submitted form after success.
-    pub fn finish_clone(&mut self, success: bool) {
-        self.finish_clone_with(if success { Ok(()) } else { Err("") });
-    }
-
-    /// [`DialogStack::finish_clone`] that also shows why a clone failed (git's message) in the
-    /// form that started it. Whether such a form was waiting (else the caller reports it).
+    /// Keeps a failed clone's input and shows why it failed (git's message) in the form that
+    /// started it, or closes the submitted form after success. Whether such a form was waiting
+    /// (else the caller reports it).
     pub fn finish_clone_with(&mut self, result: Result<(), &str>) -> bool {
         let mut found = false;
         self.dialogs.retain_mut(|dialog| {

@@ -131,12 +131,13 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "crash-reading",
     "username",
     "password",
+    "approve",
+    "notice",
 ];
 
 impl CanopyApp {
     /// Opens the dialog `--overlay name` names (the names of `DIALOG_OVERLAYS`), with the state
     /// it shows.
-    #[expect(dead_code, reason = "the launch match in app/mod.rs calls it")]
     pub(super) fn open_dialog_overlay(&mut self, name: &str) {
         if name == "update-failed" {
             self.updater.install = updater::InstallState::Failed {
@@ -153,7 +154,7 @@ impl CanopyApp {
 /// The dialog `--overlay name` opens for a screenshot, filled with fixed illustrative content so
 /// the picture never shows a fixture's temporary path; `None` for a name that is not a dialog's.
 fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
-    use crate::askpass::Prompt;
+    use crate::askpass::{Prompt, PromptKind};
     use crate::ui::legal::{Document, Pending};
     use canopy_core::forge::ForgeKind;
 
@@ -204,9 +205,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             }
             d
         }
-        "init" => Dialog::Init {
-            path: "~/src/tidepool".into(),
-        },
+        "init" => Dialog::new_repository("~/src/tidepool".into()),
         "new-branch" => Dialog::new_branch_at(Start::Head),
         "rename" => Dialog::Rename {
             old: "feature/search".into(),
@@ -295,6 +294,20 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
         },
         "username" => Dialog::credential(Prompt::preview("Username for 'https://gitlab.example.com': ")),
         "password" => Dialog::credential(Prompt::preview("Password for 'https://ada@gitlab.example.com': ")),
+        // ssh asks these through SSH_ASKPASS_PROMPT, which a preview's text cannot say.
+        "approve" | "notice" => {
+            let mut prompt = Prompt::preview(if name == "approve" {
+                "Allow use of key /home/ada/.ssh/id_ed25519?\nKey fingerprint SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU."
+            } else {
+                "Confirm user presence for key ED25519-SK SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
+            });
+            prompt.kind = if name == "approve" {
+                PromptKind::Approve
+            } else {
+                PromptKind::Notice
+            };
+            Dialog::credential(prompt)
+        }
         _ => return None,
     })
 }

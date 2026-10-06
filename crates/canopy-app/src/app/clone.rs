@@ -79,6 +79,108 @@ fn clone_repository(
 mod tests {
     use super::*;
 
+    /// An app with no window, threads or saved state, for code that only reports results.
+    fn quiet_app() -> CanopyApp {
+        CanopyApp {
+            settings: Settings::default(),
+            tabs: Vec::new(),
+            active: 0,
+            dialogs: DialogStack::default(),
+            settings_screen: None,
+            folder_picker: crate::ui::folder_picker::FolderPicker::default(),
+            palette: CommandPalette::default(),
+            cheatsheet: Cheatsheet::default(),
+            toasts: Toasts::default(),
+            screenshot: None,
+            initial_view: None,
+            clone: None,
+            opener: None,
+            pending_opens: 0,
+            git_version: String::new(),
+            tokens: TokenStore::default(),
+            updater: Updater::default(),
+            identity_worker: None,
+            global_identity: None,
+            global_identity_error: None,
+            gitlab_hosts: Vec::new(),
+            update_check_due: false,
+            askpass: None,
+            trust_seen: 0,
+            applied: None,
+            gallery: None,
+            glass_soak: None,
+        }
+    }
+
+    /// The clone form that started a clone, still waiting for it.
+    fn waiting_form() -> Dialog {
+        let mut form = Dialog::clone_default(&Settings::default());
+        if let Dialog::Clone { pending, .. } = &mut form {
+            *pending = true;
+        }
+        form
+    }
+
+    /// DL-F2, DL-F10: git's message for a failed clone goes to the form that started it, and
+    /// to a toast only when that form is gone.
+    #[test]
+    fn a_failed_clone_says_why_in_its_form_else_in_a_toast() {
+        let ctx = egui::Context::default();
+        let message = "fatal: repository 'https://example.com/x.git/' not found";
+        let mut app = quiet_app();
+        app.dialogs.open(waiting_form());
+        app.clone_finished(&ctx, Err(message.to_owned()));
+        assert!(
+            matches!(app.dialogs.current(), Some(Dialog::Clone { error: Some(e), pending: false, .. }) if e == message),
+            "{:?}",
+            app.dialogs.current()
+        );
+        assert!(!format!("{:?}", app.toasts).contains("Clone failed"));
+
+        let mut alone = quiet_app();
+        alone.clone_finished(&ctx, Err(message.to_owned()));
+        let toasts = format!("{:?}", alone.toasts);
+        assert!(
+            toasts.contains("Clone failed") && toasts.contains("not found"),
+            "{toasts}"
+        );
+    }
+
+    /// DL-F2: the app's poll hands a clone thread's failure to the form, not only to a toast.
+    #[test]
+    fn the_poll_reports_a_failed_clone_in_its_form() {
+        let ctx = egui::Context::default();
+        let mut app = quiet_app();
+        app.dialogs.open(waiting_form());
+        let (tx, rx) = unbounded();
+        app.clone = Some(("https://example.com/x.git".into(), rx, String::new()));
+        tx.send(CloneMsg::Done(Err("fatal: could not read Username".into())))
+            .expect("send");
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| app.poll(ui.ctx()));
+        out.textures_delta.clear();
+        assert!(app.clone.is_none());
+        assert!(
+            matches!(app.dialogs.current(), Some(Dialog::Clone { error: Some(e), .. }) if e.contains("Username")),
+            "{:?}",
+            app.dialogs.current()
+        );
+    }
+
+    /// A finished clone closes its form and says so.
+    #[test]
+    fn a_finished_clone_closes_its_form() {
+        let ctx = egui::Context::default();
+        let mut app = quiet_app();
+        app.dialogs.open(waiting_form());
+        app.clone_finished(&ctx, Ok(PathBuf::from("/home/ada/src/tidepool")));
+        assert!(
+            app.dialogs.current().is_none(),
+            "{:?}",
+            app.dialogs.current()
+        );
+        assert!(format!("{:?}", app.toasts).contains("Clone complete"));
+    }
+
     #[test]
     fn an_existing_destination_is_refused_before_cloning() {
         let dir = tempfile::tempdir().expect("temporary clone fixture");

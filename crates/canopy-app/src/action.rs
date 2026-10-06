@@ -52,6 +52,9 @@ pub enum Action {
     LoadMore,
     Fetch,
     Pull,
+    /// Read again what the active repository's configuration asks a pull to do (the toolbar's
+    /// Pull menu opened).
+    ReadPullConfig,
     Push,
     Commit,
     PrefillAmend,

@@ -282,8 +282,17 @@ pub(super) fn alternatives(ui: &mut Ui, extra: &mut Option<Outcome>) {
 
 /// `path` with the home folder written as `~`, as people type it.
 pub(super) fn tilde(path: &std::path::Path) -> String {
-    let home = crate::settings::home_dir();
-    match path.strip_prefix(&home) {
+    tilde_in(path, &crate::settings::home_dir())
+}
+
+/// [`tilde`] against `home`: a path in `home` starts with `~`; any other path, or every path
+/// when the home folder is unknown (empty), is shown whole. The one place paths are shortened,
+/// for dialogs and the welcome screen alike.
+pub(crate) fn tilde_in(path: &std::path::Path, home: &std::path::Path) -> String {
+    if home.as_os_str().is_empty() {
+        return path.display().to_string();
+    }
+    match path.strip_prefix(home) {
         Ok(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
         Ok(rest) => std::path::Path::new("~").join(rest).display().to_string(),
         Err(_) => path.display().to_string(),

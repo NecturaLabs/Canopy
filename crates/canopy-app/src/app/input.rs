@@ -80,9 +80,7 @@ impl CanopyApp {
             }
             C::Open => actions.push(Action::OpenDialog(Dialog::open())),
             C::Clone => actions.push(Action::OpenDialog(Dialog::clone_default(&self.settings))),
-            C::Init => actions.push(Action::OpenDialog(Dialog::Init {
-                path: String::new(),
-            })),
+            C::Init => actions.push(Action::OpenDialog(Dialog::new_repository(String::new()))),
             C::Settings => actions.push(Action::Settings),
             C::ZoomIn | C::ZoomOut | C::ZoomReset => {
                 self.settings.zoom = match command {
@@ -231,11 +229,10 @@ impl CanopyApp {
                 if command == C::Discard {
                     if sel.source == canopy_core::DiffSource::Unstaged && !sel.conflicted {
                         actions.push(Action::Confirm {
-                            title: "Discard changes".into(),
-                            body: format!(
-                                "Throw away the unstaged changes to {path}? This cannot be undone."
-                            ),
-                            confirm: "Discard".into(),
+                            title: format!("Discard changes to {path}?"),
+                            body: "Its unstaged changes are thrown away. This cannot be undone."
+                                .into(),
+                            confirm: "Discard changes".into(),
                             danger: true,
                             op: Op::Discard(vec![sel.entry]),
                         });

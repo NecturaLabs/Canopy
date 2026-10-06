@@ -30,6 +30,7 @@ use crate::ui::theme::{self, palette};
 use crate::worker::Op;
 
 mod common;
+pub(crate) use common::tilde_in;
 mod credential;
 mod reader;
 mod stack;
@@ -65,11 +66,6 @@ pub enum Dialog {
         pending: bool,
         /// Why the last clone from this form failed, in git's words.
         error: Option<String>,
-    },
-    /// How callers ask for the new-repository dialog: [`show`] turns it into
-    /// [`Dialog::NewRepository`], which keeps the dialog's state.
-    Init {
-        path: String,
     },
     NewRepository {
         path: String,
@@ -286,9 +282,6 @@ pub fn show(
 ) -> Outcome {
     let p = palette(ctx);
     let m = theme::metrics();
-    if let Dialog::Init { path } = dialog {
-        *dialog = Dialog::new_repository(std::mem::take(path));
-    }
     let salt = salt(dialog);
     // What a control inside the body asked for (a link, a secondary action); it wins over the
     // footer.
@@ -503,8 +496,6 @@ pub fn show(
                 _ => Outcome::Keep,
             })
         }
-        // Turned into `NewRepository` before this match.
-        Dialog::Init { .. } => Outcome::Keep,
         Dialog::NewRepository {
             path,
             pending,
@@ -842,20 +833,18 @@ pub fn show(
                         .iter()
                         .find(|(b, _)| *b == request.target)
                         .map_or("", |(b, _)| *b);
-                    Select::new(&mut pick, &options)
+                    let mut target = Select::new(&mut pick, &options)
                         .label(format!("Merge {} into", request.source))
                         .placeholder("Choose a branch…")
                         .enabled(!options.is_empty())
                         .disabled_reason("No other branches on the remote yet")
-                        .id_salt("request-target")
-                        .show(ui);
+                        .id_salt("request-target");
                     if options.is_empty() {
-                        note(
-                            ui,
+                        target = target.helper(
                             "Canopy knows no other branch on the remote to merge into. Fetch, then try again.",
-                            p.text_faint,
                         );
                     }
+                    target.show(ui);
                     if pick != request.target && !pick.is_empty() {
                         pick.clone_into(&mut request.target);
                     }
@@ -1232,11 +1221,16 @@ fn merge_body(
         .iter()
         .find(|n| *n == target)
         .map_or("", String::as_str);
-    Select::new(&mut pick, &options)
+    let mut branch = Select::new(&mut pick, &options)
         .label("Branch")
         .placeholder("Choose a branch…")
-        .id_salt("merge-target")
-        .show(ui);
+        .enabled(!options.is_empty())
+        .disabled_reason("No other branches yet")
+        .id_salt("merge-target");
+    if options.is_empty() {
+        branch = branch.helper("This repository has no other branch to merge or rebase onto.");
+    }
+    branch.show(ui);
     if pick != target && !pick.is_empty() {
         *target = pick.to_owned();
     }
@@ -1942,6 +1936,48 @@ mod tests {
         }
     }
 
+    /// DL-F8: with no other branch, the Merge dialog says why under its select.
+    #[test]
+    fn an_empty_merge_branch_list_says_why() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut dialog = Dialog::Merge {
+            target: String::new(),
+            rebase: false,
+            mode: canopy_core::MergeMode::Default,
+        };
+        let mut picker = crate::ui::folder_picker::FolderPicker::default();
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |_| {
+                super::show(
+                    &ctx,
+                    &mut dialog,
+                    None,
+                    &mut picker,
+                    false,
+                    &crate::updater::Updater::default(),
+                    "git version 2.55.0",
+                );
+            });
+            output.textures_delta.clear();
+            texts = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+        }
+        assert!(
+            texts
+                .iter()
+                .any(|t| t == "This repository has no other branch to merge or rebase onto."),
+            "{texts:?}"
+        );
+    }
+
     #[test]
     fn ref_names() {
         assert!(valid_ref_name("feature/login"));
@@ -2023,7 +2059,7 @@ mod tests {
         }
         stack.open(pending);
         stack.open(Dialog::Legal(Document::Privacy));
-        stack.finish_clone(false);
+        stack.finish_clone_with(Err(""));
         stack.close();
         assert!(
             matches!(stack.current(), Some(Dialog::Clone { builder, parent, pending: false, .. }) if builder.project == "example/repository" && parent == "chosen-parent")
@@ -2032,7 +2068,7 @@ mod tests {
             *pending = true;
         }
         stack.open(Dialog::clone_default(&crate::settings::Settings::default()));
-        stack.finish_clone(true);
+        stack.finish_clone_with(Ok(()));
         stack.close();
         assert!(
             stack.current().is_none(),
