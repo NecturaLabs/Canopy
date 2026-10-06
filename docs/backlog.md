@@ -6,6 +6,72 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Now
 
+- [ ] Crash reports: `crash_reports.rs` `redact_url_credentials` ends the user part at `?`/`#`,
+      so `https://u:secret?x@host/r` keeps `secret` in a report; use `canopy_core::cli::userinfo`
+      (git splits at the first `/` only). Its `TOKEN_PREFIXES` (11) lacks the six GitLab prefixes
+      `http.rs` has (`glcbt-`, `glft-`, `glimt-`, `glagent-`, `glsoat-`, `glffct-`): share one list.
+- [ ] Hosting errors: `http.rs` hides the client's own token in raw response bytes before JSON
+      decoding and before `plain_text` strips hidden characters, so a server echo that is escaped
+      or split by a zero-width character reaches the toast and the log; replace it on the decoded,
+      cleaned text (`map_status`, GraphQL `errors[].message`).
+- [ ] Argv rule: `ops.rs` `delete_remote_branch` runs `git push --progress <remote> --delete
+      <branch>` without `--` (a server refname may start with `-`); add `--` there and in
+      `push_tag`, `rename_branch`, `checkout_remote_branch`.
+- [ ] Installed apps: `system_apps.rs` `Entry::command` keeps `--file=%f` as a literal word that
+      `platform::with_path` then refuses, so such editors cannot launch; and `%%f` becomes the
+      file placeholder. Settings help (`settings_screen.rs:3286,3298,3310`) should say `%f` must
+      be a word of its own.
+- [ ] Small fixes from the component library review: `repo_config.rs:136` drops a failed read of
+      `remote.<name>.prune`; `views/history.rs:796` stacked doc comments; `valid_ref_name`
+      (`dialogs/common.rs:17`) accepts `HEAD`; `dialogs/url.rs:104` shows the credentialed-host
+      message under Project; the legal reader's scroll offset survives restarts (consent opens
+      part-way down); toolbar/palette "Pop latest stash" still pops index 0, not the commit the
+      tooltip named.
+- [ ] Settings import: `settings_file.rs` NETWORK_SWITCHES lets a file raise `auto_fetch_minutes`
+      (timed `git fetch`, no lower clamp) and `include_prereleases`, while the UI says an import
+      "never turns a network feature on": guard both or narrow the wording (owner decision).
+- [ ] `ops.rs:206` `url_has_credentials` needs `://`; check with a real git whether a one-slash
+      helper URL (`http::https:/user:pw@host/r`) prints the password unredacted.
+- [ ] Component library: triage the rest of its working record (kept outside the repository with
+      the session's orchestration notes: the follow-up ledger, about 90 open lines, and the
+      workers' deferred items and Docs notes) into lines here; the security pass, the last
+      review and the UI round's leftovers are already the lines above.
+- [ ] Component library docs pass: apply every worker's Docs notes and the docs review (RD-1 to
+      RD-8, in the working record): `design.md` rewritten from the shipped kit
+      and the Design record, features, CHANGELOG Unreleased, architecture, README and
+      `tools/README.md` options, the `add-theme` and `screenshot` skills, ADR 0003/0004 wording.
+- [ ] Component library final QA: re-render the full matrix (8 themes, both styles and densities,
+      960x600 to 4K) and read every image; frame-capture the commit and branch clicks (O2); Motion
+      Match system / Reduced / Full live; owner before | after page per theme.
+- [ ] Accessibility: `accesskit_unix` 0.21.1 unwraps a failed AT-SPI registry call in a thread,
+      so a missing accessibility bus writes a crash report; report upstream or guard it.
+- [ ] Themes, structure: Midnight, Aurora and Forest in Standard still read as recolours at
+      thumbnail size, and Midnight and Forest share one interaction grammar (bar selection,
+      lifted tab, dot nodes); give each its own selection, tab and node treatment, then an
+      8-theme before | after sheet.
+- [ ] Themes, details: Paper's conflict card is a cold grey slab with faint text at 4.41:1 (warm
+      it, faint text >= 4.5:1, with a test); Aurora's welcome art lacks the curtains of light, and
+      Forest's canopy and ground are faint in Deeper; Daylight's Changes scroll thumb is
+      near-black against the light composer; `docs/design.md` theme table rows other than Paper
+      and Contrast still describe the wave-2 colours.
+- [ ] Legal reader links: a link that starts at a line wrap gets the previous row's end as its
+      rect (`legal.rs:348` `pos_from_cursor`), so hover, focus underline and click land wrong.
+- [ ] Accessibility, kit: kit `Callout` speaks title and body twice and its icon as a
+      private-use glyph; kit `Button` could name every disabled button's reason the way
+      `commit_detail::say_unavailable` does.
+- [ ] Toolbar maps a running or finished operation to its tool by `Op::label()` text
+      (`toolbar.rs` `tool_of`) because `RepoTab::running` stores only the label; store the op kind.
+- [ ] Keyboard focus: the palette never gives focus back after it closes (`app/mod.rs:964`
+      calls `palette.show` only while open, so its close frame never runs); opening Settings
+      does not move focus into it; the title bar's Tab order runs right to left and its search
+      shows no focus ring; three panels' resize handles have no accessible name; Settings
+      navigation and theme cards should use the kit `Roving` focus; `app/input.rs:20-22` blocks
+      every bare key whenever any widget has focus, and list rows now hold focus.
+- [ ] Shift+F10 (row context menu) is not in the `keymap.rs` table, so the cheatsheet does not
+      list it; `app/mod.rs` should use `paint::pane_focus` instead of its own copy;
+      `theme.rs` `clamp_backdrop` comment is stale.
+- [ ] Flaky test: canopy-core `checkout_request_leaves_a_real_remote_branch_of_the_same_name_alone`
+      failed once, then passed three reruns; find the race.
 - [ ] Repository config can run code: Canopy's git calls (`canopy_core::cli`, `cli.rs:52-100`)
       set no `core.fsmonitor` override, so a cloned repository's `.git/config` could name a
       command that git runs on `git status` (the GitSpawn class, September 2026). Pass
