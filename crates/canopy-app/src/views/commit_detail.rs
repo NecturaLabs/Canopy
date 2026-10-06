@@ -77,7 +77,9 @@ pub fn show(
             } else {
                 theme::XS
             };
-            author(ui, &d, tab);
+            // The picture status reaches the view when the avatar work merges: contracts/avatars.md
+            // "Picture status" builds a `PictureNote` from `avatars::explain` here.
+            author(ui, &d, tab, None, actions);
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(short_id(d.oid))
@@ -403,7 +405,25 @@ fn message(ui: &mut Ui, d: &CommitDetails, summary: bool) -> bool {
     summary || !body.is_empty()
 }
 
-fn author(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
+/// Why the repository's authors show initials instead of pictures, for the author line: the view's
+/// side of `avatars::Explanation` (contracts/avatars.md, "Picture status UI" 1).
+#[derive(Debug, Clone)]
+pub struct PictureNote {
+    /// A few words: the tooltip's first line and the button's accessible name.
+    pub title: String,
+    /// The cause and what to do, under the title.
+    pub detail: String,
+    /// What a click does: open Settings where the cause can be changed.
+    pub fix: Option<Action>,
+}
+
+fn author(
+    ui: &mut Ui,
+    d: &CommitDetails,
+    tab: &mut RepoTab,
+    note: Option<&PictureNote>,
+    actions: &mut Vec<Action>,
+) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     ui.horizontal(|ui| {
@@ -426,7 +446,62 @@ fn author(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
         )
         .kit_tooltip(format!("{} <{}>", d.author.name, d.author.email))
         .show();
+        if let Some(note) = note {
+            picture_note(ui, note, actions);
+        }
     });
+}
+
+/// The info mark after the author's name when pictures are kept away: faint at rest, dim on hover,
+/// no fill; its tooltip gives the title and the cause, and a click opens the setting that fixes it.
+fn picture_note(ui: &mut Ui, note: &PictureNote, actions: &mut Vec<Action>) {
+    let ctx = ui.ctx().clone();
+    let p = palette(&ctx);
+    let m = theme::metrics();
+    let side = Size::Xs.height();
+    let sense = if note.fix.is_some() {
+        egui::Sense::click()
+    } else {
+        egui::Sense::focusable_noninteractive()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(side), sense);
+    let st = crate::ui::kit::Interact::of(&ctx, &response, true, None);
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if st.focus > 0.0 {
+            paint::focus_ring(
+                painter,
+                rect,
+                CornerRadius::same(m.radius_sm),
+                p.focus.gamma_multiply(st.focus),
+                egui::Color32::TRANSPARENT,
+            );
+        }
+        let color = p.text_faint.lerp_to_gamma(p.text_dim, st.hover);
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            icon::INFO,
+            FontId::proportional(m.icon_sm),
+            color,
+        );
+    }
+    let title = note.title.clone();
+    let response = response.on_hover_cursor(if note.fix.is_some() {
+        egui::CursorIcon::PointingHand
+    } else {
+        egui::CursorIcon::Default
+    });
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));
+    let response = response
+        .kit_tooltip(note.title.clone())
+        .detail(note.detail.clone())
+        .show();
+    if response.clicked()
+        && let Some(fix) = &note.fix
+    {
+        actions.push(fix.clone());
+    }
 }
 
 fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
@@ -870,6 +945,110 @@ mod tests {
             "the action is shown on a selected row: {nodes:?}"
         );
         assert!(nodes.iter().any(|(l, _)| l == "src/views/history.rs"));
+    }
+
+    /// The author line of a commit by `Author`, with `note` after the name; the actions it asked
+    /// for and the AccessKit labels of the last frame. `keys` are pressed one per frame after
+    /// the first.
+    fn author_line(
+        note: Option<&super::PictureNote>,
+        keys: &[egui::Key],
+    ) -> (Vec<crate::action::Action>, Vec<String>) {
+        let ctx = ctx(Density::Comfortable);
+        ctx.enable_accesskit();
+        let dir = tempfile::tempdir().expect("temporary tab");
+        let mut tab = crate::tab::RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
+        let author = canopy_core::Signature {
+            name: "Author".into(),
+            email: "author@example.com".into(),
+            time: 0,
+            offset_minutes: 0,
+        };
+        let d = canopy_core::CommitDetails {
+            oid: canopy_core::Oid::from_bytes(&[1; 20]).expect("fixture oid"),
+            message: "Selected commit".into(),
+            author: author.clone(),
+            committer: author,
+            parents: Vec::new(),
+            files: Vec::new(),
+            stats_known: true,
+        };
+        let mut actions = Vec::new();
+        let mut labels = Vec::new();
+        let frames = std::iter::once(None).chain(keys.iter().copied().map(Some));
+        for key in frames {
+            let events = key.map_or_else(Vec::new, |key| {
+                [true, false]
+                    .map(|pressed| egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    })
+                    .to_vec()
+            });
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| super::author(ui, &d, &mut tab, note, &mut actions),
+            );
+            out.textures_delta.clear();
+            labels = out
+                .platform_output
+                .accesskit_update
+                .map(|u| {
+                    u.nodes
+                        .iter()
+                        .filter_map(|(_, n)| n.label().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+        (actions, labels)
+    }
+
+    fn note(fix: Option<crate::action::Action>) -> super::PictureNote {
+        super::PictureNote {
+            title: "Profile pictures are off".into(),
+            detail: "Turn on Download profile pictures in Settings → Privacy.".into(),
+            fix,
+        }
+    }
+
+    /// Override O2 (contracts/avatars.md, "Picture status UI" 1): when pictures are kept away the
+    /// author line carries an info button named by the reason, and activating it opens the
+    /// setting that fixes it; with nothing to explain the line is unchanged.
+    #[test]
+    fn the_author_line_explains_missing_pictures_and_opens_the_fix() {
+        let (actions, labels) = author_line(None, &[]);
+        assert!(actions.is_empty());
+        assert!(
+            !labels.iter().any(|l| l == "Profile pictures are off"),
+            "{labels:?}"
+        );
+
+        let fix = Some(crate::action::Action::Settings);
+        let (actions, labels) = author_line(Some(&note(fix)), &[egui::Key::Tab, egui::Key::Enter]);
+        assert!(
+            labels.iter().any(|l| l == "Profile pictures are off"),
+            "{labels:?}"
+        );
+        assert!(
+            matches!(actions.as_slice(), [crate::action::Action::Settings]),
+            "{actions:?}"
+        );
+
+        let (actions, labels) = author_line(Some(&note(None)), &[egui::Key::Tab, egui::Key::Enter]);
+        assert!(labels.iter().any(|l| l == "Profile pictures are off"));
+        assert!(actions.is_empty(), "nothing to open: {actions:?}");
     }
 
     /// One frame-settled draw of the commit information block with `room` to spare: the body's
