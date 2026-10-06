@@ -64,6 +64,34 @@ fn open(path: &std::path::Path, create: bool) -> canopy_core::Result<PathBuf> {
     Ok(root.canonicalize().unwrap_or(root))
 }
 
+/// Where a closed tab's unsent commit message waits, for this run, until its repository opens
+/// again.
+fn draft_id(path: &std::path::Path) -> egui::Id {
+    egui::Id::new(("commit-draft", path))
+}
+
+/// Keeps `tab`'s unsent commit message (summary and description) when the tab closes, so closing
+/// a tab never throws a message away.
+pub(super) fn keep_draft(ctx: &egui::Context, tab: &RepoTab) {
+    if !tab.commit_summary.is_empty() || !tab.commit_body.is_empty() {
+        let draft = (tab.commit_summary.clone(), tab.commit_body.clone());
+        ctx.data_mut(|d| d.insert_temp(draft_id(&tab.path), draft));
+    }
+}
+
+/// Puts back the message [`keep_draft`] kept for `tab`'s repository.
+fn restore_draft(ctx: &egui::Context, tab: &mut RepoTab) {
+    let id = draft_id(&tab.path);
+    if let Some((summary, body)) = ctx.data_mut(|d| {
+        let draft = d.get_temp::<(String, String)>(id);
+        d.remove::<(String, String)>(id);
+        draft
+    }) {
+        tab.commit_summary = summary;
+        tab.commit_body = body;
+    }
+}
+
 impl CanopyApp {
     /// Opens `path` in a tab (or switches to it) once the opener thread has found it.
     pub(super) fn open_repo(&mut self, ctx: &egui::Context, path: PathBuf) {
@@ -168,6 +196,7 @@ impl CanopyApp {
         } else {
             let prefs = self.settings.diff_for(&root);
             let mut tab = RepoTab::new(root.clone(), ctx, self.settings.commit_page, prefs);
+            restore_draft(ctx, &mut tab);
             tab.split_diff = self.settings.split_diff;
             tab.highlight_diff = self.settings.syntax_highlight;
             if let Some(v) = self.initial_view {
@@ -220,5 +249,23 @@ mod tests {
         let mut alone = test_app();
         alone.open_repo(&ctx, PathBuf::from("/home/ada/src/other"));
         assert!(format!("{:?}", alone.toasts).contains("Could not open repository"));
+    }
+
+    /// review-views-10: closing a tab keeps its unsent commit message; it is back when the
+    /// repository opens again.
+    #[test]
+    fn a_closed_tab_keeps_its_commit_message_for_when_it_opens_again() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("a folder");
+        let root = dir.path().to_path_buf();
+        let mut app = test_app();
+        app.add_tab(&ctx, root.clone(), true);
+        "Fix the parser".clone_into(&mut app.tabs[0].commit_summary);
+        "It read past the end.".clone_into(&mut app.tabs[0].commit_body);
+        app.apply(&ctx, vec![Action::CloseTab(0)]);
+        assert!(app.tabs.is_empty());
+        app.add_tab(&ctx, root, true);
+        assert_eq!(app.tabs[0].commit_summary, "Fix the parser");
+        assert_eq!(app.tabs[0].commit_body, "It read past the end.");
     }
 }

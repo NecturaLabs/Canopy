@@ -39,7 +39,8 @@ impl CanopyApp {
                 Action::ForgetRecent(p) => self.settings.recent.retain(|r| r != &p),
                 Action::CloseTab(i) => {
                     if i < self.tabs.len() {
-                        self.tabs.remove(i);
+                        let closed = self.tabs.remove(i);
+                        open::keep_draft(ctx, &closed);
                         if self.active >= self.tabs.len() {
                             self.active = self.tabs.len().saturating_sub(1);
                         }
