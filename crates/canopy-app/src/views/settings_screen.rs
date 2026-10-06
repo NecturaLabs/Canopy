@@ -27,7 +27,7 @@ use crate::system_apps::Kind;
 use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::choice::Segmented;
-use crate::ui::kit::field::{SearchField, TextField};
+use crate::ui::kit::field::{NumberField as KitNumber, SearchField, TextField};
 use crate::ui::kit::overlay;
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::paint;
@@ -1503,105 +1503,9 @@ fn switch_with(switch: Switch<'_>, ui: &mut Ui, on: bool, name: &str) -> Respons
     response
 }
 
-/// Text typed into a number field that has not been applied yet, and the error it showed.
-#[derive(Debug, Clone, Default)]
-struct NumberDraft {
-    text: String,
-    error: Option<String>,
-}
-
-/// Where a [`number_field`] keeps its draft, what it accepts, how wide it is and its name.
-struct NumberField<'a> {
-    salt: &'a str,
-    range: RangeInclusive<f64>,
-    width: f32,
-    name: &'a str,
-}
-
-/// A number typed into a field: what is typed applies on Enter or when the field loses focus
-/// (clamped to `range`), Esc restores the value, and text that is not a number shows an error.
-/// A click selects the whole value, so typing replaces it. Returns the new value once applied.
-fn number_field(
-    ui: &mut Ui,
-    field: NumberField<'_>,
-    value: f64,
-    shown: impl Fn(f64) -> String,
-    parse: impl Fn(&str) -> Option<f64>,
-) -> Option<f64> {
-    let NumberField {
-        salt,
-        range,
-        width,
-        name,
-    } = field;
-    let key = ui.id().with(("settings-number", salt));
-    let draft: Option<NumberDraft> = ui.data(|d| d.get_temp(key));
-    let mut text = draft
-        .as_ref()
-        .map_or_else(|| shown(value), |d| d.text.clone());
-    let error = draft.as_ref().and_then(|d| d.error.clone());
-    let response = fixed_width(ui, width, |ui| {
-        TextField::new(&mut text)
-            .width(width)
-            .name(name)
-            .error(error.as_deref())
-            .id_salt(("settings-number", salt))
-            .show(ui)
-    });
-    if response.gained_focus() || response.clicked() {
-        let ctx = ui.ctx();
-        if let Some(mut state) = egui::text_edit::TextEditState::load(ctx, response.id) {
-            let all = egui::text::CCursorRange::two(
-                egui::text::CCursor::new(0),
-                egui::text::CCursor::new(text.chars().count()),
-            );
-            state.cursor.set_char_range(Some(all));
-            state.store(ctx, response.id);
-        }
-    }
-    let mut applied = None;
-    let mut next = None;
-    if response.lost_focus() {
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            next = None;
-        } else {
-            match parse(text.trim()) {
-                Some(v) if v.is_finite() => {
-                    applied = Some(v.clamp(*range.start(), *range.end()));
-                }
-                _ => {
-                    next = Some(NumberDraft {
-                        text: text.clone(),
-                        error: Some(format!(
-                            "Enter a number from {} to {}.",
-                            shown(*range.start()),
-                            shown(*range.end())
-                        )),
-                    });
-                }
-            }
-        }
-    } else if response.has_focus() {
-        next = Some(NumberDraft {
-            text: text.clone(),
-            // The error stays until the text is applied again.
-            error,
-        });
-    } else {
-        next = draft;
-    }
-    ui.data_mut(|d| match next {
-        Some(n) => {
-            d.insert_temp(key, n);
-        }
-        None => d.remove::<NumberDraft>(key),
-    });
-    applied
-}
-
 /// The fewest and most commits a history page loads, and the stepper's step.
 const COMMIT_PAGE: RangeInclusive<f64> = 200.0..=50_000.0;
-const COMMIT_PAGE_STEP: usize = 100;
+const COMMIT_PAGE_STEP: f64 = 100.0;
 
 fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     heading(ui, "Theme");
@@ -1814,26 +1718,26 @@ fn zoom_slider(ui: &mut Ui, s: &mut Settings, draft: &mut Option<f32>) -> Respon
                 }
                 *draft = None;
             }
-            let typed = number_field(
-                ui,
-                NumberField {
-                    salt: "zoom",
-                    range: f64::from(*ZOOM.start())..=f64::from(*ZOOM.end()),
-                    width: ZOOM_FIELD_WIDTH,
-                    name: "Zoom percentage",
-                },
-                f64::from(draft.unwrap_or(s.zoom)),
-                percent,
-                |text| {
-                    text.trim_end_matches('%')
-                        .trim()
-                        .parse::<f64>()
-                        .ok()
-                        .map(|v| v / 100.0)
-                },
-            );
-            if let Some(v) = typed {
-                s.zoom = crate::ui::to_f32(v);
+            // The slider steps; the field takes a typed percentage, so it has no steppers.
+            let mut typed = f64::from(draft.unwrap_or(s.zoom));
+            let field = KitNumber::new(
+                &mut typed,
+                f64::from(*ZOOM.start())..=f64::from(*ZOOM.end()),
+            )
+            .step(0.0)
+            .format(percent, |text| {
+                text.trim_end_matches('%')
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .map(|v| v / 100.0)
+            })
+            .name("Zoom percentage")
+            .width(ZOOM_FIELD_WIDTH)
+            .id_salt("zoom")
+            .show(ui);
+            if field.changed() {
+                s.zoom = crate::ui::to_f32(typed);
                 *draft = None;
             }
         },
@@ -2077,8 +1981,8 @@ fn select_width<'l>(ui: &Ui, labels: impl IntoIterator<Item = &'l str>) -> f32 {
     SELECT_WIDTH.max(select::fit_width(ui, labels))
 }
 
-/// The width of the commits-per-page field between its steppers.
-const COUNT_FIELD_WIDTH: f32 = 96.0;
+/// The width of the commits-per-page field, its steppers included.
+const COUNT_FIELD_WIDTH: f32 = 160.0;
 
 /// What is wrong with the identity, or that it is still being read.
 fn identity_status(ui: &mut Ui, identity: Option<&Identity>, error: Option<&str>) {
@@ -3221,60 +3125,31 @@ fn repo_identity(
     );
 }
 
-/// Commits per page: a number field between − and + steppers.
+/// Commits per page: the kit's number field, with − and + steppers of [`COMMIT_PAGE_STEP`].
 fn commit_page(ui: &mut Ui, s: &mut Settings) {
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "the range's ends are the whole numbers 200 and 50 000"
-    )]
-    let (lo, hi) = (*COMMIT_PAGE.start() as usize, *COMMIT_PAGE.end() as usize);
-    // The steppers stand a gap away from the field and as tall as it, like the other rows'
-    // controls, rather than pressed against it.
-    ui.spacing_mut().item_spacing.x = theme::SM;
-    // Right to left: +, the field, −.
-    if IconButton::new(icon::PLUS, "More commits per page")
-        .size(Size::Md)
-        .enabled(s.commit_page < hi)
-        .id_salt("commit-page-more")
-        .show(ui)
-        .clicked()
-    {
-        s.commit_page = (s.commit_page + COMMIT_PAGE_STEP).min(hi);
-    }
     #[expect(
         clippy::cast_precision_loss,
         reason = "a page size of at most 50 000, exact in f64"
     )]
-    let current = s.commit_page as f64;
-    if let Some(v) = number_field(
-        ui,
-        NumberField {
-            salt: "commit-page",
-            range: COMMIT_PAGE,
-            width: COUNT_FIELD_WIDTH,
-            name: "Commits per page",
-        },
-        current,
-        |v| format!("{v:.0}"),
-        |text| text.replace([',', '_', ' '], "").parse::<f64>().ok(),
-    ) {
+    let mut page = s.commit_page as f64;
+    let changed = fixed_width(ui, COUNT_FIELD_WIDTH, |ui| {
+        KitNumber::new(&mut page, COMMIT_PAGE)
+            .step(COMMIT_PAGE_STEP)
+            .name("Commits per page")
+            .step_names("Fewer commits per page", "More commits per page")
+            .width(COUNT_FIELD_WIDTH)
+            .id_salt("commit-page")
+            .show(ui)
+    })
+    .changed();
+    if changed {
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
-            reason = "number_field clamps the value to COMMIT_PAGE, so it is a whole positive count once rounded"
+            reason = "the field clamps the value to COMMIT_PAGE, so it is a whole positive count once rounded"
         )]
-        let page = v.round() as usize;
+        let page = page.round() as usize;
         s.commit_page = page;
-    }
-    if IconButton::new(icon::MINUS, "Fewer commits per page")
-        .size(Size::Md)
-        .enabled(s.commit_page > lo)
-        .id_salt("commit-page-fewer")
-        .show(ui)
-        .clicked()
-    {
-        s.commit_page = s.commit_page.saturating_sub(COMMIT_PAGE_STEP).max(lo);
     }
 }
 
