@@ -871,6 +871,9 @@ fn spoken_line(line: &DiffLine, marker: bool) -> String {
     }
 }
 
+/// The first hunk's note on picking lines.
+const PICK_HINT: &str = "Click lines to pick part of a hunk";
+
 /// Width of the mark at the left of a picked line.
 const PICKED_MARK: f32 = 4.0;
 
@@ -1114,24 +1117,42 @@ fn hunk_header(
     } else {
         row.min_rect().left()
     };
+    let title_left = visible_left + 12.0;
+    let title_room = bx - theme::SM - title_left;
+    // The first hunk explains line picking, but only where the whole title leaves room for it:
+    // the hint never paints over the title.
+    let hint = (n == 0 && h == 0)
+        .then(|| {
+            ui.painter()
+                .layout_no_wrap(PICK_HINT.to_owned(), note_font.clone(), p.text_faint)
+        })
+        .filter(|hint| {
+            let title_w = ui
+                .painter()
+                .layout_no_wrap(hunk.header.clone(), coordinates.clone(), p.text_faint)
+                .size()
+                .x;
+            title_w + theme::LG + hint.size().x <= title_room
+        });
     let header = widgets::single_line_galley(
         ui,
         hunk.header.clone(),
         coordinates,
         p.text_faint,
-        bx - theme::SM - (visible_left + 12.0),
+        title_room,
     );
     ui.painter().galley(
-        pos2(visible_left + 12.0, band.center().y - header.size().y / 2.0),
+        pos2(title_left, band.center().y - header.size().y / 2.0),
         header,
         p.text_faint,
     );
-    if n == 0 && h == 0 && bx - visible_left > 360.0 {
-        ui.painter().text(
-            pos2(bx - 6.0, band.center().y),
-            Align2::RIGHT_CENTER,
-            "Click lines to pick part of a hunk",
-            note_font,
+    if let Some(hint) = hint {
+        ui.painter().galley(
+            pos2(
+                bx - 6.0 - hint.size().x,
+                band.center().y - hint.size().y / 2.0,
+            ),
+            hint,
             p.text_faint,
         );
     }
@@ -1442,6 +1463,80 @@ mod tests {
             .map(|n| format!("{:?}", n.role()))
             .collect();
         assert!(unnamed.is_empty(), "unnamed operable nodes: {unnamed:?}");
+    }
+
+    /// QVIS-1: the "Click lines" hint never paints over a long hunk title; it shows only where
+    /// the whole title leaves room for it.
+    #[test]
+    fn the_pick_hint_never_overlaps_the_hunk_title() {
+        let ctx = themed();
+        for (header, hint_expected) in [
+            ("@@ -1,2 +1,2 @@", true),
+            (
+                "@@ -15,3 +15,4 @@ Set TIDEPOOL_DATA to choose where pastes are stored (default: ./data).",
+                false,
+            ),
+        ] {
+            let d = FileDiff {
+                hunks: vec![Hunk {
+                    header: header.into(),
+                    ..hunk(" +")
+                }],
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let cx = Ctx {
+                    p: palette(ui.ctx()),
+                    source: &DiffSource::Unstaged,
+                    path: "file.rs",
+                    conflicted: false,
+                    one_sided: false,
+                    editable: true,
+                    context: 3,
+                    highlights: None,
+                    mono: FontId::monospace(theme::metrics().mono_size),
+                };
+                let rect = Rect::from_min_size(pos2(0.0, 40.0), vec2(900.0, row_heights().1));
+                hunk_header(
+                    ui,
+                    &cx,
+                    &d,
+                    0,
+                    rect,
+                    egui::Pos2::ZERO,
+                    rect,
+                    &mut None,
+                    &mut Vec::new(),
+                );
+            });
+            output.textures_delta.clear();
+            let texts: Vec<(String, Rect)> = output
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Text(t) => {
+                        Some((t.galley.text().to_owned(), t.visual_bounding_rect()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let title = texts
+                .iter()
+                .find(|(t, _)| t.starts_with("@@"))
+                .map(|(_, r)| *r)
+                .expect("the hunk title");
+            let hint = texts
+                .iter()
+                .find(|(t, _)| t.starts_with("Click lines"))
+                .map(|(_, r)| *r);
+            assert_eq!(hint.is_some(), hint_expected, "{header}: {texts:?}");
+            if let Some(hint) = hint {
+                assert!(
+                    title.right() < hint.left(),
+                    "title {title:?} overlaps hint {hint:?}"
+                );
+            }
+        }
     }
 
     #[test]
