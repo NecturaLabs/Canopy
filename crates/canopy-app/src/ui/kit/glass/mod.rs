@@ -423,13 +423,6 @@ pub fn backdrop_shapes(painter: &Painter, rect: Rect, radius: CornerRadius) -> O
     backdrop_shapes_with(painter, rect, radius, theme::appearance().glass)
 }
 
-/// [`backdrop_shapes`] as one shape (the capture, then the composite), for a caller with one
-/// place for it. Placed after the layer's shadow, the shadow is blurred into the glass: prefer
-/// [`backdrop_shapes`].
-pub fn backdrop_shape(painter: &Painter, rect: Rect, radius: CornerRadius) -> Option<Shape> {
-    backdrop_shapes(painter, rect, radius).map(|b| Shape::Vec(vec![b.capture, b.composite]))
-}
-
 /// The translucent overlay painted over a blurred backdrop.
 pub fn glass_fill(ctx: &egui::Context) -> Color32 {
     let p = theme::palette(ctx);

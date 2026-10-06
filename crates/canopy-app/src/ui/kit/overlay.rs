@@ -4,9 +4,9 @@
 //! anchor side, and exits that fade out what the layer showed last. Design spec 4.11, 4.13, 4.14.
 //!
 //! **Glass.** [`backdrop`] is the one place the backdrop blur plugs in: every floating layer except
-//! tooltips asks it for the blurred backdrop between its shadow and its fill, and paints the
-//! translucent overlay over it when it gets one. With Translucent surfaces off, or the blur
-//! unavailable, it returns `None` and the layer is opaque.
+//! tooltips asks it for the blurred backdrop, copies it before its shadow and draws it between
+//! the shadow and its fill, and paints the translucent overlay over it when it gets one. With
+//! Translucent surfaces off, or the blur unavailable, it returns `None` and the layer is opaque.
 //!
 //! **Exits.** A floating layer records what it painted each frame it is open ([`record_exit`]);
 //! the frame it is no longer shown, an egui plugin keeps painting that snapshot as it fades (and
@@ -85,12 +85,17 @@ impl Layer {
 
 // --------------------------------------------------------------------------- surface and glass
 
-/// The glass hook: what the backdrop blur paints under a floating layer at `rect`, between the
-/// layer's shadow and its fill (design spec 7.4: a `Shape::Callback` into `glass/gl.rs`), or
-/// `None` for an opaque layer (Translucent surfaces off, the blur unavailable, or the frame's
-/// glass layers used up).
-pub(crate) fn backdrop(painter: &Painter, rect: Rect, radius: CornerRadius) -> Option<Shape> {
-    super::glass::backdrop_shape(painter, rect, radius)
+/// The glass hook: what the backdrop blur paints under a floating layer at `rect` (design spec
+/// 7.4: `Shape::Callback`s into `glass/gl.rs`), its capture to go before the layer's shadow and
+/// its composite after it, before the fill, so the layer never blurs its own shadow; or `None`
+/// for an opaque layer (Translucent surfaces off, the blur unavailable, or the frame's glass
+/// layers used up).
+pub(crate) fn backdrop(
+    painter: &Painter,
+    rect: Rect,
+    radius: CornerRadius,
+) -> Option<super::glass::Backdrop> {
+    super::glass::backdrop_shapes(painter, rect, radius)
 }
 
 /// What a floating layer of `layer` is filled with this frame: the overlay at the theme's glass
@@ -174,7 +179,10 @@ pub(crate) fn surface_shapes(painter: &Painter, rect: Rect, layer: Layer) -> Vec
             .flatten();
         match glass {
             Some(b) => {
-                shapes.push(b);
+                // The backdrop is copied before the layer's own shadow is painted, so the glass
+                // blurs what is behind the layer, not its shadow (G3), and drawn over the shadow.
+                shapes.insert(0, b.capture);
+                shapes.push(b.composite);
                 Fill::flat(Palette::tint(s.overlay, p.glass_alpha))
             }
             None => Fill::flat(s.overlay),

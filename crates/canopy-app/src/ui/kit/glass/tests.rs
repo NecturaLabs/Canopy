@@ -514,6 +514,61 @@ fn the_backdrop_moves_between_the_shadow_and_the_fill() {
     );
 }
 
+/// H18 / G3: menus, popovers, dialogs and toasts (`overlay::surface_shapes`) copy the backdrop
+/// before their own shadow, so the glass never blurs the shadow under the card into it.
+#[test]
+fn floating_layers_capture_the_backdrop_before_their_shadow() {
+    let ctx = egui::Context::default();
+    for id in [ThemeId::Midnight, ThemeId::Daylight] {
+        setup(&ctx, id, true, Backend::Supported);
+        let layer = at(40.0, 40.0, 240.0, 160.0);
+        for kind in [
+            crate::ui::kit::overlay::Layer::Menu,
+            crate::ui::kit::overlay::Layer::Popover,
+            crate::ui::kit::overlay::Layer::Dialog,
+            crate::ui::kit::overlay::Layer::Toast,
+        ] {
+            let mut kinds = Vec::new();
+            let _ = frame(&ctx, |ui| {
+                let shapes = crate::ui::kit::overlay::surface_shapes(ui.painter(), layer, kind);
+                kinds = shapes
+                    .iter()
+                    .flat_map(|s| match s {
+                        Shape::Vec(v) => v.clone(),
+                        other => vec![other.clone()],
+                    })
+                    .filter_map(|s| match &s {
+                        Shape::Callback(_) => Some("backdrop"),
+                        Shape::Rect(RectShape { blur_width, .. }) if *blur_width > 0.0 => {
+                            Some("shadow")
+                        }
+                        Shape::Rect(r) if r.rect == layer && r.fill.a() > 0 => Some("fill"),
+                        _ => None,
+                    })
+                    .collect();
+            });
+            let first_shadow = kinds.iter().position(|k| *k == "shadow");
+            let fill = kinds.iter().position(|k| *k == "fill");
+            assert_eq!(
+                kinds.first(),
+                Some(&"backdrop"),
+                "{id:?} {kind:?}: {kinds:?}"
+            );
+            assert!(first_shadow.is_some() && fill.is_some(), "{kinds:?}");
+            assert_eq!(
+                kinds.iter().filter(|k| **k == "backdrop").count(),
+                2,
+                "{kinds:?}"
+            );
+            let composite = kinds.iter().rposition(|k| *k == "backdrop");
+            assert!(
+                composite > kinds.iter().rposition(|k| *k == "shadow") && composite < fill,
+                "{id:?} {kind:?}: the composite sits between the shadow and the fill: {kinds:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_caller_placing_the_backdrop_gets_the_capture_and_the_composite() {
     let ctx = egui::Context::default();
@@ -524,15 +579,8 @@ fn a_caller_placing_the_backdrop_gets_the_capture_and_the_composite() {
         assert!(b.as_ref().is_some_and(|b| {
             matches!(b.capture, Shape::Callback(_)) && matches!(b.composite, Shape::Callback(_))
         }));
-        // The single-shape form carries both, capture first.
-        let one = backdrop_shape(ui.painter(), layer, CornerRadius::same(8));
-        assert!(
-            matches!(&one, Some(Shape::Vec(v)) if v.len() == 2
-                && v.iter().all(|s| matches!(s, Shape::Callback(_)))),
-            "{one:?}"
-        );
         // Each took one of the frame's glass layers.
-        for _ in 2..MAX_REGIONS {
+        for _ in 1..MAX_REGIONS {
             assert!(backdrop_shapes(ui.painter(), layer, CornerRadius::ZERO).is_some());
         }
         assert!(backdrop_shapes(ui.painter(), layer, CornerRadius::ZERO).is_none());
@@ -604,7 +652,7 @@ fn a_fading_layer_hands_its_opacity_to_the_blur() {
     frame(&ctx, |ui| {
         let mut half = ui.painter().clone();
         half.set_opacity(0.5);
-        assert!(backdrop_shape(&half, at(10.0, 10.0, 90.0, 90.0), CornerRadius::ZERO).is_some());
+        assert!(backdrop_shapes(&half, at(10.0, 10.0, 90.0, 90.0), CornerRadius::ZERO).is_some());
     });
     let look = Look {
         dark: true,
