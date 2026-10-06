@@ -539,6 +539,9 @@ enum Miss {
     /// is left as it was.
     Kept,
     Failed,
+    /// The picture host says the author has no picture (404 or 410): an older one is forgotten
+    /// rather than kept.
+    NoPicture,
     /// The provider's limit, or the share of it pictures may use, is spent until this time. The
     /// author is not at fault, so the record is left as it was and stays due.
     Later(i64),
@@ -680,6 +683,9 @@ fn fetch(
     let bytes = avatar.download().map_err(|e| match e {
         Error::Network(_) => pause_unreachable(now, note),
         Error::Api { status, .. } if status >= 500 => pause_unreachable(now, note),
+        Error::Api {
+            status: 404 | 410, ..
+        } => Miss::NoPicture,
         _ => Miss::Failed,
     })?;
     let image = decode(&bytes).map_err(|_| Miss::Failed)?;
@@ -782,6 +788,11 @@ fn refresh(
         Err(Miss::Skipped | Miss::Kept) => (record, None),
         Err(Miss::Later(at)) => (record, Some(at)),
         Err(Miss::Failed) => {
+            record.checked_at = now;
+            (record, None)
+        }
+        Err(Miss::NoPicture) => {
+            record.pixels = None;
             record.checked_at = now;
             (record, None)
         }
@@ -1331,6 +1342,37 @@ mod tests {
             none.image.is_none() && path.exists(),
             "a real miss is cached for 12 hours"
         );
+    }
+
+    #[test]
+    fn a_picture_host_without_a_picture_replaces_a_cached_stand_in_with_initials() {
+        let stub = Stub::start();
+        stub.picture_for(PUSHED);
+        // The picture host now answers that the author has none (GitLab's Gravatar links ask
+        // for a 404 instead of a generated pattern).
+        stub.route("/picture.png", 404, "");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("picture.json");
+        write_record(
+            &path,
+            &Record {
+                checked_at: 100,
+                pixels: Some(vec![7; PIXEL_BYTES]),
+            },
+        )
+        .unwrap();
+        let none = load_at(
+            Some(path.clone()),
+            &stub.client(Some("t")),
+            Oid::from_str(PUSHED).unwrap(),
+            "a@example.com",
+            &AtomicBool::new(true),
+        );
+        assert!(none.image.is_none(), "the old stand-in is not shown again");
+        assert_eq!(none.note, None);
+        let record = read_record(&path).unwrap();
+        assert!(record.pixels.is_none());
+        assert!(record.checked_at > 100, "no picture is cached for 12 hours");
     }
 
     #[test]

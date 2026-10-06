@@ -95,6 +95,19 @@ fn validate(url: &str, forge: &Forge, api_base: &str) -> Option<Avatar> {
     }
     // Tests and screenshots may fetch only from the exact loopback API server, never the web.
     let loopback = is_loopback_base(api_base);
+    let picture_service = !loopback
+        && forge.kind == ForgeKind::GitLab
+        && uri.path().starts_with("/avatar/")
+        && matches!(
+            authority,
+            "gravatar.com"
+                | "www.gravatar.com"
+                | "secure.gravatar.com"
+                | "0.gravatar.com"
+                | "1.gravatar.com"
+                | "2.gravatar.com"
+                | "seccdn.libravatar.org"
+        );
     let allowed = if loopback {
         let base: Uri = api_base.parse().ok()?;
         uri.scheme_str() == Some("http") && uri.authority() == base.authority()
@@ -104,23 +117,33 @@ fn validate(url: &str, forge: &Forge, api_base: &str) -> Option<Avatar> {
                 || (forge.kind == ForgeKind::GitHub
                     && forge.host == "github.com"
                     && authority == "avatars.githubusercontent.com")
-                || (forge.kind == ForgeKind::GitLab
-                    && uri.path().starts_with("/avatar/")
-                    && matches!(
-                        authority,
-                        "gravatar.com"
-                            | "www.gravatar.com"
-                            | "secure.gravatar.com"
-                            | "0.gravatar.com"
-                            | "1.gravatar.com"
-                            | "2.gravatar.com"
-                            | "seccdn.libravatar.org"
-                    )))
+                || picture_service)
     };
     allowed.then(|| Avatar {
-        url: url.to_owned(),
+        url: if picture_service {
+            without_stand_in(authority, &uri)
+        } else {
+            url.to_owned()
+        },
         loopback,
     })
+}
+
+/// Gravatar and Libravatar draw a stand-in for an email without a picture (GitLab asks for a
+/// generated pattern, `d=identicon`; without `d`, their logo) unless asked for a 404. With the 404
+/// the author keeps Canopy's initials and is remembered as having no picture.
+fn without_stand_in(authority: &str, uri: &Uri) -> String {
+    let mut query: Vec<&str> = uri
+        .query()
+        .unwrap_or_default()
+        .split('&')
+        .filter(|pair| {
+            let key = pair.split_once('=').map_or(*pair, |(key, _)| key);
+            !pair.is_empty() && !matches!(key, "d" | "default")
+        })
+        .collect();
+    query.push("d=404");
+    format!("https://{authority}{}?{}", uri.path(), query.join("&"))
 }
 
 #[derive(Deserialize)]
@@ -279,6 +302,41 @@ mod tests {
                 "http://127.0.0.1:1234"
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn gitlab_picture_links_ask_for_no_generated_stand_in() {
+        let gitlab = Forge::parse("https://gitlab.com/group/repo", &[]).unwrap();
+        let link = |url: &str| validate(url, &gitlab, "https://gitlab.com/api/v4").map(|a| a.url);
+        // GitLab links Gravatar with `d=identicon`: an author without a picture would get a
+        // generated pattern instead of Canopy's initials. Asking for 404 keeps the initials.
+        assert_eq!(
+            link("https://secure.gravatar.com/avatar/0a1b?s=128&d=identicon").as_deref(),
+            Some("https://secure.gravatar.com/avatar/0a1b?s=128&d=404")
+        );
+        assert_eq!(
+            link("https://seccdn.libravatar.org/avatar/0a1b?default=retro&s=80").as_deref(),
+            Some("https://seccdn.libravatar.org/avatar/0a1b?s=80&d=404")
+        );
+        assert_eq!(
+            link("https://www.gravatar.com/avatar/0a1b?d=https%3A%2F%2Fexample.com%2Fa.png")
+                .as_deref(),
+            Some("https://www.gravatar.com/avatar/0a1b?d=404")
+        );
+        assert_eq!(
+            link("https://gravatar.com/avatar/0a1b").as_deref(),
+            Some("https://gravatar.com/avatar/0a1b?d=404"),
+            "without a default Gravatar draws its own logo"
+        );
+        assert_eq!(
+            link("https://0.gravatar.com/avatar/0a1b?d=404&s=64").as_deref(),
+            Some("https://0.gravatar.com/avatar/0a1b?s=64&d=404")
+        );
+        // The same host and path; pictures on GitLab itself are left as they are.
+        assert_eq!(
+            link("https://gitlab.com/uploads/-/system/user/avatar/1/a.png?width=64").as_deref(),
+            Some("https://gitlab.com/uploads/-/system/user/avatar/1/a.png?width=64")
         );
     }
 }
