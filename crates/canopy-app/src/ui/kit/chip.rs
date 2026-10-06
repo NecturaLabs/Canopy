@@ -282,14 +282,14 @@ impl Widget for ChangeBadge {
 
 // ------------------------------------------------------------------------------------ RefPill
 
-/// A branch, tag or HEAD label beside a commit. Colour: the branch's lane (local and remote), the
-/// tag colour `warning`. Read-only unless [`RefPill::clickable`].
+/// A branch, tag, stash or HEAD label beside a commit: one quiet neutral pill for every kind, told
+/// apart by its glyph, the checked-out branch alone marked in the accent. Read-only unless
+/// [`RefPill::clickable`].
 #[derive(Debug, Clone)]
 #[must_use = "call .show(ui) or ui.add(..)"]
 pub struct RefPill {
     name: String,
     kind: RefKind,
-    lane: u16,
     upstream: bool,
     max_width: Option<f32>,
     clickable: bool,
@@ -302,7 +302,6 @@ impl RefPill {
         Self {
             name: name.into(),
             kind,
-            lane: 0,
             upstream: false,
             max_width: None,
             clickable: false,
@@ -311,15 +310,9 @@ impl RefPill {
         }
     }
 
-    /// A pill for a ref label the history shows, in its commit's lane colour.
-    pub fn from_label(label: &RefLabel, lane: u16) -> Self {
-        Self::new(label.name.clone(), label.kind).lane(lane)
-    }
-
-    /// The graph colour index of the branch's lane.
-    pub fn lane(mut self, lane: u16) -> Self {
-        self.lane = lane;
-        self
+    /// A pill for a ref label the history shows.
+    pub fn from_label(label: &RefLabel) -> Self {
+        Self::new(label.name.clone(), label.kind)
     }
 
     /// A local branch merged with its upstream into one pill: both icons.
@@ -350,17 +343,6 @@ impl RefPill {
         self.show(ui)
     }
 
-    /// The pill's colour (spec 4.17).
-    pub fn color(&self, p: &Palette) -> Color32 {
-        match self.kind {
-            RefKind::Head | RefKind::Stash => p.text_dim,
-            RefKind::CurrentBranch | RefKind::LocalBranch | RefKind::RemoteBranch => {
-                p.lane(self.lane)
-            }
-            RefKind::Tag => p.warning,
-        }
-    }
-
     fn glyphs(&self) -> Vec<&'static str> {
         let main = match self.kind {
             RefKind::Head => return Vec::new(),
@@ -377,39 +359,28 @@ impl RefPill {
         }
     }
 
-    /// Fill, ring and label colours. Only the current branch is solid, in its lane's colour;
-    /// the other pills are quiet neutral surfaces with the label in the text colour, and their
-    /// lane or tag colour on the glyph ([`RefPill::glyph_color`]) ties them to the graph.
+    /// Fill, ring and label colours: the same for every kind, the neutral `badge` surface with
+    /// the label in the text colour (HEAD's in `text_dim`), no ring.
     pub fn colors(&self, p: &Palette) -> (Color32, Color32, Color32) {
-        let s = p.s();
-        match self.kind {
-            RefKind::Head => (s.elevated, s.edge, p.text_dim),
-            RefKind::CurrentBranch => {
-                let (fill, ink) = solid_pill(p, self.color(p));
-                (fill, Color32::TRANSPARENT, ink)
-            }
-            RefKind::RemoteBranch => (
-                Color32::TRANSPARENT,
-                s.edge,
-                p.ink(p.text_dim, Color32::TRANSPARENT),
-            ),
-            RefKind::LocalBranch | RefKind::Tag | RefKind::Stash => {
-                (s.badge, Color32::TRANSPARENT, p.ink(p.text, s.badge))
-            }
-        }
+        let fill = p.s().badge;
+        let label = if self.kind == RefKind::Head {
+            p.text_dim
+        } else {
+            p.text
+        };
+        (fill, Color32::TRANSPARENT, p.ink(label, fill))
     }
 
-    /// The glyphs' colour: the lane's (a tag's `warning`), lifted toward `text` only as far as
-    /// 4.5:1 on the pill needs; the label's on the solid current branch, `text_dim` on a stash.
+    /// The glyphs' colour: the accent on the checked-out branch, `text_dim` on every other pill,
+    /// each lifted only as far as 4.5:1 on the pill needs.
     pub fn glyph_color(&self, p: &Palette) -> Color32 {
-        let (fill, _, ink) = self.colors(p);
-        match self.kind {
-            RefKind::Head | RefKind::CurrentBranch => ink,
-            RefKind::Stash => p.ink(p.text_dim, fill),
-            RefKind::LocalBranch | RefKind::RemoteBranch | RefKind::Tag => {
-                p.ink(self.color(p), fill)
-            }
-        }
+        let (fill, _, _) = self.colors(p);
+        let c = if self.kind == RefKind::CurrentBranch {
+            p.accent
+        } else {
+            p.text_dim
+        };
+        p.ink(c, fill)
     }
 
     fn label_font(&self) -> FontId {
@@ -546,21 +517,6 @@ impl RefPill {
             label_response(response, &spoken, self.tooltip.as_deref())
         }
     }
-}
-
-/// The current branch's solid pill in lane colour `c`: of `text` and the pane colour, the ink that
-/// reads better on `c`, and `c` moved away from that ink until it reads at 4.5:1.
-fn solid_pill(p: &Palette, c: Color32) -> (Color32, Color32) {
-    let pane = p.s().pane;
-    let (ink, away) = if theme::contrast(p.text, c) >= theme::contrast(pane, c) {
-        (p.text, pane)
-    } else {
-        (pane, p.text)
-    };
-    (0..=20)
-        .map(|step| theme::mix(c, away, crate::ui::int_f32(step) / 40.0))
-        .find(|fill| theme::contrast(ink, *fill) >= 4.5)
-        .map_or((away, ink), |fill| (fill, ink))
 }
 
 impl Widget for RefPill {
@@ -1204,26 +1160,18 @@ pub(crate) fn gallery(ui: &mut Ui) {
         "Ref pills: branch, current, remote, tag, HEAD, merged, +N, clickable",
     );
     row(ui, &mut |ui| {
-        RefPill::from_label(
-            &RefLabel {
-                name: "feature/auth".into(),
-                kind: RefKind::LocalBranch,
-            },
-            1,
-        )
+        RefPill::from_label(&RefLabel {
+            name: "feature/auth".into(),
+            kind: RefKind::LocalBranch,
+        })
         .show(ui);
-        RefPill::new("main", RefKind::CurrentBranch)
-            .lane(0)
-            .show(ui);
-        RefPill::new("origin/main", RefKind::RemoteBranch)
-            .lane(0)
-            .show(ui);
+        RefPill::new("main", RefKind::CurrentBranch).show(ui);
+        RefPill::new("origin/main", RefKind::RemoteBranch).show(ui);
         RefPill::new("v1.0.0", RefKind::Tag)
             .tooltip("Annotated tag")
             .show(ui);
         RefPill::new("HEAD", RefKind::Head).show(ui);
         RefPill::new("release/1.0", RefKind::LocalBranch)
-            .lane(2)
             .upstream(true)
             .show(ui);
         RefOverflow::new(vec!["origin/feature/a".into(), "v0.9.0".into()]).show(ui);
@@ -1231,15 +1179,12 @@ pub(crate) fn gallery(ui: &mut Ui) {
             "feature/a-very-long-branch-name-indeed",
             RefKind::LocalBranch,
         )
-        .lane(3)
         .max_width(150.0)
         .show(ui);
         RefPill::new("feature/graph", RefKind::LocalBranch)
-            .lane(4)
             .clickable()
             .show_forced(ui, ForceState::HOVER);
         RefPill::new("fix/typo", RefKind::LocalBranch)
-            .lane(5)
             .clickable()
             .show_forced(ui, ForceState::FOCUS);
     });
@@ -1338,6 +1283,16 @@ pub(crate) fn gallery(ui: &mut Ui) {
 mod tests {
     use super::*;
     use crate::ui::theme::Style;
+
+    /// Every kind of ref a pill shows.
+    const KINDS: [RefKind; 6] = [
+        RefKind::Head,
+        RefKind::CurrentBranch,
+        RefKind::LocalBranch,
+        RefKind::RemoteBranch,
+        RefKind::Tag,
+        RefKind::Stash,
+    ];
 
     fn ctx() -> egui::Context {
         let ctx = egui::Context::default();
@@ -1484,17 +1439,15 @@ mod tests {
                             );
                         }
                     }
-                    for kind in [RefKind::LocalBranch, RefKind::CurrentBranch, RefKind::Tag] {
-                        for lane in 0..10 {
-                            let pill = RefPill::new("x", kind).lane(lane);
-                            let (fill, _, ink) = pill.colors(p);
-                            for g in grounds {
-                                assert!(
-                                    theme::contrast(ink, theme::over(fill, g)) >= 4.5,
-                                    "{} {style:?} pill {kind:?} lane {lane}",
-                                    p.name
-                                );
-                            }
+                    for kind in KINDS {
+                        let pill = RefPill::new("x", kind);
+                        let (fill, _, ink) = pill.colors(p);
+                        for g in grounds {
+                            assert!(
+                                theme::contrast(ink, theme::over(fill, g)) >= 4.5,
+                                "{} {style:?} pill {kind:?}",
+                                p.name
+                            );
                         }
                     }
                 });
@@ -1502,61 +1455,33 @@ mod tests {
         }
     }
 
-    /// Spec 4.17: a branch pill takes its lane's colour whether it is local or remote (a remote
-    /// branch is not a second, fixed colour), so `main` and `origin/main` on one lane match.
+    /// Every ref pill shares one quiet design (the neutral fill, no ring, the label in the text
+    /// colour), told apart by its glyph; only the checked-out branch's glyph is in the accent.
+    /// Label and glyph read at 4.5:1 on the pill wherever it sits.
     #[test]
-    fn remote_branch_pills_take_their_lane_colour_like_local_ones() {
-        for id in theme::ThemeId::ALL {
-            let p = id.palette();
-            for lane in (0_u16..).take(p.lanes.len()) {
-                let local = RefPill::new("main", RefKind::LocalBranch).lane(lane);
-                let remote = RefPill::new("origin/main", RefKind::RemoteBranch).lane(lane);
-                assert_eq!(remote.color(p), p.lane(lane), "{} lane {lane}", p.name);
-                assert_eq!(remote.color(p), local.color(p), "{} lane {lane}", p.name);
-                let (fill, ring, ink) = remote.colors(p);
-                assert_eq!(fill, Color32::TRANSPARENT, "a remote pill is outlined");
-                assert_eq!(ring, p.s().edge);
-                assert_eq!(ink, p.ink(p.text_dim, Color32::TRANSPARENT));
-                assert_eq!(
-                    remote.glyph_color(p),
-                    p.ink(p.lane(lane), Color32::TRANSPARENT),
-                    "its cloud carries the lane"
-                );
-            }
-            let tag = RefPill::new("v1.0.0", RefKind::Tag).lane(3);
-            assert_eq!(
-                tag.color(p),
-                p.warning,
-                "{}: tags keep the tag colour",
-                p.name
-            );
-        }
-    }
-
-    /// The current branch is the one solid pill, its label at 4.5:1 on its lane colour; every
-    /// other pill's glyph keeps its lane or tag colour at 4.5:1 on the pill wherever it sits.
-    #[test]
-    fn the_current_branch_is_solid_and_every_glyph_reads() {
+    fn every_ref_pill_shares_one_quiet_design() {
         for id in theme::ThemeId::ALL {
             for contrast in [false, true] {
                 let p = id.shown_palette(contrast);
-                for lane in (0_u16..).take(p.lanes.len()) {
-                    let current = RefPill::new("main", RefKind::CurrentBranch).lane(lane);
-                    let (fill, _, ink) = current.colors(p);
-                    assert_eq!(fill.a(), 255, "{} lane {lane}: solid", p.name);
-                    assert!(
-                        theme::contrast(ink, fill) >= 4.5,
-                        "{} lane {lane}: {:.2}:1",
-                        p.name,
-                        theme::contrast(ink, fill)
-                    );
-                    for kind in [RefKind::LocalBranch, RefKind::RemoteBranch, RefKind::Tag] {
-                        let pill = RefPill::new("x", kind).lane(lane);
-                        let (fill, _, _) = pill.colors(p);
-                        let glyph = pill.glyph_color(p);
-                        for bg in p.component_surfaces(p.s()) {
-                            let r = theme::contrast(glyph, theme::over(fill, bg));
-                            assert!(r >= 4.5, "{} {kind:?} lane {lane}: {r:.2}:1", p.name);
+                let branch = RefPill::new("x", RefKind::LocalBranch);
+                for kind in KINDS {
+                    let pill = RefPill::new("x", kind);
+                    let (fill, ring, ink) = pill.colors(p);
+                    assert_eq!(fill, p.s().badge, "{} {kind:?}", p.name);
+                    assert_eq!(ring, Color32::TRANSPARENT, "{} {kind:?}", p.name);
+                    if kind != RefKind::Head {
+                        assert_eq!(ink, branch.colors(p).2, "{} {kind:?}", p.name);
+                    }
+                    let glyph = pill.glyph_color(p);
+                    if kind == RefKind::CurrentBranch {
+                        assert_eq!(glyph, p.ink(p.accent, fill), "{}", p.name);
+                    } else {
+                        assert_eq!(glyph, branch.glyph_color(p), "{} {kind:?}", p.name);
+                    }
+                    for bg in p.component_surfaces(p.s()) {
+                        for (what, c) in [("label", ink), ("glyph", glyph)] {
+                            let r = theme::contrast(c, theme::over(fill, bg));
+                            assert!(r >= 4.5, "{} {kind:?} {what}: {r:.2}:1", p.name);
                         }
                     }
                 }

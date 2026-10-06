@@ -523,7 +523,6 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             let selected = tab.selected_commit == Some(c.oid);
             let g = snap.graph.get(ci);
             let is_head = snap.head.oid == Some(c.oid);
-            let lane = g.map_or(0, |g| g.color);
             let picture = (avatars && show_author).then(|| {
                 // Copied only for an author whose lookup is due, not for every row every frame.
                 if tab.avatars.wants_now(&c.author.email) {
@@ -542,7 +541,7 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 if x > desc_right - 40.0 {
                     break;
                 }
-                let pill = RefPill::from_label(l, lane);
+                let pill = RefPill::from_label(l);
                 let left = x;
                 x += pill.width(ui) + PILL_GAP;
                 pills.push((pill, left));
@@ -2107,66 +2106,48 @@ mod tests {
                 RefKind::Tag,
                 RefKind::Head,
             ] {
-                for lane in (0u16..).take(p.lanes.len()) {
-                    let label = RefLabel {
-                        name: "feature/readability".into(),
-                        kind,
-                    };
-                    let pill = RefPill::from_label(&label, lane);
-                    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                        pill.paint(ui, ui.painter(), 20.0, 30.0);
-                    });
-                    output.textures_delta.clear();
-                    let text = output
-                        .shapes
-                        .iter()
-                        .filter_map(|shape| match &shape.shape {
-                            egui::Shape::Text(text) => Some(text),
-                            _ => None,
-                        })
-                        .find(|text| ["feature/readability", "HEAD"].contains(&text.galley.text()))
-                        .expect("painted ref text");
-                    let actual = text
-                        .override_text_color
-                        .unwrap_or(text.galley.job.sections[0].format.color);
-                    let (fill, _, ink) = pill.colors(p);
-                    for surface in p.component_surfaces(p.s()) {
-                        let ratio = theme::contrast(actual, theme::over(fill, surface));
-                        assert!(
-                            ratio >= 4.5,
-                            "{} {kind:?} lane {lane}: painted ink {actual:?} contrast {ratio:.2}:1",
-                            p.name
-                        );
-                    }
-                    assert_eq!(
-                        actual, ink,
-                        "{} {kind:?}: the label paints its own ink",
+                let label = RefLabel {
+                    name: "feature/readability".into(),
+                    kind,
+                };
+                let pill = RefPill::from_label(&label);
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    pill.paint(ui, ui.painter(), 20.0, 30.0);
+                });
+                output.textures_delta.clear();
+                let text = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) => Some(text),
+                        _ => None,
+                    })
+                    .find(|text| ["feature/readability", "HEAD"].contains(&text.galley.text()))
+                    .expect("painted ref text");
+                let actual = text
+                    .override_text_color
+                    .unwrap_or(text.galley.job.sections[0].format.color);
+                let (fill, _, ink) = pill.colors(p);
+                for surface in p.component_surfaces(p.s()) {
+                    let ratio = theme::contrast(actual, theme::over(fill, surface));
+                    assert!(
+                        ratio >= 4.5,
+                        "{} {kind:?}: painted ink {actual:?} contrast {ratio:.2}:1",
                         p.name
                     );
-                    if kind == RefKind::Head {
-                        assert_eq!(actual, p.text_dim, "{}: HEAD stays neutral", p.name);
-                    } else if kind == RefKind::CurrentBranch {
-                        assert_eq!(
-                            fill.a(),
-                            255,
-                            "{} lane {lane}: the current branch is solid",
-                            p.name
-                        );
-                    } else {
-                        // A remote branch is the quieter outline, in the dim text colour.
-                        let text = if kind == RefKind::RemoteBranch {
-                            p.text_dim
-                        } else {
-                            p.text
-                        };
-                        assert_eq!(
-                            actual,
-                            p.ink(text, fill),
-                            "{} {kind:?} lane {lane}: the label is in the text colour",
-                            p.name
-                        );
-                    }
                 }
+                assert_eq!(
+                    actual, ink,
+                    "{} {kind:?}: the label paints its own ink",
+                    p.name
+                );
+                // One quiet design: the text colour on the neutral fill, HEAD in the dim one.
+                let text = if kind == RefKind::Head {
+                    p.text_dim
+                } else {
+                    p.text
+                };
+                assert_eq!(actual, p.ink(text, fill), "{} {kind:?}", p.name);
             }
         }
     }
