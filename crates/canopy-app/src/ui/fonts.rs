@@ -1,4 +1,4 @@
-//! Bundled fonts: Inter for the interface, JetBrains Mono for code and ids, Phosphor for icons
+//! Bundled fonts: Inter for the interface, JetBrains Mono NL (no ligatures) for code and ids, Phosphor for icons
 //! (regular, and filled for themes that fill active icons), and two theme heading faces: Canopy
 //! Serif Bold (Paper) and Atkinson Hyperlegible Bold (Contrast).
 //! Licences: `crates/canopy-app/assets/fonts/README.md`.
@@ -34,7 +34,7 @@ pub fn install(ctx: &egui::Context) {
     );
     add(
         "jetbrains-mono",
-        include_bytes!("../../assets/fonts/JetBrainsMono-Regular.ttf"),
+        include_bytes!("../../assets/fonts/JetBrainsMonoNL-Regular.ttf"),
     );
     add(
         "canopy-serif-bold",
@@ -151,5 +151,45 @@ mod tests {
         assert!(star > 0.0);
         // Text in the filled family stays Inter (Phosphor maps letters to blank ligature glyphs).
         assert!((fill_text - text).abs() < 0.01);
+    }
+
+    /// Code shows the characters typed: in monospace, `->`, `!=`, `<=` and `::` draw each character
+    /// with the glyph it has on its own (no programming ligatures), so what a diff shows is what
+    /// copying it gives.
+    #[test]
+    fn code_text_has_no_ligatures() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let font = FontId::monospace(13.0);
+        let mut mismatches = Vec::new();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let glyphs = |text: &str| {
+                let galley = ui.painter().layout_no_wrap(
+                    text.to_owned(),
+                    font.clone(),
+                    egui::Color32::WHITE,
+                );
+                galley.rows[0]
+                    .glyphs
+                    .iter()
+                    .map(|g| (g.chr, g.uv_rect.offset, g.uv_rect.size))
+                    .collect::<Vec<_>>()
+            };
+            for pair in ["->", "!=", "<=", "::", "=>", "==", "&&", "/*"] {
+                let joined = glyphs(&format!("x{pair}x"));
+                // Each character alone at the same position (spaces join with nothing), so the
+                // same subpixel offset picks the same atlas entry.
+                let apart: Vec<_> = pair
+                    .chars()
+                    .enumerate()
+                    .map(|(i, c)| glyphs(&format!("x{}{c} x", " ".repeat(i)))[1 + i])
+                    .collect();
+                if joined[1..=2] != apart[..] {
+                    mismatches.push(pair);
+                }
+            }
+        });
+        out.textures_delta.clear();
+        assert!(mismatches.is_empty(), "ligatures in code: {mismatches:?}");
     }
 }

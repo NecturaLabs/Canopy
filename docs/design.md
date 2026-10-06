@@ -93,7 +93,10 @@ Avatar backgrounds are picked from the same ten colours by a stable hash of the 
 ## Typography
 
 Inter for interface text, JetBrains Mono for SHAs, diffs, paths in diffs and anything that must
-align. Both are bundled (SIL OFL 1.1), so metrics are consistent on Linux, macOS and Windows.
+align. Both are bundled (SIL OFL 1.1), so metrics are consistent on Linux, macOS and Windows. The
+mono face is JetBrains Mono NL, the build without programming ligatures: a version-control client
+shows exact text, so `->`, `!=` or `::` draw as the characters typed and look like what copying
+them gives (`fonts::tests::code_text_has_no_ligatures`).
 Inter Regular, Medium and SemiBold distinguish body text, controls and headings; monospace is
 reserved for code and identifiers. Sizes scale with the interface zoom and display density.
 
