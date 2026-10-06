@@ -1404,39 +1404,52 @@ fn author_picture_lookups_tell_an_unpushed_commit_from_a_hidden_repository() {
     let list = format!("/repos/octo/hello/commits?sha={sha}&per_page=1");
     let client = github(&server, None);
     // GitHub answers 404 on the list both for a commit it does not have and for a repository it
-    // will not show; only the repository itself tells them apart.
-    let hidden = client.author_avatar(sha, "a@example.com").unwrap_err();
+    // will not show. The lookup reports the 404 as it came; the caller asks about the repository
+    // separately, once it has checked its off switch and budget.
+    let miss = client.author_avatar(sha, "a@example.com").unwrap_err();
+    assert!(matches!(miss, Error::NotFound(_)), "{miss:?}");
+    assert!(!is_unknown_commit(&miss));
+    let targets = |server: &Server| -> Vec<String> {
+        server.requests().into_iter().map(|r| r.target).collect()
+    };
+    assert_eq!(targets(&server), [list.as_str()]);
+    let hidden = client.author_repository().unwrap_err();
     assert!(matches!(hidden, Error::NotFound(_)), "{hidden:?}");
-    assert!(!is_unknown_commit(&hidden));
     server.route("GET", "/repos/octo/hello", 200, r#"{"id":1}"#);
-    let unknown = client.author_avatar(sha, "a@example.com").unwrap_err();
-    assert!(is_unknown_commit(&unknown), "{unknown:?}");
-    let targets: Vec<String> = server.requests().into_iter().map(|r| r.target).collect();
+    client
+        .author_repository()
+        .expect("a visible repository: the commit is the unknown one");
     assert_eq!(
-        targets,
-        [
-            list.as_str(),
-            "/repos/octo/hello",
-            &list,
-            "/repos/octo/hello"
-        ]
+        targets(&server),
+        [list.as_str(), "/repos/octo/hello", "/repos/octo/hello"]
     );
-    // Only a 404 asks about the repository; any other refusal is reported as it came.
-    server.route(
+    // The repository check carries the token only to its own host and follows no redirect.
+    let signed_in = github(&server, Some(TOKEN));
+    signed_in.author_repository().unwrap();
+    assert_eq!(
+        server.requests()[3].header("authorization"),
+        Some(&*format!("Bearer {TOKEN}"))
+    );
+    server.route_with_headers(
         "GET",
-        "/repos/octo/hello/commits",
-        401,
-        r#"{"message":"Bad credentials"}"#,
+        "/repos/octo/hello",
+        301,
+        &[("Location", "https://example.invalid/moved")],
+        "",
     );
     assert!(matches!(
-        client.author_avatar(sha, "a@example.com"),
-        Err(Error::Unauthorized(_))
+        signed_in.author_repository(),
+        Err(Error::Api { status: 301, .. })
     ));
-    assert_eq!(server.requests().len(), 5);
-    // GitLab looks authors up by email, with no commit to be missing.
+    // GitLab looks authors up by email, with no repository to ask about.
     let gitlab_miss = gitlab(&server, None)
         .author_avatar(sha, "a@example.com")
         .unwrap_err();
     assert!(matches!(gitlab_miss, Error::NotFound(_)));
-    assert_eq!(server.requests().len(), 6);
+    let count = server.requests().len();
+    assert!(matches!(
+        gitlab(&server, None).author_repository(),
+        Err(Error::NotFound(_))
+    ));
+    assert_eq!(server.requests().len(), count, "GitLab sends nothing");
 }

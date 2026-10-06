@@ -561,10 +561,6 @@ fn prune(dir: &Path, now: SystemTime, max_age: Duration) -> usize {
         .count()
 }
 
-#[expect(
-    clippy::map_err_ignore,
-    reason = "a failed picture is cached as a miss; why it failed is not kept"
-)]
 fn load_at(
     path: Option<std::path::PathBuf>,
     client: &canopy_hosting::Client,
@@ -580,73 +576,18 @@ fn load_at(
     let due = old.as_ref().is_none_or(|r| !fresh(r.checked_at, now));
     let mut note = None;
     let (record, retry_at) = refresh(old, now, || {
-        use canopy_hosting::Error;
-        if !enabled.load(Ordering::SeqCst) {
-            return Err(Miss::Skipped);
-        }
         let limit = if client.has_token() {
             LOOKUPS_PER_HOUR_SIGNED_IN
         } else {
             LOOKUPS_PER_HOUR_ANONYMOUS
         };
-        let take = || {
+        let mut take = || {
             BUDGET
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take(now, limit)
         };
-        take().map_err(Miss::Later)?;
-        let unreachable = |note: &mut Option<Note>| {
-            *note = Some(Note::Unreachable);
-            Miss::Later(now + RETRY_UNREACHABLE_SECS)
-        };
-        let avatar = client.author_avatar(&oid.to_string(), email).map_err(|e| {
-            if matches!(e, Error::NotFound(_)) || canopy_hosting::avatars::is_unknown_commit(&e) {
-                // GitHub asked for the repository too, to tell these apart.
-                let _ = take();
-            }
-            match e {
-                Error::RateLimited { reset } => Miss::Later(
-                    reset.map_or(now + HOUR_SECS, |at| at.clamp(now + 60, now + CACHE_SECS)),
-                ),
-                Error::Network(_) => unreachable(&mut note),
-                Error::Api { status, .. } if status >= 500 => unreachable(&mut note),
-                e if canopy_hosting::avatars::is_unknown_commit(&e) => {
-                    note = Some(Note::UnknownCommit);
-                    Miss::Kept
-                }
-                Error::NotFound(_) => {
-                    note = Some(Note::Blocked(Blocked::NotFound));
-                    Miss::Kept
-                }
-                Error::Unauthorized(message) => {
-                    note = Some(Note::Blocked(Blocked::Refused(message)));
-                    Miss::Kept
-                }
-                Error::Api { status, .. } if (300..400).contains(&status) => {
-                    note = Some(Note::Blocked(Blocked::Moved));
-                    Miss::Kept
-                }
-                Error::Api { .. } | Error::Parse(_) => Miss::Failed,
-            }
-        })?;
-        if !enabled.load(Ordering::SeqCst) {
-            return Err(Miss::Skipped);
-        }
-        let Some(avatar) = avatar else {
-            return Err(Miss::Failed);
-        };
-        let bytes = avatar.download().map_err(|e| match e {
-            Error::Network(_) => unreachable(&mut note),
-            Error::Api { status, .. } if status >= 500 => unreachable(&mut note),
-            _ => Miss::Failed,
-        })?;
-        let image = decode(&bytes).map_err(|_| Miss::Failed)?;
-        Ok(image
-            .pixels
-            .iter()
-            .flat_map(egui::Color32::to_array)
-            .collect())
+        fetch(client, oid, email, enabled, now, &mut take, &mut note)
     });
     if due
         && record.checked_at == now
@@ -664,6 +605,93 @@ fn load_at(
         retry_at,
         note,
     }
+}
+
+/// Asks the provider about one author and downloads the picture. Before each request it checks
+/// that pictures are still on and takes one lookup from the hourly budget (`take`; the download
+/// is not a provider request). What it learns about the repository goes into `note`.
+#[expect(
+    clippy::map_err_ignore,
+    reason = "a failed picture is cached as a miss; why it failed is not kept"
+)]
+fn fetch(
+    client: &canopy_hosting::Client,
+    oid: Oid,
+    email: &str,
+    enabled: &AtomicBool,
+    now: i64,
+    take: &mut dyn FnMut() -> Result<(), i64>,
+    note: &mut Option<Note>,
+) -> Result<Vec<u8>, Miss> {
+    use canopy_hosting::Error;
+    let mut may_ask = || {
+        if !enabled.load(Ordering::SeqCst) {
+            return Err(Miss::Skipped);
+        }
+        take().map_err(Miss::Later)
+    };
+    may_ask()?;
+    let avatar = match client.author_avatar(&oid.to_string(), email) {
+        Ok(avatar) => avatar,
+        // GitHub answers 404 both for a commit it does not have and for a repository it will not
+        // show; only the repository itself tells them apart.
+        Err(Error::NotFound(_)) if client.kind() == canopy_core::forge::ForgeKind::GitHub => {
+            may_ask()?;
+            return Err(match client.author_repository() {
+                Ok(()) => {
+                    *note = Some(Note::UnknownCommit);
+                    Miss::Kept
+                }
+                Err(e) => miss(e, now, note),
+            });
+        }
+        Err(e) => return Err(miss(e, now, note)),
+    };
+    if !enabled.load(Ordering::SeqCst) {
+        return Err(Miss::Skipped);
+    }
+    let Some(avatar) = avatar else {
+        return Err(Miss::Failed);
+    };
+    let bytes = avatar.download().map_err(|e| match e {
+        Error::Network(_) => pause_unreachable(now, note),
+        Error::Api { status, .. } if status >= 500 => pause_unreachable(now, note),
+        _ => Miss::Failed,
+    })?;
+    let image = decode(&bytes).map_err(|_| Miss::Failed)?;
+    Ok(image
+        .pixels
+        .iter()
+        .flat_map(egui::Color32::to_array)
+        .collect())
+}
+
+/// What a failed provider request means for the author's record and the tab.
+fn miss(error: canopy_hosting::Error, now: i64, note: &mut Option<Note>) -> Miss {
+    use canopy_hosting::Error;
+    let mut kept = |about| {
+        *note = Some(about);
+        Miss::Kept
+    };
+    match error {
+        Error::RateLimited { reset } => {
+            Miss::Later(reset.map_or(now + HOUR_SECS, |at| at.clamp(now + 60, now + CACHE_SECS)))
+        }
+        Error::Network(_) => pause_unreachable(now, note),
+        Error::Api { status, .. } if status >= 500 => pause_unreachable(now, note),
+        e if canopy_hosting::avatars::is_unknown_commit(&e) => kept(Note::UnknownCommit),
+        Error::NotFound(_) => kept(Note::Blocked(Blocked::NotFound)),
+        Error::Unauthorized(message) => kept(Note::Blocked(Blocked::Refused(message))),
+        Error::Api { status, .. } if (300..400).contains(&status) => {
+            kept(Note::Blocked(Blocked::Moved))
+        }
+        Error::Api { .. } | Error::Parse(_) => Miss::Failed,
+    }
+}
+
+fn pause_unreachable(now: i64, note: &mut Option<Note>) -> Miss {
+    *note = Some(Note::Unreachable);
+    Miss::Later(now + RETRY_UNREACHABLE_SECS)
 }
 
 /// The record after one due refresh, and when to ask a provider again if it was out of requests
@@ -959,10 +987,16 @@ mod tests {
     struct Stub {
         base: String,
         routes: Routes,
+        /// Every request target, in order.
+        seen: std::sync::Arc<Mutex<Vec<String>>>,
+        /// A path whose request turns the switch off before it is answered, as a user can while
+        /// a lookup is in flight.
+        switch_off: Switch,
     }
 
     /// Canned answers by request target: status and body.
     type Routes = std::sync::Arc<Mutex<HashMap<String, (u16, Vec<u8>)>>>;
+    type Switch = std::sync::Arc<Mutex<Option<(String, std::sync::Arc<AtomicBool>)>>>;
 
     impl Stub {
         fn start() -> Self {
@@ -971,6 +1005,10 @@ mod tests {
             let base = format!("http://{}", listener.local_addr().unwrap());
             let routes = Routes::default();
             let table = std::sync::Arc::clone(&routes);
+            let seen = std::sync::Arc::<Mutex<Vec<String>>>::default();
+            let log = std::sync::Arc::clone(&seen);
+            let switch_off = Switch::default();
+            let switch = std::sync::Arc::clone(&switch_off);
             std::thread::spawn(move || {
                 for stream in listener.incoming().flatten() {
                     let mut reader = BufReader::new(&stream);
@@ -990,6 +1028,12 @@ mod tests {
                         }
                     }
                     let path = target.split('?').next().unwrap_or_default();
+                    log.lock().unwrap().push(target.clone());
+                    if let Some((at, on)) = &*switch.lock().unwrap()
+                        && at == path
+                    {
+                        on.store(false, Ordering::SeqCst);
+                    }
                     let (status, body) = {
                         let table = table.lock().unwrap();
                         table
@@ -1007,7 +1051,16 @@ mod tests {
                     let _ = out.write_all(&body);
                 }
             });
-            Self { base, routes }
+            Self {
+                base,
+                routes,
+                seen,
+                switch_off,
+            }
+        }
+
+        fn seen(&self) -> Vec<String> {
+            self.seen.lock().unwrap().clone()
         }
 
         fn route(&self, target: &str, status: u16, body: impl Into<Vec<u8>>) {
@@ -1209,6 +1262,71 @@ mod tests {
         assert!(
             none.image.is_none() && path.exists(),
             "a real miss is cached for 12 hours"
+        );
+    }
+
+    #[test]
+    fn turning_pictures_off_during_a_lookup_stops_the_repository_check() {
+        let stub = Stub::start();
+        stub.route("/repos/octo/hello", 200, "{}");
+        let on = std::sync::Arc::new(AtomicBool::new(true));
+        // The user turns pictures off while GitHub is answering the commit lookup with a 404.
+        *stub.switch_off.lock().unwrap() = Some((
+            "/repos/octo/hello/commits".to_owned(),
+            std::sync::Arc::clone(&on),
+        ));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("picture.json");
+        let skipped = load_at(
+            Some(path.clone()),
+            &stub.client(Some("t")),
+            Oid::from_str(UNPUSHED).unwrap(),
+            "a@example.com",
+            &on,
+        );
+        assert_eq!(
+            stub.seen(),
+            [format!(
+                "/repos/octo/hello/commits?sha={UNPUSHED}&per_page=1"
+            )],
+            "nothing more is asked once pictures are off"
+        );
+        assert_eq!(skipped.note, None);
+        assert!(skipped.image.is_none() && !path.exists());
+    }
+
+    #[test]
+    fn the_repository_check_is_charged_to_the_budget_before_it_is_sent() {
+        let stub = Stub::start();
+        stub.route("/repos/octo/hello", 200, "{}");
+        let mut granted = 0;
+        // The budget has room for the commit lookup only.
+        let mut take = || {
+            granted += 1;
+            if granted == 1 {
+                Ok(())
+            } else {
+                Err(T0 + HOUR_SECS)
+            }
+        };
+        let mut note = None;
+        let result = fetch(
+            &stub.client(None),
+            Oid::from_str(UNPUSHED).unwrap(),
+            "a@example.com",
+            &AtomicBool::new(true),
+            T0,
+            &mut take,
+            &mut note,
+        );
+        assert_eq!(result, Err(Miss::Later(T0 + HOUR_SECS)));
+        assert_eq!(note, None);
+        assert_eq!(
+            stub.seen(),
+            [format!(
+                "/repos/octo/hello/commits?sha={UNPUSHED}&per_page=1"
+            )],
+            "the repository check waits for the next hour"
         );
     }
 

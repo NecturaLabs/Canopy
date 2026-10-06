@@ -117,6 +117,15 @@ impl Client {
         crate::avatars::lookup(&self.http, &self.forge, &self.project, commit, email)
     }
 
+    /// Whether the host shows this repository, to tell apart why [`Client::author_avatar`] failed
+    /// with [`crate::Error::NotFound`] on GitHub: `Ok` means the host lacks the commit, an error
+    /// says what is wrong with the repository or the token. A separate request, so the caller can
+    /// check its off switch and request budget first. GitLab sends nothing and answers
+    /// [`crate::Error::NotFound`].
+    pub fn author_repository(&self) -> Result<()> {
+        crate::avatars::repository(&self.http, self.kind, &self.project)
+    }
+
     /// The login (GitHub) or username (GitLab) the token belongs to. Fails with
     /// [`crate::Error::Unauthorized`] without a valid token.
     pub fn viewer(&self) -> Result<String> {
