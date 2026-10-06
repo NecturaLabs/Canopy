@@ -10,7 +10,6 @@
 //! are instant.
 
 use egui::accesskit::{Invalid, Role};
-use egui::epaint::TextShape;
 use egui::{
     Align, Align2, Color32, CornerRadius, Event, FontFamily, FontId, Id, Key, Layout, Modifiers,
     PointerButton, Popup, PopupCloseBehavior, RectAlign, Response, Sense, Ui, UiBuilder, Widget,
@@ -364,46 +363,54 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
         };
         let error = self.error.as_deref().filter(|e| !e.is_empty());
         if ui.is_rect_visible(rect) {
-            // The trigger is a field (spec 4.2's well, edge and halo), so a form's selects and
-            // text fields read as one set; the caret says it opens a list.
+            // The trigger is a raised control, like a secondary button beside it; the up-down
+            // caret says it opens a list.
             let painter = if enabled {
                 ui.painter().clone()
             } else {
                 super::content_painter(ui)
             };
             let radius = CornerRadius::same(m.radius);
-            let look = field::look(p, style);
-            let ring_t = open_t.max(ist.focus);
-            let (fill, edge) = if enabled {
-                let fill = look
-                    .wash
-                    .lerp_to_gamma(look.hover_wash, ist.hover.max(ist.press) * (1.0 - open_t));
-                let edge = if error.is_some() {
-                    (p.danger_base, p.danger_base)
+            let ring_t = ist.focus;
+            if enabled {
+                let fill = super::button::blend(
+                    super::button::blend(s.raised, s.raised_hover, ist.hover.max(open_t)),
+                    s.raised_pressed,
+                    ist.press,
+                );
+                let ring = if error.is_some() {
+                    p.danger_base
                 } else {
-                    let to = |c: Color32| {
-                        c.lerp_to_gamma(p.control_border, ist.hover)
-                            .lerp_to_gamma(p.focus, ring_t)
-                    };
-                    (to(look.side), to(look.base))
+                    s.raised_edge
                 };
-                (fill, edge)
+                paint::surface(
+                    &painter,
+                    rect,
+                    radius,
+                    p,
+                    style,
+                    Elevation::Control,
+                    fill,
+                    Some(ring),
+                );
+                let focus = if error.is_some() {
+                    p.danger_base
+                } else {
+                    p.focus
+                };
+                if ring_t > 0.0 {
+                    paint::focus_ring(
+                        &painter,
+                        rect,
+                        radius,
+                        focus.gamma_multiply(ring_t),
+                        Color32::TRANSPARENT,
+                    );
+                }
             } else {
-                (s.disabled_fill, (s.disabled_edge, s.disabled_edge))
-            };
-            painter.rect_filled(rect, radius, fill);
-            let material = p.material(style, Elevation::Field);
-            if enabled && material.recess > 0 {
-                paint::recess(&painter, rect, radius, p.shadow, material.recess);
+                paint::fill(&painter, rect, radius, Fill::flat(s.disabled_fill));
+                paint::rim(&painter, rect, radius, s.disabled_edge);
             }
-            let halo = if !enabled {
-                None
-            } else if error.is_some() {
-                Some((p.danger_base, field::ERROR_HALO_ALPHA, 1.0))
-            } else {
-                (ring_t > 0.0).then_some((p.focus, field::FOCUS_HALO_ALPHA, ring_t))
-            };
-            field::paint_box(&painter, rect, radius, edge, halo);
             // The caret brightens while the pointer is on the trigger or the list is open.
             let (faint, placeholder, text_color) = if enabled {
                 (
@@ -426,16 +433,11 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 );
             } else {
                 let g = painter.layout_no_wrap(
-                    icon::CARET_DOWN.to_owned(),
-                    FontId::proportional(m.icon_md),
+                    icon::CARET_UP_DOWN.to_owned(),
+                    FontId::proportional(m.icon_sm),
                     faint,
                 );
-                let pos = pos2(caret_x, rect.center().y) - g.size() / 2.0;
-                let angle = std::f32::consts::PI * open_t;
-                painter.add(
-                    TextShape::new(pos, g, faint)
-                        .with_angle_and_anchor(angle, Align2::CENTER_CENTER),
-                );
+                painter.galley(pos2(caret_x, rect.center().y) - g.size() / 2.0, g, faint);
             }
             let (text, color) = match chosen {
                 Some(i) => (self.options[i].1.to_owned(), text_color),

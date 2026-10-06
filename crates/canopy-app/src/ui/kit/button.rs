@@ -47,7 +47,7 @@ impl ButtonKind {
 }
 
 /// `a` moved towards `b` by `t`, both ends.
-fn blend(a: Fill, b: Fill, t: f32) -> Fill {
+pub(super) fn blend(a: Fill, b: Fill, t: f32) -> Fill {
     if t <= 0.0 {
         return a;
     }
