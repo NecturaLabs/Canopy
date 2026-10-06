@@ -959,22 +959,45 @@ pub(crate) fn popup_origin(rect: Rect, anchor: Rect) -> (Pos2, Vec2) {
 
 // ---------------------------------------------------------------------------------- dialog
 
-/// A dialog's width: confirmations or forms (spec 2.5).
+/// A dialog's width: confirmations or forms (spec 2.5), or a document to read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DialogWidth {
     #[default]
     Confirm,
     Form,
+    /// A document (the terms, the privacy policy): its text at the [`reading_measure`] inside
+    /// the dialog's padding, never wider than the [`modal_room`].
+    Reading,
 }
 
 impl DialogWidth {
-    pub fn points(self) -> f32 {
+    /// The card's width in points, before a small window narrows it further.
+    pub fn points(self, ctx: &Context) -> f32 {
         let m = theme::metrics();
         match self {
             Self::Confirm => m.dialog_width,
             Self::Form => m.dialog_width_form,
+            Self::Reading => {
+                (reading_measure(ctx) + 2.0 * m.dialog_pad).min(modal_room(ctx).width())
+            }
         }
     }
+}
+
+/// How many characters of prose a line at the reading measure holds.
+pub const READING_CHARS: f32 = 70.0;
+
+/// The width of a line of document text (`subtitle_size`) holding [`READING_CHARS`] characters
+/// of ordinary prose, measured on a sample sentence rather than one glyph.
+pub fn reading_measure(ctx: &Context) -> f32 {
+    const SAMPLE: &str = "Canopy sends crash data only if you agree, and asks before it sends.";
+    let font = FontId::proportional(theme::metrics().subtitle_size);
+    let width = ctx.fonts_mut(|f| {
+        f.layout_no_wrap(SAMPLE.to_owned(), font, Color32::PLACEHOLDER)
+            .size()
+            .x
+    });
+    (width / crate::ui::count_f32(SAMPLE.chars().count()) * READING_CHARS).round()
 }
 
 /// What the user did with a dialog this frame.
@@ -1253,7 +1276,7 @@ impl<'a> Dialog<'a> {
         let m = theme::metrics();
         let screen = ctx.content_rect();
         let w = width
-            .points()
+            .points(&ctx)
             .min(screen.width() - DIALOG_MARGIN)
             .min(ui.available_width().max(DISC * 4.0));
         let pad = m.dialog_pad;
@@ -1671,6 +1694,43 @@ pub(crate) fn gallery(ui: &mut Ui) {
                 .show(ui.ctx());
             if result != DialogResult::Open {
                 ui.ctx().data_mut(|d| d.remove::<bool>(open_key));
+            }
+        }
+        let read_key = ui.id().with("g-live-reading-open");
+        if Button::new("Open document")
+            .id_salt("g-live-reading")
+            .show(ui)
+            .clicked()
+        {
+            ui.ctx().data_mut(|d| d.insert_temp(read_key, true));
+        }
+        if ui
+            .ctx()
+            .data(|d| d.get_temp::<bool>(read_key).unwrap_or(false))
+        {
+            let result = Dialog::new(read_key)
+                .title("Privacy Policy")
+                .closable()
+                .width(DialogWidth::Reading)
+                .body(|ui| {
+                    for text in [
+                        "Canopy runs on your machine. It talks to the git executable for your \
+                         repositories and, only when you use those features, to GitHub or \
+                         GitLab for pull requests and author pictures.",
+                        "A reading dialog sets its text at the reading measure, about seventy \
+                         characters a line, so a long document reads comfortably at any \
+                         window width.",
+                    ] {
+                        ui.label(RichText::new(text).size(m.subtitle_size).color(p.text));
+                        ui.add_space(theme::SM);
+                    }
+                })
+                .footer(|f| {
+                    f.confirm("Close");
+                })
+                .show(ui.ctx());
+            if result != DialogResult::Open {
+                ui.ctx().data_mut(|d| d.remove::<bool>(read_key));
             }
         }
     });
@@ -2255,6 +2315,86 @@ mod tests {
         assert!(
             card.bottom() <= screen.bottom() - m.status_bar_height,
             "{card:?}"
+        );
+    }
+
+    /// Override O3: a reading dialog is the reading measure plus its padding wide, the measure
+    /// holds about `READING_CHARS` characters of prose, and a narrow window keeps the card
+    /// inside the modal room.
+    #[test]
+    fn a_reading_dialog_sets_its_text_at_the_measure_within_the_modal_room() {
+        let ctx = context();
+        let m = theme::metrics();
+        let card_at = |screen: Rect| {
+            let mut card = Rect::NOTHING;
+            for frame in 0..4 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        time: Some(f64::from(frame)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let _ = Dialog::new("reading")
+                            .title("Privacy Policy")
+                            .width(DialogWidth::Reading)
+                            .body(|ui| {
+                                ui.label("What leaves your machine, and when.");
+                            })
+                            .footer(|f| {
+                                f.confirm("Close");
+                            })
+                            .show(ui.ctx());
+                    },
+                );
+                out.textures_delta.clear();
+                for c in &out.shapes {
+                    if let Shape::Vec(v) = &c.shape {
+                        for s in v {
+                            if let Shape::Rect(r) = s
+                                && r.stroke.width > 0.0
+                                && r.corner_radius == CornerRadius::same(m.radius_lg)
+                            {
+                                card = r.rect;
+                            }
+                        }
+                    }
+                }
+            }
+            card
+        };
+        let wide = card_at(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0)));
+        let measure = reading_measure(&ctx);
+        assert!(
+            (wide.width() - (measure + 2.0 * m.dialog_pad)).abs() < 1.0,
+            "{wide:?} for a measure of {measure}"
+        );
+        // A different 70-character sentence fills the measure to within a tenth.
+        let line = "Pictures are cached for twelve hours, and failures are remembered too.";
+        assert_eq!(line.chars().count(), 70);
+        let prose = ctx.fonts_mut(|f| {
+            f.layout_no_wrap(
+                line.to_owned(),
+                FontId::proportional(m.subtitle_size),
+                Color32::PLACEHOLDER,
+            )
+            .size()
+            .x
+        });
+        assert!((prose / measure - 1.0).abs() < 0.1, "{prose} vs {measure}");
+        let narrow = Rect::from_min_size(Pos2::ZERO, vec2(560.0, 600.0));
+        let card = card_at(narrow);
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(narrow),
+                time: Some(9.0),
+                ..Default::default()
+            },
+            |ui| {
+                let room = modal_room(ui.ctx());
+                assert!(card.is_positive() && card.width() <= room.width() + 0.5);
+                assert!(card.left() >= room.left() - 0.5 && card.right() <= room.right() + 0.5);
+            },
         );
     }
 
