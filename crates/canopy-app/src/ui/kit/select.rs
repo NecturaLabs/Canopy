@@ -1,13 +1,15 @@
 //! [`Select`]: a choice of one value from a list, replacing `egui::ComboBox`. Design spec 4.3.
 //!
-//! The trigger is a Secondary-styled control showing the value and a caret that turns over while
-//! the list is open; the list is a floating menu surface under the trigger (above it when there is
-//! no room). Focus stays on the trigger: Up and Down open the list and move the highlight, Home
-//! and End jump, Enter or Space choose, Esc closes and keeps focus, and typing jumps to the first
-//! option that starts with what was typed (the buffer clears after a second). Opening with the
-//! pointer animates in; opening from the keyboard is instant.
+//! The trigger is drawn as a text field (the same well, edge, hover, focus halo, label, helper and
+//! error as [`super::field`]), so a form's selects and fields read as one set, with the value and
+//! a caret that turns over while the list is open; the list is a floating menu surface under the
+//! trigger (above it when there is no room). Focus stays on the trigger: Up and Down open the list
+//! and move the highlight, Home and End jump, Enter or Space choose, Esc closes and keeps focus,
+//! and typing jumps to the first option that starts with what was typed (the buffer clears after
+//! a second). Opening with the pointer animates in and closing fades out; from the keyboard both
+//! are instant.
 
-use egui::accesskit::Role;
+use egui::accesskit::{Invalid, Role};
 use egui::epaint::TextShape;
 use egui::{
     Align2, Color32, CornerRadius, Event, FontFamily, FontId, Id, Key, Modifiers, PointerButton,
@@ -16,17 +18,13 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use super::button::{disabled_painter, tooltip_text, with_tooltip};
-use super::overlay::{self, Entrance, ExitMotion};
+use super::button::tooltip_text;
+use super::overlay::{self, Entrance, ExitMotion, TooltipExt};
 use super::toggle::{component_id, gallery_caption, gallery_row, remembered};
-use super::{ForceState, Interact, Size, anim, glass, paint};
+use super::{ForceState, Interact, Size, anim, field, glass, paint};
 use crate::ui::motion;
 use crate::ui::theme::{self, Elevation, Fill};
 
-/// Trigger padding: 10 left of the value, 8 right of the caret, 8 between (concept `.k-trigger`).
-const PAD_LEFT: f32 = 10.0;
-const PAD_RIGHT: f32 = 8.0;
-const GAP: f32 = 8.0;
 /// The caret turns over in 0.25 s.
 const CARET_TURN: f32 = 0.25;
 /// The list: 6 below the trigger, 2 wider on each side, at most 8.5 rows tall.
@@ -60,6 +58,8 @@ pub struct Select<'a, T: PartialEq + Clone> {
     label: Option<String>,
     name: Option<String>,
     placeholder: String,
+    helper: Option<String>,
+    error: Option<String>,
     width: Option<f32>,
     size: Size,
     enabled: bool,
@@ -79,6 +79,8 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             label: None,
             name: None,
             placeholder: String::new(),
+            helper: None,
+            error: None,
             width: None,
             size: Size::Md,
             enabled: true,
@@ -103,6 +105,16 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
     /// Shown in `text_faint` when the value is none of the options.
     pub fn placeholder(mut self, text: impl Into<String>) -> Self {
         self.placeholder = text.into();
+        self
+    }
+    /// A hint below the trigger (hidden while there is an error), as a text field shows one.
+    pub fn helper(mut self, text: impl Into<String>) -> Self {
+        self.helper = Some(text.into());
+        self
+    }
+    /// An error below the trigger with a danger edge and halo, as a text field shows one.
+    pub fn error(mut self, text: Option<&str>) -> Self {
+        self.error = text.map(str::to_owned);
         self
     }
     /// Trigger width; the available width by default.
@@ -151,6 +163,18 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
     /// Shows the trigger (and the list while open). The response is the trigger's and reports
     /// `changed` when a new value was chosen.
     pub fn show(self, ui: &mut Ui) -> Response {
+        // Label, trigger and message stack like a text field's, whatever layout holds them.
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                self.show_inner(ui)
+            })
+            .inner
+        })
+        .inner
+    }
+
+    fn show_inner(self, ui: &mut Ui) -> Response {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
         let style = theme::style();
@@ -165,19 +189,17 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
         let width = self.width.unwrap_or_else(|| ui.available_width());
         let chosen = self.options.iter().position(|(v, _)| v == self.value);
 
+        // Labels and text paint at full strength even in a disabled `Ui` (in disabled tokens).
+        let ink = super::content_painter(ui);
         if let Some(text) = &self.label {
-            let g = ui.painter().layout_no_wrap(
+            let color = if enabled { p.text_dim } else { p.disabled_text };
+            let g = ink.layout_no_wrap(
                 text.clone(),
-                FontId::new(12.0, theme::medium()),
-                p.text_dim,
+                FontId::new(m.meta_size, theme::medium()),
+                color,
             );
             let (rect, _) = ui.allocate_exact_size(vec2(width, g.size().y), Sense::hover());
-            if enabled {
-                ui.painter().galley(rect.min, g, p.text_dim);
-            } else {
-                let color = super::disabled_text(p, style);
-                super::content_painter(ui).galley(rect.min, g, color);
-            }
+            ink.galley(rect.min, g, color);
             ui.add_space(m.field_label_gap);
         }
 
@@ -312,47 +334,60 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             Some(_) => 0.0,
             None => anim::ease(&ctx, id.with("kit-select-caret"), open, CARET_TURN),
         };
+        let error = self.error.as_deref().filter(|e| !e.is_empty());
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
-            let radius = CornerRadius::same(m.radius);
-            let body = blend(
-                blend(s.raised, s.raised_hover, ist.hover),
-                s.raised_pressed,
-                ist.press,
-            );
-            let ring = s.raised_edge.lerp_to_gamma(p.focus, open_t);
-            if enabled {
-                paint::surface(
-                    &painter,
-                    rect,
-                    radius,
-                    p,
-                    style,
-                    Elevation::Control,
-                    body,
-                    Some(ring),
-                );
+            // The trigger is a field (spec 4.2's well, edge and halo), so a form's selects and
+            // text fields read as one set; the caret says it opens a list.
+            let painter = if enabled {
+                ui.painter().clone()
             } else {
-                // Disabled like a button: dimmed and flat, the text readable.
-                paint::fill(&painter, rect, radius, body);
-                paint::rim(&painter, rect, radius, ring);
-            }
-            if ist.focus > 0.0 {
-                paint::focus_ring(
-                    &painter,
-                    rect,
-                    radius,
-                    p.focus.gamma_multiply(ist.focus),
-                    Color32::TRANSPARENT,
-                );
-            }
-            let (painter, faint, text_color) = if enabled {
-                (painter, p.text_faint, p.text)
-            } else {
-                let c = super::disabled_text(p, style);
-                (super::content_painter(ui), c, c)
+                super::content_painter(ui)
             };
-            let caret_x = rect.right() - PAD_RIGHT - m.icon_md / 2.0;
+            let radius = CornerRadius::same(m.radius);
+            let look = field::look(p, style);
+            let ring_t = open_t.max(ist.focus);
+            let (fill, edge) = if enabled {
+                let fill = look
+                    .wash
+                    .lerp_to_gamma(look.hover_wash, ist.hover.max(ist.press) * (1.0 - open_t));
+                let edge = if error.is_some() {
+                    (p.danger_base, p.danger_base)
+                } else {
+                    let to = |c: Color32| {
+                        c.lerp_to_gamma(p.control_border, ist.hover)
+                            .lerp_to_gamma(p.focus, ring_t)
+                    };
+                    (to(look.side), to(look.base))
+                };
+                (fill, edge)
+            } else {
+                (s.disabled_fill, (s.disabled_edge, s.disabled_edge))
+            };
+            painter.rect_filled(rect, radius, fill);
+            let material = p.material(style, Elevation::Field);
+            if enabled && material.recess > 0 {
+                paint::recess(&painter, rect, radius, p.shadow, material.recess);
+            }
+            let halo = if !enabled {
+                None
+            } else if error.is_some() {
+                Some((p.danger_base, field::ERROR_HALO_ALPHA, 1.0))
+            } else {
+                (ring_t > 0.0).then_some((p.focus, field::FOCUS_HALO_ALPHA, ring_t))
+            };
+            field::paint_box(&painter, rect, radius, edge, halo);
+            // The caret brightens while the pointer is on the trigger or the list is open.
+            let (faint, placeholder, text_color) = if enabled {
+                (
+                    p.text_faint
+                        .lerp_to_gamma(p.text_dim, ist.hover.max(open_t)),
+                    p.text_faint,
+                    p.text,
+                )
+            } else {
+                (p.disabled_text, p.disabled_text, p.disabled_text)
+            };
+            let caret_x = rect.right() - theme::SM - m.icon_md / 2.0;
             if self.loading {
                 paint::spinner(
                     &painter,
@@ -376,9 +411,9 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             }
             let (text, color) = match chosen {
                 Some(i) => (self.options[i].1.to_owned(), text_color),
-                None => (self.placeholder.clone(), faint),
+                None => (self.placeholder.clone(), placeholder),
             };
-            let max = (caret_x - m.icon_md / 2.0 - GAP - rect.left() - PAD_LEFT).max(0.0);
+            let max = (rect.width() - m.field_pad_x - caret_room(m)).max(0.0);
             let mut job = egui::text::LayoutJob::simple_singleline(
                 text,
                 FontId::new(m.body_size, FontFamily::Proportional),
@@ -387,7 +422,10 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             job.wrap = egui::text::TextWrapping::truncate_at_width(max);
             let g = painter.layout_job(job);
             painter.galley(
-                pos2(rect.left() + PAD_LEFT, rect.center().y - g.size().y / 2.0),
+                pos2(
+                    rect.left() + m.field_pad_x,
+                    rect.center().y - g.size().y / 2.0,
+                ),
                 g,
                 color,
             );
@@ -571,17 +609,70 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             info.current_text_value = Some(value.clone());
             info
         });
+        let description = error.map(str::to_owned).or_else(|| self.helper.clone());
+        let has_error = error.is_some();
         ctx.accesskit_node_builder(trigger.id, |n| {
             n.set_expanded(expanded);
             n.set_has_popup(egui::accesskit::HasPopup::Listbox);
+            if let Some(d) = &description {
+                n.set_description(d.clone());
+            }
+            if has_error {
+                n.set_invalid(Invalid::True);
+            }
         });
+
+        // Helper or error below, as a text field shows them.
+        let message = error
+            .map(|e| (e, true))
+            .or(self.helper.as_deref().map(|h| (h, false)));
+        if let Some((text, is_error)) = message {
+            ui.add_space(m.field_label_gap);
+            let color = if !enabled {
+                p.disabled_text
+            } else if is_error {
+                p.danger
+            } else {
+                p.text_dim
+            };
+            let icon_g = is_error.then(|| {
+                ink.layout_no_wrap(
+                    icon::WARNING_CIRCLE.to_owned(),
+                    FontId::proportional(m.icon_sm),
+                    color,
+                )
+            });
+            let indent = icon_g
+                .as_ref()
+                .map_or(0.0, |g| g.size().x + m.field_label_gap);
+            let g = ink.layout(
+                text.to_owned(),
+                FontId::new(m.meta_size, FontFamily::Proportional),
+                color,
+                (width - indent).max(1.0),
+            );
+            let (row, _) = ui.allocate_exact_size(vec2(width, g.size().y), Sense::hover());
+            if let Some(ig) = icon_g {
+                let first = g.rows.first().map_or(g.size().y, |r| r.rect().height());
+                ink.galley(
+                    pos2(row.left(), row.top() + (first - ig.size().y) / 2.0),
+                    ig,
+                    color,
+                );
+            }
+            ink.galley(pos2(row.left() + indent, row.top()), g, color);
+        }
+
         let tip = tooltip_text(
             enabled,
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
         );
-        with_tooltip(trigger, tip)
+        match tip {
+            Some(t) => trigger.kit_tooltip(t).show(),
+            None => trigger,
+        }
     }
 }
 
@@ -591,23 +682,14 @@ impl<T: PartialEq + Clone> Widget for Select<'_, T> {
     }
 }
 
-/// `a` moved towards `b` by `t`, both ends.
-fn blend(a: Fill, b: Fill, t: f32) -> Fill {
-    if t <= 0.0 {
-        return a;
-    }
-    if t >= 1.0 {
-        return b;
-    }
-    Fill {
-        top: a.top.lerp_to_gamma(b.top, t),
-        bottom: a.bottom.lerp_to_gamma(b.bottom, t),
-    }
-}
-
 /// The trigger of a select whose id was set with `.id(id)`: what `Memory::request_focus` takes.
 pub fn trigger_id(id: Id) -> Id {
     id.with("kit-select-trigger")
+}
+
+/// What the trigger keeps right of its text: a gap, the caret and the inset after it.
+fn caret_room(m: &theme::Metrics) -> f32 {
+    theme::SM + m.icon_md + theme::SM
 }
 
 // ------------------------------------------------------------------------------------- gallery
@@ -620,19 +702,37 @@ const STRATEGIES: [(u8, &str); 3] = [
 
 /// The gallery's selects: live, hover, focus, disabled, loading, placeholder, and one open.
 pub(crate) fn gallery(ui: &mut Ui) {
-    gallery_caption(ui, "Live (pointer or keyboard), with a label");
-    remembered(ui, "select-live", 1_u8, |ui, v| {
-        Select::new(v, &STRATEGIES)
-            .label("Pull strategy")
-            .width(280.0)
-            .tooltip("How Pull combines your work with the remote's")
-            .id_salt("g-sel0")
+    gallery_caption(
+        ui,
+        "Live (pointer or keyboard) with a label and a helper; an error; beside a text field",
+    );
+    gallery_row(ui, |ui| {
+        remembered(ui, "select-live", 1_u8, |ui, v| {
+            Select::new(v, &STRATEGIES)
+                .label("Pull strategy")
+                .helper("Canopy passes it to git on every pull.")
+                .width(280.0)
+                .tooltip("How Pull combines your work with the remote's")
+                .id_salt("g-sel0")
+                .show(ui);
+        });
+        Select::new(&mut 9_u8, &STRATEGIES)
+            .label("Required")
+            .placeholder("Choose a strategy…")
+            .error(Some("Choose how to combine the branches."))
+            .width(240.0)
+            .id_salt("g-sel6")
+            .show(ui);
+        field::TextField::new(&mut "origin".to_owned())
+            .label("Text field, for comparison")
+            .width(200.0)
+            .id_salt("g-sel-field")
             .show(ui);
     });
     ui.add_space(theme::SM);
-    gallery_caption(ui, "Hover, focus, disabled, loading, placeholder, small");
+    let w = 160.0;
+    gallery_caption(ui, "Hover, focus, disabled");
     gallery_row(ui, |ui| {
-        let w = 160.0;
         Select::new(&mut 1_u8, &STRATEGIES)
             .width(w)
             .id_salt("g-sel1")
@@ -647,6 +747,10 @@ pub(crate) fn gallery(ui: &mut Ui) {
             .disabled_reason("Set by the repository's configuration")
             .id_salt("g-sel3")
             .show(ui);
+    });
+    ui.add_space(theme::SM);
+    gallery_caption(ui, "Loading, a placeholder, small");
+    gallery_row(ui, |ui| {
         Select::new(&mut 1_u8, &STRATEGIES)
             .width(w)
             .loading(true)
@@ -678,7 +782,9 @@ pub(crate) fn gallery(ui: &mut Ui) {
             },
         );
     // Room for the open list.
-    ui.add_space(3.0 * theme::metrics().menu_item_height + 2.0 * theme::metrics().menu_pad + 12.0);
+    ui.add_space(
+        3.0 * theme::metrics().menu_item_height + 2.0 * theme::metrics().menu_pad + theme::MD,
+    );
 }
 
 #[cfg(test)]
