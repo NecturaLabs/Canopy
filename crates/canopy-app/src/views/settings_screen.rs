@@ -125,6 +125,18 @@ pub struct SettingsScreen {
     apps_asked: bool,
     /// Launchers whose command field is open although their command is an installed app's.
     custom_launchers: HashSet<Kind>,
+    /// Why the active repository's authors show initials, for Privacy.
+    picture_note: Option<PictureNote>,
+}
+
+/// Why the active repository's authors show initials instead of pictures
+/// (`crate::avatars::explain`, contracts/avatars.md), shown under "Download profile pictures".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PictureNote {
+    pub title: String,
+    pub detail: String,
+    /// A token under Accounts would bring the pictures (`Fix::Accounts`).
+    pub open_accounts: bool,
 }
 
 /// What the user's version-control configuration says, read off the UI thread for the notes
@@ -219,6 +231,18 @@ impl std::fmt::Debug for SettingsScreen {
 }
 
 impl SettingsScreen {
+    /// What Privacy says about the active repository's profile pictures, set each frame.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "set from crate::avatars::explain once fix/avatars is merged (workers/settings.md F4)"
+        )
+    )]
+    pub fn set_picture_note(&mut self, note: Option<PictureNote>) {
+        self.picture_note = note;
+    }
+
     /// The screen opened at `section`.
     pub fn at(section: Section) -> Self {
         Self {
@@ -474,7 +498,18 @@ impl Page<'_, '_> {
                 *tokens_changed |= accounts(ui, screen, settings, tokens, data.forges, actions);
             }
             Section::Updates => updates(ui, settings, data.update, actions),
-            Section::Privacy => privacy(ui, settings, actions, &mut screen.picker),
+            Section::Privacy => {
+                let open_accounts = privacy(
+                    ui,
+                    settings,
+                    actions,
+                    &mut screen.picker,
+                    screen.picture_note.as_ref(),
+                );
+                if open_accounts {
+                    screen.section = Section::Accounts;
+                }
+            }
             Section::Keyboard => keyboard(ui),
             Section::Repository => repository(ui, screen, settings, tokens, data, actions),
         }
@@ -3297,12 +3332,51 @@ fn accounts(
     changed
 }
 
+/// The status line under "Download profile pictures": why the open repository's authors show
+/// initials, and the way to Accounts when a token would fix it.
+fn picture_note(ui: &mut Ui, note: &PictureNote, open_accounts: &std::cell::Cell<bool>) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    ui.add_space(theme::XS);
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = theme::XS;
+        ui.label(
+            RichText::new(icon::INFO)
+                .size(m.meta_size)
+                .color(p.text_dim),
+        );
+        ui.label(
+            RichText::new(&note.title)
+                .size(m.meta_size)
+                .color(p.text_dim),
+        );
+    });
+    ui.add(
+        egui::Label::new(
+            RichText::new(&note.detail)
+                .size(m.meta_size)
+                .color(p.text_faint),
+        )
+        .wrap(),
+    );
+    if note.open_accounts
+        && LinkButton::new("Open Accounts")
+            .text_size(m.meta_size)
+            .show(ui)
+            .clicked()
+    {
+        open_accounts.set(true);
+    }
+}
+
+/// Returns true when "Open Accounts" was clicked.
 fn privacy(
     ui: &mut Ui,
     s: &mut Settings,
     actions: &mut Vec<Action>,
     picker: &mut crate::ui::folder_picker::FolderPicker,
-) {
+    pictures: Option<&PictureNote>,
+) -> bool {
     use crate::ui::legal::Document;
     let p = palette(ui.ctx());
     heading(ui, "Partial clones");
@@ -3329,11 +3403,21 @@ fn privacy(
     }
     row_end(ui);
     heading(ui, "Profile pictures");
-    row_more(
+    let help = "Fetch GitHub or GitLab account pictures for visible authors.";
+    let open_accounts = std::cell::Cell::new(false);
+    let help_text = |ui: &mut Ui| {
+        help_label(ui, help);
+        if let Some(note) = pictures {
+            picture_note(ui, note, &open_accounts);
+        }
+    };
+    row_layout(
         ui,
         "Download profile pictures",
-        "Fetch GitHub or GitLab account pictures for visible authors.",
-        "Sends commit IDs to GitHub or author emails to GitLab. Pictures and failed lookups are cached locally for 12 hours. A failed refresh keeps the previous picture. Turn off to use initials and stop new requests. Also requires Pull and merge requests to be on.",
+        None,
+        help,
+        &help_text,
+        "Sends commit IDs to GitHub or author emails to GitLab. Pictures, and authors without one, are remembered for 12 hours. A failed refresh keeps the previous picture. Turn off to use initials and stop new requests. Also requires Pull and merge requests to be on.",
         |ui| {
             switch(ui, &mut s.download_avatars, "Download profile pictures");
         },
@@ -3446,6 +3530,7 @@ fn privacy(
             }
         },
     );
+    open_accounts.get()
 }
 
 /// The trusted folders, each with a button that stops trusting it.
@@ -3979,6 +4064,28 @@ mod tests {
         assert_eq!(pull_note(&ff, PullMode::FastForwardOnly), None);
         ff.pull_ff = Some(fact("pull.ff", "true"));
         assert_eq!(pull_note(&ff, PullMode::Merge), None);
+    }
+
+    #[test]
+    fn privacy_draws_why_pictures_are_missing() {
+        let mut settings = Settings::default();
+        let mut screen = SettingsScreen::at(Section::Privacy);
+        screen.set_picture_note(Some(PictureNote {
+            title: "No token for github.com".to_owned(),
+            detail: "Add a token under Accounts to load authors' pictures.".to_owned(),
+            open_accounts: true,
+        }));
+        let screen = draw_screen(screen, &mut settings);
+        assert_eq!(screen.section, Section::Privacy, "nothing was clicked");
+        assert!(screen.picture_note.is_some());
+        // The new wording is what a search finds.
+        let found = draw_screen(SettingsScreen::searching("remembered"), &mut settings);
+        assert_eq!(
+            found.search.count(Section::Privacy),
+            1,
+            "{:?}",
+            found.search
+        );
     }
 
     #[test]
