@@ -496,6 +496,12 @@ impl<'a> ListRow<'a> {
         self.read_only = read_only;
         self
     }
+    /// Whether Tab stops on the row (default on). Off for rows the arrows reach from a field that
+    /// keeps focus (the palette's results).
+    pub fn focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
+    }
     /// The row is row `index` of a list with one Tab stop ([`Roving`]): Tab stops on one row of
     /// the list and the arrows move between its rows.
     pub fn roving(mut self, list: Roving, index: usize) -> Self {
