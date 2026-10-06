@@ -16,8 +16,11 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SIM=${CANOPY_SIM_ROOT:-${TMPDIR:-/tmp}/canopy-usersim}
-# Where cargo puts the build, as tools/screenshot.sh finds it.
-BIN=${CARGO_TARGET_DIR:-$ROOT/target}/release/canopy
+# Where cargo puts the build, as tools/screenshot.sh finds it (a relative CARGO_TARGET_DIR is
+# relative to the repository, where cargo runs).
+TARGET=${CARGO_TARGET_DIR:-target}
+[[ $TARGET == /* ]] || TARGET=$ROOT/$TARGET
+BIN=$TARGET/release/canopy
 STATE=$SIM/state
 
 die() { echo "usersim: $*" >&2; exit 1; }
