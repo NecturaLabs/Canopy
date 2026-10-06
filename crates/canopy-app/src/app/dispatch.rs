@@ -1,6 +1,7 @@
 //! Applying the actions a frame collected.
 
 use super::*;
+use crate::action::Remember;
 use crate::system_apps::Kind;
 
 impl CanopyApp {
@@ -125,11 +126,23 @@ impl CanopyApp {
                 }
                 Action::PullAs { mode, remember } => {
                     if let Some(t) = self.tabs.get_mut(self.active) {
-                        if remember {
-                            let own = self.settings.repo_mut(&t.path);
-                            own.pull_mode = Some(mode);
-                            // Chosen for this repository: its git configuration no longer decides.
-                            own.pull_follow_config = Some(false);
+                        match remember {
+                            Remember::No => {}
+                            Remember::Repository => {
+                                let own = self.settings.repo_mut(&t.path);
+                                own.pull_mode = Some(mode);
+                                // Chosen for this repository: its git configuration no longer
+                                // decides.
+                                own.pull_follow_config = Some(false);
+                            }
+                            Remember::Everywhere => {
+                                // Offered only where Canopy's own setting, not the git
+                                // configuration, asked for fast-forwards only.
+                                self.settings.pull_mode = mode;
+                                let own = self.settings.repo_mut(&t.path);
+                                own.pull_mode = None;
+                                own.pull_follow_config = None;
+                            }
                         }
                         t.op(Op::Pull {
                             strategy: mode.strategy(),
@@ -561,6 +574,31 @@ mod tests {
         app.tabs
             .push(test_tab(canopy_core::RepoSnapshot::default()));
         app
+    }
+
+    /// A divergence answered for this repository becomes its own pull strategy; answered for
+    /// every repository it becomes the default, which this repository then follows too.
+    #[test]
+    fn a_remembered_pull_choice_reaches_as_far_as_chosen() {
+        use crate::settings::PullMode;
+        let ctx = egui::Context::default();
+        let mut app = app_with_tab();
+        let path = app.tabs[0].path.clone();
+        let default = app.settings.pull_mode;
+        let pull = |mode, remember| Action::PullAs { mode, remember };
+        app.apply(&ctx, vec![pull(PullMode::Merge, Remember::No)]);
+        assert_eq!(app.settings.pull_mode_for(&path), default);
+        app.apply(&ctx, vec![pull(PullMode::Merge, Remember::Repository)]);
+        assert_eq!(app.settings.pull_mode_for(&path), PullMode::Merge);
+        assert_eq!(app.settings.pull_mode, default);
+        app.apply(&ctx, vec![pull(PullMode::Rebase, Remember::Everywhere)]);
+        assert_eq!(app.settings.pull_mode, PullMode::Rebase);
+        let here = app.settings.pull_for(&path);
+        let everywhere = app.settings.pull_default();
+        assert_eq!(
+            (here.mode, here.follow_config),
+            (everywhere.mode, everywhere.follow_config)
+        );
     }
 
     /// A repository's own diff options reach its tab; clearing them returns it to the default.

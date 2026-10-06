@@ -376,15 +376,22 @@ pub struct PullDecision {
     pub strategy: PullStrategy,
     /// The branches diverged and the strategy only fast-forwards: ask how to combine them.
     pub diverged: bool,
+    /// The git configuration chose the strategy, not Canopy's setting.
+    pub configured: bool,
 }
 
 /// The strategy a pull uses: what the git configuration asks for when `follow_config` and it
-/// asks for one, else `strategy`.
-fn pull_strategy(repo: &Repo, strategy: PullStrategy, follow_config: bool) -> PullStrategy {
-    if follow_config {
-        repo.pull_strategy(strategy)
-    } else {
-        strategy
+/// asks for one (then also `true`), else `strategy`.
+fn pull_strategy(repo: &Repo, strategy: PullStrategy, follow_config: bool) -> (PullStrategy, bool) {
+    if !follow_config {
+        return (strategy, false);
+    }
+    match repo.pull_config() {
+        Ok(config) => config.strategy.map_or((strategy, false), |s| (s, true)),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the pull configuration");
+            (strategy, false)
+        }
     }
 }
 
@@ -410,13 +417,14 @@ fn decide_pull(
     let Some(preview) = repo.pull_preview(prune, progress)? else {
         return Ok(PullNext::Pull);
     };
-    let strategy = pull_strategy(repo, strategy, follow_config);
+    let (strategy, configured) = pull_strategy(repo, strategy, follow_config);
     let diverged = preview.diverged() && strategy == PullStrategy::FastForwardOnly;
     Ok(if diverged || preview.risky() {
         PullNext::Ask(PullDecision {
             preview,
             strategy,
             diverged,
+            configured,
         })
     } else {
         PullNext::Fetched
@@ -846,17 +854,22 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     // failed fetch brought nothing to combine: its error is the answer.
                     let refused = pull
                         .filter(|_| result.is_err() && !fetch_failed)
-                        .filter(|&(strategy, follow)| {
-                            pull_strategy(&repo, strategy, follow) == PullStrategy::FastForwardOnly
-                        })
-                        .and_then(|_| repo.compare_upstream().ok().flatten())
-                        .filter(canopy_core::PullPreview::diverged);
-                    if let Some(preview) = refused {
+                        .map(|(strategy, follow)| pull_strategy(&repo, strategy, follow))
+                        .filter(|&(strategy, _)| strategy == PullStrategy::FastForwardOnly)
+                        .and_then(|(_, configured)| {
+                            repo.compare_upstream()
+                                .ok()
+                                .flatten()
+                                .filter(canopy_core::PullPreview::diverged)
+                                .map(|preview| (preview, configured))
+                        });
+                    if let Some((preview, configured)) = refused {
                         tracing::info!(operation = %label, "the branches diverged: asking how to combine them");
                         emit(Event::PullDecision(Box::new(PullDecision {
                             preview,
                             strategy: PullStrategy::FastForwardOnly,
                             diverged: true,
+                            configured,
                         })));
                     } else if stopped {
                         // Not a failure: the conflicts are the user's to resolve.
@@ -1154,7 +1167,7 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
             checked,
             ..
         } => {
-            let strategy = pull_strategy(repo, strategy, follow_config);
+            let (strategy, _) = pull_strategy(repo, strategy, follow_config);
             if checked {
                 // The preview fetched; what the user saw is what comes in.
                 repo.pull_fetched(strategy, progress)
@@ -1673,6 +1686,77 @@ mod read_tests {
             ..canopy_core::GitOptions::default()
         }));
         worker
+    }
+
+    /// Runs the calling test again in a child process whose git sees no global or system
+    /// configuration, so the developer's own settings (`pull.rebase`, for one) cannot decide the
+    /// result. True in the child, where the test body runs; false in the parent once the child
+    /// has passed.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test runs itself again in a child process"
+    )]
+    fn in_isolated_git_env(test: &str) -> bool {
+        if std::env::var_os("CANOPY_TEST_ISOLATED_GIT").is_some_and(|v| v == "1") {
+            return true;
+        }
+        let home = tempfile::tempdir().expect("tempdir");
+        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([test, "--exact", "--test-threads=1"])
+            .env("CANOPY_TEST_ISOLATED_GIT", "1")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", home.path().join("gitconfig"))
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .output()
+            .expect("test binary runs");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("1 passed"),
+            "{test} in an isolated git environment:\n{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        false
+    }
+
+    /// A divergence says whether the git configuration asked for fast-forwards only, so the
+    /// prompt offers to remember an answer for every repository only when Canopy's setting did.
+    #[test]
+    fn a_divergence_says_who_asked_for_fast_forwards_only() {
+        if !in_isolated_git_env(
+            "worker::read_tests::a_divergence_says_who_asked_for_fast_forwards_only",
+        ) {
+            return;
+        }
+        for (configured, follow, expected) in [
+            (false, true, false),
+            (true, true, true),
+            (true, false, false),
+        ] {
+            let root = tempfile::tempdir().expect("tempdir");
+            let copy = diverged_clone(root.path());
+            if configured {
+                git(&copy, &["config", "pull.ff", "only"]);
+            }
+            let worker = worker_with_canopys_choices(copy);
+            worker.send(Job::Op(Op::Pull {
+                strategy: PullStrategy::FastForwardOnly,
+                follow_config: follow,
+                prune: false,
+                checked: false,
+            }));
+            let events = events_until(&worker, |e| {
+                matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
+            });
+            let Some(Event::PullDecision(d)) = events.last() else {
+                panic!("{events:?}");
+            };
+            assert!(d.diverged);
+            assert_eq!(
+                d.configured, expected,
+                "configured {configured}, follow {follow}"
+            );
+        }
     }
 
     /// Dropping a worker ends its repository thread and its file watcher's: nothing of it is

@@ -289,7 +289,8 @@ impl CanopyApp {
                 self.dialogs.open(if d.diverged {
                     Dialog::Diverged {
                         mode: settings::PullMode::Rebase,
-                        remember: false,
+                        remember: crate::action::Remember::No,
+                        everywhere: !d.configured,
                         preview: d.preview,
                     }
                 } else {

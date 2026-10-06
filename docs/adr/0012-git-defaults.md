@@ -32,7 +32,7 @@ its own choice explicitly:
 
 | Choice | Canopy's default | Configuration that decides while followed | Passed as |
 |---|---|---|---|
-| Pull strategy | Fast-forward only; when the branches diverged Canopy asks Rebase or Merge (optionally remembered per repository) | `branch.<name>.rebase`, `pull.rebase`, `pull.ff` | strategy flags |
+| Pull strategy | Fast-forward only; when the branches diverged Canopy asks Rebase (recommended) or Merge (optionally remembered for the repository or, where Canopy's setting asked for fast-forwards, every repository) | `branch.<name>.rebase`, `pull.rebase`, `pull.ff` | strategy flags |
 | Prune on fetch | on | `remote.<name>.prune`, else `fetch.prune` | `-c fetch.prune=…` while following, else `--prune` / `--no-prune` |
 | Prune tags too | off | `remote.<name>.pruneTags`, else `fetch.pruneTags` | `-c fetch.pruneTags=…` while following, else `--prune-tags` / `--no-prune-tags` |
 | Autostash for pull and rebase | on | `rebase.autoStash` (rebases), `merge.autoStash` (merges) | `--autostash` / `--no-autostash` (merges: git 2.27 and later) |

@@ -122,7 +122,10 @@ pub enum Dialog {
     /// them together, and whether to pull this repository that way from now on.
     Diverged {
         mode: crate::settings::PullMode,
-        remember: bool,
+        remember: crate::action::Remember,
+        /// Whether "every repository" is offered: Canopy's setting, not the git configuration,
+        /// asked for fast-forwards only.
+        everywhere: bool,
         /// What the check before the pull found (empty when git refused without one).
         preview: canopy_core::PullPreview,
     },
@@ -923,23 +926,30 @@ pub fn show(
         Dialog::Diverged {
             mode,
             remember,
+            everywhere,
             preview,
         } => {
+            use crate::action::Remember;
             use crate::settings::PullMode;
             let options = [
                 (
                     PullMode::Rebase,
-                    "Rebase",
-                    Some(
-                        "Put your commits on top of the remote's, in one straight line. Your commits get new IDs, so do this only with commits nobody else has.",
-                    ),
+                    "Rebase (recommended)",
+                    Some("Replays your commits on top of the remote's, with new IDs."),
                 ),
                 (
                     PullMode::Merge,
                     "Merge",
-                    Some("Keep every commit as it is and add one that joins the two lines."),
+                    Some("Joins both lines with a merge commit; every commit keeps its ID."),
                 ),
             ];
+            let mut scopes = vec![
+                (Remember::No, "Ask next time"),
+                (Remember::Repository, "For this repository"),
+            ];
+            if *everywhere {
+                scopes.push((Remember::Everywhere, "For every repository"));
+            }
             let confirm = match mode {
                 PullMode::Rebase => "Pull with rebase",
                 _ => "Pull with merge",
@@ -948,14 +958,17 @@ pub fn show(
                 .title("Your branch and the remote have diverged")
                 .icon(icon::GIT_FORK)
                 .width(DialogWidth::Form)
-                .description("Both have commits the other does not, so a fast-forward cannot bring them together. Choose how to combine them.")
+                .description("Both have commits the other does not.")
                 .body(|ui| {
                     RadioGroup::new(mode, &options)
-                        .label("How to combine them")
+                        .label("Combine them with")
                         .id_salt("diverged-mode")
                         .show(ui);
                     ui.add_space(theme::SM);
-                    Checkbox::new(remember, "Remember for this repository").show(ui);
+                    Select::new(remember, &scopes)
+                        .label("Remember")
+                        .id_salt("diverged-remember")
+                        .show(ui);
                     predicted_conflicts(ui, preview);
                 })
                 .footer(|f| {
@@ -1235,10 +1248,10 @@ fn predicted_conflicts(ui: &mut Ui, preview: &canopy_core::PullPreview) {
     let m = theme::metrics();
     let conflicts = preview.conflicts.as_deref().unwrap_or_default();
     for (files, says) in [
-        (conflicts, "Combining the branches conflicts in these files"),
+        (conflicts, "Likely conflicts"),
         (
             preview.overlap.as_slice(),
-            "The new commits also change these files you are editing",
+            "Uncommitted files the pull also changes",
         ),
     ] {
         if files.is_empty() {

@@ -348,7 +348,8 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
         },
         "diverged" => Dialog::Diverged {
             mode: settings::PullMode::Rebase,
-            remember: false,
+            remember: crate::action::Remember::No,
+            everywhere: true,
             preview: canopy_core::PullPreview {
                 upstream: "origin/main".into(),
                 ahead: 2,

@@ -54,10 +54,10 @@ pub enum Action {
     Fetch,
     Pull,
     /// Pull the active repository with `mode`, chosen when a fast-forward was not possible;
-    /// `remember` makes it that repository's own pull strategy.
+    /// `remember` keeps it as the pull strategy of that repository or of every repository.
     PullAs {
         mode: crate::settings::PullMode,
-        remember: bool,
+        remember: Remember,
     },
     /// Pull the active repository with `strategy` although it will likely conflict.
     PullAnyway(canopy_core::ops::PullStrategy),
@@ -147,4 +147,14 @@ pub enum Action {
     SetCrashReports(bool),
     /// Close Canopy.
     Quit,
+}
+
+/// How far a choice made in a prompt reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Remember {
+    /// Ask again next time.
+    #[default]
+    No,
+    Repository,
+    Everywhere,
 }
