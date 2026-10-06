@@ -100,8 +100,12 @@ pub enum Op {
         prune: bool,
         quiet: bool,
     },
+    /// Pull. The strategy is always passed to git explicitly; with `follow_config` it is only the
+    /// fallback for a repository whose git configuration (`branch.<name>.rebase`, `pull.rebase`,
+    /// `pull.ff`) asks for none, and the configured one is used otherwise.
     Pull {
         strategy: PullStrategy,
+        follow_config: bool,
     },
     Push {
         force: bool,
@@ -900,7 +904,14 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
         Op::StashApply { index, pop } => done(repo.stash_apply(index, pop)),
         Op::StashDrop(i) => done(repo.stash_drop(i)),
         Op::Fetch { prune, .. } => repo.fetch(None, prune, progress),
-        Op::Pull { strategy } => repo.pull(strategy, progress),
+        Op::Pull {
+            strategy,
+            follow_config: true,
+        } => repo.pull_default(strategy, progress),
+        Op::Pull {
+            strategy,
+            follow_config: false,
+        } => repo.pull(strategy, progress),
         Op::Push { force } => repo.push(force, progress),
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
