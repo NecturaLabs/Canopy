@@ -63,7 +63,7 @@ const RETRY_UNREACHABLE_SECS: i64 = 10 * 60;
 const MAX_UNKNOWN_COMMITS: u8 = 3;
 /// Unknown commits a tab remembers; past this the oldest is forgotten.
 const MAX_UNKNOWN_KEPT: usize = 1024;
-/// Longest server message kept for a refusal, in characters.
+/// Longest server message kept for a refusal, in characters, an ellipsis included.
 const MAX_SERVER_TEXT: usize = 160;
 
 /// Why a repository's pictures stopped, when the cause is the repository or the token rather
@@ -722,46 +722,16 @@ fn miss(error: canopy_hosting::Error, now: i64, note: &mut Option<Note>) -> Miss
     }
 }
 
-/// A server's own words made safe to show among Canopy's and to log: control characters become
-/// spaces, characters that reorder or hide text (bidirectional controls, zero-width and other
-/// invisible formatting) are dropped, whitespace collapses, and the length is capped.
+/// A server's own words made safe to show among Canopy's and to log
+/// ([`canopy_hosting::plain_text`]: no control characters, nothing that hides or reorders text),
+/// at most [`MAX_SERVER_TEXT`] characters.
 fn server_text(message: &str) -> String {
-    let hides = |c: char| {
-        matches!(
-            c,
-            '\u{00AD}'
-                | '\u{034F}'
-                | '\u{061C}'
-                | '\u{115F}'
-                | '\u{1160}'
-                | '\u{180E}'
-                | '\u{200B}'..='\u{200F}'
-                | '\u{202A}'..='\u{202E}'
-                | '\u{2060}'..='\u{206F}'
-                | '\u{3164}'
-                | '\u{FE00}'..='\u{FE0F}'
-                | '\u{FEFF}'
-                | '\u{FFA0}'
-                | '\u{FFF9}'..='\u{FFFB}'
-                | '\u{E0000}'..='\u{E0FFF}'
-        )
-    };
-    let visible: String = message
-        .chars()
-        .filter(|c| !hides(*c))
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    let words = visible.split_whitespace().collect::<Vec<_>>().join(" ");
-    if words.is_empty() {
-        return "no reason given".to_owned();
+    let text = canopy_hosting::plain_text(message, MAX_SERVER_TEXT);
+    if text.is_empty() {
+        "no reason given".to_owned()
+    } else {
+        text
     }
-    if words.chars().count() <= MAX_SERVER_TEXT {
-        return words;
-    }
-    let mut short: String = words.chars().take(MAX_SERVER_TEXT).collect();
-    short.truncate(short.trim_end().len());
-    short.push('…');
-    short
 }
 
 fn pause_unreachable(now: i64, note: &mut Option<Note>) -> Miss {
@@ -1407,6 +1377,37 @@ mod tests {
     }
 
     #[test]
+    fn server_text_drops_every_invisible_character_and_keeps_its_limit() {
+        // Default-ignorable characters a probe found kept: Khmer inherent vowels, Mongolian free
+        // variation selectors, specials, shorthand format controls, musical symbol formatting.
+        for c in [
+            '\u{17B4}',
+            '\u{17B5}',
+            '\u{180B}',
+            '\u{180C}',
+            '\u{180D}',
+            '\u{180F}',
+            '\u{FFF0}',
+            '\u{FFF8}',
+            '\u{1BCA0}',
+            '\u{1BCA3}',
+            '\u{1D173}',
+            '\u{1D17A}',
+        ] {
+            assert_eq!(
+                server_text(&format!("a{c}b")),
+                "ab",
+                "U+{:04X}",
+                u32::from(c)
+            );
+        }
+        assert_eq!(server_text(" \u{17B4} "), "no reason given");
+        let long = server_text(&"x".repeat(500));
+        assert_eq!(long.chars().count(), MAX_SERVER_TEXT, "{long}");
+        assert!(long.ends_with('…'));
+    }
+
+    #[test]
     fn a_refusal_from_the_server_reaches_the_explanation_and_the_log_as_plain_text() {
         let stub = Stub::start();
         // A hostile server dresses a lure up as Canopy's own text: bidirectional overrides and
@@ -1449,7 +1450,7 @@ mod tests {
         );
         assert!(!message.chars().any(hidden), "{message:?}");
         assert!(
-            message.chars().count() <= MAX_SERVER_TEXT + 1,
+            message.chars().count() <= MAX_SERVER_TEXT,
             "{} characters",
             message.chars().count()
         );
