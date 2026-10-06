@@ -41,8 +41,6 @@ pub enum SidebarItem {
 pub struct HistoryLayout {
     pub expanded: bool,
     pub compact_details: bool,
-    /// Full commit information stays open across pane and viewport changes.
-    pub information_open: bool,
     /// The current viewport shows either the list or details at a time.
     pub compact: bool,
 }
@@ -52,7 +50,6 @@ impl Default for HistoryLayout {
         Self {
             expanded: false,
             compact_details: true,
-            information_open: true,
             compact: false,
         }
     }

@@ -323,15 +323,15 @@ in the density's metrics:
   to history to restore the split. Both controls sit beside the commit summary and remain
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
-- Commit details use a compact author, SHA and date above the changed files. Commit information
-  starts open, opens independently of pane expansion and retains its state, by one rule in every
-  density: its body shows whenever its first whole line fits under room reserved for up to two
-  changed files and the "N files changed" line; otherwise the block waits shut, with a tooltip
-  saying how to make room. The body sits flush with the author row, takes its natural height up
-  to that room and scrolls past it behind a faded edge, never cutting a line through its glyphs.
-  It repeats the commit summary only when the pane header cannot show it whole (or, in a compact
-  window, has no header). History prefers six visible rows and can retain the split with two rows in a short
-  window. Automatic inspector height adapts when the diff arrives; a manual resize takes precedence.
+- Commit details use a compact author, SHA and date above the changed files, and nothing twice:
+  the author's email (and the committer, when someone else made the commit) is the name's tooltip,
+  the full date with its zone the date's. The commit message's body sits flush under them, takes
+  its natural height up to the room left above two changed files and the "N files changed" line
+  (at least one line) and scrolls past it behind a faded edge, never cutting a line through its
+  glyphs. It repeats the commit summary only when the pane header cannot show it whole (or, in a
+  compact window, has no header). History prefers six visible rows and can retain the split with
+  two rows in a short window. Automatic inspector height adapts when the diff arrives; a manual
+  resize takes precedence.
 - Commit metadata, the Changes file list, and the request list take at most 40% of their
   available width, leaving the rest for the diff or request details. The Changes file list and the
   request list are resized with `kit::split::SplitHandle` (drag, the arrow keys while it has focus,

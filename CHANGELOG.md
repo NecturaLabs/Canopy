@@ -241,6 +241,9 @@ commits since the previous build.
 
 ### Changed
 
+- Commit details no longer have a "Commit information" block repeating the email, date and
+  parents: the message shows directly under the author, the email (and the committer, when someone
+  else made the commit) is in the author's tooltip and the full date in the date's.
 - Branch, tag and stash pills in History are redesigned as one calm, consistent style: the same
   neutral pill for every kind, told apart by its icon, with only the checked-out branch's dot in
   the accent colour.

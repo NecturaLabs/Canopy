@@ -1298,10 +1298,11 @@ mod tests {
         }
     }
 
-    /// H17: at 1440x900 a commit with several files shows its commit information beside the two
-    /// file rows, in every density and style: the pane sizes itself for both.
+    /// H17: at 1440x900 a commit with several files shows its author, SHA and date beside the two
+    /// file rows, in every density and style: the pane sizes itself for both. Nothing is said
+    /// twice: no "Commit information" block repeating the email and date.
     #[test]
-    fn commit_information_shows_beside_two_files_at_the_natural_pane_height() {
+    fn commit_details_show_beside_two_files_at_the_natural_pane_height() {
         for style in [theme::Style::Standard, theme::Style::Deeper] {
             for density in [theme::Density::Comfortable, theme::Density::Dense] {
                 let ctx = egui::Context::default();
@@ -1320,16 +1321,21 @@ mod tests {
                 let mut other = details.files[0].clone();
                 other.path = "other.rs".into();
                 details.files.push(other);
-                let date = widgets::full_date(details.author.time, details.author.offset_minutes);
                 tab.details = Some(std::sync::Arc::new(details));
                 let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
                 diff.hunks[0].lines.truncate(7);
                 tab.diff = Some(std::sync::Arc::new(diff));
                 let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
-                for text in ["author@example.com", date.as_str(), "file.rs", "other.rs"] {
+                for text in ["Author", "0101010", "Jan 1, 1970", "file.rs", "other.rs"] {
                     assert!(
                         visible.iter().any(|t| t == text),
                         "{style:?} {density:?}: {text} must show whole: {visible:?}"
+                    );
+                }
+                for text in ["Commit information", "author@example.com"] {
+                    assert!(
+                        visible.iter().all(|t| t != text),
+                        "{style:?} {density:?}: {text} is not repeated: {visible:?}"
                     );
                 }
             }
