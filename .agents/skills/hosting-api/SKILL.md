@@ -109,8 +109,9 @@ token only as `Authorization: Bearer` to the API base of the repository's own ho
   `cargo test -p canopy-app` for the app side.
 - To see the UI without a network or token, run `python3 tools/mock-hosting.py <port>` and start
   Canopy with `CANOPY_HOSTING_API_BASE=http://127.0.0.1:<port>` (only a plain loopback address is
-  honoured). The mock speaks GitHub's shape; a new endpoint needs a route there too. Screenshot
-  the result with `--view requests` (`screenshot` skill).
+  honoured). The mock speaks GitHub's shape, including `POST /graphql` for the list's checks and
+  reviews; a new endpoint or GraphQL field needs a route or canned data there too. Screenshot the
+  result with `--view requests` (`screenshot` skill).
 
 ## 7. Privacy, docs and release
 
