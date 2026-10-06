@@ -1936,6 +1936,48 @@ mod tests {
         }
     }
 
+    /// DL-F8: with no other branch, the Merge dialog says why under its select.
+    #[test]
+    fn an_empty_merge_branch_list_says_why() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut dialog = Dialog::Merge {
+            target: String::new(),
+            rebase: false,
+            mode: canopy_core::MergeMode::Default,
+        };
+        let mut picker = crate::ui::folder_picker::FolderPicker::default();
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |_| {
+                super::show(
+                    &ctx,
+                    &mut dialog,
+                    None,
+                    &mut picker,
+                    false,
+                    &crate::updater::Updater::default(),
+                    "git version 2.55.0",
+                );
+            });
+            output.textures_delta.clear();
+            texts = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+        }
+        assert!(
+            texts
+                .iter()
+                .any(|t| t == "This repository has no other branch to merge or rebase onto."),
+            "{texts:?}"
+        );
+    }
+
     #[test]
     fn ref_names() {
         assert!(valid_ref_name("feature/login"));
