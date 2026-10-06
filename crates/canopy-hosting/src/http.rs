@@ -147,6 +147,33 @@ impl Http {
         self.token.is_some()
     }
 
+    /// `text` with this client's own token replaced, before it is cut short or cleaned
+    /// ([`shorten`]), so not even part of it is left. A server can echo the token in any form;
+    /// tokens of a known form are also caught by [`plain_text`].
+    fn hide_token(&self, text: &str) -> String {
+        match &self.token {
+            Some(token) if token.len() >= MIN_TOKEN_LEN => text.replace(token.as_str(), REDACTED),
+            _ => text.to_owned(),
+        }
+    }
+
+    /// A response body as [`Self::hide_token`] leaves it, for an error built from it.
+    fn hide_token_in(&self, body: &[u8]) -> Vec<u8> {
+        match &self.token {
+            Some(token) if token.len() >= MIN_TOKEN_LEN => {
+                self.hide_token(&String::from_utf8_lossy(body)).into_bytes()
+            }
+            _ => body.to_vec(),
+        }
+    }
+
+    /// Parses a JSON response; the parser's message, which can quote the server, carries no
+    /// token.
+    fn parse<T: DeserializeOwned>(&self, bytes: &[u8], what: &str) -> Result<T> {
+        serde_json::from_slice(bytes)
+            .map_err(|e| Error::Parse(shorten(&self.hide_token(&format!("{what}: {e}")))))
+    }
+
     pub(crate) fn base(&self) -> &str {
         &self.base
     }
@@ -178,9 +205,10 @@ impl Http {
             .read_to_vec()
             .map_err(|_| Error::Network("Could not read the profile response".into()))?;
         if !(200..300).contains(&status) {
-            return Err(map_status(status, response.headers(), &bytes, self.kind));
+            let body = self.hide_token_in(&bytes);
+            return Err(map_status(status, response.headers(), &body, self.kind));
         }
-        parse(&bytes, "profile response")
+        self.parse(&bytes, "profile response")
     }
 
     /// Sends a request and parses a successful JSON response.
@@ -191,7 +219,7 @@ impl Http {
         body: Option<&Value>,
     ) -> Result<T> {
         let bytes = self.send(method, path, body)?;
-        parse(&bytes, path)
+        self.parse(&bytes, path)
     }
 
     /// Sends a request whose response body does not matter.
@@ -233,7 +261,7 @@ impl Http {
         let mut response = result.map_err(|e| {
             let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             // The transport's message can quote the server (a malformed redirect target).
-            let error = shorten(&e.to_string());
+            let error = shorten(&self.hide_token(&e.to_string()));
             tracing::warn!(
                 method = method.as_str(),
                 path,
@@ -257,11 +285,12 @@ impl Http {
             .with_config()
             .limit(MAX_BODY)
             .read_to_vec()
-            .map_err(|e| Error::Network(shorten(&e.to_string())))?;
+            .map_err(|e| Error::Network(shorten(&self.hide_token(&e.to_string()))))?;
         if (200..300).contains(&status) {
             Ok((response.headers().clone(), bytes))
         } else {
-            let err = map_status(status, response.headers(), &bytes, self.kind);
+            let body = self.hide_token_in(&bytes);
+            let err = map_status(status, response.headers(), &body, self.kind);
             tracing::warn!(method = method.as_str(), path, status, ms, error = %err, "hosting request rejected");
             Err(err)
         }
@@ -314,7 +343,7 @@ impl Http {
         let started = std::time::Instant::now();
         let result = req.config().max_redirects(0).build().send(&*payload);
         let (headers, bytes) = self.receive(Method::Post, path, started, result)?;
-        let envelope: GraphqlEnvelope<T> = parse(&bytes, "GraphQL response")?;
+        let envelope: GraphqlEnvelope<T> = self.parse(&bytes, "GraphQL response")?;
         // GitHub answers an exhausted GraphQL quota with 200, an error and no requests left, and
         // a secondary limit with 200 or 403, an error saying so and perhaps `retry-after`.
         let limited = !envelope.errors.is_empty()
@@ -336,7 +365,7 @@ impl Http {
                 .map(|e| e.message.trim())
                 .filter(|m| !m.is_empty())
                 .collect();
-            let message = shorten(&messages.join("; "));
+            let message = shorten(&self.hide_token(&messages.join("; ")));
             Error::Api {
                 status: 200,
                 message: if message.is_empty() {
@@ -410,12 +439,6 @@ pub fn is_loopback_base(url: &str) -> bool {
         }
     };
     port_ok && matches!(host, "127.0.0.1" | "localhost" | "[::1]")
-}
-
-/// Parses a JSON response. The parser's message can quote the server's own text (a string where
-/// a number belongs), so it is cleaned like any server message.
-pub(crate) fn parse<T: DeserializeOwned>(bytes: &[u8], what: &str) -> Result<T> {
-    serde_json::from_slice(bytes).map_err(|e| Error::Parse(shorten(&format!("{what}: {e}"))))
 }
 
 /// A GraphQL response: `data`, `errors`, or both.
@@ -560,18 +583,48 @@ pub(crate) fn shorten(s: &str) -> String {
     plain_text(s, MAX_MESSAGE)
 }
 
+/// What replaces a secret in a server's words.
+const REDACTED: &str = "<redacted>";
+
+/// The shortest token [`Http::hide_token`] looks for: shorter text is too likely to be ordinary
+/// words, and no real token is that short.
+const MIN_TOKEN_LEN: usize = 8;
+
+/// The prefixes of GitHub's and GitLab's tokens: a word starting with one is a token.
+const TOKEN_PREFIXES: [&str; 17] = [
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "glpat-",
+    "gldt-",
+    "glptt-",
+    "glrt-",
+    "gloas-",
+    "glcbt-",
+    "glft-",
+    "glimt-",
+    "glagent-",
+    "glsoat-",
+    "glffct-",
+];
+
 /// A server's own words made safe to show among Canopy's and to log.
 ///
 /// Control characters become spaces, characters that reorder or hide text are dropped
 /// (bidirectional controls and every other default-ignorable code point, such as zero-width
-/// spaces, variation selectors and tags), whitespace collapses to single spaces, and the result
-/// is at most `max` characters, ending in an ellipsis when it was cut.
+/// spaces, variation selectors and tags), GitHub and GitLab tokens ([`TOKEN_PREFIXES`]) and the
+/// user name and password in URLs are replaced, whitespace collapses to single spaces, and the
+/// result is at most `max` characters, ending in an ellipsis when it was cut.
 pub fn plain_text(text: &str, max: usize) -> String {
     let visible: String = text
         .chars()
         .filter(|&c| !hides_text(c))
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
+    let visible = canopy_core::cli::redact_url(&hide_tokens(&visible));
     let words = visible.split_whitespace().collect::<Vec<_>>().join(" ");
     if words.chars().count() <= max {
         return words;
@@ -580,6 +633,26 @@ pub fn plain_text(text: &str, max: usize) -> String {
     short.truncate(short.trim_end().len());
     short.push('…');
     short
+}
+
+/// `text` with every word that starts with a [`TOKEN_PREFIXES`] prefix replaced.
+fn hide_tokens(text: &str) -> String {
+    let in_token = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.chars();
+    let mut after_word = false;
+    loop {
+        if !after_word && TOKEN_PREFIXES.iter().any(|p| rest.as_str().starts_with(p)) {
+            out.push_str(REDACTED);
+            rest = rest.as_str().trim_start_matches(in_token).chars();
+            continue;
+        }
+        let Some(c) = rest.next() else {
+            return out;
+        };
+        out.push(c);
+        after_word = in_token(c);
+    }
 }
 
 /// Unicode 16's `Default_Ignorable_Code_Point` characters (which include every bidirectional
@@ -683,6 +756,16 @@ mod tests {
         assert_eq!(plain_text("abcdefghijk", 10), "abcdefghi…");
         assert_eq!(plain_text("abcd efghijk", 6), "abcd…");
         assert_eq!(plain_text("ééééé", 3), "éé…");
+        // Tokens and URL credentials are replaced, even split by a character that hides.
+        assert_eq!(
+            plain_text("bad glpat-ab\u{200B}cd_9, ghp_x1 (github_pat_1A_b) é", 100),
+            "bad <redacted>, <redacted> (<redacted>) é"
+        );
+        assert_eq!(
+            plain_text("see https://user:secret@host/x", 100),
+            "see https://<redacted>@host/x"
+        );
+        assert_eq!(plain_text("xghp_word", 100), "xghp_word", "not a token");
     }
 
     #[test]
