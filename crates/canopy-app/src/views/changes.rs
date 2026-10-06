@@ -27,12 +27,16 @@ enum List {
     Staged,
 }
 
-/// Draws the changes view.
-pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
+/// The id of the file lists' panel, beside the diff.
+pub const LIST_PANEL: &str = "changes-list";
+
+/// Draws the changes view. Returns the file lists' panel rectangle when it showed one (Deeper
+/// gives the lists and the diff a card each).
+pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option<Rect> {
     let s = theme::surfaces(ui.ctx());
     let Some(snap) = tab.snap.clone() else {
         ui.centered_and_justified(|ui| Spinner::new().label("changes").show(ui));
-        return;
+        return None;
     };
     state_banner::show(ui, tab, actions);
     // Default selection: the first changed file.
@@ -64,7 +68,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     }
 
     let pane_max = (ui.available_width() * 0.4).max(160.0);
-    egui::Panel::left("changes-list")
+    let list = egui::Panel::left(LIST_PANEL)
         .resizable(true)
         .default_size(pane_max.min(400.0))
         .min_size(pane_max.min(220.0))
@@ -137,6 +141,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 diff::show(ui, tab, actions);
             }
         });
+    Some(list.response.rect)
 }
 
 /// Gap between the last list and the composer when the composer follows the lists.
@@ -1002,7 +1007,9 @@ mod tests {
                     events,
                     ..Default::default()
                 },
-                |ui| show(ui, tab, &mut Vec::new()),
+                |ui| {
+                    show(ui, tab, &mut Vec::new());
+                },
             );
             output.textures_delta.clear();
             texts = output
