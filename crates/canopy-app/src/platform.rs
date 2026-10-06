@@ -96,7 +96,7 @@ pub fn open_folder(dir: &Path, command: &str) -> Result<(), String> {
     }
     if let Some((program, args)) = split_command(command.trim()) {
         let mut cmd = Command::new(&program);
-        cmd.args(with_path(args, &["%d"], dir, true));
+        cmd.args(with_path(args, &["%d"], dir, true)?);
         return spawn(cmd).map_err(|e| format!("{program}: {e}"));
     }
     #[cfg(target_os = "linux")]
@@ -116,54 +116,48 @@ pub fn open_folder(dir: &Path, command: &str) -> Result<(), String> {
 }
 
 /// The program and arguments of a configured command such as `code --wait` or
-/// `"/opt/My Editor/edit" %f`: words are separated by spaces, and single or double quotes keep
-/// a word with spaces together (the quotes are removed; a backslash is an ordinary character, so
-/// Windows paths need no escaping). An unclosed quote runs to the end.
+/// `"/opt/My Editor/edit" %f`: words are separated by spaces, and a word that starts with a
+/// single or double quote runs to the matching quote, spaces included (the quotes are removed;
+/// inside, the quote doubled stands for itself). A quote anywhere else is an ordinary character,
+/// as is a backslash, so `/home/o'brien/bin/code` and Windows paths need no escaping. An unclosed
+/// quote runs to the end.
 pub fn split_command(configured: &str) -> Option<(String, Vec<String>)> {
     let mut words = Vec::new();
-    let mut current = String::new();
-    let mut started = false;
-    let mut quote: Option<char> = None;
-    for c in configured.chars() {
-        match quote {
-            Some(q) if c == q => quote = None,
-            Some(_) => current.push(c),
-            None if c == '"' || c == '\'' => {
-                quote = Some(c);
-                started = true;
-            }
-            None if c.is_whitespace() => {
-                if started {
-                    words.push(std::mem::take(&mut current));
-                    started = false;
+    let mut chars = configured.chars().peekable();
+    loop {
+        while chars.next_if(|c| c.is_whitespace()).is_some() {}
+        let Some(first) = chars.next() else { break };
+        let mut word = String::new();
+        if first == '"' || first == '\'' {
+            while let Some(c) = chars.next() {
+                if c != first {
+                    word.push(c);
+                } else if chars.next_if_eq(&first).is_some() {
+                    word.push(first);
+                } else {
+                    break;
                 }
             }
-            None => {
-                current.push(c);
-                started = true;
-            }
+        } else {
+            word.push(first);
         }
-    }
-    if started {
-        words.push(current);
+        while let Some(c) = chars.next_if(|c| !c.is_whitespace()) {
+            word.push(c);
+        }
+        words.push(word);
     }
     let mut words = words.into_iter();
     let program = words.next().filter(|p| !p.is_empty())?;
     Some((program, words.collect()))
 }
 
-/// `word` as [`split_command`] reads it back: quoted when it is empty or has spaces or quotes.
+/// `word` as [`split_command`] reads it back as one word: quoted when it is empty, has spaces or
+/// starts with a quote.
 pub fn quote(word: &str) -> String {
-    if !word.is_empty()
-        && !word
-            .chars()
-            .any(|c| c.is_whitespace() || c == '"' || c == '\'')
-    {
-        word.to_owned()
-    } else if word.contains('"') {
-        format!("'{word}'")
+    if word.is_empty() || word.starts_with(['"', '\'']) || word.chars().any(char::is_whitespace) {
+        format!("\"{}\"", word.replace('"', "\"\""))
     } else {
-        format!("\"{word}\"")
+        word.to_owned()
     }
 }
 
@@ -176,30 +170,35 @@ pub fn program_name(program: &str) -> String {
 }
 
 /// A command's arguments with `placeholders` (`%f`, `%d`) replaced by `path`, which is added at
-/// the end when no argument names it.
-fn with_path(args: Vec<String>, placeholders: &[&str], path: &Path, add: bool) -> Vec<OsString> {
+/// the end when no argument names it (and `add` is set). A placeholder must be a word of its own:
+/// spliced into a larger word, a file name could become part of a shell's program or of another
+/// option, so such a command is refused.
+fn with_path(
+    args: Vec<String>,
+    placeholders: &[&str],
+    path: &Path,
+    add: bool,
+) -> Result<Vec<OsString>, String> {
     let mut used = false;
-    let mut out: Vec<OsString> = args
-        .into_iter()
-        .map(|arg| {
-            let Some(code) = placeholders.iter().find(|c| arg.contains(**c)) else {
-                return OsString::from(arg);
-            };
+    let mut out = Vec::with_capacity(args.len() + 1);
+    for arg in args {
+        if placeholders.contains(&arg.as_str()) {
             used = true;
-            let mut word = OsString::new();
-            for (i, part) in arg.split(code).enumerate() {
-                if i > 0 {
-                    word.push(path.as_os_str());
-                }
-                word.push(part);
-            }
-            word
-        })
-        .collect();
+            out.push(path.as_os_str().to_owned());
+        } else if let Some(code) = placeholders.iter().find(|c| arg.contains(**c)) {
+            return Err(format!(
+                "In the command, {code} must be a word of its own, not part of {arg}, so a file \
+                 name can never become part of another argument. Change it in Settings → \
+                 Integrations."
+            ));
+        } else {
+            out.push(OsString::from(arg));
+        }
+    }
     if add && !used {
         out.push(path.as_os_str().to_owned());
     }
-    out
+    Ok(out)
 }
 
 /// Whether the desktop's default handler might run `file` instead of showing it.
@@ -239,7 +238,7 @@ fn launchable(file: &Path) -> bool {
 pub fn open_in_editor(file: &Path, configured: &str) -> Result<(), String> {
     if let Some((program, args)) = split_command(configured.trim()) {
         let mut cmd = Command::new(&program);
-        cmd.args(with_path(args, &["%f", "%F"], file, true));
+        cmd.args(with_path(args, &["%f", "%F"], file, true)?);
         return spawn(cmd).map_err(|e| format!("{program}: {e}"));
     }
     #[cfg(target_os = "macos")]
@@ -285,7 +284,7 @@ pub fn open_in_editor(file: &Path, configured: &str) -> Result<(), String> {
 pub fn open_terminal(dir: &Path, configured: &str) -> Result<(), String> {
     if let Some((program, args)) = split_command(configured.trim()) {
         let mut cmd = Command::new(&program);
-        cmd.args(with_path(args, &["%d"], dir, false))
+        cmd.args(with_path(args, &["%d"], dir, false)?)
             .current_dir(dir);
         return spawn(cmd).map_err(|e| format!("{program}: {e}"));
     }
@@ -686,17 +685,68 @@ mod tests {
         let file = Path::new("/repo/src/a b.rs");
         let args = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
         assert_eq!(
-            with_path(args(&["--goto", "%f:1"]), &["%f", "%F"], file, true),
-            ["--goto", "/repo/src/a b.rs:1"]
+            with_path(args(&["--goto", "%f"]), &["%f", "%F"], file, true).unwrap(),
+            ["--goto", "/repo/src/a b.rs"]
         );
         assert_eq!(
-            with_path(args(&["--wait"]), &["%f"], file, true),
+            with_path(args(&["--wait"]), &["%f"], file, true).unwrap(),
             ["--wait", "/repo/src/a b.rs"]
         );
         assert_eq!(
-            with_path(args(&["--cwd"]), &["%d"], file, false),
+            with_path(args(&["--cwd"]), &["%d"], file, false).unwrap(),
             ["--cwd"],
             "a terminal runs in the folder instead"
+        );
+    }
+
+    #[test]
+    fn a_path_never_lands_inside_a_larger_word() {
+        // A shell would run the file name's `$(...)` if the name were spliced into its program.
+        let file = Path::new("/repo/$(printf CANOPY_INJECTED).rs");
+        let args = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        for words in [
+            &["-c", "printf '%s\\n' \"%f\""][..],
+            &["--goto", "%f:1"],
+            &["--file=%F"],
+        ] {
+            let refused = with_path(args(words), &["%f", "%F"], file, true).unwrap_err();
+            assert!(refused.contains("a word of its own"), "{refused}");
+        }
+        let refused = with_path(args(&["--cwd=%d"]), &["%d"], file, false).unwrap_err();
+        assert!(refused.contains("%d"), "{refused}");
+        // As a word of its own, the name is one argument, passed on exactly as it is.
+        let out = with_path(
+            args(&["-c", "printf '%s' \"$1\"", "sh", "%f"]),
+            &["%f"],
+            file,
+            true,
+        )
+        .unwrap();
+        assert_eq!(out.last().map(OsString::as_os_str), Some(file.as_os_str()));
+    }
+
+    #[test]
+    fn quoting_round_trips_every_word() {
+        for word in [
+            "a' --wait \"",
+            "x' y\" z",
+            "'starts",
+            "\"starts",
+            "it's",
+            "\"\"",
+            "''",
+            "a\"\"b c",
+        ] {
+            let line = format!("prog {}", quote(word));
+            assert_eq!(split_command(&line).unwrap().1, [word], "{line}");
+        }
+        // An apostrophe inside a word, as in a saved path, is an ordinary character.
+        assert_eq!(
+            split_command("/home/o'brien/bin/code --wait %f"),
+            Some((
+                "/home/o'brien/bin/code".into(),
+                vec!["--wait".into(), "%f".into()]
+            ))
         );
     }
 
