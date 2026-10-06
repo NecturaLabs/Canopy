@@ -1318,6 +1318,34 @@ fn pull_scenario(config: &[&str], diverged: bool) -> (tempfile::TempDir, tempfil
     (up_dir, clone_dir, copy)
 }
 
+/// A copy of the clone at `clone_dir/clone` from a [`pull_scenario`], with each `key=value` of
+/// `config` set in its own configuration. A pull leaves the upstream as it was, so the copies of
+/// one scenario share its upstream, and a matrix of pulls builds two repositories, not hundreds:
+/// starting git processes is slow on Windows.
+fn pull_copy(clone_dir: &Path, config: &[&str]) -> (tempfile::TempDir, Repo) {
+    fn copy_dir(from: &Path, to: &Path) {
+        fs::create_dir_all(to).expect("mkdir");
+        for entry in fs::read_dir(from).expect("read dir") {
+            let entry = entry.expect("entry");
+            let target = to.join(entry.file_name());
+            if entry.file_type().expect("file type").is_dir() {
+                copy_dir(&entry.path(), &target);
+            } else {
+                fs::copy(entry.path(), &target).expect("copy");
+            }
+        }
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let dest = dir.path().join("clone");
+    copy_dir(&clone_dir.join("clone"), &dest);
+    for setting in config {
+        let (key, value) = setting.split_once('=').expect("key=value");
+        git(&dest, &["config", key, value]);
+    }
+    let copy = Repo::open(&dest).expect("open copy");
+    (dir, copy)
+}
+
 /// Classifies the result of a pull in `copy`, whose upstream is `up`, and checks that a refusal
 /// left the repository as it was.
 fn pulled(
@@ -1395,9 +1423,13 @@ fn pull_config_matches_what_git_pull_does() {
     if !in_isolated_git_env("pull_config_matches_what_git_pull_does") {
         return;
     }
+    let diverged_scenario = pull_scenario(&[], true);
+    let behind_scenario = pull_scenario(&[], false);
     for settings in PULL_SETTINGS {
-        for diverged in [true, false] {
-            let (up_dir, _clone, copy) = pull_scenario(settings, diverged);
+        for (diverged, (up_dir, clone_dir, _)) in
+            [(true, &diverged_scenario), (false, &behind_scenario)]
+        {
+            let (_copy_dir, copy) = pull_copy(clone_dir.path(), settings);
             let before = copy.head().expect("head").oid;
             let config = copy.pull_config().expect("pull_config");
             let bare = pulled(
@@ -1409,7 +1441,7 @@ fn pull_config_matches_what_git_pull_does() {
             let what = format!("{settings:?} diverged={diverged}: {config:?}");
             match config.strategy {
                 Some(strategy) => {
-                    let (up_dir, _clone, copy) = pull_scenario(settings, diverged);
+                    let (_copy_dir, copy) = pull_copy(clone_dir.path(), settings);
                     let before = copy.head().expect("head").oid;
                     let ours = pulled(
                         up_dir.path(),
@@ -1460,10 +1492,15 @@ fn pull_passes_every_strategy_whatever_the_configuration_says() {
         ),
     ];
     assert_eq!(expected.len(), PullStrategy::ALL.len());
+    let diverged_scenario = pull_scenario(&[], true);
+    let behind_scenario = pull_scenario(&[], false);
     for settings in PULL_SETTINGS {
         for (strategy, on_diverged, on_behind) in expected {
-            for (diverged, want) in [(true, on_diverged), (false, on_behind)] {
-                let (up_dir, _clone, copy) = pull_scenario(settings, diverged);
+            for (diverged, want, (up_dir, clone_dir, _)) in [
+                (true, on_diverged, &diverged_scenario),
+                (false, on_behind, &behind_scenario),
+            ] {
+                let (_copy_dir, copy) = pull_copy(clone_dir.path(), settings);
                 let before = copy.head().expect("head").oid;
                 let got = pulled(
                     up_dir.path(),
