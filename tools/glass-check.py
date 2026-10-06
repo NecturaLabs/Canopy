@@ -343,13 +343,17 @@ def parse_soak(output: str) -> dict | None:
 
 
 def run_soak(binary: str, frames: int, translucent: str) -> tuple[dict | None, str]:
-    """One soak run on a private Xvfb display with private data, config, cache and Git
-    configuration; returns the parsed report and everything the app printed."""
+    """One soak run on a private Xvfb display with a private home, data, config, cache and Git
+    configuration (as tools/screenshot.sh); returns the parsed report and everything the app
+    printed."""
     with tempfile.TemporaryDirectory(prefix="canopy-glass-soak.") as tmp:
-        env = {k: v for k, v in os.environ.items() if k != "WAYLAND_DISPLAY"}
+        unset = {"WAYLAND_DISPLAY", "TERMINAL", "EDITOR", "VISUAL"}
+        env = {k: v for k, v in os.environ.items() if k not in unset}
+        Path(f"{tmp}/home").mkdir()
         Path(f"{tmp}/gitconfig").write_text("[user]\n\tname = Soak\n\temail = soak@example.com\n")
         env.update(
             LIBGL_ALWAYS_SOFTWARE="1",
+            HOME=f"{tmp}/home",
             XDG_DATA_HOME=f"{tmp}/data",
             XDG_CONFIG_HOME=f"{tmp}/config",
             XDG_CACHE_HOME=f"{tmp}/cache",
