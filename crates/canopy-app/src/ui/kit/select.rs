@@ -33,7 +33,7 @@ const LIST_OVERHANG: f32 = 2.0;
 const LIST_ROWS: f32 = 8.5;
 const LIST_MIN_WIDTH: f32 = 200.0;
 /// Menu items: inner padding and the gap before the check.
-const ITEM_PAD: f32 = 8.0;
+const ITEM_PAD: f32 = theme::SM;
 /// Type-ahead: the buffer clears this long after the last key.
 const TYPE_AHEAD_RESET: f64 = 1.0;
 

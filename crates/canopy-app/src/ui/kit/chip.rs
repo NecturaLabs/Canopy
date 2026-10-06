@@ -34,6 +34,25 @@ fn radius_for(radius: u8, height: f32) -> CornerRadius {
     }
 }
 
+// Component geometry from spec 4.18 that no theme token matches (the spacing scale steps by 4).
+/// Badge and keycap text inset either side ("padding 5").
+const CAP_PAD: f32 = 5.0;
+/// `ChangeBadge`: radius 4, letter mono 10.
+const CHANGE_RADIUS: u8 = 4;
+const CHANGE_LETTER: f32 = 10.0;
+/// `KeyChord`: caps in a chord 3 apart, chords and alternatives 6 apart.
+const CHORD_GAP: f32 = 3.0;
+const SEQUENCE_GAP: f32 = 6.0;
+/// `StatusDot`: 8 pt (Dense 6) with a 2 pt ring of the surface behind.
+const DOT: f32 = 8.0;
+const DOT_DENSE: f32 = 6.0;
+const DOT_RING: f32 = 2.0;
+/// `DiffStat`: `+n` and `−n` 6 apart, then 6 before five 6 pt blocks 2 apart.
+const STAT_GAP: f32 = 6.0;
+const BLOCK: f32 = 6.0;
+const BLOCK_GAP: f32 = 2.0;
+const BLOCK_RADIUS: u8 = 2;
+
 fn layout(ui: &Ui, text: String, font: FontId) -> Arc<Galley> {
     ui.painter()
         .layout_no_wrap(text, font, Color32::PLACEHOLDER)
@@ -128,7 +147,10 @@ impl Badge {
     pub fn measure(&self, ui: &Ui) -> Vec2 {
         let m = theme::metrics();
         let g = layout(ui, self.text.clone(), self.font());
-        vec2((g.size().x + 10.0).max(m.badge_height), m.badge_height)
+        vec2(
+            (g.size().x + 2.0 * CAP_PAD).max(m.badge_height),
+            m.badge_height,
+        )
     }
 
     /// Paints the badge in `rect` (sized by [`Badge::measure`]).
@@ -137,7 +159,8 @@ impl Badge {
         let (fill, ink) = self.colors(p);
         let g = layout(ui, self.text.clone(), self.font());
         let painter = ui.painter();
-        paint::fill(painter, rect, CornerRadius::same(9), fill);
+        let radius = radius_for(FULL, theme::metrics().badge_height);
+        paint::fill(painter, rect, radius, fill);
         painter.galley(rect.center() - g.size() / 2.0, g, ink);
     }
 
@@ -230,12 +253,12 @@ impl ChangeBadge {
     pub fn paint(self, painter: &Painter, rect: Rect) {
         let p = theme::palette(painter.ctx());
         let (fill, ink) = self.colors(p);
-        painter.rect_filled(rect, CornerRadius::same(4), fill);
+        painter.rect_filled(rect, CornerRadius::same(CHANGE_RADIUS), fill);
         painter.text(
             rect.center(),
             Align2::CENTER_CENTER,
             self.kind.letter(),
-            FontId::new(10.0, FontFamily::Monospace),
+            FontId::new(CHANGE_LETTER, FontFamily::Monospace),
             ink,
         );
     }
@@ -377,7 +400,7 @@ impl RefPill {
     fn label_font(&self) -> FontId {
         let m = theme::metrics();
         match self.kind {
-            RefKind::Head => FontId::new(10.5, FontFamily::Monospace),
+            RefKind::Head => FontId::new(m.micro_size, FontFamily::Monospace),
             RefKind::CurrentBranch => FontId::new(m.small_size, theme::semibold()),
             _ => FontId::new(m.small_size, theme::medium()),
         }
@@ -403,7 +426,7 @@ impl RefPill {
         let m = theme::metrics();
         let glyphs = self.glyphs();
         if glyphs.is_empty() {
-            return 2.0 * 7.0;
+            return 2.0 * m.ref_pill_pad;
         }
         let icon_w: f32 = glyphs
             .iter()
@@ -438,13 +461,13 @@ impl RefPill {
             rect,
             radius,
             fill,
-            Stroke::new(1.0, ring),
+            Stroke::new(paint::SEAM, ring),
             StrokeKind::Inside,
         );
         let glyphs = self.glyphs();
         let mut x = rect.left()
             + if glyphs.is_empty() {
-                7.0
+                m.ref_pill_pad
             } else {
                 m.ref_pill_pad_icon
             };
@@ -516,7 +539,7 @@ impl Widget for RefPill {
 }
 
 /// Space between a ref pill's icon and its label.
-const GAP: f32 = 4.0;
+const GAP: f32 = theme::XS;
 
 /// The `+N` badge for refs that did not fit; its tooltip lists them.
 #[derive(Debug, Clone)]
@@ -577,7 +600,10 @@ impl Keycap {
     pub fn measure_on(&self, painter: &Painter) -> Vec2 {
         let m = theme::metrics();
         let g = self.galley(painter);
-        vec2((g.size().x + 10.0).max(m.keycap_height), m.keycap_height)
+        vec2(
+            (g.size().x + 2.0 * CAP_PAD).max(m.keycap_height),
+            m.keycap_height,
+        )
     }
 
     /// Paints the cap in `rect` (sized by [`Keycap::measure`]).
@@ -599,7 +625,7 @@ impl Keycap {
         paint::seam_h(
             painter,
             egui::Rangef::new(rect.left() + inset, rect.right() - inset),
-            rect.bottom() - 1.5,
+            rect.bottom() - 1.5 * paint::SEAM,
             s.keycap_edge,
         );
         paint::rim(painter, rect, radius, s.edge);
@@ -681,14 +707,14 @@ impl KeyChord {
         let mut items: Vec<(Option<Keycap>, f32)> = Vec::new();
         for (a, alt) in self.keys.iter().enumerate() {
             if a > 0 {
-                items.push((None, 6.0));
+                items.push((None, SEQUENCE_GAP));
             }
             for (c, chord) in alt.iter().enumerate() {
                 for (k, key) in chord.iter().enumerate() {
                     let gap = if k > 0 {
-                        3.0
+                        CHORD_GAP
                     } else if c > 0 {
-                        6.0
+                        SEQUENCE_GAP
                     } else {
                         0.0
                     };
@@ -698,7 +724,11 @@ impl KeyChord {
         }
         let widths: Vec<f32> = items
             .iter()
-            .map(|(cap, gap)| gap + cap.as_ref().map_or(dot.size().x + 6.0, |k| k.measure(ui).x))
+            .map(|(cap, gap)| {
+                gap + cap
+                    .as_ref()
+                    .map_or(dot.size().x + SEQUENCE_GAP, |k| k.measure(ui).x)
+            })
             .collect();
         let size = vec2(widths.iter().sum(), m.keycap_height);
         let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
@@ -770,16 +800,17 @@ impl StatusDot {
     /// The dot's diameter: 8, 6 in Dense.
     pub fn diameter() -> f32 {
         if theme::density() == Density::Dense {
-            6.0
+            DOT_DENSE
         } else {
-            8.0
+            DOT
         }
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
         let p = theme::palette(ui.ctx());
         let d = Self::diameter();
-        let (rect, response) = ui.allocate_exact_size(Vec2::splat(d + 4.0), Sense::hover());
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::splat(d + 2.0 * DOT_RING), Sense::hover());
         if ui.is_rect_visible(rect) {
             let ground = self.ground.unwrap_or(theme::surfaces(ui.ctx()).pane);
             let alpha = if self.pulse {
@@ -788,7 +819,7 @@ impl StatusDot {
                 1.0
             };
             let c = rect.center();
-            ui.painter().circle_filled(c, d / 2.0 + 2.0, ground);
+            ui.painter().circle_filled(c, d / 2.0 + DOT_RING, ground);
             ui.painter()
                 .circle_filled(c, d / 2.0, self.tone.color(p).gamma_multiply(alpha));
         }
@@ -847,7 +878,7 @@ impl DiffStat {
         job.append(&format!("+{}", self.added), 0.0, fmt(p.success));
         job.append(
             &format!("−{}", self.removed),
-            6.0,
+            STAT_GAP,
             fmt(p.danger.gamma_multiply(0.85)),
         );
         painter.layout_job(job)
@@ -857,7 +888,7 @@ impl DiffStat {
     pub fn size(self, painter: &Painter) -> Vec2 {
         let g = self.counts(painter);
         let bar_w = if self.bar {
-            6.0 + 5.0 * 6.0 + 4.0 * 2.0
+            STAT_GAP + 5.0 * BLOCK + 4.0 * BLOCK_GAP
         } else {
             0.0
         };
@@ -874,7 +905,7 @@ impl DiffStat {
         painter.galley(rect.left_top(), Arc::clone(&g), p.text);
         if self.bar {
             let (green, red, _) = blocks(self.added, self.removed);
-            let mut x = rect.left() + g.size().x + 6.0;
+            let mut x = rect.left() + g.size().x + STAT_GAP;
             for i in 0..5 {
                 let c = if i < green {
                     p.success
@@ -883,9 +914,10 @@ impl DiffStat {
                 } else {
                     s.switch_off
                 };
-                let b = Rect::from_center_size(pos2(x + 3.0, rect.center().y), Vec2::splat(6.0));
-                painter.rect_filled(b, CornerRadius::same(2), c);
-                x += 8.0;
+                let b =
+                    Rect::from_min_size(pos2(x, rect.center().y - BLOCK / 2.0), Vec2::splat(BLOCK));
+                painter.rect_filled(b, CornerRadius::same(BLOCK_RADIUS), c);
+                x += BLOCK + BLOCK_GAP;
             }
         }
         rect
@@ -1032,7 +1064,7 @@ impl Chip {
             .as_ref()
             .map(|g| layout(ui, g.clone(), FontId::proportional(m.icon_xs)));
         let height = m.keycap_height;
-        let gap = 5.0;
+        let gap = GAP;
         let content = text.size().x + glyph.as_ref().map_or(0.0, |g| g.size().x + gap);
         let size = vec2(content + 2.0 * theme::SM, height);
         let sense = if enabled {
@@ -1501,6 +1533,36 @@ mod tests {
                     "{density:?} {style:?}"
                 );
             }
+        }
+    }
+
+    /// Spec 4.17: the detached-HEAD pill is padded `ref_pill_pad` either side (7, Dense 5), in
+    /// the `micro_size` mono, like the other pills' density.
+    #[test]
+    fn the_head_pill_takes_its_padding_and_size_from_the_density() {
+        for density in Density::ALL {
+            let ctx =
+                super::super::testkit::ctx_with(theme::ThemeId::Midnight, Style::Standard, density);
+            let m = theme::metrics();
+            let mut width = 0.0;
+            let mut label = 0.0;
+            frame(&ctx, Vec::new(), |ui| {
+                width = RefPill::new("HEAD", RefKind::Head).show(ui).rect.width();
+                label = ui
+                    .painter()
+                    .layout_no_wrap(
+                        "HEAD".to_owned(),
+                        FontId::new(m.micro_size, FontFamily::Monospace),
+                        Color32::PLACEHOLDER,
+                    )
+                    .size()
+                    .x;
+            });
+            assert!(
+                (width - (label + 2.0 * m.ref_pill_pad)).abs() < 0.01,
+                "{density:?}: {width} vs {label} + 2 x {}",
+                m.ref_pill_pad
+            );
         }
     }
 
