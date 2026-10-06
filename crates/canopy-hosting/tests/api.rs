@@ -1866,6 +1866,49 @@ fn author_pictures_resolve_both_providers_and_download_without_tokens() {
 }
 
 #[test]
+fn a_switched_off_client_looks_up_no_author() {
+    let server = Server::start();
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let picture = format!("{}/picture.png", server.base);
+    server.route(
+        "GET",
+        "/repos/octo/hello/commits",
+        200,
+        &json!([{"sha": sha, "author": {"avatar_url": picture}}]).to_string(),
+    );
+    server.route("GET", "/repos/octo/hello", 200, r#"{"id":1}"#);
+    server.route(
+        "GET",
+        "/api/v4/avatar",
+        200,
+        &json!({"avatar_url": picture}).to_string(),
+    );
+    let on = Arc::new(AtomicBool::new(true));
+    let client = github(&server, Some(TOKEN)).with_switch(Arc::clone(&on));
+    client
+        .author_avatar(sha, "a@example.com")
+        .expect("lookup")
+        .expect("a picture");
+    // The tab lets the thread go: profile lookups stop like every other request.
+    on.store(false, Ordering::SeqCst);
+    assert!(matches!(
+        client.author_avatar(sha, "a@example.com"),
+        Err(Error::Stopped)
+    ));
+    assert_eq!(client.author_repository(), Err(Error::Stopped));
+    let gitlab = gitlab(&server, Some(TOKEN)).with_switch(Arc::clone(&on));
+    assert!(matches!(
+        gitlab.author_avatar(sha, "a@example.com"),
+        Err(Error::Stopped)
+    ));
+    let sent: Vec<String> = server.requests().into_iter().map(|r| r.target).collect();
+    assert_eq!(
+        sent,
+        [format!("/repos/octo/hello/commits?sha={sha}&per_page=1")]
+    );
+}
+
+#[test]
 fn author_picture_redirects_and_off_host_urls_are_never_followed() {
     let server = Server::start();
     let other = Server::start();

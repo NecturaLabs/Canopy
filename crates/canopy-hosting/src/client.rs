@@ -101,9 +101,12 @@ impl Client {
 
     /// Sends requests only while `on` holds `true`. Once it is `false`, every call fails with
     /// [`crate::Error::Stopped`] before anything is sent, including the parts of a
-    /// [`Client::details`] still to come. The hosting thread passes the switch its tab turns off
-    /// when it lets the thread go (pull and merge requests turned off, the token changed, another
-    /// remote), so a job already under way sends nothing more.
+    /// [`Client::details`] still to come and the profile lookups of [`Client::author_avatar`] and
+    /// [`Client::author_repository`]. The hosting thread passes the switch its tab turns off when
+    /// it lets the thread go (pull and merge requests turned off, the token changed, another
+    /// remote) to its own client and to its author-picture thread's, so a job already under way
+    /// sends nothing more. A picture download ([`crate::avatars::Avatar::download`]) is not a
+    /// call on the client; the picture thread checks its own switch before it.
     #[must_use]
     pub fn with_switch(mut self, on: Arc<AtomicBool>) -> Self {
         self.http.set_switch(on);

@@ -151,12 +151,16 @@ impl Http {
         &self.base
     }
 
-    /// Profile lookup: no redirects, bounded JSON, and no author email in logs.
+    /// Profile lookup: no redirects, bounded JSON, and no author email in logs. Sends nothing
+    /// while the switch is off.
     #[expect(
         clippy::map_err_ignore,
         reason = "kept as it was; docs/backlog.md has the entry to carry the transport's message"
     )]
     pub(crate) fn avatar_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        if self.stopped() {
+            return Err(Error::Stopped);
+        }
         let mut response = self
             .headers(self.agent.get(format!("{}{}", self.base, path)))
             .config()

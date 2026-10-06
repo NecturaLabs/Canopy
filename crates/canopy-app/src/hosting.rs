@@ -422,12 +422,13 @@ fn run(
         }
         Err(_) => Client::new(&forge, token),
     };
-    let client = build_client(token.clone()).with_switch(on);
+    let client = build_client(token.clone()).with_switch(Arc::clone(&on));
     // Author pictures have a thread of their own: a slow or black-holed picture host (a request
     // can take tens of seconds) must not hold up a pull or merge request action queued behind it.
+    // Its client stops with the same switch, besides its own `avatars_enabled`.
     let avatar_jobs = {
         let (jobs, job_rx) = unbounded::<(canopy_core::Oid, String)>();
-        let (client, forge) = (build_client(token), forge.clone());
+        let (client, forge) = (build_client(token).with_switch(on), forge.clone());
         let (events, ctx) = (events.clone(), ctx.clone());
         let spawned = std::thread::Builder::new()
             .name(format!("avatars:{}", forge.host))
