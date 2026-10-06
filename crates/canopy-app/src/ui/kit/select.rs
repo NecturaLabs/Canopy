@@ -18,8 +18,7 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use super::button::tooltip_text;
-use super::overlay::{self, Entrance, ExitMotion, TooltipExt};
+use super::overlay::{self, Entrance, ExitMotion};
 use super::toggle::{component_id, gallery_caption, gallery_row, remembered};
 use super::{ForceState, Interact, Size, anim, field, glass, paint};
 use crate::ui::motion;
@@ -691,16 +690,13 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             ink.galley(pos2(row.left() + indent, row.top()), g, color);
         }
 
-        let tip = tooltip_text(
+        super::button::tip(
+            trigger,
             enabled,
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
-        );
-        match tip {
-            Some(t) => trigger.kit_tooltip(t).show(),
-            None => trigger,
-        }
+        )
     }
 }
 

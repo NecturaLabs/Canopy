@@ -176,13 +176,6 @@ impl ForceState {
     };
 }
 
-/// Labels and icons of disabled controls: the theme's [`Palette::disabled_text`], painted at full
-/// strength (never also faded by `DISABLED_ALPHA`). New code reads the token directly; this stays
-/// for the field, select and chip modules until they do.
-pub(crate) fn disabled_text(p: &Palette, _style: theme::Style) -> Color32 {
-    p.disabled_text
-}
-
 /// The outline and indicator of a disabled selection control (a checkbox's rim and tick ground, a
 /// switch's knob, a slider's fill and thumb ring): halfway between `disabled_edge` and
 /// `disabled_text`, so the control keeps its shape and its value without reading as enabled.
@@ -192,7 +185,7 @@ pub(crate) fn disabled_mark(p: &Palette, s: &theme::Surfaces) -> Color32 {
 
 /// The painter a control draws its labels and icons with: `ui`'s, with egui's own disabled fade
 /// taken back off when the `Ui` itself is disabled, so a disabled label paints in
-/// [`disabled_text`] at full strength either way.
+/// [`Palette::disabled_text`] at full strength either way.
 pub(crate) fn content_painter(ui: &egui::Ui) -> egui::Painter {
     let mut painter = ui.painter().clone();
     if !ui.is_enabled() {
@@ -302,7 +295,7 @@ mod tests {
             let p = id.palette();
             for style in Style::ALL {
                 let s = p.surfaces(style);
-                let c = super::disabled_text(p, style);
+                let c = p.disabled_text;
                 for g in [s.pane, s.panel, s.elevated, s.overlay, s.field] {
                     let dimmed = theme::over(s.raised.top.gamma_multiply(theme::DISABLED_ALPHA), g);
                     for ground in [g, dimmed] {
@@ -439,7 +432,7 @@ mod tests {
     #[test]
     fn disabled_controls_paint_the_disabled_tokens_at_full_strength() {
         type Show = fn(&mut Ui, bool);
-        let controls: [(&str, Show); 14] = [
+        let controls: [(&str, Show); 17] = [
             ("menu item", |ui, on| {
                 menu::MenuItem::new(icon::GIT_BRANCH, "Check out")
                     .description("Switch to this branch")
@@ -508,6 +501,24 @@ mod tests {
                     .enabled(on)
                     .show(ui);
             }),
+            ("chip", |ui, on| {
+                chip::Chip::new("main").enabled(on).show(ui);
+            }),
+            ("danger chip", |ui, on| {
+                chip::Chip::new("3 failing")
+                    .icon(icon::X_CIRCLE)
+                    .tone(super::Tone::Danger)
+                    .enabled(on)
+                    .show(ui);
+            }),
+            ("card", |ui, on| {
+                super::surface::Card::new()
+                    .interactive(true)
+                    .selected(true)
+                    .ring(super::Tone::Accent)
+                    .enabled(on)
+                    .show(ui, |ui| super::Button::new("Open").primary().show(ui));
+            }),
         ];
         for id in ThemeId::ALL {
             for style in Style::ALL {
@@ -559,8 +570,6 @@ mod tests {
             ".on_hover_ui(",
             ".on_hover_ui_at_pointer(",
         ];
-        // Modules whose owners move them in their own change; delete each name when it does.
-        const NOT_YET: [&str; 2] = ["chip.rs", "surface.rs"];
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
         let mut files: Vec<_> = std::fs::read_dir(src.join("kit"))
             .expect("kit folder")
@@ -571,13 +580,6 @@ mod tests {
         files.extend(["cheatsheet.rs", "palette.rs", "widgets.rs"].map(|f| src.join(f)));
         let mut found = Vec::new();
         for path in files {
-            if path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| NOT_YET.contains(&n))
-            {
-                continue;
-            }
             let text = std::fs::read_to_string(&path).expect("kit source");
             let code = text.split("#[cfg(test)]").next().unwrap_or_default();
             for (i, line) in code.lines().enumerate() {

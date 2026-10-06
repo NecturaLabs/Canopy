@@ -35,9 +35,8 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use super::button::{spinner_due, tooltip_text};
+use super::button::{spinner_due, tip};
 use super::chip::Keycap;
-use super::overlay::TooltipExt;
 use super::toggle::{component_id, gallery_caption, remembered};
 use super::{ForceState, IconButton, KitResponse, Size, anim, paint};
 use crate::keymap::{self, Command};
@@ -235,14 +234,6 @@ pub(crate) fn paint_box(
         );
     } else {
         painter.add(edge_shape(rect, radius, edge.0, edge.1));
-    }
-}
-
-/// A field's response with its kit tooltip.
-fn tooltip(response: Response, tip: Option<String>) -> Response {
-    match tip {
-        Some(t) => response.kit_tooltip(t).show(),
-        None => response,
     }
 }
 
@@ -861,14 +852,14 @@ impl<'t> Core<'t> {
                 n.set_invalid(Invalid::True);
             }
         });
-        let tip = tooltip_text(
-            enabled,
-            self.tooltip.as_deref(),
-            self.disabled_reason.as_deref(),
-            None,
-        );
         Shown {
-            response: tooltip(response, tip),
+            response: tip(
+                response,
+                enabled,
+                self.tooltip.as_deref(),
+                self.disabled_reason.as_deref(),
+                None,
+            ),
             submitted,
             stepped,
         }

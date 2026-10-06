@@ -60,21 +60,6 @@ fn blend(a: Fill, b: Fill, t: f32) -> Fill {
     }
 }
 
-/// The tooltip a control shows: why it is disabled, else its tooltip, with the shortcut's chord
-/// as text. Prefer [`tip`], which shows the chord as keycaps.
-pub(super) fn tooltip_text(
-    enabled: bool,
-    tooltip: Option<&str>,
-    reason: Option<&str>,
-    shortcut: Option<Command>,
-) -> Option<String> {
-    let text = if enabled { tooltip } else { reason.or(tooltip) }?;
-    Some(match shortcut {
-        Some(c) if enabled => format!("{text}  ({})", keymap::hint(c)),
-        _ => text.to_owned(),
-    })
-}
-
 /// A control's kit tooltip: why it is disabled, else `tooltip` with the shortcut's keys as
 /// keycaps; nothing when there is no text.
 pub(super) fn tip(

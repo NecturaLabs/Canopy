@@ -1081,12 +1081,17 @@ impl Chip {
         };
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let mut painter = ui.painter().clone();
-            if !enabled && ui.is_enabled() {
-                painter.multiply_opacity(theme::DISABLED_ALPHA);
-            }
+            // A disabled chip paints in the disabled tokens at full strength: a toned chip's tint
+            // gives way to `disabled_fill`, and the label reads in `disabled_text`.
+            let painter = super::content_painter(ui);
             let radius = radius_for(FULL, height);
-            let (fill, ink) = self.colors(p);
+            let (fill, ink) = match self.colors(p) {
+                (fill, _) if !enabled && fill.a() > 0 => {
+                    (p.surfaces(theme::style()).disabled_fill, p.disabled_text)
+                }
+                (fill, _) if !enabled => (fill, p.disabled_text),
+                colors => colors,
+            };
             if fill.a() > 0 {
                 painter.rect_filled(rect, radius, fill);
             }
@@ -1105,15 +1110,10 @@ impl Chip {
                     Color32::TRANSPARENT,
                 );
             }
-            let (painter, ink) = if !enabled {
-                (
-                    super::content_painter(ui),
-                    super::disabled_text(p, theme::style()),
-                )
-            } else if self.tone == Tone::Neutral {
-                (painter, ink.lerp_to_gamma(p.text, st.hover.max(st.press)))
+            let ink = if enabled && self.tone == Tone::Neutral {
+                ink.lerp_to_gamma(p.text, st.hover.max(st.press))
             } else {
-                (painter, ink)
+                ink
             };
             let mut x = rect.left() + theme::SM;
             let mut shapes: Vec<Shape> = Vec::new();
