@@ -34,7 +34,8 @@ trap 'rm -f "$test_gitconfig"' EXIT
 git config --file "$test_gitconfig" user.name "Canopy CI"
 git config --file "$test_gitconfig" user.email "ci@canopy.invalid"
 git config --file "$test_gitconfig" init.defaultBranch main
-GIT_CONFIG_GLOBAL="$test_gitconfig" GIT_CONFIG_NOSYSTEM=1 cargo test --workspace --locked
+# Every test binary runs even after one fails, so one run reports every failure, as in CI.
+GIT_CONFIG_GLOBAL="$test_gitconfig" GIT_CONFIG_NOSYSTEM=1 cargo test --workspace --locked --no-fail-fast
 
 step "tools/release.py selftest"
 python3 tools/release.py selftest
