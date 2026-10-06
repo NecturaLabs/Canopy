@@ -908,6 +908,9 @@ impl Banner {
 
 // ------------------------------------------------------------------------------------ Callout
 
+/// What [`Callout::show_with`] draws between the text and the actions.
+type CalloutContent<'a> = Box<dyn FnOnce(&mut Ui) + 'a>;
+
 /// An inline note in a pane or dialog: the tone's tint, an icon, optional title, wrapped text and
 /// up to two ghost actions under it, their labels in line with the text. No side bar.
 #[derive(Debug, Clone)]
@@ -958,6 +961,20 @@ impl Callout {
 
     /// Shows the callout; the value is the index of the action clicked.
     pub fn show_actions(self, ui: &mut Ui) -> KitResponse<Option<usize>> {
+        self.show_inner(ui, None)
+    }
+
+    /// Shows the callout with `add`'s content between its text and its actions (a short list,
+    /// keys and what they do); the value is the index of the action clicked.
+    pub fn show_with(self, ui: &mut Ui, add: impl FnOnce(&mut Ui)) -> KitResponse<Option<usize>> {
+        self.show_inner(ui, Some(Box::new(add)))
+    }
+
+    fn show_inner(
+        self,
+        ui: &mut Ui,
+        content: Option<CalloutContent<'_>>,
+    ) -> KitResponse<Option<usize>> {
         let p = theme::palette(ui.ctx());
         let m = theme::metrics();
         let tone_c = self.tone.color(p);
@@ -994,6 +1011,10 @@ impl Callout {
                             )
                             .wrap(),
                         );
+                        if let Some(add) = content {
+                            ui.add_space(theme::XS);
+                            add(ui);
+                        }
                         if !self.actions.is_empty() {
                             ui.add_space(theme::XS);
                             // Ghost buttons pulled left so their labels line up with the text.
