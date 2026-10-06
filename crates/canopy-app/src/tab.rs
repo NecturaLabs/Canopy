@@ -248,6 +248,15 @@ pub struct Notice {
     pub body: String,
 }
 
+/// How the last announced operation ended, for the action bar to show on its tool for a moment.
+#[derive(Debug, Clone)]
+pub struct Finished {
+    /// The operation's label (`Op::label`).
+    pub label: String,
+    pub ok: bool,
+    pub at: Instant,
+}
+
 /// Pull or merge requests of the tab's forge.
 #[derive(Debug)]
 pub struct Requests {
@@ -374,6 +383,7 @@ pub struct RepoTab {
     /// Move keyboard focus to the commit summary next frame.
     pub focus_summary: bool,
     pub running: Option<String>,
+    pub finished: Option<Finished>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
     pub progress: Option<String>,
@@ -460,6 +470,7 @@ impl RepoTab {
             amend: false,
             focus_summary: false,
             running: None,
+            finished: None,
             force_delete_offer: None,
             progress: None,
             commit_limit,
@@ -1161,6 +1172,11 @@ impl RepoTab {
                                 self.last_fetch = Instant::now();
                             }
                             if announce {
+                                self.finished = Some(Finished {
+                                    label: label.clone(),
+                                    ok: true,
+                                    at: Instant::now(),
+                                });
                                 notices.push(Notice {
                                     ok: true,
                                     title: format!("{label} — done"),
@@ -1173,11 +1189,18 @@ impl RepoTab {
                             OpKind::SafeDelete(name) if e.contains("not fully merged") => {
                                 self.force_delete_offer = Some(name.clone());
                             }
-                            _ => notices.push(Notice {
-                                ok: false,
-                                title: format!("{label} failed"),
-                                body: e,
-                            }),
+                            _ => {
+                                self.finished = Some(Finished {
+                                    label: label.clone(),
+                                    ok: false,
+                                    at: Instant::now(),
+                                });
+                                notices.push(Notice {
+                                    ok: false,
+                                    title: format!("{label} failed"),
+                                    body: e,
+                                });
+                            }
                         },
                     }
                 }

@@ -4,6 +4,7 @@
 
 use std::fmt::Write as _;
 use std::sync::Arc;
+use std::time::Duration;
 
 use canopy_core::forge::ForgeKind;
 use canopy_hosting::{RequestState, RequestSummary, StateFilter};
@@ -15,7 +16,7 @@ use egui_phosphor::regular as icon;
 
 use crate::action::Action;
 use crate::keymap::Command;
-use crate::tab::{RepoTab, View};
+use crate::tab::{Finished, RepoTab, View};
 use crate::ui::art;
 use crate::ui::kit::button::tool_divider;
 use crate::ui::kit::chip::Badge;
@@ -24,6 +25,7 @@ use crate::ui::kit::field::SearchField;
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::tabs::{DocTab, DocTabs, DocTabsEvent};
 use crate::ui::kit::{IconButton, Size, ToolButton, menu, paint};
+use crate::ui::motion;
 use crate::ui::theme::{self, ThemeId, palette};
 use crate::ui::widgets::forge_icon;
 use crate::worker::Op;
@@ -227,7 +229,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
     let has_remote = snap.is_some_and(|s| !s.remotes.is_empty());
     let local_only = tab.is_local_only();
     let busy = tab.running.is_some();
-    let running = Running::of(tab);
+    let running = Running::of(ui.ctx(), tab);
     let branch = snap.and_then(|s| s.current_branch());
     let forge = tab.forge();
     let width = ui.available_width();
@@ -537,8 +539,8 @@ enum Tool {
     Pop,
 }
 
-/// The tool the running operation (its worker label, `Op::label`) belongs to, if any.
-fn running_tool(label: &str) -> Option<Tool> {
+/// The tool an operation (its worker label, `Op::label`) belongs to, if any.
+fn tool_of(label: &str) -> Option<Tool> {
     Some(match label {
         "Fetching" => Tool::Fetch,
         "Pulling" => Tool::Pull,
@@ -557,29 +559,86 @@ fn running_tool(label: &str) -> Option<Tool> {
     })
 }
 
-/// The operation the action bar is running, as its tools show it.
+/// How long a tool shows how its operation ended before that fades.
+const OUTCOME_HOLD: f32 = 1.6;
+
+/// How a tool's operation ended, while the tool still shows it.
+#[derive(Debug, Clone, PartialEq)]
+struct Outcome {
+    tool: Tool,
+    ok: bool,
+    /// 1 while it holds, easing to 0 as it fades.
+    strength: f32,
+    /// "Fetching — done", "Pushing failed".
+    tip: String,
+}
+
+impl Outcome {
+    /// The outcome `finished` still shows `seconds` after it, or `None` once it has faded.
+    fn after(finished: &Finished, seconds: f32) -> Option<Self> {
+        let tool = tool_of(&finished.label)?;
+        let fade = motion::time(motion::BASE);
+        let strength = if seconds <= OUTCOME_HOLD {
+            1.0
+        } else if seconds < OUTCOME_HOLD + fade {
+            1.0 - motion::EASE_OUT.at((seconds - OUTCOME_HOLD) / fade)
+        } else {
+            return None;
+        };
+        let tip = if finished.ok {
+            format!("{} — done", finished.label)
+        } else {
+            format!("{} failed", finished.label)
+        };
+        Some(Self {
+            tool,
+            ok: finished.ok,
+            strength,
+            tip,
+        })
+    }
+}
+
+/// The operation the action bar is running, or how the last one ended, as its tools show it
+/// (busy, then success or failure, in place).
 struct Running {
     tool: Option<Tool>,
     /// "Fetching…  Receiving objects: 45%".
     tip: String,
+    outcome: Option<Outcome>,
 }
 
 impl Running {
-    fn of(tab: &RepoTab) -> Self {
+    fn of(ctx: &egui::Context, tab: &RepoTab) -> Self {
         let job = tab.running.as_deref();
         let mut tip = job.map_or_else(String::new, |j| format!("{j}…"));
         if let Some(progress) = tab.progress.as_deref().filter(|_| job.is_some()) {
             let _ = write!(tip, "  {progress}");
         }
+        let outcome = tab
+            .finished
+            .as_ref()
+            .filter(|_| job.is_none())
+            .and_then(|f| {
+                let seconds = f.at.elapsed().as_secs_f32();
+                let shown = Outcome::after(f, seconds)?;
+                if seconds < OUTCOME_HOLD {
+                    ctx.request_repaint_after(Duration::from_secs_f32(OUTCOME_HOLD - seconds));
+                } else {
+                    ctx.request_repaint();
+                }
+                Some(shown)
+            });
         Self {
-            tool: job.and_then(running_tool),
+            tool: job.and_then(tool_of),
             tip,
+            outcome,
         }
     }
 
     /// Shows `button`, the `tool` with `shortcut`; returns whether it was clicked. While the
     /// tool's own operation runs it spins on the accent ground, its tooltip is the progress, and a
-    /// click does nothing.
+    /// click does nothing. Just after, its ground and a dot say how it ended, then fade.
     fn show(&self, ui: &mut Ui, button: ToolButton, tool: Tool, shortcut: Option<Command>) -> bool {
         if self.tool == Some(tool) {
             let _ = button
@@ -590,12 +649,37 @@ impl Running {
                 .show(ui);
             return false;
         }
-        match shortcut {
+        let button = match shortcut {
             Some(c) => button.shortcut(c),
             None => button,
-        }
-        .show(ui)
-        .clicked()
+        };
+        let Some(outcome) = self.outcome.as_ref().filter(|o| o.tool == tool) else {
+            return button.show(ui).clicked();
+        };
+        let ground = ui.painter().add(egui::Shape::Noop);
+        let response = button.tooltip(outcome.tip.clone()).show(ui);
+        let p = palette(ui.ctx());
+        let m = theme::metrics();
+        let (tint, mark) = if outcome.ok {
+            (p.success_tint(), p.success)
+        } else {
+            (p.danger_tint(), p.danger)
+        };
+        let rect = response.rect;
+        ui.painter().set(
+            ground,
+            egui::epaint::RectShape::filled(
+                rect,
+                egui::CornerRadius::same(m.radius),
+                tint.gamma_multiply(outcome.strength),
+            ),
+        );
+        ui.painter().circle_filled(
+            pos2(rect.right() - theme::SM, rect.top() + theme::SM),
+            theme::XS * 0.75,
+            mark.gamma_multiply(outcome.strength),
+        );
+        response.clicked()
     }
 }
 
@@ -894,7 +978,7 @@ mod tests {
             ),
         ];
         for (op, tool) in cases {
-            assert_eq!(running_tool(&op.label()), tool, "{}", op.label());
+            assert_eq!(tool_of(&op.label()), tool, "{}", op.label());
         }
     }
 
@@ -905,10 +989,12 @@ mod tests {
         let running = Running {
             tool: Some(Tool::Fetch),
             tip: "Fetching…".into(),
+            outcome: None,
         };
         let idle = Running {
             tool: None,
             tip: String::new(),
+            outcome: None,
         };
         let fetch = || ToolButton::new(icon::ARROWS_CLOCKWISE, "Fetch");
         for (state, expected) in [(&running, false), (&idle, true)] {
@@ -959,5 +1045,80 @@ mod tests {
             a.right() + 40.0 < b.left(),
             "the busy tab overlaps the next: {a:?} {b:?}"
         );
+    }
+
+    /// Override O1: how an operation ended holds on its tool, then is gone.
+    #[test]
+    fn an_outcome_holds_on_its_tool_then_ends() {
+        let done = Finished {
+            label: "Fetching".into(),
+            ok: true,
+            at: std::time::Instant::now(),
+        };
+        let held = Outcome::after(&done, OUTCOME_HOLD / 2.0).expect("held");
+        assert_eq!(held.tool, Tool::Fetch);
+        assert!(held.ok);
+        assert!((held.strength - 1.0).abs() < f32::EPSILON);
+        assert_eq!(held.tip, "Fetching — done");
+        assert!(Outcome::after(&done, OUTCOME_HOLD + 1.0).is_none(), "gone");
+        let failed = Finished {
+            label: "Pushing".into(),
+            ok: false,
+            ..done
+        };
+        let shown = Outcome::after(&failed, 0.0).expect("shown");
+        assert_eq!((shown.tool, shown.ok), (Tool::Push, false));
+        assert_eq!(shown.tip, "Pushing failed");
+        let other = Finished {
+            label: "Committing".into(),
+            ok: true,
+            at: std::time::Instant::now(),
+        };
+        assert!(Outcome::after(&other, 0.0).is_none(), "not a tool");
+    }
+
+    /// Override O1, end to end from the worker's events: busy while it runs, then failed on the
+    /// same tool; a quiet (auto) fetch leaves no mark.
+    #[test]
+    fn the_worker_events_drive_the_tool_from_busy_to_its_outcome() {
+        use crate::worker::{Event, OpKind};
+        let ctx = context();
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("alpha"), 100, DiffPrefs::default(), worker);
+        events
+            .send(Event::OpStarted("Fetching".into()))
+            .expect("started");
+        tab.poll(&[]);
+        let busy = Running::of(&ctx, &tab);
+        assert_eq!(busy.tool, Some(Tool::Fetch));
+        assert!(busy.outcome.is_none());
+        events
+            .send(Event::OpFinished {
+                label: "Fetching".into(),
+                kind: OpKind::Fetch,
+                announce: true,
+                result: Err("fatal: unable to access".into()),
+            })
+            .expect("finished");
+        tab.poll(&[]);
+        let after = Running::of(&ctx, &tab);
+        assert_eq!(after.tool, None);
+        let outcome = after.outcome.expect("outcome");
+        assert_eq!((outcome.tool, outcome.ok), (Tool::Fetch, false));
+
+        let (worker, events, _jobs) = Worker::detached();
+        let mut quiet =
+            RepoTab::with_worker(PathBuf::from("beta"), 100, DiffPrefs::default(), worker);
+        events
+            .send(Event::OpFinished {
+                label: "Fetching".into(),
+                kind: OpKind::Fetch,
+                announce: false,
+                result: Ok(String::new()),
+            })
+            .expect("finished");
+        quiet.poll(&[]);
+        assert!(Running::of(&ctx, &quiet).outcome.is_none());
     }
 }
