@@ -2013,7 +2013,7 @@ mod tests {
         }
         stack.open(pending);
         stack.open(Dialog::Legal(Document::Privacy));
-        stack.finish_clone(false);
+        stack.finish_clone_with(Err(""));
         stack.close();
         assert!(
             matches!(stack.current(), Some(Dialog::Clone { builder, parent, pending: false, .. }) if builder.project == "example/repository" && parent == "chosen-parent")
@@ -2022,7 +2022,7 @@ mod tests {
             *pending = true;
         }
         stack.open(Dialog::clone_default(&crate::settings::Settings::default()));
-        stack.finish_clone(true);
+        stack.finish_clone_with(Ok(()));
         stack.close();
         assert!(
             stack.current().is_none(),
