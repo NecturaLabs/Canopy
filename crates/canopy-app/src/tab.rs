@@ -266,6 +266,9 @@ pub struct Finished {
     pub at: Instant,
 }
 
+/// How old the request list may be when its view opens before it is loaded again.
+const REQUESTS_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Pull or merge requests of the tab's forge.
 #[derive(Debug)]
 pub struct Requests {
@@ -288,6 +291,9 @@ pub struct Requests {
     pub token: Option<Option<TokenSource>>,
     /// When the list was last loaded.
     pub loaded_at: Option<Instant>,
+    /// The newest load was a quiet refresh (no spinner): if it fails, the list on screen stays.
+    /// Any load the user asked for clears it.
+    pub quiet_refresh: bool,
 }
 
 impl Default for Requests {
@@ -304,6 +310,7 @@ impl Default for Requests {
             merge_method: MergeMethod::Merge,
             token: None,
             loaded_at: None,
+            quiet_refresh: false,
         }
     }
 }
@@ -685,8 +692,40 @@ impl RepoTab {
     /// Reloads the request list.
     pub fn load_requests(&mut self) {
         if let Some(h) = &self.host {
+            self.requests.quiet_refresh = false;
             self.requests.loading = true;
             h.send(HostJob::List(self.requests.filter));
+        }
+    }
+
+    /// Loads the request list again without a spinner, keeping the list, the selection and the
+    /// open request on screen until the new ones arrive. Does nothing without a hosting thread
+    /// (hosting off, no consent, no forge) or while the list was never loaded: a tab nobody
+    /// opened asks its forge for nothing.
+    pub fn refresh_requests_quietly(&mut self) {
+        let Some(h) = &self.host else { return };
+        if self.requests.list.is_none() {
+            return;
+        }
+        self.requests.quiet_refresh = true;
+        h.send(HostJob::List(self.requests.filter));
+        if let Some(n) = self.requests.selected
+            && self.requests.details.is_some()
+        {
+            h.send(HostJob::Details(n));
+        }
+    }
+
+    /// Refreshes the list quietly when it was loaded more than [`REQUESTS_STALE_AFTER`] ago:
+    /// the Requests view opens on a list as current as the last sync, not as old as the tab.
+    pub fn refresh_requests_if_stale(&mut self) {
+        if !self.requests.loading
+            && self
+                .requests
+                .loaded_at
+                .is_some_and(|at| at.elapsed() >= REQUESTS_STALE_AFTER)
+        {
+            self.refresh_requests_quietly();
         }
     }
 
@@ -1274,6 +1313,10 @@ impl RepoTab {
                             if kind == OpKind::Fetch {
                                 self.last_fetch = Instant::now();
                             }
+                            // The remote moved, or Canopy moved it: its requests may have too.
+                            if kind.syncs_remote() {
+                                self.refresh_requests_quietly();
+                            }
                             if announce {
                                 self.finished = Some(Finished {
                                     label: label.clone(),
@@ -1335,7 +1378,15 @@ impl RepoTab {
                 }
                 HostEvent::Token(t) => self.requests.token = Some(t),
                 HostEvent::List(filter, result) => {
-                    if filter == self.requests.filter {
+                    let kept_through_failure = self.requests.quiet_refresh
+                        && result.is_err()
+                        && matches!(self.requests.list, Some(Ok(_)));
+                    if kept_through_failure && filter == self.requests.filter {
+                        // A quiet refresh failed (a network blip, a rate limit): the list on
+                        // screen is still the best there is. The next sync tries again.
+                        tracing::debug!("a quiet request refresh failed; keeping the list");
+                        self.requests.quiet_refresh = false;
+                    } else if filter == self.requests.filter {
                         self.requests.loading = false;
                         self.requests.loaded_at = Some(Instant::now());
                         let first = result
@@ -1362,7 +1413,11 @@ impl RepoTab {
                 HostEvent::Details(n, result) => {
                     if self.requests.selected == Some(n) {
                         self.requests.details_loading = false;
-                        self.requests.details = Some(result.map(Arc::new));
+                        // A quiet refresh of the open request that fails leaves it shown.
+                        let kept = result.is_err() && matches!(self.requests.details, Some(Ok(_)));
+                        if !kept {
+                            self.requests.details = Some(result.map(Arc::new));
+                        }
                     }
                 }
                 HostEvent::Created(result) => {
@@ -2137,6 +2192,158 @@ mod tests {
         r.layout = crate::views::resolve::Layout::with_height(1, 0, 99.0);
         r.reload(None, Ok(Arc::new(ConflictFile::parse(TWO))));
         assert!(r.layout.is_empty());
+    }
+
+    /// A tab on a forge whose request list is on screen, with request 7 open: the channels to
+    /// feed it and read what it asks of the repository and hosting threads.
+    fn tab_showing_requests() -> (
+        RepoTab,
+        crossbeam_channel::Sender<Event>,
+        crossbeam_channel::Receiver<HostJob>,
+    ) {
+        use canopy_core::forge::ForgeKind;
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let forge = Forge {
+            kind: ForgeKind::GitHub,
+            host: "github.com".into(),
+            port: None,
+            path: "o/r".into(),
+        };
+        let (host, _host_events, host_jobs) = HostWorker::detached(forge);
+        tab.host = Some(host);
+        tab.requests.list = Some(Ok(Arc::from(Vec::new())));
+        tab.requests.loaded_at = Some(Instant::now());
+        tab.requests.selected = Some(7);
+        tab.requests.details = Some(Err("a stand-in for the open request".into()));
+        (tab, events, host_jobs)
+    }
+
+    fn finish(
+        events: &crossbeam_channel::Sender<Event>,
+        kind: OpKind,
+        result: Result<String, String>,
+    ) {
+        let _ = events.send(Event::OpFinished {
+            label: "Syncing".into(),
+            kind,
+            announce: false,
+            result,
+        });
+    }
+
+    fn jobs_of(host_jobs: &crossbeam_channel::Receiver<HostJob>) -> Vec<HostJob> {
+        host_jobs.try_iter().collect()
+    }
+
+    #[test]
+    fn a_fetch_pull_or_push_refreshes_the_request_list_quietly() {
+        for kind in [OpKind::Fetch, OpKind::Pull, OpKind::Push] {
+            let (mut tab, events, host_jobs) = tab_showing_requests();
+            finish(&events, kind.clone(), Ok(String::new()));
+            tab.poll(&[]);
+            let jobs = jobs_of(&host_jobs);
+            assert!(
+                jobs.iter()
+                    .any(|j| matches!(j, HostJob::List(StateFilter::Open))),
+                "{kind:?} asked for the list again: {jobs:?}"
+            );
+            assert!(
+                jobs.iter().any(|j| matches!(j, HostJob::Details(7))),
+                "{kind:?} asked for the open request again: {jobs:?}"
+            );
+            assert!(!tab.requests.loading, "{kind:?} showed a spinner");
+            assert!(
+                !tab.requests.details_loading,
+                "{kind:?} blanked the details"
+            );
+            assert!(tab.requests.list.is_some(), "the list stays on screen");
+            assert!(tab.requests.details.is_some(), "the open request stays");
+            assert_eq!(tab.requests.selected, Some(7));
+        }
+    }
+
+    #[test]
+    fn a_failed_sync_or_other_operation_leaves_the_request_list_alone() {
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        finish(
+            &events,
+            OpKind::Fetch,
+            Err("fatal: unable to access".into()),
+        );
+        finish(&events, OpKind::Other, Ok(String::new()));
+        tab.poll(&[]);
+        assert!(jobs_of(&host_jobs).is_empty());
+    }
+
+    #[test]
+    fn a_sync_without_a_host_or_a_loaded_list_asks_the_forge_for_nothing() {
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        tab.requests.list = None;
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        assert!(
+            jobs_of(&host_jobs).is_empty(),
+            "a list never loaded stays unloaded until its tab is opened"
+        );
+
+        let (mut tab, events, _host_jobs) = tab_showing_requests();
+        tab.host = None;
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        assert!(tab.host.is_none() && !tab.requests.loading);
+    }
+
+    #[test]
+    fn a_quiet_refresh_that_fails_keeps_the_list_on_screen()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::hosting::HostEvent;
+        let (mut tab, events, host_jobs) = tab_showing_requests();
+        let Some(host) = &tab.host else {
+            return Err("no host".into());
+        };
+        let (host, host_events, _) = HostWorker::detached(host.forge.clone());
+        tab.host = Some(host);
+        finish(&events, OpKind::Fetch, Ok(String::new()));
+        tab.poll(&[]);
+        drop(host_jobs);
+        host_events.send(HostEvent::List(
+            StateFilter::Open,
+            Err("could not reach github.com".into()),
+        ))?;
+        tab.poll(&[]);
+        assert!(
+            matches!(tab.requests.list, Some(Ok(_))),
+            "a network blip does not replace the list with an error page"
+        );
+        // A reload the user asked for shows its failure.
+        tab.load_requests();
+        host_events.send(HostEvent::List(
+            StateFilter::Open,
+            Err("could not reach github.com".into()),
+        ))?;
+        tab.poll(&[]);
+        assert!(matches!(tab.requests.list, Some(Err(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn opening_the_requests_view_refreshes_a_list_gone_stale() {
+        let (mut tab, _events, host_jobs) = tab_showing_requests();
+        tab.refresh_requests_if_stale();
+        assert!(jobs_of(&host_jobs).is_empty(), "a fresh list is left alone");
+        let long_ago = Instant::now()
+            .checked_sub(REQUESTS_STALE_AFTER * 2)
+            .unwrap_or_else(Instant::now);
+        tab.requests.loaded_at = Some(long_ago);
+        tab.refresh_requests_if_stale();
+        assert!(
+            jobs_of(&host_jobs)
+                .iter()
+                .any(|j| matches!(j, HostJob::List(_)))
+        );
+        assert!(!tab.requests.loading);
     }
 }
 
