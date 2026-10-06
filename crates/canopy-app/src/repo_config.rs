@@ -59,6 +59,9 @@ pub struct GitFacts {
     /// (globally `canopy_core::global_pull_config`); `None` when it could not be read.
     pub pull: Option<PullConfig>,
     pub fetch_prune: Option<ConfigValue>,
+    /// `remote.<name>.prune` for each remote of the repository that sets it, in the order of
+    /// [`Self::remotes`]; git lets it override `fetch.prune` for fetches from that remote.
+    pub remote_prune: Vec<ConfigValue>,
     pub gpg_sign: Option<ConfigValue>,
     pub gpg_format: Option<ConfigValue>,
     pub remotes: Vec<Remote>,
@@ -127,6 +130,11 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
                 .filter(|b| !b.is_empty());
         facts.remotes = remotes(dir);
+        facts.remote_prune = facts
+            .remotes
+            .iter()
+            .filter_map(|r| get(&format!("remote.{}.prune", r.name)).ok().flatten())
+            .collect();
     }
     let pull = match workdir {
         Some(w) => canopy_core::Repo::open(w).and_then(|r| r.pull_config()),
@@ -297,6 +305,8 @@ mod tests {
         git(&["config", "pull.ff", "true"]);
         git(&["config", "fetch.prune", "true"]);
         git(&["remote", "add", "origin", "https://example.com/o/r.git"]);
+        git(&["remote", "add", "mirror", "https://example.com/m/r.git"]);
+        git(&["config", "remote.mirror.prune", "false"]);
         let facts = read(Some(dir.path()));
         assert_eq!(facts.error, None);
         assert_eq!(facts.branch.as_deref(), Some("trunk"));
@@ -311,8 +321,18 @@ mod tests {
             facts.fetch_prune.as_ref().and_then(ConfigValue::as_bool),
             Some(true)
         );
-        assert_eq!(facts.remotes.len(), 1);
+        assert_eq!(facts.remotes.len(), 2);
         assert_eq!(facts.remotes[0].url, "https://example.com/o/r.git");
+        let [mirror] = facts.remote_prune.as_slice() else {
+            panic!(
+                "only the mirror sets its own pruning: {:?}",
+                facts.remote_prune
+            );
+        };
+        assert_eq!(
+            (mirror.key.as_str(), mirror.as_bool()),
+            ("remote.mirror.prune", Some(false))
+        );
         Ok(())
     }
 

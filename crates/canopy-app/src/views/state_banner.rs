@@ -69,15 +69,7 @@ pub fn show(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 .show(&mut child)
                 .clicked()
             {
-                actions.push(Action::Confirm {
-                    title: format!("Abort {command}"),
-                    body: "Return the repository to where it was before the operation \
-                           started? Resolved conflicts are discarded."
-                        .into(),
-                    confirm: "Abort".into(),
-                    danger: true,
-                    op: Op::ContinueOrAbort { state, abort: true },
-                });
+                actions.push(abort(state, command));
             }
             let can_continue = conflicts == 0 && !busy;
             let why = if busy {
@@ -113,9 +105,34 @@ fn conflicts_left(conflicts: usize) -> String {
     }
 }
 
+/// The confirmation before the operation in progress, git's `command`, is aborted.
+fn abort(state: canopy_core::RepoState, command: &str) -> Action {
+    Action::Confirm {
+        title: format!("Abort the {command}?"),
+        body: "The repository returns to where it was before the operation started. Resolved \
+               conflicts are discarded."
+            .into(),
+        confirm: format!("Abort {command}"),
+        danger: true,
+        op: Op::ContinueOrAbort { state, abort: true },
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::conflicts_left;
+    use super::*;
+
+    /// Mop-up D24: the title asks a question naming what goes, the answer is verb + object.
+    #[test]
+    fn aborting_asks_about_the_operation_by_name() {
+        let Action::Confirm { title, confirm, .. } =
+            abort(canopy_core::RepoState::Rebase, "rebase")
+        else {
+            panic!("not a confirmation");
+        };
+        assert_eq!(title, "Abort the rebase?");
+        assert_eq!(confirm, "Abort rebase");
+    }
 
     #[test]
     fn the_body_counts_the_conflicts_left() {

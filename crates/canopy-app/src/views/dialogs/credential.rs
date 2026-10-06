@@ -124,7 +124,7 @@ pub(super) fn credential(
                     if let Some(host) = host {
                         ui.label(
                             RichText::new(host)
-                                .font(FontId::new(m.subtitle_size, theme::semibold()))
+                                .font(theme::heading(m.subtitle_size))
                                 .color(p.text),
                         );
                     }

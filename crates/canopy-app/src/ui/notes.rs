@@ -4,9 +4,7 @@
 
 use std::sync::Arc;
 
-use egui::{
-    CornerRadius, FontId, Pos2, Rect, RichText, Sense, Shape, Stroke, StrokeKind, Ui, vec2,
-};
+use egui::{CornerRadius, Pos2, Rect, RichText, Sense, Shape, Stroke, StrokeKind, Ui, vec2};
 
 use super::kit::paint;
 use super::theme::{self, palette};
@@ -82,13 +80,13 @@ pub fn markdown(ui: &mut Ui, text: &str) {
             ui.add_space(theme::XS);
             ui.label(
                 RichText::new(h.trim())
-                    .font(FontId::new(m.body_size, theme::semibold()))
+                    .font(theme::heading(m.body_size))
                     .color(p.text),
             );
         } else if let Some(h) = trimmed.strip_prefix("# ") {
             ui.label(
                 RichText::new(h.trim())
-                    .font(FontId::new(m.title_size, theme::semibold()))
+                    .font(theme::heading(m.title_size))
                     .color(p.text),
             );
         } else if let Some(item) = trimmed

@@ -8,12 +8,12 @@ use egui_phosphor::regular as icon;
 use crate::action::Action;
 use crate::keymap::{Command, hint};
 use crate::settings::{self, Settings};
+use crate::ui::art;
 use crate::ui::kit::chip::KeyChord;
 use crate::ui::kit::row::{ListRow, SectionHeader};
 use crate::ui::kit::surface::{Callout, Card, NoticeAction};
-use crate::ui::kit::{IconButton, Size, Tone, anim, paint};
-use crate::ui::theme::{self, Palette, palette};
-use crate::ui::{art, motion};
+use crate::ui::kit::{IconButton, Size, Tone};
+use crate::ui::theme::{self, palette};
 use crate::views::dialogs::Dialog;
 
 /// Widest the action cards, the first-run keys and the recent list grow.
@@ -30,7 +30,6 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let rect = ui.max_rect();
-    ambient(ui, rect);
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -63,7 +62,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                 ui.add_space(theme::XS);
                 ui.label(
                     RichText::new("Canopy")
-                        .font(FontId::new(m.hero_size, theme::semibold()))
+                        .font(theme::heading(m.hero_size))
                         .color(p.text),
                 );
                 ui.label(
@@ -189,46 +188,6 @@ fn footer(ui: &mut Ui) {
         ui.ctx().data_mut(|d| d.insert_temp(width_id, row.inner));
         ui.ctx().request_repaint();
     }
-}
-
-/// The two soft glows behind the welcome screen. They fade and settle in once each time the
-/// screen appears, then stay still (none of it with reduced motion), so the screen does not
-/// repaint while it only sits there.
-fn ambient(ui: &Ui, rect: egui::Rect) {
-    let p = palette(ui.ctx());
-    let ctx = ui.ctx();
-    let id = Id::new("welcome-ambient");
-    let frame = ctx.cumulative_frame_nr();
-    let last: Option<u64> = ctx.data(|d| d.get_temp(id.with("frame")));
-    ctx.data_mut(|d| d.insert_temp(id.with("frame"), frame));
-    // Away for a frame or more: the screen has just appeared again.
-    let fresh = last.is_none_or(|l| l + 1 < frame);
-    let t = if motion::reduced() {
-        1.0
-    } else if fresh {
-        anim::ease_bool(ctx, id, false, 0.0, 0.0)
-    } else {
-        anim::ease_bool(ctx, id, true, motion::SLOW, 0.0)
-    };
-    if t <= 0.0 {
-        return;
-    }
-    // Each glow drifts in from a little way off its resting place.
-    let settle = vec2(30.0, 20.0) * (1.0 - t);
-    let accent = p.accent_tint();
-    let accent2 = Palette::tint(p.accent2, accent.a());
-    paint::glow(
-        ui.painter(),
-        rect.center_top() + vec2(-260.0, 220.0) - settle,
-        520.0,
-        accent.gamma_multiply(t),
-    );
-    paint::glow(
-        ui.painter(),
-        rect.center_top() + vec2(300.0, 360.0) + settle,
-        480.0,
-        accent2.gamma_multiply(t),
-    );
 }
 
 /// A recent repository: its name, the folder it is in (home as `~`), opening on click, with a
@@ -380,7 +339,7 @@ fn card(
             ui.add_space(theme::SM);
             ui.label(
                 RichText::new(title)
-                    .font(FontId::new(m.subtitle_size, theme::semibold()))
+                    .font(theme::heading(m.subtitle_size))
                     .color(p.text),
             );
             let mut job = egui::text::LayoutJob::simple(
@@ -427,32 +386,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn the_ambient_glow_stops_repainting_once_it_has_settled() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::default());
-        let mut input = egui::RawInput::default();
-        let mut repaint = std::time::Duration::ZERO;
-        for frame in 0..40 {
-            input.time = Some(f64::from(frame) * 0.05);
-            let mut output = ctx.run_ui(input.clone(), |ui| {
-                ambient(ui, ui.max_rect());
-            });
-            output.textures_delta.clear();
-            repaint = output
-                .viewport_output
-                .values()
-                .map(|v| v.repaint_delay)
-                .min()
-                .unwrap_or(std::time::Duration::MAX);
-        }
-        assert!(
-            repaint > std::time::Duration::from_secs(1),
-            "still repainting every {repaint:?}"
-        );
     }
 
     #[test]

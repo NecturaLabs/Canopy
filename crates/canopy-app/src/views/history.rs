@@ -22,6 +22,7 @@ use crate::ui::kit::menu::{self, Menu};
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{ListRow, RowKind, caps_galley};
+use crate::ui::kit::split::{self, SplitAxis, SplitHandle};
 use crate::ui::kit::surface::{EmptyState, HeaderKind, PaneHeader};
 use crate::ui::kit::{Button, IconButton, paint};
 use crate::ui::theme::{self, palette};
@@ -53,14 +54,24 @@ enum CompactPane {
     Details,
 }
 
-/// Draws the history view.
-pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<Action>) {
+/// The salt of the handle between the table and the details below it.
+const DETAILS_SPLIT: &str = "history-details";
+
+/// Draws the history view. Returns the id of the handle between the table and the details when
+/// the details sit below the table.
+pub fn show(
+    ui: &mut Ui,
+    tab: &mut RepoTab,
+    settings: &Settings,
+    actions: &mut Vec<Action>,
+) -> Option<egui::Id> {
+    let mut split_handle = None;
     let p = palette(ui.ctx());
     let s = p.s();
     let row_h = RowKind::History.height();
     if tab.snap.is_none() {
         loading(ui, tab);
-        return;
+        return None;
     }
     state_banner::show(ui, tab, actions);
     if tab
@@ -73,7 +84,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(s.pane))
             .show(ui, |ui| table(ui, tab, settings, actions));
-        return;
+        return None;
     }
     let h = ui.available_height();
     let compact_table_min = row_h * 6.0 + theme::XL + theme::MD;
@@ -185,12 +196,19 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         } else {
             ui.ctx().data_mut(|data| data.remove::<f32>(automatic_id));
         }
-        egui::Panel::bottom("details")
-            .resizable(true)
+        // The pane's height: where its handle is being dragged to, else the panel's own (kept
+        // across restarts).
+        let range = detail_min..=detail_max;
+        let handle_id = SplitHandle::id_in(ui, DETAILS_SPLIT);
+        let stored = egui::containers::panel::PanelState::load(ui.ctx(), panel_id)
+            .map_or(default_height, |state| state.size().y);
+        let mut height =
+            split::dragged_size(ui.ctx(), handle_id, SplitAxis::Rows, true, range.clone())
+                .unwrap_or(stored)
+                .clamp(detail_min, detail_max);
+        let details = egui::Panel::bottom(panel_id)
+            .exact_size(height)
             .show_separator_line(false)
-            .default_size(default_height)
-            .min_size(detail_min)
-            .max_size(detail_max)
             .frame(egui::Frame::new().fill(s.pane))
             .show(ui, |ui| {
                 let top = ui.max_rect();
@@ -208,8 +226,27 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(s.pane))
             .show(ui, |ui| table(ui, tab, settings, actions));
+        // Shown over both panes, so their scrolling cannot take the drag from it.
+        let rect = details.response.rect;
+        let handle = SplitHandle::new(DETAILS_SPLIT, &mut height, SplitAxis::Rows)
+            .after(true)
+            .range(range)
+            .default_size(default_height)
+            .label("Resize the commit details")
+            .seam(false)
+            .show(ui, rect.top(), rect.x_range());
+        if handle.changed()
+            && let Some(mut state) = egui::containers::panel::PanelState::load(ui.ctx(), panel_id)
+        {
+            state.outer_rect.min.y = state.outer_rect.max.y - height;
+            ui.ctx()
+                .data_mut(|data| data.insert_persisted(panel_id, state));
+            ui.ctx().request_repaint();
+        }
+        split_handle = Some(handle.id);
     }
     tab.history_layout.compact_details = layout.compact_details || tab.history_layout.expanded;
+    split_handle
 }
 
 fn loading(ui: &mut Ui, tab: &RepoTab) {
@@ -628,6 +665,20 @@ fn load_more_key() -> egui::Id {
     egui::Id::new("history-load-more-motion")
 }
 
+/// The confirmation before the current branch is hard reset to `oid`.
+fn hard_reset(oid: Oid) -> Action {
+    Action::Confirm {
+        title: format!("Hard reset the current branch to {}?", short_id(oid)),
+        body: "Every uncommitted change is thrown away. This cannot be undone.".into(),
+        confirm: "Hard reset".into(),
+        danger: true,
+        op: Op::Reset {
+            oid,
+            mode: ResetMode::Hard,
+        },
+    }
+}
+
 /// The context menu of a commit row.
 pub fn commit_menu(
     m: &mut Menu<'_>,
@@ -716,20 +767,7 @@ pub fn commit_menu(
                 .show(m.ui)
                 .clicked()
             {
-                actions.push(Action::Confirm {
-                    title: "Hard reset".into(),
-                    body: format!(
-                        "Move the current branch to {} and throw away every uncommitted \
-                         change? This cannot be undone.",
-                        short_id(oid)
-                    ),
-                    confirm: "Reset".into(),
-                    danger: true,
-                    op: Op::Reset {
-                        oid,
-                        mode: ResetMode::Hard,
-                    },
-                });
+                actions.push(hard_reset(oid));
             }
         },
     );
@@ -756,6 +794,17 @@ mod tests {
     use super::*;
 
     /// The id of the history filter's text field, once it has been shown.
+    /// Mop-up D24: the title asks a question naming the commit, the answer is verb + object.
+    #[test]
+    fn a_hard_reset_asks_about_the_commit_it_resets_to() {
+        let oid = Oid::from_str("38b14e7aa0000000000000000000000000000000").expect("oid");
+        let Action::Confirm { title, confirm, .. } = hard_reset(oid) else {
+            panic!("not a confirmation");
+        };
+        assert_eq!(title, "Hard reset the current branch to 38b14e7?");
+        assert_eq!(confirm, "Hard reset");
+    }
+
     fn filter_field(ctx: &egui::Context) -> Option<egui::Id> {
         let id = ctx.data(|d| d.get_temp::<egui::Id>(filter_field_key()));
         assert!(id.is_some(), "the filter field has been shown");
@@ -1299,6 +1348,138 @@ mod tests {
         output.textures_delta.clear();
         egui::containers::panel::PanelState::load(ctx, egui::Id::new("details"))
             .map_or(f32::NAN, |state| state.outer_rect.top())
+    }
+
+    /// One frame of the history view below an action bar and over a status bar, at `time` with
+    /// `events`: the split handle it returned, the details panel's height afterwards and where the
+    /// handle was laid out (y).
+    fn split_frame(
+        ctx: &egui::Context,
+        tab: &mut RepoTab,
+        time: f64,
+        events: Vec<egui::Event>,
+    ) -> (Option<egui::Id>, f32, f32) {
+        let mut handle = None;
+        let mut seam = f32::NAN;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                egui::Panel::top("test-actions")
+                    .exact_size(96.0)
+                    .show(ui, |_| {});
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::new())
+                    .show(ui, |ui| {
+                        handle = show(ui, tab, &Settings::default(), &mut Vec::new());
+                        if let Some(r) = handle.and_then(|h| ui.ctx().read_response(h)) {
+                            seam = r.rect.center().y;
+                        }
+                    });
+            },
+        );
+        output.textures_delta.clear();
+        let height = egui::containers::panel::PanelState::load(ctx, egui::Id::new("details"))
+            .map_or(f32::NAN, |state| state.size().y);
+        (handle, height, seam)
+    }
+
+    /// KP-F7: the details are resized with the kit's split handle. It sits on their top edge
+    /// (where Deeper's two cards meet), moves from the keyboard, keeps the height it was given in
+    /// the panel's persisted state, and a double click returns it to the height fitted to the
+    /// diff.
+    #[test]
+    fn the_details_split_handle_resizes_from_the_keyboard_and_resets_on_double_click() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let (mut tab, _dir) = populated_tab(&ctx);
+        let mut t = 0.0;
+        let mut step = |events: Vec<egui::Event>, tab: &mut RepoTab| {
+            t += 0.05;
+            split_frame(&ctx, tab, t, events)
+        };
+        let (mut handle, mut fitted, mut seam) = (None, f32::NAN, f32::NAN);
+        for _ in 0..4 {
+            (handle, fitted, seam) = step(Vec::new(), &mut tab);
+        }
+        let handle = handle.expect("the details sit below the table with a handle");
+        let top = egui::containers::panel::PanelState::load(&ctx, egui::Id::new("details"))
+            .expect("details")
+            .outer_rect
+            .top();
+        assert!(
+            (seam - top).abs() < 1.0,
+            "handle at {seam}, details top {top}"
+        );
+        let at = ctx.read_response(handle).expect("shown").rect.center();
+
+        ctx.memory_mut(|m| m.request_focus(handle));
+        let up = |modifiers| {
+            vec![egui::Event::Key {
+                key: egui::Key::ArrowUp,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }]
+        };
+        let (_, grown, _) = step(up(egui::Modifiers::NONE), &mut tab);
+        assert!(
+            (grown - (fitted + split::KEY_STEP)).abs() < 1.0,
+            "up grows the details below the seam: {fitted} -> {grown}"
+        );
+        let (_, kept, _) = step(Vec::new(), &mut tab);
+        assert!((kept - grown).abs() < 1.0, "the new height holds: {kept}");
+
+        let click = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        step(vec![egui::Event::PointerMoved(at)], &mut tab);
+        for pressed in [true, false, true, false] {
+            step(vec![click(pressed)], &mut tab);
+        }
+        let (_, reset, _) = step(Vec::new(), &mut tab);
+        assert!(
+            (reset - fitted).abs() < 1.0,
+            "a double click returns to the fitted height: {reset}, fitted {fitted}"
+        );
+
+        // A drag: once it has started (the pointer moved past the click distance), the details
+        // follow the pointer in the frame it moves, not one behind.
+        step(vec![click(true)], &mut tab);
+        let mut y = at.y - 8.0;
+        step(vec![egui::Event::PointerMoved(pos2(at.x, y))], &mut tab);
+        for _ in 0..3 {
+            y -= 20.0;
+            let (_, height, seam) = step(vec![egui::Event::PointerMoved(pos2(at.x, y))], &mut tab);
+            assert!(
+                (height - (fitted + at.y - y)).abs() < 1.0,
+                "dragged to {y}: {height}, fitted {fitted}"
+            );
+            assert!(
+                (seam - y).abs() < 1.0,
+                "the details were laid out at the pointer: seam {seam}, pointer {y}"
+            );
+        }
+        step(
+            vec![egui::Event::PointerButton {
+                pos: pos2(at.x, y),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            &mut tab,
+        );
+        let (_, dropped, _) = step(Vec::new(), &mut tab);
+        assert!((dropped - (fitted + 68.0)).abs() < 1.0, "{dropped}");
     }
 
     /// O2: clicking another commit must not show the details pane at another height for the

@@ -222,12 +222,6 @@ fn body_font() -> (FontId, f32) {
     (FontId::proportional(size), (size * 1.6).round())
 }
 
-/// The width of a line of body text at the reading measure: the kit's
-/// [`reading_measure`](crate::ui::kit::overlay::reading_measure), which reading dialogs share.
-pub fn measure(ctx: &egui::Context) -> f32 {
-    crate::ui::kit::overlay::reading_measure(ctx)
-}
-
 /// Lays `doc` out at the width of `ui`: its title and date, then its headings, paragraphs and
 /// lists with document spacing; links read and behave as kit links. Returns the link clicked
 /// this frame.
@@ -240,7 +234,7 @@ pub fn show(ui: &mut Ui, doc: Document) -> Option<Link> {
     ui.add(
         egui::Label::new(
             egui::RichText::new(doc.title())
-                .font(FontId::new(m.display_size, theme::semibold()))
+                .font(theme::heading(m.display_size))
                 .color(p.text),
         )
         .wrap(),
@@ -267,7 +261,7 @@ pub fn show(ui: &mut Ui, doc: Document) -> Option<Link> {
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(text)
-                            .font(FontId::new(m.headline_size, theme::semibold()))
+                            .font(theme::heading(m.headline_size))
                             .color(p.text),
                     )
                     .wrap(),
@@ -521,7 +515,7 @@ mod tests {
             assert!(width <= 420.5, "{} grew to {width}", doc.title());
         }
         assert!(
-            measure(&ctx) > 400.0,
+            crate::ui::kit::overlay::reading_measure(&ctx) > 400.0,
             "a reading line holds about 70 characters"
         );
     }

@@ -1438,7 +1438,7 @@ fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
         art::show(ui, art::logo(), egui::Vec2::splat(64.0));
         ui.label(
             RichText::new("Canopy")
-                .font(FontId::new(m.display_size, theme::semibold()))
+                .font(theme::heading(m.display_size))
                 .color(p.text),
         );
         ui.label(RichText::new(crate::build_info::title_label()).color(p.text_dim));
@@ -1577,6 +1577,25 @@ mod tests {
         assert_eq!(shown(&s), "about");
         s.close();
         assert_eq!(shown(&s), "notice");
+    }
+
+    /// The app's Escape binding reaches the stack before the dialog draws, so going back from a
+    /// document read inside the consent has to happen here.
+    #[test]
+    fn escape_goes_back_from_a_document_read_in_the_consent() {
+        let mut s = DialogStack::default();
+        s.open(Dialog::Consent {
+            step: Pending::Terms,
+            updated: false,
+            reading: Some(Document::Terms),
+        });
+        s.dismiss();
+        assert!(
+            matches!(s.current(), Some(Dialog::Consent { reading: None, .. })),
+            "back to the consent summary, still open"
+        );
+        s.dismiss();
+        assert_eq!(shown(&s), "consent");
     }
 
     #[test]
@@ -1877,7 +1896,8 @@ mod tests {
                     "{dialog:?} at {w}x{h} is {card:?}, room {room:?}"
                 );
                 assert!(
-                    card.width() >= crate::ui::legal::measure(&ctx).min(room.width() * 0.9)
+                    card.width()
+                        >= crate::ui::kit::overlay::reading_measure(&ctx).min(room.width() * 0.9)
                         && card.width() <= room.width() + 1.0,
                     "{dialog:?} at {w}x{h} is {card:?}"
                 );

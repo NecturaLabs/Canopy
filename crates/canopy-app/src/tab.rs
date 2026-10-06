@@ -2337,7 +2337,9 @@ mod perf {
             .default_size(250.0)
             .show(ui, |ui| crate::views::sidebar::show(ui, tab, &mut actions));
         egui::CentralPanel::default().show(ui, |ui| match tab.view {
-            View::History => crate::views::history::show(ui, tab, settings, &mut actions),
+            View::History => {
+                crate::views::history::show(ui, tab, settings, &mut actions);
+            }
             _ => {
                 crate::views::changes::show(ui, tab, &mut actions);
             }

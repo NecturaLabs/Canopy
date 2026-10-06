@@ -63,11 +63,13 @@ impl DialogStack {
         }
     }
 
-    /// Escape: closes the dialog on screen, except the consent, which must be answered. A
-    /// credential prompt is declined (`no` to an unknown host key).
+    /// Escape: closes the dialog on screen, except the consent, which must be answered (a
+    /// document read inside it goes back to the summary). A credential prompt is declined (`no`
+    /// to an unknown host key).
     pub fn dismiss(&mut self) {
-        match self.dialogs.last() {
-            Some(Dialog::Consent { .. }) | None => {}
+        match self.dialogs.last_mut() {
+            Some(Dialog::Consent { reading, .. }) => *reading = None,
+            None => {}
             Some(Dialog::Credential { prompt, .. }) => {
                 prompt.decline();
                 self.close();

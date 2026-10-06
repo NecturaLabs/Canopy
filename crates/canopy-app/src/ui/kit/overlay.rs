@@ -57,6 +57,8 @@ const TOOLTIP_RISE: f32 = 3.0;
 pub const SCROLL_END_ROOM: f32 = theme::SM;
 /// A scrolling body's bar stands this far in from the edge of the card (spec 4.21's 2 pt margin).
 const BAR_INSET: f32 = 2.0;
+/// Thickness of a dialog's reading-progress line ([`Dialog::progress_lane`]).
+const PROGRESS: f32 = 2.0;
 
 /// What a floating surface is: decides its radius, fill and whether it may be glass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1080,6 +1082,8 @@ impl Footer {
 
 /// What a dialog shows between its description and its footer.
 type DialogBody<'a> = Box<dyn FnOnce(&mut Ui) + 'a>;
+/// A footer row of the dialog's own ([`Dialog::custom_footer`]), answering the dialog.
+type DialogFooter<'a> = Box<dyn FnOnce(&mut Ui) -> DialogResult + 'a>;
 
 /// A modal dialog (concept `.k-dialog`) over the scrim:
 /// `Dialog::new("delete-branch").title("Delete branch 'feature/x'?").icon(icon::TRASH).destructive()
@@ -1103,6 +1107,12 @@ pub struct Dialog<'a> {
     blocking: bool,
     initial_focus: Option<InitialFocus>,
     force: Option<ForceState>,
+    label: Option<String>,
+    header: Option<DialogBody<'a>>,
+    fill_height: bool,
+    progress_lane: bool,
+    scroll_salt: Option<Id>,
+    custom_footer: Option<DialogFooter<'a>>,
 }
 
 impl<'a> Dialog<'a> {
@@ -1120,6 +1130,12 @@ impl<'a> Dialog<'a> {
             blocking: false,
             initial_focus: None,
             force: None,
+            label: None,
+            header: None,
+            fill_height: false,
+            progress_lane: false,
+            scroll_salt: None,
+            custom_footer: None,
         }
     }
     /// The question or task, as a title (destructive: the question, "Delete branch 'x'?").
@@ -1169,6 +1185,46 @@ impl<'a> Dialog<'a> {
     /// not cancel it (the start-up consent, git's credential prompts).
     pub fn blocking(mut self) -> Self {
         self.blocking = true;
+        self
+    }
+    /// What screen readers call the dialog when its title is left empty, as when a
+    /// [`Self::header`] takes the title's place.
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+    /// Controls in the title row after the title (the legal reader's document tabs), left to
+    /// right and centred on the row, up to the close button. With an empty title they start
+    /// right after the icon.
+    pub fn header(mut self, add: impl FnOnce(&mut Ui) + 'a) -> Self {
+        self.header = Some(Box::new(add));
+        self
+    }
+    /// The card is as tall as a dialog may be (the modal room, at most
+    /// [`theme::SETTINGS_MAX_HEIGHT`]) and the body fills what the title row and the footer leave,
+    /// however short it is: a document to read.
+    pub fn fill_height(mut self) -> Self {
+        self.fill_height = true;
+        self
+    }
+    /// A seam across the card under the title row, and along it a 2 pt `accent` line as long as
+    /// the share of the body scrolled past: how far the reader has come.
+    pub fn progress_lane(mut self) -> Self {
+        self.progress_lane = true;
+        self
+    }
+    /// Keys the body's scroll position by `salt` too, so a dialog that switches what its body
+    /// shows (the reader's two documents) keeps a position for each.
+    pub fn scroll_id(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        self.scroll_salt = Some(Id::new(salt));
+        self
+    }
+    /// The footer row is `add`'s, left to right, in place of [`Self::footer`]'s buttons and hint
+    /// (the reader's Back beside the consent's answers). What it returns answers the dialog, as
+    /// the buttons would: `Open` keeps it open, and focus returns to its trigger otherwise. No
+    /// control takes focus when it opens unless `add` asks for it.
+    pub fn custom_footer(mut self, add: impl FnOnce(&mut Ui) -> DialogResult + 'a) -> Self {
+        self.custom_footer = Some(Box::new(add));
         self
     }
     /// Shows the card where the cursor is, without the modal layer, scrim or focus handling, with
@@ -1262,12 +1318,29 @@ impl<'a> Dialog<'a> {
             blocking: _,
             initial_focus,
             force,
+            label,
+            header,
+            fill_height,
+            progress_lane,
+            scroll_salt,
+            custom_footer,
         } = self;
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
         let s = theme::surfaces(&ctx);
         let m = theme::metrics();
         let screen = ctx.content_rect();
+        // A document takes all the height a dialog may have; everything else its content's.
+        let max_h = if fill_height {
+            max_h.min(theme::SETTINGS_MAX_HEIGHT)
+        } else {
+            max_h
+        };
+        let spoken = if title.is_empty() {
+            label.unwrap_or_default()
+        } else {
+            title.clone()
+        };
         let w = width
             .points(&ctx)
             .min(screen.width() - DIALOG_MARGIN)
@@ -1287,7 +1360,7 @@ impl<'a> Dialog<'a> {
                     } else {
                         egui::accesskit::Role::Dialog
                     });
-                    n.set_label(title.as_str());
+                    n.set_label(spoken.as_str());
                 });
                 ui.set_width(w - 2.0 * pad);
                 // Stacked whatever the caller's layout is.
@@ -1295,7 +1368,7 @@ impl<'a> Dialog<'a> {
                     ui.spacing_mut().item_spacing = vec2(theme::SM, m.dialog_gap);
                     let top = ui.cursor().top();
                     // Title row.
-                    ui.horizontal(|ui| {
+                    let title_row = ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 10.0;
                         if let Some(g) = &glyph {
                             let (rect, _) =
@@ -1326,14 +1399,23 @@ impl<'a> Dialog<'a> {
                             Layout::left_to_right(Align::Center),
                             |ui| {
                                 ui.set_min_width(title_w);
-                                ui.add(
-                                    egui::Label::new(
+                                if !title.is_empty() {
+                                    let text = egui::Label::new(
                                         RichText::new(&title)
                                             .font(theme::heading(m.title_size))
                                             .color(p.text),
-                                    )
-                                    .wrap(),
-                                );
+                                    );
+                                    // Beside header controls the title keeps to one line.
+                                    ui.add(if header.is_some() {
+                                        text.truncate()
+                                    } else {
+                                        text.wrap()
+                                    });
+                                }
+                                if let Some(add) = header {
+                                    ui.spacing_mut().item_spacing.x = theme::MD;
+                                    add(ui);
+                                }
                             },
                         );
                         if closable
@@ -1346,18 +1428,44 @@ impl<'a> Dialog<'a> {
                             result = DialogResult::Cancel;
                         }
                     });
+                    // The lane under the title row, across the whole card.
+                    let full = Rangef::new(ui.max_rect().left() - pad, ui.max_rect().right() + pad);
+                    let lane = title_row.response.rect.bottom() + m.dialog_gap / 2.0;
+                    if progress_lane {
+                        paint::seam_h(ui.painter(), full, lane, s.border);
+                    }
                     // Description and body, scrolling inside the card when it would be too tall.
                     let used = ui.cursor().top() - top;
                     let footer_h = m.control + theme::XS;
                     let room = (max_h - 2.0 * pad - used - footer_h - m.dialog_gap).max(48.0);
                     let has_body = description.is_some() || body.is_some();
+                    let scroll_id =
+                        scroll_salt.map_or(id.with("body"), |salt| id.with(("body", salt)));
                     let scrolled = if has_body {
+                        // A document's scroll bar runs in the card's right padding, beside the
+                        // text column instead of over its line ends.
+                        let column = ui.available_width();
+                        let bar_room = if width == DialogWidth::Reading {
+                            pad - 2.0 * BAR_INSET
+                        } else {
+                            0.0
+                        };
+                        let mut area = ui.available_rect_before_wrap();
+                        area.max.x += bar_room;
+                        // A child, so the bar's room does not widen the card.
+                        let mut inside = ui.new_child(
+                            UiBuilder::new()
+                                .id_salt("kit-dialog-body")
+                                .max_rect(area)
+                                .layout(Layout::top_down(Align::Min)),
+                        );
                         let out = scroll_body(
-                            ui,
-                            id.with("body"),
+                            &mut inside,
+                            scroll_id,
                             room,
                             ground(&ctx, Layer::Dialog),
                             |ui| {
+                                ui.set_max_width(column);
                                 ui.spacing_mut().item_spacing.y = m.dialog_gap;
                                 if let Some(d) = &description {
                                     ui.add(
@@ -1375,7 +1483,22 @@ impl<'a> Dialog<'a> {
                                 }
                             },
                         );
-                        out.content_size.y > out.inner_rect.height() + 0.5
+                        let body_h = inside.min_rect().height();
+                        ui.allocate_exact_size(vec2(column, body_h), Sense::hover());
+                        let scrollable = out.content_size.y - out.inner_rect.height();
+                        if progress_lane && scrollable > 0.5 {
+                            let t = (out.state.offset.y / scrollable).clamp(0.0, 1.0);
+                            let line = Rect::from_min_max(
+                                pos2(full.min, lane - PROGRESS / 2.0),
+                                pos2(full.min + full.span() * t, lane + PROGRESS / 2.0),
+                            );
+                            ui.painter().rect_filled(line, CornerRadius::ZERO, p.accent);
+                        }
+                        // A document's body keeps the card at its full height.
+                        if fill_height {
+                            ui.add_space((room - body_h).max(0.0));
+                        }
+                        scrollable > 0.5
                     } else {
                         false
                     };
@@ -1391,114 +1514,131 @@ impl<'a> Dialog<'a> {
                             s.border,
                         );
                     }
-                    if let Some(h) = &footer.hint {
-                        ui.painter().text(
-                            row.left_center(),
-                            Align2::LEFT_CENTER,
-                            h,
-                            FontId::proportional(m.meta_size),
-                            p.text_faint,
-                        );
-                    }
-                    // The buttons sit at the right but are made left to right, Cancel first,
-                    // so Tab meets them in reading order (the row is placed by its width last
-                    // frame).
-                    let width_key = id.with("kit-footer-width");
-                    let last_w: f32 = ctx.data(|d| d.get_temp(width_key)).unwrap_or(0.0);
-                    let slot = Rect::from_min_max(
-                        pos2((row.right() - last_w).max(row.left()), row.top()),
-                        row.max,
-                    );
-                    let mut cancel_focus = false;
-                    let mut cancel_id = None;
-                    let mut confirm_id = None;
-                    let buttons = ui.scope_builder(
-                        UiBuilder::new()
-                            .max_rect(slot)
-                            .layout(Layout::left_to_right(Align::Center)),
-                        |ui| {
-                            ui.spacing_mut().item_spacing.x = theme::SM;
-                            if let Some(label) = &footer.cancel {
-                                let b = Button::new(label.as_str())
-                                    .secondary()
-                                    .size(Size::Md)
-                                    .id_salt(id.with("cancel"));
-                                let forced = force.filter(|f| f.focus && destructive);
-                                let r = match forced {
-                                    Some(f) => b.show_forced(ui, f),
-                                    None => b.show(ui),
-                                };
-                                if r.clicked() {
-                                    result = DialogResult::Cancel;
-                                }
-                                cancel_focus = r.has_focus();
-                                cancel_id = Some(r.id);
-                            }
-                            if let Some(label) = &footer.confirm {
-                                let mut b = Button::new(label.as_str())
-                                    .size(Size::Md)
-                                    .enabled(footer.confirm_enabled)
-                                    .loading(footer.confirm_loading)
-                                    .id_salt(id.with("confirm"));
-                                b = if footer.neutral {
-                                    b.secondary()
-                                } else if destructive {
-                                    b.danger()
-                                } else {
-                                    b.primary()
-                                };
-                                if let Some(g) = &footer.confirm_icon {
-                                    b = b.icon(g);
-                                }
-                                if let Some(r) = &footer.confirm_reason {
-                                    b = b.disabled_reason(r.as_str());
-                                }
-                                let forced = force.filter(|f| f.focus && !destructive);
-                                let r = match forced {
-                                    Some(f) => b.show_forced(ui, f),
-                                    None => b.show(ui),
-                                };
-                                if r.clicked() {
-                                    result = DialogResult::Confirm;
-                                }
-                                confirm_id = Some(r.id);
-                            }
-                        },
-                    );
-                    let width = buttons.response.rect.width();
-                    if (width - last_w).abs() > 0.5 {
-                        ctx.data_mut(|d| d.insert_temp(width_key, width));
-                        ctx.request_repaint();
-                    }
-                    if fresh {
-                        let want = initial_focus.unwrap_or(if footer.neutral {
-                            InitialFocus::Body
-                        } else if destructive {
-                            InitialFocus::Cancel
-                        } else {
-                            InitialFocus::Confirm
-                        });
-                        let target = match want {
-                            InitialFocus::Cancel => cancel_id.or(confirm_id),
-                            InitialFocus::Confirm => confirm_id.or(cancel_id),
-                            InitialFocus::Body => None,
-                        };
-                        if let Some(t) = target {
-                            ctx.memory_mut(|m| m.request_focus(t));
+                    if let Some(add) = custom_footer {
+                        let answer = ui
+                            .scope_builder(
+                                UiBuilder::new()
+                                    .max_rect(row)
+                                    .layout(Layout::left_to_right(Align::Center)),
+                                |ui| {
+                                    ui.spacing_mut().item_spacing.x = theme::SM;
+                                    add(ui)
+                                },
+                            )
+                            .inner;
+                        if answer != DialogResult::Open {
+                            result = answer;
                         }
-                    }
-                    if result == DialogResult::Open
-                        && force.is_none()
-                        && !destructive
-                        && !footer.neutral
-                        && enter
-                        && footer.confirm.is_some()
-                        && footer.confirm_enabled
-                        && !footer.confirm_loading
-                        && !cancel_focus
-                        && !ctx.egui_wants_keyboard_input()
-                    {
-                        result = DialogResult::Confirm;
+                    } else {
+                        if let Some(h) = &footer.hint {
+                            ui.painter().text(
+                                row.left_center(),
+                                Align2::LEFT_CENTER,
+                                h,
+                                FontId::proportional(m.meta_size),
+                                p.text_faint,
+                            );
+                        }
+                        // The buttons sit at the right but are made left to right, Cancel first,
+                        // so Tab meets them in reading order (the row is placed by its width last
+                        // frame).
+                        let width_key = id.with("kit-footer-width");
+                        let last_w: f32 = ctx.data(|d| d.get_temp(width_key)).unwrap_or(0.0);
+                        let slot = Rect::from_min_max(
+                            pos2((row.right() - last_w).max(row.left()), row.top()),
+                            row.max,
+                        );
+                        let mut cancel_focus = false;
+                        let mut cancel_id = None;
+                        let mut confirm_id = None;
+                        let buttons = ui.scope_builder(
+                            UiBuilder::new()
+                                .max_rect(slot)
+                                .layout(Layout::left_to_right(Align::Center)),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = theme::SM;
+                                if let Some(label) = &footer.cancel {
+                                    let b = Button::new(label.as_str())
+                                        .secondary()
+                                        .size(Size::Md)
+                                        .id_salt(id.with("cancel"));
+                                    let forced = force.filter(|f| f.focus && destructive);
+                                    let r = match forced {
+                                        Some(f) => b.show_forced(ui, f),
+                                        None => b.show(ui),
+                                    };
+                                    if r.clicked() {
+                                        result = DialogResult::Cancel;
+                                    }
+                                    cancel_focus = r.has_focus();
+                                    cancel_id = Some(r.id);
+                                }
+                                if let Some(label) = &footer.confirm {
+                                    let mut b = Button::new(label.as_str())
+                                        .size(Size::Md)
+                                        .enabled(footer.confirm_enabled)
+                                        .loading(footer.confirm_loading)
+                                        .id_salt(id.with("confirm"));
+                                    b = if footer.neutral {
+                                        b.secondary()
+                                    } else if destructive {
+                                        b.danger()
+                                    } else {
+                                        b.primary()
+                                    };
+                                    if let Some(g) = &footer.confirm_icon {
+                                        b = b.icon(g);
+                                    }
+                                    if let Some(r) = &footer.confirm_reason {
+                                        b = b.disabled_reason(r.as_str());
+                                    }
+                                    let forced = force.filter(|f| f.focus && !destructive);
+                                    let r = match forced {
+                                        Some(f) => b.show_forced(ui, f),
+                                        None => b.show(ui),
+                                    };
+                                    if r.clicked() {
+                                        result = DialogResult::Confirm;
+                                    }
+                                    confirm_id = Some(r.id);
+                                }
+                            },
+                        );
+                        let width = buttons.response.rect.width();
+                        if (width - last_w).abs() > 0.5 {
+                            ctx.data_mut(|d| d.insert_temp(width_key, width));
+                            ctx.request_repaint();
+                        }
+                        if fresh {
+                            let want = initial_focus.unwrap_or(if footer.neutral {
+                                InitialFocus::Body
+                            } else if destructive {
+                                InitialFocus::Cancel
+                            } else {
+                                InitialFocus::Confirm
+                            });
+                            let target = match want {
+                                InitialFocus::Cancel => cancel_id.or(confirm_id),
+                                InitialFocus::Confirm => confirm_id.or(cancel_id),
+                                InitialFocus::Body => None,
+                            };
+                            if let Some(t) = target {
+                                ctx.memory_mut(|m| m.request_focus(t));
+                            }
+                        }
+                        if result == DialogResult::Open
+                            && force.is_none()
+                            && !destructive
+                            && !footer.neutral
+                            && enter
+                            && footer.confirm.is_some()
+                            && footer.confirm_enabled
+                            && !footer.confirm_loading
+                            && !cancel_focus
+                            && !ctx.egui_wants_keyboard_input()
+                        {
+                            result = DialogResult::Confirm;
+                        }
                     }
                 });
             },
@@ -1631,6 +1771,11 @@ pub(crate) fn gallery(ui: &mut Ui) {
         // Below the whole scrim, however tall the card came out.
         ui.advance_cursor_after_rect(area);
     }
+    small(
+        ui,
+        "Reading dialog: tabs after the title, full height, the progress lane and its own footer",
+    );
+    reading_example(ui);
     small(ui, "Live: hover the icon, open the popover, open a dialog");
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = theme::LG;
@@ -1746,6 +1891,87 @@ pub(crate) fn gallery(ui: &mut Ui) {
     });
     ui.add_space(theme::SM);
     super::toast::gallery(ui);
+}
+
+/// The gallery's reading dialog on a scrim, as the legal reader uses it: two documents as tabs
+/// after the icon, the full height of its area, the progress lane over a body that scrolls, and a
+/// footer of its own (Back beside the answers).
+fn reading_example(ui: &mut Ui) {
+    let m = theme::metrics();
+    let p = theme::palette(ui.ctx());
+    let width = ui.available_width();
+    let (area, _) = ui.allocate_exact_size(vec2(width, 340.0), Sense::hover());
+    scrim(&ui.painter_at(area), area, 1.0);
+    let tab_key = ui.id().with("g-reading-tab");
+    let mut tab: u8 = ui.data(|d| d.get_temp(tab_key)).unwrap_or(0);
+    let options = [(0_u8, "Terms of Service"), (1_u8, "Privacy Policy")];
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(area.shrink(theme::LG))
+            .layout(Layout::top_down(Align::Center)),
+        |ui| {
+            Dialog::new("g-reading")
+                .label("Terms of Service")
+                .icon(icon::SCROLL)
+                .width(DialogWidth::Reading)
+                .fill_height()
+                .progress_lane()
+                .scroll_id(tab)
+                .header(|ui| {
+                    super::choice::UnderlineTabs::new(&mut tab, &options)
+                        .label("Documents")
+                        .id_salt("g-reading-tabs")
+                        .show(ui);
+                })
+                .body(|ui| {
+                    for (i, heading) in ["Your licence", "What you may not do", "Updates"]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        if i > 0 {
+                            ui.add_space(theme::MD);
+                        }
+                        ui.label(
+                            RichText::new(heading)
+                                .font(theme::heading(m.headline_size))
+                                .color(p.text),
+                        );
+                        ui.label(
+                            RichText::new(
+                                "A paragraph of the document at the reading measure, long enough \
+                                 to wrap over several lines so the body scrolls under the lane.",
+                            )
+                            .size(m.subtitle_size)
+                            .color(p.text),
+                        );
+                    }
+                })
+                .custom_footer(|ui| {
+                    Button::new("Back")
+                        .ghost()
+                        .size(Size::Md)
+                        .icon(icon::ARROW_LEFT)
+                        .id_salt("g-reading-back")
+                        .show(ui);
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        Button::new("I agree")
+                            .primary()
+                            .size(Size::Md)
+                            .id_salt("g-reading-agree")
+                            .show(ui);
+                        Button::new("Quit")
+                            .secondary()
+                            .size(Size::Md)
+                            .id_salt("g-reading-quit")
+                            .show(ui);
+                    });
+                    DialogResult::Open
+                })
+                .show_inline(ui, ForceState::default());
+        },
+    );
+    ui.data_mut(|d| d.insert_temp(tab_key, tab));
+    ui.advance_cursor_after_rect(area);
 }
 
 /// Paints `add` as an entrance at linear time `t` would show it (the gallery's motion rows).
@@ -2389,6 +2615,263 @@ mod tests {
                 assert!(card.left() >= room.left() - 0.5 && card.right() <= room.right() + 0.5);
             },
         );
+    }
+
+    /// The card a dialog painted this frame: its ringed, `radius_lg` rectangle.
+    fn painted_card(out: &egui::FullOutput) -> Rect {
+        let m = theme::metrics();
+        let mut card = Rect::NOTHING;
+        for c in &out.shapes {
+            if let Shape::Vec(v) = &c.shape {
+                for s in v {
+                    if let Shape::Rect(r) = s
+                        && r.stroke.width > 0.0
+                        && r.corner_radius == CornerRadius::same(m.radius_lg)
+                    {
+                        card = r.rect;
+                    }
+                }
+            }
+        }
+        card
+    }
+
+    /// Where `text` was painted.
+    fn painted_text(out: &egui::FullOutput, text: &str) -> Option<Rect> {
+        fn find(shape: &Shape, text: &str) -> Option<Rect> {
+            match shape {
+                Shape::Text(t) if t.galley.text() == text => Some(t.visual_bounding_rect()),
+                Shape::Vec(v) => v.iter().find_map(|s| find(s, text)),
+                _ => None,
+            }
+        }
+        out.shapes.iter().find_map(|c| find(&c.shape, text))
+    }
+
+    /// The legal reader's dialog (P-6): controls after the title in the title row, named for
+    /// screen readers by `label` when the title is empty.
+    #[test]
+    fn header_controls_follow_the_title_in_its_row() {
+        let ctx = context();
+        ctx.enable_accesskit();
+        let show = |ctx: &Context, title: &str| {
+            Dialog::new("tabs")
+                .title(title)
+                .label("Privacy Policy")
+                .icon(icon::SHIELD_CHECK)
+                .closable()
+                .header(|ui| {
+                    ui.label("Terms");
+                    ui.label("Privacy");
+                })
+                .footer(|f| {
+                    f.confirm("Close");
+                })
+                .show(ctx)
+        };
+        let mut out = None;
+        for _ in 0..3 {
+            out = Some(run(&ctx, Vec::new(), |ui| {
+                let _ = show(ui.ctx(), "Legal");
+            }));
+        }
+        let out = out.expect("shown");
+        let title = painted_text(&out, "Legal").expect("the title");
+        let terms = painted_text(&out, "Terms").expect("the first header control");
+        let privacy = painted_text(&out, "Privacy").expect("the second header control");
+        assert!(title.right() < terms.left() && terms.right() < privacy.left());
+        assert!(
+            (terms.center().y - title.center().y).abs() < 2.0,
+            "one row: {title:?} {terms:?}"
+        );
+
+        // No title: the header starts the row, and the label names the dialog.
+        let mut out = None;
+        for _ in 0..3 {
+            out = Some(run(&ctx, Vec::new(), |ui| {
+                let _ = show(ui.ctx(), "");
+            }));
+        }
+        let out = out.expect("shown");
+        let card = painted_card(&out);
+        let terms = painted_text(&out, "Terms").expect("the header");
+        assert!(
+            terms.left() < card.left() + theme::metrics().dialog_pad + DISC + theme::XL,
+            "right after the icon: {terms:?} in {card:?}"
+        );
+        let nodes = out
+            .platform_output
+            .accesskit_update
+            .expect("accesskit")
+            .nodes;
+        assert!(
+            nodes
+                .iter()
+                .any(|(_, n)| n.role() == egui::accesskit::Role::Dialog
+                    && n.label() == Some("Privacy Policy")),
+            "the dialog is named by its label"
+        );
+    }
+
+    /// A document's dialog is as tall as a dialog may be even when its text is short, and its
+    /// footer sits at the bottom of the card.
+    #[test]
+    fn a_full_height_dialog_takes_the_room_however_short_its_body() {
+        let ctx = context();
+        let mut out = None;
+        for frame in 0..4 {
+            let mut shown = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))),
+                    time: Some(f64::from(frame)),
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = Dialog::new("short")
+                        .title("Notes")
+                        .width(DialogWidth::Reading)
+                        .fill_height()
+                        .body(|ui| {
+                            ui.label("One line.");
+                        })
+                        .footer(|f| {
+                            f.confirm("Close");
+                        })
+                        .show(ui.ctx());
+                },
+            );
+            shown.textures_delta.clear();
+            out = Some(shown);
+        }
+        let out = out.expect("shown");
+        let card = painted_card(&out);
+        let room = modal_room(&ctx);
+        assert!(
+            card.height() >= room.height().min(theme::SETTINGS_MAX_HEIGHT) - 2.0 * DIALOG_MARGIN,
+            "{card:?} in {room:?}"
+        );
+        let close = painted_text(&out, "Close").expect("the footer");
+        assert!(
+            card.bottom() - close.bottom() < theme::metrics().dialog_pad + theme::XL,
+            "the footer is at the bottom: {close:?} in {card:?}"
+        );
+    }
+
+    /// The progress lane: a seam under the title row and, along it, an `accent` line as long as
+    /// the share of the body scrolled past.
+    #[test]
+    fn the_progress_lane_follows_the_scroll() {
+        let ctx = context();
+        let accent = theme::palette(&ctx).accent;
+        let mut time = 0.0;
+        let mut frame = |events: Vec<egui::Event>| {
+            time += 0.5;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = Dialog::new("document")
+                        .title("Terms")
+                        .width(DialogWidth::Reading)
+                        .fill_height()
+                        .progress_lane()
+                        .body(|ui| {
+                            for i in 0..200 {
+                                ui.label(format!("Paragraph {i}"));
+                            }
+                        })
+                        .footer(|f| {
+                            f.confirm("Close");
+                        })
+                        .show(ui.ctx());
+                },
+            );
+            out.textures_delta.clear();
+            let line = out.shapes.iter().find_map(|c| {
+                fn find(shape: &Shape, accent: Color32) -> Option<Rect> {
+                    match shape {
+                        Shape::Rect(r) if r.fill == accent && r.rect.height() <= PROGRESS => {
+                            Some(r.rect)
+                        }
+                        Shape::Vec(v) => v.iter().find_map(|s| find(s, accent)),
+                        _ => None,
+                    }
+                }
+                find(&c.shape, accent)
+            });
+            (painted_card(&out), line)
+        };
+        for _ in 0..3 {
+            frame(Vec::new());
+        }
+        let (card, line) = frame(Vec::new());
+        assert!(
+            line.is_none_or(|l| l.width() < 1.0),
+            "nothing read yet: {line:?}"
+        );
+        let over = card.center();
+        for _ in 0..6 {
+            frame(vec![
+                egui::Event::PointerMoved(over),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(0.0, -100_000.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        let (card, line) = frame(Vec::new());
+        let line = line.expect("the progress line once scrolled");
+        assert!(
+            (line.left() - card.left()).abs() < 1.0 && (line.right() - card.right()).abs() < 1.0,
+            "read to the end, the line spans the card: {line:?} {card:?}"
+        );
+    }
+
+    /// A custom footer answers the dialog with what it returns, and a blocking dialog leaves
+    /// Esc to it.
+    #[test]
+    fn a_custom_footer_answers_the_dialog() {
+        let ctx = context();
+        let show = |ctx: &Context, back: &mut bool| {
+            Dialog::new("consent")
+                .title("Terms")
+                .blocking()
+                .custom_footer(|ui| {
+                    *back = ui.button("Back").clicked() || ui.input(|i| i.key_pressed(Key::Escape));
+                    if *back {
+                        DialogResult::Cancel
+                    } else {
+                        DialogResult::Open
+                    }
+                })
+                .show(ctx)
+        };
+        let mut back = false;
+        let mut result = DialogResult::Open;
+        for _ in 0..3 {
+            let _ = run(&ctx, Vec::new(), |ui| result = show(ui.ctx(), &mut back));
+        }
+        assert_eq!(result, DialogResult::Open);
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            None,
+            "nothing is focused"
+        );
+        let _ = run(&ctx, key(Key::Enter), |ui| {
+            result = show(ui.ctx(), &mut back);
+        });
+        assert_eq!(result, DialogResult::Open, "Enter answers nothing");
+        let _ = run(&ctx, key(Key::Escape), |ui| {
+            result = show(ui.ctx(), &mut back);
+        });
+        assert!(back);
+        assert_eq!(result, DialogResult::Cancel);
     }
 
     #[test]

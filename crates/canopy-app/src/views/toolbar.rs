@@ -9,8 +9,7 @@ use canopy_core::PullStrategy;
 use canopy_core::forge::ForgeKind;
 use canopy_hosting::{RequestState, RequestSummary, StateFilter};
 use egui::{
-    Align, FontId, Id, Layout, RichText, Sense, Stroke, Ui, Vec2, WidgetInfo, WidgetType, pos2,
-    vec2,
+    Align, Id, Layout, RichText, Sense, Stroke, Ui, Vec2, WidgetInfo, WidgetType, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -47,7 +46,7 @@ pub fn tabs(
         art::show(ui, art::logo(), Vec2::splat(m.icon_xl));
         ui.label(
             RichText::new("Canopy")
-                .font(FontId::new(m.subtitle_size, theme::semibold()))
+                .font(theme::heading(m.subtitle_size))
                 .color(p.text),
         );
         ui.add_space(theme::MD);
@@ -142,6 +141,7 @@ fn doc_tabs(tabs: &[RepoTab]) -> Vec<DocTab<'_>> {
                 let _ = write!(detail, "  ·  {modifier}+{}", i + 1);
             }
             let doc = DocTab::new(&tab.path, &tab.name)
+                .icon(tab.icon)
                 .sync(ahead, behind)
                 .busy(tab.running.is_some())
                 .detail(detail);
@@ -167,7 +167,7 @@ fn theme_items(m: &mut menu::Menu<'_>, current: ThemeId) -> Option<ThemeId> {
         let radius = metrics.icon_md / 2.0;
         let center = pos2(r.rect.left() + theme::SM + radius, r.rect.center().y);
         let painter = m.ui.painter();
-        painter.circle_filled(center, radius, tp.bg());
+        painter.circle_filled(center, radius, tp.s().pane);
         painter.circle_filled(center, radius * 0.45, tp.accent);
         painter.circle_stroke(
             center,
@@ -1121,6 +1121,27 @@ mod tests {
         assert!(
             a.right() + 40.0 < b.left(),
             "the busy tab overlaps the next: {a:?} {b:?}"
+        );
+    }
+
+    /// A repository's tab shows the icon chosen for it in its settings, not always the folder.
+    #[test]
+    fn a_title_bar_tab_shows_the_repository_icon() {
+        let ctx = context();
+        let mut alpha = repo_tab("alpha");
+        alpha.icon = crate::tab::tab_icon(Some("code"));
+        let tabs = [alpha];
+        let mut actions = Vec::new();
+        let (shapes, _) = frame(&ctx, Vec::new(), |ui| {
+            super::tabs(ui, &tabs, 0, ThemeId::Midnight, &mut actions);
+        });
+        assert!(
+            text_rect(&shapes, egui_phosphor::regular::CODE).is_some(),
+            "the chosen icon"
+        );
+        assert!(
+            text_rect(&shapes, egui_phosphor::regular::FOLDER_SIMPLE).is_none(),
+            "the default folder instead of the chosen icon"
         );
     }
 

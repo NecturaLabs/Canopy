@@ -1040,19 +1040,21 @@ fn hunk_header(
                         }
                     };
                     if danger {
-                        let what = if n == 0 {
-                            "this change".to_owned()
+                        let (title, confirm) = if n == 0 {
+                            (
+                                format!("Discard this hunk of {path}?"),
+                                "Discard hunk".to_owned(),
+                            )
                         } else {
-                            format!("the {n} selected {lines_word}")
+                            (
+                                format!("Discard {n} selected {lines_word} of {path}?"),
+                                format!("Discard {lines_word}"),
+                            )
                         };
                         actions.push(Action::Confirm {
-                            title: if n == 0 {
-                                "Discard hunk".into()
-                            } else {
-                                format!("Discard {lines_word}")
-                            },
-                            body: format!("Throw away {what} in {path}? It cannot be recovered."),
-                            confirm: "Discard".into(),
+                            title,
+                            body: "The change is thrown away. It cannot be recovered.".into(),
+                            confirm,
                             danger: true,
                             op,
                         });
@@ -1381,6 +1383,15 @@ mod tests {
             ),
             "{pushed:?}"
         );
+        // Mop-up D24: the title asks a question naming what goes, the answer is verb + object.
+        let [Action::Confirm { title, confirm, .. }] = pushed.as_slice() else {
+            unreachable!()
+        };
+        assert!(
+            title.starts_with("Discard this hunk of ") && title.ends_with('?'),
+            "{title}"
+        );
+        assert_eq!(confirm, "Discard hunk");
     }
 
     #[test]
