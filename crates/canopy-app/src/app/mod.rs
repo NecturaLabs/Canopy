@@ -707,6 +707,7 @@ impl eframe::App for CanopyApp {
         let p = palette(&ctx);
         let compact = ctx.content_rect().width() < theme::COMPACT_WIDTH;
         self.poll(&ctx);
+        self.apply_repo_looks();
         self.auto_fetch(&ctx);
         let mut actions = Vec::new();
         self.keyboard(&ctx, &mut actions);
@@ -990,8 +991,7 @@ impl eframe::App for CanopyApp {
                     }
                 }
                 crate::ui::toast::Recovery::Accounts => {
-                    self.settings_screen =
-                        Some(SettingsScreen::at(settings_screen::Section::Accounts));
+                    self.open_settings(SettingsScreen::at(settings_screen::Section::Accounts));
                 }
             }
         }

@@ -149,8 +149,12 @@ impl CanopyApp {
                 }
                 Action::OpenLogs => match crate::logging::log_dir() {
                     Some(dir) => {
-                        let _ = std::fs::create_dir_all(&dir);
-                        if let Err(e) = crate::platform::open_folder(&dir, &self.file_manager()) {
+                        let opened = std::fs::create_dir_all(&dir)
+                            .map_err(|e| format!("{}: {e}", dir.display()))
+                            .and_then(|()| {
+                                crate::platform::open_folder(&dir, &self.file_manager())
+                            });
+                        if let Err(e) = opened {
                             self.toasts.push(ctx, ToastKind::Error, "Could not open", e);
                         }
                     }
@@ -400,7 +404,7 @@ impl CanopyApp {
 
     /// Opens Settings, reading the identity it shows (the active repository's, else the global
     /// one) off the UI thread.
-    fn open_settings(&mut self, screen: SettingsScreen) {
+    pub(super) fn open_settings(&mut self, screen: SettingsScreen) {
         self.settings_screen = Some(screen);
         if let Some(t) = self.tabs.get(self.active) {
             self.request_identity(IdentityJob::ReadRepo(t.path.clone()));

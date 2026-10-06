@@ -200,7 +200,7 @@ pub fn natural_height(ui: &Ui, d: Option<&CommitDetails>) -> f32 {
             .filter(|l| !l.trim().is_empty());
         (
             1 + usize::from(committer) + usize::from(!d.parents.is_empty()),
-            body.count().min(BODY_LINES),
+            body.take(BODY_LINES).count(),
             d.files.len().min(2),
         )
     });
