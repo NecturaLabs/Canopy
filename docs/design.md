@@ -96,7 +96,9 @@ Inter for interface text, JetBrains Mono for SHAs, diffs, paths in diffs and any
 align. Both are bundled (SIL OFL 1.1), so metrics are consistent on Linux, macOS and Windows. The
 mono face is JetBrains Mono NL, the build without programming ligatures: a version-control client
 shows exact text, so `->`, `!=` or `::` draw as the characters typed and look like what copying
-them gives (`fonts::tests::code_text_has_no_ligatures`).
+them gives (`fonts::tests::code_text_has_no_ligatures`). Every family ends in Canopy CJK, a
+subset of Noto Sans CJK (everyday Han, kana and Hangul, 5.7 MB), so CJK file names, branches and
+messages draw in a matching sans instead of missing-glyph boxes.
 Inter Regular, Medium and SemiBold distinguish body text, controls and headings; monospace is
 reserved for code and identifiers. Sizes scale with the interface zoom and display density.
 

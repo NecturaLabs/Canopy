@@ -1,6 +1,7 @@
-//! Bundled fonts: Inter for the interface, JetBrains Mono NL (no ligatures) for code and ids, Phosphor for icons
-//! (regular, and filled for themes that fill active icons), and two theme heading faces: Canopy
-//! Serif Bold (Paper) and Atkinson Hyperlegible Bold (Contrast).
+//! Bundled fonts: Inter for the interface, JetBrains Mono NL (no ligatures) for code and ids,
+//! Phosphor for icons (regular, and filled for themes that fill active icons), two theme heading
+//! faces, Canopy Serif Bold (Paper) and Atkinson Hyperlegible Bold (Contrast), and Canopy CJK, the
+//! fallback for Chinese, Japanese and Korean text.
 //! Licences: `crates/canopy-app/assets/fonts/README.md`.
 
 use std::sync::Arc;
@@ -11,6 +12,10 @@ use super::theme::HeadingFace;
 
 /// Font data and family name of Phosphor's filled glyphs.
 pub const FILL: &str = "phosphor-fill";
+
+/// Font data name of the CJK fallback: Canopy CJK, everyday Han, kana and Hangul from Noto Sans
+/// CJK JP (assets/fonts/README.md).
+const CJK: &str = "canopy-cjk";
 
 /// Installs the fonts on `ctx`.
 pub fn install(ctx: &egui::Context) {
@@ -44,6 +49,10 @@ pub fn install(ctx: &egui::Context) {
         "atkinson-hyperlegible-bold",
         include_bytes!("../../assets/fonts/AtkinsonHyperlegible-Bold.ttf"),
     );
+    add(
+        CJK,
+        include_bytes!("../../assets/fonts/CanopyCJK-Regular.otf"),
+    );
 
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     // The filled glyphs share the regular ones' code points, so they get a family of their own
@@ -58,8 +67,9 @@ pub fn install(ctx: &egui::Context) {
     // Phosphor icons live in the Unicode private-use area. The bundled Inter files have their own
     // private-use mappings removed (see assets/fonts/README.md) and Phosphor comes straight after
     // Inter, ahead of egui's emoji font, which also uses that area. egui's defaults stay as
-    // fallbacks for scripts and emoji Inter lacks.
-    let fallbacks: Vec<String> = fonts
+    // fallbacks for scripts and emoji Inter lacks, and Canopy CJK comes last of all, for the Han,
+    // kana and Hangul in file names, branches and messages.
+    let mut fallbacks: Vec<String> = fonts
         .families
         .get(&FontFamily::Proportional)
         .cloned()
@@ -67,6 +77,7 @@ pub fn install(ctx: &egui::Context) {
         .into_iter()
         .filter(|f| f != "phosphor")
         .collect();
+    fallbacks.push(CJK.to_owned());
     let with = |primary: &str| {
         let mut v = vec![primary.to_owned(), "phosphor".to_owned()];
         v.extend(fallbacks.iter().cloned());
@@ -102,6 +113,7 @@ pub fn install(ctx: &egui::Context) {
         mono.retain(|f| f != "phosphor");
         mono.insert(0, "jetbrains-mono".to_owned());
         mono.insert(1, "phosphor".to_owned());
+        mono.push(CJK.to_owned());
     }
     ctx.set_fonts(fonts);
 }
@@ -151,6 +163,47 @@ mod tests {
         assert!(star > 0.0);
         // Text in the filled family stays Inter (Phosphor maps letters to blank ligature glyphs).
         assert!((fill_text - text).abs() < 0.01);
+    }
+
+    /// Chinese, Japanese and Korean text (file names, branch names, commit messages are user data)
+    /// draws real glyphs in every family instead of the missing-glyph box.
+    #[test]
+    fn cjk_text_draws_real_glyphs() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let families = [
+            FontFamily::Proportional,
+            FontFamily::Monospace,
+            FontFamily::Name("semibold".into()),
+            HeadingFace::Serif.family(),
+        ];
+        let mut missing = Vec::new();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for family in &families {
+                let font = FontId::new(14.0, family.clone());
+                let glyph = |c: char| {
+                    let galley = ui.painter().layout_no_wrap(
+                        c.to_string(),
+                        font.clone(),
+                        egui::Color32::WHITE,
+                    );
+                    let g = galley.rows[0].glyphs[0];
+                    (g.uv_rect.offset, g.uv_rect.size)
+                };
+                // A private-use code point in plane 16 that no bundled font maps.
+                let unknown = glyph('\u{10FFFD}');
+                for c in [
+                    '日', '本', '語', '中', '文', '體', '한', '국', 'ひ', 'カ', '「', '。',
+                ] {
+                    let g = glyph(c);
+                    if g == unknown || g.1 == egui::emath::Vec2::ZERO {
+                        missing.push(format!("{family:?} {c}"));
+                    }
+                }
+            }
+        });
+        out.textures_delta.clear();
+        assert!(missing.is_empty(), "missing glyphs: {missing:?}");
     }
 
     /// Code shows the characters typed: in monospace, `->`, `!=`, `<=` and `::` draw each character

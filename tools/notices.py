@@ -48,6 +48,8 @@ FONTS = [
      "crates/canopy-app/assets/fonts/OFL-PTSerif.txt"),
     ("Atkinson Hyperlegible Bold by the Braille Institute of America",
      "crates/canopy-app/assets/fonts/OFL-AtkinsonHyperlegible.txt"),
+    ("Canopy CJK, a modified version of Noto Sans CJK JP by Adobe for Google",
+     "crates/canopy-app/assets/fonts/OFL-NotoSansCJK.txt"),
 ]
 
 
