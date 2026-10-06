@@ -1659,6 +1659,16 @@ impl Palette {
         (fill, ring, label)
     }
 
+    /// A ref pill in colour `c` (its lane's): the badge surface tinted with `c` (more for the
+    /// checked-out branch, `strong`), a hairline of `c` and the label in `c` lifted to 4.5:1 on
+    /// it, the tonal look of [`Palette::tonal`] at rest. Returns fill, ring and label.
+    pub fn pill(&self, c: Color32, strong: bool) -> (Color32, Color32, Color32) {
+        let s = self.s();
+        let fill = mix(s.badge, c, if strong { TONAL_PRESSED } else { TONAL_REST });
+        let ring = mix(s.badge, c, TONAL_RING);
+        (fill, ring, self.ink(c, fill))
+    }
+
     /// Text or an icon in colour `fg` drawn on the translucent `fill` in the active style: `fg`
     /// moved towards the text colour just enough to read at 4.5:1 on that fill over every
     /// component surface, so it keeps its hue wherever the component is drawn.
