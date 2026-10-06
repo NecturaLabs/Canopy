@@ -1145,6 +1145,9 @@ impl eframe::App for CanopyApp {
     )]
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         crate::ui::kit::glass::destroy(gl);
+        // Stop every repository's threads, then wait for them all at once.
+        self.tabs.clear();
+        crate::worker::wait_for_threads(Duration::from_secs(1));
         if let Some(soak) = &self.glass_soak {
             println!("{}", soak.report());
         }

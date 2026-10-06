@@ -2,9 +2,9 @@
 //! never calls git itself, so a slow disk, a large repository or the network cannot freeze it.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
@@ -517,10 +517,13 @@ impl Worker {
     }
 }
 
+/// The threads of dropped workers that may still be running ([`wait_for_threads`]).
+static ENDING: Mutex<Vec<Receiver<()>>> = Mutex::new(Vec::new());
+
 impl Drop for Worker {
-    /// Stops both threads and gives them a second to end (a running operation may take longer),
-    /// so a process exiting right after, a test or the app quitting, does not tear libgit2 and
-    /// OpenSSL down while a thread is still using them.
+    /// Stops both threads without waiting for them (closing a tab never stalls the UI); the
+    /// process waits for them before it exits ([`wait_for_threads`]). A test binary, which has no
+    /// such moment, waits here.
     fn drop(&mut self) {
         // Dropping the senders ends the threads: the watcher's loop, then the repository
         // thread's once the watcher's copy of the jobs sender has gone too.
@@ -529,7 +532,26 @@ impl Drop for Worker {
             crossbeam_channel::bounded(0).0,
         ));
         drop(std::mem::replace(&mut self.jobs, unbounded().0));
-        let _ = self.ended.recv_timeout(Duration::from_secs(1));
+        let ended = std::mem::replace(&mut self.ended, crossbeam_channel::bounded(0).1);
+        if cfg!(test) {
+            let _ = ended.recv_timeout(Duration::from_secs(1));
+        } else {
+            ENDING
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(ended);
+        }
+    }
+}
+
+/// Waits, up to `within` in all (a running operation may take longer), for the threads of
+/// dropped workers to end, so a process exiting right after does not tear libgit2 and OpenSSL
+/// down while one of them is still using them.
+pub fn wait_for_threads(within: Duration) {
+    let deadline = Instant::now() + within;
+    let ending = std::mem::take(&mut *ENDING.lock().unwrap_or_else(PoisonError::into_inner));
+    for ended in ending {
+        let _ = ended.recv_deadline(deadline);
     }
 }
 
@@ -604,7 +626,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
         let mut mutated = false;
         for job in rest {
             let kind = job.kind();
-            let started = std::time::Instant::now();
+            let started = Instant::now();
             match job {
                 Job::Details(oid) => {
                     // The file list needs no file contents, so it is shown first, offline. A
@@ -866,7 +888,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             limit = n;
         }
         if want_full.is_some() || mutated {
-            let started = std::time::Instant::now();
+            let started = Instant::now();
             match snapshot_completing(&repo, limit, &emit, &allowed) {
                 Ok(s) => {
                     tracing::debug!(
@@ -1244,9 +1266,23 @@ fn watch(path: PathBuf, jobs: Sender<Job>, stop: Receiver<()>, ended: Sender<()>
                     }
                 };
                 classify(first);
-                // Debounce: wait for a quiet period.
-                while let Ok(e) = rx.recv_timeout(Duration::from_millis(350)) {
-                    classify(e);
+                // Debounce: wait for a quiet period, unless told to stop.
+                let mut stopped = false;
+                loop {
+                    crossbeam_channel::select! {
+                        recv(rx) -> e => match e {
+                            Ok(e) => classify(e),
+                            Err(_) => break,
+                        },
+                        recv(stop) -> _ => {
+                            stopped = true;
+                            break;
+                        },
+                        default(Duration::from_millis(350)) => break,
+                    }
+                }
+                if stopped {
+                    break;
                 }
                 if full {
                     if jobs.send(Job::Refresh(0)).is_err() {
@@ -1639,6 +1675,39 @@ mod read_tests {
         worker
     }
 
+    /// Dropping a worker ends its repository thread and its file watcher's: nothing of it is
+    /// left running when the process exits.
+    #[test]
+    fn dropping_a_worker_ends_its_threads() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let worker = worker_with_canopys_choices(diverged_clone(root.path()));
+        let ended = worker.ended.clone();
+        drop(worker);
+        assert_eq!(
+            ended.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        );
+    }
+
+    /// The app's exit waits for the threads of the workers dropped before it, within one bound.
+    #[test]
+    fn exiting_waits_for_the_threads_of_dropped_workers() {
+        let (ended_tx, ended) = crossbeam_channel::bounded::<()>(0);
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            drop(ended_tx);
+        });
+        ENDING.lock().expect("lock").push(ended);
+        let started = Instant::now();
+        wait_for_threads(Duration::from_secs(5));
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_millis(200) && waited < Duration::from_secs(5),
+            "waited {waited:?}"
+        );
+        thread.join().expect("thread");
+    }
+
     /// When the pull's fetch fails, git's error is the answer, even where the branches as last
     /// fetched diverged: there is nothing new to combine.
     #[test]
@@ -1738,7 +1807,7 @@ mod read_tests {
         // change the answer.
         git(&copy, &["config", "pull.ff", "true"]);
         git(&copy, &["config", "branch.main.rebase", "true"]);
-        let worker = Worker::spawn(copy, &egui::Context::default());
+        let worker = worker_with_canopys_choices(copy);
         worker.send(Job::PullConfig);
         let events = events_until(&worker, |e| matches!(e, Event::PullConfig(_)));
         let Some(Event::PullConfig(Ok(config))) = events.last() else {
@@ -1755,7 +1824,7 @@ mod read_tests {
     fn an_untrusted_partial_clone_downloads_nothing_and_says_why() {
         // Blobless: the file list is offline, the line counts would need a download.
         let (_root, _src, copy, _oldest, middle) = partial_clone("--filter=blob:none");
-        let worker = Worker::spawn(copy, &egui::Context::default());
+        let worker = worker_with_canopys_choices(copy);
         worker.send(Job::Details(middle));
         let events = events_until(&worker, |e| matches!(e, Event::DownloadsRefused { .. }));
         assert!(
@@ -1772,7 +1841,7 @@ mod read_tests {
 
         // Treeless: even the file list needs a download, so the read fails and explains.
         let (_root, _src, copy, oldest, _) = partial_clone("--filter=tree:0");
-        let worker = Worker::spawn(copy, &egui::Context::default());
+        let worker = worker_with_canopys_choices(copy);
         worker.send(Job::Details(oldest));
         let events = events_until(&worker, |e| matches!(e, Event::DetailsFailed { .. }));
         let Some(Event::DetailsFailed {
@@ -1800,7 +1869,7 @@ mod read_tests {
     #[test]
     fn details_in_a_blobless_clone_show_the_file_list_first_and_the_counts_after_downloading() {
         let (_root, _src, copy, _oldest, middle) = trusted_partial_clone("--filter=blob:none");
-        let worker = Worker::spawn(copy, &egui::Context::default());
+        let worker = worker_with_canopys_choices(copy);
 
         // The blobs of this commit are not local: the list comes first, offline, and the line
         // counts follow once downloaded, with a progress line around the download.
@@ -1833,7 +1902,7 @@ mod read_tests {
     #[test]
     fn a_failed_download_of_details_is_reported_with_its_oid_and_can_be_retried() {
         let (root, src, copy, oldest, _) = trusted_partial_clone("--filter=tree:0");
-        let worker = Worker::spawn(copy, &egui::Context::default());
+        let worker = worker_with_canopys_choices(copy);
         let moved = root.path().join("src-moved");
         std::fs::rename(&src, &moved).expect("hide the remote");
 
