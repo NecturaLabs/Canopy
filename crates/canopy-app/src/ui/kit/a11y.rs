@@ -5,7 +5,7 @@
 //! overlay while it is open).
 
 use egui::accesskit::Role;
-use egui::{Context, Id, LayerId, Ui};
+use egui::{Context, Id, LayerId, Response, Ui};
 
 /// Marks `ui`'s own accessibility node as a `role` named `label`, so the widgets inside it are
 /// announced as its parts (the commits of a list, the controls of a dialog). Every egui `Ui` has a
@@ -51,6 +51,68 @@ pub fn disclosure_name(label: &str, open: bool) -> String {
     } else {
         format!("{label}, collapsed")
     }
+}
+
+/// Whether the platform's accessibility adapter says a disabled control is unavailable. AccessKit's
+/// Linux adapter (`accesskit_atspi_common` 0.18) reports it only for roles with a read-only state
+/// ([`reads_read_only`]) and calls every other control, a button among them, enabled.
+const ADAPTER_SPEAKS_DISABLED: bool = !cfg!(all(unix, not(target_os = "macos")));
+
+/// Roles whose disabled state the Linux adapter speaks as read-only (`accesskit_consumer`'s
+/// `is_read_only_supported`).
+fn reads_read_only(role: Role) -> bool {
+    matches!(
+        role,
+        Role::TextInput
+            | Role::MultilineTextInput
+            | Role::SearchInput
+            | Role::DateInput
+            | Role::DateTimeInput
+            | Role::WeekInput
+            | Role::MonthInput
+            | Role::TimeInput
+            | Role::EmailInput
+            | Role::NumberInput
+            | Role::PasswordInput
+            | Role::PhoneNumberInput
+            | Role::UrlInput
+            | Role::EditableComboBox
+            | Role::SpinButton
+            | Role::CheckBox
+            | Role::ColorWell
+            | Role::ComboBox
+            | Role::Grid
+            | Role::ListBox
+            | Role::MenuItemCheckBox
+            | Role::MenuItemRadio
+            | Role::MenuListPopup
+            | Role::RadioButton
+            | Role::RadioGroup
+            | Role::Slider
+            | Role::Switch
+            | Role::TreeGrid
+    )
+}
+
+/// The name an unavailable control in `role` called `label` is announced by, when it differs:
+/// on Linux, for a role the adapter would call enabled, ", unavailable" after the label (once).
+fn unavailable_name(label: &str, role: Role) -> Option<String> {
+    (!ADAPTER_SPEAKS_DISABLED && !reads_read_only(role) && !label.ends_with(", unavailable"))
+        .then(|| format!("{label}, unavailable"))
+}
+
+/// Tells screen readers that the disabled control `response` is unavailable and why: `reason`, if
+/// any, as its description, and on Linux the state in its name ([`unavailable_name`]). Call after
+/// the control's `widget_info`.
+pub fn unavailable(response: &Response, reason: Option<&str>) {
+    response.ctx.accesskit_node_builder(response.id, |n| {
+        if let Some(name) = n.label().and_then(|l| unavailable_name(l, n.role())) {
+            n.set_label(name);
+        }
+        if let Some(reason) = reason {
+            n.set_description(reason);
+        }
+    });
 }
 
 /// Where keyboard focus goes back to when an overlay (the palette, the cheatsheet) closes: the
@@ -188,6 +250,52 @@ mod tests {
             seen.iter()
                 .all(|l| l.is_some_and(|l| l.order == Order::Tooltip)),
             "Tab left the overlay: {seen:?}"
+        );
+    }
+
+    /// A11Y-19 kit-wide: an unavailable control says so and why. The Linux adapter reports a
+    /// disabled button as enabled, so there its name carries the state; a checkbox's read-only
+    /// state does reach Orca, so its name stays as it is.
+    #[test]
+    fn an_unavailable_control_says_so_and_why() {
+        let ctx = testkit::ctx();
+        let nodes = testkit::spoken(&ctx, |ui| {
+            Button::new("Push")
+                .enabled(false)
+                .disabled_reason("Nothing to push")
+                .show(ui);
+            Button::new("Fetch").show(ui);
+            super::super::toggle::Checkbox::new(&mut false, "Sign commits")
+                .enabled(false)
+                .disabled_reason("No signing key")
+                .show(ui);
+        });
+        let named = |prefix: &str| {
+            nodes
+                .iter()
+                .find(|n| n.label.as_deref().is_some_and(|l| l.starts_with(prefix)))
+                .unwrap_or_else(|| panic!("{prefix}: {nodes:?}"))
+                .clone()
+        };
+        let push = named("Push");
+        let want = if ADAPTER_SPEAKS_DISABLED {
+            "Push"
+        } else {
+            "Push, unavailable"
+        };
+        assert_eq!(push.label.as_deref(), Some(want));
+        assert_eq!(push.description.as_deref(), Some("Nothing to push"));
+        assert!(push.disabled);
+        let fetch = named("Fetch");
+        assert_eq!(fetch.label.as_deref(), Some("Fetch"));
+        assert_eq!(fetch.description, None);
+        let sign = named("Sign commits");
+        assert_eq!(sign.label.as_deref(), Some("Sign commits"));
+        assert_eq!(sign.description.as_deref(), Some("No signing key"));
+        assert_eq!(
+            unavailable_name("Push, unavailable", Role::Button),
+            None,
+            "once"
         );
     }
 }

@@ -61,7 +61,8 @@ fn blend(a: Fill, b: Fill, t: f32) -> Fill {
 }
 
 /// A control's kit tooltip: why it is disabled, else `tooltip` with the shortcut's keys as
-/// keycaps; nothing when there is no text.
+/// keycaps; nothing when there is no text. A disabled control also tells screen readers it is
+/// unavailable and why ([`super::a11y::unavailable`]), so call this after its `widget_info`.
 pub(super) fn tip(
     response: Response,
     enabled: bool,
@@ -69,6 +70,9 @@ pub(super) fn tip(
     reason: Option<&str>,
     shortcut: Option<Command>,
 ) -> Response {
+    if !enabled {
+        super::a11y::unavailable(&response, reason);
+    }
     let text = if enabled { tooltip } else { reason.or(tooltip) };
     match (text, shortcut) {
         (None, _) => response,

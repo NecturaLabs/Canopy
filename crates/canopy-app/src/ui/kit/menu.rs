@@ -842,6 +842,9 @@ impl MenuItem {
                 }
             }
         });
+        if !enabled {
+            super::a11y::unavailable(&response, self.disabled_reason.as_deref());
+        }
         match (enabled, self.disabled_reason) {
             (false, Some(reason)) => response.kit_tooltip(reason).show(),
             _ => response,

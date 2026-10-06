@@ -2339,7 +2339,16 @@ mod tests {
         let nodes = spoken(&ctx, |ui| {
             number(ui, &mut v);
         });
-        let more = find(&nodes, "Increase Commits per page").expect("the + button");
+        // On Linux an unavailable button says so in its name (a11y::unavailable).
+        let more = nodes
+            .iter()
+            .find(|n| {
+                matches!(
+                    n.label.as_deref(),
+                    Some("Increase Commits per page" | "Increase Commits per page, unavailable")
+                )
+            })
+            .expect("the + button");
         assert!(more.disabled, "+ turns off at the top of the range");
         let minus = plus - vec2(Size::Xs.height() + theme::XS / 2.0, 0.0);
         testkit::click(&ctx, minus, |ui| {
