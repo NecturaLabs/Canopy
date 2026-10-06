@@ -1167,6 +1167,8 @@ mod tests {
             .collect()
     }
 
+    // A desktop entry's Exec line holds a Unix path; a Windows one is not valid there.
+    #[cfg(unix)]
     #[test]
     fn installed_apps_are_offered_by_what_they_are() {
         let dir = tempfile::tempdir().unwrap();

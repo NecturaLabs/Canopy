@@ -60,7 +60,9 @@ mod tests {
         );
         let mut found = Vec::new();
         for path in files {
-            let src = std::fs::read_to_string(&path).expect("view source");
+            let src = std::fs::read_to_string(&path)
+                .expect("view source")
+                .replace("\r\n", "\n");
             // The file up to its test module; a test-only helper above it is still scanned.
             let code = src
                 .split("\n#[cfg(test)]\nmod tests")

@@ -268,7 +268,13 @@ fn tree(dir: &Path) -> Vec<(String, String)> {
         entries.sort_by_key(fs::DirEntry::file_name);
         for e in entries {
             let path = e.path();
-            let rel = path.strip_prefix(base).expect("rel").display().to_string();
+            let rel = path
+                .strip_prefix(base)
+                .expect("rel")
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
             if path.is_dir() {
                 walk(base, &path, out);
             } else {
@@ -820,6 +826,8 @@ fn sums(script: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+// The in-app update runs only for a Linux install folder: its desktop entry and `sh` checks.
+#[cfg(unix)]
 #[test]
 fn an_update_replaces_the_install_and_everything_registered_with_it() {
     let old = installed();
@@ -963,6 +971,7 @@ fn an_archive_without_a_binary_is_refused_before_anything_changes() {
     assert_eq!(tree(&old.root), before);
 }
 
+#[cfg(unix)]
 #[test]
 fn an_installer_script_that_cannot_be_trusted_keeps_the_old_uninstaller() {
     for (what, sums_body, script) in [

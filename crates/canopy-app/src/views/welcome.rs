@@ -446,7 +446,10 @@ mod tests {
     fn recent_repositories_name_their_folder_with_home_as_a_tilde() {
         let home = Path::new("/home/ada");
         let at = |p: &str| folder_label(Path::new(p), home);
-        assert_eq!(at("/home/ada/src/canopy").as_deref(), Some("~/src"));
+        assert_eq!(
+            at("/home/ada/src/canopy"),
+            Some(Path::new("~").join("src").display().to_string())
+        );
         assert_eq!(at("/home/ada/canopy").as_deref(), Some("~"));
         assert_eq!(at("/srv/git/canopy").as_deref(), Some("/srv/git"));
         // A folder merely starting with the home folder's name is not inside it.
