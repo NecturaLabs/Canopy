@@ -572,13 +572,16 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                 );
                 ui.ctx()
                     .accesskit_node_builder(response.id, |n| n.set_label(info));
-                let response = response.on_hover_text_at_pointer(format!(
-                    "{}\n{} <{}>\n{}",
-                    c.summary,
-                    c.author.name,
-                    c.author.email,
-                    widgets::full_date(c.author.time, c.author.offset_minutes)
-                ));
+                let response = response
+                    .kit_tooltip(c.summary.as_str())
+                    .detail(format!(
+                        "{} <{}>\n{}",
+                        c.author.name,
+                        c.author.email,
+                        widgets::full_date(c.author.time, c.author.offset_minutes)
+                    ))
+                    .at_pointer()
+                    .show();
                 if response.clicked() {
                     clicked = Some(c.oid);
                 }

@@ -559,8 +559,9 @@ mod tests {
         }
     }
 
-    /// L-F9: kit components, the cheatsheet and the palette show the kit tooltip
-    /// (`overlay::TooltipExt`), never egui's stock one, so every tooltip looks and moves the same.
+    /// L-F9: kit components, the cheatsheet, the palette and the history, changes, diff and
+    /// conflict views show the kit tooltip (`overlay::TooltipExt`), never egui's stock one, so
+    /// every tooltip looks and moves the same.
     #[test]
     fn the_kit_uses_its_own_tooltip() {
         const STOCK: [&str; 5] = [
@@ -578,6 +579,18 @@ mod tests {
             .filter(|p| p.extension().is_some_and(|e| e == "rs"))
             .collect();
         files.extend(["cheatsheet.rs", "palette.rs", "widgets.rs"].map(|f| src.join(f)));
+        files.extend(
+            [
+                "history.rs",
+                "changes.rs",
+                "diff.rs",
+                "statusbar.rs",
+                "state_banner.rs",
+                "commit_detail.rs",
+                "resolve.rs",
+            ]
+            .map(|f| src.with_file_name("views").join(f)),
+        );
         let mut found = Vec::new();
         for path in files {
             let text = std::fs::read_to_string(&path).expect("kit source");
