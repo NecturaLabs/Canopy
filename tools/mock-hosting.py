@@ -47,11 +47,12 @@ PULLS = [
 ]
 # The list's checks and reviews per pull request, as GitHub's GraphQL API answers them: the check
 # rollup's state, the branch rules' review decision (null without required reviews) and the
-# reviewers' latest verdicts.
+# reviewers' latest verdicts. #42, the row Canopy selects first, agrees with the details this mock
+# serves for every pull request (one check still running, approved).
 ROLLUP = {
-    42: {"statusCheckRollup": {"state": "SUCCESS"}, "reviewDecision": "APPROVED",
+    42: {"statusCheckRollup": {"state": "PENDING"}, "reviewDecision": "APPROVED",
          "latestOpinionatedReviews": {"nodes": [{"state": "APPROVED"}]}},
-    41: {"statusCheckRollup": {"state": "PENDING"}, "reviewDecision": "REVIEW_REQUIRED",
+    41: {"statusCheckRollup": {"state": "SUCCESS"}, "reviewDecision": "REVIEW_REQUIRED",
          "latestOpinionatedReviews": {"nodes": []}},
     39: {"statusCheckRollup": None, "reviewDecision": None,
          "latestOpinionatedReviews": {"nodes": []}},
