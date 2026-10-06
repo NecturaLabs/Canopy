@@ -146,9 +146,24 @@ pub fn show(
                         d.message.lines().next().unwrap_or("").trim()
                     });
                     row.add_space(theme::SM);
-                    row.add(egui::Label::new(RichText::new(summary).color(p.text_dim)).truncate())
-                        .kit_tooltip(summary)
-                        .show();
+                    let cut =
+                        row.fonts_mut(|f| {
+                            f.layout_no_wrap(
+                                summary.to_owned(),
+                                egui::TextStyle::Body.resolve(row.style()),
+                                p.text_dim,
+                            )
+                        })
+                        .size()
+                        .x > row.available_width();
+                    let shown = row.add(
+                        egui::Label::new(RichText::new(summary).color(p.text_dim))
+                            .truncate()
+                            .show_tooltip_when_elided(false),
+                    );
+                    if cut {
+                        shown.kit_tooltip(summary).show();
+                    }
                 }
             });
     }

@@ -887,6 +887,7 @@ impl<'t> Core<'t> {
                 self.tooltip.as_deref(),
                 self.disabled_reason.as_deref(),
                 None,
+                true,
             ),
             submitted,
             stepped,

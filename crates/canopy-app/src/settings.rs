@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use canopy_core::Whitespace;
 use canopy_core::ops::PullStrategy;
 
+use crate::ui::kit::overlay::{TooltipDelay, TooltipLevel};
 use crate::ui::motion::MotionPref;
 use crate::ui::theme::{Curve, CustomTheme, Density, NodeShape, Style, ThemeId};
 use crate::ui::toast::Topic;
@@ -279,6 +280,11 @@ pub struct Settings {
     pub translucent: bool,
     /// Which notifications show as cards in the bottom-right corner.
     pub notifications: NotificationPrefs,
+    /// Which tooltips show, and after how long a rest.
+    #[serde(deserialize_with = "known")]
+    pub tooltips: TooltipLevel,
+    #[serde(deserialize_with = "known")]
+    pub tooltip_delay: TooltipDelay,
     /// The chosen theme at high contrast: stronger text, lines and focus, outlines for shadows.
     pub high_contrast: bool,
     /// The custom theme's colours (Settings, Appearance, with the Custom theme chosen).
@@ -402,6 +408,8 @@ impl Default for Settings {
             style: Style::Standard,
             translucent: false,
             notifications: NotificationPrefs::default(),
+            tooltips: TooltipLevel::Helpful,
+            tooltip_delay: TooltipDelay::Normal,
             high_contrast: false,
             custom_theme: CustomTheme::default(),
             density: Density::Comfortable,

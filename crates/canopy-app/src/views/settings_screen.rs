@@ -1950,6 +1950,46 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         },
     );
     notifications(ui, &mut s.notifications);
+    tooltips(ui, s);
+}
+
+/// Which tooltips show, and how soon.
+fn tooltips(ui: &mut Ui, s: &mut Settings) {
+    use crate::ui::kit::overlay::{TooltipDelay, TooltipLevel};
+    group_gap(ui, theme::LG);
+    heading(ui, "Tooltips");
+    row(
+        ui,
+        "Show tooltips",
+        "Helpful: only what the screen does not show — an icon's name, why something is unavailable, cut-off text, shortcuts, full dates and addresses. All: also descriptions of labelled controls and how to use them. Off: none, except why something is unavailable.",
+        |ui| {
+            let options = TooltipLevel::ALL.map(|v| (v, v.label()));
+            Segmented::new(&mut s.tooltips, &options)
+                .label("Show tooltips")
+                .show(ui);
+            revert(ui, &mut s.tooltips, &DEFAULTS.tooltips, "Show tooltips");
+        },
+    );
+    let on = s.tooltips != TooltipLevel::Off;
+    ui.add_enabled_ui(on, |ui| {
+        row(
+            ui,
+            "Tooltip delay",
+            "How long the pointer rests on something before its tooltip shows.",
+            |ui| {
+                let options = TooltipDelay::ALL.map(|v| (v, v.label()));
+                Segmented::new(&mut s.tooltip_delay, &options)
+                    .label("Tooltip delay")
+                    .show(ui);
+                revert(
+                    ui,
+                    &mut s.tooltip_delay,
+                    &DEFAULTS.tooltip_delay,
+                    "Tooltip delay",
+                );
+            },
+        );
+    });
 }
 
 /// The notification cards: whether they show at all, and for which kinds of notification. The

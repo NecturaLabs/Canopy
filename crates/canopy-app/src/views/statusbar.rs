@@ -89,6 +89,7 @@ pub fn show(
                                 p.text_faint,
                             )))
                             .kit_tooltip("This repository has no remote")
+                            .extra(true)
                             .show();
                         }
                         None => {

@@ -63,12 +63,15 @@ fn blend(a: Fill, b: Fill, t: f32) -> Fill {
 /// A control's kit tooltip: why it is disabled, else `tooltip` with the shortcut's keys as
 /// keycaps; nothing when there is no text. A disabled control also tells screen readers it is
 /// unavailable and why ([`super::a11y::unavailable`]), so call this after its `widget_info`.
+/// On a `labelled` control (its name is on screen) a tooltip without a shortcut only describes
+/// it, so it is [`super::overlay::Tooltip::extra`].
 pub(super) fn tip(
     response: Response,
     enabled: bool,
     tooltip: Option<&str>,
     reason: Option<&str>,
     shortcut: Option<Command>,
+    labelled: bool,
 ) -> Response {
     if !enabled {
         super::a11y::unavailable(&response, reason);
@@ -77,7 +80,7 @@ pub(super) fn tip(
     match (text, shortcut) {
         (None, _) => response,
         (Some(t), Some(c)) if enabled => response.kit_tooltip(t).shortcut(c).show(),
-        (Some(t), _) => response.kit_tooltip(t).show(),
+        (Some(t), _) => response.kit_tooltip(t).extra(labelled).show(),
     }
 }
 
@@ -686,6 +689,7 @@ impl Button {
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             self.shortcut,
+            !accessible.is_empty(),
         );
         response
     }
@@ -861,6 +865,7 @@ impl IconButton {
             Some(&label),
             self.disabled_reason.as_deref(),
             self.shortcut,
+            false,
         )
     }
 }
@@ -1121,6 +1126,7 @@ impl ToolButton {
             Some(self.tooltip.as_deref().unwrap_or(&name)),
             self.disabled_reason.as_deref(),
             self.shortcut,
+            true,
         )
     }
 }

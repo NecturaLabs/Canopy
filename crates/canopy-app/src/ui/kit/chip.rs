@@ -529,8 +529,9 @@ impl RefPill {
         };
         if self.clickable {
             response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &spoken));
+            // The chip's text names it; its tooltip only describes it.
             match self.tooltip {
-                Some(t) => response.kit_tooltip(t).show(),
+                Some(t) => response.kit_tooltip(t).extra(true).show(),
                 None => response,
             }
         } else {

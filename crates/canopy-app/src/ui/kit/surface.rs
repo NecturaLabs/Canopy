@@ -482,6 +482,7 @@ impl Card {
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
+            true,
         );
         KitResponse {
             response,

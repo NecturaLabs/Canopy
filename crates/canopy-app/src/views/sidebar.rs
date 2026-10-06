@@ -83,6 +83,7 @@ fn no_remotes(ui: &mut Ui, actions: &mut Vec<Action>) {
                 .color(p.text_faint),
         )
         .kit_tooltip("Everything stays on this computer until you publish it or add a remote")
+        .extra(true)
         .show();
     });
     ui.add_space(theme::XS);
@@ -93,6 +94,7 @@ fn no_remotes(ui: &mut Ui, actions: &mut Vec<Action>) {
             .text_size(m.meta_size)
             .show(ui)
             .kit_tooltip("Create a repository on GitHub or GitLab and push this one to it")
+            .extra(true)
             .show()
             .clicked()
         {
@@ -103,6 +105,7 @@ fn no_remotes(ui: &mut Ui, actions: &mut Vec<Action>) {
             .text_size(m.meta_size)
             .show(ui)
             .kit_tooltip("Connect a repository that already exists elsewhere")
+            .extra(true)
             .show()
             .clicked()
         {
@@ -416,7 +419,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     if shown.value == Some(TreeNav::Parent) {
                         list.focus(ui.ctx(), remote_at);
                     }
-                    let resp = shown.response.kit_tooltip("Double-click to check out").show();
+                    let resp = shown.response.kit_tooltip("Double-click to check out").extra(true).show();
                     if resp.clicked()
                         && let Some(t) = b.target {
                             pick = Some(SidebarItem::RemoteBranch { remote: b.remote.clone(), branch: b.branch.clone() });

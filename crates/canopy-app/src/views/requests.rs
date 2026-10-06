@@ -1000,10 +1000,14 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
 const DETAILS_PLACEHOLDER_ROWS: usize = 6;
 
 fn branch_pill(ui: &mut Ui, name: &str) {
-    RefPill::new(name, RefKind::LocalBranch)
-        .max_width(BRANCH_PILL_MAX)
-        .tooltip(name)
-        .show(ui);
+    let pill = RefPill::new(name, RefKind::LocalBranch);
+    // The whole name on hover only when the pill cuts it.
+    let pill = if pill.width(ui) > BRANCH_PILL_MAX {
+        pill.tooltip(name)
+    } else {
+        pill
+    };
+    pill.max_width(BRANCH_PILL_MAX).show(ui);
 }
 
 /// `#` for GitHub pull requests, `!` for GitLab merge requests.
@@ -1517,6 +1521,7 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64, actions: &mut Vec<Action>) {
                         .color(c),
                 )
                 .kit_tooltip(&r.state)
+                .extra(true)
                 .show();
             }
         });

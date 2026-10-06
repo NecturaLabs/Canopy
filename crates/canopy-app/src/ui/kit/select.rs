@@ -720,6 +720,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
+            true,
         )
     }
 }

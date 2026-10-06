@@ -290,10 +290,14 @@ fn header(ui: &mut Ui, tab: &mut RepoTab) -> bool {
                 .size()
                 .x
                 <= summary_rect.width();
-            summary_ui
-                .add(egui::Label::new(RichText::new(summary).font(font).color(p.text)).truncate())
-                .kit_tooltip(summary)
-                .show();
+            let shown = summary_ui.add(
+                egui::Label::new(RichText::new(summary).font(font).color(p.text))
+                    .truncate()
+                    .show_tooltip_when_elided(false),
+            );
+            if !whole {
+                shown.kit_tooltip(summary).show();
+            }
             if toggle.clicked() {
                 tab.history_layout.expanded = !tab.history_layout.expanded;
                 tab.history_layout.compact_details = true;
@@ -561,6 +565,7 @@ fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
                     .text_size(m.meta_size)
                     .show(ui)
                     .kit_tooltip(format!("Show commit {parent}"))
+                    .extra(true)
                     .show()
                     .clicked()
                 {

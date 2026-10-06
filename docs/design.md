@@ -253,7 +253,7 @@ kit's helpers in `ui/kit/anim.rs`.
 | `TOAST_SHIFT` | 200ms | Toasts sliding into the place of one that left |
 | `TAB_CLOSE` | 250ms | A closed repository tab collapsing |
 | `EXIT_POPUP` / `EXIT_DIALOG` / `EXIT_TOAST` | 100 / 120 / 160ms | Exits |
-| `TOOLTIP_DELAY` / `TOOLTIP_SKIP` | 450 / 300ms | First tooltip delay; no delay right after one closed |
+| `TOOLTIP_DELAY` / `TOOLTIP_SKIP` | 450 / 300ms | First tooltip delay (Settings' Tooltip delay: Quick 150ms, Normal, Slow 1s); no delay right after one closed |
 | `LOADING_DELAY` / `LOADING_MIN` | 150 / 400ms | Spinners appear late and stay a minimum time |
 
 Curves are cubic Béziers (`EASE_OUT` by default); springs (`SWITCH`, `PRESS`, the indicator
@@ -270,6 +270,14 @@ Phosphor icons (`egui-phosphor`), regular weight at 16px for toolbar and list ic
 for state markers (HEAD, conflict, current branch). Icons inherit `text-dim` and take `text` on
 hover and `accent` when active. Toolbar buttons pair an icon with a short label; icon-only buttons
 always have a tooltip naming the action and its shortcut.
+
+Settings → Appearance → Tooltips sets which tooltips show (`overlay::TooltipLevel`). Helpful, the
+default, shows what the screen does not: an icon-only control's name, why a control is
+unavailable, cut-off text, shortcuts, and details such as full dates, addresses and paths. A
+tooltip that only describes a labelled control (a kit button, toggle, field or chip with its name
+on screen and no shortcut) or says how to use something is `Tooltip::extra` and shows only at
+All. Off shows none but why a control is unavailable. A truncated label's tooltip shows only when
+the label is actually cut.
 
 A glyph beside text takes the text's size. A glyph drawn on its own takes one of the icon sizes
 in the density's metrics:

@@ -227,6 +227,7 @@ fn search_trigger(ui: &mut Ui) -> egui::Response {
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     r.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Search commands"));
     r.kit_tooltip("Search commands")
+        .extra(true)
         .shortcut(Command::Palette)
         .show()
 }
