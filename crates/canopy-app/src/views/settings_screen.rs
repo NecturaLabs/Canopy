@@ -1,7 +1,7 @@
 //! The settings screen (Ctrl+,): sections on the left, live-applied controls on the right.
 //! Every setting changes behaviour; nothing here is decorative.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -123,6 +123,8 @@ pub struct SettingsScreen {
     local_email: String,
     /// Whether this screen asked for the system's programs to be looked up again.
     apps_asked: bool,
+    /// Launchers whose command field is open although their command is an installed app's.
+    custom_launchers: HashSet<Kind>,
 }
 
 /// What the user's version-control configuration says, read off the UI thread for the notes
@@ -462,7 +464,12 @@ impl Page<'_, '_> {
         match section {
             Section::Appearance => appearance(ui, settings, &mut screen.zoom_preview),
             Section::Git => git(ui, screen, settings, &data.identity, actions),
-            Section::Integrations => integrations(ui, settings, &mut screen.picker),
+            Section::Integrations => integrations(
+                ui,
+                settings,
+                &mut screen.picker,
+                &mut screen.custom_launchers,
+            ),
             Section::Accounts => {
                 *tokens_changed |= accounts(ui, screen, settings, tokens, data.forges, actions);
             }
@@ -2853,6 +2860,7 @@ fn integrations(
     ui: &mut Ui,
     s: &mut Settings,
     picker: &mut crate::ui::folder_picker::FolderPicker,
+    custom: &mut HashSet<Kind>,
 ) {
     heading(ui, "Cloning");
     row(
@@ -2928,88 +2936,179 @@ fn integrations(
     );
     heading(ui, "Tools");
     let apps = crate::system_apps::get();
+    let apps = apps.as_deref();
     launcher_row(
         ui,
-        "Terminal",
-        "What \"Open terminal here\" runs, in the repository folder (%d stands for the folder).",
-        Kind::Terminal,
+        Launcher {
+            title: "Terminal",
+            help: "What \"Open terminal here\" runs, in the repository folder.",
+            command_help: "Runs in the repository folder; %d stands for the folder.",
+            kind: Kind::Terminal,
+        },
         &mut s.terminal,
-        apps.as_deref(),
+        apps,
+        custom,
     );
     launcher_row(
         ui,
-        "Editor",
-        "What \"Open in editor\" runs. %f stands for the file; without it the file is added at the end.",
-        Kind::Editor,
+        Launcher {
+            title: "Editor",
+            help: "What \"Open in editor\" opens files with.",
+            command_help: "%f stands for the file; without it the file is added at the end. Quote a path with spaces.",
+            kind: Kind::Editor,
+        },
         &mut s.editor,
-        apps.as_deref(),
+        apps,
+        custom,
     );
     launcher_row(
         ui,
-        "File manager",
-        "What \"Show in file manager\" runs. %d stands for the folder; without it the folder is added at the end.",
-        Kind::FileManager,
+        Launcher {
+            title: "File manager",
+            help: "What \"Show in file manager\" opens folders with.",
+            command_help: "%d stands for the folder; without it the folder is added at the end.",
+            kind: Kind::FileManager,
+        },
         &mut s.file_manager,
-        apps.as_deref(),
+        apps,
+        custom,
     );
 }
 
-/// An editor, terminal or file manager: the chosen command, or the system's program shown in
-/// the empty field with where it comes from, and a button back to it once one is chosen.
+/// The words of one editor, terminal or file manager setting.
+#[derive(Clone, Copy)]
+struct Launcher {
+    title: &'static str,
+    help: &'static str,
+    command_help: &'static str,
+    kind: Kind,
+}
+
+/// What a launcher setting holds, as its select shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaunchChoice {
+    System,
+    App(usize),
+    Custom,
+}
+
+/// What a saved command shows as: the system's when empty, an installed app whose command it
+/// is, else a custom command (also while the user has the command field open).
+fn launch_choice(
+    value: &str,
+    editing: bool,
+    installed: &[&crate::system_apps::App],
+) -> LaunchChoice {
+    let value = value.trim();
+    if editing {
+        LaunchChoice::Custom
+    } else if value.is_empty() {
+        LaunchChoice::System
+    } else {
+        installed
+            .iter()
+            .position(|a| a.command == value)
+            .map_or(LaunchChoice::Custom, LaunchChoice::App)
+    }
+}
+
+/// An editor, terminal or file manager: the system's (named, with where that comes from), one of
+/// the installed ones, or a command of the user's in a field that opens below.
 fn launcher_row(
     ui: &mut Ui,
-    title: &str,
-    help: &str,
-    kind: Kind,
+    launcher: Launcher,
     value: &mut String,
     apps: Option<&crate::system_apps::Apps>,
+    custom: &mut HashSet<Kind>,
 ) {
+    let Launcher {
+        title,
+        help,
+        command_help,
+        kind,
+    } = launcher;
     let system = apps.and_then(|a| a.system(kind));
-    let system_name = match (apps, system) {
-        (None, _) => "Looking for the system's…".to_owned(),
-        (Some(_), Some(choice)) => choice.name.clone(),
-        (Some(_), None) => "The desktop's default".to_owned(),
+    let installed: Vec<&crate::system_apps::App> = apps
+        .map(|a| a.installed(kind).collect())
+        .unwrap_or_default();
+    let system_label = match (apps, system) {
+        (None, _) => "Default (looking…)".to_owned(),
+        (Some(_), Some(choice)) => format!("Default · {}", choice.name),
+        (Some(_), None) => "Default".to_owned(),
     };
-    let tip = system.map_or_else(
-        || "Canopy asks the desktop to open it.".to_owned(),
-        |c| {
-            c.command.as_ref().map_or_else(
+    let current = launch_choice(value, custom.contains(&kind), &installed);
+    let mut labels = vec![(LaunchChoice::System, system_label)];
+    labels.extend(
+        installed
+            .iter()
+            .enumerate()
+            .map(|(i, a)| (LaunchChoice::App(i), a.name.clone())),
+    );
+    labels.push((LaunchChoice::Custom, "Custom command…".to_owned()));
+    let options: Vec<(LaunchChoice, &str)> = labels.iter().map(|(c, l)| (*c, l.as_str())).collect();
+    let mut chosen = current;
+    // Where the system's choice comes from, under the help (the control column is narrow).
+    let origin = (current == LaunchChoice::System)
+        .then_some(system)
+        .flatten();
+    let help_text = |ui: &mut Ui| {
+        help_label(ui, help);
+        if let Some(choice) = origin {
+            let tip = choice.command.as_ref().map_or_else(
                 || "Canopy asks the system to open it.".to_owned(),
                 |cmd| format!("Runs: {cmd}"),
-            )
-        },
-    );
-    row(
-        ui,
-        title,
-        &format!("{help} Empty uses the system's."),
-        |ui| {
-            // Right to left: the field, then its tag or the way back to the system's.
+            );
+            Badge::new(choice.origin.tag()).tooltip(tip).show(ui);
+        }
+    };
+    row_layout(ui, title, None, help, &help_text, "", |ui| {
+        Select::new(&mut chosen, &options)
+            .width(FIELD_WIDTH)
+            .name(title)
+            .id_salt(("launcher", title))
+            .show(ui);
+    });
+    row_end(ui);
+    if chosen != current {
+        match chosen {
+            LaunchChoice::System => {
+                value.clear();
+                custom.remove(&kind);
+            }
+            LaunchChoice::App(i) => {
+                if let Some(app) = installed.get(i) {
+                    value.clone_from(&app.command);
+                }
+                custom.remove(&kind);
+            }
+            // The field starts from what was chosen, to adjust.
+            LaunchChoice::Custom => {
+                if value.trim().is_empty()
+                    && let Some(cmd) = system.and_then(|c| c.command.as_ref())
+                {
+                    value.clone_from(cmd);
+                }
+                custom.insert(kind);
+            }
+        }
+    }
+    if chosen == LaunchChoice::Custom {
+        let name = format!("{title} command");
+        row(ui, &name, command_help, |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(value)
-                    .placeholder(system_name.clone())
+                    .placeholder(match kind {
+                        Kind::Editor => "code --wait %f",
+                        Kind::Terminal => "wezterm start --cwd %d",
+                        Kind::FileManager => "nautilus %d",
+                    })
                     .width(FIELD_WIDTH)
-                    .name(title)
-                    .id_salt(("launcher", title))
+                    .name(name.clone())
+                    .id_salt(("launcher-command", title))
                     .show(ui)
             });
-            if value.trim().is_empty() {
-                if let Some(choice) = system {
-                    Badge::new(choice.origin.tag()).tooltip(tip).show(ui);
-                }
-            } else if IconButton::new(
-                icon::ARROW_COUNTER_CLOCKWISE,
-                format!("Use the system's ({system_name})"),
-            )
-            .size(Size::Sm)
-            .id_salt(("launcher-reset", title))
-            .show(ui)
-            .clicked()
-            {
-                value.clear();
-            }
-        },
-    );
+        });
+    }
 }
 
 /// Returns true when a token was saved or removed.
@@ -3066,7 +3165,7 @@ fn accounts(
             ..f.clone()
         });
     }
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     hosts.retain(|f| seen.insert(f.authority()));
 
     // Collect finished token tests.
@@ -3880,6 +3979,36 @@ mod tests {
         assert_eq!(pull_note(&ff, PullMode::FastForwardOnly), None);
         ff.pull_ff = Some(fact("pull.ff", "true"));
         assert_eq!(pull_note(&ff, PullMode::Merge), None);
+    }
+
+    #[test]
+    fn a_saved_command_shows_as_the_app_it_starts() {
+        use crate::system_apps::App;
+        let app = |name: &str, command: &str| App {
+            kind: Kind::Editor,
+            name: name.to_owned(),
+            command: command.to_owned(),
+        };
+        let (zed, code) = (app("Zed", "zed"), app("Code", "code %f"));
+        let installed = [&zed, &code];
+        assert_eq!(launch_choice("  ", false, &installed), LaunchChoice::System);
+        assert_eq!(
+            launch_choice("code %f", false, &installed),
+            LaunchChoice::App(1)
+        );
+        assert_eq!(
+            launch_choice(" zed ", false, &installed),
+            LaunchChoice::App(0)
+        );
+        assert_eq!(
+            launch_choice("zed --wait", false, &installed),
+            LaunchChoice::Custom
+        );
+        assert_eq!(
+            launch_choice("zed", true, &installed),
+            LaunchChoice::Custom,
+            "an open command field stays open"
+        );
     }
 
     #[test]

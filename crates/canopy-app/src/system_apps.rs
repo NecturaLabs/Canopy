@@ -56,12 +56,23 @@ pub struct SystemChoice {
     pub origin: Origin,
 }
 
+/// An installed program Settings offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct App {
+    pub kind: Kind,
+    pub name: String,
+    /// What Canopy saves and runs when it is chosen.
+    pub command: String,
+}
+
 /// Everything detected.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Apps {
     pub editor: Option<SystemChoice>,
     pub terminal: Option<SystemChoice>,
     pub file_manager: Option<SystemChoice>,
+    /// Installed editors, terminals and file managers, by name.
+    pub installed: Vec<App>,
 }
 
 impl Apps {
@@ -72,6 +83,23 @@ impl Apps {
             Kind::FileManager => self.file_manager.as_ref(),
         }
     }
+
+    pub fn installed(&self, kind: Kind) -> impl Iterator<Item = &App> {
+        self.installed.iter().filter(move |a| a.kind == kind)
+    }
+}
+
+/// `apps` by name, each command once per kind.
+fn sorted(mut apps: Vec<App>) -> Vec<App> {
+    apps.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.command.cmp(&b.command))
+    });
+    let mut seen = std::collections::HashSet::new();
+    apps.retain(|a| seen.insert((a.kind, a.command.clone())));
+    apps
 }
 
 struct Cache {
@@ -250,6 +278,131 @@ fn listed_gui_editor(program: &str) -> Option<String> {
         .then(|| program.to_owned())
 }
 
+/// macOS applications Settings knows how to start, by bundle name.
+#[cfg_attr(
+    not(any(target_os = "macos", test)),
+    expect(dead_code, reason = "macOS's applications")
+)]
+const MAC_APPS: &[(Kind, &str)] = &[
+    (Kind::Editor, "Visual Studio Code"),
+    (Kind::Editor, "Cursor"),
+    (Kind::Editor, "Zed"),
+    (Kind::Editor, "Sublime Text"),
+    (Kind::Editor, "BBEdit"),
+    (Kind::Editor, "CotEditor"),
+    (Kind::Editor, "Nova"),
+    (Kind::Editor, "TextMate"),
+    (Kind::Editor, "MacVim"),
+    (Kind::Editor, "TextEdit"),
+    (Kind::Terminal, "Terminal"),
+    (Kind::Terminal, "iTerm"),
+    (Kind::Terminal, "Ghostty"),
+    (Kind::Terminal, "WezTerm"),
+    (Kind::Terminal, "Alacritty"),
+    (Kind::Terminal, "kitty"),
+    (Kind::Terminal, "Warp"),
+    (Kind::FileManager, "Finder"),
+    (Kind::FileManager, "Path Finder"),
+    (Kind::FileManager, "ForkLift"),
+    (Kind::FileManager, "Commander One"),
+];
+
+/// The known applications among `bundles` (names without `.app`), started with `open -a`.
+#[cfg_attr(
+    not(any(target_os = "macos", test)),
+    expect(dead_code, reason = "macOS's applications")
+)]
+fn mac_apps(bundles: &[String]) -> Vec<App> {
+    let apps = MAC_APPS
+        .iter()
+        .filter(|(_, name)| bundles.iter().any(|b| b == name))
+        .map(|&(kind, name)| {
+            let open = format!("open -a {}", crate::platform::quote(name));
+            App {
+                kind,
+                name: name.to_owned(),
+                command: match kind {
+                    Kind::Editor => open,
+                    Kind::Terminal | Kind::FileManager => format!("{open} %d"),
+                },
+            }
+        })
+        .collect();
+    sorted(apps)
+}
+
+/// Windows programs Settings knows how to start, by their App Paths name.
+#[cfg_attr(
+    not(any(target_os = "windows", test)),
+    expect(dead_code, reason = "Windows's programs")
+)]
+const WINDOWS_APPS: &[(Kind, &str, &str)] = &[
+    (Kind::Editor, "code.exe", "Visual Studio Code"),
+    (Kind::Editor, "cursor.exe", "Cursor"),
+    (Kind::Editor, "zed.exe", "Zed"),
+    (Kind::Editor, "sublime_text.exe", "Sublime Text"),
+    (Kind::Editor, "notepad++.exe", "Notepad++"),
+    (Kind::Terminal, "wt.exe", "Windows Terminal"),
+    (Kind::Terminal, "wezterm-gui.exe", "WezTerm"),
+    (Kind::Terminal, "alacritty.exe", "Alacritty"),
+    (Kind::FileManager, "totalcmd64.exe", "Total Commander"),
+    (Kind::FileManager, "files.exe", "Files"),
+];
+
+/// `(program name, path)` from `reg query "…\App Paths" /s`: each key's default value.
+#[cfg_attr(
+    not(any(target_os = "windows", test)),
+    expect(dead_code, reason = "Windows's programs")
+)]
+fn parse_app_paths(out: &str) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut key: Option<String> = None;
+    for line in out.lines() {
+        if line.starts_with("HKEY_") {
+            key = line.trim().rsplit('\\').next().map(str::to_ascii_lowercase);
+            continue;
+        }
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix("(Default)") else {
+            continue;
+        };
+        let value = rest
+            .trim_start()
+            .strip_prefix("REG_EXPAND_SZ")
+            .or_else(|| rest.trim_start().strip_prefix("REG_SZ"))
+            .map(|v| v.trim().trim_matches('"'));
+        if let (Some(k), Some(v)) = (&key, value.filter(|v| !v.is_empty())) {
+            found.push((k.clone(), v.to_owned()));
+        }
+    }
+    found
+}
+
+/// The known programs among the App Paths entries.
+#[cfg_attr(
+    not(any(target_os = "windows", test)),
+    expect(dead_code, reason = "Windows's programs")
+)]
+fn windows_apps(paths: &[(String, String)]) -> Vec<App> {
+    let apps = WINDOWS_APPS
+        .iter()
+        .filter_map(|&(kind, exe, name)| {
+            let (_, path) = paths.iter().find(|(k, _)| k == exe)?;
+            let program = crate::platform::quote(path);
+            Some(App {
+                kind,
+                name: name.to_owned(),
+                command: match (kind, exe) {
+                    (Kind::Terminal, "wt.exe") => format!("{program} -d %d"),
+                    (Kind::FileManager, _) => format!("{program} %d"),
+                    _ => program,
+                },
+            })
+        })
+        .collect();
+    sorted(apps)
+}
+
 #[cfg_attr(
     not(any(target_os = "linux", test)),
     expect(dead_code, reason = "desktop entries are Linux's")
@@ -259,7 +412,9 @@ mod linux {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
-    use super::{Apps, Origin, SystemChoice, editor_from_env, listed_gui_editor, on_path};
+    use super::{
+        App, Apps, Kind, Origin, SystemChoice, editor_from_env, listed_gui_editor, on_path, sorted,
+    };
     use crate::platform::{program_name, quote};
 
     /// The desktop entry id that opens a MIME type.
@@ -573,8 +728,7 @@ mod linux {
                 return None;
             }
             let name = if program_name(&program) == "xdg-terminal-exec" {
-                xdg_terminal_name(env, &entries)
-                    .unwrap_or_else(|| "Desktop terminal (xdg-terminal-exec)".to_owned())
+                xdg_terminal_name(env, &entries).unwrap_or_else(|| "xdg-terminal-exec".to_owned())
             } else {
                 by_program(&program_name(&program))
                     .map_or_else(|| program.clone(), |e| e.name.clone())
@@ -605,19 +759,80 @@ mod linux {
                 origin: Origin::Desktop,
             });
 
+        let mut installed = Vec::new();
+        for entry in entries.values() {
+            if entry.hidden || !entry.installed(&env.path) {
+                continue;
+            }
+            let has = |c: &str| entry.categories.iter().any(|x| x == c);
+            if has("TerminalEmulator") && !entry.terminal {
+                installed.push(App {
+                    kind: Kind::Terminal,
+                    name: entry.name.clone(),
+                    command: entry.command("%d"),
+                });
+            }
+            if has("FileManager") && !entry.terminal {
+                installed.push(App {
+                    kind: Kind::FileManager,
+                    name: entry.name.clone(),
+                    command: entry.command("%d"),
+                });
+            }
+            // Plain text or source code: a chat app that takes CSV is no editor.
+            let edits_text = entry
+                .mime
+                .iter()
+                .any(|m| m == "text/plain" || m.starts_with("text/x-"));
+            if (has("TextEditor") || ((has("IDE") || has("Development")) && edits_text))
+                && let Some((name, command)) = editor_command(entry, launcher)
+            {
+                installed.push(App {
+                    kind: Kind::Editor,
+                    name,
+                    command,
+                });
+            }
+        }
+
         Apps {
             editor,
             terminal,
             file_manager,
+            installed: sorted(installed),
         }
     }
 }
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::{Apps, Origin, SystemChoice, editor_from_env, listed_gui_editor, path_dirs};
+    use std::path::PathBuf;
+
+    use super::{
+        Apps, Origin, SystemChoice, editor_from_env, listed_gui_editor, mac_apps, path_dirs,
+    };
 
     pub(super) fn detect() -> Apps {
+        let home = crate::settings::home_dir();
+        let mut bundles = Vec::new();
+        for dir in [
+            PathBuf::from("/Applications"),
+            PathBuf::from("/Applications/Utilities"),
+            PathBuf::from("/System/Applications"),
+            PathBuf::from("/System/Applications/Utilities"),
+            PathBuf::from("/System/Library/CoreServices"),
+            home.join("Applications"),
+        ] {
+            let Ok(read) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            bundles.extend(read.flatten().filter_map(|e| {
+                e.file_name()
+                    .to_str()
+                    .and_then(|n| n.strip_suffix(".app"))
+                    .map(str::to_owned)
+            }));
+        }
         let var = |name: &str| std::env::var(name).ok();
         let editor = editor_from_env(
             var("VISUAL").as_deref(),
@@ -642,15 +857,39 @@ mod macos {
                 command: None,
                 origin: Origin::Platform,
             }),
+            installed: mac_apps(&bundles),
         }
     }
 }
 
 #[cfg(target_os = "windows")]
 mod windows {
+    use std::process::Command;
+
     use super::{
-        Apps, Origin, SystemChoice, editor_from_env, listed_gui_editor, on_path, path_dirs,
+        Apps, Origin, SystemChoice, editor_from_env, listed_gui_editor, on_path, parse_app_paths,
+        path_dirs, windows_apps,
     };
+
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "reads the App Paths registry keys with reg.exe, never git"
+    )]
+    fn app_paths() -> Vec<(String, String)> {
+        let mut found = Vec::new();
+        for root in ["HKCU", "HKLM"] {
+            let mut cmd = Command::new("reg");
+            cmd.args([
+                "query",
+                &format!(r"{root}\Software\Microsoft\Windows\CurrentVersion\App Paths"),
+                "/s",
+            ]);
+            if let Some(out) = crate::platform::output_within(cmd, crate::platform::QUERY_TIMEOUT) {
+                found.extend(parse_app_paths(&out));
+            }
+        }
+        found
+    }
 
     pub(super) fn detect() -> Apps {
         let var = |name: &str| std::env::var(name).ok();
@@ -687,6 +926,7 @@ mod windows {
                 command: None,
                 origin: Origin::Platform,
             }),
+            installed: windows_apps(&app_paths()),
         }
     }
 }
@@ -883,5 +1123,117 @@ mod tests {
     #[test]
     fn a_chosen_command_comes_before_the_systems() {
         assert_eq!(command_for("  zed  ", Kind::Editor), "zed");
+    }
+
+    fn names(apps: &Apps, kind: Kind) -> Vec<(String, String)> {
+        apps.installed(kind)
+            .map(|a| (a.name.clone(), a.command.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn installed_apps_are_offered_by_what_they_are() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let apps = root.join("usr-share/applications");
+        write(&apps, "nvim.desktop", NVIM);
+        let code = root.join("opt/code/bin/code");
+        write(
+            &apps,
+            "code.desktop",
+            &CODE.replace("/opt/code/bin/code", &format!("\"{}\"", code.display())),
+        );
+        write(&apps, "org.gnome.Nautilus.desktop", FILES);
+        write(&apps, "kitty.desktop", KITTY);
+        // Not offered: hidden, not installed, and a viewer that is not an editor.
+        write(
+            &apps,
+            "hidden.desktop",
+            &KITTY.replace("Name=kitty", "Name=Hidden\nNoDisplay=true"),
+        );
+        write(
+            &apps,
+            "gone.desktop",
+            &KITTY.replace("Exec=kitty", "Exec=gone-term"),
+        );
+        write(
+            &apps,
+            "viewer.desktop",
+            "[Desktop Entry]\nType=Application\nName=Viewer\nExec=nvim\nCategories=Graphics;\nMimeType=image/png;\n",
+        );
+        write(
+            &apps,
+            "chat.desktop",
+            "[Desktop Entry]\nType=Application\nName=Chat\nExec=kitty %U\nCategories=Utility;Development;\nMimeType=text/csv;x-scheme-handler/https;\n",
+        );
+        for p in ["nvim", "nautilus", "kitty", "xdg-terminal-exec"] {
+            program(&root.join("bin"), p);
+        }
+        program(&root.join("opt/code/bin"), "code");
+        let found = detect(&env(root, &[]));
+        assert_eq!(
+            names(&found, Kind::Editor),
+            [
+                (
+                    "Neovim (in terminal)".to_owned(),
+                    "xdg-terminal-exec nvim %f".to_owned()
+                ),
+                (
+                    "Visual Studio Code".to_owned(),
+                    format!(
+                        "{} --unity-launch %f",
+                        crate::platform::quote(&code.display().to_string())
+                    )
+                ),
+            ]
+        );
+        assert_eq!(
+            names(&found, Kind::Terminal),
+            [("kitty".to_owned(), "kitty".to_owned())]
+        );
+        assert_eq!(
+            names(&found, Kind::FileManager),
+            [("Files".to_owned(), "nautilus --new-window %d".to_owned())]
+        );
+        // Without a terminal launcher a terminal editor is not offered.
+        std::fs::remove_file(root.join("bin/xdg-terminal-exec")).unwrap();
+        let found = detect(&env(root, &[]));
+        assert_eq!(names(&found, Kind::Editor).len(), 1);
+    }
+
+    #[test]
+    fn mac_and_windows_programs_are_recognised() {
+        let bundles = ["Zed", "iTerm", "Photos", "Finder"].map(str::to_owned);
+        let mac = mac_apps(&bundles);
+        assert_eq!(
+            mac.iter()
+                .map(|a| (a.kind, a.command.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (Kind::FileManager, "open -a Finder %d"),
+                (Kind::Terminal, "open -a iTerm %d"),
+                (Kind::Editor, "open -a Zed"),
+            ]
+        );
+        let reg = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Code.exe\r\n    (Default)    REG_SZ    C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe\r\n    Path    REG_SZ    C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\r\n\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\wt.exe\r\n    (Default)    REG_EXPAND_SZ    \"%LOCALAPPDATA%\\Microsoft\\WindowsApps\\wt.exe\"\r\n\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\other.exe\r\n";
+        let paths = parse_app_paths(reg);
+        assert_eq!(paths.len(), 2, "{paths:?}");
+        let windows = windows_apps(&paths);
+        assert_eq!(
+            windows
+                .iter()
+                .map(|a| (a.kind, a.command.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    Kind::Editor,
+                    "\"C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe\""
+                ),
+                (
+                    Kind::Terminal,
+                    "%LOCALAPPDATA%\\Microsoft\\WindowsApps\\wt.exe -d %d"
+                ),
+            ]
+        );
     }
 }
