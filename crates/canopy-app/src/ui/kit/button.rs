@@ -60,16 +60,6 @@ fn blend(a: Fill, b: Fill, t: f32) -> Fill {
     }
 }
 
-/// The opacity a disabled control paints at, unless its `Ui` is already disabled (egui then
-/// fades the painter itself).
-pub(super) fn disabled_painter(ui: &Ui, enabled: bool, alpha: f32) -> Painter {
-    let mut painter = ui.painter().clone();
-    if !enabled && ui.is_enabled() {
-        painter.multiply_opacity(alpha);
-    }
-    painter
-}
-
 /// The tooltip a control shows: why it is disabled, else its tooltip, with the shortcut's chord
 /// as text. Prefer [`tip`], which shows the chord as keycaps.
 pub(super) fn tooltip_text(
@@ -83,14 +73,6 @@ pub(super) fn tooltip_text(
         Some(c) if enabled => format!("{text}  ({})", keymap::hint(c)),
         _ => text.to_owned(),
     })
-}
-
-/// `tip` as the control's kit tooltip (for enabled and disabled controls alike).
-pub(super) fn with_tooltip(response: Response, tip: Option<String>) -> Response {
-    match tip {
-        Some(t) => response.kit_tooltip(t).show(),
-        None => response,
-    }
 }
 
 /// A control's kit tooltip: why it is disabled, else `tooltip` with the shortcut's keys as
