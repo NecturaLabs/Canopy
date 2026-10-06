@@ -25,8 +25,6 @@ pub const TERMS_VERSION: &str = "2026-10-03";
 /// "Last updated" of the Privacy Policy, as `YYYY-MM-DD`.
 pub const PRIVACY_VERSION: &str = "2026-10-06";
 
-/// How many average characters a line of a document holds (its measure).
-const MEASURE_CHARS: f32 = 70.0;
 /// A list item's dot, and how far below the line's middle its x-height sits.
 const BULLET_RADIUS: f32 = 2.5;
 const BULLET_DROP: f32 = 1.0;
@@ -224,17 +222,10 @@ fn body_font() -> (FontId, f32) {
     (FontId::proportional(size), (size * 1.6).round())
 }
 
-/// The width of a line of body text at the reading measure (`MEASURE_CHARS` characters of
-/// ordinary prose, measured on a sample sentence rather than one glyph).
+/// The width of a line of body text at the reading measure: the kit's
+/// [`reading_measure`](crate::ui::kit::overlay::reading_measure), which reading dialogs share.
 pub fn measure(ctx: &egui::Context) -> f32 {
-    const SAMPLE: &str = "Canopy sends crash data only if you agree, and asks before it sends.";
-    let (font, _) = body_font();
-    let width = ctx.fonts_mut(|f| {
-        f.layout_no_wrap(SAMPLE.to_owned(), font, Color32::WHITE)
-            .size()
-            .x
-    });
-    (width / crate::ui::count_f32(SAMPLE.chars().count()) * MEASURE_CHARS).round()
+    crate::ui::kit::overlay::reading_measure(ctx)
 }
 
 /// Lays `doc` out at the width of `ui`: its title and date, then its headings, paragraphs and
