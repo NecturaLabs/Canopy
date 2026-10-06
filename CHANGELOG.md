@@ -13,10 +13,12 @@ commits since the previous build.
 - A pull looks before it changes anything: it fetches, and when your branch and the remote have
   both moved on it asks whether to rebase or merge (and can remember the answer for the
   repository); when a pull would likely conflict it names the files first and lets you cancel.
-  A pull that stops on conflicts, or whose uncommitted changes conflict when they come back,
-  takes you to Changes to resolve them.
-- Settings → Git: Autostash, Push tags with their commits, Conflict style and First branch of a
-  new repository, each saying where your git configuration differs.
+  It then brings in what it fetched, so it asks the remote, and you for credentials, only once.
+  A pull or rebase that stops on conflicts, or whose uncommitted changes conflict when they come
+  back, takes you to Changes to resolve them.
+- Settings → Git: Follow my git config, and Prune tags too, Autostash, Push tags with their
+  commits, Push to, Conflict style, Message cleanup and First branch of a new repository, each
+  with Canopy's recommendation and, where your git configuration sets it, its value and file.
 - A notification center: the bell at the right end of the status bar lists the last 100
   notifications, whether or not they showed as a card, with copy and clear all, and an
   unread count for errors and other notices that need you. Settings → Appearance → Notifications
@@ -127,8 +129,8 @@ commits since the previous build.
 
 ### Fixed
 
-- Fetching no longer deletes local tags you have not pushed when your git configuration sets
-  `fetch.pruneTags`, and a commit keeps message lines that start with `#`.
+- A commit keeps message lines that start with `#` (an issue number, a Markdown heading) unless
+  your git configuration sets `commit.cleanup`.
 - Submenus in context menus (Reset current branch here in History, and others) no longer close
   as soon as the pointer leaves their item on the way to them.
 - The pull and merge request list refreshes by itself after a fetch, pull or push, and when you
@@ -250,11 +252,12 @@ commits since the previous build.
 
 ### Changed
 
-- Canopy's git defaults follow today's recommended practice and are passed to git explicitly: a
-  pull only fast-forwards unless you choose otherwise, uncommitted changes are set aside around a
-  pull or rebase, a push sends the annotated tags on its commits, conflicts show the original
-  text too, and new repositories start on `main`. Pull options live in Settings only; the menu
-  beside the Pull button is gone.
+- What your git configuration sets still decides; everywhere else Canopy's git choices follow
+  today's recommended practice and are passed to git explicitly: a pull only fast-forwards
+  unless you choose otherwise, uncommitted changes are set aside around a pull or rebase, a push
+  sends the annotated tags on its commits, conflicts show the original text too, local tags are
+  never pruned, and new repositories start on `main`. Pull options live in Settings only; the
+  menu beside the Pull button is gone.
 - Notification cards no longer have an expandable Details section, and the notification center
   explains a failure the same way its card does, with git's full output in its tooltip and Copy.
 - Notifications look the same in every theme and have no close button: one that asks for a

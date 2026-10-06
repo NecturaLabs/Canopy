@@ -138,7 +138,9 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Fetch (all remotes, prune) | Done | Yes | Yes | Yes |
 | Pull (fast-forward or rebase per git config) | Done | Yes | Yes | Yes |
 | Pull checks first: fast-forward only by default, asks Rebase or Merge (remembered per repository if wanted) when branches diverged, and names the files before a pull that would conflict | Unreleased | ? | ? | ? |
-| Recommended git defaults passed explicitly (autostash, push tags with their commits, `push.default=simple`, zdiff3 conflicts, `main` for new repositories, no tag pruning, `#` lines kept in commit messages), with Settings saying where your git configuration differs | Unreleased | ? | ? | ? |
+| Your git configuration decides what it sets (Follow my git config, on by default); elsewhere Canopy passes recommended defaults (autostash, push tags with their commits, `push.default=simple`, zdiff3 conflicts, `main` for new repositories, no tag pruning, `#` lines kept in commit messages), each a choice in Settings with its recommendation and where your configuration sets it | Unreleased | ? | ? | ? |
+| A pull fetches once: after its check it brings in what it fetched, so a credential prompt comes once | Unreleased | ? | ? | ? |
+| A rebase that stops on conflicts takes you to Changes, like a pull | Unreleased | ? | ? | ? |
 | A pull that stops on conflicts, or whose set-aside changes conflict when they come back, opens Changes to resolve them | Unreleased | ? | ? | ? |
 | Push, setting upstream when missing | Done | Yes | Yes | Yes |
 | Force push with lease | Done | Yes | ? | ? |

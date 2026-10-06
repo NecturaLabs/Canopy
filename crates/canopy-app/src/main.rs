@@ -46,8 +46,9 @@ OPTIONS:
         --split               Show diffs side by side
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
                               palette, consent, crash-consent, legal, credential, host-key,
-                              merge, identity, settings-git, clear-identity, update-installed,
-                              update-running, trust-folder, diff-options,
+                              merge, identity, settings-git, settings-git-commits,
+                              clear-identity, update-installed, update-running, trust-folder,
+                              diff-options,
                               settings-integrations, settings-accounts, settings-updates,
                               settings-keyboard, settings-backup, settings-repository,
                               settings-search, about, toasts, notifications, branch-selected,

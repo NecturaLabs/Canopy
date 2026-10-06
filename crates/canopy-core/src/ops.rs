@@ -280,7 +280,7 @@ impl Repo {
     /// Runs `git args…` with the conflict style chosen in Canopy ([`crate::GitOptions`]), for anything
     /// that can write conflicts into files.
     fn conflicting_cmd(&self, args: &[&str]) -> Result<String> {
-        let o = self.options().conflict_override();
+        let o = self.conflict_override();
         let mut all: Vec<&str> = o.iter().map(String::as_str).collect();
         all.extend_from_slice(args);
         self.git_cmd(&all)
@@ -423,14 +423,16 @@ impl Repo {
 
     /// Commits the index with `message`, running hooks and signing as configured. `amend`
     /// replaces `HEAD`; `signoff` adds a `Signed-off-by:` trailer for the committer
-    /// (`git commit --signoff`). Only surrounding blank lines and trailing spaces are cleaned up
-    /// (`--cleanup=whitespace`): a line starting with `#` is the user's, not a comment. Returns
-    /// the new `HEAD`.
+    /// (`git commit --signoff`). The message is cleaned up as [`crate::GitOptions::cleanup`]
+    /// says (by default only surrounding blank lines and trailing spaces, so a line starting with
+    /// `#` is the user's, not a comment). Returns the new `HEAD`.
     pub fn commit(&self, message: &str, amend: bool, signoff: bool) -> Result<Oid> {
         if message.trim().is_empty() {
             return Err(Error::invalid("Write a commit message first."));
         }
-        let mut args = vec!["commit", "-q", "--cleanup=whitespace", "-F", "-"];
+        let cleanup = self.cleanup_flag();
+        let mut args = vec!["commit", "-q", "-F", "-"];
+        args.extend(cleanup.as_deref());
         if amend {
             args.push("--amend");
         }
@@ -535,7 +537,10 @@ impl Repo {
     /// Rebases the current branch onto `onto`, stashing uncommitted changes around it when
     /// [`crate::GitOptions::autostash`] says so.
     pub fn rebase(&self, onto: &str) -> Result<String> {
-        self.conflicting_cmd(&["rebase", self.options().autostash_flag(), onto])
+        let mut args = vec!["rebase"];
+        args.extend(self.autostash_flag(true));
+        args.push(onto);
+        self.conflicting_cmd(&args)
     }
 
     /// Continues or aborts the operation in progress.
@@ -673,17 +678,18 @@ impl Repo {
 
     /// Fetches `remote`, or every remote when `None`, with tags. `prune` also deletes
     /// remote-tracking branches whose branch no longer exists on the remote (`--prune`); without
-    /// it `--no-prune` is passed, so `fetch.prune` / `remote.<name>.prune` in the configuration
-    /// do not prune either. Local tags are never pruned (`--no-prune-tags`), whatever
-    /// `fetch.pruneTags` says: that would delete tags not pushed yet.
+    /// it `--no-prune` is passed, so `fetch.prune` / `remote.<name>.prune` do not prune either.
+    /// Local tags are pruned only as [`crate::GitOptions::prune_tags`] says (by default never:
+    /// that would delete tags not pushed yet). Where Canopy follows the git configuration and it
+    /// sets either, it decides ([`Repo::prune_flags`]).
     pub fn fetch(
         &self,
         remote: Option<&str>,
         prune: bool,
         progress: impl FnMut(&str),
     ) -> Result<String> {
-        let mut args = vec!["fetch", "--progress", "--tags", "--no-prune-tags"];
-        args.push(if prune { "--prune" } else { "--no-prune" });
+        let mut args = vec!["fetch", "--progress", "--tags"];
+        args.extend(self.prune_flags(prune, remote));
         match remote {
             Some(r) => args.extend(["--", r]),
             None => args.push("--all"),
@@ -695,33 +701,67 @@ impl Repo {
     /// git, so the user's `pull.rebase`, `branch.<name>.rebase`, `pull.ff` and `merge.ff` cannot
     /// change what happens (a bare `git pull` also refuses diverged branches when none of the
     /// first three is set). [`Repo::pull_config`] reads those settings for a caller that wants
-    /// them as the default.
+    /// them as the default. Its fetch never prunes (`--no-prune`), so `fetch.pruneTags` cannot
+    /// delete local tags either. After [`Repo::pull_preview`] has fetched, which prunes as
+    /// [`Repo::fetch`] does, use [`Repo::pull_fetched`] instead.
     pub fn pull(&self, strategy: PullStrategy, progress: impl FnMut(&str)) -> Result<String> {
-        let options = self.options();
-        let conflicts = options.conflict_override();
+        let rebase = matches!(strategy, PullStrategy::Rebase | PullStrategy::RebaseMerges);
+        let conflicts = self.conflict_override();
         let mut args: Vec<&str> = conflicts.iter().map(String::as_str).collect();
-        args.extend(["pull", "--progress", options.autostash_flag()]);
+        args.extend(["pull", "--progress", "--no-prune"]);
+        args.extend(self.autostash_flag(rebase));
         args.extend(strategy.git_args());
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }
 
-    /// Pulls with the strategy the user's git configuration asks for ([`Repo::pull_config`]),
-    /// else with `fallback`; either way the strategy is passed to git explicitly. A configuration
-    /// that cannot be read (a git older than 2.26 has no `--show-scope`, or a broken config file)
-    /// counts as asking for nothing: the pull itself then reports git's own error if it has one.
-    pub fn pull_default(
+    /// Brings the current branch's upstream, as last fetched, into the branch with exactly
+    /// `strategy`, without fetching again: what [`Repo::pull`] does after its fetch, with a merge
+    /// (`git merge @{upstream}`) or a rebase onto the upstream (`git rebase`, which finds the
+    /// fork point as `git pull --rebase` does). The pull's second step once
+    /// [`Repo::pull_preview`] has fetched, so the remote is asked only once.
+    pub fn pull_fetched(
         &self,
-        fallback: PullStrategy,
+        strategy: PullStrategy,
         progress: impl FnMut(&str),
     ) -> Result<String> {
-        let strategy = match self.pull_config() {
+        let conflicts = self.conflict_override();
+        let mut args: Vec<&str> = conflicts.iter().map(String::as_str).collect();
+        match strategy {
+            PullStrategy::Rebase | PullStrategy::RebaseMerges => {
+                args.push("rebase");
+                args.extend(self.autostash_flag(true));
+                if strategy == PullStrategy::RebaseMerges {
+                    args.push("--rebase-merges");
+                }
+            }
+            PullStrategy::Merge
+            | PullStrategy::MergeNoFastForward
+            | PullStrategy::FastForwardOnly => {
+                args.extend(["merge", "--no-edit"]);
+                args.extend(self.autostash_flag(false));
+                args.push(match strategy {
+                    PullStrategy::MergeNoFastForward => "--no-ff",
+                    PullStrategy::FastForwardOnly => "--ff-only",
+                    _ => "--ff",
+                });
+                args.push("@{upstream}");
+            }
+        }
+        cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
+    /// The strategy the user's git configuration asks a pull to use ([`Repo::pull_config`]),
+    /// else `fallback`. A configuration that cannot be read (a git older than 2.26 has no
+    /// `--show-scope`, or a broken config file) counts as asking for nothing: the pull itself then
+    /// reports git's own error if it has one.
+    pub fn pull_strategy(&self, fallback: PullStrategy) -> PullStrategy {
+        match self.pull_config() {
             Ok(config) => config.strategy.unwrap_or(fallback),
             Err(e) => {
                 tracing::warn!(error = %e, "could not read the pull configuration");
                 fallback
             }
-        };
-        self.pull(strategy, progress)
+        }
     }
 
     /// Pushes the current branch. Without an upstream, pushes to `origin` (or the only remote)
@@ -737,15 +777,10 @@ impl Repo {
             .find_branch(&branch, git2::BranchType::Local)
             .and_then(|b| b.upstream())
             .is_ok();
-        // With an upstream this is a bare push: `simple` pushes the current branch to its
-        // same-named upstream whatever `push.default` says.
-        let mut args = vec![
-            "-c".to_owned(),
-            "push.default=simple".to_owned(),
-            "push".to_owned(),
-            "--progress".to_owned(),
-            self.options().follow_tags_flag().to_owned(),
-        ];
+        // With an upstream this is a bare push: `push.default` decides where it goes.
+        let mut args = self.push_default_override();
+        args.extend(["push".to_owned(), "--progress".to_owned()]);
+        args.extend(self.follow_tags_flag().map(str::to_owned));
         if force {
             args.push("--force-with-lease".to_owned());
         }
@@ -791,18 +826,10 @@ impl Repo {
             return Err(Error::invalid(format!("'{name}' is not a local branch.")));
         }
         let refspec = format!("refs/heads/{name}:refs/heads/{name}");
-        cli::run_streaming(
-            Some(self.workdir()),
-            &[
-                "push",
-                "--progress",
-                self.options().follow_tags_flag(),
-                "--set-upstream",
-                remote,
-                &refspec,
-            ],
-            progress,
-        )
+        let mut args = vec!["push", "--progress"];
+        args.extend(self.follow_tags_flag());
+        args.extend(["--set-upstream", remote, &refspec]);
+        cli::run_streaming(Some(self.workdir()), &args, progress)
     }
 
     /// Pushes one tag to `remote`.

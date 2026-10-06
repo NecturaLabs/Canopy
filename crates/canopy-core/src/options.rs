@@ -1,7 +1,11 @@
 //! Canopy's choices for how git carries out what Canopy asks.
 //!
-//! Each is passed to git explicitly (a flag, or a `-c name=value` override), so the user's git
-//! configuration cannot change the outcome; Settings says where that configuration differs.
+//! Where the user's git configuration sets one of them and [`GitOptions::follow_config`] is on,
+//! git's own configuration decides and Canopy passes nothing for it; otherwise Canopy's choice is
+//! passed explicitly (a flag, or a `-c name=value` override), so no configuration value changes
+//! the outcome. Settings shows both, with Canopy's recommendation.
+
+use crate::{Repo, cli};
 
 /// How a conflicted file shows the two sides (`merge.conflictStyle`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -47,9 +51,77 @@ impl ConflictStyle {
     }
 }
 
-/// How Canopy has git pull, push, merge, rebase, cherry-pick, revert and apply stashes.
+/// Where a push without a destination sends the current branch (`push.default`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PushDefault {
+    /// To its upstream, only when that has the same name (`simple`).
+    #[default]
+    Simple,
+    /// To its upstream, whatever its name (`upstream`).
+    Upstream,
+    /// To the branch of the same name on the remote (`current`).
+    Current,
+}
+
+impl PushDefault {
+    pub const ALL: [Self; 3] = [Self::Simple, Self::Upstream, Self::Current];
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::Simple => "simple",
+            Self::Upstream => "upstream",
+            Self::Current => "current",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Simple => "Its upstream, when the names match",
+            Self::Upstream => "Its upstream, whatever its name",
+            Self::Current => "The branch of the same name",
+        }
+    }
+}
+
+/// What a commit removes from its message (`commit.cleanup`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Cleanup {
+    /// Trailing spaces and surrounding blank lines only: a line starting with `#` stays
+    /// (`whitespace`).
+    #[default]
+    Whitespace,
+    /// Also lines starting with `#` (`strip`, git's default for an edited message).
+    Strip,
+    /// Nothing (`verbatim`).
+    Verbatim,
+}
+
+impl Cleanup {
+    pub const ALL: [Self; 3] = [Self::Whitespace, Self::Strip, Self::Verbatim];
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::Whitespace => "whitespace",
+            Self::Strip => "strip",
+            Self::Verbatim => "verbatim",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Whitespace => "Spaces and blank lines",
+            Self::Strip => "Also lines starting with #",
+            Self::Verbatim => "Nothing",
+        }
+    }
+}
+
+/// How Canopy has git pull, fetch, push, commit, merge, rebase, cherry-pick, revert and apply
+/// stashes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GitOptions {
+    /// Where the user's git configuration sets one of the choices below, it decides.
+    pub follow_config: bool,
     /// Pull and rebase with uncommitted changes: git stashes them first and puts them back
     /// afterwards (`--autostash`).
     pub autostash: bool,
@@ -57,46 +129,128 @@ pub struct GitOptions {
     pub follow_tags: bool,
     /// How conflicts are written into files.
     pub conflict_style: ConflictStyle,
+    /// Where a push without a destination goes.
+    pub push_default: PushDefault,
+    /// What a commit removes from its message.
+    pub cleanup: Cleanup,
+    /// A pruning fetch also deletes local tags the remote does not have (`--prune-tags`), tags
+    /// never pushed included.
+    pub prune_tags: bool,
 }
 
 impl Default for GitOptions {
-    /// Today's recommended practice (`docs/adr/0012-git-defaults.md`).
+    /// Today's recommended practice (`docs/adr/0012-git-defaults.md`), with the user's git
+    /// configuration followed where it sets something.
     fn default() -> Self {
         Self {
+            follow_config: true,
             autostash: true,
             follow_tags: true,
             conflict_style: ConflictStyle::Zdiff3,
+            push_default: PushDefault::Simple,
+            cleanup: Cleanup::Whitespace,
+            prune_tags: false,
         }
     }
 }
 
-impl GitOptions {
+fn flag(on: bool, yes: &'static str, no: &'static str) -> &'static str {
+    if on { yes } else { no }
+}
+
+impl Repo {
+    /// Whether the git configuration decides the choice its keys match (`pattern`, a regular
+    /// expression over lower-case key names): Canopy follows it and it sets one of them.
+    fn config_decides(&self, pattern: &str) -> bool {
+        self.options().follow_config
+            && cli::run_unchecked(self.workdir(), &["config", "--get-regexp", pattern])
+                .is_ok_and(|o| o.code == Some(0))
+    }
+
     /// The `-c merge.conflictStyle=…` override that goes before the sub-command of anything that
     /// can write conflicts.
-    pub(crate) fn conflict_override(self) -> [String; 2] {
-        [
+    pub(crate) fn conflict_override(&self) -> Vec<String> {
+        if self.config_decides(r"^merge\.conflictstyle$") {
+            return Vec::new();
+        }
+        let style = self.options().conflict_style.value(cli::version_number());
+        vec!["-c".to_owned(), format!("merge.conflictStyle={style}")]
+    }
+
+    /// The autostash flag for a rebase (`rebase`, read from `rebase.autoStash`) or a merge (read
+    /// from `merge.autoStash`). `git merge` and `git pull` without `--rebase` learned it in git
+    /// 2.27, so an older or unknown git gets none for a merge and keeps refusing to merge over
+    /// changed files, as it always did.
+    pub(crate) fn autostash_flag(&self, rebase: bool) -> Option<&'static str> {
+        let (key, known) = if rebase {
+            (r"^rebase\.autostash$", true)
+        } else {
+            (
+                r"^merge\.autostash$",
+                cli::version_number().is_some_and(|v| v >= (2, 27)),
+            )
+        };
+        (known && !self.config_decides(key))
+            .then(|| flag(self.options().autostash, "--autostash", "--no-autostash"))
+    }
+
+    pub(crate) fn follow_tags_flag(&self) -> Option<&'static str> {
+        (!self.config_decides(r"^push\.followtags$")).then(|| {
+            flag(
+                self.options().follow_tags,
+                "--follow-tags",
+                "--no-follow-tags",
+            )
+        })
+    }
+
+    /// The `-c push.default=…` override for a push without a destination.
+    pub(crate) fn push_default_override(&self) -> Vec<String> {
+        if self.config_decides(r"^push\.default$") {
+            return Vec::new();
+        }
+        vec![
             "-c".to_owned(),
-            format!(
-                "merge.conflictStyle={}",
-                self.conflict_style.value(crate::cli::version_number())
-            ),
+            format!("push.default={}", self.options().push_default.value()),
         ]
     }
 
-    pub(crate) fn autostash_flag(self) -> &'static str {
-        if self.autostash {
-            "--autostash"
-        } else {
-            "--no-autostash"
+    pub(crate) fn cleanup_flag(&self) -> Option<String> {
+        (!self.config_decides(r"^commit\.cleanup$"))
+            .then(|| format!("--cleanup={}", self.options().cleanup.value()))
+    }
+
+    /// A boolean the git configuration sets, as git reads it, while Canopy follows it.
+    fn configured_bool(&self, key: &str) -> Option<bool> {
+        if !self.options().follow_config {
+            return None;
+        }
+        let out =
+            cli::run_unchecked(self.workdir(), &["config", "--type=bool", "--get", key]).ok()?;
+        match (out.code, String::from_utf8_lossy(&out.stdout).trim()) {
+            (Some(0), "true") => Some(true),
+            (Some(0), "false") => Some(false),
+            _ => None,
         }
     }
 
-    pub(crate) fn follow_tags_flag(self) -> &'static str {
-        if self.follow_tags {
-            "--follow-tags"
-        } else {
-            "--no-follow-tags"
+    /// A fetch's pruning flags for `remote` (every remote when `None`): of remote-tracking
+    /// branches as `prune` says, left to `fetch.prune` / `remote.<name>.prune` where the
+    /// configuration decides; and of local tags as [`GitOptions::prune_tags`] says, or as
+    /// `remote.<name>.pruneTags`, else `fetch.pruneTags`, says while Canopy follows them (for
+    /// every remote, only `fetch.pruneTags`). The tags' value is passed even then: the `--tags`
+    /// a fetch always has would keep git from reading it.
+    pub(crate) fn prune_flags(&self, prune: bool, remote: Option<&str>) -> Vec<&'static str> {
+        let mut flags = Vec::new();
+        if !self.config_decides(r"^(fetch|remote\..*)\.prune$") {
+            flags.push(flag(prune, "--prune", "--no-prune"));
         }
+        let prune_tags = remote
+            .and_then(|r| self.configured_bool(&format!("remote.{r}.pruneTags")))
+            .or_else(|| self.configured_bool("fetch.pruneTags"))
+            .unwrap_or(self.options().prune_tags);
+        flags.push(flag(prune_tags, "--prune-tags", "--no-prune-tags"));
+        flags
     }
 }
 

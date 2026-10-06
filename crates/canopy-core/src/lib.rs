@@ -51,7 +51,7 @@ pub use lfs::{LfsFile, LfsPointer};
 pub use merged::{MergedBranch, MergedReason};
 pub use model::*;
 pub use ops::{HunkAction, MergeMode, PullStrategy, ResetMode};
-pub use options::{ConflictStyle, GitOptions};
+pub use options::{Cleanup, ConflictStyle, GitOptions, PushDefault};
 pub use partial::MissingObjects;
 pub use pull::{ConfigScope, ConfigSource, PullConfig, global_pull_config};
 pub use pull_preview::PullPreview;

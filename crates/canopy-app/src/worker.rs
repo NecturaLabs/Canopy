@@ -112,7 +112,8 @@ pub enum Op {
     /// `pull.ff`) asks for none, and the configured one is used otherwise. Unless `checked`, the
     /// upstream is fetched (pruning as `prune` says) and the pull waits for the user's decision
     /// ([`Event::PullDecision`]) when the branches diverged under a fast-forward-only strategy or
-    /// it would likely conflict.
+    /// it would likely conflict. A `checked` pull brings in the upstream as already fetched,
+    /// without asking the remote again.
     Pull {
         strategy: PullStrategy,
         follow_config: bool,
@@ -363,7 +364,7 @@ pub enum Event {
     AutostashConflict,
     /// A pull waits for the user: the branches diverged, or it would likely conflict.
     PullDecision(Box<PullDecision>),
-    /// The operation `label` (a pull) stopped on conflicts for the user to resolve.
+    /// The operation `label` (a pull or a rebase) stopped on conflicts for the user to resolve.
     Conflicted(String),
 }
 
@@ -378,38 +379,48 @@ pub struct PullDecision {
 }
 
 /// The strategy a pull uses: what the git configuration asks for when `follow_config` and it
-/// asks for one, else `strategy`. A configuration that cannot be read asks for nothing.
+/// asks for one, else `strategy`.
 fn pull_strategy(repo: &Repo, strategy: PullStrategy, follow_config: bool) -> PullStrategy {
-    if !follow_config {
-        return strategy;
-    }
-    match repo.pull_config() {
-        Ok(config) => config.strategy.unwrap_or(strategy),
-        Err(e) => {
-            tracing::warn!(error = %redacted(&e), "could not read the pull configuration");
-            strategy
-        }
+    if follow_config {
+        repo.pull_strategy(strategy)
+    } else {
+        strategy
     }
 }
 
-/// Fetches and previews a pull; `Some` when the user has to decide before it runs.
+/// What a pull does after its preview ([`decide_pull`]).
+#[derive(Debug)]
+enum PullNext {
+    /// Ask the user first.
+    Ask(PullDecision),
+    /// The upstream is fetched: bring it in without fetching again.
+    Fetched,
+    /// No upstream to preview: `git pull` reports why.
+    Pull,
+}
+
+/// Fetches and previews a pull, and says what comes next.
 fn decide_pull(
     repo: &Repo,
     strategy: PullStrategy,
     follow_config: bool,
     prune: bool,
     progress: impl FnMut(&str),
-) -> canopy_core::Result<Option<PullDecision>> {
+) -> canopy_core::Result<PullNext> {
     let Some(preview) = repo.pull_preview(prune, progress)? else {
-        return Ok(None);
+        return Ok(PullNext::Pull);
     };
     let strategy = pull_strategy(repo, strategy, follow_config);
     let diverged = preview.diverged() && strategy == PullStrategy::FastForwardOnly;
-    Ok((diverged || preview.risky()).then_some(PullDecision {
-        preview,
-        strategy,
-        diverged,
-    }))
+    Ok(if diverged || preview.risky() {
+        PullNext::Ask(PullDecision {
+            preview,
+            strategy,
+            diverged,
+        })
+    } else {
+        PullNext::Fetched
+    })
 }
 
 /// What a finished operation means for the tab, independent of its label's wording.
@@ -716,11 +727,21 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         .map_err(|e| e.to_string());
                     emit(Event::Conflict { path, kind, file });
                 }
-                Job::Op(op) => {
+                Job::Op(mut op) => {
                     let label = op.label();
                     let kind = op.kind();
                     let announce = op.announce();
-                    let autostashes = matches!(op, Op::Pull { .. } | Op::Rebase(_));
+                    // A pull or a rebase: it can autostash, and stopping on conflicts is not a
+                    // failure.
+                    let integrates = matches!(op, Op::Pull { .. } | Op::Rebase(_));
+                    let pull = match op {
+                        Op::Pull {
+                            strategy,
+                            follow_config,
+                            ..
+                        } => Some((strategy, follow_config)),
+                        _ => None,
+                    };
                     tracing::info!(operation = %label, "operation started");
                     emit(Event::OpStarted(label.clone()));
                     let progress = |line: &str| emit(Event::Progress(line.to_owned()));
@@ -740,16 +761,20 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         _ => None,
                     };
                     let result = match decided {
-                        Some(Ok(Some(decision))) => {
+                        Some(Ok(PullNext::Ask(decision))) => {
                             tracing::info!(operation = %label, "waiting for the user's decision");
                             emit(Event::PullDecision(Box::new(decision)));
                             mutated = true;
                             continue;
                         }
                         Some(Err(e)) => Err(e.to_string()),
-                        Some(Ok(None)) | None => {
+                        Some(Ok(next)) => {
+                            if let (PullNext::Fetched, Op::Pull { checked, .. }) = (next, &mut op) {
+                                *checked = true;
+                            }
                             perform(&repo, op, progress).map_err(|e| e.to_string())
                         }
+                        None => perform(&repo, op, progress).map_err(|e| e.to_string()),
                     };
                     let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                     match &result {
@@ -758,16 +783,32 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             tracing::warn!(operation = %label, ms, error = %canopy_core::cli::redact_url(e), "operation failed");
                         }
                     }
-                    let stash_conflict = autostashes
+                    let stash_conflict = integrates
                         && result.is_ok()
                         && repo.autostash_conflicted().unwrap_or_else(|e| {
                             tracing::warn!(error = %redacted(&e), "conflicts not checked");
                             false
                         });
-                    let stopped = kind == OpKind::Pull
+                    let stopped = integrates
                         && result.is_err()
                         && repo.stopped_on_conflicts().unwrap_or(false);
-                    if stopped {
+                    // Only a fast-forward was allowed and the branches diverged after all: a
+                    // choice to make, not a failure (a pull checked beforehand asks first).
+                    let refused = pull
+                        .filter(|_| result.is_err())
+                        .filter(|&(strategy, follow)| {
+                            pull_strategy(&repo, strategy, follow) == PullStrategy::FastForwardOnly
+                        })
+                        .and_then(|_| repo.compare_upstream().ok().flatten())
+                        .filter(canopy_core::PullPreview::diverged);
+                    if let Some(preview) = refused {
+                        tracing::info!(operation = %label, "the branches diverged: asking how to combine them");
+                        emit(Event::PullDecision(Box::new(PullDecision {
+                            preview,
+                            strategy: PullStrategy::FastForwardOnly,
+                            diverged: true,
+                        })));
+                    } else if stopped {
                         // Not a failure: the conflicts are the user's to resolve.
                         emit(Event::Conflicted(label));
                     } else {
@@ -1060,8 +1101,17 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
         Op::Pull {
             strategy,
             follow_config,
+            checked,
             ..
-        } => repo.pull(pull_strategy(repo, strategy, follow_config), progress),
+        } => {
+            let strategy = pull_strategy(repo, strategy, follow_config);
+            if checked {
+                // The preview fetched; what the user saw is what comes in.
+                repo.pull_fetched(strategy, progress)
+            } else {
+                repo.pull(strategy, progress)
+            }
+        }
         Op::Push { force } => repo.push(force, progress),
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
@@ -1423,18 +1473,28 @@ mod read_tests {
         let repo = Repo::open(&copy).expect("open");
         let decide =
             |strategy| decide_pull(&repo, strategy, false, false, |_| {}).expect("checked");
-        let d = decide(PullStrategy::FastForwardOnly).expect("asks");
+        let asks = |next: PullNext| match next {
+            PullNext::Ask(d) => d,
+            other => panic!("no question: {other:?}"),
+        };
+        let d = asks(decide(PullStrategy::FastForwardOnly));
         assert!(d.diverged && !d.preview.risky(), "{d:?}");
-        assert_eq!(decide(PullStrategy::Rebase), None, "clean: no question");
+        assert!(
+            matches!(decide(PullStrategy::Rebase), PullNext::Fetched),
+            "clean: no question, and nothing left to fetch"
+        );
         // Both sides change the same line now.
         std::fs::write(up.join("a.txt"), "theirs\n").expect("write");
         git(&up, &["commit", "-q", "-am", "theirs"]);
         std::fs::write(copy.join("a.txt"), "ours\n").expect("write");
         git(&copy, &["commit", "-q", "-am", "ours"]);
-        let d = decide(PullStrategy::Rebase).expect("asks");
+        let d = asks(decide(PullStrategy::Rebase));
         assert!(!d.diverged, "a rebase knows how to combine them");
         assert_eq!(d.preview.conflicts, Some(vec!["a.txt".to_owned()]));
         assert_eq!(d.strategy, PullStrategy::Rebase);
+        // Without an upstream there is nothing to preview: `git pull` says why.
+        git(&copy, &["branch", "--unset-upstream"]);
+        assert!(matches!(decide(PullStrategy::Rebase), PullNext::Pull));
     }
 
     /// A source repository with three commits, and a partial clone of it made with `filter`.
@@ -1514,6 +1574,82 @@ mod read_tests {
         let made = partial_clone(filter);
         crate::trust::add_for_tests(made.0.path().to_path_buf());
         made
+    }
+
+    /// A fast-forward-only pull that git refuses because the branches diverged (the preview did
+    /// not catch it) still asks how to combine them, whatever language git speaks.
+    #[test]
+    fn a_refused_fast_forward_asks_how_to_combine_the_branches() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let up = root.path().join("up");
+        std::fs::create_dir(&up).expect("up");
+        git(&up, &["init", "-q", "-b", "main"]);
+        std::fs::write(up.join("a.txt"), "base\n").expect("write");
+        git(&up, &["add", "."]);
+        git(&up, &["commit", "-q", "-m", "base"]);
+        let copy = root.path().join("copy");
+        git(root.path(), &["clone", "-q", "up", "copy"]);
+        std::fs::write(up.join("up.txt"), "upstream\n").expect("write");
+        git(&up, &["add", "."]);
+        git(&up, &["commit", "-q", "-m", "upstream"]);
+        std::fs::write(copy.join("local.txt"), "local\n").expect("write");
+        git(&copy, &["add", "."]);
+        git(&copy, &["commit", "-q", "-m", "local"]);
+        git(&copy, &["fetch", "-q"]);
+        let worker = Worker::spawn(copy, &egui::Context::default());
+        worker.send(Job::Op(Op::Pull {
+            strategy: PullStrategy::FastForwardOnly,
+            follow_config: false,
+            prune: false,
+            checked: true,
+        }));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
+        });
+        let Some(Event::PullDecision(d)) = events.last() else {
+            panic!("{events:?}");
+        };
+        assert!(d.diverged, "{d:?}");
+        assert_eq!((d.preview.ahead, d.preview.behind), (1, 1));
+    }
+
+    /// A rebase that stops on conflicts is not a failure: like a pull, it says so and the tab
+    /// takes the user to the conflicted files.
+    #[test]
+    fn a_rebase_that_stops_on_conflicts_is_reported_as_stopped() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let repo = root.path().join("repo");
+        std::fs::create_dir(&repo).expect("repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        for (k, v) in [
+            ("user.name", "Ada"),
+            ("user.email", "ada@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            git(&repo, &["config", k, v]);
+        }
+        std::fs::write(repo.join("a.txt"), "base\n").expect("write");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        git(&repo, &["switch", "-q", "-c", "other"]);
+        std::fs::write(repo.join("a.txt"), "theirs\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "theirs"]);
+        git(&repo, &["switch", "-q", "main"]);
+        std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
+        git(&repo, &["commit", "-q", "-am", "ours"]);
+        let worker = Worker::spawn(repo, &egui::Context::default());
+        worker.send(Job::Op(Op::Rebase("other".into())));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::Conflicted(_) | Event::OpFinished { .. })
+        });
+        assert!(
+            matches!(events.last(), Some(Event::Conflicted(_))),
+            "{events:?}"
+        );
     }
 
     /// PS-F1: the Pull menu's default comes from the repository thread, never the UI thread.
@@ -1650,7 +1786,7 @@ mod read_tests {
     fn a_refusal_names_the_version_of_the_trusted_list_that_made_it()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        let repo = Repo::init(dir.path(), "main")?;
+        let repo = Repo::init(dir.path(), "main", false)?;
         let before = crate::trust::changes();
         assert!(!trusted_now(&repo), "nothing is trusted here");
         let after = crate::trust::changes();

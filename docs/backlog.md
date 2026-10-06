@@ -120,16 +120,12 @@ yet true, then correctness and the features people meet first, then polish. Take
       and security notices): a persistent, dismissable list with unread count, severity, source
       and timestamp, actions such as "Open setting", kept across restarts. Replace bottom-right
       toast notifications with this center; let users choose notification kinds in Settings.
-- [ ] Pull strategy: the app is the authority. The chosen strategy is always passed to git, so
-      the menu never says Merge while git rebases. The user's setting, read through `git config`
-      in git's order (`branch.<name>.rebase`, then `pull.rebase`, `pull.ff`), becomes the menu's
-      default selection, marked as coming from their git config; a pull that goes against it is
-      reported in the notification center with the setting, its value and where it is set. Today
-      `pull` checks only `pull.rebase`, so it overrides a `branch.<name>.rebase`.
-- [ ] Git settings: Canopy is the authority (AGENTS.md, Git settings; ADR 0012 lists what is
-      passed). Left: report differences from the user's configuration in the notification
-      center too (Settings shows them). Whether Canopy may override `commit.gpgsign` or
-      `core.hooksPath` (signing, hooks) is the owner's call: ask before changing either.
+- [ ] Git settings: where the user's git configuration sets one of Canopy's git choices it
+      decides (Follow my git config, on by default), else Canopy passes its recommended choice
+      (AGENTS.md, Git settings; ADR 0012). Left: report a configuration value that goes against
+      Canopy's recommendation in the notification center too (Settings shows it); a fetch of
+      every remote reads only `fetch.pruneTags`, not each `remote.<name>.pruneTags`. Whether
+      Canopy may override `commit.gpgsign` or `core.hooksPath` is the owner's call: ask first.
 - [ ] Wire canopy-2's core into the app: publish any branch, mode and type changes, collapsed
       untracked folders, ask before Stage all adds a nested repository; drop the compatibility
       wrappers.
@@ -172,6 +168,11 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] `tests/safety.rs` non-UTF-8 folder test: when the filesystem refuses the name (NTFS under
       `TMPDIR`), fail with a message naming that cause instead of an `unwrap` panic.
 - [ ] Verify the one-line installers on real machines after the first stable release.
+- [ ] Tests: a `canopy` test binary that runs only a short `RepoTab::new` test (such as
+      `tab::tests::a_pull_decision_or_its_conflicts_end_the_running_pull`) often dies with
+      SIGSEGV after passing: the tab's file-watcher thread is in libcrypto while the process
+      exits. Whole-suite runs pass. Stop and join the watcher when a `RepoTab` drops (also
+      covers the app quitting mid-scan).
 - [ ] Log redaction: `canopy_core::cli::redact_url` removes credentials from the first URL in a
       text only, and it also runs on git's stderr and error text (`cli.rs` `record`, `worker.rs`),
       so `user:token@` in a second URL reaches the log; redact every URL, as

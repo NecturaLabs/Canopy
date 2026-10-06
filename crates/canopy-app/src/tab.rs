@@ -777,7 +777,6 @@ impl RepoTab {
         ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new("history-filter")));
     }
 
-    /// Selects a commit and loads its details.
     /// Whether the sidebar row `item`, pointing at `target`, shows selected: it is the row last
     /// clicked and History still shows its commit (selecting another commit, or a branch moving,
     /// lets go of it).
@@ -792,6 +791,7 @@ impl RepoTab {
             && self.sidebar_pick.as_ref().is_some_and(item)
     }
 
+    /// Selects a commit and loads its details.
     pub fn select_commit(&mut self, oid: Oid) {
         if self.selected_commit == Some(oid) {
             return;
@@ -1347,15 +1347,6 @@ impl RepoTab {
                             // Git's own safety check, not a failure: ask before forcing.
                             OpKind::SafeDelete(name) if e.contains("not fully merged") => {
                                 self.force_delete_offer = Some(name.clone());
-                            }
-                            // Only a fast-forward was allowed: a choice to make, not a failure.
-                            // (A pull checked beforehand asks first; this covers the rest.)
-                            OpKind::Pull if e.contains("Not possible to fast-forward") => {
-                                self.pull_decision = Some(crate::worker::PullDecision {
-                                    preview: canopy_core::PullPreview::default(),
-                                    strategy: canopy_core::PullStrategy::FastForwardOnly,
-                                    diverged: true,
-                                });
                             }
                             _ => {
                                 self.finished = Some(Finished {
@@ -2261,8 +2252,8 @@ mod tests {
         Ok(())
     }
 
-    /// A fast-forward-only pull that git refuses because the branches diverged asks how to
-    /// combine them; any other pull failure is an error.
+    /// A diverged pull asks how to combine the branches (the worker says so, whatever git's
+    /// wording); a pull that failed is an error, whatever its text.
     #[test]
     fn a_diverged_pull_asks_how_to_combine_the_branches() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -2277,10 +2268,20 @@ mod tests {
             announce: true,
             result,
         };
-        events.send(finished(Err("hint: Diverging branches can't be fast-forwarded, you need to either:\nhint:\nhint: \tgit merge --no-ff\nfatal: Not possible to fast-forward, aborting.".into())))?;
+        events.send(Event::PullDecision(Box::new(crate::worker::PullDecision {
+            preview: canopy_core::PullPreview::default(),
+            strategy: canopy_core::PullStrategy::FastForwardOnly,
+            diverged: true,
+        })))?;
         let notices = tab.poll(&[]);
         assert!(notices.is_empty(), "a choice to make, not a failure");
         assert!(tab.pull_decision.take().is_some_and(|d| d.diverged));
+        events.send(finished(Err(
+            "fatal: Not possible to fast-forward, aborting.".into(),
+        )))?;
+        let notices = tab.poll(&[]);
+        assert!(notices.iter().any(|n| !n.ok), "git's words decide nothing");
+        assert!(tab.pull_decision.is_none());
         events.send(finished(Err(
             "fatal: unable to access 'https://example.com/r.git/'".into(),
         )))?;

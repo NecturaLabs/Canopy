@@ -55,6 +55,7 @@ pub const OVERLAYS: &[&str] = &[
     "merge",
     "identity",
     "settings-git",
+    "settings-git-commits",
     "clear-identity",
     "update-installed",
     "update-running",
@@ -348,6 +349,12 @@ impl CanopyApp {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
             Some("settings-git") => {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git));
+            }
+            Some("settings-git-commits") => {
+                app.settings_screen = Some(SettingsScreen::at_group(
+                    settings_screen::Section::Git,
+                    "Conflicts",
+                ));
             }
             Some("settings-integrations") => {
                 app.settings_screen =

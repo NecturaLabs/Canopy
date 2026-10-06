@@ -63,12 +63,24 @@ impl Repo {
         })
     }
 
-    /// Creates a new repository in `path` (creating the directory) whose first branch is
-    /// `initial_branch`, whatever `init.defaultBranch` says, and opens it.
-    pub fn init(path: &Path, initial_branch: &str) -> Result<Self> {
+    /// Creates a new repository in `path` (creating the directory) and opens it. Its first
+    /// branch is `initial_branch`, unless `follow_config` and `init.defaultBranch` names one.
+    pub fn init(path: &Path, initial_branch: &str, follow_config: bool) -> Result<Self> {
         std::fs::create_dir_all(path)?;
-        let branch = format!("--initial-branch={initial_branch}");
-        crate::cli::run(path, &["init", "-q", &branch])?;
+        let configured = follow_config
+            && crate::cli::run_unchecked(path, &["config", "--get", "init.defaultBranch"])
+                .is_ok_and(|o| o.code == Some(0));
+        if configured {
+            crate::cli::run(path, &["init", "-q"])?;
+        } else if crate::cli::version_number().is_some_and(|v| v >= (2, 28)) {
+            let branch = format!("--initial-branch={initial_branch}");
+            crate::cli::run(path, &["init", "-q", &branch])?;
+        } else {
+            // `--initial-branch` is git 2.28's; an older git names the unborn branch afterwards.
+            crate::cli::run(path, &["init", "-q"])?;
+            let head = format!("refs/heads/{initial_branch}");
+            crate::cli::run(path, &["symbolic-ref", "HEAD", &head])?;
+        }
         Self::open(path)
     }
 

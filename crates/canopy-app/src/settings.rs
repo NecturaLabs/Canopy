@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use canopy_core::Whitespace;
 use canopy_core::ops::PullStrategy;
-use canopy_core::{ConflictStyle, GitOptions};
+use canopy_core::{Cleanup, ConflictStyle, GitOptions, PushDefault};
 
 use crate::ui::kit::overlay::{TooltipDelay, TooltipLevel};
 use crate::ui::motion::MotionPref;
@@ -113,6 +113,58 @@ impl ConflictMode {
 
     pub fn label(self) -> &'static str {
         self.style().label()
+    }
+}
+
+/// Where a push without a destination goes: a serialisable mirror of
+/// [`canopy_core::PushDefault`]. Variants are only ever added, so saved settings keep loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PushMode {
+    #[default]
+    Simple,
+    Upstream,
+    Current,
+}
+
+impl PushMode {
+    pub const ALL: [Self; 3] = [Self::Simple, Self::Upstream, Self::Current];
+
+    pub fn push_default(self) -> PushDefault {
+        match self {
+            Self::Simple => PushDefault::Simple,
+            Self::Upstream => PushDefault::Upstream,
+            Self::Current => PushDefault::Current,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        self.push_default().label()
+    }
+}
+
+/// What a commit removes from its message: a serialisable mirror of [`canopy_core::Cleanup`].
+/// Variants are only ever added, so saved settings keep loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CleanupMode {
+    #[default]
+    Whitespace,
+    Strip,
+    Verbatim,
+}
+
+impl CleanupMode {
+    pub const ALL: [Self; 3] = [Self::Whitespace, Self::Strip, Self::Verbatim];
+
+    pub fn cleanup(self) -> Cleanup {
+        match self {
+            Self::Whitespace => Cleanup::Whitespace,
+            Self::Strip => Cleanup::Strip,
+            Self::Verbatim => Cleanup::Verbatim,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        self.cleanup().label()
     }
 }
 
@@ -338,14 +390,14 @@ pub struct Settings {
     pub reduce_motion: Option<bool>,
 
     // Git.
-    /// Canopy's pull strategy; while `pull_follow_config` is on, only where the git
-    /// configuration sets none.
+    /// Follow my git config: where the user's git configuration sets one of the git choices
+    /// below (the pull strategy among them), it decides; each choice here applies where it sets
+    /// none. On by default.
+    pub follow_git_config: bool,
+    /// Canopy's pull strategy; while `follow_git_config` is on, only where the git configuration
+    /// sets none.
     #[serde(deserialize_with = "known")]
     pub pull_mode: PullMode,
-    /// Follow my git config: a pull strategy the git configuration sets wins over `pull_mode`.
-    /// On by default, and for settings saved before it existed (pulls then already followed
-    /// `pull.rebase`).
-    pub pull_follow_config: bool,
     /// `--prune` on fetch: drop remote-tracking branches deleted on the remote.
     pub prune_on_fetch: bool,
     /// Fetch in the background every N minutes (0 = off).
@@ -359,6 +411,14 @@ pub struct Settings {
     /// How conflicts are written into files (`merge.conflictStyle`).
     #[serde(deserialize_with = "known")]
     pub conflict_style: ConflictMode,
+    /// Where a push without a destination goes (`push.default`).
+    #[serde(deserialize_with = "known")]
+    pub push_default: PushMode,
+    /// What a commit removes from its message (`commit.cleanup`).
+    #[serde(deserialize_with = "known")]
+    pub cleanup: CleanupMode,
+    /// A pruning fetch also deletes local tags the remote does not have (`--prune-tags`).
+    pub prune_tags: bool,
     /// The first branch of a repository Canopy creates (`git init --initial-branch`).
     pub initial_branch: String,
     /// The one-time Git identity question has been shown.
@@ -458,14 +518,17 @@ impl Default for Settings {
             graph_curve: Curve::Smooth,
             motion: MotionPref::System,
             reduce_motion: None,
+            follow_git_config: true,
             pull_mode: PullMode::FastForwardOnly,
-            pull_follow_config: true,
             prune_on_fetch: true,
             auto_fetch_minutes: 0,
             signoff: false,
             autostash: true,
             follow_tags: true,
             conflict_style: ConflictMode::Zdiff3,
+            push_default: PushMode::Simple,
+            cleanup: CleanupMode::Whitespace,
+            prune_tags: false,
             initial_branch: INITIAL_BRANCH.to_owned(),
             identity_asked: false,
             commit_page: 2000,
@@ -570,7 +633,7 @@ impl Settings {
     pub fn pull_default(&self) -> PullChoice {
         PullChoice {
             mode: self.pull_mode,
-            follow_config: self.pull_follow_config,
+            follow_config: self.follow_git_config,
         }
     }
 
@@ -580,16 +643,20 @@ impl Settings {
             mode: self.pull_mode_for(path),
             follow_config: self
                 .own(path, |r| r.pull_follow_config)
-                .unwrap_or(self.pull_follow_config),
+                .unwrap_or(self.follow_git_config),
         }
     }
 
-    /// How Canopy has git pull, push, rebase and write conflicts.
+    /// How Canopy has git fetch, pull, push, commit, rebase and write conflicts.
     pub fn git_options(&self) -> GitOptions {
         GitOptions {
+            follow_config: self.follow_git_config,
             autostash: self.autostash,
             follow_tags: self.follow_tags,
             conflict_style: self.conflict_style.style(),
+            push_default: self.push_default.push_default(),
+            cleanup: self.cleanup.cleanup(),
+            prune_tags: self.prune_tags,
         }
     }
 
@@ -937,10 +1004,8 @@ mod tests {
         assert_eq!(s.pull_mode_for(&repo), PullMode::FastForwardOnly);
     }
 
-    /// Override O3: following the git configuration is the default, for new and old settings
-    /// files; a repository can follow it or not on its own, and Canopy's strategy applies only
-    /// where the configuration sets none or is not followed.
-    /// Canopy's git choices start from today's recommended practice, not git's own defaults.
+    /// Canopy's git choices start from today's recommended practice, not git's own defaults, and
+    /// the user's git configuration decides wherever it sets one of them.
     #[test]
     fn git_choices_default_to_recommended_practice() {
         let s = Settings::default();
@@ -948,9 +1013,13 @@ mod tests {
         assert_eq!(
             s.git_options(),
             GitOptions {
+                follow_config: true,
                 autostash: true,
                 follow_tags: true,
                 conflict_style: ConflictStyle::Zdiff3,
+                push_default: PushDefault::Simple,
+                cleanup: Cleanup::Whitespace,
+                prune_tags: false,
             }
         );
         assert_eq!(s.git_options(), GitOptions::default());
@@ -960,18 +1029,26 @@ mod tests {
     #[test]
     fn the_git_options_follow_the_settings() {
         let s = Settings {
+            follow_git_config: false,
             autostash: false,
             follow_tags: false,
             conflict_style: ConflictMode::Merge,
+            push_default: PushMode::Current,
+            cleanup: CleanupMode::Strip,
+            prune_tags: true,
             initial_branch: "  trunk ".into(),
             ..Settings::default()
         };
         assert_eq!(
             s.git_options(),
             GitOptions {
+                follow_config: false,
                 autostash: false,
                 follow_tags: false,
                 conflict_style: ConflictStyle::Merge,
+                push_default: PushDefault::Current,
+                cleanup: Cleanup::Strip,
+                prune_tags: true,
             }
         );
         assert_eq!(s.initial_branch(), "trunk");
@@ -985,8 +1062,21 @@ mod tests {
             ConflictStyle::ALL,
             "one ConflictMode per ConflictStyle"
         );
+        assert_eq!(
+            PushMode::ALL.map(PushMode::push_default),
+            PushDefault::ALL,
+            "one PushMode per PushDefault"
+        );
+        assert_eq!(
+            CleanupMode::ALL.map(CleanupMode::cleanup),
+            Cleanup::ALL,
+            "one CleanupMode per Cleanup"
+        );
     }
 
+    /// Override O3: following the git configuration is the default, for new and old settings
+    /// files; a repository can follow it or not on its own, and Canopy's strategy applies only
+    /// where the configuration sets none or is not followed.
     #[test]
     fn pulls_follow_the_git_config_by_default_and_per_repository() {
         let repo = PathBuf::from("/home/ada/src/canopy");

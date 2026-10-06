@@ -8,6 +8,16 @@ use git2::{BranchType, Oid, StatusOptions};
 use crate::flow::{MergeTree, merge_tree};
 use crate::{Repo, Result, cli};
 
+/// The checked-out branch's upstream.
+struct Upstream {
+    /// As `origin/main`.
+    shown: String,
+    /// As `refs/remotes/origin/main`.
+    reference: String,
+    /// `branch.<name>.remote`: `.` for a branch of this repository.
+    remote: Option<String>,
+}
+
 /// What pulling the current branch would bring and where it would conflict.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PullPreview {
@@ -47,39 +57,27 @@ impl Repo {
         prune: bool,
         progress: impl FnMut(&str),
     ) -> Result<Option<PullPreview>> {
-        let git = self.git();
-        let Ok(head) = git.head() else {
+        let Some(upstream) = self.head_upstream() else {
             return Ok(None);
         };
-        let (Some(name), Some(head_ref)) = (head.shorthand().ok(), head.name().ok()) else {
-            return Ok(None);
-        };
-        if !head.is_branch() {
-            return Ok(None);
-        }
-        let Ok(upstream) = git
-            .find_branch(name, BranchType::Local)
-            .and_then(|b| b.upstream())
-        else {
-            return Ok(None);
-        };
-        let Some(upstream_ref) = upstream.get().name().ok().map(str::to_owned) else {
-            return Ok(None);
-        };
-        let shown = upstream.name().ok().flatten().unwrap_or(name).to_owned();
-        let remote = git
-            .branch_upstream_remote(head_ref)
-            .ok()
-            .and_then(|r| r.as_str().ok().map(str::to_owned));
         // An upstream in this repository (remote ".") has nothing to fetch.
-        if let Some(remote) = remote.filter(|r| r != ".") {
+        if let Some(remote) = upstream.remote.filter(|r| r != ".") {
             self.fetch(Some(&remote), prune, progress)?;
         }
+        self.compare_upstream()
+    }
+
+    /// [`Repo::pull_preview`] against the upstream as last fetched, without fetching.
+    pub fn compare_upstream(&self) -> Result<Option<PullPreview>> {
+        let Some(upstream) = self.head_upstream() else {
+            return Ok(None);
+        };
+        let git = self.git();
         let ours = git.head()?.peel_to_commit()?.id();
-        let theirs = git.refname_to_id(&upstream_ref)?;
+        let theirs = git.refname_to_id(&upstream.reference)?;
         let (ahead, behind) = git.graph_ahead_behind(ours, theirs)?;
         let mut preview = PullPreview {
-            upstream: shown,
+            upstream: upstream.shown,
             ahead,
             behind,
             ..PullPreview::default()
@@ -105,6 +103,31 @@ impl Repo {
             };
         }
         Ok(Some(preview))
+    }
+
+    /// The checked-out branch's upstream; `None` without one or on a detached `HEAD`.
+    fn head_upstream(&self) -> Option<Upstream> {
+        let git = self.git();
+        let head = git.head().ok()?;
+        if !head.is_branch() {
+            return None;
+        }
+        let (name, head_ref) = (head.shorthand().ok()?, head.name().ok()?);
+        let upstream = git
+            .find_branch(name, BranchType::Local)
+            .and_then(|b| b.upstream())
+            .ok()?;
+        let reference = upstream.get().name().ok()?.to_owned();
+        let shown = upstream.name().ok().flatten().unwrap_or(name).to_owned();
+        let remote = git
+            .branch_upstream_remote(head_ref)
+            .ok()
+            .and_then(|r| r.as_str().ok().map(str::to_owned));
+        Some(Upstream {
+            shown,
+            reference,
+            remote,
+        })
     }
 
     /// Every path `to` changes since `from` (both sides of a rename).

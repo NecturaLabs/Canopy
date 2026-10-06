@@ -1,8 +1,8 @@
 //! What the user's git configuration says about the choices Canopy makes for a repository (how
-//! a pull integrates, whether a fetch prunes, whether commits are signed, autostash, tags on
-//! push, the conflict style and a new repository's first branch) and where each value is
-//! set, so Settings can show them beside Canopy's own choice and say where they differ (AGENTS.md,
-//! "Git settings"). Read through the same `git` that runs the operations, on a thread of its own:
+//! a pull integrates, whether a fetch prunes branches and tags, whether commits are signed,
+//! autostash, tags on push, where a push goes, the conflict style, message cleanup and a new
+//! repository's first branch) and where each value is set, so Settings can show them beside
+//! Canopy's own choice and say which one applies (AGENTS.md, "Git settings"). Read through the same `git` that runs the operations, on a thread of its own:
 //! the UI thread never runs git.
 
 use std::path::{Path, PathBuf};
@@ -65,13 +65,19 @@ pub struct GitFacts {
     pub remote_prune: Vec<ConfigValue>,
     pub gpg_sign: Option<ConfigValue>,
     pub gpg_format: Option<ConfigValue>,
-    /// `rebase.autoStash`, which Canopy's `--autostash` / `--no-autostash` overrides.
-    pub autostash: Option<ConfigValue>,
-    /// `push.followTags`, which Canopy's `--follow-tags` / `--no-follow-tags` overrides.
+    /// `fetch.pruneTags`, and `remote.<name>.pruneTags` for each remote that sets it.
+    pub prune_tags: Vec<ConfigValue>,
+    /// `rebase.autoStash` (rebases) and `merge.autoStash` (merges and merging pulls).
+    pub autostash: Vec<ConfigValue>,
+    /// `push.followTags`.
     pub follow_tags: Option<ConfigValue>,
-    /// `merge.conflictStyle`, which Canopy's own `-c merge.conflictStyle=…` overrides.
+    /// `push.default`.
+    pub push_default: Option<ConfigValue>,
+    /// `merge.conflictStyle`.
     pub conflict_style: Option<ConfigValue>,
-    /// `init.defaultBranch`, which Canopy's `--initial-branch` overrides.
+    /// `commit.cleanup`.
+    pub cleanup: Option<ConfigValue>,
+    /// `init.defaultBranch`.
     pub initial_branch: Option<ConfigValue>,
     pub remotes: Vec<Remote>,
     /// Why the configuration could not be read (git missing, not a repository).
@@ -142,9 +148,23 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
         facts.remote_prune = facts
             .remotes
             .iter()
-            .filter_map(|r| get(&format!("remote.{}.prune", r.name)).ok().flatten())
+            .filter_map(|r| {
+                get_bool(dir, scope, &format!("remote.{}.prune", r.name))
+                    .ok()
+                    .flatten()
+            })
             .collect();
     }
+    facts.prune_tags = get_bool(dir, scope, "fetch.pruneTags")
+        .ok()
+        .flatten()
+        .into_iter()
+        .chain(facts.remotes.iter().filter_map(|r| {
+            get_bool(dir, scope, &format!("remote.{}.pruneTags", r.name))
+                .ok()
+                .flatten()
+        }))
+        .collect();
     let pull = match workdir {
         Some(w) => canopy_core::Repo::open(w).and_then(|r| r.pull_config()),
         None => canopy_core::global_pull_config(dir),
@@ -154,9 +174,14 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
         .ok();
     facts.gpg_sign = get_bool(dir, scope, "commit.gpgsign").ok().flatten();
     facts.gpg_format = get("gpg.format").ok().flatten();
-    facts.autostash = get_bool(dir, scope, "rebase.autoStash").ok().flatten();
+    facts.autostash = ["rebase.autoStash", "merge.autoStash"]
+        .into_iter()
+        .filter_map(|key| get_bool(dir, scope, key).ok().flatten())
+        .collect();
     facts.follow_tags = get_bool(dir, scope, "push.followTags").ok().flatten();
+    facts.push_default = get("push.default").ok().flatten();
     facts.conflict_style = get("merge.conflictStyle").ok().flatten();
+    facts.cleanup = get("commit.cleanup").ok().flatten();
     facts.initial_branch = get("init.defaultBranch").ok().flatten();
     facts
 }
@@ -320,6 +345,10 @@ mod tests {
         git(&["remote", "add", "origin", "https://example.com/o/r.git"]);
         git(&["remote", "add", "mirror", "https://example.com/m/r.git"]);
         git(&["config", "remote.mirror.prune", "false"]);
+        git(&["config", "remote.mirror.pruneTags", "true"]);
+        git(&["config", "merge.autoStash", "false"]);
+        git(&["config", "push.default", "current"]);
+        git(&["config", "commit.cleanup", "strip"]);
         let facts = read(Some(dir.path()));
         assert_eq!(facts.error, None);
         assert_eq!(facts.branch.as_deref(), Some("trunk"));
@@ -345,6 +374,28 @@ mod tests {
         assert_eq!(
             (mirror.key.as_str(), mirror.as_bool()),
             ("remote.mirror.prune", Some(false))
+        );
+        let value = |values: &[ConfigValue], key: &str| {
+            values
+                .iter()
+                .find(|v| v.key == key)
+                .map(|v| v.value.clone())
+        };
+        assert_eq!(
+            value(&facts.prune_tags, "remote.mirror.pruneTags").as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            value(&facts.autostash, "merge.autoStash").as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            facts.push_default.as_ref().map(|v| v.value.as_str()),
+            Some("current")
+        );
+        assert_eq!(
+            facts.cleanup.as_ref().map(|v| v.value.as_str()),
+            Some("strip")
         );
         Ok(())
     }

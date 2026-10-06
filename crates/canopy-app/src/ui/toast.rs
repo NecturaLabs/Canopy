@@ -348,8 +348,8 @@ impl Toasts {
         self.notify(ctx, kind, topic, title, body, help, offer);
     }
 
-    /// Notifies with a decision to make: the card stays, with buttons for it, until it is made
-    /// or declined, and the center offers it until then too.
+    /// Notifies with a decision to make: the card shows buttons for it for a decision's time
+    /// (`DECISION_SECONDS`), and the center offers it until it is made or declined.
     pub fn push_offer(
         &mut self,
         ctx: &egui::Context,
@@ -430,7 +430,9 @@ impl Toasts {
                 .or_else(|| self.items.iter().position(|t| t.offer.is_none()));
             let gone = self.items.remove(oldest.unwrap_or(0));
             if gone.offer.is_some() {
+                // Not made: it waits in the center, counted on the bell as when it runs out.
                 tracing::warn!(title = %gone.title, "a sixth decision pushed out the oldest card");
+                self.unread += 1;
             }
         }
         ctx.request_repaint();
@@ -948,6 +950,27 @@ mod tests {
         );
     }
 
+    /// Six decisions at once: the oldest card goes, and like one that ran out it waits in the
+    /// center and counts on the bell.
+    #[test]
+    fn a_decision_pushed_out_counts_on_the_bell() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        for i in 0..6 {
+            toasts.push_offer(
+                &ctx,
+                ToastKind::Info,
+                Topic::Update,
+                format!("Decide {i}"),
+                "",
+                Offer::ReviewUpdate,
+            );
+        }
+        assert_eq!(toasts.items.len(), 5);
+        assert_eq!(toasts.items[0].title, "Decide 1");
+        assert_eq!(toasts.unread, 1);
+    }
+
     /// A decision still waiting outlasts errors too: with nothing routine left to push out, the
     /// oldest error goes.
     #[test]
@@ -985,7 +1008,7 @@ mod tests {
     }
 
     /// REVIEW-KIT-7: an error Canopy has no hint for still shows git's own first line on the
-    /// card, with the whole output behind Details when there is more.
+    /// card, with the whole output in the center's tooltip when there is more.
     #[test]
     fn an_error_without_a_hint_shows_gits_first_line() {
         let ctx = egui::Context::default();
@@ -1029,7 +1052,7 @@ mod tests {
                 body: Some(one),
                 details: None,
             },
-            "one line needs no Details"
+            "one line has nothing more to show"
         );
         assert_eq!(text[2].body, toasts.items[2].help, "a hint still leads");
         assert_eq!(text[2].details, Some(rejected));
