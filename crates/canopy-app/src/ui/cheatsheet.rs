@@ -38,7 +38,8 @@ impl Cheatsheet {
         self.just_opened = self.open;
     }
 
-    /// Draws the overlay when open.
+    /// Draws the overlay when open. Call it every frame: the frame after it closes it gives
+    /// keyboard focus back to what had it.
     pub fn show(&mut self, ctx: &egui::Context) {
         if !self.open {
             self.back.restore(ctx, card_layer());

@@ -190,7 +190,9 @@ impl<T: Clone> CommandPalette<T> {
         self.ranked_for = None;
     }
 
-    /// Draws the palette; returns what the entry the user ran runs.
+    /// Draws the palette; returns what the entry the user ran runs. Call it every frame, open or
+    /// not: the frame after it closes (by itself or by `open = false`) it gives keyboard focus back
+    /// to what had it.
     pub fn show(&mut self, ctx: &egui::Context) -> Option<T> {
         if !self.open {
             self.back.restore(ctx, card_layer());
@@ -778,6 +780,36 @@ mod tests {
         }
         window_frame(&ctx, &mut p, key(Key::Escape));
         assert!(!p.open, "Escape closes");
+        window_frame(&ctx, &mut p, Vec::new());
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            Some(behind),
+            "focus is back on what had it"
+        );
+    }
+
+    /// The window closes the palette itself on Escape (its Dismiss command), before the palette
+    /// draws that frame, while the palette's modal layer from the frame before still holds: focus
+    /// still goes back to what had it.
+    #[test]
+    fn focus_returns_when_the_window_closes_the_palette() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let mut p = CommandPalette::default();
+        window_frame(&ctx, &mut p, Vec::new());
+        window_frame(&ctx, &mut p, key(Key::Tab));
+        let behind = ctx
+            .memory(egui::Memory::focused)
+            .expect("the button behind has focus");
+        p.open();
+        p.set_entries(1, items());
+        window_frame(&ctx, &mut p, Vec::new());
+        window_frame(&ctx, &mut p, Vec::new());
+        p.open = false;
+        window_frame(&ctx, &mut p, key(Key::Escape));
+        window_frame(&ctx, &mut p, Vec::new());
         window_frame(&ctx, &mut p, Vec::new());
         assert_eq!(
             ctx.memory(egui::Memory::focused),
