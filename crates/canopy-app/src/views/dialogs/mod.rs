@@ -1806,7 +1806,8 @@ mod tests {
                     "{dialog:?} at {w}x{h} is {card:?}, room {room:?}"
                 );
                 assert!(
-                    card.width() >= crate::ui::legal::measure(&ctx).min(room.width() * 0.9)
+                    card.width()
+                        >= crate::ui::kit::overlay::reading_measure(&ctx).min(room.width() * 0.9)
                         && card.width() <= room.width() + 1.0,
                     "{dialog:?} at {w}x{h} is {card:?}"
                 );
