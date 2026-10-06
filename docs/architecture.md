@@ -103,9 +103,12 @@ thread.
 | `logging.rs` | Structured per-run JSON-lines logs, timed spans, local crash files and the diagnostics Settings copies. |
 | `highlight.rs` | Diff syntax highlighting (`syntect`) on two shared highlighter threads, cached per file revision; stale requests are abandoned. |
 | `keymap.rs` | Every keyboard shortcut in one table (`BINDINGS`) that dispatches keys and renders the cheatsheet and Settings → Keyboard; see `docs/keybindings.md`. |
-| `settings.rs` | Settings persisted through eframe storage: appearance, Git, integrations, updates, privacy answers, trusted folders, recent and open repositories. |
+| `settings.rs` | Settings persisted through eframe storage: appearance, Git, integrations, updates, privacy answers, trusted folders, per-repository choices (`repos`, keyed by working directory), recent and open repositories. |
+| `settings_file.rs` | Export, import and reset of preferences: the versioned JSON format, the keys that are never exported or replaced (consent, trust, session memory), validation, and the file choosers on a background thread. |
+| `repo_config.rs` | What the repository's git configuration says for the settings Canopy overrides (`branch.<name>.rebase`, `pull.rebase`, `pull.ff`, `fetch.prune`, `commit.gpgsign`, `gpg.format`) with where each is set, and the remotes' URLs, read with `git config --show-scope --show-origin` on a background thread for Settings, This repository. |
+| `system_apps.rs` | The editor, terminal and file manager the system provides (`$VISUAL`/`$EDITOR`/`$TERMINAL`, desktop defaults, `PATH`) and the installed ones (Linux desktop entries, macOS `/Applications`, Windows App Paths), resolved on one background thread and cached; `command_for` is what the open actions run. |
 | `trust.rs` | The trusted folders (`Settings::trusted_folders`) as a process-wide list the repository threads read; adding a folder (never a root) and the parent offered next to a repository's own folder (ADR 0009). |
-| `platform.rs` | Handing things to the operating system (web pages, folders, files in an editor, a terminal) and reading its settings, such as reduced motion, off the UI thread. |
+| `platform.rs` | Handing things to the operating system (web pages, folders, files in an editor, a terminal) and reading its settings, such as reduced motion, off the UI thread; running commands with quotes and `%f`/`%F`/`%d` placeholders. |
 | `ui/mod.rs` | The look-and-feel modules, and the conversions between egui's integer and float types (`points_i8`, `count_f32`, `int_f32`, `to_f32`, `saturate_u8`, `saturate_usize`), each a plain cast named for what it does out of range, so views never cast by hand. |
 | `ui/theme.rs` | Design tokens: the eight palettes (shared colours plus Standard and Deeper surfaces), elevation materials, metrics per density and style, the active look (`apply`, `palette`, `surfaces`, `metrics`, `appearance`) and the contrast tests. The only place colours and sizes are defined. |
 | `ui/motion.rs` | Motion tokens (durations, Bézier curves, springs), the Motion preference, the system's answer (asked on a background thread) and whether motion is currently reduced. |
@@ -152,7 +155,7 @@ thread.
 | `views/diff.rs` | Unified and side-by-side diff viewer with line numbers, hunk and line actions; row layout cached per diff. |
 | `views/resolve.rs` | Conflict resolver; off-screen cards skipped by measured height. |
 | `views/requests.rs` | Pull and merge requests: list, details, checks, reviews and actions. |
-| `views/settings_screen.rs` | The settings screen: appearance, Git, integrations, accounts, updates, privacy, keyboard. |
+| `views/settings_screen.rs` | The settings screen: appearance, Git, integrations, accounts, updates, privacy, keyboard, backup and reset, and this repository; settings search. |
 | `views/dialogs/mod.rs` | `Dialog` and `show`: the modal dialogs (clone, new branch, confirmations, consent, ...). |
 | `views/dialogs/stack.rs` | `DialogStack`: credentials in front, the consent never replaced, a closed prompt always answered. |
 | `views/dialogs/reader.rs` | The full-size reading modal for the Terms of Service and Privacy Policy, used by the consent too: a measured column with headings, lists and kit links, scrolling with fades. |
@@ -234,7 +237,7 @@ Paths are under `crates/canopy-app/src/` unless they start with `crates/`.
 | To change | Start in | Then |
 |---|---|---|
 | A repository operation (stage, branch, rebase, ...) | The `add-git-operation` skill: the function and its test in `crates/canopy-core`, then an `Op` (with its `OpKind`) or `Job` in `worker.rs` and the `Event` it returns | An `Action` in `action.rs`, applied in `app/dispatch.rs`; in-flight state in `tab.rs`; a keybinding where one is wanted; `docs/features.md` |
-| A setting | A field on `Settings` in `settings.rs` (the struct is `#[serde(default)]`, so old files load) | The control in `views/settings_screen.rs` (sections Appearance, Git, Integrations, Accounts, Updates, Privacy, Keyboard); read it where the behaviour happens, since a setting that changes nothing is a defect. `CanopyApp::save` in `app/mod.rs` persists it under `settings::KEY` |
+| A setting | A field on `Settings` in `settings.rs` (the struct is `#[serde(default)]`, so old files load) | The control in `views/settings_screen.rs` (sections Appearance, Git, Integrations, Accounts, Updates, Privacy, Keyboard, Backup and reset, This repository; give the row its search words); read it where the behaviour happens, since a setting that changes nothing is a defect. `CanopyApp::save` in `app/mod.rs` persists it under `settings::KEY` |
 | A dialog | A variant of `Dialog` and its drawing in `views/dialogs/mod.rs`, with a file beside it when it is large | Open it with `Action::OpenDialog`; stacking rules are in `views/dialogs/stack.rs` |
 | A message to the user | `self.toasts.push(ctx, ToastKind::..., title, body)` (`ui/toast.rs`). A worker failure arrives as an `Event` that `Tab::poll` (`tab.rs`) turns into a notice, which `app/background.rs` shows as a toast; its body is git's own stderr | Log the detail with `tracing` |
 | A keyboard shortcut | The `add-keybinding` skill: `BINDINGS` in `keymap.rs` | `docs/keybindings.md` |
