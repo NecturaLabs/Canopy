@@ -187,7 +187,7 @@ list summaries do not carry those verdicts. Bulk or bounded cached list badges r
 | Opt-in, scrubbed crash reports | Unreleased | ? | ? | ? |
 | Screen reader support (AccessKit) | Planned | ? | ? | ? |
 
-Author pictures are fetched after consent when enabled in Privacy, through the repository hosting worker. GitLab-provided Gravatar and Libravatar image URLs need no API keys. Pictures and failures are cached locally for 12 hours across restarts; failed refreshes retain the previous picture. Lookups take at most half of GitHub's anonymous request limit, and cache files unused for 30 days are deleted.
+Author pictures are fetched after consent when enabled in Privacy, through the repository hosting worker. GitLab-provided Gravatar and Libravatar image URLs need no API keys. Pictures, and authors without one, are cached locally for 12 hours across restarts; failed refreshes retain the previous picture. A private repository without a token, an unpushed commit or a lost connection no longer hides pictures, and GitLab authors without a picture keep their initials instead of a generated pattern. Lookups take at most half of GitHub's anonymous request limit, and cache files unused for 30 days are deleted.
 
 Request review and merge shortcuts use the selected request's refreshed details when available,
 matching the state displayed by the action buttons. Merge controls wrap within narrow panes.

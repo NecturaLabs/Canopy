@@ -1,4 +1,4 @@
-//! Author pictures cached locally for twelve hours, including failed lookups.
+//! Author pictures cached locally for twelve hours, including authors without one.
 //! All cache I/O, provider requests and image decoding run on the hosting thread.
 
 use std::cell::Cell;

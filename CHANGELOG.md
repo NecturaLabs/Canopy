@@ -88,6 +88,9 @@ commits since the previous build.
 
 ### Fixed
 
+- Author pictures appear after adding a token for a private repository, for your own unpushed
+  commits, and after a lost connection, instead of staying initials for 12 hours. GitLab authors
+  without a picture show initials instead of a generated pattern.
 - Scroll bars in the commit details, toasts and code boxes are a thin, quiet handle beside the
   text instead of a thick full-colour bar. The soft glow inside the illustrations fades smoothly instead of in rings.
 - Pull uses the chosen strategy (merge, rebase or fast-forward only) whenever `git` itself has

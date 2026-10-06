@@ -12,7 +12,7 @@ pub const PRIVACY: &str = include_str!("../../../../docs/legal/privacy-policy.md
 /// "Last updated" of the Terms of Service, as `YYYY-MM-DD`.
 pub const TERMS_VERSION: &str = "2026-10-03";
 /// "Last updated" of the Privacy Policy, as `YYYY-MM-DD`.
-pub const PRIVACY_VERSION: &str = "2026-10-03";
+pub const PRIVACY_VERSION: &str = "2026-10-06";
 
 /// Which document to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

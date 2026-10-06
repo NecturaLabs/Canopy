@@ -20,8 +20,10 @@ These come from the owner and override anything else in the repository.
   download only when the user chooses Update; opt-in, scrubbed crash reports to Sentry.
   Every HTTP feature has an off switch and sends nothing before the user accepted the Terms and
   Privacy Policy and answered the crash question. Pictures are cached locally for 12 hours,
-  including failures; a failed refresh keeps the previous picture. Image requests carry no token
-  and follow no redirects. No other telemetry, analytics, backend or service.
+  including authors without one; a failed refresh keeps the previous picture. A failure that is
+  not about the author (repository refused, commit not pushed, network) is never cached per
+  author; it pauses lookups instead. Image requests carry no token and follow no redirects. No
+  other telemetry, analytics, backend or service.
 - **Credentials**: never put credentials into a URL Canopy builds or logs. A hosting token goes
   only to its own host. Git and ssh prompts go through Canopy's own askpass
   (`crates/canopy-app/src/askpass.rs`), never a terminal.

@@ -470,7 +470,7 @@ handle therefore get the same colour without needing an account lookup. At these
 one larger initial for legibility; larger circles can show two. Account pictures fill the same
 circle, with initials while unavailable or downloads are
 disabled. History and commit details share a twelve-hour local cache; a failed refresh retains
-the last picture.
+the last picture, and an author without a picture keeps initials (never a generated pattern).
 
 ### Toast
 
