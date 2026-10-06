@@ -8,8 +8,8 @@ use std::sync::Arc;
 use canopy_core::forge::ForgeKind;
 use canopy_hosting::{RequestState, RequestSummary, StateFilter};
 use egui::{
-    Align, CornerRadius, FontId, Id, Layout, Rect, RichText, Sense, Ui, Vec2, WidgetInfo,
-    WidgetType, pos2, vec2,
+    Align, FontId, Id, Layout, RichText, Sense, Stroke, Ui, Vec2, WidgetInfo, WidgetType, pos2,
+    vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -159,26 +159,19 @@ fn theme_items(m: &mut menu::Menu<'_>, current: ThemeId) -> Option<ThemeId> {
     for t in ThemeId::ALL {
         // A blank glyph keeps the icon column, where the swatch is painted.
         let r = m.item(" ", t.name()).checked(t == current).show(m.ui);
+        // A theme circle, like Settings' theme cards: the theme's pane with its accent at the
+        // centre, as a graph node sits on it.
         let tp = t.palette();
-        let size = vec2(metrics.icon_md, metrics.icon_md * 0.75);
-        let swatch = Rect::from_min_size(
-            pos2(r.rect.left() + theme::SM, r.rect.center().y - size.y / 2.0),
-            size,
-        );
-        let radius = CornerRadius::same(metrics.radius_sm.min(3));
+        let radius = metrics.icon_md / 2.0;
+        let center = pos2(r.rect.left() + theme::SM + radius, r.rect.center().y);
         let painter = m.ui.painter();
-        painter.rect_filled(swatch, radius, tp.bg());
-        painter.rect_filled(
-            Rect::from_min_max(swatch.center_top(), swatch.max),
-            CornerRadius {
-                nw: 0,
-                sw: 0,
-                ne: radius.ne,
-                se: radius.se,
-            },
-            tp.accent,
+        painter.circle_filled(center, radius, tp.bg());
+        painter.circle_filled(center, radius * 0.45, tp.accent);
+        painter.circle_stroke(
+            center,
+            radius - paint::SEAM / 2.0,
+            Stroke::new(paint::SEAM, s.edge),
         );
-        paint::rim(painter, swatch, radius, s.edge);
         if r.clicked() {
             picked = Some(t);
         }
@@ -238,6 +231,16 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
     let branch = snap.and_then(|s| s.current_branch());
     let forge = tab.forge();
     let width = ui.available_width();
+    // Deeper floats the bar on a card inset by the pane gutter: the tools keep their padding
+    // inside it, in line with the panes' content below.
+    let card_inset = if theme::style() == theme::Style::Deeper {
+        m.pane_gutter
+    } else {
+        0.0
+    };
+    let at_left_edge = ui.max_rect().left() <= ui.ctx().content_rect().left() + 0.5;
+    let left_pad = theme::SM + if at_left_edge { card_inset } else { 0.0 };
+    let right_pad = theme::SM + card_inset;
     let no_remote = "Add a remote first";
     let busy_reason = "Wait for the running operation to finish";
     let reason = |remote_needed: bool| {
@@ -257,7 +260,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
             ui.set_min_width(width);
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = m.toolbar_gap;
-                ui.add_space(theme::SM);
+                ui.add_space(left_pad);
                 let changes = snap.map_or(0, |s| s.status.len());
                 let open_requests = open_requests(ui.ctx(), tab);
                 view_tabs(
@@ -432,7 +435,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                         .tooltip("No remote: everything stays on this computer until you publish")
                         .show(ui);
                 }
-                ui.add_space(theme::SM);
+                ui.add_space(right_pad);
                 let used = ui.cursor().min.x - start;
                 if (used - right_w).abs() > 0.5 {
                     ui.data_mut(|d| d.insert_temp(right_id, used));
@@ -600,6 +603,7 @@ impl Running {
 mod tests {
     use std::path::PathBuf;
 
+    use egui::Rect;
     use egui::accesskit::{Node, Role};
 
     use super::*;
