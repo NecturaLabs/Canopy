@@ -1163,9 +1163,9 @@ pub fn tool_divider(ui: &mut Ui) {
 
 // --------------------------------------------------------------------------------- LinkButton
 
-/// Text that opens something: `accent2`, underlined on hover (at rest too where the theme's
-/// `Design::link_underline` asks). External links append "↗" (open
-/// web addresses through `platform.rs`).
+/// Text that opens something: `accent2`, brightening and underlined on hover (at rest too where
+/// the theme's `Design::link_underline` asks). External links end in an arrow icon (open web
+/// addresses through `platform.rs`).
 #[derive(Debug)]
 #[must_use = "call .show(ui) or ui.add(..)"]
 pub struct LinkButton {
@@ -1204,36 +1204,70 @@ impl LinkButton {
         let p = theme::palette(&ctx);
         let m = theme::metrics();
         let enabled = ui.is_enabled();
-        let text = if self.external {
-            format!("{} ↗", self.text)
-        } else {
-            self.text.clone()
-        };
-        let font = FontId::new(self.size.unwrap_or(m.body_size), theme::medium());
-        let g = ui.painter().layout_no_wrap(text, font, p.accent2);
+        let size = self.size.unwrap_or(m.body_size);
+        let font = FontId::new(size, theme::medium());
+        let g = ui
+            .painter()
+            .layout_no_wrap(self.text.clone(), font, p.accent2);
+        // An external link's arrow is the icon font's, a little smaller than the text.
+        let arrow = self.external.then(|| {
+            ui.painter().layout_no_wrap(
+                icon::ARROW_UP_RIGHT.to_owned(),
+                FontId::proportional(size * 0.85),
+                p.accent2,
+            )
+        });
+        let gap = 3.0;
+        let width = g.size().x + arrow.as_ref().map_or(0.0, |a| gap + a.size().x);
         let sense = if enabled {
             Sense::click()
         } else {
             Sense::hover()
         };
-        let (rect, response) = ui.allocate_exact_size(g.size(), sense);
+        let (rect, response) = ui.allocate_exact_size(vec2(width, g.size().y), sense);
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
             let painter = &super::content_painter(ui);
             if st.focus > 0.0 {
                 paint::focus_ring(
                     painter,
-                    rect.expand2(vec2(2.0, 0.0)),
+                    rect.expand2(vec2(3.0, 1.0)),
                     CornerRadius::same(m.radius_sm),
                     p.focus.gamma_multiply(st.focus),
                     Color32::TRANSPARENT,
                 );
             }
-            let ink = if enabled { p.accent2 } else { p.disabled_text };
+            // Brighter under the pointer, a touch dimmer while pressed.
+            let ink = if enabled {
+                p.accent2
+                    .lerp_to_gamma(p.text, 0.3 * st.hover)
+                    .gamma_multiply(1.0 - 0.2 * st.press)
+            } else {
+                p.disabled_text
+            };
             let baseline = rect.top() + g.rows.first().map_or(rect.height(), |r| r.rect().bottom());
+            let text_w = g.size().x;
             painter.galley(rect.min, g, ink);
-            if st.hover > 0.5 || theme::design(&ctx).link_underline {
-                paint::seam_h(painter, rect.x_range(), baseline + 1.0, ink);
+            if let Some(a) = arrow {
+                let at = pos2(
+                    rect.left() + text_w + gap,
+                    rect.center().y - a.size().y / 2.0,
+                );
+                painter.galley(at, a, ink);
+            }
+            // The underline fades in with the hover (always shown where the theme asks).
+            let underline = if theme::design(&ctx).link_underline {
+                1.0
+            } else {
+                st.hover
+            };
+            if underline > 0.0 {
+                paint::seam_h(
+                    painter,
+                    egui::Rangef::new(rect.left(), rect.left() + text_w),
+                    baseline + 1.5,
+                    ink.gamma_multiply(underline),
+                );
             }
         }
         let response = if enabled {
