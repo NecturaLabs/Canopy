@@ -66,8 +66,14 @@ Each theme has one idea, carried by its ladder, signature, selection and status 
 | Ember | Forge at dusk | warm charcoal and cream type, a copper signature, steel-blue links, an apricot selection glow |
 | Neon | Night city | black-violet, electric cyan with a hot magenta second voice, a true green for success |
 | Forest | Evergreen at dusk | deep green shade, a sunlit-gold signature, a lake-blue selection |
-| Paper | Letterpress | warm cream stock with whiter fields and sheets, Prussian ink, a sepia highlighter selection |
-| Contrast | Signal | pure black, white type, strong outlines, a yellow focus ring, a neutral white selection |
+| Paper | Letterpress | warm cream stock on a kraft desk, whiter fields and sheets, Prussian ink, sepia links underlined like print, a yellow highlighter selection |
+| Contrast | Signal | pure black, white type, strong outlines, a yellow focus ring, links underlined at rest, a neutral white selection |
+
+Link buttons are `accent2` and underlined on hover and focus; where the link colour alone does
+not set a link apart from body text, the theme's `Design::link_underline` underlines them at rest
+too (Paper, whose sepia shares the ink's hue family, and Contrast, for low vision;
+`links_are_underlined_at_rest_in_paper_and_contrast`). Inline links in the legal texts still
+underline only on hover and focus.
 
 Every pairing (text on every surface and state, labels on every fill end, focus, outlines, lanes,
 syntax, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme

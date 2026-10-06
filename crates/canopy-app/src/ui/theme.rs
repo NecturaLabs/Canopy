@@ -2511,6 +2511,9 @@ mod design {
         pub hover: HoverStyle,
         /// The active repository tab and the active view tab.
         pub active_tab: TabStyle,
+        /// Links are underlined at rest, not only when hovered or focused: where the link colour
+        /// alone does not set a link apart from body text (Paper) or for low vision (Contrast).
+        pub link_underline: bool,
         /// Section labels (sidebar sections, settings groups, table headers, menu headings).
         pub labels: LabelStyle,
         /// Face of titles and headlines; body text stays Inter.
@@ -2889,6 +2892,7 @@ mod design {
         },
         hover: HoverStyle::Tint,
         active_tab: TabStyle::Lifted,
+        link_underline: false,
         labels: labels(LabelCase::Upper, 0.07, Weight::Semibold),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Dot, 1.0, 1.0, Curve::Smooth),
@@ -2914,6 +2918,7 @@ mod design {
         },
         hover: HoverStyle::Tint,
         active_tab: TabStyle::Underline { width: 2.0 },
+        link_underline: false,
         labels: labels(LabelCase::Title, 0.0, Weight::Semibold),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Ring, 1.05, 0.85, Curve::Rounded),
@@ -2942,6 +2947,7 @@ mod design {
         focus: FocusStyle::Glow { width: 4.0 },
         hover: HoverStyle::Tint,
         active_tab: TabStyle::Underline { width: 2.0 },
+        link_underline: false,
         labels: labels(LabelCase::Upper, 0.09, Weight::Medium),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Ring, 1.05, 1.1, Curve::Smooth),
@@ -2969,6 +2975,7 @@ mod design {
         focus: FocusStyle::Glow { width: 4.0 },
         hover: HoverStyle::Lift,
         active_tab: TabStyle::Lifted,
+        link_underline: false,
         labels: labels(LabelCase::Title, 0.01, Weight::Semibold),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Dot, 1.1, 1.2, Curve::Smooth),
@@ -2996,6 +3003,7 @@ mod design {
         focus: FocusStyle::Glow { width: 5.0 },
         hover: HoverStyle::Edge,
         active_tab: TabStyle::Underline { width: 2.0 },
+        link_underline: false,
         labels: labels(LabelCase::Upper, 0.14, Weight::Semibold),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Diamond, 1.1, 1.0, Curve::Angular),
@@ -3025,6 +3033,7 @@ mod design {
         },
         hover: HoverStyle::Tint,
         active_tab: TabStyle::Lifted,
+        link_underline: false,
         labels: labels(LabelCase::Title, 0.02, Weight::Medium),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Dot, 1.0, 1.3, Curve::Smooth),
@@ -3054,6 +3063,7 @@ mod design {
         },
         hover: HoverStyle::Tint,
         active_tab: TabStyle::TopRule { width: 2.0 },
+        link_underline: true,
         labels: labels(LabelCase::Upper, 0.11, Weight::Semibold),
         heading: HeadingFace::Serif,
         graph: graph(NodeShape::Ring, 1.0, 0.9, Curve::Smooth),
@@ -3077,6 +3087,7 @@ mod design {
         focus: FocusStyle::Double { width: 2.5 },
         hover: HoverStyle::Edge,
         active_tab: TabStyle::Underline { width: 3.0 },
+        link_underline: true,
         labels: labels(LabelCase::Upper, 0.06, Weight::Semibold),
         heading: HeadingFace::Hyperlegible,
         graph: graph(NodeShape::Square, 1.15, 1.25, Curve::Rounded),
@@ -4908,6 +4919,37 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// Paper's sepia links share body text's hue family and Contrast serves low vision, so there a
+    /// link carries a cue beyond colour: it is underlined at rest (QV2-3, WCAG 1.4.1). Elsewhere
+    /// the underline appears on hover.
+    #[test]
+    fn links_are_underlined_at_rest_in_paper_and_contrast() {
+        use crate::ui::kit::button::LinkButton;
+        for id in ThemeId::ALL {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            apply(&ctx, id, Appearance::STILL);
+            let mut text = egui::Rect::NOTHING;
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                text = LinkButton::new("Create a token").show(ui).rect;
+            });
+            out.textures_delta.clear();
+            let p = id.palette();
+            let underlined = out.shapes.iter().any(|c| match &c.shape {
+                egui::Shape::LineSegment { points, stroke } => {
+                    stroke.color == p.accent2
+                        && (points[0].y - points[1].y).abs() < 0.01
+                        && points[0].y > text.center().y
+                        && points[0].y <= text.bottom() + 2.0
+                }
+                _ => false,
+            });
+            let want = matches!(id, ThemeId::Paper | ThemeId::Contrast);
+            assert_eq!(underlined, want, "{id:?}");
+            assert_eq!(id.design().link_underline, want, "{id:?}");
+        }
     }
 
     /// A banner's or callout's action can be disabled ("Continue" while conflicts remain): disabled
