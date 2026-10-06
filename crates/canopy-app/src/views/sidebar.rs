@@ -127,7 +127,7 @@ struct Row<'a> {
     ahead: usize,
     behind: usize,
     hint: Option<&'a str>,
-    /// Dim text after the label (the folder of a branch checked out in another worktree).
+    /// Dim text after the label (a worktree's branch).
     detail: Option<&'a str>,
     /// What screen readers call the row when the label alone says too little.
     spoken: Option<&'a str>,
@@ -238,18 +238,16 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             }
             virtual_rows(ui, snap.branches.len(), row_h, |ui, i| {
                 let b = &snap.branches[i];
-                // A branch checked out in another worktree lives there: git refuses to check it
-                // out here, so it shows its folder and opens it instead.
+                // A branch checked out in another worktree (listed under Worktrees) lives there:
+                // git refuses to check it out here, so it opens that worktree instead.
                 let worktree = b.worktree.as_ref().filter(|_| !b.is_head);
-                let folder = worktree.map(|w| w.file_name().unwrap_or(w.as_os_str()).to_string_lossy().into_owned());
-                let glyph = if b.is_head { icon::CHECK_CIRCLE } else if worktree.is_some() { icon::FOLDER_SIMPLE } else { icon::GIT_BRANCH };
+                let glyph = if b.is_head { icon::CHECK_CIRCLE } else { icon::GIT_BRANCH };
                 let mut hint = b.upstream.as_ref().map_or_else(|| "No upstream".to_owned(), |u| format!("Tracks {u}"));
                 if let Some(w) = worktree {
-                    hint = format!("Checked out in the worktree at {} · {hint}", w.display());
+                    hint = format!("Checked out in the worktree {} · {hint}", folder_name(w));
                 }
-                let spoken = folder.as_ref().map(|f| format!("{}, checked out in worktree {f}", b.name));
                 let selected = tab.sidebar_shows(|p| matches!(p, SidebarItem::Branch(n) if *n == b.name), b.target);
-                let resp = row(ui, &Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, selected, current: b.is_head, ahead: b.ahead, behind: b.behind, hint: Some(&hint), detail: folder.as_deref(), spoken: spoken.as_deref() }, Some((list, i + first)));
+                let resp = row(ui, &Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, selected, current: b.is_head, ahead: b.ahead, behind: b.behind, hint: Some(&hint), detail: None, spoken: None }, Some((list, i + first)));
                 if resp.clicked()
                     && let Some(t) = b.target {
                         pick = Some(SidebarItem::Branch(b.name.clone()));
@@ -317,6 +315,53 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                 });
             });
+            });
+        }
+
+        // Worktrees: the repository's working folders, once `git worktree add` made a second.
+        if snap.worktrees.len() > 1
+            && section(ui, tab, "worktrees", "Worktrees", icon::FOLDERS, snap.worktrees.len(), true)
+        {
+            let here = snap.worktrees.iter().position(|w| w.current);
+            let list = Roving::new(ui.ctx(), ("sidebar-worktrees", &tab.path), snap.worktrees.len(), here.or(Some(0)));
+            ui.scope(|ui| {
+            a11y::group(ui, Role::List, "Worktrees");
+            for (i, w) in snap.worktrees.iter().enumerate() {
+                let name = folder_name(&w.path);
+                let on = w.branch.clone().unwrap_or_else(|| match w.head {
+                    Some(oid) => format!("detached at {}", canopy_core::short_id(oid)),
+                    None => "detached".to_owned(),
+                });
+                let mut hint = format!("{} · on {on}", w.path.display());
+                if w.main {
+                    hint.push_str(" · main working folder");
+                }
+                if w.current {
+                    hint.push_str(" · open here");
+                }
+                let spoken = format!("{name}, worktree on {on}");
+                let glyph = if w.current { icon::FOLDER_OPEN } else { icon::FOLDER_SIMPLE };
+                let selected = tab.sidebar_shows(|p| matches!(p, SidebarItem::Worktree(path) if *path == w.path), w.head);
+                let resp = row(ui, &Row { id: ui.id().with(("worktree", &w.path)), glyph, label: &name, selected, current: w.current, ahead: 0, behind: 0, hint: Some(&hint), detail: Some(&on), spoken: Some(&spoken) }, Some((list, i)));
+                if resp.clicked()
+                    && let Some(head) = w.head {
+                        pick = Some(SidebarItem::Worktree(w.path.clone()));
+                        actions.push(Action::Reveal(head));
+                    }
+                if resp.double_clicked() && !w.current {
+                    actions.push(Action::OpenRepo(w.path.clone()));
+                }
+                let path = w.path.clone();
+                let current = w.current;
+                menu::context(&resp, |m| {
+                    if !current && m.item(icon::FOLDER_OPEN, "Open worktree").show(m.ui).clicked() {
+                        actions.push(Action::OpenRepo(path.clone()));
+                    }
+                    if m.item(icon::COPY, "Copy path").show(m.ui).clicked() {
+                        actions.push(Action::Copy(path.display().to_string()));
+                    }
+                });
+            }
             });
         }
 
@@ -536,6 +581,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     if pick.is_some() {
         tab.sidebar_pick = pick;
     }
+}
+
+/// A worktree's folder name, as its row and tooltips call it.
+fn folder_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// The confirmation for dropping `stash`: it names the stash by its message and drops it by its
@@ -917,6 +970,22 @@ mod tests {
                 branch("feature", 2, false, None),
                 branch("wt", 3, false, Some("/work/canopy-wt")),
             ],
+            worktrees: vec![
+                canopy_core::WorktreeInfo {
+                    path: "/work/canopy".into(),
+                    branch: Some("main".into()),
+                    head: Some(oid(1)),
+                    current: true,
+                    main: true,
+                },
+                canopy_core::WorktreeInfo {
+                    path: "/work/canopy-wt".into(),
+                    branch: Some("wt".into()),
+                    head: Some(oid(3)),
+                    current: false,
+                    main: false,
+                },
+            ],
             ..Default::default()
         }));
         tab
@@ -962,8 +1031,9 @@ mod tests {
         assert_eq!(row_state(&nodes, "feature"), (Some(false), false));
     }
 
-    /// A branch checked out in another worktree says so and opens that worktree on a double
-    /// click instead of trying a checkout git would refuse.
+    /// A branch checked out in another worktree looks like any branch (its folder is under
+    /// Worktrees) and opens that worktree on a double click instead of trying a checkout git
+    /// would refuse.
     #[test]
     fn a_branch_in_another_worktree_opens_it() {
         let ctx = egui::Context::default();
@@ -974,8 +1044,7 @@ mod tests {
         let mut actions = Vec::new();
         let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
         let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
-        let spoken = "wt, checked out in worktree canopy-wt";
-        let at = center(named(&nodes, spoken).expect("the worktree branch names its folder"));
+        let at = center(named(&nodes, "wt").expect("the branch is listed by its name"));
         let mut events = click(at);
         events.extend(click(at));
         let _ = sidebar_frame(&ctx, &mut tab, events, &mut actions);
@@ -992,6 +1061,71 @@ mod tests {
                 .any(|a| matches!(a, Action::Op(Op::Checkout(_)))),
             "{actions:?}"
         );
+    }
+
+    /// Worktrees list the working folders apart from the branches: the open one marked current,
+    /// a click showing a folder's commit, a double click opening it.
+    #[test]
+    fn worktrees_have_their_own_section() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = branch_tab();
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        assert_eq!(
+            row_state(&nodes, "canopy, worktree on main"),
+            (Some(false), true)
+        );
+        let other = "canopy-wt, worktree on wt";
+        assert_eq!(row_state(&nodes, other), (Some(false), false));
+        assert!(named(&nodes, "Worktrees").is_some(), "its own section");
+
+        let at = center(named(&nodes, other).expect(other));
+        let _ = sidebar_frame(&ctx, &mut tab, click(at), &mut actions);
+        assert!(
+            matches!(actions.as_slice(), [Action::Reveal(o)] if *o == oid(3)),
+            "{actions:?}"
+        );
+        tab.select_commit(oid(3));
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        assert_eq!(row_state(&nodes, other), (Some(true), false));
+        assert_eq!(
+            row_state(&nodes, "wt"),
+            (Some(false), false),
+            "the branch at the same commit stays unpicked"
+        );
+
+        actions.clear();
+        let mut events = click(at);
+        events.extend(click(at));
+        let _ = sidebar_frame(&ctx, &mut tab, events, &mut actions);
+        crate::ui::motion::set_reduced(false);
+        assert!(
+            actions.iter().any(
+                |a| matches!(a, Action::OpenRepo(p) if p == std::path::Path::new("/work/canopy-wt"))
+            ),
+            "{actions:?}"
+        );
+    }
+
+    /// A repository with one working folder has no Worktrees section.
+    #[test]
+    fn a_single_working_folder_has_no_worktrees_section() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        let mut tab = branch_tab();
+        if let Some(snap) = &mut tab.snap {
+            std::sync::Arc::make_mut(snap).worktrees.truncate(1);
+        }
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        assert!(named(&nodes, "Worktrees").is_none());
+        assert!(named(&nodes, "canopy, worktree on main").is_none());
     }
 
     /// review-views-3: Drop names the stash and acts on its commit, not its place in the list.

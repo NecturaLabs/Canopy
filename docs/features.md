@@ -34,7 +34,7 @@ Update this table in the same change that adds or alters a feature.
 | Welcome screen with recent repositories | Done | Yes | Yes | Yes |
 | Auto refresh (file watcher, window focus) | Done | Yes | Yes | Yes |
 | Submodules | Planned (backend merged) | Yes | Yes | Yes |
-| Worktrees | Planned | ? | Yes | ? |
+| Worktrees: a sidebar section lists the working folders with their branches (the open one marked) and opens one in a tab; creating and removing them is planned | Unreleased | Yes | Yes | ? |
 | Git LFS indicator and commands | Planned (status backend merged) | Yes | Yes | Yes |
 | Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Unreleased | Yes | ? | ? |
 | Very large repositories | Planned | ? | ? | ? |
@@ -119,8 +119,8 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Delete with `git branch -d`, forcing only after Git refuses and you confirm | Unreleased | ? | ? | ? |
 | Checkout remote branch as tracking branch | Done | Yes | Yes | Yes |
 | Ahead/behind badges | Done | Yes | Yes | Yes |
-| Sidebar marks the branch, remote branch, tag or stash you clicked while History shows its commit, apart from the checked-out branch (accent check, semibold) | Unreleased | Yes | Yes | Yes |
-| Branches checked out in another worktree show a folder icon and that folder's name; double-click or Open worktree opens it in a tab instead of a checkout Git would refuse | Unreleased | Yes | Yes | ? |
+| Sidebar marks the branch, remote branch, tag, stash or worktree you clicked while History shows its commit (the checked-out branch on opening), apart from the checked-out branch (accent check, semibold) | Unreleased | Yes | Yes | Yes |
+| A branch checked out in another worktree opens it (double-click or Open worktree) instead of a checkout Git would refuse | Unreleased | Yes | Yes | ? |
 | Merge into current | Done | Yes | Yes | Yes |
 | Rebase current onto | Done | Yes | Yes | Yes |
 | Merge, rebase, cherry-pick in progress: continue and abort | Done | Yes | Yes | Yes |

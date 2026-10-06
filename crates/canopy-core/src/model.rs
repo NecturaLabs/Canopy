@@ -97,6 +97,21 @@ pub struct BranchInfo {
     pub worktree: Option<PathBuf>,
 }
 
+/// One of the repository's working folders (`git worktree list`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeInfo {
+    /// The folder.
+    pub path: PathBuf,
+    /// The branch checked out there; `None` when its `HEAD` is detached.
+    pub branch: Option<String>,
+    /// The commit its `HEAD` is at (`None` on an unborn branch).
+    pub head: Option<Oid>,
+    /// It is the folder this repository was opened at.
+    pub current: bool,
+    /// It is the main working folder, the one the others were added from.
+    pub main: bool,
+}
+
 /// A remote-tracking branch, e.g. `origin/main`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteBranchInfo {
@@ -385,6 +400,9 @@ pub struct RepoSnapshot {
     pub tags: Vec<TagInfo>,
     /// Stash entries, newest first.
     pub stashes: Vec<StashInfo>,
+    /// The working folders, the main one first, then by folder; only this one when no
+    /// `git worktree` was added.
+    pub worktrees: Vec<WorktreeInfo>,
     /// Working tree status.
     pub status: WorkingStatus,
     /// Commits in topological order, newest first.

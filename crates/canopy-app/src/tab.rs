@@ -25,13 +25,15 @@ pub enum View {
     Requests,
 }
 
-/// A sidebar row the user picked: it shows selected while History shows the commit it points at.
+/// A sidebar row picked by the user (or, on opening, the checked-out branch): it shows selected
+/// while History shows the commit it points at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidebarItem {
     Branch(String),
     RemoteBranch { remote: String, branch: String },
     Tag(String),
     Stash(Oid),
+    Worktree(PathBuf),
 }
 
 /// How the history list and selected commit share the content area.
@@ -1097,6 +1099,14 @@ impl RepoTab {
                             self.select_commit(h);
                             self.scroll_to_selected = true;
                         }
+                        // Opening shows the checked-out branch's commit: mark the branch too.
+                        if !had && self.sidebar_pick.is_none() {
+                            self.sidebar_pick = self
+                                .snap
+                                .as_ref()
+                                .and_then(|s| s.head.branch.clone())
+                                .map(SidebarItem::Branch);
+                        }
                     } else if let Some(sel) = self.selected_commit
                         && self
                             .snap
@@ -1676,6 +1686,35 @@ mod tests {
         tab.commit_summary = "Draft".into();
         tab.running = Some("Busy".into());
         assert!(!tab.can_commit());
+    }
+
+    /// Opening a repository marks the checked-out branch in the sidebar, as History shows its
+    /// commit; a later snapshot leaves the user's own pick alone.
+    #[test]
+    fn opening_picks_the_checked_out_branch() {
+        let (worker, events, _jobs) = Worker::detached();
+        let mut tab =
+            RepoTab::with_worker(PathBuf::from("fixture"), 100, DiffPrefs::default(), worker);
+        let head = Oid::from_bytes(&[1; 20]).expect("oid");
+        let snap = || {
+            Arc::new(RepoSnapshot {
+                head: canopy_core::HeadInfo {
+                    branch: Some("main".into()),
+                    oid: Some(head),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+        };
+        events.send(Event::Snapshot(snap())).expect("snapshot");
+        tab.poll(&[]);
+        assert_eq!(tab.sidebar_pick, Some(SidebarItem::Branch("main".into())));
+        assert!(tab.sidebar_shows(|p| *p == SidebarItem::Branch("main".into()), Some(head)));
+
+        tab.sidebar_pick = Some(SidebarItem::Tag("v1".into()));
+        events.send(Event::Snapshot(snap())).expect("snapshot");
+        tab.poll(&[]);
+        assert_eq!(tab.sidebar_pick, Some(SidebarItem::Tag("v1".into())));
     }
 
     #[test]

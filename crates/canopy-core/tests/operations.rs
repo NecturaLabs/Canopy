@@ -2656,3 +2656,73 @@ fn branches_checked_out_in_another_worktree_name_its_folder() {
     assert!(feature.is_head);
     assert_eq!(feature.worktree, None);
 }
+
+#[test]
+fn worktrees_list_every_working_folder_main_first() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["branch", "feature"]);
+    let linked = tempfile::tempdir().expect("tempdir");
+    let wt = linked.path().join("wt");
+    let detached = linked.path().join("detached");
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            wt.to_str().expect("utf-8"),
+            "feature",
+        ],
+    );
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            detached.to_str().expect("utf-8"),
+            "HEAD",
+        ],
+    );
+    let canonical = |path: &Path| fs::canonicalize(path).expect("canonical");
+    let head = repo.snapshot(1).expect("snapshot").head.oid;
+    // What `git worktree list` says, in Canopy's order: main first, then by folder.
+    let listed = |r: &Repo| {
+        r.snapshot(1)
+            .expect("snapshot")
+            .worktrees
+            .into_iter()
+            .map(|w| (canonical(&w.path), w.branch, w.head, w.current, w.main))
+            .collect::<Vec<_>>()
+    };
+    let main = (canonical(p), Some("main".to_owned()), head, true, true);
+    let feature = (
+        canonical(&wt),
+        Some("feature".to_owned()),
+        head,
+        false,
+        false,
+    );
+    let loose = (canonical(&detached), None, head, false, false);
+    assert_eq!(
+        listed(&repo),
+        vec![main.clone(), loose.clone(), feature.clone()]
+    );
+
+    // From a linked folder: the same list, with that folder the current one.
+    let from_linked = Repo::open(&wt).expect("open the linked worktree");
+    assert_eq!(
+        listed(&from_linked),
+        vec![
+            (main.0, main.1, main.2, false, true),
+            loose,
+            (feature.0, feature.1, feature.2, true, false),
+        ]
+    );
+
+    // A plain repository has only its own folder.
+    let (_plain_dir, plain) = fixture();
+    assert_eq!(plain.snapshot(1).expect("snapshot").worktrees.len(), 1);
+}

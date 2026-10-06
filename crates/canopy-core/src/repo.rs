@@ -10,7 +10,7 @@ use crate::graph;
 use crate::model::{
     BranchInfo, ChangeKind, CommitDetails, CommitSummary, FileEntry, HeadInfo, RefKind, RefLabel,
     RemoteBranchInfo, RemoteInfo, RepoSnapshot, RepoState, Signature, StashInfo, StatusUnavailable,
-    TagInfo, UntrackedListing, WorkingStatus,
+    TagInfo, UntrackedListing, WorkingStatus, WorktreeInfo,
 };
 use crate::partial::{self, MissingObjects};
 use crate::{Error, Result, status};
@@ -122,7 +122,12 @@ impl Repo {
 
     /// Local branches, the checked-out one first.
     pub fn branches(&self) -> Result<Vec<BranchInfo>> {
-        let mut elsewhere = self.other_worktree_branches();
+        let mut elsewhere: HashMap<String, PathBuf> = self
+            .worktrees()
+            .into_iter()
+            .filter(|w| !w.current)
+            .filter_map(|w| Some((w.branch?, w.path)))
+            .collect();
         let mut out = Vec::new();
         for item in self.git.branches(Some(BranchType::Local))? {
             let (branch, _) = item?;
@@ -152,41 +157,55 @@ impl Repo {
         Ok(out)
     }
 
-    /// The branches checked out in the repository's other working folders (the main one and
-    /// those `git worktree add` made), by name, with the folder of each. A folder that cannot be
-    /// read (moved, deleted, owned by someone else) is left out.
-    fn other_worktree_branches(&self) -> HashMap<String, PathBuf> {
-        let mut out = HashMap::new();
-        let mut note = |repo: &Repository| {
-            if repo.path() == self.git.path() {
-                return;
-            }
-            let Some(dir) = repo.workdir() else { return };
-            if let Ok(head) = repo.find_reference("HEAD")
-                && let Some(name) = head
-                    .symbolic_target()
-                    .ok()
-                    .flatten()
-                    .and_then(|t| t.strip_prefix("refs/heads/"))
-            {
-                out.insert(name.to_owned(), dir.to_path_buf());
-            }
+    /// The repository's working folders: the main one first, then those `git worktree add`
+    /// made, by folder. A folder that cannot be read (moved, deleted, owned by someone else) is
+    /// left out; a bare repository has none.
+    pub fn worktrees(&self) -> Vec<WorktreeInfo> {
+        let read = |repo: &Repository, main: bool| {
+            let path = repo.workdir()?.to_path_buf();
+            let head = repo.find_reference("HEAD").ok()?;
+            let branch = head
+                .symbolic_target()
+                .ok()
+                .flatten()
+                .and_then(|t| t.strip_prefix("refs/heads/"))
+                .map(str::to_owned);
+            Some(WorktreeInfo {
+                path,
+                branch,
+                head: head.resolve().ok().and_then(|r| r.target()),
+                current: repo.path() == self.git.path(),
+                main,
+            })
         };
-        if self.git.is_worktree()
-            && let Ok(main) = Repository::open(self.git.commondir())
-        {
-            note(&main);
+        let mut out = Vec::new();
+        let main = if self.git.is_worktree() {
+            Repository::open(self.git.commondir()).ok()
+        } else {
+            None
+        };
+        let main = if self.git.is_worktree() {
+            main.as_ref()
+        } else {
+            Some(&self.git)
+        };
+        if let Some(w) = main.and_then(|r| read(r, true)) {
+            out.push(w);
         }
+        let mut linked = Vec::new();
         if let Ok(names) = self.git.worktrees() {
             for name in names.iter().flatten().flatten() {
                 if let Ok(worktree) = self.git.find_worktree(name)
                     && worktree.validate().is_ok()
                     && let Ok(repo) = Repository::open_from_worktree(&worktree)
+                    && let Some(w) = read(&repo, false)
                 {
-                    note(&repo);
+                    linked.push(w);
                 }
             }
         }
+        linked.sort_by(|a, b| a.path.cmp(&b.path));
+        out.extend(linked);
         out
     }
 
@@ -338,6 +357,7 @@ impl Repo {
         let remote_branches = self.remote_branches()?;
         let tags = self.tags()?;
         let stashes = self.stashes();
+        let worktrees = self.worktrees();
         let (commits, truncated) = self.commits(max_commits)?;
         let graph = graph::layout(commits.iter().map(|c| (c.oid, c.parents.as_slice())));
         // History never depends on status: a partial clone that lacks the tree of `HEAD` still
@@ -403,6 +423,7 @@ impl Repo {
             remotes: self.remotes()?,
             tags,
             stashes,
+            worktrees,
             status,
             commits,
             graph,
