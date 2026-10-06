@@ -22,8 +22,8 @@ pub const FOCUS_WIDTH: f32 = 2.0;
 pub const INSET_FOCUS_WIDTH: f32 = 1.5;
 
 /// The layers of `material` under a surface at `rect`, largest first. Paint before the surface.
-/// A negative spread shrinks the rect (egui's `Shadow::spread` is unsigned); a blur wider than the
-/// rect's shorter side is cut to it, as egui's tessellator would.
+/// A negative spread shrinks the rect (egui's `Shadow::spread` is unsigned); a layer whose rect is
+/// too small to hold its blur grows to hold it and fades by as much, so it stays soft.
 pub fn shadow(painter: &Painter, rect: Rect, radius: CornerRadius, p: &Palette, m: &Material) {
     painter.extend(shadow_shapes(rect, radius, p, m));
 }
@@ -33,20 +33,32 @@ pub fn shadow(painter: &Painter, rect: Rect, radius: CornerRadius, p: &Palette, 
 pub fn shadow_shapes(rect: Rect, radius: CornerRadius, p: &Palette, m: &Material) -> Vec<Shape> {
     let mut shapes = Vec::with_capacity(m.layers.len());
     for l in m.layers {
-        let r = rect
+        let mut r = rect
             .translate(vec2(0.0, f32::from(l.dy)))
             .expand(f32::from(l.spread));
         if r.width() <= 0.0 || r.height() <= 0.0 {
             continue;
         }
-        let blur = f32::from(l.blur).min((r.size().min_elem() - 1.0).max(0.0));
+        // egui cuts a blur wider than the rect's shorter side, which leaves a crisp dark stub
+        // under a small surface: hold the whole blur instead, as faint as the rect grew.
+        let blur = f32::from(l.blur);
+        let need = blur + 1.0;
+        let mut alpha = f32::from(l.alpha);
+        if r.width() < need {
+            alpha *= r.width() / need;
+            r = Rect::from_center_size(r.center(), vec2(need, r.height()));
+        }
+        if r.height() < need {
+            alpha *= r.height() / need;
+            r = Rect::from_center_size(r.center(), vec2(r.width(), need));
+        }
         let spread = f32::from(l.spread);
         let corner = if spread >= 0.0 {
             radius + CornerRadius::same(crate::ui::saturate_u8(spread))
         } else {
             shrink_radius(radius, -spread)
         };
-        let color = Palette::tint(p.shadow_color(l.tint), l.alpha);
+        let color = Palette::tint(p.shadow_color(l.tint), crate::ui::saturate_u8(alpha));
         shapes.push(
             RectShape::filled(r, corner, color)
                 .with_blur_width(blur)
@@ -763,11 +775,51 @@ mod tests {
         assert_eq!(mesh.vertices[3].color, ground.bottom);
     }
 
+    /// A shadow under a surface smaller than its blur (a one-line tooltip) keeps its whole blur:
+    /// egui would cut the blur to the rect, leaving a crisp dark stub under the surface, so the
+    /// layer's rect grows to hold the blur and fades by as much as it grew.
+    #[test]
+    fn a_small_surface_keeps_its_shadow_soft() {
+        let rect = Rect::from_min_size(pos2(40.0, 40.0), vec2(64.0, 22.0));
+        for id in theme::ThemeId::ALL {
+            let p = id.palette();
+            for style in [Style::Standard, Style::Deeper] {
+                let m = p.material(style, Elevation::Floating);
+                let shapes = shadow_shapes(rect, CornerRadius::same(6), p, &m);
+                let mut painted = shapes.iter().filter_map(|s| match s {
+                    Shape::Rect(r) => Some(r),
+                    _ => None,
+                });
+                for l in m.layers {
+                    let r = rect
+                        .translate(vec2(0.0, f32::from(l.dy)))
+                        .expand(f32::from(l.spread));
+                    if r.width() <= 0.0 || r.height() <= 0.0 {
+                        continue;
+                    }
+                    let shape = painted.next().expect("a shape per visible layer");
+                    let what = format!("{}/{style:?} {l:?}", p.name);
+                    assert!(
+                        (shape.blur_width - f32::from(l.blur)).abs() < 0.01,
+                        "{what}: blur cut to {}",
+                        shape.blur_width
+                    );
+                    assert!(
+                        shape.rect.size().min_elem() >= shape.blur_width + 1.0 - 0.01,
+                        "{what}: {:?} cannot hold the blur",
+                        shape.rect
+                    );
+                    assert!(shape.fill.a() <= l.alpha, "{what}: darker than designed");
+                }
+            }
+        }
+    }
+
     #[test]
     fn negative_spread_shrinks_the_shadow() {
         let ctx = Context::default();
         let p = theme::ThemeId::Midnight.palette();
-        let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(100.0, 40.0));
+        let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(100.0, 60.0));
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             let m = p.material(Style::Standard, Elevation::Floating);
             shadow(ui.painter(), rect, CornerRadius::same(12), p, &m);
@@ -781,9 +833,9 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // (10, 28, -8): moved down 10 and 8 smaller on every side.
+        // (10, 28, -8): moved down 10 and 8 smaller on every side (tall enough to hold its blur).
         assert!(
-            shapes.contains(&Rect::from_min_max(pos2(18.0, 28.0), pos2(102.0, 52.0))),
+            shapes.contains(&Rect::from_min_max(pos2(18.0, 28.0), pos2(102.0, 72.0))),
             "{shapes:?}"
         );
     }
