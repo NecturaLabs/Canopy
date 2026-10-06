@@ -273,9 +273,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         }
 
         // Remotes: "+" on the header (hover or focus) and its context menu add one; a
-        // repository with none says so and offers to publish it.
+        // repository with none says so and offers Publish and Add remote as links instead, so
+        // the header has no second "Add remote…".
         let local_only = snap.remotes.is_empty();
-        let (open, header) = section_with_action(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len(), false, Some((icon::PLUS, "Add remote…")));
+        let (open, header) = section_with_action(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len(), false, (!local_only).then_some((icon::PLUS, "Add remote…")));
         if header.value {
             actions.push(Action::AddRemoteDialog);
         }
@@ -604,8 +605,8 @@ mod tests {
         );
     }
 
-    /// O9: with remotes there is no "Add remote…" button at rest; hovering the Remotes header
-    /// shows its "+" and a click on it opens the dialog.
+    /// O9: with remotes the Remotes header's "+" is reachable at rest (keyboard and screen
+    /// readers, kit-polish Override O2), shows on hover, and a click on it opens the dialog.
     #[test]
     fn the_remotes_header_adds_a_remote_from_its_hover_button() {
         let ctx = egui::Context::default();
@@ -616,9 +617,10 @@ mod tests {
         let mut actions = Vec::new();
         let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
         let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
-        assert!(
-            named(&nodes, "Add remote…").is_none(),
-            "no add button at rest"
+        assert_eq!(
+            named(&nodes, "Add remote…").map(egui::accesskit::Node::role),
+            Some(egui::accesskit::Role::Button),
+            "the header's + is in the tree at rest"
         );
         let header = center(named(&nodes, "Remotes").expect("remotes header"));
         let hover = vec![egui::Event::PointerMoved(header)];
