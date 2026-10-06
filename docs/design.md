@@ -637,7 +637,7 @@ notification center: the bell at the right end of the status bar (`BELL`, `BELL_
 cards are off) opens a 360-point popover listing the last 100, newest first, each with its kind's
 glyph and colour, title, relative time (exact in the tooltip), up to four lines of text (all of it
 in the tooltip) and its actions as Xs buttons, their labels lined up with the text: any recovery
-action Secondary, Copy and Dismiss Ghost; a header holds a Ghost Clear all and the settings gear. Notifications of a counting topic (errors, attention, updates) that showed no
+action Secondary, Copy (failures only, whose output is worth keeping) and Dismiss Ghost; a header holds a Ghost Clear all and the settings gear. Notifications of a counting topic (errors, attention, updates) that showed no
 card raise a strong count badge on the bell, `danger` when one is an error, else `accent`; opening
 the center clears it, and while it is open new notifications go to its list instead of a card.
 

@@ -726,12 +726,13 @@ impl Toasts {
                                             self.chosen.push(recovery.clone());
                                         }
                                     }
-                                    if Button::new("Copy")
-                                        .ghost()
-                                        .size(Size::Xs)
-                                        .icon(icon::COPY)
-                                        .show(ui)
-                                        .clicked()
+                                    if e.kind == ToastKind::Error
+                                        && Button::new("Copy")
+                                            .ghost()
+                                            .size(Size::Xs)
+                                            .icon(icon::COPY)
+                                            .show(ui)
+                                            .clicked()
                                     {
                                         let text = if body.is_empty() {
                                             e.title.clone()
@@ -1385,6 +1386,37 @@ mod tests {
             !labels.iter().any(|l| l.contains("[rejected]")),
             "{labels:?}"
         );
+    }
+
+    #[test]
+    fn only_a_failure_in_the_center_offers_copy() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        motion::set_reduced(true);
+        let mut toasts = Toasts::default();
+        toasts.push(&ctx, ToastKind::Success, Topic::Finished, "Pushed", "main");
+        toasts.push(&ctx, ToastKind::Info, Topic::Confirmation, "Copied", "abc");
+        let copies = |toasts: &mut Toasts| {
+            let mut n = 0;
+            for _ in 0..3 {
+                let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let _ = toasts.center(ui);
+                });
+                out.textures_delta.clear();
+                n = out.platform_output.accesskit_update.map_or(0, |u| {
+                    u.nodes
+                        .iter()
+                        .filter(|(_, n)| n.label() == Some("Copy"))
+                        .count()
+                });
+            }
+            n
+        };
+        assert_eq!(copies(&mut toasts), 0);
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Fetch failed", "no");
+        assert_eq!(copies(&mut toasts), 1);
+        motion::set_reduced(false);
     }
 
     #[test]
