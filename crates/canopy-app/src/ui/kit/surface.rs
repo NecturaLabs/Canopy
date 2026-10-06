@@ -1,7 +1,7 @@
-//! Surfaces (design spec 4.20, 7.1 and the owner's amendments): [`PaneFrame`] (flush in
-//! Standard, a floating card over gutters with the focused-pane edge in Deeper), [`PaneHeader`]
-//! (a table pane's header strip, whose top edge is its own colour in Deeper), [`Deck`] (the top
-//! bars), [`Card`], [`Banner`], [`Callout`], [`EmptyState`] and [`InsetBox`].
+//! Surfaces (design spec 4.20, 7.1 and the owner's amendments): [`PaneHeader`] (a table pane's
+//! header strip, whose top edge is its own colour in Deeper), [`Deck`] (the top bars), [`Card`],
+//! [`Banner`], [`Callout`], [`EmptyState`] and [`InsetBox`]. Panes themselves are painted by
+//! [`paint::pane`] and [`paint::pane_focus`].
 
 use std::sync::Arc;
 
@@ -14,42 +14,11 @@ use egui_phosphor::regular as icon;
 use super::button::{Button, LinkButton};
 use super::chip::KeyChord;
 use super::progress::Skeleton;
-use super::{ForceState, Interact, KitResponse, Size, Tone, anim, paint};
+use super::{ForceState, Interact, KitResponse, Size, Tone, paint};
 use crate::keymap::Command;
 use crate::ui::art::{self, Art};
 use crate::ui::motion;
 use crate::ui::theme::{self, Elevation, Fill, Palette, Style};
-
-/// Which sides of a pane touch a neighbour or the window edge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Sides {
-    pub left: bool,
-    pub right: bool,
-    pub top: bool,
-    pub bottom: bool,
-}
-
-impl Sides {
-    pub const NONE: Self = Self {
-        left: false,
-        right: false,
-        top: false,
-        bottom: false,
-    };
-    pub const ALL: Self = Self {
-        left: true,
-        right: true,
-        top: true,
-        bottom: true,
-    };
-    /// Concept 4's body padding: the gutter at the sides and below, none above (the deck).
-    pub const BODY: Self = Self {
-        left: true,
-        right: true,
-        top: false,
-        bottom: true,
-    };
-}
 
 /// Seconds since something was first shown in an unbroken run of frames: restarts when a frame
 /// passes without it.
@@ -83,175 +52,6 @@ fn appear(ctx: &egui::Context, id: Id, seconds: f32) -> f32 {
         ctx.request_repaint();
     }
     motion::EASE_OUT.at(t)
-}
-
-// ---------------------------------------------------------------------------------- PaneFrame
-
-/// The ground a pane paints its content on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PaneGround {
-    /// Content: tables, file lists, the diff (`Surfaces::pane`).
-    #[default]
-    Pane,
-    /// Chrome: the sidebar, settings navigation (`Surfaces::panel`).
-    Panel,
-}
-
-/// A content pane filling the space it is given. Standard: flush, `seams` on its shared edges.
-/// Deeper: a floating card (`pane_radius`, `pane_edge` ring, `Elevation::Pane`) inset by
-/// `pane_gutter` on its `gutters` sides, and while `focused` the focused-pane edge, fading in
-/// over `BASE`.
-#[derive(Debug, Clone, Copy)]
-#[must_use = "call .show(ui, ..)"]
-pub struct PaneFrame {
-    id_salt: Id,
-    ground: PaneGround,
-    focused: bool,
-    gutters: Sides,
-    seams: Sides,
-    margin: Margin,
-    force: Option<ForceState>,
-}
-
-impl PaneFrame {
-    pub fn new(id_salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
-        Self {
-            id_salt: Id::new(id_salt),
-            ground: PaneGround::Pane,
-            focused: false,
-            gutters: Sides::BODY,
-            seams: Sides::NONE,
-            margin: Margin::ZERO,
-            force: None,
-        }
-    }
-    pub fn ground(mut self, ground: PaneGround) -> Self {
-        self.ground = ground;
-        self
-    }
-    /// The pane holds the keyboard: Deeper draws the focused-pane edge.
-    pub fn focused(mut self, focused: bool) -> Self {
-        self.focused = focused;
-        self
-    }
-    /// Sides that get Deeper's gutter (default: left, right and bottom).
-    pub fn gutters(mut self, gutters: Sides) -> Self {
-        self.gutters = gutters;
-        self
-    }
-    /// Sides that get a 1 pt seam in Standard (shared with a neighbour).
-    pub fn seams(mut self, seams: Sides) -> Self {
-        self.seams = seams;
-        self
-    }
-    /// Space between the pane's edge and its content.
-    pub fn margin(mut self, margin: Margin) -> Self {
-        self.margin = margin;
-        self
-    }
-    pub(crate) fn force(mut self, force: ForceState) -> Self {
-        self.force = Some(force);
-        self
-    }
-
-    /// The pane's card inside `outer` in the active style.
-    pub fn card_rect(&self, outer: Rect) -> Rect {
-        let g = theme::metrics().pane_gutter;
-        let side = |on: bool| if on { g } else { 0.0 };
-        Rect::from_min_max(
-            pos2(
-                outer.left() + side(self.gutters.left),
-                outer.top() + side(self.gutters.top),
-            ),
-            pos2(
-                outer.right() - side(self.gutters.right),
-                outer.bottom() - side(self.gutters.bottom),
-            ),
-        )
-    }
-
-    pub fn show<R>(self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> KitResponse<R> {
-        let ctx = ui.ctx().clone();
-        let p = theme::palette(&ctx);
-        let style = theme::style();
-        let s = p.surfaces(style);
-        let m = theme::metrics();
-        let outer = ui.available_rect_before_wrap();
-        let card = self.card_rect(outer);
-        let id = ui.id().with(self.id_salt);
-        let fill = match self.ground {
-            PaneGround::Pane => s.pane,
-            PaneGround::Panel => s.panel,
-        };
-        let focus = match self.force {
-            Some(f) => f32::from(u8::from(f.focus || self.focused)) * f.progress.unwrap_or(1.0),
-            None => anim::ease_bool(
-                &ctx,
-                id.with("kit-pane-focus"),
-                self.focused,
-                motion::BASE,
-                motion::BASE,
-            ),
-        };
-        let painter = ui.painter().clone();
-        let radius = if style == Style::Deeper {
-            CornerRadius::same(m.pane_radius)
-        } else {
-            CornerRadius::ZERO
-        };
-        if style == Style::Deeper {
-            paint::surface(
-                &painter,
-                card,
-                radius,
-                p,
-                style,
-                Elevation::Pane,
-                Fill::flat(fill),
-                None,
-            );
-        } else {
-            painter.rect_filled(card, CornerRadius::ZERO, fill);
-        }
-        let inner = card - self.margin;
-        let mut child = ui.new_child(
-            UiBuilder::new()
-                .id_salt(id.with("kit-pane-content"))
-                .max_rect(inner)
-                .layout(Layout::top_down(Align::Min)),
-        );
-        child.set_clip_rect(card.intersect(ui.clip_rect()));
-        let value = add(&mut child);
-        // The ring and the focus edge go over the content, so a header strip at the top of the
-        // card cannot hide them.
-        if style == Style::Deeper {
-            if let Some(edge) = s.pane_edge {
-                paint::rim(&painter, card, radius, edge);
-            }
-            paint::focus_edge(&painter, card, radius, p.focus, focus);
-        } else {
-            let seam = |on: bool, f: &dyn Fn()| {
-                if on {
-                    f();
-                }
-            };
-            seam(self.seams.top, &|| {
-                paint::seam_h(&painter, card.x_range(), card.top() + 0.5, s.border);
-            });
-            seam(self.seams.bottom, &|| {
-                paint::seam_h(&painter, card.x_range(), card.bottom() - 0.5, s.border);
-            });
-            seam(self.seams.left, &|| {
-                paint::seam_v(&painter, card.left() + 0.5, card.y_range(), s.border);
-            });
-            seam(self.seams.right, &|| {
-                paint::seam_v(&painter, card.right() - 0.5, card.y_range(), s.border);
-            });
-        }
-        let response = ui.allocate_rect(outer, Sense::hover());
-        response.widget_info(|| WidgetInfo::new(WidgetType::Panel));
-        KitResponse { response, value }
-    }
 }
 
 // --------------------------------------------------------------------------------- PaneHeader
@@ -446,13 +246,16 @@ impl Deck {
 /// A framed group: welcome action cards, settings theme cards, conflict cards. Standard: `panel`
 /// with a 1 pt `border` ring and no shadow. Deeper: `pane` with the `pane_edge` ring and the pane
 /// shadow. An interactive card hovers (`hover` over its fill, `edge` ring), selects (`focus` ring
-/// 1.5 pt and the accent wash) and shows the outside focus ring; it never lifts.
+/// 1.5 pt and the accent wash) and shows the outside focus ring; it never lifts. An interactive
+/// card is announced as a button, or as one choice of a group (a radio button, checked or not)
+/// once [`Self::selected`] is set; cards in a grid share one Tab stop through [`Self::roving`].
 #[derive(Debug, Clone)]
 #[must_use = "call .show(ui, ..)"]
 pub struct Card {
     id_salt: Option<Id>,
     interactive: bool,
-    selected: bool,
+    selected: Option<bool>,
+    roving: Option<(super::row::Roving, usize)>,
     enabled: bool,
     ring: Option<Tone>,
     width: Option<f32>,
@@ -468,7 +271,8 @@ impl Card {
         Self {
             id_salt: None,
             interactive: false,
-            selected: false,
+            selected: None,
+            roving: None,
             enabled: true,
             ring: None,
             width: None,
@@ -484,8 +288,15 @@ impl Card {
         self.interactive = on;
         self
     }
+    /// The card is one choice of a group (the theme cards), chosen or not.
     pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
+        self.selected = Some(selected);
+        self
+    }
+    /// The card is card `index` of the grid `list`: the grid is one Tab stop, and the arrows move
+    /// between its cards (give the [`super::row::Roving`] its `columns`).
+    pub fn roving(mut self, list: super::row::Roving, index: usize) -> Self {
+        self.roving = Some((list, index));
         self
     }
     pub fn enabled(mut self, enabled: bool) -> Self {
@@ -537,8 +348,9 @@ impl Card {
         let s = p.surfaces(style);
         let m = theme::metrics();
         let enabled = self.enabled && ui.is_enabled();
-        let sense = match (self.interactive, enabled) {
-            (true, true) => Sense::click(),
+        let sense = match (self.interactive, enabled, self.roving) {
+            (true, true, Some((list, index))) if !list.takes_tab(&ctx, index, None) => Sense::CLICK,
+            (true, true, _) => Sense::click(),
             _ => Sense::hover(),
         };
         let slot = ui.painter().add(Shape::Noop);
@@ -592,7 +404,7 @@ impl Card {
         } else {
             (s.panel, s.border, None)
         };
-        let selected = self.selected && !off;
+        let selected = self.selected == Some(true) && !off;
         let mut fill = base;
         if selected {
             fill = theme::over(p.accent_tint(), fill);
@@ -654,9 +466,15 @@ impl Card {
         }
         if self.interactive {
             let label = self.label.clone().unwrap_or_default();
-            response.widget_info(|| {
-                WidgetInfo::selected(WidgetType::Button, enabled, self.selected, &label)
+            response.widget_info(|| match self.selected {
+                Some(on) => WidgetInfo::selected(WidgetType::RadioButton, enabled, on, &label),
+                None => WidgetInfo::labeled(WidgetType::Button, enabled, &label),
             });
+            if let Some((list, index)) = self.roving
+                && enabled
+            {
+                list.row(ui, &response, index, false);
+            }
         }
         let response = super::button::tip(
             response,
@@ -686,6 +504,16 @@ fn tone_glyph(tone: Tone) -> &'static str {
         Tone::Success => icon::CHECK_CIRCLE,
         Tone::Warning => icon::WARNING,
         Tone::Danger => icon::WARNING_OCTAGON,
+    }
+}
+
+/// What a callout in `tone` is called to screen readers, which do not see its icon.
+fn tone_name(tone: Tone) -> &'static str {
+    match tone {
+        Tone::Neutral | Tone::Accent => "Note",
+        Tone::Success => "Success",
+        Tone::Warning => "Warning",
+        Tone::Danger => "Error",
     }
 }
 
@@ -987,9 +815,16 @@ impl Callout {
             .corner_radius(CornerRadius::same(m.radius))
             .inner_margin(CALLOUT_PAD)
             .show(ui, |ui| {
+                // A group named for the tone, holding the title, text and actions: the icon is
+                // painted, not spoken (a private-use glyph screen readers would spell out).
+                super::a11y::group(ui, egui::accesskit::Role::Group, tone_name(self.tone));
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = theme::SM;
-                    ui.label(egui::RichText::new(glyph).size(m.icon_lg).color(tone_c));
+                    let icon =
+                        ui.painter()
+                            .layout_no_wrap(glyph, FontId::proportional(m.icon_lg), tone_c);
+                    let (at, _) = ui.allocate_exact_size(icon.size(), Sense::hover());
+                    ui.painter().galley(at.min, icon, tone_c);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         if let Some(t) = &self.title {
@@ -1035,11 +870,6 @@ impl Callout {
                 });
             })
             .response;
-        let spoken = match &self.title {
-            Some(t) => format!("{t}: {}", self.text),
-            None => self.text.clone(),
-        };
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &spoken));
         KitResponse {
             response,
             value: clicked,
@@ -1346,12 +1176,14 @@ pub(crate) fn gallery(ui: &mut Ui) {
                 }
                 let mut c = Card::new()
                     .interactive(true)
-                    .selected(*selected)
                     .enabled(*enabled)
                     .width(w)
                     .label(*name)
                     .disabled_reason("Not available")
                     .id_salt(("gallery-card", i));
+                if *selected {
+                    c = c.selected(true);
+                }
                 if let Some(t) = ring {
                     c = c.ring(*t);
                 }
@@ -1363,6 +1195,33 @@ pub(crate) fn gallery(ui: &mut Ui) {
         });
         ui.add_space(theme::SM);
     }
+    small(
+        ui,
+        "Choice cards: one Tab stop, the arrows move between them, the chosen one is checked",
+    );
+    let chosen_id = ui.id().with("gallery-choice");
+    let mut chosen: usize = ui.ctx().data(|d| d.get_temp(chosen_id)).unwrap_or(0);
+    let choices = ["Midnight", "Daylight", "Forest"];
+    let grid = super::row::Roving::new(ui.ctx(), "gallery-choice", choices.len(), Some(chosen))
+        .columns(choices.len());
+    ui.horizontal_top(|ui| {
+        super::a11y::group(ui, egui::accesskit::Role::RadioGroup, "Gallery theme");
+        ui.spacing_mut().item_spacing = vec2(theme::SM, theme::SM);
+        for (i, name) in choices.into_iter().enumerate() {
+            let r = Card::new()
+                .interactive(true)
+                .selected(chosen == i)
+                .roving(grid, i)
+                .width(w)
+                .label(format!("{name} theme"))
+                .id_salt(("gallery-choice", i))
+                .show(ui, |ui| card_body(ui, name));
+            if r.response.clicked() {
+                chosen = i;
+            }
+        }
+    });
+    ui.ctx().data_mut(|d| d.insert_temp(chosen_id, chosen));
     ui.add_space(theme::SM);
     small(ui, "Banners per tone");
     for tone in Tone::ALL {
@@ -1498,18 +1357,22 @@ pub(crate) fn gallery(ui: &mut Ui) {
             ),
             vec2(third, rect.height()),
         );
-        let mut child = ui.new_child(UiBuilder::new().max_rect(r));
-        let shown = PaneFrame::new(("gallery-empty-pane", i))
-            .gutters(Sides::NONE)
-            .seams(Sides::ALL)
-            .ground(if i == 2 {
-                PaneGround::Panel
-            } else {
-                PaneGround::Pane
-            })
-            .margin(Margin::same(crate::ui::points_i8(theme::SM)))
-            .show(&mut child, |ui| empty.show(ui).value);
-        if let Some(action) = shown.value {
+        let s = theme::surfaces(ui.ctx());
+        let fill = if i == 2 { s.panel } else { s.pane };
+        let shown = gallery_pane(
+            ui,
+            r,
+            fill,
+            0.0,
+            Margin::same(crate::ui::points_i8(theme::SM)),
+            |ui| empty.show(ui).value,
+        );
+        // Standard's flush panes part only where they meet; here each sits apart, so its seams
+        // run all the way round.
+        if theme::style() == Style::Standard {
+            paint::rim(ui.painter(), r, CornerRadius::ZERO, s.border);
+        }
+        if let Some(action) = shown {
             ui.ctx()
                 .data_mut(|d| d.insert_temp(last_id, format!("{action:?} in pane {i}")));
         }
@@ -1546,6 +1409,34 @@ pub(crate) fn gallery(ui: &mut Ui) {
     }
 }
 
+/// A pane in the gallery, painted as the window paints its content pane: [`paint::pane`] over
+/// `card` in `fill`, `add` inside `margin` and clipped to the card, and in Deeper the
+/// focused-pane edge at `focus` (0 to 1) over the content, so a header strip cannot hide it.
+fn gallery_pane<R>(
+    ui: &mut Ui,
+    card: Rect,
+    fill: Color32,
+    focus: f32,
+    margin: Margin,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let p = theme::palette(ui.ctx());
+    let painter = ui.painter().clone();
+    let radius = paint::pane(&painter, card, p, fill, 0.0);
+    let mut child = ui.new_child(
+        UiBuilder::new()
+            .max_rect(card - margin)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    let clip = card.shrink(f32::from(radius.nw) * 0.3);
+    child.set_clip_rect(clip.intersect(ui.clip_rect()));
+    let value = add(&mut child);
+    if theme::style() == Style::Deeper {
+        paint::pane_focus(&painter, card, radius, p.focus, focus);
+    }
+    value
+}
+
 /// A miniature window corner: ground, a pane with the table header strip and two rows.
 fn pane_sample(ui: &mut Ui, style: Style, focused: bool) {
     let p = theme::palette(ui.ctx());
@@ -1553,36 +1444,30 @@ fn pane_sample(ui: &mut Ui, style: Style, focused: bool) {
     let m = theme::metrics();
     let (outer, _) = ui.allocate_exact_size(vec2(140.0, 120.0), Sense::hover());
     ui.painter().rect_filled(outer, CornerRadius::ZERO, s.bg);
-    let mut child = ui.new_child(UiBuilder::new().max_rect(outer));
-    PaneFrame::new(("gallery-pane", style, focused))
-        .gutters(Sides::ALL)
-        .focused(focused)
-        .force(ForceState {
-            focus: focused,
-            ..ForceState::default()
-        })
-        .show(&mut child, |ui| {
-            PaneHeader::new(HeaderKind::Table).show(ui, |ui| {
-                column_label(ui, if focused { "Focused" } else { "Graph" });
-            });
-            for i in 0..2 {
-                let (r, _) = ui.allocate_exact_size(
-                    vec2(ui.available_width(), m.history_row_height),
-                    Sense::hover(),
-                );
-                if i == 0 {
-                    ui.painter()
-                        .rect_filled(r, CornerRadius::ZERO, p.selected());
-                }
-                ui.painter().text(
-                    r.left_center() + vec2(theme::MD, 0.0),
-                    Align2::LEFT_CENTER,
-                    format!("{} row", style.label()),
-                    FontId::proportional(m.body_size),
-                    p.text,
-                );
-            }
+    let card = outer.shrink(m.pane_gutter);
+    let focus = f32::from(u8::from(focused));
+    gallery_pane(ui, card, s.pane, focus, Margin::ZERO, |ui| {
+        PaneHeader::new(HeaderKind::Table).show(ui, |ui| {
+            column_label(ui, if focused { "Focused" } else { "Graph" });
         });
+        for i in 0..2 {
+            let (r, _) = ui.allocate_exact_size(
+                vec2(ui.available_width(), m.history_row_height),
+                Sense::hover(),
+            );
+            if i == 0 {
+                ui.painter()
+                    .rect_filled(r, CornerRadius::ZERO, p.selected());
+            }
+            ui.painter().text(
+                r.left_center() + vec2(theme::MD, 0.0),
+                Align2::LEFT_CENTER,
+                format!("{} row", style.label()),
+                FontId::proportional(m.body_size),
+                p.text,
+            );
+        }
+    });
 }
 
 /// The top bars of a window in `style`: tab strip (a tab, the search trigger) and the action bar.
@@ -1710,22 +1595,36 @@ mod tests {
         );
     }
 
+    /// A callout is a group named for its tone that holds its title, text and actions, each
+    /// spoken once, and never its icon glyph (a private-use character screen readers spell out).
     #[test]
-    fn panes_float_over_gutters_only_in_deeper() {
+    fn a_callout_speaks_its_title_and_text_once() {
         let ctx = ctx();
-        let outer = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 100.0));
-        for (style, density, gutter) in [
-            (Style::Standard, Density::Comfortable, 0.0),
-            (Style::Deeper, Density::Comfortable, 6.0),
-            (Style::Deeper, Density::Dense, 4.0),
-        ] {
-            apply(&ctx, style, density);
-            let card = PaneFrame::new("p").card_rect(outer);
-            assert_eq!(
-                card,
-                Rect::from_min_max(pos2(gutter, 0.0), pos2(200.0 - gutter, 100.0 - gutter)),
-                "{style:?} {density:?}"
+        let show = |ui: &mut Ui| {
+            Callout::new(Tone::Warning, "Pushing rewrites the remote branch.")
+                .title("Force push")
+                .action("Learn more")
+                .show(ui);
+        };
+        assert_eq!(
+            super::super::testkit::parts(&ctx, "Warning", show),
+            [
+                "Force push",
+                "Pushing rewrites the remote branch.",
+                "Learn more"
+            ]
+        );
+        for n in super::super::testkit::spoken(&ctx, show) {
+            let Some(label) = n.label.or(n.value) else {
+                continue;
+            };
+            assert!(
+                !label
+                    .chars()
+                    .any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c)),
+                "a glyph is spoken: {label:?}"
             );
+            assert!(!label.starts_with("Force push:"), "spoken twice: {label:?}");
         }
     }
 
@@ -2052,5 +1951,94 @@ mod tests {
         ] {
             assert!(labels.iter().any(|l| l == want), "{want}: {labels:?}");
         }
+    }
+
+    /// A11Y-15: an action card is a button; a card that is one choice of a group (a theme) is a
+    /// radio button, checked or not, never a toggle button.
+    #[test]
+    fn cards_are_buttons_or_choices_never_toggles() {
+        use egui::accesskit::{Role, Toggled};
+
+        use super::super::testkit;
+        let ctx = ctx();
+        let nodes = testkit::spoken(&ctx, |ui| {
+            Card::new()
+                .interactive(true)
+                .label("Clone a repository")
+                .show(ui, |ui| ui.label("Clone"));
+            for (name, on) in [("Midnight theme", true), ("Daylight theme", false)] {
+                Card::new()
+                    .interactive(true)
+                    .selected(on)
+                    .label(name)
+                    .id_salt(name)
+                    .show(ui, |ui| ui.label(name));
+            }
+        });
+        let action = testkit::find(&nodes, "Clone a repository").expect("action card");
+        assert_eq!((action.role, action.toggled), (Role::Button, None));
+        for (name, on) in [
+            ("Midnight theme", Toggled::True),
+            ("Daylight theme", Toggled::False),
+        ] {
+            let choice = testkit::find(&nodes, name).expect(name);
+            assert_eq!(
+                (choice.role, choice.toggled),
+                (Role::RadioButton, Some(on)),
+                "{name}"
+            );
+        }
+    }
+
+    /// A grid of choice cards is one Tab stop; the arrows move between the cards, by one to the
+    /// side and by a row up and down.
+    #[test]
+    fn a_card_grid_is_one_tab_stop_with_arrows_inside() {
+        use egui::Key;
+
+        use super::super::testkit;
+        let ctx = ctx();
+        let names = ["A", "B", "C", "D", "E", "F"];
+        let mut show = |ui: &mut Ui| {
+            Button::new("Before").show(ui);
+            let grid = super::super::row::Roving::new(ui.ctx(), "test-grid", 6, Some(1)).columns(3);
+            for row in names.chunks(3).enumerate() {
+                ui.horizontal(|ui| {
+                    for (j, name) in row.1.iter().enumerate() {
+                        Card::new()
+                            .interactive(true)
+                            .selected(row.0 * 3 + j == 1)
+                            .roving(grid, row.0 * 3 + j)
+                            .label(*name)
+                            .id_salt(*name)
+                            .show(ui, |ui| ui.label(*name));
+                    }
+                });
+            }
+            Button::new("After").show(ui);
+        };
+        ctx.enable_accesskit();
+        run(&ctx, Vec::new(), &mut show);
+        let mut path = Vec::new();
+        for k in [
+            Key::Tab,
+            Key::Tab,
+            Key::ArrowRight,
+            Key::ArrowDown,
+            Key::ArrowLeft,
+            Key::ArrowUp,
+            Key::Tab,
+        ] {
+            run(&ctx, testkit::key(k), &mut show);
+            let out = run(&ctx, Vec::new(), &mut show);
+            let update = out.platform_output.accesskit_update.expect("accesskit");
+            let label = update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == update.focus)
+                .and_then(|(_, n)| n.label().map(str::to_owned));
+            path.push(label.unwrap_or_default());
+        }
+        assert_eq!(path, ["Before", "B", "C", "F", "E", "B", "After"]);
     }
 }

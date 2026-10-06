@@ -61,7 +61,8 @@ fn blend(a: Fill, b: Fill, t: f32) -> Fill {
 }
 
 /// A control's kit tooltip: why it is disabled, else `tooltip` with the shortcut's keys as
-/// keycaps; nothing when there is no text.
+/// keycaps; nothing when there is no text. A disabled control also tells screen readers it is
+/// unavailable and why ([`super::a11y::unavailable`]), so call this after its `widget_info`.
 pub(super) fn tip(
     response: Response,
     enabled: bool,
@@ -69,6 +70,9 @@ pub(super) fn tip(
     reason: Option<&str>,
     shortcut: Option<Command>,
 ) -> Response {
+    if !enabled {
+        super::a11y::unavailable(&response, reason);
+    }
     let text = if enabled { tooltip } else { reason.or(tooltip) };
     match (text, shortcut) {
         (None, _) => response,
@@ -881,7 +885,7 @@ pub struct ToolButton {
     label: String,
     tooltip: Option<String>,
     badge: Option<String>,
-    toggled: bool,
+    toggled: Option<bool>,
     operation: Operation,
     enabled: bool,
     disabled_reason: Option<String>,
@@ -898,7 +902,7 @@ impl ToolButton {
             label: label.into(),
             tooltip: None,
             badge: None,
-            toggled: false,
+            toggled: None,
             operation: Operation::Idle,
             enabled: true,
             disabled_reason: None,
@@ -917,8 +921,10 @@ impl ToolButton {
         self.badge = Some(text.into());
         self
     }
+    /// The tool switches something on and off (a panel), and it is `on` now: it is announced
+    /// as a toggle button, pressed or not. Without it the tool is a plain button.
     pub fn toggled(mut self, on: bool) -> Self {
-        self.toggled = on;
+        self.toggled = Some(on);
         self
     }
     /// The tool's operation is running: a spinner replaces the icon (`operation(Running)`).
@@ -984,7 +990,7 @@ impl ToolButton {
                 .layout_no_wrap(self.label.clone(), caption_font, Color32::PLACEHOLDER);
         let glyph = ui.painter().layout_no_wrap(
             self.glyph.clone(),
-            theme::icon_font(icon_size, self.toggled && enabled),
+            theme::icon_font(icon_size, self.toggled == Some(true) && enabled),
             Color32::PLACEHOLDER,
         );
         let badge = self.badge.as_ref().map(|b| {
@@ -1014,7 +1020,7 @@ impl ToolButton {
         if ui.is_rect_visible(rect) {
             let painter = super::content_painter(ui);
             let radius = CornerRadius::same(m.radius);
-            if self.toggled {
+            if self.toggled == Some(true) {
                 // A disabled toggled tool keeps its state on the neutral disabled fill.
                 let ground = if enabled {
                     p.accent_tint()
@@ -1024,7 +1030,7 @@ impl ToolButton {
                 painter.rect_filled(rect, radius, ground);
             }
             let lit = st.hover.max(st.press);
-            if lit > 0.0 && !self.toggled {
+            if lit > 0.0 && self.toggled != Some(true) {
                 if style == Style::Deeper {
                     let body = blend(s.raised_hover, s.raised_pressed, st.press);
                     let mut faded = painter.clone();
@@ -1057,7 +1063,7 @@ impl ToolButton {
             } else {
                 p.disabled_text
             };
-            let icon_color = if self.toggled && enabled {
+            let icon_color = if self.toggled == Some(true) && enabled {
                 p.accent
             } else {
                 text_color
@@ -1108,8 +1114,10 @@ impl ToolButton {
             paint_scaled(&painter, shapes, rect.center(), scale);
         }
         let name = self.label;
-        response
-            .widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, self.toggled, &name));
+        response.widget_info(|| match self.toggled {
+            Some(on) => WidgetInfo::selected(WidgetType::Button, enabled, on, &name),
+            None => WidgetInfo::labeled(WidgetType::Button, enabled, &name),
+        });
         report_busy(&ctx, response.id, self.operation);
         tip(
             response,
@@ -2142,5 +2150,27 @@ mod tests {
             );
         }
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+    }
+
+    /// A11Y-15: a tool is a plain button unless it switches something on and off.
+    #[test]
+    fn a_tool_is_a_toggle_only_when_it_switches_something() {
+        use egui::accesskit::Toggled;
+
+        use super::super::testkit;
+        let ctx = testkit::ctx();
+        let nodes = testkit::spoken(&ctx, |ui| {
+            ToolButton::new(icon::ARROWS_CLOCKWISE, "Fetch").show(ui);
+            ToolButton::new(icon::STACK, "Stashes")
+                .toggled(true)
+                .show(ui);
+            ToolButton::new(icon::SIDEBAR, "Sidebar")
+                .toggled(false)
+                .show(ui);
+        });
+        let toggled = |label| testkit::find(&nodes, label).expect(label).toggled;
+        assert_eq!(toggled("Fetch"), None, "Fetch is a plain button");
+        assert_eq!(toggled("Stashes"), Some(Toggled::True));
+        assert_eq!(toggled("Sidebar"), Some(Toggled::False));
     }
 }

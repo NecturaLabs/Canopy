@@ -1353,15 +1353,19 @@ impl<'a> Dialog<'a> {
             Layer::Dialog,
             Margin::same(crate::ui::points_i8(pad)),
             |ui| {
-                // The card's own node, so its controls are announced inside the dialog.
-                ctx.accesskit_node_builder(ui.id(), |n| {
-                    n.set_role(if destructive {
+                // The card's own node: its controls are announced as its parts, and screen
+                // readers keep to it while it is open (A11Y-7). The gallery's inline card is not
+                // modal.
+                if force.is_some() {
+                    let role = if destructive {
                         egui::accesskit::Role::AlertDialog
                     } else {
                         egui::accesskit::Role::Dialog
-                    });
-                    n.set_label(spoken.as_str());
-                });
+                    };
+                    super::a11y::group(ui, role, &spoken);
+                } else {
+                    super::a11y::dialog(ui, &spoken, destructive);
+                }
                 ui.set_width(w - 2.0 * pad);
                 // Stacked whatever the caller's layout is.
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
@@ -1548,7 +1552,6 @@ impl<'a> Dialog<'a> {
                             pos2((row.right() - last_w).max(row.left()), row.top()),
                             row.max,
                         );
-                        let mut cancel_focus = false;
                         let mut cancel_id = None;
                         let mut confirm_id = None;
                         let buttons = ui.scope_builder(
@@ -1570,7 +1573,6 @@ impl<'a> Dialog<'a> {
                                     if r.clicked() {
                                         result = DialogResult::Cancel;
                                     }
-                                    cancel_focus = r.has_focus();
                                     cancel_id = Some(r.id);
                                 }
                                 if let Some(label) = &footer.confirm {
@@ -1626,6 +1628,13 @@ impl<'a> Dialog<'a> {
                                 ctx.memory_mut(|m| m.request_focus(t));
                             }
                         }
+                        // Enter confirms only when no control has focus (or Confirm itself has
+                        // it): a focused button, checkbox, select or field answers Enter on its
+                        // own, and must not also confirm the dialog (the credential prompt's
+                        // "Show" must not submit the password).
+                        let focus_free = ctx
+                            .memory(egui::Memory::focused)
+                            .is_none_or(|f| Some(f) == confirm_id);
                         if result == DialogResult::Open
                             && force.is_none()
                             && !destructive
@@ -1634,8 +1643,7 @@ impl<'a> Dialog<'a> {
                             && footer.confirm.is_some()
                             && footer.confirm_enabled
                             && !footer.confirm_loading
-                            && !cancel_focus
-                            && !ctx.egui_wants_keyboard_input()
+                            && focus_free
                         {
                             result = DialogResult::Confirm;
                         }
@@ -2341,6 +2349,87 @@ mod tests {
 
     #[test]
     fn dialogs_report_their_role_and_title() {
+        dialog_owns_its_controls_and_is_modal();
+        dialog_reports_role_and_title();
+    }
+
+    /// REVIEW-KIT-1: Enter on a focused body control (the credential prompt's "Show" eye, a
+    /// Browse button) answers that control only; it does not also confirm the dialog.
+    #[test]
+    fn enter_on_a_body_control_does_not_confirm() {
+        let ctx = context();
+        let mut browsed = 0;
+        let mut show = |ui: &mut Ui| {
+            Dialog::new("clone")
+                .title("Clone a repository")
+                .initial_focus(InitialFocus::Body)
+                .body(|ui| {
+                    if Button::new("Browse").id_salt("browse").show(ui).clicked() {
+                        browsed += 1;
+                    }
+                })
+                .footer(|f| {
+                    f.cancel().confirm("Clone");
+                })
+                .show(ui.ctx())
+        };
+        let mut result = DialogResult::Open;
+        for _ in 0..3 {
+            let _ = run(&ctx, Vec::new(), |ui| result = show(ui));
+        }
+        // Tab to the body's button (focus starts nowhere: the body asked for it).
+        let _ = run(&ctx, key(Key::Tab), |ui| result = show(ui));
+        let _ = run(&ctx, Vec::new(), |ui| result = show(ui));
+        let _ = run(&ctx, key(Key::Enter), |ui| result = show(ui));
+        assert_eq!(
+            result,
+            DialogResult::Open,
+            "Enter on Browse confirmed the dialog"
+        );
+        assert_eq!(browsed, 1, "Enter pressed Browse");
+    }
+
+    /// A11Y-7: the dialog node owns its controls (they are its children, not the window's) and
+    /// is modal, so a screen reader keeps to it.
+    fn dialog_owns_its_controls_and_is_modal() {
+        let ctx = context();
+        ctx.enable_accesskit();
+        let mut out = None;
+        for _ in 0..2 {
+            out = Some(run(&ctx, Vec::new(), |ui| {
+                let _ = Dialog::new("modal")
+                    .title("Delete tag 'v1'?")
+                    .destructive()
+                    .footer(|f| {
+                        f.cancel().confirm("Delete tag");
+                    })
+                    .show(ui.ctx());
+            }));
+        }
+        let nodes = out
+            .and_then(|o| o.platform_output.accesskit_update)
+            .expect("accesskit")
+            .nodes;
+        let (_, dialog) = nodes
+            .iter()
+            .find(|(_, n)| n.role() == egui::accesskit::Role::AlertDialog)
+            .expect("the dialog");
+        assert!(dialog.is_modal(), "the dialog is modal");
+        // Its controls are below it in the tree, however deep.
+        let mut below = Vec::new();
+        let mut stack: Vec<_> = dialog.children().to_vec();
+        while let Some(id) = stack.pop() {
+            if let Some((_, n)) = nodes.iter().find(|(i, _)| *i == id) {
+                below.extend(n.label().map(str::to_owned));
+                stack.extend(n.children().iter().copied());
+            }
+        }
+        for control in ["Cancel", "Delete tag"] {
+            assert!(below.iter().any(|l| l == control), "{control} in {below:?}");
+        }
+    }
+
+    fn dialog_reports_role_and_title() {
         let ctx = context();
         ctx.enable_accesskit();
         let mut out = None;

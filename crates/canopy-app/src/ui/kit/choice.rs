@@ -312,18 +312,18 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
             .filter(|i| live(*i))
             .or_else(|| (0..rects.len()).find(|i| live(*i)));
         let mut responses = Vec::with_capacity(rects.len());
-        let inner = ui.new_child(
-            UiBuilder::new()
-                .max_rect(track)
-                .accessibility_parent(group_id),
-        );
+        let inner = ui.new_child(UiBuilder::new().max_rect(track));
+        group_node(&inner, Role::RadioGroup, &self.label, enabled);
         for (i, rect) in rects.iter().enumerate() {
             let sense = match (live(i), stop == Some(i)) {
                 (false, _) => Sense::hover(),
                 (true, true) => Sense::click(),
                 (true, false) => Sense::CLICK,
             };
-            responses.push(inner.interact(*rect, group_id.with(i), sense));
+            let r = inner.interact(*rect, group_id.with(i), sense);
+            // Every segment's node now, in order (only the Tab stop would get one here).
+            ctx.accesskit_node_builder(r.id, |_| {});
+            responses.push(r);
         }
 
         let mut changed = false;
@@ -474,7 +474,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                 .map(|(_, c)| *c);
             tip_for(r, ok, tip, reason, shortcut);
         }
-        let mut group = group_node(ui, group_id, track, &self.label, enabled);
+        let mut group = ui.interact(track, group_id, Sense::hover());
         if changed {
             group.mark_changed();
         }
@@ -653,7 +653,8 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
         let mut responses = Vec::with_capacity(rects.len());
         let mut closes = Vec::new();
         let mut closed = None;
-        let inner = ui.new_child(UiBuilder::new().max_rect(row).accessibility_parent(list_id));
+        let inner = ui.new_child(UiBuilder::new().max_rect(row));
+        group_node(&inner, Role::TabList, &self.label, enabled);
         for (i, rect) in rects.iter().enumerate() {
             let sense = match (enabled, chosen.unwrap_or(0) == i) {
                 (false, _) => Sense::hover(),
@@ -661,6 +662,8 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
                 (true, false) => Sense::CLICK,
             };
             let r = inner.interact(*rect, list_id.with(i), sense);
+            // Every tab's node now, in order (only the Tab stop would get one here).
+            ctx.accesskit_node_builder(r.id, |_| {});
             if self.closable && enabled && r.clicked_by(PointerButton::Middle) {
                 closed = Some(i);
             }
@@ -826,8 +829,6 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
             });
         }
         let mut list = ui.interact(row, list_id, Sense::hover());
-        list.widget_info(|| WidgetInfo::labeled(WidgetType::Other, enabled, &self.label));
-        ctx.accesskit_node_builder(list_id, |n| n.set_role(Role::TabList));
         if changed {
             list.mark_changed();
         }
@@ -1153,6 +1154,25 @@ mod tests {
         let compact = texts(true);
         assert!(compact.iter().any(|t| t == "Changes"), "{compact:?}");
         assert!(!compact.iter().any(|t| t == "History"), "{compact:?}");
+    }
+
+    /// A11Y-4: a segmented control and a tab list hold their options (they were empty groups,
+    /// with the options elsewhere in the tree).
+    #[test]
+    fn groups_hold_their_options() {
+        let ctx = testkit::ctx();
+        let mut v = 1_u8;
+        let names: Vec<String> = OPTS.iter().map(|(_, n)| (*n).to_owned()).collect();
+        let segments = testkit::parts(&ctx, "View", |ui| {
+            Segmented::new(&mut v, &OPTS).label("View").show(ui);
+        });
+        assert_eq!(segments, names, "the segments are the group's parts");
+        let tabs = testkit::parts(&ctx, "Documents", |ui| {
+            UnderlineTabs::new(&mut v, &OPTS)
+                .label("Documents")
+                .show(ui);
+        });
+        assert_eq!(tabs, names, "the tabs are the tab list's parts");
     }
 
     #[test]

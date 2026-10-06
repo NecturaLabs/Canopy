@@ -4,9 +4,9 @@
 //! Each kit module with components adds `pub(crate) fn gallery(ui: &mut Ui)` and one row in
 //! [`SECTIONS`]. A section is drawn twice side by side, on the content ground (`pane`) and on the
 //! chrome (`panel`), so every component is seen on both. Force states with `show_forced`.
-//! `--gallery-page N` scrolls down N window heights so the screenshot script can capture a page
-//! at a time; a page past the end shows the last one, and every page says which it is ("Page 3
-//! of 15", bottom right).
+//! `--gallery-page N` scrolls down N pages (the window less the strip at its bottom) so the
+//! screenshot script can capture a page at a time; a page past the end shows the last one, and
+//! the strip says which page it is ("Page 4 of 16" for `--gallery-page 3`), below the content.
 
 use egui::{
     Align2, Color32, CornerRadius, FontId, Id, Order, Rect, RichText, Sense, Stroke, StrokeKind,
@@ -42,6 +42,11 @@ pub const SECTIONS: &[Section] = &[
 
 const MAX_WIDTH: f32 = 1360.0;
 
+/// The strip along the window's bottom that holds the page label, clear of the content.
+fn strip_height() -> f32 {
+    theme::metrics().small_size + 2.0 * theme::XS + 2.0 * theme::SM
+}
+
 /// Paints the gallery over the whole window, scrolled down `page` window heights (no further than
 /// its end).
 pub fn show(ctx: &egui::Context, page: usize) {
@@ -49,7 +54,8 @@ pub fn show(ctx: &egui::Context, page: usize) {
     // The content's and the viewport's height last frame: a page past the end is the last page.
     let size_key = Id::new("canopy-gallery-size");
     let size: Option<(f32, f32)> = ctx.data(|d| d.get_temp(size_key));
-    let offset = page_offset(page, size, screen.height());
+    let viewport = (screen.height() - strip_height()).max(0.0);
+    let offset = page_offset(page, size, viewport);
     egui::Area::new(Id::new("canopy-gallery"))
         .order(Order::Foreground)
         .fixed_pos(screen.min)
@@ -60,6 +66,8 @@ pub fn show(ctx: &egui::Context, page: usize) {
             ui.set_max_size(screen.size());
             let out = egui::ScrollArea::vertical()
                 .id_salt("canopy-gallery-scroll")
+                .max_height(viewport)
+                .auto_shrink([false, false])
                 .vertical_scroll_offset(offset)
                 .show(ui, |ui| {
                     let width = ui.available_width().min(MAX_WIDTH);
@@ -81,17 +89,18 @@ pub fn show(ctx: &egui::Context, page: usize) {
         });
 }
 
-/// Where page `page` starts: `page` viewports down, but no further than the last full viewport
-/// of the content (`size`: its height and the viewport's, once known).
-fn page_offset(page: usize, size: Option<(f32, f32)>, screen_height: f32) -> f32 {
-    let wanted = crate::ui::count_f32(page) * screen_height;
+/// Where page `page` (from 0) starts: `page` viewports down, but no further than the last full
+/// viewport of the content (`size`: its height and the viewport's, once known).
+fn page_offset(page: usize, size: Option<(f32, f32)>, viewport: f32) -> f32 {
+    let wanted = crate::ui::count_f32(page) * viewport;
     match size {
         Some((content, viewport)) => wanted.min((content - viewport).max(0.0)),
         None => wanted,
     }
 }
 
-/// "Page 3 of 15" at the bottom right, so a screenshot says where in the gallery it is.
+/// "Page 4 of 16" in the strip at the bottom right, under the content, so a screenshot says where
+/// in the gallery it is (pages count from 1).
 fn page_label(ui: &Ui, screen: Rect, offset: f32, (content, viewport): (f32, f32)) {
     if viewport <= 0.0 {
         return;
@@ -99,15 +108,14 @@ fn page_label(ui: &Ui, screen: Rect, offset: f32, (content, viewport): (f32, f32
     let m = theme::metrics();
     let p = theme::palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
-    let pages = ((content - viewport).max(0.0) / viewport).ceil() + 1.0;
-    let at = (offset / viewport).ceil().min(pages - 1.0);
-    let text = format!("Page {at} of {}", pages - 1.0);
+    let (at, pages) = page_of(offset, content, viewport);
+    let text = format!("Page {at} of {pages}");
     let g = ui
         .painter()
         .layout_no_wrap(text, FontId::proportional(m.small_size), p.text_dim);
     let pad = vec2(theme::SM, theme::XS);
     let rect = Rect::from_min_size(
-        screen.right_bottom() - g.size() - pad * 2.0 - Vec2::splat(theme::LG),
+        screen.right_bottom() - g.size() - pad * 2.0 - vec2(theme::LG, theme::SM),
         g.size() + pad * 2.0,
     );
     let painter = ui.painter();
@@ -119,6 +127,16 @@ fn page_label(ui: &Ui, screen: Rect, offset: f32, (content, viewport): (f32, f32
         StrokeKind::Inside,
     );
     painter.galley(rect.min + pad, g, p.text_dim);
+}
+
+/// The page (from 1) the gallery shows at `offset`, and how many there are.
+fn page_of(offset: f32, content: f32, viewport: f32) -> (usize, usize) {
+    let rest = ((content - viewport).max(0.0) / viewport).ceil();
+    let at = (offset / viewport).ceil().min(rest);
+    (
+        crate::ui::saturate_usize(at) + 1,
+        crate::ui::saturate_usize(rest) + 1,
+    )
 }
 
 fn page_content(ui: &mut Ui) {
@@ -331,10 +349,24 @@ fn swatches<'a>(ui: &mut Ui, items: impl Iterator<Item = (&'a str, Fill)>) {
     let p = theme::palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
     let m = theme::metrics();
+    let items: Vec<(&str, Fill)> = items.collect();
+    // Every swatch as wide as the longest name (or value) needs, so none runs into the next.
+    let widest = items
+        .iter()
+        .map(|(name, fill)| {
+            let width = |text: String, font: FontId| {
+                ui.painter().layout_no_wrap(text, font, p.text_dim).size().x
+            };
+            let value = if fill.is_flat() { 6 } else { 13 };
+            width((*name).to_owned(), FontId::proportional(m.micro_size))
+                .max(width("0".repeat(value), FontId::monospace(m.micro_size)))
+        })
+        .fold(0.0_f32, f32::max);
+    let swatch_w = (28.0 + 5.0 + widest + theme::SM).max(118.0);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(theme::XS, theme::XS);
         for (name, fill) in items {
-            let (rect, _) = ui.allocate_exact_size(vec2(118.0, 40.0), Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(vec2(swatch_w, 40.0), Sense::hover());
             let chip = Rect::from_min_size(rect.min, vec2(28.0, rect.height()));
             paint::fill(ui.painter(), chip, CornerRadius::same(m.radius_sm), fill);
             ui.painter().rect_stroke(
@@ -531,5 +563,23 @@ mod tests {
         assert_eq!(page_offset(3, Some((10000.0, 900.0)), 900.0), 2700.0);
         assert_eq!(page_offset(16, Some((10000.0, 900.0)), 900.0), 9100.0);
         assert_eq!(page_offset(16, Some((500.0, 900.0)), 900.0), 0.0);
+    }
+
+    /// QVIS-3, QV2-8: pages count from 1 and the last page is the count, however far past the end
+    /// the screenshot script asks.
+    #[test]
+    fn pages_are_labelled_from_one() {
+        // 10000 tall in a 900 viewport: twelve pages (the last stops at 9100).
+        assert_eq!(page_of(0.0, 10000.0, 900.0), (1, 12));
+        assert_eq!(page_of(2700.0, 10000.0, 900.0), (4, 12));
+        assert_eq!(
+            page_of(
+                page_offset(40, Some((10000.0, 900.0)), 900.0),
+                10000.0,
+                900.0
+            ),
+            (12, 12)
+        );
+        assert_eq!(page_of(0.0, 500.0, 900.0), (1, 1), "all on one page");
     }
 }

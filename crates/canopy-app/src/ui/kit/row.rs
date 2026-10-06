@@ -170,6 +170,10 @@ struct FrameSpec {
     joined: (bool, bool),
     ground: Option<Color32>,
     read_only: bool,
+    /// Whether Tab stops on the row (false: a palette result, reached by the arrows only).
+    focusable: bool,
+    /// The list's single Tab stop and the row's place in it.
+    roving: Option<(Roving, usize)>,
     force: Option<ForceState>,
 }
 
@@ -183,16 +187,22 @@ fn frame(ui: &mut Ui, spec: &FrameSpec) -> Frame {
         width = theme::metrics().sidebar_width;
     }
     let rect = ui.allocate_space(vec2(width, spec.height)).1;
+    let id = ui.id().with(spec.id_salt);
+    // In a list with one Tab stop only that row (or the one with focus) takes focus from Tab.
+    let tab_stop = enabled
+        && match spec.roving {
+            Some((list, index)) => list.takes_tab(ui.ctx(), index, Some(id)),
+            None => spec.focusable,
+        };
     // A read-only row takes focus (to be read, or copied from) but no clicks, hover or press.
     let live = enabled && !spec.read_only;
-    let sense = if live {
-        Sense::click()
-    } else if enabled {
-        Sense::focusable_noninteractive()
-    } else {
-        Sense::hover()
+    let sense = match (live, tab_stop) {
+        (true, true) => Sense::click(),
+        (true, false) => Sense::CLICK,
+        (false, true) => Sense::focusable_noninteractive(),
+        (false, false) => Sense::hover(),
     };
-    let response = ui.interact(rect, ui.id().with(spec.id_salt), sense);
+    let response = ui.interact(rect, id, sense);
     let f = spec.force.unwrap_or_default();
     // The pointer anywhere over the row (its trailing actions included) hovers it.
     let hovered = live && (f.hover || ui.rect_contains_pointer(rect));
@@ -363,6 +373,15 @@ fn with_tip(
     }
 }
 
+/// Whether the widget with keyboard focus lay inside `area` of `ui`'s layer last frame (a row's
+/// actions, which have no ids of their own the row knows).
+fn focus_within(ui: &Ui, area: Rect) -> bool {
+    let ctx = ui.ctx();
+    ctx.memory(egui::Memory::focused)
+        .and_then(|id| ctx.read_response(id))
+        .is_some_and(|r| r.layer_id == ui.layer_id() && area.contains_rect(r.rect))
+}
+
 // ------------------------------------------------------------------------------------ ListRow
 
 /// A row's hover-revealed actions.
@@ -390,6 +409,8 @@ pub struct ListRow<'a> {
     badge: Option<Badge>,
     widgets: Option<(f32, Actions<'a>)>,
     read_only: bool,
+    focusable: bool,
+    roving: Option<(Roving, usize)>,
     indent: f32,
     tooltip: Option<String>,
     disabled_reason: Option<String>,
@@ -428,6 +449,8 @@ impl<'a> ListRow<'a> {
             badge: None,
             widgets: None,
             read_only: false,
+            focusable: true,
+            roving: None,
             indent: 0.0,
             tooltip: None,
             disabled_reason: None,
@@ -471,6 +494,18 @@ impl<'a> ListRow<'a> {
     /// The row can be focused and read but not clicked: no hover, no press.
     pub fn read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
+        self
+    }
+    /// Whether Tab stops on the row (default on). Off for rows the arrows reach from a field that
+    /// keeps focus (the palette's results).
+    pub fn focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
+    }
+    /// The row is row `index` of a list with one Tab stop ([`Roving`]): Tab stops on one row of
+    /// the list and the arrows move between its rows.
+    pub fn roving(mut self, list: Roving, index: usize) -> Self {
+        self.roving = Some((list, index));
         self
     }
     pub fn selected(mut self, selected: bool) -> Self {
@@ -556,6 +591,8 @@ impl<'a> ListRow<'a> {
             joined: self.joined,
             ground: self.ground,
             read_only: self.read_only,
+            focusable: self.focusable,
+            roving: self.roving,
             force: self.force,
         }
     }
@@ -569,6 +606,11 @@ impl<'a> ListRow<'a> {
     pub fn show_with(mut self, ui: &mut Ui, paint: impl FnOnce(&RowCtx, &Painter)) -> Response {
         let m = theme::metrics();
         let f = frame(ui, &self.spec());
+        if let Some((list, index)) = self.roving
+            && f.enabled
+        {
+            list.row(ui, &f.response, index, false);
+        }
         let rc = f.ctx;
         let cy = rc.rect.center().y;
         let actions = self.actions.take();
@@ -660,25 +702,38 @@ impl<'a> ListRow<'a> {
             add(&mut child);
         }
         if let Some(add) = actions {
+            let area = Rect::from_min_max(
+                pos2(rc.content.right() - actions_w, f.rect.top()),
+                pos2(rc.content.right(), f.rect.bottom()),
+            );
+            // Tab goes from the row to its actions: they stay while one of them has focus, or
+            // the focus they hold would vanish with them (A11Y-2).
+            let action_focused = focus_within(ui, area);
             let shown = f.enabled
-                && (rc.hover > 0.0 || self.selected || f.response.has_focus() || f.cursor);
-            let reveal = anim::ease_bool(
-                ui.ctx(),
-                f.response.id.with("kit-row-actions"),
-                shown,
-                motion::FAST,
-                motion::FAST,
+                && (rc.hover > 0.0
+                    || self.selected
+                    || f.response.has_focus()
+                    || f.cursor
+                    || action_focused);
+            let reveal = if action_focused {
+                1.0
+            } else {
+                anim::ease_bool(
+                    ui.ctx(),
+                    f.response.id.with("kit-row-actions"),
+                    shown,
+                    motion::FAST,
+                    motion::FAST,
+                )
+            };
+            // The child is made whether or not the actions show, so the widgets after the row
+            // keep their automatic ids (and their focus) as the actions come and go.
+            let mut child = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(area)
+                    .layout(Layout::right_to_left(Align::Center)),
             );
             if reveal > 0.0 {
-                let area = Rect::from_min_max(
-                    pos2(rc.content.right() - actions_w, f.rect.top()),
-                    pos2(rc.content.right(), f.rect.bottom()),
-                );
-                let mut child = ui.new_child(
-                    UiBuilder::new()
-                        .max_rect(area)
-                        .layout(Layout::right_to_left(Align::Center)),
-                );
                 child.multiply_opacity(reveal);
                 child.spacing_mut().item_spacing.x = 2.0;
                 add(&mut child);
@@ -729,6 +784,7 @@ pub struct TreeRow<'a> {
     icon: Option<String>,
     icon_tone: Option<Tone>,
     label: String,
+    accessible: Option<String>,
     trailing: Option<String>,
     selected: bool,
     cursor: bool,
@@ -736,6 +792,7 @@ pub struct TreeRow<'a> {
     toggle_on_click: bool,
     tooltip: Option<String>,
     disabled_reason: Option<String>,
+    roving: Option<(Roving, usize)>,
     force: Option<ForceState>,
 }
 
@@ -759,6 +816,7 @@ impl<'a> TreeRow<'a> {
             icon: None,
             icon_tone: None,
             label: String::new(),
+            accessible: None,
             trailing: None,
             selected: false,
             cursor: false,
@@ -766,8 +824,14 @@ impl<'a> TreeRow<'a> {
             toggle_on_click: false,
             tooltip: None,
             disabled_reason: None,
+            roving: None,
             force: None,
         }
+    }
+    /// The row is row `index` of a tree with one Tab stop ([`Roving`]).
+    pub fn roving(mut self, list: Roving, index: usize) -> Self {
+        self.roving = Some((list, index));
+        self
     }
     /// Colours the icon by `tone` (a CI check's red, amber or green).
     pub fn icon_tone(mut self, tone: Tone) -> Self {
@@ -799,6 +863,12 @@ impl<'a> TreeRow<'a> {
     }
     pub fn label(mut self, text: impl Into<String>) -> Self {
         self.label = text.into();
+        self
+    }
+    /// What screen readers call the row when the painted label has more than words in it (a
+    /// remote's name with its host's icon glyph).
+    pub fn accessible_name(mut self, name: impl Into<String>) -> Self {
+        self.accessible = Some(name.into());
         self
     }
     pub fn trailing(mut self, text: impl Into<String>) -> Self {
@@ -845,6 +915,8 @@ impl<'a> TreeRow<'a> {
             joined: (false, false),
             ground: None,
             read_only: false,
+            focusable: true,
+            roving: self.roving,
             force: self.force,
         };
         let f = frame(ui, &spec);
@@ -860,7 +932,9 @@ impl<'a> TreeRow<'a> {
         );
         let mut toggled = false;
         if has_children && f.enabled {
-            let hit = ui.interact(chevron, id.with("kit-tree-chevron"), Sense::click());
+            // The pointer's target only: the row itself opens and closes from the keyboard, so
+            // the chevron is no Tab stop and no unnamed node of its own (A11Y-5, A11Y-6).
+            let hit = ui.interact(chevron, id.with("kit-tree-chevron"), Sense::CLICK);
             if hit.clicked() {
                 toggled = true;
             }
@@ -872,12 +946,18 @@ impl<'a> TreeRow<'a> {
             toggled = true;
         }
         let mut nav = None;
+        if let Some((list, index)) = self.roving
+            && f.enabled
+        {
+            list.row(ui, &f.response, index, true);
+        }
         if f.response.has_focus() && f.enabled {
             ui.memory_mut(|mem| {
                 mem.set_focus_lock_filter(
                     id,
                     egui::EventFilter {
                         horizontal_arrows: true,
+                        vertical_arrows: self.roving.is_some(),
                         ..Default::default()
                     },
                 );
@@ -986,17 +1066,21 @@ impl<'a> TreeRow<'a> {
         if toggled {
             response.mark_changed();
         }
+        let spoken = self.accessible.as_deref().unwrap_or(&self.label);
         row_widget_info(
             ui,
             &response,
             f.enabled,
             self.selected,
-            &self.label,
+            spoken,
             egui::accesskit::Role::TreeItem,
         );
         if has_children {
-            ui.ctx()
-                .accesskit_node_builder(response.id, |n| n.set_expanded(open_now));
+            let name = super::a11y::disclosure_name(spoken, open_now);
+            ui.ctx().accesskit_node_builder(response.id, |n| {
+                n.set_expanded(open_now);
+                n.set_label(name);
+            });
         }
         let response = with_tip(
             response,
@@ -1149,11 +1233,13 @@ impl<'a> Disclosure<'a> {
         let r = row.show(ui);
         *self.open = open;
         // A disclosure is a collapsing header, not an item of a tree.
+        let name = super::a11y::disclosure_name(&self.label, open);
         r.response
-            .widget_info(|| WidgetInfo::labeled(WidgetType::CollapsingHeader, true, &self.label));
+            .widget_info(|| WidgetInfo::labeled(WidgetType::CollapsingHeader, true, &name));
         ui.ctx().accesskit_node_builder(r.response.id, |n| {
             n.clear_selected();
             n.set_expanded(open);
+            n.set_label(name.as_str());
         });
         let value = tree_children(ui, id, open, 0, |ui| {
             ui.add_space(theme::XS);
@@ -1361,10 +1447,12 @@ impl<'a> SectionHeader<'a> {
             false
         };
         if collapsible {
-            response.widget_info(|| {
-                WidgetInfo::labeled(WidgetType::CollapsingHeader, true, &self.title)
+            let name = super::a11y::disclosure_name(&self.title, open_now);
+            response.widget_info(|| WidgetInfo::labeled(WidgetType::CollapsingHeader, true, &name));
+            ctx.accesskit_node_builder(response.id, |n| {
+                n.set_expanded(open_now);
+                n.set_label(name.as_str());
             });
-            ctx.accesskit_node_builder(response.id, |n| n.set_expanded(open_now));
         } else {
             response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &self.title));
         }
@@ -1427,6 +1515,221 @@ impl Selection {
             index > 0 && self.rows.contains(&(index - 1)),
             self.rows.contains(&(index + 1)),
         )
+    }
+}
+
+// ------------------------------------------------------------------------------------- Roving
+
+/// One Tab stop for a list (design spec 4.16): Tab stops on one row of the list, the arrows move
+/// between its rows, and the next Tab leaves the list, however long it is. The stop is the row
+/// the user was last on, else [`Roving::new`]'s `initial` row, else the first; with
+/// [`Roving::follow`] it is the selected row, and focus follows the selection while it is in the
+/// list. Make one each frame before the rows and pass it to each with [`ListRow::roving`] or
+/// [`TreeRow::roving`]; [`Roving::moved`] says where an arrow went, for views whose selection
+/// moves with the keyboard. Rows that are not shown (a virtualised list) cost nothing: when the
+/// stop is scrolled away the first row shown stands in for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Roving {
+    id: Id,
+    len: usize,
+    columns: usize,
+}
+
+/// What a [`Roving`] list keeps between frames.
+#[derive(Debug, Clone, Copy, Default)]
+struct RovingState {
+    /// The row Tab stops on.
+    stop: usize,
+    /// The user has been on the list: `stop` is theirs, not the caller's `initial`.
+    visited: bool,
+    /// The row that last had focus, and its widget.
+    focused: Option<(usize, Id)>,
+    /// The row to give focus to when it is next shown.
+    pending: Option<usize>,
+    /// The row an arrow moved from and to this frame.
+    moved: Option<(usize, usize)>,
+    /// Whether the stop row was shown this frame, and the frame before.
+    stop_shown: bool,
+    stop_shown_before: bool,
+    /// A row stood in for the stop this frame (the stop was not shown the frame before).
+    stand_in: bool,
+}
+
+impl Roving {
+    /// The list `id_salt` of `len` rows, for this frame. `initial` is the row Tab stops on before
+    /// the user has been on the list (the checked-out branch).
+    pub fn new(
+        ctx: &egui::Context,
+        id_salt: impl std::hash::Hash + std::fmt::Debug,
+        len: usize,
+        initial: Option<usize>,
+    ) -> Self {
+        let id = Id::new(("kit-roving", Id::new(id_salt)));
+        let last = len.saturating_sub(1);
+        ctx.data_mut(|d| {
+            let st = d.get_temp_mut_or_default::<RovingState>(id);
+            st.moved = None;
+            st.stop_shown_before = st.stop_shown;
+            st.stop_shown = false;
+            st.stand_in = false;
+            if !st.visited
+                && let Some(i) = initial
+            {
+                st.stop = i;
+            }
+            st.stop = st.stop.min(last);
+            st.pending = st.pending.map(|p| p.min(last));
+        });
+        Self {
+            id,
+            len,
+            columns: 1,
+        }
+    }
+
+    /// The list's selection follows the keyboard (History): call it with the selected row before
+    /// that row is shown. The selected row is the stop, and while another row of the list has
+    /// focus (the selection moved with j and k, a click, a search) focus moves to it.
+    pub fn follow(&self, ctx: &egui::Context, selected: usize) {
+        let selected = selected.min(self.len.saturating_sub(1));
+        let focused = ctx
+            .data(|d| d.get_temp::<RovingState>(self.id))
+            .and_then(|st| st.focused);
+        let in_list = focused.is_some_and(|(_, id)| ctx.memory(|m| m.has_focus(id)));
+        ctx.data_mut(|d| {
+            let st = d.get_temp_mut_or_default::<RovingState>(self.id);
+            st.stop = selected;
+            st.visited = true;
+            if in_list && focused.is_some_and(|(at, _)| at != selected) {
+                st.pending = Some(selected);
+            }
+        });
+    }
+
+    /// The rows flow in `n` columns (a grid of cards): Left and Right move by one, Up and Down by
+    /// a row of `n`.
+    #[must_use]
+    pub fn columns(mut self, n: usize) -> Self {
+        self.columns = n.max(1);
+        self
+    }
+
+    /// The rows an arrow moved from and to this frame, once the rows have been shown.
+    pub fn moved(&self, ctx: &egui::Context) -> Option<(usize, usize)> {
+        ctx.data(|d| d.get_temp::<RovingState>(self.id))
+            .and_then(|st| st.moved)
+    }
+
+    /// Moves focus to row `index` when it is next shown (a tree row's parent or first child).
+    pub fn focus(&self, ctx: &egui::Context, index: usize) {
+        let index = index.min(self.len.saturating_sub(1));
+        ctx.data_mut(|d| {
+            let st = d.get_temp_mut_or_default::<RovingState>(self.id);
+            st.stop = index;
+            st.visited = true;
+            st.pending = Some(index);
+        });
+    }
+
+    /// Whether row `index` (widget `id`, when known before it is shown) takes focus from Tab
+    /// this frame: the stop, the row with focus, the row focus is moving to, or the first row
+    /// shown while the stop is scrolled away.
+    pub(crate) fn takes_tab(&self, ctx: &egui::Context, index: usize, id: Option<Id>) -> bool {
+        let last = ctx
+            .data(|d| d.get_temp::<RovingState>(self.id))
+            .and_then(|st| st.focused)
+            .filter(|(at, _)| *at == index)
+            .map(|(_, f)| f);
+        let focused = id.or(last).is_some_and(|f| ctx.memory(|m| m.has_focus(f)));
+        ctx.data_mut(|d| {
+            let st = d.get_temp_mut_or_default::<RovingState>(self.id);
+            if index == st.stop {
+                st.stop_shown = true;
+                return true;
+            }
+            if focused || st.pending == Some(index) {
+                return true;
+            }
+            if !st.stop_shown_before && !st.stand_in {
+                st.stand_in = true;
+                return true;
+            }
+            false
+        })
+    }
+
+    /// Row `index` was shown with `response`: gives it the focus that is moving to it, makes it
+    /// the stop when the user is on it, and moves along the list on the arrows while it has
+    /// focus (Left and Right stay with a `tree` row, which opens and closes on them).
+    pub(crate) fn row(&self, ui: &Ui, response: &Response, index: usize, tree: bool) {
+        let ctx = ui.ctx();
+        let pending = ctx
+            .data(|d| d.get_temp::<RovingState>(self.id))
+            .and_then(|st| st.pending);
+        if pending == Some(index) {
+            response.request_focus();
+            ctx.data_mut(|d| d.get_temp_mut_or_default::<RovingState>(self.id).pending = None);
+        }
+        let focused = response.has_focus() || pending == Some(index);
+        if !(focused || response.clicked()) {
+            return;
+        }
+        let horizontal = self.columns > 1;
+        let target = if focused {
+            ui.memory_mut(|m| {
+                m.set_focus_lock_filter(
+                    response.id,
+                    egui::EventFilter {
+                        vertical_arrows: true,
+                        horizontal_arrows: horizontal || tree,
+                        ..Default::default()
+                    },
+                );
+            });
+            let step = |forward: Key, back: Key, by: usize| {
+                ui.input_mut(|i| {
+                    if i.consume_key(Modifiers::NONE, forward) {
+                        Some(index.saturating_add(by))
+                    } else if i.consume_key(Modifiers::NONE, back) {
+                        Some(index.saturating_sub(by))
+                    } else {
+                        None
+                    }
+                })
+            };
+            let mut to = step(Key::ArrowDown, Key::ArrowUp, self.columns);
+            if horizontal {
+                to = to.or_else(|| step(Key::ArrowRight, Key::ArrowLeft, 1));
+            }
+            to.map(|t| t.min(self.len.saturating_sub(1)))
+                .filter(|t| *t != index)
+        } else {
+            None
+        };
+        if let Some(t) = target
+            && !horizontal
+        {
+            // Bring the row into view before it is asked for focus (it may not be shown yet).
+            let rows = crate::ui::count_f32(t) - crate::ui::count_f32(index);
+            ui.scroll_to_rect(
+                response
+                    .rect
+                    .translate(vec2(0.0, rows * response.rect.height())),
+                None,
+            );
+        }
+        ctx.data_mut(|d| {
+            let st = d.get_temp_mut_or_default::<RovingState>(self.id);
+            st.stop = index;
+            st.visited = true;
+            if focused {
+                st.focused = Some((index, response.id));
+            }
+            if let Some(t) = target {
+                st.pending = Some(t);
+                st.moved = Some((index, t));
+            }
+        });
     }
 }
 
@@ -1730,6 +2033,147 @@ mod tests {
         );
         out.textures_delta.clear();
         out
+    }
+
+    /// The label of the node with keyboard focus after one frame of `f` with `events`, and the
+    /// frame after it (focus moves at the end of the frame that read the key).
+    fn focus_after(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        mut f: impl FnMut(&mut Ui),
+    ) -> Option<String> {
+        run(ctx, events, &mut f);
+        let out = run(ctx, Vec::new(), &mut f);
+        let update = out.platform_output.accesskit_update.expect("accesskit");
+        update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == update.focus)
+            .and_then(|(_, n)| n.label().map(str::to_owned))
+    }
+
+    fn shift_tab() -> egui::Event {
+        egui::Event::Key {
+            key: Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::SHIFT,
+        }
+    }
+
+    /// A11Y-3: a list is one Tab stop: Tab enters it on one row and the next Tab leaves it, the
+    /// arrows move between its rows, and coming back lands on the row the user was last on.
+    #[test]
+    fn a_list_is_one_tab_stop_and_the_arrows_move_inside_it() {
+        let ctx = ctx();
+        ctx.enable_accesskit();
+        let mut moves = Vec::new();
+        let mut show = |ui: &mut Ui| {
+            super::super::Button::new("Before").show(ui);
+            let list = Roving::new(ui.ctx(), "test-list", 6, Some(2));
+            for i in 0..6 {
+                ListRow::new(("row", i))
+                    .label(format!("Row {i}"))
+                    .roving(list, i)
+                    .show(ui);
+            }
+            if let Some(m) = list.moved(ui.ctx()) {
+                moves.push(m);
+            }
+            super::super::Button::new("After").show(ui);
+        };
+        run(&ctx, Vec::new(), &mut show);
+        let mut path = Vec::new();
+        for events in [
+            vec![key(Key::Tab)],
+            vec![key(Key::Tab)],
+            vec![key(Key::ArrowDown)],
+            vec![key(Key::ArrowDown)],
+            vec![key(Key::ArrowUp)],
+            vec![key(Key::Tab)],
+            vec![shift_tab()],
+            vec![shift_tab()],
+        ] {
+            path.push(focus_after(&ctx, events, &mut show).unwrap_or_default());
+        }
+        assert_eq!(
+            path,
+            [
+                "Before", "Row 2", "Row 3", "Row 4", "Row 3", "After", "Row 3", "Before"
+            ],
+            "Tab enters on the stop and leaves the list; the arrows move inside it"
+        );
+        assert_eq!(moves, [(2, 3), (3, 4), (4, 3)], "the view hears each move");
+    }
+
+    /// A11Y-2: with motion on, Tab from a row goes to its hover action and on to the next control;
+    /// the action does not fade away (and take focus with it) once the row lost focus.
+    #[test]
+    fn tab_goes_through_a_rows_actions_with_motion_on() {
+        let ctx = ctx();
+        ctx.enable_accesskit();
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            theme::Appearance {
+                reduce_motion: false,
+                ..theme::Appearance::STILL
+            },
+        );
+        let mut show = |ui: &mut Ui| {
+            for i in 0..2 {
+                ListRow::new(("acting", i))
+                    .label(format!("File {i}"))
+                    .actions(move |ui| {
+                        IconButton::new(icon::PLUS, format!("Stage file {i}"))
+                            .size(Size::Sm)
+                            .show(ui);
+                    })
+                    .show(ui);
+            }
+            super::super::Button::new("Commit").show(ui);
+        };
+        run(&ctx, Vec::new(), &mut show);
+        let mut path = Vec::new();
+        for _ in 0..5 {
+            path.push(focus_after(&ctx, vec![key(Key::Tab)], &mut show).unwrap_or_default());
+            // Quiet frames, past the action's fade: focus stays where Tab put it.
+            for _ in 0..20 {
+                assert_eq!(
+                    focus_after(&ctx, Vec::new(), &mut show).unwrap_or_default(),
+                    *path.last().unwrap(),
+                    "focus moved by itself after {path:?}"
+                );
+            }
+        }
+        assert_eq!(
+            path,
+            ["File 0", "Stage file 0", "File 1", "Stage file 1", "Commit"],
+            "{path:?}"
+        );
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+    }
+
+    /// A11Y-5, A11Y-6: a tree row's chevron is the pointer's target only, not a Tab stop of its
+    /// own nor an unnamed node.
+    #[test]
+    fn a_tree_rows_chevron_is_no_tab_stop() {
+        let ctx = ctx();
+        ctx.enable_accesskit();
+        let mut open = false;
+        let mut show = |ui: &mut Ui| {
+            let _ = TreeRow::new("origin", 0)
+                .label("origin")
+                .open(&mut open)
+                .show(ui);
+            super::super::Button::new("After").show(ui);
+        };
+        run(&ctx, Vec::new(), &mut show);
+        let first = focus_after(&ctx, vec![key(Key::Tab)], &mut show);
+        let second = focus_after(&ctx, vec![key(Key::Tab)], &mut show);
+        assert!(first.is_some_and(|l| l.starts_with("origin")));
+        assert_eq!(second.as_deref(), Some("After"));
     }
 
     #[test]
@@ -2091,10 +2535,11 @@ mod tests {
         let row = node("main.rs");
         assert_eq!(row.role(), egui::accesskit::Role::ListItem);
         assert_eq!(row.is_selected(), Some(true));
-        let tree = node("origin");
+        // A11Y-17: Linux screen readers hear the state in the name.
+        let tree = node(&super::super::a11y::disclosure_name("origin", true));
         assert_eq!(tree.role(), egui::accesskit::Role::TreeItem);
         assert_eq!(tree.is_expanded(), Some(true));
-        let header = node("Branches");
+        let header = node(&super::super::a11y::disclosure_name("Branches", false));
         assert_eq!(header.is_expanded(), Some(false));
     }
 
@@ -2179,7 +2624,10 @@ mod tests {
             assert_eq!(
                 labels,
                 [
-                    Some(format!("Remotes {reduced}").as_str()),
+                    Some(
+                        super::super::a11y::disclosure_name(&format!("Remotes {reduced}"), true)
+                            .as_str()
+                    ),
                     Some("Add remote…"),
                     Some("After"),
                     Some("Add remote…")

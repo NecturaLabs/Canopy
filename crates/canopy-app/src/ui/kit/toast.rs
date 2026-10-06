@@ -345,12 +345,17 @@ impl<'a> ToastCard<'a> {
                 },
             );
         }
-        // A live region: errors interrupt, the rest wait their turn.
+        // A live region: errors interrupt, the rest wait their turn. The announcement reads the
+        // title and the body (git's message, or the hint for it) as the description.
         let title = self.title.to_owned();
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, &title));
         let tone = self.tone;
+        let body = self.body;
         ctx.accesskit_node_builder(response.id, |n| {
             use egui::accesskit::{Live, Role};
+            if let Some(b) = body {
+                n.set_description(b);
+            }
             if tone == Tone::Danger {
                 n.set_role(Role::Alert);
                 n.set_live(Live::Assertive);
@@ -518,6 +523,36 @@ mod tests {
             Some((Role::Alert, Some(Live::Assertive)))
         );
         assert_eq!(role("Pushed"), Some((Role::Status, Some(Live::Polite))));
+    }
+
+    /// A11Y-14: an error's alert speaks git's message with its title, not the title alone.
+    #[test]
+    fn an_error_alert_speaks_its_message() {
+        use egui::accesskit::Role;
+
+        let ctx = context();
+        ctx.enable_accesskit();
+        let out = run(&ctx, Vec::new(), |ui| {
+            ui.set_width(380.0);
+            ToastCard::new(Id::new(1), Tone::Danger, "Push failed")
+                .body("fatal: unable to access the remote")
+                .show(ui);
+        });
+        let nodes = out
+            .platform_output
+            .accesskit_update
+            .expect("accesskit")
+            .nodes;
+        let (_, alert) = nodes
+            .iter()
+            .find(|(_, n)| n.role() == Role::Alert)
+            .expect("the alert");
+        assert_eq!(alert.label(), Some("Push failed"));
+        assert_eq!(
+            alert.description(),
+            Some("fatal: unable to access the remote"),
+            "the message is the alert's description"
+        );
     }
 
     #[test]

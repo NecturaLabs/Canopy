@@ -1,5 +1,6 @@
 //! The commit graph: a virtualised table with coloured lanes, ref pills and the details pane.
 
+use egui::accesskit::Role;
 use egui::{Align, FontId, Layout, Rect, RichText, Ui, UiBuilder, pos2, vec2};
 use egui_phosphor::regular as icon;
 
@@ -12,6 +13,7 @@ use crate::action::Action;
 use crate::keymap::Command;
 use crate::settings::Settings;
 use crate::tab::RepoTab;
+use crate::ui::kit::a11y;
 use crate::ui::kit::anim::Flip;
 use crate::ui::kit::avatar::{self, Person};
 use crate::ui::kit::chip::RefPill;
@@ -21,7 +23,7 @@ use crate::ui::kit::graph::{self, Lanes, Marks};
 use crate::ui::kit::menu::{self, Menu};
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
-use crate::ui::kit::row::{ListRow, RowKind, caps_galley};
+use crate::ui::kit::row::{ListRow, Roving, RowKind, caps_galley};
 use crate::ui::kit::split::{self, SplitAxis, SplitHandle};
 use crate::ui::kit::surface::{EmptyState, HeaderKind, PaneHeader};
 use crate::ui::kit::{Button, IconButton, paint};
@@ -102,6 +104,7 @@ pub fn show(
     if compact {
         egui::Panel::top("history-detail-controls")
             .exact_size(theme::XL + theme::SM)
+            .resizable(false)
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 let strip = ui.max_rect();
@@ -206,26 +209,37 @@ pub fn show(
             split::dragged_size(ui.ctx(), handle_id, SplitAxis::Rows, true, range.clone())
                 .unwrap_or(stored)
                 .clamp(detail_min, detail_max);
+        // The panel keeps the details' place (and its height across restarts); the kit handle
+        // below resizes it, so egui's own unnamed resize handle is off.
         let details = egui::Panel::bottom(panel_id)
             .exact_size(height)
+            .resizable(false)
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(s.pane))
-            .show(ui, |ui| {
-                let top = ui.max_rect();
-                commit_detail::show(ui, tab, settings, actions);
-                // The seam between the table and the details (concept 1's `.h-det` top border), in
-                // the theme's pane separation.
-                let seam = paint::pane_seam(p, s.border, false);
-                paint::seam_line_h(
-                    ui.painter(),
-                    top.x_range(),
-                    top.top() + seam.map_or(0.0, |st| st.width) * 0.5,
-                    seam,
-                );
-            });
+            .show(ui, |ui| ui.max_rect());
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(s.pane))
             .show(ui, |ui| table(ui, tab, settings, actions));
+        // The details are drawn after the table, so Tab and screen readers meet the commit list
+        // first.
+        let top = details.inner;
+        let mut pane = ui.new_child(
+            UiBuilder::new()
+                .id_salt(panel_id.with("content"))
+                .max_rect(top)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        pane.set_clip_rect(top.intersect(ui.clip_rect()));
+        commit_detail::show(&mut pane, tab, settings, actions);
+        // The seam between the table and the details (concept 1's `.h-det` top border), in the
+        // theme's pane separation.
+        let seam = paint::pane_seam(p, s.border, false);
+        paint::seam_line_h(
+            pane.painter(),
+            top.x_range(),
+            top.top() + seam.map_or(0.0, |st| st.width) * 0.5,
+            seam,
+        );
         // Shown over both panes, so their scrolling cannot take the drag from it.
         let rect = details.response.rect;
         let handle = SplitHandle::new(DETAILS_SPLIT, &mut height, SplitAxis::Rows)
@@ -453,8 +467,11 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     let mut wanted_pictures = Vec::new();
     let motion = egui::Id::new(("history-motion", &tab.path));
     let generation = tab.generation;
+    // One Tab stop for the commits: the selected one; the arrows move the selection and focus.
+    let roving = Roving::new(ui.ctx(), ("history-rows", &tab.path), row_count, None);
     let list = area.show_rows(ui, row_h, total_rows, |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
+        a11y::group(ui, Role::List, "Commits");
         // Rows keep their place on screen as commits arrive or go (a fetch, a commit, a branch
         // switch): they slide to their new rows instead of jumping.
         let origin = ui.max_rect().min - vec2(0.0, crate::ui::count_f32(range.start) * row_h);
@@ -517,11 +534,15 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             }
             let summary_x = x;
             let date = date_text(c.author.time);
+            if selected {
+                roving.follow(ui.ctx(), ri);
+            }
             flip.item(ui, row_key(c.oid), None, |ui| {
                 let response = ListRow::new(("history-row", c.oid))
                     .kind(RowKind::History)
                     .index(ri)
                     .selected(selected)
+                    .roving(roving, ri)
                     .show_with(ui, |rc, painter| {
                         let cy = rc.rect.center().y;
                         if show_graph && let Some(g) = g {
@@ -599,13 +620,12 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
                         pill.paint(ui, &painter, *left, response.rect.center().y);
                     }
                 }
-                // The row paints its own columns; screen readers get the commit in one sentence.
-                let info = format!(
-                    "Commit {}, {}, by {}, {}",
-                    short_id(c.oid),
-                    c.summary,
-                    c.author.name,
-                    widgets::relative_time_format(c.author.time, now, settings.iso_dates)
+                // The row paints its own columns; screen readers get the commit in one sentence,
+                // with the branches and tags its pills show.
+                let info = commit_name(
+                    c,
+                    snap.refs.get(&c.oid).map_or(&[], Vec::as_slice),
+                    &widgets::relative_time_format(c.author.time, now, settings.iso_dates),
                 );
                 ui.ctx()
                     .accesskit_node_builder(response.id, |n| n.set_label(info));
@@ -650,11 +670,39 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     for (oid, email) in wanted_pictures {
         tab.request_avatar(oid, &email);
     }
+    // An arrow on a focused commit moves the selection; focus follows it next frame.
+    if let Some((from, to)) = roving.moved(ui.ctx()) {
+        let delta = if to >= from {
+            isize::try_from(to - from).unwrap_or(isize::MAX)
+        } else {
+            -isize::try_from(from - to).unwrap_or(isize::MAX)
+        };
+        tab.move_commit(delta);
+    }
     if let Some(oid) = clicked {
         tab.select_commit(oid);
         return true;
     }
     false
+}
+
+/// What screen readers call a commit's row: its short id, summary, the branches and tags at it,
+/// author and `when`, in one sentence.
+fn commit_name(
+    c: &canopy_core::CommitSummary,
+    refs: &[canopy_core::RefLabel],
+    when: &str,
+) -> String {
+    let mut name = format!("Commit {}, {}", short_id(c.oid), c.summary);
+    for r in refs {
+        name.push_str(", ");
+        name.push_str(&r.name);
+    }
+    name.push_str(", by ");
+    name.push_str(&c.author.name);
+    name.push_str(", ");
+    name.push_str(when);
+    name
 }
 
 /// The [`Flip`] key of a commit's row, and of the "Load more commits" row.
@@ -792,6 +840,91 @@ mod tests {
     use egui::Pos2;
 
     use super::*;
+
+    /// A11Y-3, A11Y-4, A11Y-20: Tab meets the commit list before the details, stops once on the
+    /// list (the selected commit, announced with its branches), and the arrows move the selection
+    /// with focus following it.
+    #[test]
+    fn the_commit_list_is_one_tab_stop_before_the_details() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let dir = tempfile::tempdir().expect("temporary tab");
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
+        let mut snap = history_of(&["c0", "c1", "c2", "c3", "c4", "c5"]);
+        let oids: Vec<Oid> = snap.commits.iter().map(|c| c.oid).collect();
+        snap.refs.insert(
+            oids[2],
+            vec![canopy_core::RefLabel {
+                name: "main".into(),
+                kind: canopy_core::RefKind::CurrentBranch,
+            }],
+        );
+        tab.snap = Some(std::sync::Arc::new(snap));
+        tab.selected_commit = Some(oids[2]);
+        let settings = Settings::default();
+        let frame = |events: Vec<egui::Event>, tab: &mut RepoTab| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        show(ui, tab, &settings, &mut Vec::new());
+                    });
+                },
+            );
+            out.textures_delta.clear();
+            let update = out.platform_output.accesskit_update.expect("accesskit");
+            update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == update.focus)
+                .and_then(|(_, n)| n.label().map(str::to_owned))
+                .unwrap_or_default()
+        };
+        let key = |key: egui::Key| {
+            vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }]
+        };
+        frame(Vec::new(), &mut tab);
+        frame(key(egui::Key::Tab), &mut tab);
+        let first = frame(Vec::new(), &mut tab);
+        assert!(
+            first.starts_with("Commit ") && first.contains(", c2, main, by Author"),
+            "the first Tab stop is the selected commit, with its branch: {first:?}"
+        );
+        frame(key(egui::Key::ArrowDown), &mut tab);
+        for _ in 0..3 {
+            frame(Vec::new(), &mut tab);
+        }
+        assert_eq!(
+            tab.selected_commit,
+            Some(oids[3]),
+            "Down moved the selection"
+        );
+        let moved = frame(Vec::new(), &mut tab);
+        assert!(moved.contains(", c3, by "), "focus followed: {moved:?}");
+        frame(key(egui::Key::Tab), &mut tab);
+        let next = frame(Vec::new(), &mut tab);
+        assert!(
+            !next.starts_with("Commit "),
+            "the next Tab leaves the list: {next:?}"
+        );
+    }
 
     /// The id of the history filter's text field, once it has been shown.
     /// Mop-up D24: the title asks a question naming the commit, the answer is verb + object.

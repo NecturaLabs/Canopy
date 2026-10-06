@@ -1,5 +1,6 @@
 //! The left sidebar: branches, remotes, tags and stashes.
 
+use egui::accesskit::Role;
 use egui::{FontId, RichText, Ui};
 use egui_phosphor::regular as icon;
 
@@ -10,8 +11,8 @@ use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Skeleton;
-use crate::ui::kit::row::{ListRow, RowKind, SectionHeader, TreeRow};
-use crate::ui::kit::{KitResponse, Tone, menu};
+use crate::ui::kit::row::{ListRow, Roving, RowKind, SectionHeader, TreeNav, TreeRow};
+use crate::ui::kit::{KitResponse, Tone, a11y, menu};
 use crate::ui::theme::{self, palette};
 use crate::ui::widgets::forge_icon;
 use crate::views::commit_detail::virtual_rows;
@@ -124,8 +125,8 @@ struct Row<'a> {
 }
 
 /// A sidebar item: icon and label, the checked-out branch selected, ahead and behind counts as
-/// badges at the right.
-fn row(ui: &mut Ui, r: &Row<'_>) -> egui::Response {
+/// badges at the right; row `index` of `list` when its section is one Tab stop.
+fn row(ui: &mut Ui, r: &Row<'_>, list: Option<(Roving, usize)>) -> egui::Response {
     let m = theme::metrics();
     let badges: Vec<Badge> = [(r.ahead, "↑", Tone::Accent), (r.behind, "↓", Tone::Neutral)]
         .into_iter()
@@ -158,6 +159,9 @@ fn row(ui: &mut Ui, r: &Row<'_>) -> egui::Response {
         .label(r.label);
     if let Some(t) = tip {
         row = row.tooltip(t);
+    }
+    if let Some((list, index)) = list {
+        row = row.roving(list, index);
     }
     if !badges.is_empty() {
         // Right to left: the behind count at the edge, the ahead count before it.
@@ -203,15 +207,21 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             snap.branches.len() + usize::from(unborn.is_some()),
             true,
         ) {
+            // One Tab stop for the branches: the checked-out one until the user moves.
+            let first = usize::from(unborn.is_some());
+            let head = snap.branches.iter().position(|b| b.is_head).map(|i| i + first);
+            let list = Roving::new(ui.ctx(), ("sidebar-branches", &tab.path), snap.branches.len() + first, head.or(Some(0)));
+            ui.scope(|ui| {
+            if snap.branches.len() + first > 0 { a11y::group(ui, Role::List, "Branches"); }
             if let Some(name) = unborn {
                 let label = format!("{name} (no commits yet)");
-                let _ = row(ui, &Row { id: ui.id().with("unborn-branch"), glyph: icon::CHECK_CIRCLE, label: &label, current: true, ahead: 0, behind: 0, hint: Some("Current branch; make the first commit to create it") });
+                let _ = row(ui, &Row { id: ui.id().with("unborn-branch"), glyph: icon::CHECK_CIRCLE, label: &label, current: true, ahead: 0, behind: 0, hint: Some("Current branch; make the first commit to create it") }, Some((list, 0)));
             }
             virtual_rows(ui, snap.branches.len(), row_h, |ui, i| {
                 let b = &snap.branches[i];
                 let glyph = if b.is_head { icon::CHECK_CIRCLE } else { icon::GIT_BRANCH };
                 let hint = b.upstream.as_ref().map_or_else(|| "No upstream".to_owned(), |u| format!("Tracks {u}"));
-                let resp = row(ui, &Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, current: b.is_head, ahead: b.ahead, behind: b.behind, hint: Some(&hint) });
+                let resp = row(ui, &Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, current: b.is_head, ahead: b.ahead, behind: b.behind, hint: Some(&hint) }, Some((list, i + first)));
                 if resp.clicked()
                     && let Some(t) = b.target {
                         actions.push(Action::Reveal(t));
@@ -270,6 +280,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                 });
             });
+            });
         }
 
         // Remotes: "+" on the header (hover or focus) and its context menu add one; a
@@ -296,19 +307,35 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             if local_only {
                 no_remotes(ui, actions);
             }
+            // The remotes and their branches are one tree and one Tab stop; the rows are
+            // numbered in display order.
+            let shown_rows: usize = snap.remotes.iter().enumerate().map(|(ri, r)| {
+                1 + if tab.collapsed.contains(&format!("remote:{}", r.name)) { 0 } else { tab.snap_index.remote_branches.get(ri).map_or(0, Vec::len) }
+            }).sum();
+            let list = Roving::new(ui.ctx(), ("sidebar-remotes", &tab.path), shown_rows, Some(0));
+            let mut at = 0;
+            ui.scope(|ui| {
+            if !local_only { a11y::group(ui, Role::Tree, "Remotes"); }
             for (ri, r) in snap.remotes.iter().enumerate() {
                 let key = format!("remote:{}", r.name);
                 let mut open = !tab.collapsed.contains(&key);
                 let forge = tab.forge_of(&r.name).cloned();
-                let label = match &forge {
-                    Some(f) => format!("{}  {}", r.name, forge_icon(f.kind)),
-                    None => r.name.clone(),
+                let (label, spoken) = match &forge {
+                    Some(f) => (format!("{}  {}", r.name, forge_icon(f.kind)), format!("{}, {}", r.name, f.kind.name())),
+                    None => (r.name.clone(), r.name.clone()),
                 };
+                let remote_at = at;
                 let shown = TreeRow::new(("remote", &r.name), 0)
                     .open(&mut open)
                     .toggle_on_click(true)
                     .label(label)
+                    .accessible_name(spoken)
+                    .roving(list, remote_at)
                     .show(ui);
+                at += 1;
+                if shown.value == Some(TreeNav::FirstChild) {
+                    list.focus(ui.ctx(), remote_at + 1);
+                }
                 if open {
                     tab.collapsed.remove(&key);
                 } else {
@@ -340,14 +367,20 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     continue;
                 }
                 let branches: &[usize] = tab.snap_index.remote_branches.get(ri).map_or(&[], Vec::as_slice);
+                let base = at;
+                at += branches.len();
                 virtual_rows(ui, branches.len(), row_h, |ui, i| {
                     let b = &snap.remote_branches[branches[i]];
-                    let resp = TreeRow::new(("remote-branch", &b.remote, &b.branch), 1)
+                    let shown = TreeRow::new(("remote-branch", &b.remote, &b.branch), 1)
                         .icon(icon::GIT_BRANCH)
                         .label(b.branch.clone())
-                        .show(ui)
-                        .response
-                        .kit_tooltip("Double-click to check out").show();
+                        .roving(list, base + i)
+                        .show(ui);
+                    // Left goes back up to the remote.
+                    if shown.value == Some(TreeNav::Parent) {
+                        list.focus(ui.ctx(), remote_at);
+                    }
+                    let resp = shown.response.kit_tooltip("Double-click to check out").show();
                     if resp.clicked()
                         && let Some(t) = b.target {
                             actions.push(Action::Reveal(t));
@@ -378,15 +411,19 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     });
                 });
             }
+            });
         }
 
         // Tags.
         if section(ui, tab, "tags", "Tags", icon::TAG, snap.tags.len(), false) {
             let remote = snap.remotes.first().map(|r| r.name.clone());
             let tag_forge = tab.forge().map(|(_, f)| f.clone());
+            let list = Roving::new(ui.ctx(), ("sidebar-tags", &tab.path), snap.tags.len(), Some(0));
+            ui.scope(|ui| {
+            if !snap.tags.is_empty() { a11y::group(ui, Role::List, "Tags"); }
             virtual_rows(ui, snap.tags.len(), row_h, |ui, i| {
                 let t = &snap.tags[i];
-                let resp = row(ui, &Row { id: ui.id().with(("tag", &t.name)), glyph: icon::TAG, label: &t.name, current: false, ahead: 0, behind: 0, hint: t.message.as_deref() });
+                let resp = row(ui, &Row { id: ui.id().with(("tag", &t.name)), glyph: icon::TAG, label: &t.name, current: false, ahead: 0, behind: 0, hint: t.message.as_deref() }, Some((list, i)));
                 if resp.clicked()
                     && let Some(target) = t.target {
                         actions.push(Action::Reveal(target));
@@ -417,14 +454,18 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                 });
             });
+            });
         }
 
         // Stashes.
         if section(ui, tab, "stashes", "Stashes", icon::ARCHIVE, snap.stashes.len(), false) {
+            let list = Roving::new(ui.ctx(), ("sidebar-stashes", &tab.path), snap.stashes.len(), Some(0));
+            ui.scope(|ui| {
+            if !snap.stashes.is_empty() { a11y::group(ui, Role::List, "Stashes"); }
             virtual_rows(ui, snap.stashes.len(), row_h, |ui, i| {
                 let s = &snap.stashes[i];
                 let label = s.message.trim_start_matches("On ").to_owned();
-                let resp = row(ui, &Row { id: ui.id().with(("stash", s.oid)), glyph: icon::ARCHIVE, label: &label, current: false, ahead: 0, behind: 0, hint: Some(&s.message) });
+                let resp = row(ui, &Row { id: ui.id().with(("stash", s.oid)), glyph: icon::ARCHIVE, label: &label, current: false, ahead: 0, behind: 0, hint: Some(&s.message) }, Some((list, i)));
                 let oid = s.oid;
                 if resp.clicked() {
                     actions.push(Action::Reveal(oid));
@@ -443,6 +484,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         actions.push(drop_stash(s));
                     }
                 });
+            });
             });
         }
         ui.add_space(theme::LG);
@@ -504,6 +546,7 @@ mod tests {
                     behind: 1,
                     hint: None,
                 },
+                None,
             );
         });
         assert!(labels.iter().any(|l| l == "feature/auth"), "{labels:?}");
@@ -615,7 +658,7 @@ mod tests {
         let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
         for label in ["Publish…", "Add remote…"] {
             let n = named(&nodes, label).unwrap_or_else(|| panic!("{label}"));
-            assert_eq!(n.role(), egui::accesskit::Role::Link, "{label}");
+            assert_eq!(n.role(), Role::Link, "{label}");
         }
         let at = center(named(&nodes, "Publish…").expect("publish"));
         let _ = sidebar_frame(&ctx, &mut tab, click(at), &mut actions);
@@ -639,10 +682,11 @@ mod tests {
         let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
         assert_eq!(
             named(&nodes, "Add remote…").map(egui::accesskit::Node::role),
-            Some(egui::accesskit::Role::Button),
+            Some(Role::Button),
             "the header's + is in the tree at rest"
         );
-        let header = center(named(&nodes, "Remotes").expect("remotes header"));
+        let header =
+            center(named(&nodes, &a11y::disclosure_name("Remotes", true)).expect("remotes header"));
         let hover = vec![egui::Event::PointerMoved(header)];
         let _ = sidebar_frame(&ctx, &mut tab, hover.clone(), &mut actions);
         let nodes = sidebar_frame(&ctx, &mut tab, hover, &mut actions);
@@ -706,6 +750,94 @@ mod tests {
         assert!(
             back.as_deref().is_some_and(|l| l.starts_with("Remotes")),
             "Shift+Tab goes back to the header: {back:?}"
+        );
+        assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    /// A11Y-3: each section's rows are one Tab stop (the checked-out branch for Branches), the
+    /// arrows move between them, and the rows are announced inside a list named after the section.
+    #[test]
+    fn each_section_is_one_tab_stop_with_arrows_inside() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = tab_with(Vec::new());
+        let branch = |name: &str, is_head: bool| canopy_core::BranchInfo {
+            name: name.into(),
+            target: None,
+            is_head,
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+        };
+        let tag = |name: &str| canopy_core::TagInfo {
+            name: name.into(),
+            target: None,
+            message: None,
+        };
+        tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
+            branches: vec![
+                branch("feature/a", false),
+                branch("main", true),
+                branch("zeta", false),
+            ],
+            tags: vec![tag("v2"), tag("v1")],
+            ..Default::default()
+        }));
+        let mut actions = Vec::new();
+        let press = |key: egui::Key| {
+            vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }]
+        };
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let mut path = Vec::new();
+        for key in [
+            egui::Key::Tab,
+            egui::Key::Tab,
+            egui::Key::ArrowDown,
+            egui::Key::Tab,
+            egui::Key::Tab,
+            egui::Key::Tab,
+            egui::Key::Tab,
+            egui::Key::Tab,
+            egui::Key::ArrowDown,
+            egui::Key::Tab,
+        ] {
+            let _ = sidebar_frame(&ctx, &mut tab, press(key), &mut actions);
+            let (nodes, focused) = sidebar_frame_focus(&ctx, &mut tab, Vec::new(), &mut actions);
+            path.push(focused.unwrap_or_default());
+            if key == egui::Key::Tab && path.len() == 2 {
+                let list = nodes
+                    .iter()
+                    .find(|n| n.role() == Role::List && n.label() == Some("Branches"))
+                    .expect("the branches list");
+                assert_eq!(list.label(), Some("Branches"));
+                assert_eq!(list.children().len(), 3, "the branch rows are its parts");
+            }
+        }
+        crate::ui::motion::set_reduced(false);
+        let open = |s: &str| a11y::disclosure_name(s, true);
+        assert_eq!(
+            path,
+            [
+                open("Branches"),
+                "main".to_owned(),
+                "zeta".to_owned(),
+                open("Remotes"),
+                "Publish…".to_owned(),
+                "Add remote…".to_owned(),
+                open("Tags"),
+                "v2".to_owned(),
+                "v1".to_owned(),
+                open("Stashes"),
+            ],
+            "{path:?}"
         );
         assert!(actions.is_empty(), "{actions:?}");
     }

@@ -518,9 +518,17 @@ impl<'t> Core<'t> {
         if self.stepper.is_some() {
             right += 2.0 * button + theme::XS + theme::SM;
         }
+        // Shown or not, and the frame the field was last drawn: a secret starts hidden whenever
+        // its field comes back (the next credential prompt reuses the same id).
         let reveal_id = id.with("kit-field-reveal");
-        let revealed =
-            self.password && ctx.data(|d| d.get_temp::<bool>(reveal_id)).unwrap_or(false);
+        let now = ctx.cumulative_frame_nr();
+        let revealed = self.password
+            && ctx
+                .data(|d| d.get_temp::<(bool, u64)>(reveal_id))
+                .is_some_and(|(on, seen)| on && seen.saturating_add(1) >= now);
+        if self.password {
+            ctx.data_mut(|d| d.insert_temp(reveal_id, (revealed, now)));
+        }
 
         // The edit itself, in a frameless child over the reserved rect.
         let mut child = ui.new_child(
@@ -796,7 +804,7 @@ impl<'t> Core<'t> {
                     .id_salt(id.with("kit-field-reveal-button")),
             );
             if toggle.clicked() {
-                ctx.data_mut(|d| d.insert_temp(reveal_id, !revealed));
+                ctx.data_mut(|d| d.insert_temp(reveal_id, (!revealed, now)));
             }
             x = at.left() - theme::SM;
         }
@@ -929,120 +937,95 @@ fn paint_line_numbers(
 
 // ----------------------------------------------------------------------------------- builders
 
-/// The setters every field shares, as an `impl` block for `$field`.
+/// The setters the fields share, as an `impl` block for `$field` with the setters it is given:
+/// `common_setters!(TextArea: label, name, placeholder)`. Each field lists the setters it is used
+/// with, so none is dead code; give a field another one by adding it to its list.
 macro_rules! common_setters {
-    ($field:ident) => {
-        #[expect(
-            clippy::allow_attributes,
-            reason = "a setter is dead for some fields and used by others, which `expect` cannot say"
-        )]
+    ($field:ident: $($setter:ident),+ $(,)?) => {
         impl $field<'_> {
-            /// A label above the field (also its accessible name).
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn label(mut self, text: impl Into<String>) -> Self {
-                self.core.label = Some(text.into());
-                self
-            }
-            /// The accessible name when no label is shown.
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn name(mut self, text: impl Into<String>) -> Self {
-                self.core.name = Some(text.into());
-                self
-            }
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn placeholder(mut self, text: impl Into<String>) -> Self {
-                self.core.placeholder = text.into();
-                self
-            }
-            /// A hint below the field (hidden while there is an error).
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn helper(mut self, text: impl Into<String>) -> Self {
-                self.core.helper = Some(text.into());
-                self
-            }
-            /// An error below the field with a danger edge and halo. Set it on blur or submit,
-            /// never on each keystroke.
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn error(mut self, text: Option<&str>) -> Self {
-                self.core.error = text.map(str::to_owned);
-                self
-            }
-            /// Text that can be selected and copied but not changed: flush on its surface with
-            /// a quiet edge, `text_dim`, no caret.
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn read_only(mut self, read_only: bool) -> Self {
-                self.core.read_only = read_only;
-                self
-            }
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn enabled(mut self, enabled: bool) -> Self {
-                self.core.enabled = enabled;
-                self
-            }
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn tooltip(mut self, text: impl Into<String>) -> Self {
-                self.core.tooltip = Some(text.into());
-                self
-            }
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
-                self.core.disabled_reason = Some(text.into());
-                self
-            }
-            /// Field width; the available width by default.
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn width(mut self, width: f32) -> Self {
-                self.core.width = Some(width);
-                self
-            }
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
-                self.core.id_salt = Some(Id::new(salt));
-                self
-            }
-            /// The field's own id, set by the caller (not derived from the parent `Ui`), so
-            /// code elsewhere can focus it: request focus on [`edit_id`]`(id)`.
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn id(mut self, id: Id) -> Self {
-                self.core.id = Some(id);
-                self
-            }
+            $(common_setters!(@ $setter);)+
+        }
+    };
+    (@ label) => {
+        /// A label above the field (also its accessible name).
+        pub fn label(mut self, text: impl Into<String>) -> Self {
+            self.core.label = Some(text.into());
+            self
+        }
+    };
+    (@ name) => {
+        /// The accessible name when no label is shown.
+        pub fn name(mut self, text: impl Into<String>) -> Self {
+            self.core.name = Some(text.into());
+            self
+        }
+    };
+    (@ placeholder) => {
+        pub fn placeholder(mut self, text: impl Into<String>) -> Self {
+            self.core.placeholder = text.into();
+            self
+        }
+    };
+    (@ helper) => {
+        /// A hint below the field (hidden while there is an error).
+        pub fn helper(mut self, text: impl Into<String>) -> Self {
+            self.core.helper = Some(text.into());
+            self
+        }
+    };
+    (@ error) => {
+        /// An error below the field with a danger edge and halo. Set it on blur or submit, never
+        /// on each keystroke.
+        pub fn error(mut self, text: Option<&str>) -> Self {
+            self.core.error = text.map(str::to_owned);
+            self
+        }
+    };
+    (@ read_only) => {
+        /// Text that can be selected and copied but not changed: flush on its surface with a
+        /// quiet edge, `text_dim`, no caret.
+        pub fn read_only(mut self, read_only: bool) -> Self {
+            self.core.read_only = read_only;
+            self
+        }
+    };
+    (@ enabled) => {
+        pub fn enabled(mut self, enabled: bool) -> Self {
+            self.core.enabled = enabled;
+            self
+        }
+    };
+    (@ tooltip) => {
+        pub fn tooltip(mut self, text: impl Into<String>) -> Self {
+            self.core.tooltip = Some(text.into());
+            self
+        }
+    };
+    (@ disabled_reason) => {
+        pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
+            self.core.disabled_reason = Some(text.into());
+            self
+        }
+    };
+    (@ width) => {
+        /// Field width; the available width by default.
+        pub fn width(mut self, width: f32) -> Self {
+            self.core.width = Some(width);
+            self
+        }
+    };
+    (@ id_salt) => {
+        pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+            self.core.id_salt = Some(Id::new(salt));
+            self
+        }
+    };
+    (@ id) => {
+        /// The field's own id, set by the caller (not derived from the parent `Ui`), so code
+        /// elsewhere can focus it: request focus on [`edit_id`]`(id)`.
+        pub fn id(mut self, id: Id) -> Self {
+            self.core.id = Some(id);
+            self
         }
     };
 }
@@ -1105,7 +1088,7 @@ impl<'t> TextField<'t> {
     }
 }
 
-common_setters!(TextField);
+common_setters!(TextField: label, name, placeholder, helper, error, read_only, enabled, tooltip, disabled_reason, width, id_salt);
 
 impl Widget for TextField<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
@@ -1157,7 +1140,7 @@ impl<'t> SearchField<'t> {
     }
 }
 
-common_setters!(SearchField);
+common_setters!(SearchField: name, placeholder, read_only, width, id_salt, id);
 
 impl Widget for SearchField<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
@@ -1203,7 +1186,7 @@ impl<'t> TextArea<'t> {
     }
 }
 
-common_setters!(TextArea);
+common_setters!(TextArea: label, name, placeholder, enabled, disabled_reason, id_salt);
 
 /// A [`TextArea`] for code: monospace, Tab inserts a tab, optional line numbers (the conflict
 /// hand-edit box).
@@ -1254,7 +1237,7 @@ impl<'t> CodeArea<'t> {
     }
 }
 
-common_setters!(CodeArea);
+common_setters!(CodeArea: name, id_salt);
 
 // -------------------------------------------------------------------------------- NumberField
 
@@ -1271,7 +1254,8 @@ struct NumberDraft {
 
 /// A number typed into a field, with − and + steppers at its trailing end: `NumberField::new(&mut
 /// page, 200.0..=50_000.0).step(100.0).name("Commits per page").show(ui)`. What is typed applies
-/// on Enter or when the field loses focus (clamped to the range), Esc restores the value, and
+/// on Enter or when the field loses focus (clamped to the range, and stored as the format shows
+/// it: a whole-number field rounds 12.7 to 13), Esc restores the value, and
 /// text that is not a number keeps the draft with an error until it is fixed. A click selects the
 /// whole value, so typing replaces it. Up and Down step while it is focused (Page Up and Page
 /// Down ten steps), and each stepper turns off at its end of the range. The response reports
@@ -1501,7 +1485,10 @@ impl<'v> NumberField<'v> {
             } else {
                 match parse(text.trim()) {
                     Some(v) if v.is_finite() => {
-                        *value = clamp(v);
+                        // Stored as the field shows it: a whole-number field keeps no fraction
+                        // it rounds away on screen.
+                        let v = clamp(v);
+                        *value = parse(&format(v)).filter(|s| s.is_finite()).map_or(v, clamp);
                         ui.data_mut(|d| d.remove::<NumberDraft>(draft_key));
                     }
                     _ => {
@@ -2239,6 +2226,15 @@ mod tests {
             "a click shows the secret"
         );
         assert_eq!(text, "hunter2", "the toggle never edits the text");
+        // RK-6: the next prompt with the same field starts hidden again.
+        frame(&ctx, Vec::new(), |_| {});
+        let nodes = spoken(&ctx, |ui| {
+            show(ui, &mut text);
+        });
+        assert!(
+            find(&nodes, "Show secret").is_some(),
+            "a field shown again after it was gone hides its secret"
+        );
     }
 
     #[test]
@@ -2343,7 +2339,16 @@ mod tests {
         let nodes = spoken(&ctx, |ui| {
             number(ui, &mut v);
         });
-        let more = find(&nodes, "Increase Commits per page").expect("the + button");
+        // On Linux an unavailable button says so in its name (a11y::unavailable).
+        let more = nodes
+            .iter()
+            .find(|n| {
+                matches!(
+                    n.label.as_deref(),
+                    Some("Increase Commits per page" | "Increase Commits per page, unavailable")
+                )
+            })
+            .expect("the + button");
         assert!(more.disabled, "+ turns off at the top of the range");
         let minus = plus - vec2(Size::Xs.height() + theme::XS / 2.0, 0.0);
         testkit::click(&ctx, minus, |ui| {
@@ -2395,6 +2400,51 @@ mod tests {
             _ => false,
         });
         assert!(said, "the error says what to type");
+    }
+
+    /// RK-12: a typed number is stored as the field shows it: a whole-number field never keeps
+    /// the fraction it rounds away on screen.
+    #[test]
+    fn a_typed_number_is_stored_as_it_is_shown() {
+        let ctx = testkit::ctx();
+        let mut v = 400.0;
+        let mut id = Id::NULL;
+        frame(&ctx, Vec::new(), |ui| id = number(ui, &mut v).id);
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(&ctx, Vec::new(), |ui| id = number(ui, &mut v).id);
+        let replace = |text: &str| {
+            let mut events = key_with(Key::A, Modifiers::COMMAND);
+            events.extend(type_text(text));
+            events
+        };
+        frame(&ctx, replace("512.7"), |ui| id = number(ui, &mut v).id);
+        frame(&ctx, key(Key::Enter), |ui| id = number(ui, &mut v).id);
+        assert!((v - 513.0).abs() < f64::EPSILON, "stored as shown: {v}");
+        let mut zoom = 1.0;
+        let percent = |ui: &mut Ui, z: &mut f64| {
+            NumberField::new(z, 0.5..=2.0)
+                .step(0.1)
+                .format(
+                    |z| format!("{:.0}%", z * 100.0),
+                    |t| {
+                        t.trim_end_matches('%')
+                            .parse::<f64>()
+                            .ok()
+                            .map(|p| p / 100.0)
+                    },
+                )
+                .id_salt("zoom")
+                .show(ui)
+        };
+        frame(&ctx, Vec::new(), |ui| id = percent(ui, &mut zoom).id);
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(&ctx, Vec::new(), |ui| id = percent(ui, &mut zoom).id);
+        frame(&ctx, replace("125%"), |ui| id = percent(ui, &mut zoom).id);
+        frame(&ctx, key(Key::Enter), |ui| id = percent(ui, &mut zoom).id);
+        assert!(
+            (zoom - 1.25).abs() < 1e-9,
+            "finer than the step when shown so: {zoom}"
+        );
     }
 
     #[test]

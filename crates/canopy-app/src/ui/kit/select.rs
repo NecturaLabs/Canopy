@@ -491,6 +491,11 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 popup.open_memory(None)
             };
             let options = self.options;
+            let list_name = self
+                .label
+                .clone()
+                .or_else(|| self.name.clone())
+                .unwrap_or_default();
             let shown = popup.show(|ui| {
                 let layer = ui.layer_id();
                 let e = Entrance::of(
@@ -518,68 +523,89 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                     Some(p.floating_ring(s)),
                 );
                 let inner = list.shrink(m.menu_pad);
-                let mut child = ui.new_child(
-                    UiBuilder::new()
-                        .max_rect(inner)
-                        .accessibility_parent(popup_id.with("listbox")),
-                );
+                let mut child = ui.new_child(UiBuilder::new().max_rect(inner));
+                // The options are the list box's parts.
+                super::a11y::group(&child, Role::ListBox, &list_name);
+                child.spacing_mut().item_spacing.y = 0.0;
                 let mut chose = None;
-                let scroll_to = st.highlight.filter(|_| st.by_keyboard);
-                let out = egui::ScrollArea::vertical()
-                    .id_salt(popup_id.with("scroll"))
+                let scroll_id = popup_id.with("scroll");
+                let mut area = egui::ScrollArea::vertical()
+                    .id_salt(scroll_id)
                     .max_height(inner.height())
-                    .auto_shrink([false, true])
-                    .show(&mut child, |ui| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        for (i, (_, label)) in options.iter().enumerate() {
-                            let (row, r) =
-                                ui.allocate_exact_size(vec2(inner.width(), item_h), Sense::click());
-                            if r.hovered() && ui.input(|i| i.pointer.is_moving()) {
-                                st.highlight = Some(i);
-                                st.by_keyboard = false;
-                            }
-                            if scroll_to == Some(i) {
-                                ui.scroll_to_rect(row, None);
-                            }
-                            let on = chosen == Some(i);
-                            let radius = CornerRadius::same(m.radius_lg.saturating_sub(5).max(3));
-                            if st.highlight == Some(i) {
-                                ui.painter().rect_filled(row, radius, p.hover_strong());
-                            }
-                            let font = if on {
-                                FontId::new(m.body_size, theme::medium())
-                            } else {
-                                FontId::new(m.body_size, FontFamily::Proportional)
-                            };
-                            ui.painter().text(
-                                pos2(row.left() + ITEM_PAD, row.center().y),
-                                Align2::LEFT_CENTER,
-                                *label,
-                                font,
-                                p.text,
-                            );
-                            if on {
-                                ui.painter().text(
-                                    pos2(row.right() - ITEM_PAD, row.center().y),
-                                    Align2::RIGHT_CENTER,
-                                    icon::CHECK,
-                                    FontId::proportional(m.icon_sm),
-                                    p.accent,
-                                );
-                            }
-                            if r.clicked() {
-                                chose = Some(i);
-                            }
-                            r.widget_info(|| {
-                                WidgetInfo::selected(WidgetType::SelectableLabel, true, on, *label)
-                            });
-                            ui.ctx().accesskit_node_builder(r.id, |n| {
-                                n.set_role(Role::ListBoxOption);
-                                n.clear_toggled();
-                                n.set_selected(on);
-                            });
+                    .auto_shrink([false, true]);
+                // Only the rows in view are built (a list of every branch can be long), so the
+                // row the keyboard moved to is brought into view by the offset, not by the row.
+                if let Some(i) = st.highlight.filter(|_| st.by_keyboard) {
+                    let offset = egui::scroll_area::State::load(
+                        ui.ctx(),
+                        child.make_persistent_id(scroll_id),
+                    )
+                    .map_or(0.0, |state| state.offset.y);
+                    let top = crate::ui::count_f32(i) * item_h;
+                    let view = inner.height();
+                    let to = if top < offset {
+                        top
+                    } else if top + item_h > offset + view {
+                        top + item_h - view
+                    } else {
+                        offset
+                    };
+                    if (to - offset).abs() > 0.5 {
+                        area = area.vertical_scroll_offset(to);
+                    }
+                }
+                let out = area.show_rows(&mut child, item_h, options.len(), |ui, range| {
+                    for (i, (_, label)) in options
+                        .iter()
+                        .enumerate()
+                        .skip(range.start)
+                        .take(range.len())
+                    {
+                        let (row, r) =
+                            ui.allocate_exact_size(vec2(inner.width(), item_h), Sense::click());
+                        if r.hovered() && ui.input(|i| i.pointer.is_moving()) {
+                            st.highlight = Some(i);
+                            st.by_keyboard = false;
                         }
-                    });
+                        let on = chosen == Some(i);
+                        let radius = CornerRadius::same(m.radius_lg.saturating_sub(5).max(3));
+                        if st.highlight == Some(i) {
+                            ui.painter().rect_filled(row, radius, p.hover_strong());
+                        }
+                        let font = if on {
+                            FontId::new(m.body_size, theme::medium())
+                        } else {
+                            FontId::new(m.body_size, FontFamily::Proportional)
+                        };
+                        ui.painter().text(
+                            pos2(row.left() + ITEM_PAD, row.center().y),
+                            Align2::LEFT_CENTER,
+                            *label,
+                            font,
+                            p.text,
+                        );
+                        if on {
+                            ui.painter().text(
+                                pos2(row.right() - ITEM_PAD, row.center().y),
+                                Align2::RIGHT_CENTER,
+                                icon::CHECK,
+                                FontId::proportional(m.icon_sm),
+                                p.accent,
+                            );
+                        }
+                        if r.clicked() {
+                            chose = Some(i);
+                        }
+                        r.widget_info(|| {
+                            WidgetInfo::selected(WidgetType::SelectableLabel, true, on, *label)
+                        });
+                        ui.ctx().accesskit_node_builder(r.id, |n| {
+                            n.set_role(Role::ListBoxOption);
+                            n.clear_toggled();
+                            n.set_selected(on);
+                        });
+                    }
+                });
                 paint::scroll_fade(ui, &out, fill);
                 let (origin, drop) = overlay::popup_origin(list, anchor);
                 overlay::transform_since(
@@ -601,14 +627,11 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                 }
                 chose
             });
-            if let Some(inner) = shown {
-                if let Some(i) = inner.inner {
-                    picked = Some(i);
-                    Popup::close_id(&ctx, popup_id);
-                }
-                ctx.accesskit_node_builder(popup_id.with("listbox"), |n| {
-                    n.set_role(Role::ListBox);
-                });
+            if let Some(inner) = shown
+                && let Some(i) = inner.inner
+            {
+                picked = Some(i);
+                Popup::close_id(&ctx, popup_id);
             }
         }
         if let Some(i) = picked
@@ -902,6 +925,74 @@ mod tests {
 
     fn open_id(ctx: &egui::Context) -> bool {
         Popup::is_any_open(ctx)
+    }
+
+    /// A11Y-4: an open list is a list box named like its select, holding its options.
+    #[test]
+    fn an_open_list_is_a_named_list_box_of_its_options() {
+        let ctx = testkit::ctx();
+        let mut v = 0_u8;
+        let mut id = Id::NULL;
+        frame(&ctx, Vec::new(), |ui| id = show(ui, &mut v).id);
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(&ctx, Vec::new(), |ui| id = show(ui, &mut v).id);
+        frame(&ctx, key(Key::ArrowDown), |ui| id = show(ui, &mut v).id);
+        let nodes = spoken(&ctx, |ui| {
+            show(ui, &mut v);
+        });
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.role == Role::ListBox && n.label.as_deref() == Some("Pull strategy")),
+            "the list is named for its select"
+        );
+        let parts = testkit::parts(&ctx, "Pull strategy", |ui| {
+            show(ui, &mut v);
+        });
+        let names: Vec<&str> = STRATEGIES.iter().map(|(_, l)| *l).collect();
+        assert_eq!(parts, names, "the options are the list's parts");
+    }
+
+    /// REVIEW-KIT-11: a long list (every branch) builds only the rows in view.
+    #[test]
+    fn a_long_list_shows_only_the_rows_in_view() {
+        let ctx = testkit::ctx();
+        let labels: Vec<String> = (0..2000).map(|i| format!("branch-{i}")).collect();
+        let options: Vec<(usize, &str)> = labels.iter().map(String::as_str).enumerate().collect();
+        let mut v = 0_usize;
+        let show_long = |ui: &mut Ui, v: &mut usize| {
+            Select::new(v, &options)
+                .name("Branch")
+                .id_salt("long")
+                .show(ui)
+        };
+        let mut id = Id::NULL;
+        frame(&ctx, Vec::new(), |ui| id = show_long(ui, &mut v).id);
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(&ctx, Vec::new(), |ui| id = show_long(ui, &mut v).id);
+        frame(&ctx, key(Key::ArrowDown), |ui| {
+            id = show_long(ui, &mut v).id;
+        });
+        let nodes = spoken(&ctx, |ui| {
+            show_long(ui, &mut v);
+        });
+        let rows = nodes
+            .iter()
+            .filter(|n| n.role == Role::ListBoxOption)
+            .count();
+        assert!(rows > 0 && rows < 20, "{rows} rows built");
+        // End reaches the last branch, and the list scrolls to it.
+        frame(&ctx, key(Key::End), |ui| id = show_long(ui, &mut v).id);
+        frame(&ctx, Vec::new(), |ui| id = show_long(ui, &mut v).id);
+        let nodes = spoken(&ctx, |ui| {
+            show_long(ui, &mut v);
+        });
+        assert!(
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref() == Some("branch-1999")),
+            "the last row is in view"
+        );
     }
 
     #[test]

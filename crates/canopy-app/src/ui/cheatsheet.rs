@@ -1,9 +1,10 @@
 //! The keyboard cheatsheet (`?` or Ctrl+/): every binding from [`crate::keymap::BINDINGS`],
 //! grouped by section and searchable, in an overlay styled like the command palette.
 
-use egui::{Align2, FontId, Id, Order, RichText, Sense, vec2};
+use egui::{Align2, FontId, Id, LayerId, Order, RichText, Sense, vec2};
 use egui_phosphor::regular as icon;
 
+use super::kit::a11y::{self, FocusReturn};
 use super::kit::chip::Keycap;
 use super::kit::overlay::{self, Layer};
 use super::kit::row::SectionHeader;
@@ -18,6 +19,16 @@ pub struct Cheatsheet {
     pub open: bool,
     query: String,
     just_opened: bool,
+    /// The control focus goes back to when the cheatsheet closes.
+    back: FocusReturn,
+}
+
+/// The cheatsheet's own layers: the scrim (which traps focus above it) and the card.
+fn scrim_layer() -> LayerId {
+    LayerId::new(Order::Foreground, Id::new("cheatsheet-scrim"))
+}
+fn card_layer() -> LayerId {
+    LayerId::new(Order::Tooltip, Id::new("cheatsheet"))
 }
 
 impl Cheatsheet {
@@ -27,19 +38,24 @@ impl Cheatsheet {
         self.just_opened = self.open;
     }
 
-    /// Draws the overlay when open.
+    /// Draws the overlay when open. Call it every frame: the frame after it closes it gives
+    /// keyboard focus back to what had it.
     pub fn show(&mut self, ctx: &egui::Context) {
         if !self.open {
+            self.back.restore(ctx, card_layer());
             return;
         }
+        // Tab stays in the cheatsheet, and nothing behind it takes a key or a click.
+        a11y::trap_focus(ctx, scrim_layer());
         let p = palette(ctx);
         let m = theme::metrics();
         let screen = ctx.content_rect();
-        egui::Area::new(Id::new("cheatsheet-scrim"))
+        egui::Area::new(scrim_layer().id)
             .order(Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
-                let resp = ui.allocate_rect(screen, Sense::click());
+                // A click target only: no Tab stop, no unnamed node.
+                let resp = ui.allocate_rect(screen, Sense::CLICK);
                 overlay::scrim(ui.painter(), screen, 1.0);
                 if resp.clicked() {
                     self.open = false;
@@ -49,12 +65,13 @@ impl Cheatsheet {
             .min(screen.width() - theme::XL * 2.0 - theme::LG * 2.0)
             .max(0.0);
         let height = (screen.height() - theme::XL * 2.0 - theme::LG * 2.0).max(0.0);
-        egui::Area::new(Id::new("cheatsheet"))
+        egui::Area::new(card_layer().id)
             .order(Order::Tooltip)
             .pivot(Align2::CENTER_TOP)
             .fixed_pos(egui::pos2(screen.center().x, screen.min.y + theme::XL))
             .show(ctx, |ui| {
                 overlay::floating(ui, Layer::Popover, egui::Margin::ZERO, |ui| {
+                    a11y::dialog(ui, "Keyboard shortcuts", false);
                     ui.set_width(width);
                     let content_top = ui.cursor().min.y;
                     let pad = m.card_pad;
@@ -105,8 +122,10 @@ impl Cheatsheet {
                         ui,
                         &mut self.query,
                         "Search shortcuts…",
+                        "Search shortcuts",
                     );
                     if self.just_opened {
+                        self.back.remember(ctx);
                         edit.request_focus();
                         self.just_opened = false;
                     }
@@ -306,6 +325,81 @@ mod tests {
         assert!(
             caps.windows(2).all(|pair| pair[0].max.x < pair[1].min.x),
             "alternative shortcut labels overlap: {caps:?}"
+        );
+    }
+
+    /// A11Y-7, A11Y-9, A11Y-21: the cheatsheet is a modal dialog named "Keyboard shortcuts" with a
+    /// named search that has focus; Tab stays inside it, and focus goes back to what had it when
+    /// it closes.
+    #[test]
+    fn the_cheatsheet_is_a_modal_dialog_that_gives_focus_back() {
+        use egui::accesskit::Role;
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let mut sheet = Cheatsheet::default();
+        let tab = || {
+            vec![egui::Event::Key {
+                key: egui::Key::Tab,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }]
+        };
+        let frame = |sheet: &mut Cheatsheet, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    crate::ui::kit::Button::new("Behind").show(ui);
+                    sheet.show(ui.ctx());
+                },
+            );
+            out.textures_delta.clear();
+            out.platform_output.accesskit_update.expect("accesskit")
+        };
+        frame(&mut sheet, Vec::new());
+        frame(&mut sheet, tab());
+        let behind = ctx
+            .memory(egui::Memory::focused)
+            .expect("the button behind has focus");
+        sheet.toggle();
+        frame(&mut sheet, Vec::new());
+        let update = frame(&mut sheet, Vec::new());
+        let (_, dialog) = update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == Role::Dialog)
+            .expect("a dialog");
+        assert_eq!(dialog.label(), Some("Keyboard shortcuts"));
+        assert!(dialog.is_modal(), "modal");
+        let (search, _) = update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.label() == Some("Search shortcuts"))
+            .expect("a named search");
+        assert_eq!(update.focus, *search, "the search has focus");
+        for _ in 0..3 {
+            frame(&mut sheet, tab());
+            frame(&mut sheet, Vec::new());
+            let focused = ctx
+                .memory(egui::Memory::focused)
+                .and_then(|f| ctx.read_response(f));
+            assert!(
+                focused.is_some_and(|r| r.layer_id == card_layer()),
+                "Tab stays in the cheatsheet"
+            );
+        }
+        sheet.toggle();
+        frame(&mut sheet, Vec::new());
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            Some(behind),
+            "focus is back on what had it"
         );
     }
 }

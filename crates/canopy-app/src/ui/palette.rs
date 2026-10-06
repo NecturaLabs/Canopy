@@ -1,7 +1,9 @@
 //! The command palette (Ctrl+K): fuzzy search over every command, branch and recent repository.
 
-use egui::{Align2, FontId, Id, Key, Order, RichText, Sense};
+use egui::accesskit::Role;
+use egui::{Align2, FontId, Id, Key, LayerId, Order, RichText, Sense};
 
+use super::kit::a11y::{self, FocusReturn};
 use super::kit::chip::Keycap;
 use super::kit::field::SearchField;
 use super::kit::overlay::{self, Layer};
@@ -109,6 +111,8 @@ pub struct CommandPalette<T> {
     /// Best matches (score, entry index) for `ranked_for`.
     ranked: Vec<(i32, usize)>,
     ranked_for: Option<String>,
+    /// The control focus goes back to when the palette closes.
+    back: FocusReturn,
 }
 
 impl<T> Default for CommandPalette<T> {
@@ -123,8 +127,17 @@ impl<T> Default for CommandPalette<T> {
             built_for: None,
             ranked: Vec::new(),
             ranked_for: None,
+            back: FocusReturn::default(),
         }
     }
+}
+
+/// The palette's own layers: the scrim (which traps focus above it) and the card.
+fn scrim_layer() -> LayerId {
+    LayerId::new(Order::Foreground, Id::new("palette-scrim"))
+}
+fn card_layer() -> LayerId {
+    LayerId::new(Order::Tooltip, Id::new("palette"))
 }
 
 /// The best `MAX_SHOWN` matches of `query` among `haystacks`, best first (ties in entry order).
@@ -177,11 +190,16 @@ impl<T: Clone> CommandPalette<T> {
         self.ranked_for = None;
     }
 
-    /// Draws the palette; returns what the entry the user ran runs.
+    /// Draws the palette; returns what the entry the user ran runs. Call it every frame, open or
+    /// not: the frame after it closes (by itself or by `open = false`) it gives keyboard focus back
+    /// to what had it.
     pub fn show(&mut self, ctx: &egui::Context) -> Option<T> {
         if !self.open {
+            self.back.restore(ctx, card_layer());
             return None;
         }
+        // Nothing behind the palette takes a key or a click while it is open.
+        a11y::trap_focus(ctx, scrim_layer());
         let p = palette(ctx);
         if self.ranked_for.as_deref() != Some(self.query.as_str()) {
             self.ranked = rank(&self.query, &self.haystacks);
@@ -232,11 +250,12 @@ impl<T: Clone> CommandPalette<T> {
 
         // Dim the window behind.
         let screen = ctx.content_rect();
-        egui::Area::new(Id::new("palette-scrim"))
+        egui::Area::new(scrim_layer().id)
             .order(Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
-                let resp = ui.allocate_rect(screen, Sense::click());
+                // A click target only: no Tab stop, no unnamed node.
+                let resp = ui.allocate_rect(screen, Sense::CLICK);
                 overlay::scrim(ui.painter(), screen, 1.0);
                 if resp.clicked() {
                     self.open = false;
@@ -246,24 +265,41 @@ impl<T: Clone> CommandPalette<T> {
         let m = theme::metrics();
         let width = 620.0_f32.min(screen.width() - theme::XL * 2.0).max(0.0);
         let top = theme::XL.min(screen.height() * 0.08);
-        egui::Area::new(Id::new("palette"))
+        egui::Area::new(card_layer().id)
             .order(Order::Tooltip)
             .pivot(Align2::CENTER_TOP)
             .fixed_pos(egui::pos2(screen.center().x, screen.min.y + top))
             .show(ctx, |ui| {
                 // The overlay surface (glass with Translucent surfaces on) under the card.
                 overlay::floating(ui, Layer::Popover, egui::Margin::ZERO, |ui| {
+                    a11y::dialog(ui, "Command palette", false);
                     ui.set_width(width);
                     ui.spacing_mut().item_spacing.y = 0.0;
                     let edit = surface_search(
                         ui,
                         &mut self.query,
                         "Type a command, branch or repository…",
+                        "Search commands, branches and repositories",
                     );
                     if self.just_opened {
+                        self.back.remember(ctx);
                         edit.request_focus();
                         self.just_opened = false;
                     }
+                    // The search is the palette's one Tab stop (the arrows move through the
+                    // results): Tab keeps focus on it, rather than dropping focus for a frame and
+                    // having a screen reader announce the search again.
+                    ui.memory_mut(|m| {
+                        m.set_focus_lock_filter(
+                            edit.id,
+                            egui::EventFilter {
+                                tab: true,
+                                horizontal_arrows: true,
+                                vertical_arrows: true,
+                                escape: false,
+                            },
+                        );
+                    });
                     if edit.changed() {
                         self.selected = 0;
                     }
@@ -286,6 +322,10 @@ impl<T: Clone> CommandPalette<T> {
                         .show(ui, |ui| {
                             overlay::scroll_body(ui, "palette-list", list_h, ground, |ui| {
                                 ui.spacing_mut().item_spacing.y = 0.0;
+                                // The results are a list box the search field drives: focus
+                                // stays in the field, and the selected result is its active
+                                // descendant, which screen readers announce as it moves.
+                                a11y::group(ui, Role::ListBox, "Results");
                                 let mut previous_group = None;
                                 for (row, (_, i)) in ranked.iter().enumerate() {
                                     let Some((e, _)) = self.items.get(*i) else {
@@ -307,6 +347,10 @@ impl<T: Clone> CommandPalette<T> {
                                     }
                                     if selected {
                                         ui.scroll_to_rect(resp.rect, None);
+                                        let option = resp.id.accesskit_id();
+                                        ctx.accesskit_node_builder(edit.id, |n| {
+                                            n.set_active_descendant(option);
+                                        });
                                     }
                                     if resp.clicked() {
                                         chosen = Some(*i);
@@ -361,12 +405,14 @@ pub(crate) fn surface_search(
     ui: &mut egui::Ui,
     text: &mut String,
     placeholder: &str,
+    name: &str,
 ) -> egui::Response {
     let s = theme::surfaces(ui.ctx());
     let m = theme::metrics();
     let at = ui.available_rect_before_wrap();
     let edit = SearchField::new(text)
         .placeholder(placeholder)
+        .name(name)
         .borderless(true)
         .show(ui);
     let bottom = at.top() + m.palette_input_height;
@@ -394,9 +440,11 @@ fn entry_row(
     let sizes: Vec<egui::Vec2> = keys.iter().map(|k| k.measure(ui)).collect();
     let keys_w: f32 = sizes.iter().map(|s| s.x + KEY_GAP).sum();
     let detail = (!e.detail.is_empty() && category(e).is_none()).then_some(e.detail.as_str());
+    // The arrows reach the results from the search field, which keeps focus: no Tab stops.
     let r = ListRow::new(("palette-row", row))
         .kind(RowKind::Palette)
         .selected(selected)
+        .focusable(false)
         .ground(ground)
         .show_with(ui, |rc, painter| {
             let cy = rc.rect.center().y;
@@ -431,10 +479,14 @@ fn entry_row(
     r.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &e.label)
     });
+    let shortcut = e.shortcut.replace('·', "or");
     ui.ctx().accesskit_node_builder(r.id, |n| {
-        n.set_role(egui::accesskit::Role::ListItem);
+        n.set_role(Role::ListBoxOption);
         n.clear_toggled();
         n.set_selected(selected);
+        if !shortcut.trim().is_empty() {
+            n.set_keyboard_shortcut(shortcut.trim());
+        }
     });
     if ui.is_rect_visible(r.rect) {
         let mut x = r.rect.right() - theme::SM - keys_w + KEY_GAP;
@@ -628,5 +680,141 @@ mod tests {
             out.drop_without_applying_deltas();
         }
         assert!(meshes > 0, "no fade");
+    }
+
+    /// One frame of the window: a "Behind" button under the palette, and AccessKit's update.
+    fn window_frame(
+        ctx: &egui::Context,
+        p: &mut CommandPalette<u32>,
+        events: Vec<egui::Event>,
+    ) -> egui::accesskit::TreeUpdate {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                crate::ui::kit::Button::new("Behind").show(ui);
+                let _ = p.show(ui.ctx());
+            },
+        );
+        out.textures_delta.clear();
+        out.platform_output.accesskit_update.expect("accesskit")
+    }
+
+    fn key(key: Key) -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    }
+
+    /// A11Y-7, A11Y-9, A11Y-21: the palette is a modal dialog named "Command palette" holding a
+    /// named search and a list box of results, whose selected entry is the search's active
+    /// descendant (what a screen reader reads as the arrows move); Tab stays inside it, and focus
+    /// goes back to what had it when it closes.
+    #[test]
+    fn the_palette_is_a_modal_dialog_that_gives_focus_back() {
+        use egui::accesskit::Role;
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let mut p = CommandPalette::default();
+        window_frame(&ctx, &mut p, Vec::new());
+        window_frame(&ctx, &mut p, key(Key::Tab));
+        let behind = ctx
+            .memory(egui::Memory::focused)
+            .expect("the button behind has focus");
+        p.open();
+        p.set_entries(1, items());
+        window_frame(&ctx, &mut p, Vec::new());
+        let update = window_frame(&ctx, &mut p, key(Key::ArrowDown));
+        let node = |role: Role| {
+            update
+                .nodes
+                .iter()
+                .find(|(_, n)| n.role() == role)
+                .map(|(_, n)| n.clone())
+        };
+        let dialog = node(Role::Dialog).expect("a dialog");
+        assert_eq!(dialog.label(), Some("Command palette"));
+        assert!(dialog.is_modal(), "modal");
+        let (search_id, search) = update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.label() == Some("Search commands, branches and repositories"))
+            .map(|(id, n)| (*id, n.clone()))
+            .expect("a named search");
+        assert_eq!(update.focus, search_id, "the search has focus");
+        let results = node(Role::ListBox).expect("a list box of results");
+        assert_eq!(results.label(), Some("Results"));
+        let options: Vec<_> = update
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.role() == Role::ListBoxOption)
+            .collect();
+        assert_eq!(options.len(), items().len(), "one option per entry");
+        let active = search.active_descendant().expect("an active descendant");
+        let (_, chosen) = options
+            .iter()
+            .find(|(id, _)| *id == active)
+            .expect("the active descendant is an option");
+        assert_eq!(
+            chosen.is_selected(),
+            Some(true),
+            "it is the selected option"
+        );
+        for _ in 0..4 {
+            window_frame(&ctx, &mut p, key(Key::Tab));
+            let focused = ctx
+                .memory(egui::Memory::focused)
+                .and_then(|f| ctx.read_response(f));
+            assert!(
+                focused.is_some_and(|r| r.layer_id == card_layer()),
+                "Tab stays in the palette"
+            );
+        }
+        window_frame(&ctx, &mut p, key(Key::Escape));
+        assert!(!p.open, "Escape closes");
+        window_frame(&ctx, &mut p, Vec::new());
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            Some(behind),
+            "focus is back on what had it"
+        );
+    }
+
+    /// The window closes the palette itself on Escape (its Dismiss command), before the palette
+    /// draws that frame, while the palette's modal layer from the frame before still holds: focus
+    /// still goes back to what had it.
+    #[test]
+    fn focus_returns_when_the_window_closes_the_palette() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let mut p = CommandPalette::default();
+        window_frame(&ctx, &mut p, Vec::new());
+        window_frame(&ctx, &mut p, key(Key::Tab));
+        let behind = ctx
+            .memory(egui::Memory::focused)
+            .expect("the button behind has focus");
+        p.open();
+        p.set_entries(1, items());
+        window_frame(&ctx, &mut p, Vec::new());
+        window_frame(&ctx, &mut p, Vec::new());
+        p.open = false;
+        window_frame(&ctx, &mut p, key(Key::Escape));
+        window_frame(&ctx, &mut p, Vec::new());
+        window_frame(&ctx, &mut p, Vec::new());
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            Some(behind),
+            "focus is back on what had it"
+        );
     }
 }

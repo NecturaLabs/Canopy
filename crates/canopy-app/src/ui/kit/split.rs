@@ -190,9 +190,8 @@ impl<'a> SplitHandle<'a> {
         {
             size = d;
         }
-        if response.clicked() || response.drag_started() {
-            response.request_focus();
-        }
+        // The pointer never takes keyboard focus: after a drag the arrows keep moving through the
+        // lists. Tab reaches the handle, and then the arrows resize.
         if response.has_focus() {
             size = keys(ui, id, self.axis, size, sign, (lo, hi));
         }
@@ -536,6 +535,38 @@ mod tests {
         step(vec![Event::PointerMoved(pos2(900.0, 50.0))], &mut size);
         assert!((size - 400.0).abs() < 0.01, "clamped to the range: {size}");
         step(testkit::release(pos2(900.0, 50.0)), &mut size);
+    }
+
+    /// REVIEW-KIT-2: a drag with the pointer leaves keyboard focus where it was, so the arrows
+    /// go on moving through the lists instead of resizing the pane.
+    #[test]
+    fn a_pointer_drag_does_not_take_keyboard_focus() {
+        let ctx = testkit::ctx();
+        let mut size = 200.0;
+        let mut t = 0.0;
+        let mut step = |events: Vec<Event>, size: &mut f32| {
+            t += 0.05;
+            frame(&ctx, t, events, |ui| {
+                handle(ui, size);
+            });
+        };
+        step(vec![Event::PointerMoved(pos2(200.0, 50.0))], &mut size);
+        step(testkit::press(pos2(200.0, 50.0)), &mut size);
+        step(vec![Event::PointerMoved(pos2(230.0, 50.0))], &mut size);
+        step(testkit::release(pos2(230.0, 50.0)), &mut size);
+        step(Vec::new(), &mut size);
+        assert!((size - 230.0).abs() < 0.01, "dragged: {size}");
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            None,
+            "the handle took focus"
+        );
+        let before = size;
+        step(testkit::key(Key::ArrowLeft), &mut size);
+        assert!(
+            (size - before).abs() < f32::EPSILON,
+            "the arrows resized it"
+        );
     }
 
     #[test]

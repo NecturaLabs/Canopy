@@ -389,15 +389,6 @@ pub fn query_system(ctx: &egui::Context) {
 
 // ------------------------------------------------------------------------------------ facade
 
-/// Adds the blurred backdrop under a floating layer at `rect`, if Translucent surfaces is on and
-/// the blur can run, and returns whether it did (the caller then paints [`glass_fill`]). Call it
-/// before the layer's shadow; a `kit::paint::surface` at the same `rect` moves the composite
-/// between the shadow and the fill.
-#[expect(dead_code, reason = "used by the component phase")]
-pub fn backdrop(painter: &Painter, rect: Rect, radius: CornerRadius) -> bool {
-    backdrop_with(painter, rect, radius, theme::appearance().glass)
-}
-
 /// The fill a floating layer paints at `rect`: the overlay at the theme's glass opacity over the
 /// blurred backdrop when glass is on, else the opaque overlay. `rect` must be the rectangle the
 /// layer paints (with its entrance transform applied). Call before the layer's surface; when that

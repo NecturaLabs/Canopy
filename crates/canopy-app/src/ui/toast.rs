@@ -71,6 +71,41 @@ fn error_help(
     }
 }
 
+/// What a toast's card says under its title.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CardText<'a> {
+    body: Option<&'a str>,
+    /// The body in `text` rather than `text_dim` (a hint for an error).
+    strong: bool,
+    /// The output behind the card's Details disclosure.
+    details: Option<&'a str>,
+}
+
+fn card_text(t: &Toast) -> CardText<'_> {
+    if t.kind != ToastKind::Error {
+        return CardText {
+            body: Some(t.body.as_str()).filter(|b| !b.is_empty()),
+            strong: false,
+            details: None,
+        };
+    }
+    if t.help.is_some() {
+        return CardText {
+            body: t.help,
+            strong: true,
+            details: Some(t.body.as_str()),
+        };
+    }
+    // No hint: git's own first line says why, and Details holds the rest.
+    let first = t.body.lines().map(str::trim).find(|l| !l.is_empty());
+    let more = first.is_some_and(|f| t.body.trim() != f);
+    CardText {
+        body: first,
+        strong: false,
+        details: more.then_some(t.body.as_str()),
+    }
+}
+
 /// Info and success toasts go after this many seconds of unpaused time; errors stay.
 const TIMEOUT: f64 = 4.0;
 
@@ -169,7 +204,12 @@ impl Toasts {
             recovery,
         });
         if self.items.len() > 5 {
-            self.items.remove(0);
+            // The oldest notice that is not an error goes first: an unread error stays.
+            let oldest = self.items.iter().position(|t| t.kind != ToastKind::Error);
+            let gone = self.items.remove(oldest.unwrap_or(0));
+            if gone.kind == ToastKind::Error {
+                tracing::warn!(title = %gone.title, "a sixth error pushed out the oldest");
+            }
         }
         ctx.request_repaint();
     }
@@ -242,20 +282,19 @@ impl Toasts {
                                     .born(t.born)
                                     .stagger(u8::try_from(stagger).unwrap_or(u8::MAX))
                                     .clickable(t.kind != ToastKind::Error);
-                            if t.kind == ToastKind::Error {
-                                if let Some(help) = t.help {
-                                    card = card.body(help).body_strong(true);
-                                }
-                                if let Some(recovery) = &t.recovery {
-                                    let label = match recovery {
-                                        Recovery::Pull(_) => "Pull",
-                                        Recovery::Accounts => "Open Accounts",
-                                    };
-                                    card = card.action(label, None);
-                                }
-                                card = card.details(&t.body);
-                            } else if !t.body.is_empty() {
-                                card = card.body(&t.body);
+                            let text = card_text(t);
+                            if let Some(body) = text.body {
+                                card = card.body(body).body_strong(text.strong);
+                            }
+                            if let Some(recovery) = &t.recovery {
+                                let label = match recovery {
+                                    Recovery::Pull(_) => "Pull",
+                                    Recovery::Accounts => "Open Accounts",
+                                };
+                                card = card.action(label, None);
+                            }
+                            if let Some(details) = text.details {
+                                card = card.details(details);
                             }
                             let layer = ui.layer_id();
                             let start = overlay::next_shape(ctx, layer);
@@ -358,6 +397,62 @@ impl Toasts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// REVIEW-KIT-5: a sixth notification pushes out the oldest one that is not an error; an
+    /// unread error stays.
+    #[test]
+    fn a_sixth_notification_leaves_the_errors_alone() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        toasts.push(&ctx, ToastKind::Error, "Push failed", "fatal: refused");
+        for i in 0..4 {
+            toasts.push(&ctx, ToastKind::Success, format!("Done {i}"), "");
+        }
+        toasts.push(&ctx, ToastKind::Info, "Fetched", "");
+        let titles: Vec<&str> = toasts.items.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            ["Push failed", "Done 1", "Done 2", "Done 3", "Fetched"]
+        );
+    }
+
+    /// REVIEW-KIT-7: an error Canopy has no hint for still shows git's own first line on the
+    /// card, with the whole output behind Details when there is more.
+    #[test]
+    fn an_error_without_a_hint_shows_gits_first_line() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        let first =
+            "error: Your local changes to the following files would be overwritten by checkout:";
+        let stderr =
+            format!("{first}\n\tsrc/main.rs\nPlease commit your changes or stash them.\nAborting");
+        toasts.push(&ctx, ToastKind::Error, "Checkout failed", stderr.clone());
+        let one = "fatal: couldn't find remote ref nope";
+        toasts.push(&ctx, ToastKind::Error, "Fetch failed", one);
+        let rejected = "! [rejected] main -> main (fetch first)";
+        toasts.push(&ctx, ToastKind::Error, "Push failed", rejected);
+        let text: Vec<CardText<'_>> = toasts.items.iter().map(card_text).collect();
+        assert_eq!(
+            text[0],
+            CardText {
+                body: Some(first),
+                strong: false,
+                details: Some(stderr.as_str()),
+            }
+        );
+        assert_eq!(
+            text[1],
+            CardText {
+                body: Some(one),
+                strong: false,
+                details: None,
+            },
+            "one line needs no Details"
+        );
+        assert_eq!(text[2].body, toasts.items[2].help, "a hint still leads");
+        assert!(text[2].strong);
+        assert_eq!(text[2].details, Some(rejected));
+    }
 
     #[test]
     fn five_error_notifications_fit_and_remain_reachable_at_max_zoom() {
@@ -522,13 +617,23 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut toasts = Toasts::default();
-        toasts.push(&ctx, ToastKind::Error, "Original error", "Original output");
+        toasts.push(
+            &ctx,
+            ToastKind::Error,
+            "Original error",
+            "error: original\nOriginal output",
+        );
         let mut pointer = egui::Pos2::ZERO;
         let mut detail_visible = false;
         for frame in 0..9 {
             if frame == 6 {
                 assert!(detail_visible, "details must open before testing arrival");
-                toasts.push(&ctx, ToastKind::Error, "New error", "New output");
+                toasts.push(
+                    &ctx,
+                    ToastKind::Error,
+                    "New error",
+                    "error: new\nNew output",
+                );
             }
             let mut events = vec![egui::Event::PointerMoved(pointer)];
             if matches!(frame, 3 | 4) {
@@ -554,7 +659,7 @@ mod tests {
                 },
             );
             output.textures_delta.clear();
-            detail_visible = output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "Original output"));
+            detail_visible = output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "error: original\nOriginal output"));
 
             if frame == 2 {
                 pointer = output

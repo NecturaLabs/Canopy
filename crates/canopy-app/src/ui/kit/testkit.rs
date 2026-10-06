@@ -1,7 +1,7 @@
 //! Helpers the kit's own tests share: a themed context, one frame with input events, keyboard and
 //! pointer events, and the AccessKit nodes a frame produced.
 
-use egui::accesskit::{Node, Role, Toggled};
+use egui::accesskit::{Node, NodeId, Role, Toggled};
 use egui::{Color32, Context, Event, Key, Modifiers, PointerButton, Pos2, RawInput, Shape, Ui};
 
 use crate::ui::theme::{self, Appearance, Density, Style, ThemeId};
@@ -157,6 +157,7 @@ pub struct Spoken {
     pub value: Option<String>,
     pub numeric: Option<f64>,
     pub disabled: bool,
+    pub description: Option<String>,
 }
 
 impl Spoken {
@@ -170,6 +171,7 @@ impl Spoken {
             value: n.value().map(str::to_owned),
             numeric: n.numeric_value(),
             disabled: n.is_disabled(),
+            description: n.description().map(str::to_owned),
         }
     }
 }
@@ -183,6 +185,40 @@ pub fn spoken(ctx: &Context, mut f: impl FnMut(&mut Ui)) -> Vec<Spoken> {
         .accesskit_update
         .map(|u| u.nodes.iter().map(|(_, n)| Spoken::of(n)).collect())
         .unwrap_or_default()
+}
+
+/// The names of the parts of the node labelled `group` after one frame of `f`: its named
+/// descendants, looking through unnamed containers (what a screen reader lists inside it).
+pub fn parts(ctx: &Context, group: &str, mut f: impl FnMut(&mut Ui)) -> Vec<String> {
+    ctx.enable_accesskit();
+    let mut out = ctx.run_ui(RawInput::default(), |ui| f(ui));
+    out.textures_delta.clear();
+    let Some(update) = out.platform_output.accesskit_update else {
+        return Vec::new();
+    };
+    let nodes: std::collections::HashMap<NodeId, &Node> =
+        update.nodes.iter().map(|(id, n)| (*id, n)).collect();
+    let mut names = Vec::new();
+    // A select's trigger and its list share a name: the group is the one with parts.
+    let mut todo: Vec<NodeId> = nodes
+        .values()
+        .find(|n| n.label() == Some(group) && !n.children().is_empty())
+        .map(|g| g.children().iter().rev().copied().collect())
+        .unwrap_or_default();
+    while let Some(id) = todo.pop() {
+        let Some(n) = nodes.get(&id) else { continue };
+        // A text label's words are its value (egui), what a screen reader reads for it.
+        let name = if n.role() == Role::Label {
+            n.value()
+        } else {
+            n.label()
+        };
+        match name {
+            Some(l) => names.push(l.to_owned()),
+            None => todo.extend(n.children().iter().rev().copied()),
+        }
+    }
+    names
 }
 
 /// The node labelled `label`, if one was spoken.

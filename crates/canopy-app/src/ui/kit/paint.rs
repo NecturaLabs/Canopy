@@ -633,10 +633,34 @@ pub fn focus_edge_alpha(y: f32) -> f32 {
     f32::from(stops[stops.len() - 1].1)
 }
 
+/// Deeper's focused-pane edge on `card` at strength `t` (0 to 1): the [`focus_edge`] with its top
+/// edge lit, so the pane that holds the keyboard (History's table) reads as the one in front. A
+/// theme with lit edges outlines the whole card in a glowing `focus` line instead.
+pub fn pane_focus(painter: &Painter, card: Rect, radius: CornerRadius, focus: Color32, t: f32) {
+    if t <= 0.0 {
+        return;
+    }
+    if lit() {
+        lit_edge(painter, card, radius, focus, 0.7 * t);
+        return;
+    }
+    focus_edge(painter, card, radius, focus, t);
+    let r = f32::from(radius.nw);
+    let width = 1.5;
+    painter.hline(
+        (card.left() + r)..=(card.right() - r),
+        card.top() + width / 2.0,
+        Stroke::new(
+            width,
+            Palette::tint(focus, crate::ui::saturate_u8(210.0 * t)),
+        ),
+    );
+}
+
 /// A content pane in the active style. Standard: a flush `fill` with nothing else. Deeper: a
 /// floating card (`Elevation::Pane`, `pane_edge` ring, `pane_radius`) and, while it holds focus
-/// (`focus` 0 to 1), the focused-pane edge. `rect` is the card itself (the caller leaves the
-/// gutters). Returns the radius it painted with, for content clipping.
+/// (`focus` 0 to 1), the focused-pane edge ([`pane_focus`]). `rect` is the card itself (the
+/// caller leaves the gutters). Returns the radius it painted with, for content clipping.
 pub fn pane(
     painter: &Painter,
     rect: Rect,
@@ -662,7 +686,7 @@ pub fn pane(
         Fill::flat(fill_color),
         s.pane_edge,
     );
-    focus_edge(painter, rect, radius, p.focus, focus);
+    pane_focus(painter, rect, radius, p.focus, focus);
     radius
 }
 
@@ -1332,5 +1356,55 @@ mod tests {
             shapes.contains(&Rect::from_min_max(pos2(18.0, 28.0), pos2(102.0, 72.0))),
             "{shapes:?}"
         );
+    }
+
+    /// The pane that holds the keyboard reads as the one in front, the same wherever a pane is
+    /// painted (the window's content pane, the gallery): Deeper lights its top edge, and a theme
+    /// with lit edges outlines the whole card in a glowing focus line.
+    #[test]
+    fn a_focused_pane_lights_its_top_or_its_whole_edge() {
+        let card = Rect::from_min_size(pos2(10.0, 10.0), vec2(200.0, 120.0));
+        let paint = |id: theme::ThemeId, focus: f32| {
+            let ctx =
+                crate::ui::kit::testkit::ctx_with(id, Style::Deeper, theme::Density::Comfortable);
+            let p = theme::palette(&ctx);
+            let shapes = crate::ui::kit::testkit::frame(&ctx, Vec::new(), |ui| {
+                pane(ui.painter(), card, p, p.surfaces(Style::Deeper).pane, focus);
+            });
+            (p.focus, shapes)
+        };
+        let top_lines = |focus_color: Color32, shapes: &[egui::epaint::ClippedShape]| {
+            shapes
+                .iter()
+                .filter(|c| match &c.shape {
+                    Shape::LineSegment { points, stroke } => {
+                        (points[0].y - points[1].y).abs() < 0.01
+                            && points[0].y < card.top() + 2.0
+                            && stroke.color == Palette::tint(focus_color, 210)
+                    }
+                    _ => false,
+                })
+                .count()
+        };
+        let (focus, shapes) = paint(theme::ThemeId::Midnight, 1.0);
+        assert_eq!(top_lines(focus, &shapes), 1, "a lit top edge: {shapes:?}");
+        let (focus, shapes) = paint(theme::ThemeId::Midnight, 0.0);
+        assert_eq!(top_lines(focus, &shapes), 0, "no edge without focus");
+        let rings = |focus_color: Color32, shapes: &[egui::epaint::ClippedShape]| {
+            shapes
+                .iter()
+                .filter(|c| match &c.shape {
+                    Shape::Rect(r) => {
+                        r.rect == card
+                            && (r.stroke.width - 1.0).abs() < 0.01
+                            && r.stroke.color == focus_color.gamma_multiply(0.7)
+                    }
+                    _ => false,
+                })
+                .count()
+        };
+        let (focus, shapes) = paint(theme::ThemeId::Neon, 1.0);
+        assert_eq!(rings(focus, &shapes), 1, "a lit outline: {shapes:?}");
+        assert_eq!(top_lines(focus, &shapes), 0, "and no separate top line");
     }
 }

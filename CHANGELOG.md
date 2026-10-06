@@ -93,6 +93,21 @@ commits since the previous build.
 
 ### Fixed
 
+- Keyboard use: each list (History's commits, every sidebar section) is one Tab stop and the
+  arrows move inside it, History's commit list comes before the details, and a row's buttons stay
+  visible while one of them has focus. Shift+F10 opens the focused row's context menu; in a menu
+  the arrows stay inside it and wrap, and Escape returns to the row. The command palette and the
+  cheatsheet keep Tab inside them and give focus back when they close, and dragging a divider no
+  longer takes the arrows away from the lists.
+- Screen readers hear lists, trees, menus, choices, tabs and a select's open list as groups of
+  their items, a commit by its refs, author and date, whether a section is open (Linux), why a
+  control is unavailable, and an error notification's message, and no longer hear callouts twice
+  or icons as symbols.
+- An error notification without a known explanation shows git's message instead of only its
+  title, and a new notification never pushes out an unread error.
+- A typed number setting is stored exactly as shown, a revealed password is hidden again at the
+  next prompt, a select listing every branch opens quickly, and the sliding segment and tab
+  indicators stretch the right way when moving left.
 - Author pictures appear after adding a token for a private repository, for your own unpushed
   commits, and after a lost connection, instead of staying initials for 12 hours. GitLab authors
   without a picture show initials instead of a generated pattern.
