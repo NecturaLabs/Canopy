@@ -760,6 +760,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         )),
                         _ => None,
                     };
+                    let fetch_failed = matches!(decided, Some(Err(_)));
                     let result = match decided {
                         Some(Ok(PullNext::Ask(decision))) => {
                             tracing::info!(operation = %label, "waiting for the user's decision");
@@ -793,9 +794,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         && result.is_err()
                         && repo.stopped_on_conflicts().unwrap_or(false);
                     // Only a fast-forward was allowed and the branches diverged after all: a
-                    // choice to make, not a failure (a pull checked beforehand asks first).
+                    // choice to make, not a failure (a pull checked beforehand asks first). A
+                    // failed fetch brought nothing to combine: its error is the answer.
                     let refused = pull
-                        .filter(|_| result.is_err())
+                        .filter(|_| result.is_err() && !fetch_failed)
                         .filter(|&(strategy, follow)| {
                             pull_strategy(&repo, strategy, follow) == PullStrategy::FastForwardOnly
                         })
@@ -1576,21 +1578,18 @@ mod read_tests {
         made
     }
 
-    /// A fast-forward-only pull that git refuses because the branches diverged (the preview did
-    /// not catch it) still asks how to combine them, whatever language git speaks.
-    #[test]
-    fn a_refused_fast_forward_asks_how_to_combine_the_branches() {
-        let root = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(root.path().join("home")).expect("home");
-        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
-        let up = root.path().join("up");
+    /// A clone whose `main` and fetched `origin/main` diverged by one commit each, in `root`.
+    fn diverged_clone(root: &Path) -> PathBuf {
+        std::fs::create_dir_all(root.join("home")).expect("home");
+        std::fs::write(root.join("home").join("gitconfig"), "").expect("config");
+        let up = root.join("up");
         std::fs::create_dir(&up).expect("up");
         git(&up, &["init", "-q", "-b", "main"]);
         std::fs::write(up.join("a.txt"), "base\n").expect("write");
         git(&up, &["add", "."]);
         git(&up, &["commit", "-q", "-m", "base"]);
-        let copy = root.path().join("copy");
-        git(root.path(), &["clone", "-q", "up", "copy"]);
+        let copy = root.join("copy");
+        git(root, &["clone", "-q", "up", "copy"]);
         std::fs::write(up.join("up.txt"), "upstream\n").expect("write");
         git(&up, &["add", "."]);
         git(&up, &["commit", "-q", "-m", "upstream"]);
@@ -1598,7 +1597,58 @@ mod read_tests {
         git(&copy, &["add", "."]);
         git(&copy, &["commit", "-q", "-m", "local"]);
         git(&copy, &["fetch", "-q"]);
-        let worker = Worker::spawn(copy, &egui::Context::default());
+        copy
+    }
+
+    /// A worker on `repo` making Canopy's own git choices, whatever the developer's git
+    /// configuration sets.
+    fn worker_with_canopys_choices(repo: PathBuf) -> Worker {
+        let worker = Worker::spawn(repo, &egui::Context::default());
+        worker.send(Job::Options(canopy_core::GitOptions {
+            follow_config: false,
+            ..canopy_core::GitOptions::default()
+        }));
+        worker
+    }
+
+    /// When the pull's fetch fails, git's error is the answer, even where the branches as last
+    /// fetched diverged: there is nothing new to combine.
+    #[test]
+    fn a_pull_whose_fetch_fails_reports_git_error() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        let gone = root.path().join("gone");
+        git(
+            &copy,
+            &["remote", "set-url", "origin", &gone.to_string_lossy()],
+        );
+        let worker = worker_with_canopys_choices(copy);
+        worker.send(Job::Op(Op::Pull {
+            strategy: PullStrategy::FastForwardOnly,
+            follow_config: false,
+            prune: false,
+            checked: false,
+        }));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
+        });
+        let Some(Event::OpFinished {
+            result: Err(error), ..
+        }) = events.last()
+        else {
+            panic!("{events:?}");
+        };
+        assert!(error.contains("gone"), "git's own message: {error}");
+    }
+
+    /// A fast-forward-only pull that git refuses because the branches diverged after the check
+    /// (they moved in between, as a Pull anyway can meet) still asks how to combine them,
+    /// whatever language git speaks.
+    #[test]
+    fn a_refused_fast_forward_asks_how_to_combine_the_branches() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        let worker = worker_with_canopys_choices(copy);
         worker.send(Job::Op(Op::Pull {
             strategy: PullStrategy::FastForwardOnly,
             follow_config: false,
@@ -1641,7 +1691,7 @@ mod read_tests {
         git(&repo, &["switch", "-q", "main"]);
         std::fs::write(repo.join("a.txt"), "ours\n").expect("write");
         git(&repo, &["commit", "-q", "-am", "ours"]);
-        let worker = Worker::spawn(repo, &egui::Context::default());
+        let worker = worker_with_canopys_choices(repo);
         worker.send(Job::Op(Op::Rebase("other".into())));
         let events = events_until(&worker, |e| {
             matches!(e, Event::Conflicted(_) | Event::OpFinished { .. })
