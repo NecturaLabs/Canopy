@@ -1213,27 +1213,59 @@ fn lowercase_label(label: &str) -> String {
     })
 }
 
-/// What git's configuration says about pruning, against Canopy's choice. Canopy always passes
-/// `--prune` or `--no-prune`, so a `fetch.prune` that differs does not apply to its fetches.
+/// What git's configuration says about pruning, against Canopy's choice: `fetch.prune`, and a
+/// remote's own `remote.<name>.prune`, which git puts before it for that remote. Canopy always
+/// passes `--prune` or `--no-prune`, so a value that differs does not apply to its fetches.
 fn prune_note(facts: &GitFacts, prune: bool) -> Option<Note> {
-    let v = facts.fetch_prune.as_ref()?;
-    let git_prunes = v.as_bool().unwrap_or(false);
-    Some(if git_prunes == prune {
+    // fetch.prune still decides for a remote without its own setting (or with no remote yet).
+    let fetch_applies = facts.remotes.is_empty()
+        || facts.remotes.iter().any(|r| {
+            let own = format!("remote.{}.prune", r.name);
+            !facts.remote_prune.iter().any(|v| v.key == own)
+        });
+    let set: Vec<&ConfigValue> = facts
+        .fetch_prune
+        .iter()
+        .filter(|_| fetch_applies)
+        .chain(&facts.remote_prune)
+        .collect();
+    if set.is_empty() {
+        return None;
+    }
+    let differ: Vec<&ConfigValue> = set
+        .iter()
+        .copied()
+        .filter(|v| v.as_bool().unwrap_or(false) != prune)
+        .collect();
+    let phrases = |values: &[&ConfigValue]| {
+        and_list(&values.iter().map(|v| config_phrase(v)).collect::<Vec<_>>())
+    };
+    Some(if differ.is_empty() {
         Note {
-            text: format!("Matches your git configuration: {}.", config_phrase(v)),
+            text: format!("Matches your git configuration: {}.", phrases(&set)),
             warn: false,
         }
     } else {
         Note {
             text: format!(
-                "Canopy passes {}, so your git configuration's {} does not apply to fetches \
+                "Canopy passes {}, so your git configuration's {} {} not apply to fetches \
                  from Canopy.",
                 if prune { "--prune" } else { "--no-prune" },
-                config_phrase(v)
+                phrases(&differ),
+                if differ.len() == 1 { "does" } else { "do" }
             ),
             warn: true,
         }
     })
+}
+
+/// `items` joined as a sentence lists them: "a", "a and b", "a, b and c".
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }
 
 /// The background fetch intervals offered, in minutes (0 = off), with their labels.
@@ -4628,6 +4660,59 @@ mod tests {
         let on = prune_note(&facts, true).unwrap();
         assert!(on.warn);
         assert!(on.text.starts_with("Canopy passes --prune"), "{}", on.text);
+    }
+
+    /// A remote's own `remote.<name>.prune` is named beside `fetch.prune`, and replaces it once
+    /// every remote sets its own.
+    #[test]
+    fn notes_name_a_remote_s_own_prune_setting() {
+        let remote = |name: &str| crate::repo_config::Remote {
+            name: name.to_owned(),
+            url: format!("https://example.com/{name}.git"),
+        };
+        let mut facts = GitFacts {
+            remotes: vec![remote("origin")],
+            remote_prune: vec![fact("remote.origin.prune", "true")],
+            ..GitFacts::default()
+        };
+        let off = prune_note(&facts, false).expect("a note");
+        assert!(off.warn);
+        assert!(
+            off.text.contains("remote.origin.prune = true"),
+            "{}",
+            off.text
+        );
+        assert!(off.text.contains(" does not apply"), "{}", off.text);
+        assert!(!prune_note(&facts, true).expect("a note").warn);
+
+        // Every remote sets its own, so fetch.prune decides nothing and is not named.
+        facts.fetch_prune = Some(fact("fetch.prune", "false"));
+        let on = prune_note(&facts, true).expect("a note");
+        assert!(!on.warn, "{}", on.text);
+        assert!(!on.text.contains("fetch.prune"), "{}", on.text);
+
+        // A second remote without its own setting brings fetch.prune back.
+        facts.remotes.push(remote("mirror"));
+        let on = prune_note(&facts, true).expect("a note");
+        assert!(on.warn);
+        assert!(on.text.contains("fetch.prune = false"), "{}", on.text);
+        assert!(!on.text.contains("remote.origin.prune"), "{}", on.text);
+        let off = prune_note(&facts, false).expect("a note");
+        assert!(off.warn);
+        assert!(
+            off.text.contains("remote.origin.prune = true") && !off.text.contains("fetch.prune"),
+            "{}",
+            off.text
+        );
+        facts.remote_prune.push(fact("remote.mirror.prune", "true"));
+        let off = prune_note(&facts, false).expect("a note");
+        assert!(
+            off.text.contains("remote.origin.prune = true (")
+                && off.text.contains(" and remote.mirror.prune = true (")
+                && off.text.contains(" do not apply"),
+            "{}",
+            off.text
+        );
     }
 
     #[test]
