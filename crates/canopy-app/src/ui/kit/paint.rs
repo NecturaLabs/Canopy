@@ -1,8 +1,8 @@
 //! Painting primitives the kit's components share: layered shadows, gradient fills clipped to a
 //! rounded rect, the inner top highlight and bottom line, the field recess, focus rings, 1 pt
 //! seams snapped to the pixel grid, Deeper's floating panes with their focus edge and top deck,
-//! scroll fades and soft radial glows. Colours come in from the caller, which reads them from the
-//! theme.
+//! edge and scroll fades, and soft radial glows. Colours come in from the caller, which reads them
+//! from the theme.
 
 use egui::epaint::tessellator::path::rounded_rectangle;
 use egui::epaint::{CornerRadiusF32, PathShape, PathStroke, RectShape};
@@ -411,8 +411,74 @@ pub fn deck(painter: &Painter, rect: Rect, p: &Palette, s: &Surfaces) {
     );
 }
 
+/// How deep a scroll fade reaches into a vertical scroll area, and how strongly it covers the
+/// content at the edge (spec 4.21: 12 pt at 85%).
+pub const SCROLL_FADE: f32 = theme::MD;
+pub const SCROLL_FADE_ALPHA: f32 = 0.85;
+/// How wide a sideways scroll fade is (the tab strip): its items are wide, and a fade as narrow
+/// as the vertical one reads as a clipped label rather than "more this way".
+pub const SIDE_FADE: f32 = theme::LG;
+
+/// The edge of a viewport a fade starts from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FadeEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+/// A fade `band` deep inside `rect` from `edge`: the ground behind the viewport (`ground`, top to
+/// bottom across `rect`) at `alpha` along the edge, clear `band` inwards.
+pub fn edge_fade(rect: Rect, edge: FadeEdge, band: f32, ground: Fill, alpha: f32) -> Shape {
+    let band = band.min(match edge {
+        FadeEdge::Top | FadeEdge::Bottom => rect.height(),
+        FadeEdge::Left | FadeEdge::Right => rect.width(),
+    });
+    let at = |y: f32| {
+        let t = ((y - rect.top()) / rect.height().max(1.0)).clamp(0.0, 1.0);
+        theme::mix(ground.top, ground.bottom, t).gamma_multiply(alpha)
+    };
+    let clear = Color32::TRANSPARENT;
+    // The four corners clockwise from the top left, each with its colour.
+    let corners = match edge {
+        FadeEdge::Top => [
+            (rect.left_top(), at(rect.top())),
+            (rect.right_top(), at(rect.top())),
+            (pos2(rect.right(), rect.top() + band), clear),
+            (pos2(rect.left(), rect.top() + band), clear),
+        ],
+        FadeEdge::Bottom => [
+            (pos2(rect.left(), rect.bottom() - band), clear),
+            (pos2(rect.right(), rect.bottom() - band), clear),
+            (rect.right_bottom(), at(rect.bottom())),
+            (rect.left_bottom(), at(rect.bottom())),
+        ],
+        FadeEdge::Left => [
+            (rect.left_top(), at(rect.top())),
+            (pos2(rect.left() + band, rect.top()), clear),
+            (pos2(rect.left() + band, rect.bottom()), clear),
+            (rect.left_bottom(), at(rect.bottom())),
+        ],
+        FadeEdge::Right => [
+            (pos2(rect.right() - band, rect.top()), clear),
+            (rect.right_top(), at(rect.top())),
+            (rect.right_bottom(), at(rect.bottom())),
+            (pos2(rect.right() - band, rect.bottom()), clear),
+        ],
+    };
+    let mut mesh = egui::Mesh::default();
+    for (pos, color) in corners {
+        mesh.colored_vertex(pos, color);
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    Shape::mesh(mesh)
+}
+
 /// Fades the top and bottom edges of a vertical scroll area into `surface` where more content lies
-/// beyond them (12 pt, 85%), so a row cut by the viewport reads as "scroll for more".
+/// beyond them ([`SCROLL_FADE`] at [`SCROLL_FADE_ALPHA`]), so a row cut by the viewport reads as
+/// "scroll for more".
 pub fn scroll_fade<R>(
     ui: &egui::Ui,
     output: &egui::scroll_area::ScrollAreaOutput<R>,
@@ -422,24 +488,58 @@ pub fn scroll_fade<R>(
     let hidden_above = output.state.offset.y;
     let hidden_below = output.content_size.y - rect.height() - output.state.offset.y;
     let painter = ui.painter_at(rect);
-    let band = theme::MD.min(rect.height() / 4.0);
-    let surface = surface.gamma_multiply(0.85);
-    let clear = Color32::TRANSPARENT;
-    let fade = |top: f32, from: Color32, to: Color32| {
-        let mut mesh = egui::Mesh::default();
-        mesh.colored_vertex(pos2(rect.left(), top), from);
-        mesh.colored_vertex(pos2(rect.right(), top), from);
-        mesh.colored_vertex(pos2(rect.right(), top + band), to);
-        mesh.colored_vertex(pos2(rect.left(), top + band), to);
-        mesh.add_triangle(0, 1, 2);
-        mesh.add_triangle(0, 2, 3);
-        painter.add(mesh);
-    };
+    let band = SCROLL_FADE.min(rect.height() / 4.0);
+    let ground = Fill::flat(surface);
     if hidden_above > 1.0 {
-        fade(rect.top(), surface, clear);
+        painter.add(edge_fade(
+            rect,
+            FadeEdge::Top,
+            band,
+            ground,
+            SCROLL_FADE_ALPHA,
+        ));
     }
     if hidden_below > 1.0 {
-        fade(rect.bottom() - band, clear, surface);
+        painter.add(edge_fade(
+            rect,
+            FadeEdge::Bottom,
+            band,
+            ground,
+            SCROLL_FADE_ALPHA,
+        ));
+    }
+}
+
+/// Fades the left and right edges of a sideways scroll area into `ground` (its colour from the
+/// top of the viewport to the bottom) where more content lies beyond them ([`SIDE_FADE`] at
+/// [`SCROLL_FADE_ALPHA`]).
+pub fn scroll_fade_x<R>(
+    ui: &egui::Ui,
+    output: &egui::scroll_area::ScrollAreaOutput<R>,
+    ground: Fill,
+) {
+    let rect = output.inner_rect;
+    let hidden_left = output.state.offset.x;
+    let hidden_right = output.content_size.x - rect.width() - output.state.offset.x;
+    let painter = ui.painter_at(rect);
+    let band = SIDE_FADE.min(rect.width() / 4.0);
+    if hidden_left > 0.5 {
+        painter.add(edge_fade(
+            rect,
+            FadeEdge::Left,
+            band,
+            ground,
+            SCROLL_FADE_ALPHA,
+        ));
+    }
+    if hidden_right > 0.5 {
+        painter.add(edge_fade(
+            rect,
+            FadeEdge::Right,
+            band,
+            ground,
+            SCROLL_FADE_ALPHA,
+        ));
     }
 }
 
@@ -477,7 +577,10 @@ fn glow_image() -> egui::ColorImage {
             let x = crate::ui::count_f32(i % GLOW_TEXELS) + 0.5 - half;
             let y = crate::ui::count_f32(i / GLOW_TEXELS) + 0.5 - half;
             let t = x.hypot(y) / half;
-            Palette::tint(Color32::WHITE, crate::ui::saturate_u8(glow_falloff(t) * 255.0))
+            Palette::tint(
+                Color32::WHITE,
+                crate::ui::saturate_u8(glow_falloff(t) * 255.0),
+            )
         })
         .collect();
     egui::ColorImage::new([GLOW_TEXELS, GLOW_TEXELS], pixels)
@@ -614,6 +717,41 @@ mod tests {
             bounds,
             Rect::from_center_size(pos2(300.0, 200.0), egui::Vec2::splat(500.0))
         );
+    }
+
+    #[test]
+    fn edge_fades_are_opaque_at_their_edge_and_clear_inwards() {
+        let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 30.0));
+        let ground = Fill {
+            top: theme::ThemeId::Midnight.palette().text,
+            bottom: theme::ThemeId::Midnight.palette().bg(),
+        };
+        for edge in [
+            FadeEdge::Top,
+            FadeEdge::Bottom,
+            FadeEdge::Left,
+            FadeEdge::Right,
+        ] {
+            let Shape::Mesh(mesh) = edge_fade(rect, edge, 16.0, ground, 1.0) else {
+                panic!("not a mesh");
+            };
+            for v in &mesh.vertices {
+                let on_edge = match edge {
+                    FadeEdge::Top => v.pos.y <= rect.top(),
+                    FadeEdge::Bottom => v.pos.y >= rect.bottom(),
+                    FadeEdge::Left => v.pos.x <= rect.left(),
+                    FadeEdge::Right => v.pos.x >= rect.right(),
+                };
+                assert_eq!(v.color.a() == 255, on_edge, "{edge:?} {v:?}");
+                assert!(rect.contains(v.pos));
+            }
+        }
+        // A sideways fade follows the ground down its height.
+        let Shape::Mesh(mesh) = edge_fade(rect, FadeEdge::Left, 16.0, ground, 1.0) else {
+            panic!("not a mesh");
+        };
+        assert_eq!(mesh.vertices[0].color, ground.top);
+        assert_eq!(mesh.vertices[3].color, ground.bottom);
     }
 
     #[test]
