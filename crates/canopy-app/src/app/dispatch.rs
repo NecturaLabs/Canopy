@@ -1,6 +1,7 @@
 //! Applying the actions a frame collected.
 
 use super::*;
+use crate::system_apps::Kind;
 
 impl CanopyApp {
     pub(super) fn apply(&mut self, ctx: &egui::Context, actions: Vec<Action>) {
@@ -96,8 +97,9 @@ impl CanopyApp {
                     }
                 }
                 Action::Fetch => {
-                    let prune = self.settings.prune_on_fetch;
-                    if let Some(t) = self.tab() {
+                    let settings = &self.settings;
+                    if let Some(t) = self.tabs.get_mut(self.active) {
+                        let prune = settings.prune_for(&t.path);
                         t.op(Op::Fetch {
                             prune,
                             quiet: false,
@@ -105,8 +107,9 @@ impl CanopyApp {
                     }
                 }
                 Action::Pull => {
-                    let strategy = self.settings.pull_mode.strategy();
-                    if let Some(t) = self.tab() {
+                    let settings = &self.settings;
+                    if let Some(t) = self.tabs.get_mut(self.active) {
+                        let strategy = settings.pull_mode_for(&t.path).strategy();
                         t.op(Op::Pull {
                             strategy,
                             follow_config: true,
@@ -141,7 +144,7 @@ impl CanopyApp {
                 Action::OpenLogs => match crate::logging::log_dir() {
                     Some(dir) => {
                         let _ = std::fs::create_dir_all(&dir);
-                        if let Err(e) = crate::platform::open_folder(&dir) {
+                        if let Err(e) = crate::platform::open_folder(&dir, &self.file_manager()) {
                             self.toasts.push(ctx, ToastKind::Error, "Could not open", e);
                         }
                     }
@@ -164,7 +167,12 @@ impl CanopyApp {
                     self.dialogs.open(self.add_remote_dialog(true));
                 }
                 Action::Commit => {
-                    let signoff = self.settings.signoff;
+                    let signoff = self
+                        .tabs
+                        .get(self.active)
+                        .map_or(self.settings.signoff, |t| {
+                            self.settings.signoff_for(&t.path)
+                        });
                     if let Some(t) = self.tab().filter(|tab| tab.can_commit()) {
                         let mut message = t.commit_summary.trim().to_owned();
                         if !t.commit_body.trim().is_empty() {
@@ -195,21 +203,53 @@ impl CanopyApp {
                 }
                 Action::Palette => self.palette.open(),
                 Action::Cheatsheet => self.cheatsheet.toggle(),
-                Action::Settings => {
-                    self.settings_screen = Some(SettingsScreen::default());
-                    if let Some(t) = self.tabs.get(self.active) {
-                        self.request_identity(IdentityJob::ReadRepo(t.path.clone()));
-                    } else {
-                        self.request_identity(IdentityJob::ReadGlobal);
+                Action::Settings => self.open_settings(SettingsScreen::default()),
+                Action::SettingsAt(section) => self.open_settings(SettingsScreen::at(section)),
+                Action::RepositorySettings(path) => {
+                    if let Some(i) = self.tabs.iter().position(|t| t.path == path) {
+                        self.active = i;
+                        self.open_settings(SettingsScreen::at(
+                            settings_screen::Section::Repository,
+                        ));
+                    }
+                }
+                Action::SetRepoDiff { path, prefs } => {
+                    match prefs {
+                        Some(prefs) => self.settings.repo_diff.insert(path.clone(), prefs),
+                        None => self.settings.repo_diff.remove(&path),
+                    };
+                    let prefs = prefs.unwrap_or(self.settings.diff);
+                    for t in self.tabs.iter_mut().filter(|t| t.path == path) {
+                        if t.diff_prefs != prefs {
+                            t.diff_prefs = prefs;
+                            t.reload_diff();
+                        }
+                    }
+                }
+                Action::ResetRepoSettings => {
+                    self.settings.repos.clear();
+                    self.settings.repo_diff.clear();
+                    let prefs = self.settings.diff;
+                    for t in &mut self.tabs {
+                        if t.diff_prefs != prefs {
+                            t.diff_prefs = prefs;
+                            t.reload_diff();
+                        }
+                    }
+                }
+                Action::SettingsReplaced => {
+                    crate::trust::set(&self.settings.trusted_folders);
+                    crate::logging::set_level(self.settings.log_level);
+                    for t in &mut self.tabs {
+                        let prefs = self.settings.diff_for(&t.path);
+                        if t.diff_prefs != prefs {
+                            t.diff_prefs = prefs;
+                            t.reload_diff();
+                        }
                     }
                 }
                 Action::IdentitySettings => {
-                    self.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git));
-                    if let Some(t) = self.tabs.get(self.active) {
-                        self.request_identity(IdentityJob::ReadRepo(t.path.clone()));
-                    } else {
-                        self.request_identity(IdentityJob::ReadGlobal);
-                    }
+                    self.open_settings(SettingsScreen::at(settings_screen::Section::Git));
                 }
                 Action::SaveIdentity {
                     repo,
@@ -249,19 +289,23 @@ impl CanopyApp {
                     }
                 }
                 Action::OpenPath(dir) => {
-                    if let Err(e) = crate::platform::open_folder(&dir) {
+                    if let Err(e) = crate::platform::open_folder(&dir, &self.file_manager()) {
                         self.toasts
                             .push(ctx, ToastKind::Error, "Could not open the folder", e);
                     }
                 }
                 Action::OpenInEditor(file) => {
-                    if let Err(e) = crate::platform::open_in_editor(&file, &self.settings.editor) {
+                    if let Err(e) =
+                        crate::platform::open_in_editor(&file, &self.launcher(Kind::Editor))
+                    {
                         self.toasts
                             .push(ctx, ToastKind::Error, "Could not open the file", e);
                     }
                 }
                 Action::OpenTerminal(p) => {
-                    if let Err(e) = crate::platform::open_terminal(&p, &self.settings.terminal) {
+                    if let Err(e) =
+                        crate::platform::open_terminal(&p, &self.launcher(Kind::Terminal))
+                    {
                         self.toasts
                             .push(ctx, ToastKind::Error, "Could not open a terminal", e);
                     }
@@ -348,6 +392,52 @@ impl CanopyApp {
         }
     }
 
+    /// Opens Settings, reading the identity it shows (the active repository's, else the global
+    /// one) off the UI thread.
+    fn open_settings(&mut self, screen: SettingsScreen) {
+        self.settings_screen = Some(screen);
+        if let Some(t) = self.tabs.get(self.active) {
+            self.request_identity(IdentityJob::ReadRepo(t.path.clone()));
+        } else {
+            self.request_identity(IdentityJob::ReadGlobal);
+        }
+    }
+
+    /// The command an open action runs: the one chosen in Settings, else the system's.
+    fn launcher(&self, kind: Kind) -> String {
+        let configured = match kind {
+            Kind::Editor => &self.settings.editor,
+            Kind::Terminal => &self.settings.terminal,
+            Kind::FileManager => &self.settings.file_manager,
+        };
+        crate::system_apps::command_for(configured, kind)
+    }
+
+    fn file_manager(&self) -> String {
+        self.launcher(Kind::FileManager)
+    }
+
+    /// Each tab's name and icon as its repository's settings say (cheap: runs every frame).
+    pub(super) fn apply_repo_looks(&mut self) {
+        for t in &mut self.tabs {
+            let own = self.settings.repos.get(&t.path);
+            let icon = crate::tab::tab_icon(own.and_then(|r| r.icon.as_deref()));
+            if t.icon != icon {
+                t.icon = icon;
+            }
+            match own.and_then(|r| r.display_name.as_deref()) {
+                Some(name) if t.name != name => name.clone_into(&mut t.name),
+                Some(_) => {}
+                None => {
+                    let folder = t.path.file_name().map(|n| n.to_string_lossy());
+                    if folder.as_deref() != Some(t.name.as_str()) {
+                        t.name = crate::tab::folder_name(&t.path);
+                    }
+                }
+            }
+        }
+    }
+
     /// The remotes of the active repository, by name.
     fn remote_names(&self) -> Vec<String> {
         self.tabs
@@ -358,9 +448,12 @@ impl CanopyApp {
     }
 
     /// The add-remote dialog (or, `publish`, the publish dialog) for the active repository, with
-    /// a remote name it does not use yet.
+    /// a remote name it does not use yet and its URL protocol the repository's choice.
     fn add_remote_dialog(&self, publish: bool) -> Dialog {
         let mut d = Dialog::add_remote(&self.settings);
+        if let (Some(t), Dialog::AddRemote { builder, .. }) = (self.tabs.get(self.active), &mut d) {
+            builder.ssh = self.settings.protocol_for(&t.path) == settings::CloneProtocol::Ssh;
+        }
         if publish {
             d = d.publishing();
         }

@@ -330,7 +330,16 @@ impl CanopyApp {
                 ),
                 (
                     e(icon::CLOUD, "Add remote…", "Remote", None),
-                    Action::OpenDialog(Dialog::add_remote(&self.settings)),
+                    Action::AddRemoteDialog,
+                ),
+                (
+                    e(
+                        icon::SLIDERS_HORIZONTAL,
+                        "Repository settings…",
+                        "Repository",
+                        None,
+                    ),
+                    Action::RepositorySettings(tab.path.clone()),
                 ),
                 (
                     e(

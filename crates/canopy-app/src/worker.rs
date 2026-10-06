@@ -115,6 +115,11 @@ pub enum Op {
         url: String,
     },
     RemoveRemote(String),
+    /// Point a remote at another URL (never one carrying credentials).
+    SetRemoteUrl {
+        name: String,
+        url: String,
+    },
     DeleteRemoteBranch {
         remote: String,
         branch: String,
@@ -215,6 +220,7 @@ impl Op {
             Self::Push { .. } => "Pushing".into(),
             Self::AddRemote { name, .. } => format!("Adding remote {name}"),
             Self::RemoveRemote(r) => format!("Removing remote {r}"),
+            Self::SetRemoteUrl { name, .. } => format!("Changing the URL of {name}"),
             Self::DeleteRemoteBranch { remote, branch } => format!("Deleting {remote}/{branch}"),
             Self::CheckoutRequest { branch, .. } => format!("Checking out {branch}"),
             Self::Resolve {
@@ -915,6 +921,7 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
         Op::Push { force } => repo.push(force, progress),
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
+        Op::SetRemoteUrl { name, url } => done(repo.set_remote_url(&name, &url)),
         Op::DeleteRemoteBranch { remote, branch } => {
             repo.delete_remote_branch(&remote, &branch, progress)
         }

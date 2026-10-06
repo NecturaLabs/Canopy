@@ -49,6 +49,45 @@ pub enum CloneProtocol {
     Ssh,
 }
 
+impl CloneProtocol {
+    pub const ALL: [Self; 2] = [Self::Https, Self::Ssh];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Https => "HTTPS",
+            Self::Ssh => "SSH",
+        }
+    }
+}
+
+/// The longest name a repository's tab can be given, in characters.
+pub const MAX_TAB_NAME: usize = 60;
+
+/// One repository's own choices. Each is `None` while the repository follows the default in
+/// [`Settings`] (its "Default for repositories" value).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RepoSettings {
+    pub pull_mode: Option<PullMode>,
+    pub prune_on_fetch: Option<bool>,
+    /// Minutes between background fetches; `Some(0)` turns them off for this repository.
+    pub auto_fetch_minutes: Option<u32>,
+    pub signoff: Option<bool>,
+    /// Protocol of remote URLs built from `owner/repo` (Add remote, Publish).
+    pub protocol: Option<CloneProtocol>,
+    /// The name its tab shows instead of the folder's.
+    pub display_name: Option<String>,
+    /// The icon its tab shows: a key of `tab::TAB_ICONS`.
+    pub icon: Option<String>,
+}
+
+impl RepoSettings {
+    /// Whether the repository follows every default.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Whitespace handling in diffs (a serialisable mirror of [`Whitespace`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum WhitespaceMode {
@@ -136,6 +175,8 @@ pub struct Settings {
     pub diff: DiffPrefs,
     /// Per-repository diff options, keyed by working directory.
     pub repo_diff: HashMap<PathBuf, DiffPrefs>,
+    /// Per-repository choices that differ from the defaults above, keyed by working directory.
+    pub repos: HashMap<PathBuf, RepoSettings>,
     /// Show diffs side by side (old left, new right) instead of unified.
     pub split_diff: bool,
     /// Colour code in diffs by language.
@@ -147,11 +188,15 @@ pub struct Settings {
     pub clone_protocol: CloneProtocol,
     /// Self-hosted GitLab hosts, comma-separated.
     pub gitlab_hosts: String,
-    /// Terminal command for "Open terminal here", run in the repository folder.
+    /// Terminal command for "Open terminal here", run in the repository folder (`%d` stands for
+    /// it). Empty uses the system's terminal (`system_apps`).
     pub terminal: String,
-    /// Editor command for "Open in editor"; the file is added as the last argument. Empty uses
-    /// the platform's text editor.
+    /// Editor command for "Open in editor"; `%f` stands for the file, which is added as the last
+    /// argument otherwise. Empty uses the system's editor.
     pub editor: String,
+    /// File manager command for showing a folder; `%d` stands for the folder, which is added as
+    /// the last argument otherwise. Empty uses the system's file manager.
+    pub file_manager: String,
     /// Load pull/merge requests from GitHub and GitLab.
     pub hosting_api: bool,
     /// Folders whose repositories may download missing objects in a partial clone without being
@@ -218,6 +263,7 @@ impl Default for Settings {
             commit_page: 2000,
             diff: DiffPrefs::default(),
             repo_diff: HashMap::new(),
+            repos: HashMap::new(),
             split_diff: false,
             syntax_highlight: true,
             clone_dir: String::new(),
@@ -225,6 +271,7 @@ impl Default for Settings {
             gitlab_hosts: String::new(),
             terminal: String::new(),
             editor: String::new(),
+            file_manager: String::new(),
             hosting_api: true,
             trusted_folders: Vec::new(),
             check_updates: true,
@@ -262,6 +309,77 @@ impl Settings {
         let mut seen = Vec::new();
         self.trusted_folders
             .retain(|f| f.is_absolute() && crate::trust::add(&mut seen, f));
+        for repo in self.repos.values_mut() {
+            repo.display_name = repo
+                .display_name
+                .take()
+                .map(|n| n.trim().chars().take(MAX_TAB_NAME).collect::<String>())
+                .filter(|n| !n.is_empty());
+            repo.icon = repo
+                .icon
+                .take()
+                .filter(|k| crate::tab::TAB_ICONS.iter().any(|(key, _, _)| key == k));
+        }
+        // Only real choices are kept; a repository following every default needs no entry.
+        self.repos
+            .retain(|path, repo| path.is_absolute() && !repo.is_default());
+    }
+
+    /// The repository's own choices, or the defaults when it has none.
+    pub fn repo(&self, path: &Path) -> RepoSettings {
+        self.repos.get(path).cloned().unwrap_or_default()
+    }
+
+    /// One of the repository's own choices, without copying the rest.
+    fn own<T>(&self, path: &Path, pick: impl FnOnce(&RepoSettings) -> Option<T>) -> Option<T> {
+        self.repos.get(path).and_then(pick)
+    }
+
+    /// The repository's own choices, to change them.
+    pub fn repo_mut(&mut self, path: &Path) -> &mut RepoSettings {
+        self.repos.entry(path.to_path_buf()).or_default()
+    }
+
+    /// How a pull integrates in the repository at `path`.
+    pub fn pull_mode_for(&self, path: &Path) -> PullMode {
+        self.own(path, |r| r.pull_mode).unwrap_or(self.pull_mode)
+    }
+
+    /// Whether fetching in the repository at `path` prunes.
+    pub fn prune_for(&self, path: &Path) -> bool {
+        self.own(path, |r| r.prune_on_fetch)
+            .unwrap_or(self.prune_on_fetch)
+    }
+
+    /// Minutes between background fetches of the repository at `path` (0 = off).
+    pub fn auto_fetch_for(&self, path: &Path) -> u32 {
+        self.own(path, |r| r.auto_fetch_minutes)
+            .unwrap_or(self.auto_fetch_minutes)
+    }
+
+    /// Whether commits in the repository at `path` get a Signed-off-by trailer.
+    pub fn signoff_for(&self, path: &Path) -> bool {
+        self.own(path, |r| r.signoff).unwrap_or(self.signoff)
+    }
+
+    /// The protocol of URLs built from `owner/repo` for the repository at `path`.
+    pub fn protocol_for(&self, path: &Path) -> CloneProtocol {
+        self.own(path, |r| r.protocol)
+            .unwrap_or(self.clone_protocol)
+    }
+
+    /// Repositories with a choice of their own (settings or diff options).
+    pub fn repos_with_overrides(&self) -> usize {
+        let mut paths: Vec<&PathBuf> = self
+            .repos
+            .iter()
+            .filter(|(_, r)| !r.is_default())
+            .map(|(p, _)| p)
+            .chain(self.repo_diff.keys())
+            .collect();
+        paths.sort();
+        paths.dedup();
+        paths.len()
     }
 
     /// Moves `path` to the front of the recent list.
@@ -421,6 +539,118 @@ mod tests {
             (back.style, back.density, back.translucent, back.motion),
             (Style::Deeper, Density::Dense, true, MotionPref::Full)
         );
+    }
+
+    #[test]
+    fn a_repository_follows_the_defaults_until_it_chooses() {
+        let repo = PathBuf::from("/home/ada/src/canopy");
+        let other = PathBuf::from("/home/ada/src/other");
+        let mut s = Settings {
+            pull_mode: PullMode::Rebase,
+            prune_on_fetch: false,
+            auto_fetch_minutes: 15,
+            signoff: true,
+            clone_protocol: CloneProtocol::Ssh,
+            ..Settings::default()
+        };
+        // Nothing chosen: every value is the default.
+        assert_eq!(s.pull_mode_for(&repo), PullMode::Rebase);
+        assert!(!s.prune_for(&repo));
+        assert_eq!(s.auto_fetch_for(&repo), 15);
+        assert!(s.signoff_for(&repo));
+        assert_eq!(s.protocol_for(&repo), CloneProtocol::Ssh);
+        // A repository's choice wins for it alone.
+        *s.repo_mut(&repo) = RepoSettings {
+            pull_mode: Some(PullMode::FastForwardOnly),
+            prune_on_fetch: Some(true),
+            auto_fetch_minutes: Some(0),
+            signoff: Some(false),
+            protocol: Some(CloneProtocol::Https),
+            ..RepoSettings::default()
+        };
+        assert_eq!(s.pull_mode_for(&repo), PullMode::FastForwardOnly);
+        assert!(s.prune_for(&repo));
+        assert_eq!(
+            s.auto_fetch_for(&repo),
+            0,
+            "Some(0) turns background fetch off"
+        );
+        assert!(!s.signoff_for(&repo));
+        assert_eq!(s.protocol_for(&repo), CloneProtocol::Https);
+        assert_eq!(s.pull_mode_for(&other), PullMode::Rebase);
+        assert_eq!(s.protocol_for(&other), CloneProtocol::Ssh);
+        // A changed default reaches the repositories that follow it, not the others.
+        s.pull_mode = PullMode::Merge;
+        assert_eq!(s.pull_mode_for(&other), PullMode::Merge);
+        assert_eq!(s.pull_mode_for(&repo), PullMode::FastForwardOnly);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_choices_survive_a_round_trip_and_old_files_load() {
+        let repo = PathBuf::from("/srv/git/app");
+        let mut s = Settings::default();
+        s.repo_mut(&repo).protocol = Some(CloneProtocol::Ssh);
+        s.repo_mut(&repo).pull_mode = Some(PullMode::Rebase);
+        let json = serde_json::to_string(&s).expect("serialise");
+        let mut back: Settings = serde_json::from_str(&json).expect("parse");
+        back.migrate();
+        assert_eq!(back.repo(&repo), s.repo(&repo));
+        // A file from before per-repository settings: every repository follows the defaults.
+        let mut old: Settings =
+            serde_json::from_str(r#"{"clone_protocol": "Ssh", "pull_mode": "Rebase"}"#)
+                .expect("parse");
+        old.migrate();
+        assert!(old.repos.is_empty());
+        assert_eq!(old.protocol_for(&repo), CloneProtocol::Ssh);
+        assert_eq!(old.pull_mode_for(&repo), PullMode::Rebase);
+        // An entry with a field this version does not know still loads.
+        let mut newer: Settings = serde_json::from_str(
+            r#"{"repos": {"/srv/git/app": {"signoff": true, "from_the_future": 1}}}"#,
+        )
+        .expect("parse");
+        newer.migrate();
+        assert!(newer.signoff_for(&repo));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tab_names_and_icons_are_checked_when_loaded() {
+        let mut s: Settings = serde_json::from_str(
+            r#"{"repos": {
+                "/srv/a": {"display_name": "  Website  ", "icon": "globe"},
+                "/srv/b": {"display_name": "   ", "icon": "no-such-icon"}
+            }}"#,
+        )
+        .expect("parse");
+        s.repo_mut(Path::new("/srv/c")).display_name = Some("x".repeat(500));
+        s.migrate();
+        let a = s.repo(Path::new("/srv/a"));
+        assert_eq!(a.display_name.as_deref(), Some("Website"));
+        assert_eq!(a.icon.as_deref(), Some("globe"));
+        assert!(
+            !s.repos.contains_key(Path::new("/srv/b")),
+            "a blank name and an unknown icon are no choice"
+        );
+        let long = s.repo(Path::new("/srv/c")).display_name.unwrap_or_default();
+        assert_eq!(long.chars().count(), MAX_TAB_NAME);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn empty_and_relative_repository_entries_are_dropped() {
+        let mut s = Settings::default();
+        s.repo_mut(Path::new("/srv/git/kept")).signoff = Some(true);
+        s.repo_mut(Path::new("/srv/git/reset"));
+        s.repo_mut(Path::new("relative/repo")).signoff = Some(true);
+        s.migrate();
+        let kept: Vec<&PathBuf> = s.repos.keys().collect();
+        assert_eq!(kept, [&PathBuf::from("/srv/git/kept")]);
+        s.repo_diff
+            .insert(PathBuf::from("/srv/git/kept"), DiffPrefs::default());
+        s.repo_diff
+            .insert(PathBuf::from("/srv/git/diff"), DiffPrefs::default());
+        assert_eq!(s.repos_with_overrides(), 2);
     }
 
     #[test]
