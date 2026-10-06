@@ -1374,6 +1374,31 @@ fn github_rollup_errors_and_empty_data() {
             reset: Some(1_800_000_005)
         })
     );
+    // …or with any error and no requests left (GitHub's documented primary-limit answer).
+    assert_eq!(
+        rollup(
+            200,
+            &[
+                ("x-ratelimit-remaining", "0"),
+                ("x-ratelimit-reset", "1800000006")
+            ],
+            r#"{"data":null,"errors":[{"message":"Something went wrong."}]}"#
+        ),
+        Err(Error::RateLimited {
+            reset: Some(1_800_000_006)
+        })
+    );
+    // A secondary limit: 200, a message saying so, and how long to wait.
+    let before = chrono::Utc::now().timestamp();
+    let secondary = rollup(
+        200,
+        &[("retry-after", "60")],
+        r#"{"errors":[{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}]}"#,
+    );
+    let Err(Error::RateLimited { reset: Some(reset) }) = secondary else {
+        panic!("a secondary limit is a rate limit: {secondary:?}");
+    };
+    assert!((before + 59..=before + 62).contains(&reset), "{reset}");
     assert_eq!(
         rollup(
             200,

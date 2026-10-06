@@ -257,7 +257,8 @@ impl Http {
     /// The request carries the same `User-Agent` and token as every other, follows no redirect,
     /// reads the body with the same limit as [`Self::json`] and logs the same fields (method,
     /// path, status, duration). A failed status maps as for any request ([`map_status`]). In a
-    /// successful response, a `RATE_LIMITED` error becomes [`Error::RateLimited`]; other errors
+    /// successful response, errors that come with no requests left, a `retry-after`, or a
+    /// message or type saying a rate limit was hit become [`Error::RateLimited`]; other errors
     /// fail the call only when no `data` came back (GitHub answers a missing pull request with
     /// an error beside the rest of the data).
     pub(crate) fn graphql<T: DeserializeOwned>(&self, query: &str, variables: &Value) -> Result<T> {
@@ -279,11 +280,16 @@ impl Http {
         let result = req.config().max_redirects(0).build().send(&*payload);
         let (headers, bytes) = self.receive(Method::Post, path, started, result)?;
         let envelope: GraphqlEnvelope<T> = parse(&bytes, "GraphQL response")?;
-        if envelope
-            .errors
-            .iter()
-            .any(|e| e.kind.as_deref() == Some("RATE_LIMITED"))
-        {
+        // GitHub answers an exhausted GraphQL quota with 200, an error and no requests left, and
+        // a secondary limit with 200 or 403, an error saying so and perhaps `retry-after`.
+        let limited = !envelope.errors.is_empty()
+            && (header_i64(&headers, "x-ratelimit-remaining") == Some(0)
+                || headers.contains_key("retry-after")
+                || envelope.errors.iter().any(|e| {
+                    e.kind.as_deref() == Some("RATE_LIMITED")
+                        || e.message.to_ascii_lowercase().contains("rate limit")
+                }));
+        if limited {
             return Err(Error::RateLimited {
                 reset: rate_limit_reset(&headers),
             });
