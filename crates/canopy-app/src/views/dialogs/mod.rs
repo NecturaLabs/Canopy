@@ -30,6 +30,7 @@ use crate::ui::theme::{self, palette};
 use crate::worker::Op;
 
 mod common;
+pub(crate) use common::tilde_in;
 mod credential;
 mod reader;
 mod stack;

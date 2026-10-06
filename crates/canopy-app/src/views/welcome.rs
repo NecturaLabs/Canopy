@@ -266,16 +266,7 @@ fn recent(ui: &mut Ui, path: &Path, home: &Path, actions: &mut Vec<Action>) {
 /// file system.
 fn folder_label(path: &Path, home: &Path) -> Option<String> {
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty())?;
-    if !home.as_os_str().is_empty()
-        && let Ok(rest) = parent.strip_prefix(home)
-    {
-        return Some(if rest.as_os_str().is_empty() {
-            "~".to_owned()
-        } else {
-            Path::new("~").join(rest).display().to_string()
-        });
-    }
-    Some(parent.display().to_string())
+    Some(crate::views::dialogs::tilde_in(parent, home))
 }
 
 /// First-run tips: how Canopy is meant to be driven, as keys and what they do.
