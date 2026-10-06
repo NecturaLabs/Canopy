@@ -35,6 +35,7 @@ pub const SECTIONS: &[Section] = &[
     ("Chips", super::chip::gallery),
     ("People", super::avatar::gallery),
     ("Surfaces", super::surface::gallery),
+    ("Split handles", super::split::gallery),
     ("Graph", super::graph::gallery),
     ("Translucent surfaces", super::glass::gallery),
 ];
