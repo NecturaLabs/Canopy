@@ -72,7 +72,7 @@ pub struct ToastCard<'a> {
 }
 
 impl<'a> ToastCard<'a> {
-    /// A card for `id` (stable across frames: it keeps the disclosure and the entrance) in the
+    /// A card for `id` (stable across frames: it keeps the entrance) in the
     /// colour of `tone` (`Accent` informs, `Success`, `Warning`, `Danger` for errors).
     pub fn new(id: Id, tone: Tone, title: &'a str) -> Self {
         Self {
@@ -293,8 +293,8 @@ impl<'a> ToastCard<'a> {
 
 // ------------------------------------------------------------------------------------- gallery
 
-/// The gallery's toasts: info, success, warning, an error with its details open and an action,
-/// a running operation, and one mid-entrance.
+/// The gallery's toasts: a choice, success, warning, an error with a choice, a running operation,
+/// and one mid-entrance.
 pub(crate) fn gallery(ui: &mut Ui) {
     let m = theme::metrics();
     let p = theme::palette(ui.ctx());

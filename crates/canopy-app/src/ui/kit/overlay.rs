@@ -553,7 +553,6 @@ fn paint_exits(ctx: &Context) {
 
 // --------------------------------------------------------------------------------- tooltip
 
-/// Kit tooltips on any response: `response.kit_tooltip("Fetch all remotes").shortcut(Command::Fetch).show()`.
 /// Which tooltips show (Settings → Appearance → Tooltips).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum TooltipLevel {
@@ -656,6 +655,7 @@ fn tooltip_shows(level: TooltipLevel, enabled: bool, extra: bool) -> bool {
     }
 }
 
+/// Kit tooltips on any response: `response.kit_tooltip("Fetch all remotes").shortcut(Command::Fetch).show()`.
 pub trait TooltipExt {
     fn kit_tooltip(self, text: impl Into<String>) -> Tooltip;
 }

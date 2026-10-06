@@ -1226,8 +1226,6 @@ fn clone_target(builder: &UrlBuilder, parent: &str) -> Option<(String, std::path
     Some((url.trim().to_owned(), dest))
 }
 
-/// A yes-or-no question: destructive ones get the danger disc and button and keep Enter from
-/// confirming.
 /// How many predicted files a pull's dialog lists before "and N more".
 const PREDICTED_SHOWN: usize = 8;
 
@@ -1268,6 +1266,8 @@ fn predicted_conflicts(ui: &mut Ui, preview: &canopy_core::PullPreview) {
     }
 }
 
+/// A yes-or-no question: destructive ones get the danger disc and button and keep Enter from
+/// confirming.
 fn confirmation<'a>(
     salt: impl std::hash::Hash + std::fmt::Debug,
     title: &str,

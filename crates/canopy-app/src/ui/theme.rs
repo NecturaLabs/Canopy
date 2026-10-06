@@ -1798,7 +1798,6 @@ pub fn over(fg: Color32, bg: Color32) -> Color32 {
     )
 }
 
-/// `a` moved towards `b` by `t` (0 to 1).
 /// How much of its colour a tonal control's ground takes at rest, hovered and pressed, and its
 /// ring ([`Palette::tonal`]).
 const TONAL_REST: f32 = 0.16;
@@ -1806,6 +1805,7 @@ const TONAL_HOVER: f32 = 0.22;
 const TONAL_PRESSED: f32 = 0.28;
 const TONAL_RING: f32 = 0.45;
 
+/// `a` moved towards `b` by `t` (0 to 1).
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let m = |x: u8, y: u8| {
         crate::ui::saturate_u8((f32::from(x) + (f32::from(y) - f32::from(x)) * t).round())
