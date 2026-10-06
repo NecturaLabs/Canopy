@@ -20,11 +20,11 @@ use egui::{RichText, Ui};
 use egui_phosphor::regular as icon;
 
 use super::kit::Tone;
-use super::kit::button::{IconButton, LinkButton};
+use super::kit::button::IconButton;
 use super::kit::chip::Badge;
 use super::kit::overlay::{self, Popover, TooltipExt};
 use super::kit::toast::ToastCard;
-use super::kit::{KitResponse, Size};
+use super::kit::{Button, KitResponse, Size};
 use super::motion;
 use super::theme;
 use crate::settings::NotificationPrefs;
@@ -601,8 +601,9 @@ impl Toasts {
                     settings = true;
                 }
                 if !self.history.is_empty()
-                    && LinkButton::new("Clear all")
-                        .text_size(m.meta_size)
+                    && Button::new("Clear all")
+                        .ghost()
+                        .size(Size::Xs)
                         .show(ui)
                         .clicked()
                 {
@@ -701,22 +702,28 @@ impl Toasts {
                                     }
                                 }
                                 ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = theme::MD;
+                                    ui.spacing_mut().item_spacing.x = theme::XS;
+                                    // The buttons' labels, not their padding, line up with the
+                                    // text above.
+                                    ui.add_space(-theme::metrics().button_pad_x_sm);
                                     if let Some(recovery) = &e.recovery {
                                         let label = match recovery {
                                             Recovery::Pull(_) => "Pull",
                                             Recovery::Accounts => "Open Accounts",
                                         };
-                                        if LinkButton::new(label)
-                                            .text_size(m.meta_size)
+                                        if Button::new(label)
+                                            .secondary()
+                                            .size(Size::Xs)
                                             .show(ui)
                                             .clicked()
                                         {
                                             self.chosen.push(recovery.clone());
                                         }
                                     }
-                                    if LinkButton::new("Copy")
-                                        .text_size(m.meta_size)
+                                    if Button::new("Copy")
+                                        .ghost()
+                                        .size(Size::Xs)
+                                        .icon(icon::COPY)
                                         .show(ui)
                                         .clicked()
                                     {
@@ -727,8 +734,9 @@ impl Toasts {
                                         };
                                         ui.ctx().copy_text(text);
                                     }
-                                    if LinkButton::new("Dismiss")
-                                        .text_size(m.meta_size)
+                                    if Button::new("Dismiss")
+                                        .ghost()
+                                        .size(Size::Xs)
                                         .show(ui)
                                         .clicked()
                                     {

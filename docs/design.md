@@ -100,7 +100,9 @@ The history graph's node shape (dots, rings, squares, diamonds) and its lines be
 (curves, metro, circuit) are the user's choice in Settings (`theme::NodeShape`, `theme::Curve`,
 `theme::set_graph`), the same in every theme.
 
-Link buttons are `accent2` and underlined on hover and focus; where the link colour alone does
+Links are for going somewhere (a web page, release notes, another screen); an action that does
+something (copy, dismiss, create) is a button, a Ghost one where it should stay quiet. Link
+buttons are Inter Medium in `accent2` and underlined on hover and focus; where the link colour alone does
 not set a link apart from body text, the theme's `Design::link_underline` underlines them at rest
 too: at high contrast, for low vision. Inline links in the legal texts still
 underline only on hover and focus.
@@ -631,8 +633,8 @@ cards, and by default only the first three do. Every notification, card or not, 
 notification center: the bell at the right end of the status bar (`BELL`, `BELL_SLASH` while
 cards are off) opens a 360-point popover listing the last 100, newest first, each with its kind's
 glyph and colour, title, relative time (exact in the tooltip), up to four lines of text (all of it
-in the tooltip) and Copy, Dismiss and any recovery action as links; a header holds Clear all and
-the settings gear. Notifications of a counting topic (errors, attention, updates) that showed no
+in the tooltip) and its actions as Xs buttons, their labels lined up with the text: any recovery
+action Secondary, Copy and Dismiss Ghost; a header holds a Ghost Clear all and the settings gear. Notifications of a counting topic (errors, attention, updates) that showed no
 card raise a strong count badge on the bell, `danger` when one is an error, else `accent`; opening
 the center clears it, and while it is open new notifications go to its list instead of a card.
 

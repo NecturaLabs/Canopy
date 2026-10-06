@@ -377,8 +377,10 @@ pub fn show(
                         *error = None;
                     }
                     if error.as_ref().is_some_and(|e| e.not_a_repository)
-                        && LinkButton::new("Create a new repository in this folder…")
-                            .text_size(m.meta_size)
+                        && Button::new("Create a new repository in this folder…")
+                            .ghost()
+                            .size(Size::Sm)
+                            .icon(icon::PLUS)
                             .show(ui)
                             .clicked()
                     {

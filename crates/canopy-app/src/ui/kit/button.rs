@@ -1209,7 +1209,7 @@ impl LinkButton {
         } else {
             self.text.clone()
         };
-        let font = FontId::proportional(self.size.unwrap_or(m.body_size));
+        let font = FontId::new(self.size.unwrap_or(m.body_size), theme::medium());
         let g = ui.painter().layout_no_wrap(text, font, p.accent2);
         let sense = if enabled {
             Sense::click()
