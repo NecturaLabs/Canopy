@@ -1476,6 +1476,10 @@ fn pull_config_names_the_setting_its_value_and_where_it_is_set() {
     git(workdir, &["config", "pull.rebase", "false"]);
     let config = copy.pull_config().expect("pull_config");
     assert_eq!(config.strategy, Some(PullStrategy::Merge));
+    // The global configuration alone, read even from inside the repository, ignores it.
+    let global = canopy_core::global_pull_config(workdir).expect("global_pull_config");
+    assert_eq!(global.strategy, Some(PullStrategy::RebaseMerges));
+    assert_eq!(global.sources[0].scope, ConfigScope::Global);
     let source = &config.sources[0];
     assert_eq!(source.scope, ConfigScope::Local);
     assert_eq!(source.value, "false");

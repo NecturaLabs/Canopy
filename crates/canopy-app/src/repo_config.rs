@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crossbeam_channel::{Receiver, bounded};
 
+use canopy_core::PullConfig;
 use canopy_core::identity::Source;
 
 /// One configuration value and where git found it.
@@ -53,10 +54,10 @@ pub struct Remote {
 pub struct GitFacts {
     /// The checked-out branch, when there is one.
     pub branch: Option<String>,
-    /// `branch.<branch>.rebase`, which git puts before `pull.rebase`.
-    pub branch_rebase: Option<ConfigValue>,
-    pub pull_rebase: Option<ConfigValue>,
-    pub pull_ff: Option<ConfigValue>,
+    /// What the configuration asks a pull to do (`branch.<name>.rebase`, `pull.rebase`,
+    /// `pull.ff`, `merge.ff`), resolved in git's order by `canopy_core::Repo::pull_config`
+    /// (globally `canopy_core::global_pull_config`); `None` when it could not be read.
+    pub pull: Option<PullConfig>,
     pub fetch_prune: Option<ConfigValue>,
     pub gpg_sign: Option<ConfigValue>,
     pub gpg_format: Option<ConfigValue>,
@@ -66,12 +67,6 @@ pub struct GitFacts {
 }
 
 impl GitFacts {
-    /// The setting git follows for how a pull integrates, in git's order: the branch's own
-    /// `rebase`, then `pull.rebase`. `None` when neither is set.
-    pub fn pull_rebase_setting(&self) -> Option<&ConfigValue> {
-        self.branch_rebase.as_ref().or(self.pull_rebase.as_ref())
-    }
-
     /// Whether git signs commits (`commit.gpgsign`).
     pub fn signs_commits(&self) -> bool {
         self.gpg_sign
@@ -117,8 +112,8 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
     };
     let get = |key: &str| get_value(dir, scope, key);
     let mut facts = GitFacts::default();
-    match get("pull.rebase") {
-        Ok(v) => facts.pull_rebase = v,
+    match get("fetch.prune") {
+        Ok(v) => facts.fetch_prune = v,
         Err(e) => {
             facts.error = Some(e);
             return facts;
@@ -131,13 +126,15 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
                 .filter(|o| o.code == Some(0))
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
                 .filter(|b| !b.is_empty());
-        if let Some(branch) = &facts.branch {
-            facts.branch_rebase = get(&format!("branch.{branch}.rebase")).ok().flatten();
-        }
         facts.remotes = remotes(dir);
     }
-    facts.pull_ff = get("pull.ff").ok().flatten();
-    facts.fetch_prune = get("fetch.prune").ok().flatten();
+    let pull = match workdir {
+        Some(w) => canopy_core::Repo::open(w).and_then(|r| r.pull_config()),
+        None => canopy_core::global_pull_config(dir),
+    };
+    facts.pull = pull
+        .inspect_err(|e| tracing::debug!(error = %e, "pull settings not read"))
+        .ok();
     facts.gpg_sign = get("commit.gpgsign").ok().flatten();
     facts.gpg_format = get("gpg.format").ok().flatten();
     facts
@@ -277,17 +274,20 @@ mod tests {
         git(&["init", "-q", "-b", "trunk"]);
         git(&["config", "pull.rebase", "false"]);
         git(&["config", "branch.trunk.rebase", "true"]);
+        // Read after any global pull.ff=only, so the developer's configuration cannot decide.
+        git(&["config", "pull.ff", "true"]);
         git(&["config", "fetch.prune", "true"]);
         git(&["remote", "add", "origin", "https://example.com/o/r.git"]);
         let facts = read(Some(dir.path()));
         assert_eq!(facts.error, None);
         assert_eq!(facts.branch.as_deref(), Some("trunk"));
-        let pull = facts.pull_rebase_setting().expect("set");
+        let pull = facts.pull.as_ref().expect("read");
         assert_eq!(
-            (pull.key.as_str(), pull.value.as_str()),
-            ("branch.trunk.rebase", "true"),
+            pull.strategy,
+            Some(canopy_core::PullStrategy::Rebase),
             "the branch's own setting comes before pull.rebase"
         );
+        assert_eq!(pull.sources[0].key, "branch.trunk.rebase");
         assert_eq!(
             facts.fetch_prune.as_ref().and_then(ConfigValue::as_bool),
             Some(true)

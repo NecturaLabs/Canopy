@@ -274,6 +274,8 @@ pub enum Job {
     SquashMessage(String),
     /// A conflicted file, parsed for the resolver.
     Conflict(String),
+    /// What the configuration asks a pull to do on the current branch (`Repo::pull_config`).
+    PullConfig,
     /// A mutation.
     Op(Op),
 }
@@ -318,6 +320,9 @@ pub enum Event {
     /// highlighter threads, so it may arrive after a newer diff; it applies only to this one.
     Highlight(DiffKey, Arc<FileDiff>, Arc<crate::highlight::Highlights>),
     HeadMessage(String),
+    /// The answer to [`Job::PullConfig`]: git's own message when the configuration cannot be
+    /// read.
+    PullConfig(Result<canopy_core::PullConfig, String>),
     MergeMessage(String),
     /// A new commit message after a squash, never an amend prefill.
     SquashMessage(String),
@@ -421,6 +426,7 @@ impl Job {
             Self::MergeMessage => "merge-message",
             Self::SquashMessage(_) => "squash-message",
             Self::Conflict(_) => "conflict",
+            Self::PullConfig => "pull-config",
             Self::Op(_) => "operation",
         }
     }
@@ -606,6 +612,11 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         "Merge {target} (squashed)\n\n{}",
                         body.trim()
                     )));
+                }
+                Job::PullConfig => {
+                    emit(Event::PullConfig(
+                        repo.pull_config().map_err(|e| e.to_string()),
+                    ));
                 }
                 Job::Conflict(path) => {
                     let kind = repo.conflict_kind(&path).ok().flatten();
@@ -1332,6 +1343,27 @@ mod read_tests {
         let made = partial_clone(filter);
         crate::trust::add_for_tests(made.0.path().to_path_buf());
         made
+    }
+
+    /// PS-F1: the Pull menu's default comes from the repository thread, never the UI thread.
+    #[test]
+    fn the_worker_reads_what_the_configuration_asks_a_pull_to_do() {
+        let (_root, _src, copy, _oldest, _middle) = partial_clone("--no-local");
+        // The repository's own values are read last, so the developer's configuration cannot
+        // change the answer.
+        git(&copy, &["config", "pull.ff", "true"]);
+        git(&copy, &["config", "branch.main.rebase", "true"]);
+        let worker = Worker::spawn(copy, &egui::Context::default());
+        worker.send(Job::PullConfig);
+        let events = events_until(&worker, |e| matches!(e, Event::PullConfig(_)));
+        let Some(Event::PullConfig(Ok(config))) = events.last() else {
+            panic!("expected the pull settings, got {events:?}");
+        };
+        assert_eq!(config.strategy, Some(PullStrategy::Rebase));
+        assert_eq!(
+            config.describe().as_deref(),
+            Some("branch.main.rebase=true (repository)")
+        );
     }
 
     #[test]

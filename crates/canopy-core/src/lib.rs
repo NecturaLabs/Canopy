@@ -50,6 +50,6 @@ pub use merged::{MergedBranch, MergedReason};
 pub use model::*;
 pub use ops::{HunkAction, MergeMode, PullStrategy, ResetMode};
 pub use partial::MissingObjects;
-pub use pull::{ConfigScope, ConfigSource, PullConfig};
+pub use pull::{ConfigScope, ConfigSource, PullConfig, global_pull_config};
 pub use repo::Repo;
 pub use submodule::{SubmoduleChange, SubmoduleInfo, SubmoduleState};

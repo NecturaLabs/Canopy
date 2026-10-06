@@ -109,11 +109,16 @@ impl CanopyApp {
                 Action::Pull => {
                     let settings = &self.settings;
                     if let Some(t) = self.tabs.get_mut(self.active) {
-                        let strategy = settings.pull_mode_for(&t.path).strategy();
+                        let choice = settings.pull_for(&t.path);
                         t.op(Op::Pull {
-                            strategy,
-                            follow_config: true,
+                            strategy: choice.mode.strategy(),
+                            follow_config: choice.follow_config,
                         });
+                    }
+                }
+                Action::ReadPullConfig => {
+                    if let Some(t) = self.tabs.get(self.active) {
+                        t.worker.send(Job::PullConfig);
                     }
                 }
                 Action::Push => {
@@ -417,7 +422,8 @@ impl CanopyApp {
         self.launcher(Kind::FileManager)
     }
 
-    /// Each tab's name and icon as its repository's settings say (cheap: runs every frame).
+    /// Each tab's name, icon and pull choice as its repository's settings say (cheap: runs every
+    /// frame).
     pub(super) fn apply_repo_looks(&mut self) {
         for t in &mut self.tabs {
             let own = self.settings.repos.get(&t.path);
@@ -425,6 +431,7 @@ impl CanopyApp {
             if t.icon != icon {
                 t.icon = icon;
             }
+            t.pull = self.settings.pull_for(&t.path);
             match own.and_then(|r| r.display_name.as_deref()) {
                 Some(name) if t.name != name => name.clone_into(&mut t.name),
                 Some(_) => {}

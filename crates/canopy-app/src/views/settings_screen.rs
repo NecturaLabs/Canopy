@@ -22,7 +22,7 @@ use crate::action::Action;
 use crate::hosting::{self, TokenStore};
 use crate::keymap::{Command, Section as KeySection};
 use crate::repo_config::{ConfigValue, GitFacts};
-use crate::settings::{CloneProtocol, DiffPrefs, PullMode, Settings, WhitespaceMode};
+use crate::settings::{CloneProtocol, DiffPrefs, PullChoice, PullMode, Settings, WhitespaceMode};
 use crate::system_apps::Kind;
 use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::Badge;
@@ -34,7 +34,7 @@ use crate::ui::kit::paint;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::range::Slider;
 use crate::ui::kit::row::{ListRow, RowKind};
-use crate::ui::kit::select::Select;
+use crate::ui::kit::select::{self, Select};
 use crate::ui::kit::surface::{Callout, Card, EmptyAction, EmptyState, column_label};
 use crate::ui::kit::toggle::Switch;
 use crate::ui::kit::{Button, IconButton, Size, Tone};
@@ -689,6 +689,7 @@ fn synonyms(title: &str) -> &'static str {
             "identity user author git config user.name user.email"
         }
         "Pull strategy" => "pull rebase merge fast-forward ff only",
+        "Follow my git config" => "pull rebase pull.rebase pull.ff configuration follow default",
         "Prune on fetch" => "prune stale remote branches delete",
         "Fetch in the background" => "auto fetch automatic interval minutes",
         "Add Signed-off-by" => "signoff sign-off dco trailer",
@@ -1155,41 +1156,51 @@ fn config_phrase(v: &ConfigValue) -> String {
     )
 }
 
-/// What git's configuration says about pulls, against Canopy's `mode`. Git follows its own
-/// `branch.<name>.rebase` or `pull.rebase` when one is set, whatever Canopy chose
-/// (`canopy_core::Repo::pull`).
-fn pull_note(facts: &GitFacts, mode: PullMode) -> Option<Note> {
-    if let Some(v) = facts.pull_rebase_setting() {
-        let rebases = v.as_bool().is_none_or(|b| b);
-        let agrees = matches!(
-            (mode, rebases),
-            (PullMode::Rebase, true) | (PullMode::Merge, false)
-        );
-        return Some(if agrees {
-            Note {
-                text: format!("Matches your git configuration: {}.", config_phrase(v)),
-                warn: false,
-            }
-        } else {
-            Note {
-                text: format!(
-                    "Your git configuration sets {}; git follows it for pulls, so pulls {}.",
-                    config_phrase(v),
-                    if rebases { "rebase" } else { "merge" }
-                ),
-                warn: true,
-            }
+/// What git's configuration says about pulls, against Canopy's `choice`. Canopy always passes a
+/// strategy (`canopy_core::Repo::pull`): the configuration's when it follows it and one is set,
+/// else its own, and then a configuration that differs does not apply.
+fn pull_note(facts: &GitFacts, choice: PullChoice) -> Option<Note> {
+    let config = facts.pull.as_ref()?;
+    let ours = choice.mode.strategy();
+    let Some((configured, described)) = config.strategy.zip(config.describe()) else {
+        return choice.follow_config.then(|| Note {
+            text: format!(
+                "Your git configuration sets no pull strategy, so pulls use {}.",
+                lowercase_label(ours.label())
+            ),
+            warn: false,
         });
-    }
-    let ff = facts.pull_ff.as_ref()?;
-    (ff.value.trim().eq_ignore_ascii_case("only") && mode != PullMode::FastForwardOnly).then(|| {
+    };
+    Some(if choice.follow_config {
         Note {
             text: format!(
-                "Your git configuration sets {}: git refuses a pull that is not a fast-forward.",
-                config_phrase(ff)
+                "From your git configuration: {described}, so pulls use {}.",
+                lowercase_label(configured.label())
+            ),
+            warn: false,
+        }
+    } else if configured == ours {
+        Note {
+            text: format!("Matches your git configuration: {described}."),
+            warn: false,
+        }
+    } else {
+        Note {
+            text: format!(
+                "Canopy passes {}, so your git configuration's {described} does not apply to \
+                 pulls from Canopy.",
+                ours.git_args().join(" ")
             ),
             warn: true,
         }
+    })
+}
+
+/// A strategy's label inside a sentence: "Rebase, keeping merges" -> "rebase, keeping merges".
+fn lowercase_label(label: &str) -> String {
+    let mut chars = label.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_lowercase().chain(chars).collect()
     })
 }
 
@@ -2050,6 +2061,13 @@ fn elide_middle(ui: &Ui, text: &str, font: &FontId, max_width: f32) -> String {
 const FIELD_WIDTH: f32 = 280.0;
 /// The width of a select in a settings row.
 const SELECT_WIDTH: f32 = 220.0;
+
+/// A select's width in a settings row: [`SELECT_WIDTH`], so a column of rows lines up, or wider
+/// when its longest option needs it (`kit::select::fit_width`).
+fn select_width<'l>(ui: &Ui, labels: impl IntoIterator<Item = &'l str>) -> f32 {
+    SELECT_WIDTH.max(select::fit_width(ui, labels))
+}
+
 /// The width of the commits-per-page field between its steppers.
 const COUNT_FIELD_WIDTH: f32 = 96.0;
 
@@ -2249,16 +2267,33 @@ fn git(
     facts_error(ui, facts.as_ref());
     default_row(
         ui,
-        "Pull strategy",
-        "How a pull brings in the remote's commits: a merge commit, a rebase of yours on top, or only a fast-forward.",
+        "Follow my git config",
+        "Pull with the strategy your git configuration sets (branch.<name>.rebase, pull.rebase, pull.ff) when it sets one.",
         facts
             .as_ref()
-            .and_then(|f| pull_note(f, s.pull_mode))
+            .and_then(|f| pull_note(f, s.pull_default()))
             .as_ref(),
         |ui| {
+            switch(ui, &mut s.pull_follow_config, "Follow my git config");
+            revert(
+                ui,
+                &mut s.pull_follow_config,
+                &DEFAULTS.pull_follow_config,
+                "Follow my git config",
+            );
+        },
+    );
+    default_row(
+        ui,
+        "Pull strategy",
+        "How a pull brings in the remote's commits: a merge commit, a rebase of yours on top, or only a fast-forward. While Follow my git config is on, only where your git configuration sets none.",
+        None,
+        |ui| {
             let options = PullMode::ALL.map(|m| (m, m.label()));
-            Segmented::new(&mut s.pull_mode, &options)
-                .label("Pull strategy")
+            Select::new(&mut s.pull_mode, &options)
+                .width(select_width(ui, options.iter().map(|(_, l)| *l)))
+                .name("Pull strategy")
+                .id_salt("pull-strategy")
                 .show(ui);
             revert(ui, &mut s.pull_mode, &DEFAULTS.pull_mode, "Pull strategy");
         },
@@ -2455,12 +2490,28 @@ fn repository(
     let mut own = s.repo(path);
     group_gap(ui, theme::LG);
     heading(ui, "Pull and fetch");
-    let pull = own.pull_mode.unwrap_or(s.pull_mode);
+    let pull = s.pull_for(path);
+    repo_row(
+        ui,
+        "Follow my git config",
+        "Pull with the strategy this repository's git configuration sets, when it sets one.",
+        facts.as_ref().and_then(|f| pull_note(f, pull)).as_ref(),
+        |ui| {
+            override_select(
+                ui,
+                "repo-pull-follow",
+                "Follow my git config",
+                &mut own.pull_follow_config,
+                s.pull_follow_config,
+                &on_off(),
+            );
+        },
+    );
     repo_row(
         ui,
         "Pull strategy",
-        "How a pull brings in the remote's commits.",
-        facts.as_ref().and_then(|f| pull_note(f, pull)).as_ref(),
+        "How a pull brings in the remote's commits; while it follows the git configuration, only where that sets none.",
+        None,
         |ui| {
             override_select(
                 ui,
@@ -2843,7 +2894,7 @@ fn override_select<T: PartialEq + Copy>(
             .collect();
     let refs: Vec<(Option<T>, &str)> = items.iter().map(|(v, l)| (*v, l.as_str())).collect();
     Select::new(value, &refs)
-        .width(SELECT_WIDTH)
+        .width(select_width(ui, refs.iter().map(|(_, l)| *l)))
         .name(name)
         .id_salt(salt)
         .show(ui);
@@ -4518,28 +4569,53 @@ mod tests {
         );
     }
 
+    /// ST-F1, Override O3: pulls pass a strategy, so the note says which one applies and, when
+    /// Canopy's own choice differs from the configuration, that the configuration does not.
     #[test]
-    fn notes_say_when_git_will_pull_otherwise() {
-        let mut facts = GitFacts::default();
-        assert_eq!(pull_note(&facts, PullMode::Merge), None);
-        facts.pull_rebase = Some(fact("pull.rebase", "true"));
-        let merge = pull_note(&facts, PullMode::Merge).unwrap();
-        assert!(merge.warn, "{merge:?}");
-        assert!(merge.text.contains("pull.rebase = true"), "{merge:?}");
-        assert!(!pull_note(&facts, PullMode::Rebase).unwrap().warn);
-        // The branch's own setting comes first, as in git.
-        facts.branch_rebase = Some(fact("branch.main.rebase", "false"));
-        assert!(pull_note(&facts, PullMode::Rebase).unwrap().warn);
-        assert!(!pull_note(&facts, PullMode::Merge).unwrap().warn);
-        // pull.ff = only refuses what is not a fast-forward.
-        let mut ff = GitFacts {
-            pull_ff: Some(fact("pull.ff", "only")),
-            ..GitFacts::default()
+    fn notes_say_which_pull_strategy_applies() {
+        use canopy_core::{ConfigScope, ConfigSource, PullConfig, PullStrategy};
+        let follow = PullChoice::default();
+        let own = |mode| PullChoice {
+            mode,
+            follow_config: false,
         };
-        assert!(pull_note(&ff, PullMode::Merge).unwrap().warn);
-        assert_eq!(pull_note(&ff, PullMode::FastForwardOnly), None);
-        ff.pull_ff = Some(fact("pull.ff", "true"));
-        assert_eq!(pull_note(&ff, PullMode::Merge), None);
+        let mut facts = GitFacts::default();
+        assert_eq!(pull_note(&facts, follow), None, "not read");
+        facts.pull = Some(PullConfig::default());
+        let nothing = pull_note(&facts, follow).unwrap();
+        assert!(!nothing.warn);
+        assert!(
+            nothing.text.contains("sets no pull strategy"),
+            "{nothing:?}"
+        );
+        assert_eq!(pull_note(&facts, own(PullMode::Rebase)), None);
+
+        facts.pull = Some(PullConfig {
+            strategy: Some(PullStrategy::Rebase),
+            sources: vec![ConfigSource {
+                key: "pull.rebase".into(),
+                value: "true".into(),
+                scope: ConfigScope::Global,
+                origin: "file:/home/me/.gitconfig".into(),
+                file: None,
+            }],
+            invalid: Vec::new(),
+        });
+        let followed = pull_note(&facts, follow).unwrap();
+        assert!(!followed.warn);
+        assert_eq!(
+            followed.text,
+            "From your git configuration: pull.rebase=true (your global git config), so pulls \
+             use rebase."
+        );
+        assert!(!pull_note(&facts, own(PullMode::Rebase)).unwrap().warn);
+        let overridden = pull_note(&facts, own(PullMode::Merge)).unwrap();
+        assert!(overridden.warn);
+        assert_eq!(
+            overridden.text,
+            "Canopy passes --no-rebase --ff, so your git configuration's pull.rebase=true (your \
+             global git config) does not apply to pulls from Canopy."
+        );
     }
 
     #[test]

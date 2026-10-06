@@ -18,7 +18,7 @@
 //!    can and refuses diverged branches ("Need to specify how to reconcile divergent branches").
 //!    `merge.ff` alone does not change that, so no strategy comes out of it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::ops::PullStrategy;
 use crate::paths::os_path;
@@ -158,6 +158,30 @@ impl Repo {
 
     /// [`Repo::pull_config`] for the local branch `branch`, whether or not it is checked out.
     pub fn pull_config_for(&self, branch: Option<&str>) -> Result<PullConfig> {
+        Reader {
+            dir: self.workdir(),
+            global: false,
+        }
+        .resolve(branch)
+    }
+}
+
+/// What the user's global git configuration alone (`git config --global`) asks `git pull` to do.
+///
+/// Read from `dir` (a folder outside any repository, such as the home folder): the default every
+/// repository starts from until its own configuration says otherwise. Blocking: it runs git.
+pub fn global_pull_config(dir: &Path) -> Result<PullConfig> {
+    Reader { dir, global: true }.resolve(None)
+}
+
+/// Reads pull settings through git in `dir`: every layer git sees there, or only the global one.
+struct Reader<'a> {
+    dir: &'a Path,
+    global: bool,
+}
+
+impl Reader<'_> {
+    fn resolve(&self, branch: Option<&str>) -> Result<PullConfig> {
         let entries = self.read_pull_entries()?;
         let last = |key: &str| entries.iter().rfind(|e| e.key == key).cloned();
         // Git reads `pull.rebase` only when the branch has no setting of its own.
@@ -170,19 +194,28 @@ impl Repo {
         Ok(decide(rebase, pull_ff, merge_ff))
     }
 
+    /// `git config [--global] <rest>`.
+    fn args<'b>(&self, rest: &[&'b str]) -> Vec<&'b str> {
+        let mut args = vec!["config"];
+        if self.global {
+            args.push("--global");
+        }
+        args.extend_from_slice(rest);
+        args
+    }
+
     /// Every `pull.rebase`, `pull.ff`, `merge.ff` and `branch.*.rebase` entry in git's reading
     /// order, so the last one of a key is the one in force.
     fn read_pull_entries(&self) -> Result<Vec<ConfigSource>> {
         let (_, out) = cli::run_answer(
-            self.workdir(),
-            &[
-                "config",
+            self.dir,
+            &self.args(&[
                 "--show-origin",
                 "--show-scope",
                 "-z",
                 "--get-regexp",
                 r"^(pull\.(rebase|ff)|merge\.ff|branch\..*\.rebase)$",
-            ],
+            ]),
             b"",
             &[0, 1],
         )?;
@@ -199,7 +232,7 @@ impl Repo {
                 let file = origin.strip_prefix(b"file:").map(|path| {
                     let path = os_path(path);
                     if path.is_relative() {
-                        self.workdir().join(path)
+                        self.dir.join(path)
                     } else {
                         path
                     }
@@ -250,8 +283,8 @@ impl Repo {
             _ => {}
         }
         let (code, out) = cli::run_answer(
-            self.workdir(),
-            &["config", "--type=bool", "--get", key],
+            self.dir,
+            &self.args(&["--type=bool", "--get", key]),
             b"",
             &[0, 1, 128],
         )?;

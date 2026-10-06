@@ -5,6 +5,7 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
+use canopy_core::PullStrategy;
 use canopy_core::forge::ForgeKind;
 use canopy_hosting::{RequestState, RequestSummary, StateFilter};
 use egui::{
@@ -289,8 +290,9 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     actions.push(Action::Fetch);
                 }
                 let behind = branch.map_or(0, |b| b.behind);
+                let (strategy, _) = tab.pull_default();
                 let mut pull = ToolButton::new(icon::ARROW_FAT_LINE_DOWN, "Pull")
-                    .tooltip("Pull the current branch")
+                    .tooltip(format!("Pull the current branch: {}", strategy.label()))
                     .enabled(has_remote && !busy)
                     .disabled_reason(reason(true));
                 if behind > 0 {
@@ -299,6 +301,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 if running.show(ui, pull, Tool::Pull, Some(Command::Pull)) {
                     actions.push(Action::Pull);
                 }
+                pull_menu(ui, tab, has_remote && !busy, reason(true), actions);
                 let ahead = branch.map_or(0, |b| b.ahead);
                 if local_only {
                     let publish = ToolButton::new(icon::CLOUD_ARROW_UP, "Publish")
@@ -469,6 +472,72 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
         theme::Fill::flat(s.deck.top)
     };
     paint::scroll_fade_x(ui, &output, ground);
+}
+
+/// The caret beside Pull: a menu of every pull strategy, the one the Pull tool uses checked and
+/// marked with where it comes from (the git configuration or Canopy's settings). Picking one
+/// pulls with exactly that strategy.
+fn pull_menu(
+    ui: &mut Ui,
+    tab: &RepoTab,
+    enabled: bool,
+    disabled_reason: &str,
+    actions: &mut Vec<Action>,
+) {
+    // Close to the tool it belongs to, like the caret half of a split button.
+    ui.add_space(-theme::metrics().toolbar_gap * 0.75);
+    let caret = IconButton::new(icon::CARET_DOWN, "Pull with…")
+        .size(Size::Sm)
+        .enabled(enabled)
+        .disabled_reason(disabled_reason)
+        .id_salt("pull-menu")
+        .show(ui);
+    if caret.clicked() {
+        // The configuration may have changed outside Canopy since it was last read.
+        actions.push(Action::ReadPullConfig);
+    }
+    let (default, _) = tab.pull_default();
+    let marker = pull_marker(tab);
+    if let Some(Some(strategy)) = menu::menu(&caret, |m| {
+        m.heading("Pull with");
+        let mut picked = None;
+        for s in PullStrategy::ALL {
+            let mut item = m.item("", s.label()).checked(s == default);
+            if s == default {
+                item = item.description(marker.clone());
+            }
+            if item.show(m.ui).clicked() {
+                picked = Some(s);
+            }
+        }
+        picked
+    }) {
+        actions.push(Action::Op(Op::Pull {
+            strategy,
+            follow_config: false,
+        }));
+    }
+}
+
+/// Where the Pull tool's strategy comes from, for its menu entry: "from your git config:
+/// branch.main.rebase=true (repository)", or Canopy's settings, saying which setting of the
+/// configuration they override.
+fn pull_marker(tab: &RepoTab) -> String {
+    let (default, from_config) = tab.pull_default();
+    if let Some(described) = from_config.and_then(canopy_core::PullConfig::describe) {
+        return format!("from your git config: {described}");
+    }
+    match tab
+        .pull_config
+        .as_ref()
+        .and_then(|c| c.contradicted_by(default))
+    {
+        Some(source) => format!(
+            "from Canopy's settings, over your git config: {}",
+            source.describe()
+        ),
+        None => "from Canopy's settings".to_owned(),
+    }
 }
 
 /// The History / Changes / Requests switcher (design spec 4.8 ViewTabs): the kit's view tabs with
@@ -704,10 +773,20 @@ mod tests {
         events: Vec<egui::Event>,
         add: impl FnMut(&mut Ui),
     ) -> (Vec<egui::epaint::ClippedShape>, Vec<Node>) {
+        frame_in(ctx, SCREEN, events, add)
+    }
+
+    /// [`frame`] on a `screen` of its own (room for a menu under the bar).
+    fn frame_in(
+        ctx: &egui::Context,
+        screen: Rect,
+        events: Vec<egui::Event>,
+        add: impl FnMut(&mut Ui),
+    ) -> (Vec<egui::epaint::ClippedShape>, Vec<Node>) {
         let mut add = add;
         let mut out = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(SCREEN),
+                screen_rect: Some(screen),
                 events,
                 ..Default::default()
             },
@@ -1128,6 +1207,112 @@ mod tests {
             .expect("finished");
         quiet.poll(&[]);
         assert!(Running::of(&ctx, &quiet).outcome.is_none());
+    }
+
+    fn rebase_config() -> canopy_core::PullConfig {
+        canopy_core::PullConfig {
+            strategy: Some(PullStrategy::Rebase),
+            sources: vec![canopy_core::ConfigSource {
+                key: "branch.main.rebase".into(),
+                value: "true".into(),
+                scope: canopy_core::ConfigScope::Local,
+                origin: "file:.git/config".into(),
+                file: None,
+            }],
+            invalid: Vec::new(),
+        }
+    }
+
+    /// PS-F1: the Pull menu's default is the git configuration's strategy while Canopy follows
+    /// it, else Canopy's, and its entry says which (and what it overrides).
+    #[test]
+    fn the_pull_menu_marks_where_its_default_comes_from() {
+        use crate::settings::{PullChoice, PullMode};
+        let mut tab = repo_tab("alpha");
+        assert_eq!(tab.pull_default().0, PullStrategy::Merge);
+        assert_eq!(pull_marker(&tab), "from Canopy's settings");
+        tab.pull_config = Some(rebase_config());
+        assert_eq!(tab.pull_default().0, PullStrategy::Rebase);
+        assert_eq!(
+            pull_marker(&tab),
+            "from your git config: branch.main.rebase=true (repository)"
+        );
+        tab.pull = PullChoice {
+            mode: PullMode::FastForwardOnly,
+            follow_config: false,
+        };
+        assert_eq!(tab.pull_default().0, PullStrategy::FastForwardOnly);
+        assert_eq!(
+            pull_marker(&tab),
+            "from Canopy's settings, over your git config: branch.main.rebase=true (repository)"
+        );
+        tab.pull.mode = PullMode::Rebase;
+        assert_eq!(pull_marker(&tab), "from Canopy's settings", "they agree");
+    }
+
+    /// PS-F1: opening the menu reads the configuration again, and an entry pulls with exactly
+    /// that strategy, whatever the configuration says.
+    #[test]
+    fn a_pull_menu_entry_pulls_with_exactly_that_strategy() {
+        let ctx = context();
+        let mut tab = repo_tab("alpha");
+        tab.snap = Some(Arc::new(canopy_core::RepoSnapshot {
+            remotes: vec![canopy_core::RemoteInfo {
+                name: "origin".into(),
+                url: None,
+                default_branch: None,
+            }],
+            ..Default::default()
+        }));
+        tab.pull_config = Some(rebase_config());
+        let mut actions = Vec::new();
+        let screen = Rect::from_min_max(egui::Pos2::ZERO, pos2(1200.0, 600.0));
+        let run = |events: Vec<egui::Event>, actions: &mut Vec<Action>| {
+            frame_in(&ctx, screen, events, |ui| {
+                let slot = Rect::from_min_size(egui::Pos2::ZERO, vec2(1150.0, 60.0));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                    actions_bar(ui, &tab, actions);
+                });
+            })
+            .1
+        };
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            nodes = run(Vec::new(), &mut actions);
+        }
+        let caret = node_rect(node(&nodes, Role::Button, "Pull with…")).center();
+        let _ = run(click(caret), &mut actions);
+        assert!(
+            matches!(actions.as_slice(), [Action::ReadPullConfig]),
+            "{actions:?}"
+        );
+        actions.clear();
+        for _ in 0..3 {
+            nodes = run(Vec::new(), &mut actions);
+        }
+        let entry = nodes
+            .iter()
+            .find(|n| n.label() == Some("Fast-forward only"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "no menu entry in {:?}",
+                    nodes.iter().map(Node::label).collect::<Vec<_>>()
+                )
+            });
+        // A popup's item takes the pointer's move, press and release on frames of their own.
+        for event in click(node_rect(entry).center()) {
+            let _ = run(vec![event], &mut actions);
+        }
+        assert!(
+            matches!(
+                actions.as_slice(),
+                [Action::Op(Op::Pull {
+                    strategy: PullStrategy::FastForwardOnly,
+                    follow_config: false
+                })]
+            ),
+            "{actions:?}"
+        );
     }
 
     /// Override O2: an action bar too narrow for every tool names only the active view and drops
