@@ -21,7 +21,7 @@ access), `python3 tools/stall-check.py`, `packaging/test-install.sh`.
   `non_utf8_folders_are_listed_and_never_staged_as_gitlinks` fails with "Invalid argument", and
   `check.sh` stops there (`CONTRIBUTING.md`, `docs/backlog.md`).
 - `cargo test` stops at the first test binary that fails, so later binaries never run; add
-  `--no-fail-fast` to see every failure in one run.
+  `--no-fail-fast` to see every failure in one run, as CI's test job does.
 - `shellcheck` and `cargo deny` run only when installed; CI runs them either way.
 
 ## Running the app live (private Xvfb)

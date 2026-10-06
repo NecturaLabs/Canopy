@@ -154,7 +154,8 @@ jobs:
           git config --global user.name "Canopy CI"
           git config --global user.email "ci@canopy.invalid"
           git config --global init.defaultBranch main
-      - run: cargo test --workspace --locked
+      # Every test binary runs even after one fails, so a run reports every failure at once.
+      - run: cargo test --workspace --locked --no-fail-fast
       # A window the compositor is not drawing must keep answering its pings (ADR 0007). The check
       # runs the app on a stand-in compositor with software OpenGL. A GitHub-hosted runner (pull
       # requests, Dependabot's eframe bumps) gets the tools installed and must pass. A self-hosted
