@@ -35,7 +35,7 @@ pub mod updates;
 
 pub use client::Client;
 pub use error::{Error, Result};
-pub use http::{is_loopback_base, set_build};
+pub use http::{is_loopback_base, plain_text, set_build};
 pub use model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
     RequestSummary, Review, ReviewDecision, Rollup, StateFilter, checkout_ref,

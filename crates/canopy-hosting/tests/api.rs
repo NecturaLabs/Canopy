@@ -1497,6 +1497,56 @@ fn github_rollup_errors_and_empty_data() {
 }
 
 #[test]
+fn server_words_are_made_plain_before_they_are_shown_or_logged() {
+    // A message that hides or reorders text, spans lines and runs long.
+    let dirty = format!(
+        "Bad\u{202E}gnirts\u{202C} query\u{200B}\nline two\u{1b}[31m red\u{2066} {}",
+        "x".repeat(1_000)
+    );
+    let is_plain = |m: &str| {
+        m.chars().count() <= 300
+            && m.ends_with('…')
+            && m.starts_with("Badgnirts query line two [31m red x")
+            && !m.chars().any(|c| {
+                c.is_control() || matches!(c, '\u{200B}' | '\u{202C}' | '\u{202E}' | '\u{2066}')
+            })
+    };
+    let server = Server::start();
+    // A GraphQL answer with errors and no data…
+    let errors = json!({ "data": null, "errors": [{ "message": dirty }] }).to_string();
+    server.route("POST", "/graphql", 200, &errors);
+    match github(&server, Some(TOKEN)).rollup(&[1]) {
+        Err(Error::Api {
+            status: 200,
+            message,
+        }) => assert!(is_plain(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+    // …a refused GraphQL query, and a refused REST call.
+    server.route(
+        "POST",
+        "/graphql",
+        502,
+        &json!({ "message": dirty }).to_string(),
+    );
+    match github(&server, Some(TOKEN)).rollup(&[1]) {
+        Err(Error::Api {
+            status: 502,
+            message,
+        }) => assert!(is_plain(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+    server.route("POST", "/repos/octo/hello/issues/1/comments", 422, &dirty);
+    match github(&server, Some(TOKEN)).comment(1, "hi") {
+        Err(Error::Api {
+            status: 422,
+            message,
+        }) => assert!(is_plain(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn rollup_redirects_are_never_followed() {
     let server = Server::start();
     let other = Server::start();

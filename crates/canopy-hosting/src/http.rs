@@ -324,12 +324,13 @@ impl Http {
                 .map(|e| e.message.trim())
                 .filter(|m| !m.is_empty())
                 .collect();
+            let message = shorten(&messages.join("; "));
             Error::Api {
                 status: 200,
-                message: if messages.is_empty() {
+                message: if message.is_empty() {
                     "The GraphQL response carried no data".to_owned()
                 } else {
-                    shorten(&messages.join("; "))
+                    message
                 },
             }
         })
@@ -492,10 +493,10 @@ pub(crate) fn server_message(body: &[u8]) -> Option<String> {
     let Ok(json) = serde_json::from_slice::<Value>(body) else {
         let text = String::from_utf8_lossy(body);
         let text = text.trim();
-        if text.is_empty() || text.starts_with('<') {
+        if text.starts_with('<') {
             return None;
         }
-        return Some(shorten(text));
+        return Some(shorten(text)).filter(|t| !t.is_empty());
     };
     let mut parts: Vec<String> = Vec::new();
     for key in ["message", "error", "error_description", "errors"] {
@@ -504,11 +505,7 @@ pub(crate) fn server_message(body: &[u8]) -> Option<String> {
         }
     }
     parts.dedup();
-    if parts.is_empty() {
-        None
-    } else {
-        Some(shorten(&parts.join("; ")))
-    }
+    Some(shorten(&parts.join("; "))).filter(|t| !t.is_empty())
 }
 
 /// Collects the strings in an error value. Objects in GitHub's `errors` array contribute their
@@ -545,13 +542,54 @@ fn flatten(v: &Value, field: Option<&str>, out: &mut Vec<String>) {
 }
 
 fn shorten(s: &str) -> String {
-    if s.chars().count() <= MAX_MESSAGE {
-        s.to_owned()
-    } else {
-        let mut out: String = s.chars().take(MAX_MESSAGE).collect();
-        out.push('…');
-        out
+    plain_text(s, MAX_MESSAGE)
+}
+
+/// A server's own words made safe to show among Canopy's and to log.
+///
+/// Control characters become spaces, characters that reorder or hide text are dropped
+/// (bidirectional controls and every other default-ignorable code point, such as zero-width
+/// spaces, variation selectors and tags), whitespace collapses to single spaces, and the result
+/// is at most `max` characters, ending in an ellipsis when it was cut.
+pub fn plain_text(text: &str, max: usize) -> String {
+    let visible: String = text
+        .chars()
+        .filter(|&c| !hides_text(c))
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let words = visible.split_whitespace().collect::<Vec<_>>().join(" ");
+    if words.chars().count() <= max {
+        return words;
     }
+    let mut short: String = words.chars().take(max.saturating_sub(1)).collect();
+    short.truncate(short.trim_end().len());
+    short.push('…');
+    short
+}
+
+/// Unicode 16's `Default_Ignorable_Code_Point` characters (which include every bidirectional
+/// control) and the interlinear annotation controls: none of them shows, and some reorder text.
+fn hides_text(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF0}'..='\u{FFFB}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}'
+    )
 }
 
 /// Percent-encodes everything outside RFC 3986's unreserved set, so `group/sub/project`
@@ -572,6 +610,65 @@ pub(crate) fn encode(s: &str) -> String {
 mod tests {
     use super::*;
     use ureq::http::HeaderValue;
+
+    #[test]
+    fn plain_text_drops_what_hides_or_reorders_text() {
+        // One of each: bidirectional controls, zero-width and other invisible formatting, the
+        // Khmer, Mongolian, shorthand and musical format characters, specials and tags.
+        let hidden = [
+            '\u{00AD}',
+            '\u{034F}',
+            '\u{061C}',
+            '\u{115F}',
+            '\u{1160}',
+            '\u{17B4}',
+            '\u{17B5}',
+            '\u{180B}',
+            '\u{180E}',
+            '\u{180F}',
+            '\u{200B}',
+            '\u{200F}',
+            '\u{202A}',
+            '\u{202E}',
+            '\u{2060}',
+            '\u{2066}',
+            '\u{2069}',
+            '\u{206F}',
+            '\u{3164}',
+            '\u{FE00}',
+            '\u{FE0F}',
+            '\u{FEFF}',
+            '\u{FFA0}',
+            '\u{FFF0}',
+            '\u{FFF8}',
+            '\u{FFFB}',
+            '\u{1BCA0}',
+            '\u{1BCA3}',
+            '\u{1D173}',
+            '\u{1D17A}',
+            '\u{E0001}',
+            '\u{E007F}',
+            '\u{E0FFF}',
+        ];
+        for c in hidden {
+            assert_eq!(
+                plain_text(&format!("a{c}b"), 10),
+                "ab",
+                "U+{:04X}",
+                u32::from(c)
+            );
+        }
+        assert_eq!(
+            plain_text("a\u{0}b\tc\u{85}d\u{2028}e\r\n f", 20),
+            "a b c d e f"
+        );
+        assert_eq!(plain_text(" \u{200B}\n", 10), "");
+        // The ellipsis counts towards the limit, and never follows a space.
+        assert_eq!(plain_text("abcdefghij", 10), "abcdefghij");
+        assert_eq!(plain_text("abcdefghijk", 10), "abcdefghi…");
+        assert_eq!(plain_text("abcd efghijk", 6), "abcd…");
+        assert_eq!(plain_text("ééééé", 3), "éé…");
+    }
 
     #[test]
     fn huge_retry_after_values_neither_overflow_nor_wait_for_ever() {
