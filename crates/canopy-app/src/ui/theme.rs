@@ -4334,6 +4334,7 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, look: Appearance) {
     style.interaction.tooltip_delay = super::motion::TOOLTIP_DELAY;
     style.interaction.tooltip_grace_time = super::motion::TOOLTIP_SKIP;
     style.animation_time = super::motion::time(super::motion::BASE);
+    style.scroll_animation = super::motion::scroll_animation();
     ctx.set_style_of(theme, style);
     ctx.set_theme(theme);
 }

@@ -281,6 +281,16 @@ pub fn time(seconds: f32) -> f32 {
     }
 }
 
+/// egui's own scroll glide (a wheel step, `scroll_to_*`): egui's default, or none when motion is
+/// reduced, so the view jumps to where it scrolls.
+pub fn scroll_animation() -> egui::style::ScrollAnimation {
+    if reduced() {
+        egui::style::ScrollAnimation::none()
+    } else {
+        egui::style::ScrollAnimation::default()
+    }
+}
+
 /// The active theme's motion character.
 fn character() -> MotionCharacter {
     super::theme::active().design().motion
@@ -324,6 +334,25 @@ mod tests {
         assert!((enter_curve()(0.25) - EASE_OUT.at(0.25)).abs() < 1e-6);
         theme::apply(&ctx, ThemeId::Ember, Appearance::STILL);
         assert!(time(0.5).abs() < f32::EPSILON);
+    }
+
+    /// Reduced motion also stops egui's own scroll animation (a wheel step, `scroll_to_*`): the
+    /// view jumps instead of gliding. Full motion keeps egui's glide.
+    #[test]
+    fn reduced_motion_stops_the_scroll_glide() {
+        use crate::ui::theme::{self, Appearance, ThemeId};
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, ThemeId::Midnight, Appearance::STILL);
+        let still = ctx.style_of(egui::Theme::Dark).scroll_animation;
+        assert!(still.points_per_second.is_infinite(), "{still:?}");
+        assert!(still.duration.max <= 0.0, "{still:?}");
+        let full = Appearance {
+            reduce_motion: false,
+            ..Appearance::STILL
+        };
+        theme::apply(&ctx, ThemeId::Midnight, full);
+        let moving = ctx.style_of(egui::Theme::Dark).scroll_animation;
+        assert_eq!(moving, egui::style::ScrollAnimation::default());
     }
 
     #[test]

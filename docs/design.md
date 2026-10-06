@@ -215,7 +215,8 @@ Curves are cubic Béziers (`EASE_OUT` by default); springs (`SWITCH`, `PRESS`, t
 pair) use the exact damped solution and repaint only while moving. Buttons scale their content
 to 0.97 while pressed. Settings → Appearance → Motion offers Match system (the default), Reduced
 and Full; the system answer comes from `platform::prefers_reduced_motion` on a background thread.
-Reduced makes every duration zero, lands every spring at once, turns the press scale off and
+Reduced makes every duration zero, lands every spring at once, turns the press scale off,
+stops egui's scroll glide (`motion::scroll_animation`: a wheel step or a scroll-to jumps) and
 stills the welcome screen. Only spinners and skeletons repaint continuously, and only while shown.
 
 ## Iconography
