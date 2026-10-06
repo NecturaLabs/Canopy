@@ -929,120 +929,95 @@ fn paint_line_numbers(
 
 // ----------------------------------------------------------------------------------- builders
 
-/// The setters every field shares, as an `impl` block for `$field`.
+/// The setters the fields share, as an `impl` block for `$field` with the setters it is given:
+/// `common_setters!(TextArea: label, name, placeholder)`. Each field lists the setters it is used
+/// with, so none is dead code; give a field another one by adding it to its list.
 macro_rules! common_setters {
-    ($field:ident) => {
-        #[expect(
-            clippy::allow_attributes,
-            reason = "a setter is dead for some fields and used by others, which `expect` cannot say"
-        )]
+    ($field:ident: $($setter:ident),+ $(,)?) => {
         impl $field<'_> {
-            /// A label above the field (also its accessible name).
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn label(mut self, text: impl Into<String>) -> Self {
-                self.core.label = Some(text.into());
-                self
-            }
-            /// The accessible name when no label is shown.
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn name(mut self, text: impl Into<String>) -> Self {
-                self.core.name = Some(text.into());
-                self
-            }
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn placeholder(mut self, text: impl Into<String>) -> Self {
-                self.core.placeholder = text.into();
-                self
-            }
-            /// A hint below the field (hidden while there is an error).
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn helper(mut self, text: impl Into<String>) -> Self {
-                self.core.helper = Some(text.into());
-                self
-            }
-            /// An error below the field with a danger edge and halo. Set it on blur or submit,
-            /// never on each keystroke.
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn error(mut self, text: Option<&str>) -> Self {
-                self.core.error = text.map(str::to_owned);
-                self
-            }
-            /// Text that can be selected and copied but not changed: flush on its surface with
-            /// a quiet edge, `text_dim`, no caret.
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn read_only(mut self, read_only: bool) -> Self {
-                self.core.read_only = read_only;
-                self
-            }
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn enabled(mut self, enabled: bool) -> Self {
-                self.core.enabled = enabled;
-                self
-            }
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn tooltip(mut self, text: impl Into<String>) -> Self {
-                self.core.tooltip = Some(text.into());
-                self
-            }
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
-                self.core.disabled_reason = Some(text.into());
-                self
-            }
-            /// Field width; the available width by default.
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn width(mut self, width: f32) -> Self {
-                self.core.width = Some(width);
-                self
-            }
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
-                self.core.id_salt = Some(Id::new(salt));
-                self
-            }
-            /// The field's own id, set by the caller (not derived from the parent `Ui`), so
-            /// code elsewhere can focus it: request focus on [`edit_id`]`(id)`.
-            #[allow(
-                dead_code,
-                reason = "shared by the fields; not every field uses each yet"
-            )]
-            pub fn id(mut self, id: Id) -> Self {
-                self.core.id = Some(id);
-                self
-            }
+            $(common_setters!(@ $setter);)+
+        }
+    };
+    (@ label) => {
+        /// A label above the field (also its accessible name).
+        pub fn label(mut self, text: impl Into<String>) -> Self {
+            self.core.label = Some(text.into());
+            self
+        }
+    };
+    (@ name) => {
+        /// The accessible name when no label is shown.
+        pub fn name(mut self, text: impl Into<String>) -> Self {
+            self.core.name = Some(text.into());
+            self
+        }
+    };
+    (@ placeholder) => {
+        pub fn placeholder(mut self, text: impl Into<String>) -> Self {
+            self.core.placeholder = text.into();
+            self
+        }
+    };
+    (@ helper) => {
+        /// A hint below the field (hidden while there is an error).
+        pub fn helper(mut self, text: impl Into<String>) -> Self {
+            self.core.helper = Some(text.into());
+            self
+        }
+    };
+    (@ error) => {
+        /// An error below the field with a danger edge and halo. Set it on blur or submit, never
+        /// on each keystroke.
+        pub fn error(mut self, text: Option<&str>) -> Self {
+            self.core.error = text.map(str::to_owned);
+            self
+        }
+    };
+    (@ read_only) => {
+        /// Text that can be selected and copied but not changed: flush on its surface with a
+        /// quiet edge, `text_dim`, no caret.
+        pub fn read_only(mut self, read_only: bool) -> Self {
+            self.core.read_only = read_only;
+            self
+        }
+    };
+    (@ enabled) => {
+        pub fn enabled(mut self, enabled: bool) -> Self {
+            self.core.enabled = enabled;
+            self
+        }
+    };
+    (@ tooltip) => {
+        pub fn tooltip(mut self, text: impl Into<String>) -> Self {
+            self.core.tooltip = Some(text.into());
+            self
+        }
+    };
+    (@ disabled_reason) => {
+        pub fn disabled_reason(mut self, text: impl Into<String>) -> Self {
+            self.core.disabled_reason = Some(text.into());
+            self
+        }
+    };
+    (@ width) => {
+        /// Field width; the available width by default.
+        pub fn width(mut self, width: f32) -> Self {
+            self.core.width = Some(width);
+            self
+        }
+    };
+    (@ id_salt) => {
+        pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+            self.core.id_salt = Some(Id::new(salt));
+            self
+        }
+    };
+    (@ id) => {
+        /// The field's own id, set by the caller (not derived from the parent `Ui`), so code
+        /// elsewhere can focus it: request focus on [`edit_id`]`(id)`.
+        pub fn id(mut self, id: Id) -> Self {
+            self.core.id = Some(id);
+            self
         }
     };
 }
@@ -1105,7 +1080,7 @@ impl<'t> TextField<'t> {
     }
 }
 
-common_setters!(TextField);
+common_setters!(TextField: label, name, placeholder, helper, error, read_only, enabled, tooltip, disabled_reason, width, id_salt);
 
 impl Widget for TextField<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
@@ -1157,7 +1132,7 @@ impl<'t> SearchField<'t> {
     }
 }
 
-common_setters!(SearchField);
+common_setters!(SearchField: name, placeholder, read_only, width, id_salt, id);
 
 impl Widget for SearchField<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
@@ -1203,7 +1178,7 @@ impl<'t> TextArea<'t> {
     }
 }
 
-common_setters!(TextArea);
+common_setters!(TextArea: label, name, placeholder, enabled, disabled_reason, id_salt);
 
 /// A [`TextArea`] for code: monospace, Tab inserts a tab, optional line numbers (the conflict
 /// hand-edit box).
@@ -1254,7 +1229,7 @@ impl<'t> CodeArea<'t> {
     }
 }
 
-common_setters!(CodeArea);
+common_setters!(CodeArea: name, id_salt);
 
 // -------------------------------------------------------------------------------- NumberField
 
