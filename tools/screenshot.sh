@@ -21,8 +21,9 @@
 # path. Builds the release binary first (a no-op when it is up to date); set CANOPY_BIN to use a
 # different binary and skip the build. Uses Xvfb when available, else a native Hyprland window
 # on CANOPY_WORKSPACE (default 3). Output and native-run temporary files stay beside <out.png>.
-# On Xvfb the app gets private home, data, config and cache folders and a fixed Git identity, so the
-# image never depends on your own Canopy state or Git configuration.
+# On Xvfb the app gets private home, data, config and cache folders, a fixed Git identity and no
+# TERMINAL, EDITOR or VISUAL, so the image never depends on your own Canopy state, Git
+# configuration or programs; a screenshot also ignores the pointer (no hover, no tooltip).
 set -euo pipefail
 
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; }
@@ -75,15 +76,16 @@ out_abs="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
 rm -f "$out_abs"
 
 if command -v xvfb-run >/dev/null; then
-  # Private home, data, config and cache folders and a fixed Git identity: the image must not
-  # depend on (or write to) your own Canopy state, such as its saved window size, or your Git
-  # configuration, and a path under "~" must not show your own home folder.
+  # Private home, data, config and cache folders, a fixed Git identity and no TERMINAL, EDITOR or
+  # VISUAL: the image must not depend on (or write to) your own Canopy state, such as its saved
+  # window size, your Git configuration or your programs (Settings > Integrations names them),
+  # and a path under "~" must not show your own home folder.
   isolated=$(mktemp -d)
   trap 'rm -rf "$isolated"' EXIT
   mkdir -p "$isolated/home"
   printf '[user]\n\tname = Showcase Author\n\temail = author@example.com\n' > "$isolated/gitconfig"
   # Force X11 inside Xvfb even when called from a Wayland session.
-  env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 HOME="$isolated/home" \
+  env -u WAYLAND_DISPLAY -u TERMINAL -u EDITOR -u VISUAL LIBGL_ALWAYS_SOFTWARE=1 HOME="$isolated/home" \
     XDG_DATA_HOME="$isolated/data" XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache" \
     GIT_CONFIG_GLOBAL="$isolated/gitconfig" GIT_CONFIG_NOSYSTEM=1 \
     timeout 60 xvfb-run -a -s "-screen 0 ${size}x24" \

@@ -1054,6 +1054,12 @@ impl eframe::App for CanopyApp {
         }
     }
 
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if self.screenshot.is_some() {
+            screenshot::without_pointer(raw_input);
+        }
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         if self.screenshot.is_some() || self.glass_soak.is_some() {
             return;

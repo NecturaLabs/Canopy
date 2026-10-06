@@ -312,6 +312,24 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
     })
 }
 
+/// Takes the pointer out of a screenshot's input, so the picture never depends on where the
+/// virtual screen left it: Xvfb starts the pointer in the middle of the screen, where it would
+/// hover (and give a tooltip to) whatever lies there.
+pub(super) fn without_pointer(input: &mut egui::RawInput) {
+    input.events.retain(|event| {
+        !matches!(
+            event,
+            egui::Event::PointerMoved(_)
+                | egui::Event::MouseMoved(_)
+                | egui::Event::PointerButton { .. }
+                | egui::Event::MouseWheel { .. }
+                | egui::Event::Touch { .. }
+                | egui::Event::PointerGone
+        )
+    });
+    input.events.push(egui::Event::PointerGone);
+}
+
 fn save_png(path: &std::path::Path, image: &egui::ColorImage) -> anyhow::Result<()> {
     let file = std::fs::File::create(path)?;
     let mut enc = png::Encoder::new(
@@ -334,6 +352,50 @@ fn save_png(path: &std::path::Path, image: &egui::ColorImage) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CR-5: a screenshot never sees the pointer. Xvfb starts it in the middle of the screen,
+    /// where it hovered whatever lay there and put a tooltip into some pictures and not others.
+    #[test]
+    fn a_screenshot_ignores_the_pointer() {
+        use eframe::App as _;
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.screenshot = Some(Screenshot {
+            path: PathBuf::from("shot.png"),
+            ready_frames: 0,
+            ready_since: None,
+            requested: false,
+            started: 0.0,
+            popup: None,
+        });
+        let at = egui::pos2(480.0, 300.0);
+        let mut input = egui::RawInput {
+            events: vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::Text("kept".into()),
+            ],
+            ..Default::default()
+        };
+        app.raw_input_hook(&ctx, &mut input);
+        assert_eq!(
+            input.events,
+            [egui::Event::Text("kept".into()), egui::Event::PointerGone]
+        );
+        // A normal run keeps its pointer.
+        app.screenshot = None;
+        let mut input = egui::RawInput {
+            events: vec![egui::Event::PointerMoved(at)],
+            ..Default::default()
+        };
+        app.raw_input_hook(&ctx, &mut input);
+        assert_eq!(input.events, [egui::Event::PointerMoved(at)]);
+    }
 
     #[test]
     fn every_dialog_overlay_opens_a_dialog_that_draws() {
