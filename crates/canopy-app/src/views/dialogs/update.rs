@@ -158,8 +158,7 @@ pub(super) fn update(
                             .show(ui)
                             .clicked()
                         {
-                            extra =
-                                Some(Outcome::Run(vec![Action::SkipVersion(a.build.to_string())]));
+                            extra = Some(Outcome::Run(vec![Action::SkipVersion(a.skip_key())]));
                         }
                         if LinkButton::new("Download it yourself")
                             .text_size(m.meta_size)

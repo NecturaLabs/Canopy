@@ -3,9 +3,10 @@
 A fast, beautiful, Linux-first Git client for Linux, macOS and Windows, written in Rust (edition
 2024, MSRV 1.91). Three crates: `crates/canopy-core`, the UI-agnostic Git backend (libgit2 via
 `git2`, built without HTTPS/SSH, for reads; the `git` CLI for every mutation);
-`crates/canopy-hosting`, the GitHub/GitLab REST client (`ureq`, rustls); `crates/canopy-app`, the
-GUI (`eframe`/`egui` 0.36, glow), binary `canopy`. Docs: `docs/README.md` maps them (architecture,
-decisions in `docs/adr/`, design, features, playbook) and says which can lag.
+`crates/canopy-hosting`, the GitHub/GitLab API client (REST, plus one GraphQL query for the
+request list; `ureq`, rustls); `crates/canopy-app`, the GUI (`eframe`/`egui` 0.36, glow), binary
+`canopy`. Docs: `docs/README.md` maps them (architecture, decisions in `docs/adr/`, design,
+features, playbook) and says which can lag.
 
 ## Product rules
 
@@ -40,9 +41,10 @@ These come from the owner and override anything else in the repository.
   with the option chosen in Canopy, passed to git explicitly, even where the user's git
   configuration says otherwise; that configuration is the default Canopy's choices start from.
   Whenever Canopy's choice differs from the user's git configuration, the UI says so: which
-  setting, its value and where it is set. Not yet true: `pull` still defers to the user's
-  `pull.rebase`, and nothing reports differences yet (`docs/backlog.md`, "Git settings" and
-  "Pull strategy").
+  setting, its value and where it is set. True so far for pull and fetch only: the pull strategy
+  and `--prune`/`--no-prune` are always passed, and Settings says where they differ from the
+  configuration. Other settings (`push.default`, `rebase.autoStash`, ...) are not passed yet,
+  and no notification reports differences (`docs/backlog.md`, "Git settings").
 - **Toolkit**: egui stays (the owner chose it over React).
 - **Art**: in-app illustrations are drawn in code from the active theme (`ui/art.rs`,
   `docs/art-prompts.md`), never shipped as SVG; the app icon is PNG only (`assets/icon-*.png`).
@@ -57,11 +59,15 @@ These come from the owner and override anything else in the repository.
 
 `vendor/` (third-party code we build, with our patch); `askpass.rs`; saved tokens (`tokens.json`,
 `hosting.rs`) and all of `crates/canopy-hosting/`; crash-report scrubbing (`crash_reports.rs`); URL
-opening in `platform.rs` (web addresses only); log redaction (`logging.rs`, `cli.rs`); URL building
-in `forge.rs`; `ui/kit/glass/gl.rs` (the only `unsafe` code); the update feed; `Cargo.toml`,
-`Cargo.lock`, `deny.toml`; `.github/` (self-hosted runners run code). A change there gets a
-security pass (`/security-review`) before the general review. Ask the owner before storing a
-token anywhere new, contacting a new host or adding a dependency.
+opening and running the chosen editor, terminal and file manager in `platform.rs` (web addresses
+only; a file name only ever as a whole argument); settings import and export (`settings_file.rs`:
+a file never sets consent, trust, the programs Canopy runs or the hosts a token goes to);
+installed-app discovery (`system_apps.rs`); git configuration reading (`repo_config.rs`); log
+redaction (`logging.rs`, `cli.rs`); URL building in `forge.rs`; `ui/kit/glass/gl.rs` (the only
+`unsafe` code); the update feed; `Cargo.toml`, `Cargo.lock`, `deny.toml`; `.github/`
+(self-hosted runners run code). A change there gets a security pass (`/security-review`) before
+the general review. Ask the owner before storing a token anywhere new, contacting a new host or
+adding a dependency.
 
 ## Commands
 

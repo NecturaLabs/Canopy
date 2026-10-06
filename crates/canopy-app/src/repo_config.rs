@@ -112,7 +112,7 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
     };
     let get = |key: &str| get_value(dir, scope, key);
     let mut facts = GitFacts::default();
-    match get("fetch.prune") {
+    match get_bool(dir, scope, "fetch.prune") {
         Ok(v) => facts.fetch_prune = v,
         Err(e) => {
             facts.error = Some(e);
@@ -135,7 +135,7 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
     facts.pull = pull
         .inspect_err(|e| tracing::debug!(error = %e, "pull settings not read"))
         .ok();
-    facts.gpg_sign = get("commit.gpgsign").ok().flatten();
+    facts.gpg_sign = get_bool(dir, scope, "commit.gpgsign").ok().flatten();
     facts.gpg_format = get("gpg.format").ok().flatten();
     facts
 }
@@ -170,6 +170,25 @@ fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue
             }
         }
     }
+}
+
+/// [`get_value`] for a boolean key, with the value as git reads it: a key written without `=`
+/// is true, one with an empty value false, and both print as an empty value.
+fn get_bool(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue>, String> {
+    let mut found = get_value(dir, scope, key)?;
+    if let Some(v) = found.as_mut().filter(|v| v.value.is_empty()) {
+        let mut args = vec!["config"];
+        args.extend_from_slice(scope);
+        args.extend(["--bool", "--get", key]);
+        if let Ok(out) = canopy_core::cli::run_unchecked(dir, &args)
+            && out.code == Some(0)
+        {
+            String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .clone_into(&mut v.value);
+        }
+    }
+    Ok(found)
 }
 
 /// The last line of `git config --show-origin [--show-scope] --get` output.
@@ -294,6 +313,41 @@ mod tests {
         );
         assert_eq!(facts.remotes.len(), 1);
         assert_eq!(facts.remotes[0].url, "https://example.com/o/r.git");
+        Ok(())
+    }
+
+    /// A key with no `=` is true to git, one with an empty value false; read as git reads them.
+    #[test]
+    fn a_key_without_a_value_is_true_as_git_reads_it() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let git = |args: &[&str]| canopy_core::cli::run(dir.path(), args).expect("git");
+        git(&["init", "-q"]);
+        let config = dir.path().join(".git").join("config");
+        let mut text = std::fs::read_to_string(&config)?;
+        text.push_str("[fetch]\n\tprune\n[commit]\n\tgpgsign\n");
+        std::fs::write(&config, &text)?;
+        let facts = read(Some(dir.path()));
+        assert_eq!(
+            git(&["config", "--bool", "--get", "fetch.prune"]).trim(),
+            "true"
+        );
+        assert_eq!(
+            facts.fetch_prune.as_ref().and_then(ConfigValue::as_bool),
+            Some(true)
+        );
+        assert!(facts.signs_commits());
+
+        text.push_str("[fetch]\n\tprune =\n");
+        std::fs::write(&config, &text)?;
+        let facts = read(Some(dir.path()));
+        assert_eq!(
+            git(&["config", "--bool", "--get", "fetch.prune"]).trim(),
+            "false"
+        );
+        assert_eq!(
+            facts.fetch_prune.as_ref().and_then(ConfigValue::as_bool),
+            Some(false)
+        );
         Ok(())
     }
 }

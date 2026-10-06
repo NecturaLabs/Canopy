@@ -4025,9 +4025,10 @@ fn poll_file_task(screen: &mut SettingsScreen, s: &mut Settings, actions: &mut V
         Outcome::Exported(path) => Some((false, format!("Exported to {}.", path.display()))),
         Outcome::Read(path, text) => match crate::settings_file::import(s, &text) {
             Ok(imported) => {
-                *s = imported;
+                let message = imported.message(&path);
+                *s = imported.settings;
                 actions.push(Action::SettingsReplaced);
-                Some((false, format!("Imported from {}.", path.display())))
+                Some((false, message))
             }
             Err(e) => Some((true, e)),
         },
@@ -4051,7 +4052,7 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row(
         ui,
         "Export settings",
-        "Saves your preferences to a file you choose, to keep or to use on another computer. Tokens, trusted folders and your answers to the Terms, the Privacy Policy and crash reports are never in it.",
+        "Saves your preferences to a file you choose, to keep or to use on another computer. Tokens, trusted folders, your answers to the Terms, the Privacy Policy and crash reports, the editor, terminal and file manager, GitLab hosts, the clone folder and per-repository settings are never in it.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Export…" })
                 .icon(icon::EXPORT)
@@ -4074,7 +4075,7 @@ fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &
     row(
         ui,
         "Import settings",
-        "Takes the preferences from a settings file. Anything the file does not name stays as it is; a file that is not Canopy's changes nothing.",
+        "Takes the preferences from a settings file. Anything the file does not name stays as it is; a file that is not Canopy's changes nothing. A file never chooses the programs Canopy runs or the GitLab hosts trusted with a token, and never turns a network feature on.",
         |ui| {
             if Button::new(if busy { "Choosing…" } else { "Import…" })
                 .icon(icon::DOWNLOAD_SIMPLE)

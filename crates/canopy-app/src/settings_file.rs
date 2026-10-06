@@ -5,13 +5,17 @@
 //! report answer), the folders trusted to run a repository's configuration and Canopy's memory
 //! of the session ([`NOT_PREFERENCES`]) never leave the machine and are never taken from a file:
 //! a file must not be able to give consent or trust. Tokens are not settings at all
-//! (`hosting.rs` keeps them), so they are never in the file.
+//! (`hosting.rs` keeps them), so they are never in the file. The programs Canopy runs, the hosts
+//! trusted with a GitLab token and everything tied to a folder on this computer
+//! ([`THIS_COMPUTER`]) are neither written nor read either, and a file may switch a network
+//! feature off but never on ([`NETWORK_SWITCHES`]).
 //!
 //! The file is JSON: `{"format": "canopy-settings", "version": 1, "exported": "<UTC>",
 //! "settings": {…}}`. An import is checked as a whole before anything changes: a file that is
 //! not Canopy's, comes from a newer format, or has a value of the wrong kind is refused with a
-//! message saying why.
+//! message saying why. The file is read only up to [`MAX_BYTES`], whatever size it claims.
 
+use std::io::Read;
 use std::path::PathBuf;
 
 use crossbeam_channel::{Receiver, TryRecvError, bounded};
@@ -45,6 +49,52 @@ pub const NOT_PREFERENCES: &[&str] = &[
     "reduce_motion",
 ];
 
+/// Preferences that stay on this computer, with the words the import message uses for them. The
+/// editor, terminal and file manager are programs Canopy runs and `gitlab_hosts` is the list of
+/// hosts the GitLab token from the environment is sent to: a file from someone else must not
+/// choose either. The clone folder and the per-repository entries are paths on this computer.
+pub const THIS_COMPUTER: &[(&str, &str)] = &[
+    ("editor", "editor"),
+    ("terminal", "terminal"),
+    ("file_manager", "file manager"),
+    ("gitlab_hosts", "GitLab hosts"),
+    ("clone_dir", "clone folder"),
+    ("repos", "per-repository settings"),
+    ("repo_diff", "per-repository settings"),
+];
+
+/// Network features (each its off switch) a file may turn off but never on, with the import
+/// message's words for them.
+pub const NETWORK_SWITCHES: &[(&str, &str)] = &[
+    ("hosting_api", "pull and merge requests"),
+    ("download_avatars", "profile pictures"),
+    ("check_updates", "update checks"),
+];
+
+/// An imported file's settings, and what of the file was not taken.
+#[derive(Debug)]
+pub struct Imported {
+    pub settings: Settings,
+    /// What the file named but this computer keeps, in the words of [`THIS_COMPUTER`] and
+    /// [`NETWORK_SWITCHES`], each once.
+    pub kept: Vec<&'static str>,
+}
+
+impl Imported {
+    /// The message after an import from `path`.
+    pub fn message(&self, path: &std::path::Path) -> String {
+        if self.kept.is_empty() {
+            format!("Imported from {}.", path.display())
+        } else {
+            format!(
+                "Imported from {}. Kept as they are on this computer: {}.",
+                path.display(),
+                self.kept.join(", ")
+            )
+        }
+    }
+}
+
 fn to_map(s: &Settings) -> Result<Map<String, Value>, String> {
     match serde_json::to_value(s) {
         Ok(Value::Object(map)) => Ok(map),
@@ -59,6 +109,9 @@ pub fn export(s: &Settings) -> Result<String, String> {
     for key in NOT_PREFERENCES {
         prefs.remove(*key);
     }
+    for (key, _) in THIS_COMPUTER {
+        prefs.remove(*key);
+    }
     let file = serde_json::json!({
         "format": FORMAT,
         "version": VERSION,
@@ -69,8 +122,9 @@ pub fn export(s: &Settings) -> Result<String, String> {
 }
 
 /// `current` with the preferences from a settings file; nothing else changes. Preferences the
-/// file does not name keep their current value.
-pub fn import(current: &Settings, text: &str) -> Result<Settings, String> {
+/// file does not name keep their current value, and so do [`THIS_COMPUTER`]'s and a
+/// [`NETWORK_SWITCHES`] feature that is off.
+pub fn import(current: &Settings, text: &str) -> Result<Imported, String> {
     let file: Value =
         serde_json::from_str(text).map_err(|e| format!("This is not a settings file: {e}."))?;
     let Value::Object(mut file) = file else {
@@ -95,16 +149,36 @@ pub fn import(current: &Settings, text: &str) -> Result<Settings, String> {
         return Err("The settings file has no \"settings\" object.".to_owned());
     };
     let mut merged = to_map(current)?;
+    let mut kept = Vec::new();
+    let mut keep = |words: &'static str| {
+        if !kept.contains(&words) {
+            kept.push(words);
+        }
+    };
     for (key, value) in prefs {
         if NOT_PREFERENCES.contains(&key.as_str()) {
             continue;
         }
+        if let Some((_, words)) = THIS_COMPUTER.iter().find(|(k, _)| *k == key) {
+            if merged.get(&key) != Some(&value) {
+                keep(words);
+            }
+            continue;
+        }
+        if let Some((_, words)) = NETWORK_SWITCHES.iter().find(|(k, _)| *k == key)
+            && merged.get(&key) == Some(&Value::Bool(false))
+        {
+            if value != Value::Bool(false) {
+                keep(words);
+            }
+            continue;
+        }
         merged.insert(key, value);
     }
-    let mut imported: Settings = serde_json::from_value(Value::Object(merged))
+    let mut settings: Settings = serde_json::from_value(Value::Object(merged))
         .map_err(|e| format!("The settings file has a value Canopy cannot use: {e}."))?;
-    imported.migrate();
-    Ok(imported)
+    settings.migrate();
+    Ok(Imported { settings, kept })
 }
 
 /// `current` with every preference back to its default; consent, trust and session memory
@@ -200,23 +274,40 @@ impl FileTask {
     }
 }
 
-/// A settings file's text, refusing one too large to be settings.
+/// A settings file's text, refusing anything but a file and one too large to be settings.
 fn read(path: PathBuf) -> Outcome {
-    let size = match std::fs::metadata(&path) {
-        Ok(m) => m.len(),
-        Err(e) => return Outcome::Failed(format!("Could not read {}: {e}", path.display())),
+    let failed = |e: &dyn std::fmt::Display| {
+        Outcome::Failed(format!("Could not read {}: {e}", path.display()))
     };
-    if size > MAX_BYTES {
-        return Outcome::Failed(format!(
-            "{} is {} KB, too large to be a settings file.",
-            path.display(),
-            size / 1024
+    // A device or a pipe has no end to wait for.
+    match std::fs::metadata(&path) {
+        Ok(m) if m.is_file() => {}
+        Ok(_) => return Outcome::Failed(format!("{} is not a file.", path.display())),
+        Err(e) => return failed(&e),
+    }
+    match std::fs::File::open(&path)
+        .map_err(|e| e.to_string())
+        .and_then(read_text)
+    {
+        Ok(text) => Outcome::Read(path, text),
+        Err(e) => failed(&e),
+    }
+}
+
+/// At most [`MAX_BYTES`] of text: a file that grew after it was chosen is cut off, not read on.
+fn read_text(reader: impl Read) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take(MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(format!(
+            "it is larger than {} KB, too large to be a settings file",
+            MAX_BYTES / 1024
         ));
     }
-    match std::fs::read_to_string(&path) {
-        Ok(text) => Outcome::Read(path, text),
-        Err(e) => Outcome::Failed(format!("Could not read {}: {e}", path.display())),
-    }
+    String::from_utf8(bytes).map_err(|e| format!("it is not text ({e})"))
 }
 
 #[cfg(test)]
@@ -255,10 +346,13 @@ mod tests {
         }
         assert!(text.contains("\"format\": \"canopy-settings\""), "{text}");
         let fresh = Settings::default();
-        let back = import(&fresh, &text).unwrap();
+        let back = import(&fresh, &text).unwrap().settings;
         assert_eq!(back.theme, ThemeId::Daylight);
         assert_eq!(back.pull_mode, PullMode::Rebase);
-        assert_eq!(back.editor, "zed --wait %f");
+        assert_eq!(
+            back.editor, "",
+            "the programs Canopy runs stay this computer's"
+        );
         // Consent and trust stay what they were on this machine.
         assert_eq!(back.accepted_terms, fresh.accepted_terms);
         assert_eq!(back.crash_reports, None);
@@ -271,11 +365,70 @@ mod tests {
         let text = r#"{"format": "canopy-settings", "version": 1, "settings": {
             "accepted_terms": "2026-10-03", "accepted_privacy": "2026-10-03",
             "crash_reports": true, "trusted_folders": ["/"], "zoom": 1.2}}"#;
-        let back = import(&fresh, text).unwrap();
+        let back = import(&fresh, text).unwrap().settings;
         assert_eq!(back.accepted_terms, fresh.accepted_terms);
         assert_eq!(back.crash_reports, None);
         assert_eq!(back.trusted_folders, Vec::<PathBuf>::new());
         assert!((back.zoom - 1.2).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_file_cannot_choose_programs_token_hosts_or_network_features() {
+        let here = Settings {
+            editor: "code --wait %f".to_owned(),
+            gitlab_hosts: "gitlab.internal".to_owned(),
+            hosting_api: false,
+            download_avatars: false,
+            check_updates: true,
+            ..Settings::default()
+        };
+        let text = r#"{"format": "canopy-settings", "version": 1, "settings": {
+            "gitlab_hosts": "git.evil.example", "editor": "sh -c id %f",
+            "terminal": "sh -c id", "file_manager": "sh -c id %d", "clone_dir": "/srv/x",
+            "repos": {"/srv/secret": {"display_name": "x"}},
+            "repo_diff": {"/srv/secret": {}},
+            "hosting_api": true, "download_avatars": true, "check_updates": false,
+            "zoom": 1.2}}"#;
+        let back = import(&here, text).unwrap().settings;
+        assert_eq!(back.gitlab_hosts, "gitlab.internal");
+        assert_eq!(back.editor, "code --wait %f");
+        assert_eq!(back.terminal, "");
+        assert_eq!(back.file_manager, "");
+        assert_eq!(back.clone_dir, here.clone_dir);
+        assert!(back.repos.is_empty() && back.repo_diff.is_empty());
+        // A network feature switched off here stays off; one the file switches off goes off.
+        assert!(!back.hosting_api && !back.download_avatars && !back.check_updates);
+        assert!(
+            (back.zoom - 1.2).abs() < f32::EPSILON,
+            "preferences still come in"
+        );
+    }
+
+    #[test]
+    fn an_export_leaves_out_what_belongs_to_this_computer() {
+        let mut s = customised();
+        s.gitlab_hosts = "gitlab.internal".to_owned();
+        s.terminal = "kitty".to_owned();
+        s.repos.insert(
+            PathBuf::from("/home/ada/secret-project"),
+            crate::settings::RepoSettings {
+                display_name: Some("Secret".to_owned()),
+                ..Default::default()
+            },
+        );
+        s.repo_diff.insert(PathBuf::from("/home/ada/other"), s.diff);
+        let text = export(&s).unwrap();
+        for key in [
+            "secret-project",
+            "/home/ada",
+            "gitlab_hosts",
+            "\"editor\"",
+            "\"terminal\"",
+            "\"repos\"",
+            "\"repo_diff\"",
+        ] {
+            assert!(!text.contains(key), "{key} must not be exported:\n{text}");
+        }
     }
 
     #[test]
@@ -304,7 +457,8 @@ mod tests {
             &s,
             r#"{"format": "canopy-settings", "version": 1, "settings": {"zoom": 9.0}}"#,
         )
-        .unwrap();
+        .unwrap()
+        .settings;
         assert!(big.zoom <= 1.6);
     }
 
@@ -327,5 +481,27 @@ mod tests {
         let path = dir.path().join("big.json");
         std::fs::write(&path, vec![b' '; usize::try_from(MAX_BYTES).unwrap() + 1]).unwrap();
         assert!(matches!(read(path), Outcome::Failed(m) if m.contains("too large")));
+    }
+
+    /// A device reports no size, so only a bounded read stops it.
+    #[cfg(unix)]
+    #[test]
+    fn an_endless_file_is_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::os::unix::fs::symlink("/dev/zero", &path).unwrap();
+        let outcome = read(path);
+        assert!(
+            matches!(&outcome, Outcome::Failed(m) if m.contains("not a file")),
+            "{outcome:?}"
+        );
+    }
+
+    /// A file that grows after its size was checked is cut off at the limit.
+    #[test]
+    fn reading_stops_at_the_limit() {
+        let endless = std::io::repeat(b' ');
+        assert!(matches!(read_text(endless), Err(m) if m.contains("too large")));
+        assert_eq!(read_text(&b"{}"[..]).as_deref(), Ok("{}"));
     }
 }

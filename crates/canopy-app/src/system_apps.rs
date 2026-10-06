@@ -417,6 +417,30 @@ mod linux {
     };
     use crate::platform::{program_name, quote};
 
+    /// The largest desktop entry or terminal list read; the largest entries (many translations)
+    /// are a few tens of kilobytes.
+    const MAX_FILE_BYTES: u64 = 256 * 1024;
+
+    /// A small text file's contents: `None` for anything but a file (a link to a device or a
+    /// pipe never ends) and for a file larger than [`MAX_FILE_BYTES`], however large it claims to
+    /// be.
+    fn read_small(path: &Path) -> Option<String> {
+        use std::io::Read;
+        if !std::fs::metadata(path).ok()?.is_file() {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .ok()?
+            .take(MAX_FILE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() as u64 > MAX_FILE_BYTES {
+            return None;
+        }
+        String::from_utf8(bytes).ok()
+    }
+
     /// The desktop entry id that opens a MIME type.
     pub(super) type DefaultFor = Box<dyn Fn(&str) -> Option<String>>;
 
@@ -650,10 +674,7 @@ mod linux {
             if found.contains_key(&id) {
                 continue;
             }
-            if let Some(entry) = std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|text| parse_entry(&id, &text))
-            {
+            if let Some(entry) = read_small(&path).and_then(|text| parse_entry(&id, &text)) {
                 found.insert(id, entry);
             }
         }
@@ -663,7 +684,7 @@ mod linux {
     /// installed. Its name, for Settings.
     fn xdg_terminal_name(env: &Env, entries: &HashMap<String, Entry>) -> Option<String> {
         env.config_dirs.iter().find_map(|dir| {
-            let list = std::fs::read_to_string(dir.join("xdg-terminals.list")).ok()?;
+            let list = read_small(&dir.join("xdg-terminals.list"))?;
             list.lines()
                 .map(str::trim)
                 .filter(|l| !l.is_empty() && !l.starts_with('#'))
@@ -1021,6 +1042,21 @@ mod tests {
         let found = entries(&[dir.path().join("home-data"), dir.path().join("usr-share")]);
         assert_eq!(found["kitty.desktop"].name, "kitty");
         assert_eq!(found["kde-files.desktop"].name, "Files");
+    }
+
+    #[test]
+    fn oversized_and_endless_entries_are_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let apps = dir.path().join("applications");
+        let padding = "# padding\n".repeat(30_000);
+        write(&apps, "big.desktop", &format!("{KITTY}{padding}"));
+        write(&apps, "files.desktop", FILES);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/dev/zero", apps.join("zero.desktop")).unwrap();
+        let found = entries(&[dir.path().to_path_buf()]);
+        assert!(!found.contains_key("big.desktop"), "read past the limit");
+        assert!(!found.contains_key("zero.desktop"));
+        assert_eq!(found["files.desktop"].name, "Files");
     }
 
     #[test]

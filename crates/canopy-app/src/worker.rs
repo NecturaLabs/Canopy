@@ -90,11 +90,18 @@ pub enum Op {
         message: Option<String>,
         untracked: bool,
     },
+    /// Applies (or pops) the stash at `index` when the operation runs: the latest, `0`.
     StashApply {
         index: usize,
         pop: bool,
     },
-    StashDrop(usize),
+    /// Applies (or pops) the stash whose commit is `oid`, wherever it is by then.
+    StashApplyCommit {
+        oid: Oid,
+        pop: bool,
+    },
+    /// Drops the stash whose commit is `oid`, wherever it is by then.
+    StashDrop(Oid),
     /// Fetch every remote. `quiet` skips the success toast (auto-fetch).
     Fetch {
         prune: bool,
@@ -211,8 +218,10 @@ impl Op {
             Self::DeleteTag(t) => format!("Deleting tag {t}"),
             Self::PushTag { tag, .. } => format!("Pushing tag {tag}"),
             Self::StashSave { .. } => "Stashing".into(),
-            Self::StashApply { pop: true, .. } => "Popping stash".into(),
-            Self::StashApply { .. } => "Applying stash".into(),
+            Self::StashApply { pop: true, .. } | Self::StashApplyCommit { pop: true, .. } => {
+                "Popping stash".into()
+            }
+            Self::StashApply { .. } | Self::StashApplyCommit { .. } => "Applying stash".into(),
             Self::StashDrop(_) => "Dropping stash".into(),
             Self::Fetch { .. } => "Fetching".into(),
             Self::Pull { .. } => "Pulling".into(),
@@ -919,7 +928,8 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
             done(repo.stash_save(message.as_deref(), untracked))
         }
         Op::StashApply { index, pop } => done(repo.stash_apply(index, pop)),
-        Op::StashDrop(i) => done(repo.stash_drop(i)),
+        Op::StashApplyCommit { oid, pop } => done(repo.stash_apply_commit(oid, pop)),
+        Op::StashDrop(oid) => done(repo.stash_drop_commit(oid)),
         Op::Fetch { prune, .. } => repo.fetch(None, prune, progress),
         Op::Pull {
             strategy,

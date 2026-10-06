@@ -209,21 +209,48 @@ pub fn loggable(args: &[&str]) -> Vec<String> {
     out
 }
 
-/// Removes the `user:password@` part of a URL inside `text`.
+/// Removes the `user:password@` part of every URL inside `text`.
 #[expect(
     clippy::string_slice,
-    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+    reason = "offsets come from find and userinfo, so they fall between characters"
 )]
 pub fn redact_url(text: &str) -> String {
-    let Some(scheme_end) = text.find("://") else {
-        return text.to_owned();
-    };
-    let rest = &text[scheme_end + 3..];
-    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    match rest[..authority_end].rfind('@') {
-        Some(at) => format!("{}://<redacted>@{}", &text[..scheme_end], &rest[at + 1..]),
-        None => text.to_owned(),
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("://") {
+        let (head, tail) = rest.split_at(i + 3);
+        out.push_str(head);
+        let ends_text = |c: char| c.is_whitespace() || matches!(c, '\'' | '"' | '<' | '>' | '`');
+        match userinfo(tail, ends_text) {
+            Some(user) => {
+                out.push_str(&tail[..user.start]);
+                out.push_str("<redacted>");
+                rest = &tail[user.end..];
+            }
+            None => rest = tail,
+        }
     }
+    out.push_str(rest);
+    out
+}
+
+/// Where the user name and password lie in `after`, the text after a URL's `://`.
+///
+/// They run from the end of any further slashes (git and libcurl skip them) to the last `@`
+/// before the first slash or `stop` character. Git splits the user from the host at the first
+/// slash only, so a `?` or `#` does not end them. `None` when there is no `@` there.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, rfind and an ASCII trim, so they fall between characters"
+)]
+pub fn userinfo(after: &str, stop: impl Fn(char) -> bool) -> Option<std::ops::Range<usize>> {
+    let start = after.len() - after.trim_start_matches('/').len();
+    let rest = &after[start..];
+    let end = rest
+        .find(|c: char| c == '/' || stop(c))
+        .unwrap_or(rest.len());
+    let at = rest[..end].rfind('@')?;
+    Some(start..start + at)
 }
 
 /// Logs a finished git command: at debug level always, at warn level when it failed.
@@ -590,6 +617,20 @@ mod tests {
         assert_eq!(redact_url("ssh://git@host/x"), "ssh://<redacted>@host/x");
         assert_eq!(redact_url("https://host/a@b"), "https://host/a@b");
         assert_eq!(redact_url("no url"), "no url");
+        // Git and libcurl skip extra slashes; git splits user and host at the first slash only.
+        for text in [
+            "fatal: unable to access 'https:///u:secret@github.com/o/r.git/': error",
+            "https:////secret@host/r",
+            "https://u:secret?x@host/r",
+            "from https://a@one/x to 'https://u:secret@two/y'",
+        ] {
+            let shown = redact_url(text);
+            assert!(!shown.contains("secret"), "{shown}");
+        }
+        assert_eq!(
+            redact_url("from https://a@one/x to https://two/y@z"),
+            "from https://<redacted>@one/x to https://two/y@z"
+        );
         assert_eq!(
             loggable(&[
                 "config",

@@ -184,7 +184,7 @@ pub fn show(
                         actions.push(Action::OpenUrl(page.clone()));
                     }
                     if m.item(icon::X, "Skip this version").show(m.ui).clicked() {
-                        actions.push(Action::SkipVersion(v.clone()));
+                        actions.push(Action::SkipVersion(a.skip_key()));
                     }
                 });
                 if resp.clicked() {

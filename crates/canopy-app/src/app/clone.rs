@@ -12,7 +12,8 @@ impl CanopyApp {
     pub(super) fn start_clone(&mut self, ctx: &egui::Context, url: String, dest: PathBuf) {
         let (tx, rx) = unbounded();
         let thread_ctx = ctx.clone();
-        let thread_url = url.clone();
+        // The status bar shows the URL for the whole clone.
+        let shown = canopy_core::cli::redact_url(&url);
         let spawned = std::thread::Builder::new()
             .name("clone".into())
             .spawn(move || {
@@ -20,13 +21,13 @@ impl CanopyApp {
                     let _ = tx.send(m);
                     thread_ctx.request_repaint();
                 };
-                let result = clone_repository(&thread_url, &dest, |l| {
-                    send(CloneMsg::Progress(l.to_owned()));
+                let result = clone_repository(&url, &dest, |l| {
+                    send(CloneMsg::Progress(canopy_core::cli::redact_url(l)));
                 });
                 send(CloneMsg::Done(result));
             });
         match spawned {
-            Ok(_) => self.clone = Some((url, rx, "Starting…".into())),
+            Ok(_) => self.clone = Some((shown, rx, "Starting…".into())),
             // The status bar never shows a clone that is not running.
             Err(e) => {
                 tracing::error!("could not start the clone thread: {e}");
@@ -71,7 +72,8 @@ fn clone_repository(
             dest.display()
         ));
     }
-    canopy_core::ops::clone(url, dest, progress).map_err(|e| e.to_string())?;
+    canopy_core::ops::clone(url, dest, progress)
+        .map_err(|e| canopy_core::cli::redact_url(&e.to_string()))?;
     Ok(dest.to_path_buf())
 }
 
@@ -179,6 +181,28 @@ mod tests {
             app.dialogs.current()
         );
         assert!(format!("{:?}", app.toasts).contains("Clone complete"));
+    }
+
+    /// The status bar shows the clone's URL for as long as it runs: never its credentials.
+    #[test]
+    fn a_running_clone_shows_no_credentials() {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir().expect("temporary folder");
+        let mut app = quiet_app();
+        app.start_clone(
+            &ctx,
+            "https://user:secret@127.0.0.1:9/o/r.git".to_owned(),
+            dir.path().join("r"),
+        );
+        let (url, rx, _) = app.clone.as_ref().expect("a clone runs");
+        assert!(!url.contains("secret"), "{url}");
+        let done = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the clone ends");
+        assert!(
+            matches!(&done, CloneMsg::Done(Err(e)) if !e.contains("secret")),
+            "{done:?}"
+        );
     }
 
     #[test]

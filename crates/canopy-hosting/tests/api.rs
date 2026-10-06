@@ -1445,6 +1445,19 @@ fn github_rollup_errors_and_empty_data() {
         ),
         Err(Error::RateLimited { reset: Some(r6.0) })
     );
+    // The answer that took the last request still counts when it carries data beside an error
+    // that is not about the limit (GitHub's NOT_FOUND for a missing pull request).
+    assert_eq!(
+        rollup(
+            200,
+            &[
+                ("x-ratelimit-remaining", "0"),
+                ("x-ratelimit-reset", r6.1.as_str())
+            ],
+            r#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a PullRequest with the number of 1."}]}"#
+        ),
+        Ok(Vec::new())
+    );
     // A secondary limit: 200, a message saying so, and how long to wait.
     let before = chrono::Utc::now().timestamp();
     let secondary = rollup(
@@ -2089,4 +2102,131 @@ fn author_picture_lookups_tell_an_unpushed_commit_from_a_hidden_repository() {
         Err(Error::NotFound(_))
     ));
     assert_eq!(server.requests().len(), count, "GitLab sends nothing");
+}
+
+mod capture {
+    //! Records every log event's fields, so a test can check what reached the log.
+
+    use std::fmt::Write as _;
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Metadata, Subscriber};
+
+    #[derive(Clone, Default)]
+    pub struct Logs(Arc<Mutex<Vec<String>>>);
+
+    impl Logs {
+        pub fn lines(&self) -> Vec<String> {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+    }
+
+    struct Line(String);
+
+    impl Visit for Line {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            let _ = write!(self.0, " {}={value:?}", field.name());
+        }
+    }
+
+    impl Subscriber for Logs {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+        fn record(&self, _: &Id, _: &Record<'_>) {}
+        fn record_follows_from(&self, _: &Id, _: &Id) {}
+        fn event(&self, event: &Event<'_>) {
+            let mut line = Line(String::new());
+            event.record(&mut line);
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(line.0);
+        }
+        fn enter(&self, _: &Id) {}
+        fn exit(&self, _: &Id) {}
+    }
+}
+
+/// A server that echoes the client's own token (of any form) or another token back: neither
+/// reaches an error, which the app shows and logs, nor this crate's own log lines, even where
+/// the message is cut short.
+#[test]
+fn tokens_in_server_words_never_reach_an_error_or_the_log() {
+    // No known prefix: only the client's knowing its own token can find it.
+    const OWN: &str = "plainsecretvalue0123456789";
+    let logs = capture::Logs::default();
+    let server = Server::start();
+    let mut shown = Vec::new();
+    // With one subscriber alive, tracing decides whether a log line is wanted by asking the
+    // subscriber of the thread that first reaches it, and other tests' threads have none. A
+    // second one makes it ask every live subscriber, this test's among them.
+    let _second = tracing::Dispatch::new(capture::Logs::default());
+    tracing::subscriber::with_default(logs.clone(), || {
+        tracing::callsite::rebuild_interest_cache();
+        let echo = format!("invalid token: {OWN}, also glpat-review-sentinel and ghp_abcdef123456");
+        server.route(
+            "POST",
+            "/graphql",
+            200,
+            &json!({ "data": null, "errors": [{ "message": echo }] }).to_string(),
+        );
+        shown.push(github(&server, Some(OWN)).rollup(&[1]).map(drop));
+        // The token straddles where a long message is cut.
+        let long = format!("{} {OWN}", "x".repeat(290));
+        server.route(
+            "POST",
+            "/graphql",
+            401,
+            &json!({ "message": long }).to_string(),
+        );
+        shown.push(github(&server, Some(OWN)).rollup(&[1]).map(drop));
+        server.route(
+            "POST",
+            "/repos/octo/hello/issues/1/comments",
+            422,
+            &format!("bad credentials {OWN}"),
+        );
+        shown.push(github(&server, Some(OWN)).comment(1, "hi").map(drop));
+        // A response of the wrong shape: the parser quotes the string it met.
+        server.route(
+            "GET",
+            "/repos/octo/hello/pulls?state=all&sort=updated&direction=desc&per_page=3&page=1",
+            200,
+            &json!([OWN]).to_string(),
+        );
+        shown.push(
+            github(&server, Some(OWN))
+                .list(StateFilter::All, 3)
+                .map(drop),
+        );
+    });
+    let lines = logs.lines();
+    assert!(
+        lines.iter().any(|l| l.contains("hosting request")),
+        "the log was captured: {lines:?}"
+    );
+    for result in &shown {
+        let Err(e) = result else {
+            panic!("every call fails: {shown:?}");
+        };
+        let text = e.to_string();
+        assert!(text.contains("<redact"), "the token was replaced: {text}");
+        for secret in ["plainsec", "glpat-review", "ghp_abc"] {
+            assert!(!text.contains(secret), "{secret} in {text}");
+        }
+    }
+    for line in &lines {
+        for secret in ["plainsec", "glpat-review", "ghp_abc"] {
+            assert!(!line.contains(secret), "{secret} in the log: {line}");
+        }
+    }
 }
