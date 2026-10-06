@@ -320,6 +320,47 @@ impl SnapIndex {
     }
 }
 
+/// The icons a repository's tab can show (Settings → This repository): a stored key, the glyph
+/// and its name. The first is the default.
+pub const TAB_ICONS: &[(&str, &str, &str)] = &[
+    ("folder", egui_phosphor::regular::FOLDER_SIMPLE, "Folder"),
+    ("code", egui_phosphor::regular::CODE, "Code"),
+    (
+        "terminal",
+        egui_phosphor::regular::TERMINAL_WINDOW,
+        "Terminal",
+    ),
+    ("globe", egui_phosphor::regular::GLOBE, "Web"),
+    ("mobile", egui_phosphor::regular::DEVICE_MOBILE, "Mobile"),
+    ("database", egui_phosphor::regular::DATABASE, "Data"),
+    ("cube", egui_phosphor::regular::CUBE, "Package"),
+    ("book", egui_phosphor::regular::BOOK_OPEN, "Docs"),
+    ("palette", egui_phosphor::regular::PALETTE, "Design"),
+    ("game", egui_phosphor::regular::GAME_CONTROLLER, "Game"),
+    ("flask", egui_phosphor::regular::FLASK, "Experiment"),
+    ("rocket", egui_phosphor::regular::ROCKET_LAUNCH, "Launch"),
+    ("briefcase", egui_phosphor::regular::BRIEFCASE, "Work"),
+    ("house", egui_phosphor::regular::HOUSE, "Personal"),
+    ("star", egui_phosphor::regular::STAR, "Favourite"),
+    ("lightning", egui_phosphor::regular::LIGHTNING, "Fast"),
+];
+
+/// The glyph for an icon key; the folder for none or an unknown one.
+pub fn tab_icon(key: Option<&str>) -> &'static str {
+    TAB_ICONS
+        .iter()
+        .find(|(k, _, _)| Some(*k) == key)
+        .map_or(TAB_ICONS[0].1, |(_, glyph, _)| glyph)
+}
+
+/// The folder's name, which a tab shows unless the repository has a name of its own.
+pub fn folder_name(path: &std::path::Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
+}
+
 /// One repository tab.
 ///
 /// Large data from the worker (snapshot, commit details, diff, conflict file) is held in `Arc`s:
@@ -329,7 +370,10 @@ pub struct RepoTab {
     pub path: PathBuf,
     pub identity: Option<canopy_core::identity::Identity>,
     pub identity_error: Option<String>,
+    /// What the tab says: the repository's own name from Settings, else its folder's.
     pub name: String,
+    /// The tab's icon ([`TAB_ICONS`]).
+    pub icon: &'static str,
     pub worker: Worker,
     pub snap: Option<Arc<RepoSnapshot>>,
     /// Derived from `snap` when it arrives.
@@ -420,15 +464,13 @@ impl RepoTab {
         diff_prefs: DiffPrefs,
         worker: Worker,
     ) -> Self {
-        let name = path.file_name().map_or_else(
-            || path.display().to_string(),
-            |n| n.to_string_lossy().into_owned(),
-        );
+        let name = folder_name(&path);
         Self {
             path,
             identity: None,
             identity_error: None,
             name,
+            icon: tab_icon(None),
             worker,
             snap: None,
             snap_index: SnapIndex::default(),

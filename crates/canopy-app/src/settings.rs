@@ -60,6 +60,9 @@ impl CloneProtocol {
     }
 }
 
+/// The longest name a repository's tab can be given, in characters.
+pub const MAX_TAB_NAME: usize = 60;
+
 /// One repository's own choices. Each is `None` while the repository follows the default in
 /// [`Settings`] (its "Default for repositories" value).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +75,10 @@ pub struct RepoSettings {
     pub signoff: Option<bool>,
     /// Protocol of remote URLs built from `owner/repo` (Add remote, Publish).
     pub protocol: Option<CloneProtocol>,
+    /// The name its tab shows instead of the folder's.
+    pub display_name: Option<String>,
+    /// The icon its tab shows: a key of `tab::TAB_ICONS`.
+    pub icon: Option<String>,
 }
 
 impl RepoSettings {
@@ -302,6 +309,17 @@ impl Settings {
         let mut seen = Vec::new();
         self.trusted_folders
             .retain(|f| f.is_absolute() && crate::trust::add(&mut seen, f));
+        for repo in self.repos.values_mut() {
+            repo.display_name = repo
+                .display_name
+                .take()
+                .map(|n| n.trim().chars().take(MAX_TAB_NAME).collect::<String>())
+                .filter(|n| !n.is_empty());
+            repo.icon = repo
+                .icon
+                .take()
+                .filter(|k| crate::tab::TAB_ICONS.iter().any(|(key, _, _)| key == k));
+        }
         // Only real choices are kept; a repository following every default needs no entry.
         self.repos
             .retain(|path, repo| path.is_absolute() && !repo.is_default());
@@ -312,6 +330,11 @@ impl Settings {
         self.repos.get(path).cloned().unwrap_or_default()
     }
 
+    /// One of the repository's own choices, without copying the rest.
+    fn own<T>(&self, path: &Path, pick: impl FnOnce(&RepoSettings) -> Option<T>) -> Option<T> {
+        self.repos.get(path).and_then(pick)
+    }
+
     /// The repository's own choices, to change them.
     pub fn repo_mut(&mut self, path: &Path) -> &mut RepoSettings {
         self.repos.entry(path.to_path_buf()).or_default()
@@ -319,31 +342,30 @@ impl Settings {
 
     /// How a pull integrates in the repository at `path`.
     pub fn pull_mode_for(&self, path: &Path) -> PullMode {
-        self.repo(path).pull_mode.unwrap_or(self.pull_mode)
+        self.own(path, |r| r.pull_mode).unwrap_or(self.pull_mode)
     }
 
     /// Whether fetching in the repository at `path` prunes.
     pub fn prune_for(&self, path: &Path) -> bool {
-        self.repo(path)
-            .prune_on_fetch
+        self.own(path, |r| r.prune_on_fetch)
             .unwrap_or(self.prune_on_fetch)
     }
 
     /// Minutes between background fetches of the repository at `path` (0 = off).
     pub fn auto_fetch_for(&self, path: &Path) -> u32 {
-        self.repo(path)
-            .auto_fetch_minutes
+        self.own(path, |r| r.auto_fetch_minutes)
             .unwrap_or(self.auto_fetch_minutes)
     }
 
     /// Whether commits in the repository at `path` get a Signed-off-by trailer.
     pub fn signoff_for(&self, path: &Path) -> bool {
-        self.repo(path).signoff.unwrap_or(self.signoff)
+        self.own(path, |r| r.signoff).unwrap_or(self.signoff)
     }
 
     /// The protocol of URLs built from `owner/repo` for the repository at `path`.
     pub fn protocol_for(&self, path: &Path) -> CloneProtocol {
-        self.repo(path).protocol.unwrap_or(self.clone_protocol)
+        self.own(path, |r| r.protocol)
+            .unwrap_or(self.clone_protocol)
     }
 
     /// Repositories with a choice of their own (settings or diff options).
@@ -544,6 +566,7 @@ mod tests {
             auto_fetch_minutes: Some(0),
             signoff: Some(false),
             protocol: Some(CloneProtocol::Https),
+            ..RepoSettings::default()
         };
         assert_eq!(s.pull_mode_for(&repo), PullMode::FastForwardOnly);
         assert!(s.prune_for(&repo));
@@ -588,6 +611,29 @@ mod tests {
         .expect("parse");
         newer.migrate();
         assert!(newer.signoff_for(&repo));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tab_names_and_icons_are_checked_when_loaded() {
+        let mut s: Settings = serde_json::from_str(
+            r#"{"repos": {
+                "/srv/a": {"display_name": "  Website  ", "icon": "globe"},
+                "/srv/b": {"display_name": "   ", "icon": "no-such-icon"}
+            }}"#,
+        )
+        .expect("parse");
+        s.repo_mut(Path::new("/srv/c")).display_name = Some("x".repeat(500));
+        s.migrate();
+        let a = s.repo(Path::new("/srv/a"));
+        assert_eq!(a.display_name.as_deref(), Some("Website"));
+        assert_eq!(a.icon.as_deref(), Some("globe"));
+        assert!(
+            !s.repos.contains_key(Path::new("/srv/b")),
+            "a blank name and an unknown icon are no choice"
+        );
+        let long = s.repo(Path::new("/srv/c")).display_name.unwrap_or_default();
+        assert_eq!(long.chars().count(), MAX_TAB_NAME);
     }
 
     #[cfg(unix)]

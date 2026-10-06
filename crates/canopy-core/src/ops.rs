@@ -167,6 +167,26 @@ pub fn clone(url: &str, dest: &Path, progress: impl FnMut(&str)) -> Result<()> {
     Ok(())
 }
 
+/// Whether a remote URL carries credentials.
+///
+/// Any user name in an `http(s)://` URL counts (it is usually a token), and a password
+/// (`user:secret@`) in any other URL with a scheme. An ssh user such as `git@github.com:o/r.git`
+/// or `ssh://git@host/r` is not a credential.
+pub fn url_has_credentials(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let Some((user_info, _)) = authority.rsplit_once('@') else {
+        return false;
+    };
+    let web = matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "http" | "https" | "ftp" | "ftps"
+    );
+    web || user_info.contains(':')
+}
+
 /// Where [`Repo::checkout_request`] keeps the head of `remote_ref` (a full ref such as
 /// `refs/pull/12/head`) fetched from `remote`: `refs/canopy/requests/<remote>/pull/12/head`.
 fn request_ref(remote: &str, remote_ref: &str) -> String {
@@ -526,6 +546,27 @@ impl Repo {
     /// Removes a remote and its remote-tracking branches.
     pub fn remove_remote(&self, name: &str) -> Result<()> {
         self.git_cmd(&["remote", "remove", name]).map(drop)
+    }
+
+    /// Points the remote `name` at `url` (`git remote set-url`). A URL carrying credentials
+    /// ([`url_has_credentials`]) is refused: it would be stored in `.git/config` and shown
+    /// wherever the URL is, while git asks for credentials through the credential helper anyway.
+    pub fn set_remote_url(&self, name: &str, url: &str) -> Result<()> {
+        let url = url.trim();
+        if name.is_empty() || name.starts_with('-') {
+            return Err(Error::Invalid(format!("{name:?} is not a remote name.")));
+        }
+        if url.is_empty() {
+            return Err(Error::Invalid("Enter the remote's URL.".into()));
+        }
+        if url_has_credentials(url) {
+            return Err(Error::Invalid(
+                "Remove the user name and password from the URL: git asks for them when it needs them."
+                    .into(),
+            ));
+        }
+        self.git_cmd(&["remote", "set-url", "--", name, url])
+            .map(drop)
     }
 
     /// Fetches `remote`, or every remote when `None`, with tags. `prune` also deletes

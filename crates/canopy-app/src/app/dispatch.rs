@@ -402,6 +402,27 @@ impl CanopyApp {
         self.launcher(Kind::FileManager)
     }
 
+    /// Each tab's name and icon as its repository's settings say (cheap: runs every frame).
+    pub(super) fn apply_repo_looks(&mut self) {
+        for t in &mut self.tabs {
+            let own = self.settings.repos.get(&t.path);
+            let icon = crate::tab::tab_icon(own.and_then(|r| r.icon.as_deref()));
+            if t.icon != icon {
+                t.icon = icon;
+            }
+            match own.and_then(|r| r.display_name.as_deref()) {
+                Some(name) if t.name != name => name.clone_into(&mut t.name),
+                Some(_) => {}
+                None => {
+                    let folder = t.path.file_name().map(|n| n.to_string_lossy());
+                    if folder.as_deref() != Some(t.name.as_str()) {
+                        t.name = crate::tab::folder_name(&t.path);
+                    }
+                }
+            }
+        }
+    }
+
     /// The add-remote dialog, its URL protocol the active repository's choice.
     fn add_remote_dialog(&self) -> Dialog {
         let mut dialog = Dialog::add_remote(&self.settings);

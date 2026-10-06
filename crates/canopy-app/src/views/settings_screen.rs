@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
 use egui::epaint::CubicBezierShape;
@@ -44,6 +45,7 @@ use crate::ui::theme::{
 use crate::ui::widgets::forge_icon;
 use crate::updater::{self, UpdateState, Updater};
 use crate::views::dialogs::Dialog;
+use crate::worker::Op;
 
 /// The sections, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -127,6 +129,11 @@ pub struct SettingsScreen {
     custom_launchers: HashSet<Kind>,
     /// Why the active repository's authors show initials, for Privacy.
     picture_note: Option<PictureNote>,
+    /// Remote URLs being edited on the repository page, by remote name, for this repository.
+    remote_drafts_for: Option<PathBuf>,
+    remote_drafts: HashMap<String, String>,
+    /// The URL last saved for a remote, and when, until the configuration shows it.
+    remote_saved: Option<(String, String, Instant)>,
 }
 
 /// Why the active repository's authors show initials instead of pictures
@@ -154,14 +161,29 @@ struct FactsSlot {
     path: Option<PathBuf>,
     rx: Option<Receiver<GitFacts>>,
     facts: Option<GitFacts>,
+    /// When the last read ended.
+    read_at: Option<Instant>,
 }
 
 impl FactsSlot {
+    /// Reads again on the next [`FactsSlot::get`].
+    fn reread(&mut self) {
+        self.asked = false;
+    }
+
+    /// Whether no read is running and the last one ended at least `gap` ago.
+    fn idle_for(&self, gap: Duration) -> bool {
+        self.rx.is_none() && self.read_at.is_none_or(|at| at.elapsed() >= gap)
+    }
+
     /// The facts for `path`, starting a read the first time and when `path` changes.
     fn get(&mut self, ctx: &egui::Context, path: Option<&Path>) -> Option<&GitFacts> {
         let path = path.map(Path::to_path_buf);
         if !self.asked || self.path != path {
-            self.facts = None;
+            if self.path != path {
+                // Another repository's facts must not show while this one's are read.
+                self.facts = None;
+            }
             self.rx = Some(crate::repo_config::read_async(ctx, path.clone()));
             self.asked = true;
             self.path = path;
@@ -169,6 +191,7 @@ impl FactsSlot {
         if let Some(facts) = self.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.facts = Some(facts);
             self.rx = None;
+            self.read_at = Some(Instant::now());
         }
         self.facts.as_ref()
     }
@@ -371,7 +394,8 @@ pub fn show(
             ));
             let content = if sidebar {
                 let nav = Rect::from_min_size(shell.min, vec2(NAV_WIDTH, shell.height()));
-                navigation(ui, nav, r, screen, repo);
+                let look = repo.map(|path| RepoLook::of(settings, path));
+                navigation(ui, nav, r, screen, look.as_ref());
                 shell.with_min_x(nav.right())
             } else {
                 shell
@@ -798,7 +822,7 @@ fn navigation(
     rect: Rect,
     radius: u8,
     screen: &mut SettingsScreen,
-    repo: Option<&Path>,
+    repo: Option<&RepoLook>,
 ) {
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
@@ -852,16 +876,14 @@ fn navigation(
             ui.spacing_mut().item_spacing.y = 1.0;
             let searching = !screen.search.words().is_empty();
             for section in Section::shown(repo.is_some()) {
-                let (glyph, mut label) = section.label();
-                let name = if section == Section::Repository {
-                    // Its own group, named by the repository's folder.
+                let (mut glyph, mut label) = section.label();
+                let name = if let (Section::Repository, Some(look)) = (section, repo) {
+                    // Its own group, named and drawn as the repository's tab.
                     ui.add_space(theme::LG);
                     column_label(ui, "This repository");
                     ui.add_space(theme::XS);
-                    label = repo
-                        .and_then(Path::file_name)
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(label);
+                    label = &look.name;
+                    glyph = look.icon;
                     format!("This repository: {label}")
                 } else {
                     label.to_owned()
@@ -2301,9 +2323,11 @@ fn repository(
     };
     let facts = screen.facts.repo(ui.ctx(), path).cloned();
     if block(ui, "This repository", &path.display().to_string()) {
-        repo_header(ui, path);
+        repo_header(ui, path, &RepoLook::of(s, path));
         facts_error(ui, facts.as_ref());
     }
+    repo_tab(ui, s, path);
+    repo_remotes(ui, screen, path, facts.as_ref(), actions);
     repo_identity(ui, screen, path, &data.identity, actions);
 
     let mut own = s.repo(path);
@@ -2412,14 +2436,195 @@ fn repository(
     }
 }
 
+/// How the repository's tab looks: its own name and icon, else the folder's name and a folder.
+struct RepoLook {
+    name: String,
+    icon: &'static str,
+}
+
+impl RepoLook {
+    fn of(s: &Settings, path: &Path) -> Self {
+        let own = s.repos.get(path);
+        Self {
+            name: own
+                .and_then(|r| r.display_name.clone())
+                .unwrap_or_else(|| crate::tab::folder_name(path)),
+            icon: crate::tab::tab_icon(own.and_then(|r| r.icon.as_deref())),
+        }
+    }
+}
+
+/// The repository tab's name and icon.
+fn repo_tab(ui: &mut Ui, s: &mut Settings, path: &Path) {
+    heading(ui, "Tab");
+    let folder = crate::tab::folder_name(path);
+    let saved = s
+        .repos
+        .get(path)
+        .and_then(|r| r.display_name.clone())
+        .unwrap_or_default();
+    let mut name = saved.clone();
+    row(
+        ui,
+        "Name",
+        "What its tab calls this repository. Empty uses the folder's name.",
+        |ui| {
+            fixed_width(ui, FIELD_WIDTH, |ui| {
+                TextField::new(&mut name)
+                    .placeholder(folder.clone())
+                    .width(FIELD_WIDTH)
+                    .name("Tab name")
+                    .id_salt("repo-tab-name")
+                    .show(ui)
+            });
+        },
+    );
+    if name != saved {
+        let name: String = name.chars().take(crate::settings::MAX_TAB_NAME).collect();
+        s.repo_mut(path).display_name = (!name.trim().is_empty()).then_some(name);
+    }
+    let icons: Vec<String> = crate::tab::TAB_ICONS
+        .iter()
+        .map(|(_, glyph, label)| format!("{glyph}  {label}"))
+        .collect();
+    let options: Vec<(usize, &str)> = icons.iter().map(String::as_str).enumerate().collect();
+    let key = s.repos.get(path).and_then(|r| r.icon.clone());
+    let current = crate::tab::TAB_ICONS
+        .iter()
+        .position(|(k, _, _)| Some(*k) == key.as_deref())
+        .unwrap_or(0);
+    let mut chosen = current;
+    row(ui, "Icon", "Shown in the tab, before its name.", |ui| {
+        Select::new(&mut chosen, &options)
+            .width(SELECT_WIDTH)
+            .name("Tab icon")
+            .id_salt("repo-tab-icon")
+            .show(ui);
+    });
+    if chosen != current {
+        s.repo_mut(path).icon = (chosen != 0)
+            .then(|| {
+                crate::tab::TAB_ICONS
+                    .get(chosen)
+                    .map(|(k, _, _)| (*k).to_owned())
+            })
+            .flatten();
+    }
+}
+
+/// The repository's remotes, each URL editable (`git remote set-url`).
+fn repo_remotes(
+    ui: &mut Ui,
+    screen: &mut SettingsScreen,
+    path: &Path,
+    facts: Option<&GitFacts>,
+    actions: &mut Vec<Action>,
+) {
+    let Some(facts) = facts else {
+        return;
+    };
+    if screen.remote_drafts_for.as_deref() != Some(path) {
+        screen.remote_drafts_for = Some(path.to_path_buf());
+        screen.remote_drafts.clear();
+        screen.remote_saved = None;
+    }
+    // After a save, read the configuration again until it shows the new URL (or for 10 s, when
+    // git refused it: its message is in a toast).
+    if let Some((name, url, at)) = &screen.remote_saved {
+        let landed = facts
+            .remotes
+            .iter()
+            .any(|r| &r.name == name && &r.url == url);
+        if landed || at.elapsed() > Duration::from_secs(10) {
+            screen.remote_saved = None;
+        } else if screen.facts.repo.idle_for(Duration::from_millis(300)) {
+            screen.facts.repo.reread();
+        }
+        ui.ctx().request_repaint_after(Duration::from_millis(300));
+    }
+    heading(ui, "Remotes");
+    if facts.remotes.is_empty() {
+        if block(ui, "Remotes", "remote url origin") {
+            help_label(
+                ui,
+                "This repository has no remotes. Add one from the sidebar or the command palette.",
+            );
+            row_end(ui);
+        }
+        return;
+    }
+    for remote in &facts.remotes {
+        let draft = screen
+            .remote_drafts
+            .entry(remote.name.clone())
+            .or_insert_with(|| remote.url.clone());
+        let typed = draft.trim().to_owned();
+        let problem = if typed.is_empty() {
+            Some("Enter the remote's URL.")
+        } else if canopy_core::ops::url_has_credentials(&typed) {
+            Some("Remove the user name and password: git asks for them when it needs them.")
+        } else {
+            None
+        };
+        let changed = typed != remote.url;
+        let help = format!(
+            "Where {} fetches from and pushes to. {}",
+            remote.name,
+            if changed { "Not saved yet." } else { "" }
+        );
+        let mut save = false;
+        row_layout(
+            ui,
+            &remote.name,
+            None,
+            "remote url origin upstream set-url",
+            &|ui: &mut Ui| {
+                help_label(ui, help.trim_end());
+                if let Some(problem) = problem.filter(|_| changed) {
+                    Note {
+                        text: problem.to_owned(),
+                        warn: true,
+                    }
+                    .show(ui);
+                }
+            },
+            "",
+            |ui| {
+                // Right to left: Save, then the field, together as wide as the other fields.
+                let right = ui.cursor().max.x;
+                save = Button::new("Save")
+                    .primary()
+                    .enabled(changed && problem.is_none())
+                    .disabled_reason(problem.unwrap_or("The URL is unchanged."))
+                    .id_salt(("remote-save", &remote.name))
+                    .show(ui)
+                    .clicked();
+                let width = (FIELD_WIDTH - (right - ui.cursor().max.x)).max(120.0);
+                fixed_width(ui, width, |ui| {
+                    TextField::new(draft)
+                        .width(width)
+                        .name(format!("URL of {}", remote.name))
+                        .id_salt(("remote-url", &remote.name))
+                        .show(ui)
+                });
+            },
+        );
+        row_end(ui);
+        if save {
+            actions.push(Action::Op(Op::SetRemoteUrl {
+                name: remote.name.clone(),
+                url: typed.clone(),
+            }));
+            screen.remote_saved = Some((remote.name.clone(), typed, Instant::now()));
+        }
+    }
+}
+
 /// The repository's name and where it is.
-fn repo_header(ui: &mut Ui, path: &Path) {
+fn repo_header(ui: &mut Ui, path: &Path, look: &RepoLook) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
-    let name = path.file_name().map_or_else(
-        || path.display().to_string(),
-        |n| n.to_string_lossy().into_owned(),
-    );
+    let name = &look.name;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = theme::MD;
         let (disc, _) = ui.allocate_exact_size(Vec2::splat(m.icon_lg * 2.0), Sense::hover());
@@ -2428,14 +2633,14 @@ fn repo_header(ui: &mut Ui, path: &Path) {
         ui.painter().text(
             disc.center(),
             Align2::CENTER_CENTER,
-            icon::FOLDER_SIMPLE,
+            look.icon,
             FontId::proportional(m.icon_lg),
             p.accent,
         );
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = theme::XS;
             ui.label(
-                RichText::new(&name)
+                RichText::new(name)
                     .font(FontId::new(m.subtitle_size, theme::semibold()))
                     .color(p.text),
             );
