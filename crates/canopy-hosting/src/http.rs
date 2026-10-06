@@ -439,20 +439,20 @@ fn header_i64(headers: &HeaderMap, name: &str) -> Option<i64> {
     headers.get(name)?.to_str().ok()?.trim().parse::<i64>().ok()
 }
 
-/// The longest `Retry-After` taken at its word: a day.
+/// The longest wait for a rate limit taken at the server's word: a day.
 const MAX_RETRY_AFTER: i64 = 86_400;
 
-/// When a rate limit resets: the provider's reset header (unix seconds), else `Retry-After`
-/// (seconds from now, between none and [`MAX_RETRY_AFTER`]).
+/// When a rate limit resets, in unix seconds between now and [`MAX_RETRY_AFTER`] ahead: the
+/// provider's reset header (unix seconds), else `Retry-After` (seconds from now).
 fn rate_limit_reset(headers: &HeaderMap) -> Option<i64> {
+    let now = chrono::Utc::now().timestamp();
+    let latest = now.saturating_add(MAX_RETRY_AFTER);
     header_i64(headers, "x-ratelimit-reset")
         .or_else(|| header_i64(headers, "ratelimit-reset"))
+        .map(|at| at.clamp(now, latest))
         .or_else(|| {
-            header_i64(headers, "retry-after").map(|secs| {
-                chrono::Utc::now()
-                    .timestamp()
-                    .saturating_add(secs.clamp(0, MAX_RETRY_AFTER))
-            })
+            header_i64(headers, "retry-after")
+                .map(|secs| now.saturating_add(secs.clamp(0, MAX_RETRY_AFTER)))
         })
 }
 
@@ -711,6 +711,27 @@ mod tests {
     }
 
     #[test]
+    fn reset_times_are_kept_between_now_and_a_day_ahead() {
+        let now = chrono::Utc::now().timestamp();
+        for name in ["x-ratelimit-reset", "ratelimit-reset"] {
+            let reset = |value: &'static str| {
+                let mut headers = HeaderMap::new();
+                headers.insert(name, HeaderValue::from_static(value));
+                rate_limit_reset(&headers).expect("a reset")
+            };
+            let far = reset("9223372036854775807");
+            assert!((now..=now + 86_400 + 60).contains(&far), "{name}: {far}");
+            let past = reset("-9223372036854775808");
+            assert!((now..=now + 60).contains(&past), "{name}: {past}");
+            assert!((now..=now + 60).contains(&reset("0")), "{name}");
+            let soon = now + 600;
+            let mut headers = HeaderMap::new();
+            headers.insert(name, HeaderValue::from(soon));
+            assert_eq!(rate_limit_reset(&headers), Some(soon), "{name}");
+        }
+    }
+
+    #[test]
     fn encodes_gitlab_project_ids() {
         assert_eq!(encode("group/sub/project"), "group%2Fsub%2Fproject");
         assert_eq!(encode("a.b_c-d~e"), "a.b_c-d~e");
@@ -891,19 +912,18 @@ mod tests {
             Error::Unauthorized("Forbidden".into())
         );
         h.insert("x-ratelimit-remaining", HeaderValue::from_static("0"));
-        h.insert("x-ratelimit-reset", HeaderValue::from_static("1800000000"));
+        let soon = chrono::Utc::now().timestamp() + 600;
+        h.insert("x-ratelimit-reset", HeaderValue::from(soon));
         assert_eq!(
             map_status(403, &h, b"", ForgeKind::GitHub),
-            Error::RateLimited {
-                reset: Some(1_800_000_000)
-            }
+            Error::RateLimited { reset: Some(soon) }
         );
         let mut gl = HeaderMap::new();
-        gl.insert("ratelimit-reset", HeaderValue::from_static("1800000001"));
+        gl.insert("ratelimit-reset", HeaderValue::from(soon + 1));
         assert_eq!(
             map_status(429, &gl, b"Retry later", ForgeKind::GitLab),
             Error::RateLimited {
-                reset: Some(1_800_000_001)
+                reset: Some(soon + 1)
             }
         );
         assert_eq!(
