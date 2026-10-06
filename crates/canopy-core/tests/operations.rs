@@ -361,10 +361,11 @@ fn hunk_staging_handles_unusual_paths() {
     let p = dir.path();
     let mut names = vec!["my notes.txt", "caf\u{e9} \"q\".txt", "back\\slash.txt"];
     if cfg!(unix) {
-        // Windows forbids tabs and backslashes in file names.
+        // Windows forbids tabs, backslashes and double quotes in file names.
         names.push("tab\there.txt");
     } else {
-        names.retain(|n| !n.contains('\\'));
+        names.retain(|n| !n.contains(['\\', '"']));
+        names.push("caf\u{e9}.txt");
     }
     for name in names {
         fs::write(p.join(name), "1\n2\n3\n4\n5\n6\n7\n8\n9\n").expect("write");
@@ -628,6 +629,9 @@ fn configure(p: &Path) {
     git(p, &["config", "commit.gpgsign", "false"]);
     git(p, &["config", "tag.gpgsign", "false"]);
     git(p, &["config", "fetch.prune", "false"]);
+    // As in `fixture`: Git for Windows' system-wide core.autocrlf=true would check files out
+    // with CRLF.
+    git(p, &["config", "core.autocrlf", "false"]);
 }
 
 /// The fixture as upstream plus a clone of it made with `ops::clone`.
