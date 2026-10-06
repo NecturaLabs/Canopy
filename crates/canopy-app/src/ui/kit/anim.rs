@@ -104,51 +104,11 @@ pub fn spring(ctx: &Context, id: Id, target: f32, s: Spring) -> f32 {
     x
 }
 
-/// Progress of an entrance from the first frame `open` was true, eased along `EASE_OUT`; 0 while
-/// closed, 1 at once with reduced motion.
-#[cfg_attr(not(test), expect(dead_code, reason = "used by the component phase"))]
-pub fn entrance(ctx: &Context, id: Id, open: bool, seconds: f32) -> f32 {
-    let key = id.with("kit-opened-at");
-    if !open {
-        ctx.data_mut(|d| d.remove::<f64>(key));
-        return 0.0;
-    }
-    let seconds = motion::time(seconds);
-    if seconds <= 0.0 {
-        return 1.0;
-    }
-    let now = ctx.input(|i| i.time);
-    let opened = ctx.data_mut(|d| *d.get_temp_mut_or_insert_with(key, || now));
-    let t = (crate::ui::to_f32(now - opened) / seconds).clamp(0.0, 1.0);
-    if t < 1.0 {
-        ctx.request_repaint();
-    }
-    motion::EASE_OUT.at(t)
-}
-
-/// Progress of something that enters and leaves: rises after `open` turns true, falls after it
-/// turns false, and is `None` once fully gone (stop showing it).
-#[expect(dead_code, reason = "used by the component phase")]
-pub fn phase(ctx: &Context, id: Id, open: bool, enter_s: f32, exit_s: f32) -> Option<f32> {
-    let entering = entrance(ctx, id, open, enter_s);
-    let presence = ease_bool(ctx, id.with("kit-presence"), open, 0.0, exit_s);
-    if open {
-        Some(entering)
-    } else if presence > 0.0 {
-        Some(presence)
-    } else {
-        None
-    }
-}
-
 /// A rectangle that slides to `target`: the edge moving towards the target leads
 /// (`INDICATOR_LEAD`), the other trails (`INDICATOR_TRAIL`), so it stretches then settles. Paint it
 /// with pixel rounding off.
 pub fn slide_rect(ctx: &Context, id: Id, target: Rect) -> Rect {
-    let last: Option<Rect> = ctx.data(|d| d.get_temp(id.with("kit-slide-target")));
-    ctx.data_mut(|d| d.insert_temp(id.with("kit-slide-target"), target));
-    let moving_right = last.is_none_or(|l| target.center().x >= l.center().x);
-    let (left_s, right_s) = if moving_right {
+    let (left_s, right_s) = if slide_direction(ctx, id, target) {
         (motion::INDICATOR_TRAIL, motion::INDICATOR_LEAD)
     } else {
         (motion::INDICATOR_LEAD, motion::INDICATOR_TRAIL)
@@ -168,6 +128,23 @@ pub fn slide_rect(ctx: &Context, id: Id, target: Rect) -> Rect {
         motion::INDICATOR_LEAD,
     );
     Rect::from_min_max(pos2(left, top), pos2(right.max(left), bottom.max(top)))
+}
+
+/// Whether a slide to `target` travels rightwards: set when the target moves (rightwards when
+/// first shown) and kept while it stays put, so the leading edge keeps leading until it settles.
+fn slide_direction(ctx: &Context, id: Id, target: Rect) -> bool {
+    let key = id.with("kit-slide-target");
+    ctx.data_mut(|d| {
+        let (last, right) = d.get_temp::<(Rect, bool)>(key).unwrap_or((target, true));
+        let moved = target.center().x - last.center().x;
+        let right = if moved.abs() < 0.5 {
+            right
+        } else {
+            moved > 0.0
+        };
+        d.insert_temp(key, (target, right));
+        right
+    })
 }
 
 /// The content scale of a pressed control (`scale` while held, 1 otherwise), on the `PRESS`
@@ -510,6 +487,34 @@ mod tests {
         assert!((a - d).abs() < 1e-4);
     }
 
+    /// REVIEW-KIT-4: a slide keeps the direction it set out in until the target moves again, so
+    /// the edge moving towards the target leads on every frame, not just the first.
+    #[test]
+    fn a_slide_keeps_its_direction_until_the_target_moves() {
+        let ctx = Context::default();
+        let id = Id::new("slide");
+        let at = |x: f32| Rect::from_min_size(pos2(x, 0.0), egui::vec2(60.0, 2.0));
+        assert!(
+            slide_direction(&ctx, id, at(200.0)),
+            "first shown: rightwards"
+        );
+        assert!(
+            !slide_direction(&ctx, id, at(100.0)),
+            "the target moved left"
+        );
+        for _ in 0..5 {
+            assert!(
+                !slide_direction(&ctx, id, at(100.0)),
+                "still travelling left"
+            );
+        }
+        assert!(
+            slide_direction(&ctx, id, at(300.0)),
+            "the target moved right"
+        );
+        assert!(slide_direction(&ctx, id, at(300.0)));
+    }
+
     #[test]
     fn reduced_motion_lands_at_once() {
         let ctx = Context::default();
@@ -518,7 +523,6 @@ mod tests {
         let id = Id::new("t");
         assert_eq!(spring(&ctx, id, 5.0, motion::SWITCH), 5.0);
         assert_eq!(spring(&ctx, id, 9.0, motion::SWITCH), 9.0);
-        assert_eq!(entrance(&ctx, id, true, 0.5), 1.0);
         assert_eq!(press_scale(&ctx, id, true, 0.97), 1.0);
     }
 
