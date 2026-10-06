@@ -602,7 +602,7 @@ impl CanopyApp {
     }
 
     /// Applies settings that changed in the settings screen.
-    fn settings_changed(&mut self, ctx: &egui::Context, before: &Settings) {
+    fn settings_changed(&mut self, ctx: &egui::Context, before: Watched) {
         let s = &self.settings;
         if s.motion == crate::ui::motion::MotionPref::System
             && before.motion != crate::ui::motion::MotionPref::System
@@ -614,7 +614,7 @@ impl CanopyApp {
         if (ctx.zoom_factor() - s.zoom).abs() > f32::EPSILON {
             apply_zoom(ctx, s.zoom);
         }
-        if s.gitlab_hosts != before.gitlab_hosts {
+        if Watched::hash(&s.gitlab_hosts) != before.gitlab_hosts {
             self.gitlab_hosts = s.gitlab_host_list();
             for t in &mut self.tabs {
                 t.update_forges(&self.gitlab_hosts);
@@ -647,6 +647,39 @@ impl CanopyApp {
                 t.restart_host(ctx, saved, enabled);
             }
         }
+    }
+}
+
+/// The settings whose change needs more than a repaint, as they were before Settings drew a
+/// frame: compared after it, without copying the whole settings every frame Settings is open.
+#[derive(Debug, Clone, Copy)]
+struct Watched {
+    motion: crate::ui::motion::MotionPref,
+    diff: settings::DiffPrefs,
+    split_diff: bool,
+    syntax_highlight: bool,
+    hosting_api: bool,
+    /// A hash of the GitLab hosts text.
+    gitlab_hosts: u64,
+}
+
+impl Watched {
+    fn of(s: &Settings) -> Self {
+        Self {
+            motion: s.motion,
+            diff: s.diff,
+            split_diff: s.split_diff,
+            syntax_highlight: s.syntax_highlight,
+            hosting_api: s.hosting_api,
+            gitlab_hosts: Self::hash(&s.gitlab_hosts),
+        }
+    }
+
+    fn hash(text: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        h.finish()
     }
 }
 
@@ -884,13 +917,8 @@ impl eframe::App for CanopyApp {
         }
         self.folder_picker.begin_frame();
         if let Some(screen) = &mut self.settings_screen {
-            let before = self.settings.clone();
+            let before = Watched::of(&self.settings);
             let active_tab = self.tabs.get(self.active);
-            let forges: Vec<canopy_core::forge::Forge> = self
-                .tabs
-                .iter()
-                .flat_map(|t| t.forges.iter().map(|(_, f)| f.clone()))
-                .collect();
             screen.set_picture_note(active_tab.and_then(|tab| {
                 crate::avatars::explain_tab(&self.settings, tab)
                     .map(settings_screen::PictureNote::from)
@@ -901,7 +929,7 @@ impl eframe::App for CanopyApp {
                 &mut self.settings,
                 &mut self.tokens,
                 &settings_screen::SettingsData {
-                    forges: &forges,
+                    tabs: &self.tabs,
                     update: &self.updater.state,
                     identity: settings_screen::IdentityView {
                         repo: active_tab.map(|t| t.path.as_path()),
@@ -928,7 +956,7 @@ impl eframe::App for CanopyApp {
                 self.folder_picker.cancel();
                 self.settings_screen = None;
             }
-            self.settings_changed(&ctx, &before);
+            self.settings_changed(&ctx, before);
         }
         // Dialogs draw above the settings screen (the Privacy Policy opens from there).
         if let Some(d) = self.dialogs.current_mut() {
@@ -1366,6 +1394,22 @@ pub(super) fn test_tab(snap: canopy_core::RepoSnapshot) -> RepoTab {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// review-views-9: Settings is compared by the few values whose change needs work, not by a
+    /// copy of every setting each frame; a changed GitLab host list still reaches the tabs.
+    #[test]
+    fn a_settings_change_is_seen_without_copying_the_settings() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let before = Watched::of(&app.settings);
+        app.settings.split_diff = !app.settings.split_diff;
+        "git.example.com".clone_into(&mut app.settings.gitlab_hosts);
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        app.settings_changed(&ctx, before);
+        assert_eq!(app.gitlab_hosts, ["git.example.com"]);
+        assert_eq!(app.tabs[0].split_diff, app.settings.split_diff);
+    }
 
     /// Each mask fans over the part of a card's square corner outside its rounded arc: the arc's
     /// middle points from its centre straight at the corner, for cards above each other and side
