@@ -290,7 +290,7 @@ in the density's metrics:
 | `icon_md` | 15 | Buttons, palette rows, settings navigation, request status |
 | `icon_lg` | 16 / 15 | Beside a dialog's title |
 | `icon_tool` | 17 / 15 | Toolbar tools |
-| `icon_toast` | 18 | A notification's leading glyph |
+| `icon_toast` | 18 / 15 | A notification's leading glyph |
 | `icon_xl` | 24 / 22 | The welcome screen's action cards |
 | `icon_hero` | 32 / 28 | The centre of an empty or finished state |
 
@@ -620,7 +620,8 @@ the last picture, and an author without a picture keeps initials (never a genera
 
 Overlay cards (glass with Translucent surfaces on) share a bounded bottom-right scroll stack, at
 most 408 points wide, so five errors remain reachable even in a compact zoomed window. Newest
-notices lead the stack. Every card has one layout in every theme: the kind's glyph (`icon_toast`,
+notices lead the stack. Every card has one layout in every theme, padded `toast_pad` (tighter in
+Dense) and shaped like the other floating layers of the style: the kind's glyph (`icon_toast`,
 centred on the title's line), a semibold title that truncates, the body in `text_dim` at
 `meta_size` with 1.45 leading 4 points below it, and, only when the notification asks for a
 decision, a row of two buttons 10 points lower. A card has no close button: it goes on a click

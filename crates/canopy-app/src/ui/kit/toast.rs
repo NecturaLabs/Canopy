@@ -351,6 +351,19 @@ pub(crate) fn gallery(ui: &mut Ui) {
 
 #[cfg(test)]
 mod tests {
+
+    /// A card follows the density like everything around it: Dense's is tighter, with a smaller
+    /// glyph, than Comfortable's (Deeper keeps each density's).
+    #[test]
+    fn a_card_follows_the_density() {
+        use crate::ui::theme::{COMFORTABLE, DEEPER_COMFORTABLE, DEEPER_DENSE, DENSE};
+        let room = |m: &theme::Metrics| m.toast_pad.sum();
+        const { assert!(DENSE.icon_toast < COMFORTABLE.icon_toast) };
+        assert!(room(&DENSE).x < room(&COMFORTABLE).x);
+        assert!(room(&DENSE).y < room(&COMFORTABLE).y);
+        assert_eq!(DEEPER_DENSE.toast_pad, DENSE.toast_pad);
+        assert_eq!(DEEPER_COMFORTABLE.toast_pad, COMFORTABLE.toast_pad);
+    }
     use super::*;
     use egui::Rect;
 

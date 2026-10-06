@@ -129,6 +129,8 @@ commits since the previous build.
 
 ### Fixed
 
+- Notification cards follow the Dense density like the rest of the window, with tighter padding
+  and a smaller icon, instead of keeping Comfortable's.
 - A commit keeps message lines that start with `#` (an issue number, a Markdown heading) unless
   your git configuration sets `commit.cleanup`.
 - Submenus in context menus (Reset current branch here in History, and others) no longer close

@@ -2873,6 +2873,8 @@ pub const DENSE: Metrics = Metrics {
     keycap_radius: 4,
     status_dot: 6.0,
     segment_pad: 9.0,
+    icon_toast: 15.0,
+    toast_pad: margin(8, 6, 8, 9),
     toast_width: 360.0,
     dialog_width_form: 500.0,
     dialog_width_wide: 680.0,
