@@ -67,8 +67,12 @@ impl CanopyApp {
                                 t.select_commit(oid);
                                 t.reveal_selected = true;
                             }
-                            if v == View::Requests && t.requests.list.is_none() {
-                                t.load_requests();
+                            if v == View::Requests {
+                                if t.requests.list.is_none() {
+                                    t.load_requests();
+                                } else {
+                                    t.refresh_requests_if_stale();
+                                }
                             }
                         }
                     }

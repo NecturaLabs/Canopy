@@ -160,6 +160,8 @@ impl Op {
             Self::Commit { .. } => OpKind::Commit,
             Self::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
             Self::Fetch { .. } => OpKind::Fetch,
+            Self::Pull { .. } => OpKind::Pull,
+            Self::Push { .. } => OpKind::Push,
             Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
             _ => OpKind::Other,
         }
@@ -360,9 +362,21 @@ pub enum OpKind {
     Squash(String),
     /// A fetch: restart the auto-fetch clock.
     Fetch,
+    /// A pull: the remote's branches moved, so the forge's requests may have too.
+    Pull,
+    /// A push: it can open, update or close a request.
+    Push,
     /// `git branch -d`: when Git refuses an unmerged branch, offer to force the delete.
     SafeDelete(String),
     Other,
+}
+
+impl OpKind {
+    /// Whether finishing this operation means the forge's pull or merge requests may have
+    /// changed (it talked to the remote).
+    pub fn syncs_remote(&self) -> bool {
+        matches!(self, Self::Fetch | Self::Pull | Self::Push)
+    }
 }
 
 /// The UI's handle on a repository thread.

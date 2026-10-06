@@ -168,6 +168,12 @@ and review (approved, changes requested, and on GitHub review required) without 
 Canopy has a token for the host; without a token a row shows them once the request was opened in
 the session.
 
+The request list stays current without pressing Reload: a fetch (manual or the background one),
+pull or push that succeeds refreshes it, and the open request, quietly (no spinner or toast; the
+list, selection and open request stay on screen, and a failed refresh keeps them), and opening
+the Requests view reloads a list older than a minute. These use the same list and details calls
+as Reload, and only with hosting on and a list already loaded.
+
 ## Interface
 
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
