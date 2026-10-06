@@ -13,6 +13,7 @@ use egui::{
 
 use super::anim;
 use super::chip::Badge;
+use super::overlay::TooltipExt;
 use crate::ui::motion;
 use crate::ui::theme::{self, Palette};
 use crate::ui::widgets;
@@ -237,7 +238,7 @@ impl Avatar {
         let name = self.person.display_name().to_owned();
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Image, true, &name));
         if self.tooltip && !name.is_empty() {
-            response.on_hover_text(name)
+            response.kit_tooltip(name).show()
         } else {
             response
         }
@@ -369,7 +370,7 @@ impl AvatarStack {
         if label.is_empty() {
             response
         } else {
-            response.on_hover_text(names.join("\n"))
+            response.kit_tooltip(names.join("\n")).show()
         }
     }
 }

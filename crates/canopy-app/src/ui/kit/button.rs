@@ -16,6 +16,7 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
+use super::overlay::TooltipExt;
 use super::{ForceState, Interact, Size, Tone, anim, paint};
 use crate::keymap::{self, Command};
 use crate::ui::motion;
@@ -68,7 +69,8 @@ pub(super) fn disabled_painter(ui: &Ui, enabled: bool, alpha: f32) -> Painter {
     painter
 }
 
-/// The tooltip a control shows: why it is disabled, else its tooltip, with the shortcut's chord.
+/// The tooltip a control shows: why it is disabled, else its tooltip, with the shortcut's chord
+/// as text. Prefer [`tip`], which shows the chord as keycaps.
 pub(super) fn tooltip_text(
     enabled: bool,
     tooltip: Option<&str>,
@@ -82,10 +84,28 @@ pub(super) fn tooltip_text(
     })
 }
 
+/// `tip` as the control's kit tooltip (for enabled and disabled controls alike).
 pub(super) fn with_tooltip(response: Response, tip: Option<String>) -> Response {
     match tip {
-        Some(t) => response.on_hover_text(&t).on_disabled_hover_text(&t),
+        Some(t) => response.kit_tooltip(t).show(),
         None => response,
+    }
+}
+
+/// A control's kit tooltip: why it is disabled, else `tooltip` with the shortcut's keys as
+/// keycaps; nothing when there is no text.
+pub(super) fn tip(
+    response: Response,
+    enabled: bool,
+    tooltip: Option<&str>,
+    reason: Option<&str>,
+    shortcut: Option<Command>,
+) -> Response {
+    let text = if enabled { tooltip } else { reason.or(tooltip) };
+    match (text, shortcut) {
+        (None, _) => response,
+        (Some(t), Some(c)) if enabled => response.kit_tooltip(t).shortcut(c).show(),
+        (Some(t), _) => response.kit_tooltip(t).show(),
     }
 }
 
@@ -493,13 +513,13 @@ impl Button {
             paint_scaled(&painter, shapes, rect.center(), scale);
         }
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &accessible));
-        let tip = tooltip_text(
+        response = tip(
+            response,
             enabled,
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             self.shortcut,
         );
-        response = with_tooltip(response, tip);
         response
     }
 }
@@ -644,13 +664,13 @@ impl IconButton {
         }
         let label = self.label;
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &label));
-        let tip = tooltip_text(
+        tip(
+            response,
             enabled,
             Some(&label),
             self.disabled_reason.as_deref(),
             self.shortcut,
-        );
-        with_tooltip(response, tip)
+        )
     }
 }
 
@@ -880,13 +900,13 @@ impl ToolButton {
         let name = self.label;
         response
             .widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, self.toggled, &name));
-        let tip = tooltip_text(
+        tip(
+            response,
             enabled,
             Some(self.tooltip.as_deref().unwrap_or(&name)),
             self.disabled_reason.as_deref(),
             self.shortcut,
-        );
-        with_tooltip(response, tip)
+        )
     }
 }
 

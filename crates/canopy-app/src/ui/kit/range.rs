@@ -10,7 +10,7 @@ use egui::{
     Vec2, Widget, WidgetInfo, pos2, vec2,
 };
 
-use super::button::{tooltip_text, with_tooltip};
+use super::button::tip;
 use super::toggle::{claim_arrows, gallery_caption, gallery_row, remembered};
 use super::{ForceState, Interact, paint};
 use crate::ui::motion;
@@ -337,13 +337,13 @@ impl<'a, T: Numeric> Slider<'a, T> {
                 n.set_numeric_value_step(s);
             }
         });
-        let tip = tooltip_text(
+        tip(
+            response,
             enabled,
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
-        );
-        with_tooltip(response, tip)
+        )
     }
 }
 

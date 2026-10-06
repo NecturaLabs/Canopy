@@ -547,4 +547,50 @@ mod tests {
             }
         }
     }
+
+    /// L-F9: kit components, the cheatsheet and the palette show the kit tooltip
+    /// (`overlay::TooltipExt`), never egui's stock one, so every tooltip looks and moves the same.
+    #[test]
+    fn the_kit_uses_its_own_tooltip() {
+        const STOCK: [&str; 5] = [
+            ".on_hover_text(",
+            ".on_disabled_hover_text(",
+            ".on_hover_text_at_pointer(",
+            ".on_hover_ui(",
+            ".on_hover_ui_at_pointer(",
+        ];
+        // Modules whose owners move them in their own change; delete each name when it does.
+        const NOT_YET: [&str; 2] = ["chip.rs", "surface.rs"];
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        let mut files: Vec<_> = std::fs::read_dir(src.join("kit"))
+            .expect("kit folder")
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "rs"))
+            .collect();
+        files.extend(["cheatsheet.rs", "palette.rs", "widgets.rs"].map(|f| src.join(f)));
+        let mut found = Vec::new();
+        for path in files {
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| NOT_YET.contains(&n))
+            {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("kit source");
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            for (i, line) in code.lines().enumerate() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                for stock in STOCK {
+                    if line.contains(stock) {
+                        found.push(format!("{}:{}: {stock}", path.display(), i + 1));
+                    }
+                }
+            }
+        }
+        assert!(found.is_empty(), "stock tooltips:\n{}", found.join("\n"));
+    }
 }

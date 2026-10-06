@@ -16,7 +16,7 @@ use egui::{
     WidgetType, pos2, vec2,
 };
 
-use super::button::{tooltip_text, with_tooltip};
+use super::button::tip;
 use super::{ForceState, Interact, anim, paint};
 use crate::ui::motion;
 use crate::ui::theme::{self, Elevation, Fill, Palette};
@@ -336,13 +336,13 @@ impl<'a> Checkbox<'a> {
             info.selected = (!indeterminate).then_some(checked);
             info
         });
-        let tip = tooltip_text(
+        tip(
+            response,
             enabled,
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
-        );
-        with_tooltip(response, tip)
+        )
     }
 }
 
@@ -466,13 +466,13 @@ impl Radio {
         response.widget_info(|| {
             WidgetInfo::selected(WidgetType::RadioButton, enabled, selected, &label)
         });
-        let tip = tooltip_text(
+        tip(
+            response,
             enabled,
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
-        );
-        with_tooltip(response, tip)
+        )
     }
 }
 
@@ -840,13 +840,13 @@ impl<'a> Switch<'a> {
         let label = self.label;
         response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, on, &label));
         ctx.accesskit_node_builder(response.id, |n| n.set_role(Role::Switch));
-        let tip = tooltip_text(
+        tip(
+            response,
             enabled,
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
-        );
-        with_tooltip(response, tip)
+        )
     }
 }
 

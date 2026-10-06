@@ -17,6 +17,7 @@ use egui_phosphor::regular as icon;
 
 use super::button::IconButton;
 use super::chip::Badge;
+use super::overlay::TooltipExt;
 use super::{ForceState, KitResponse, Size, Tone, anim, focus_visible, paint};
 use crate::ui::motion;
 use crate::ui::theme::{self, Palette};
@@ -340,8 +341,9 @@ fn with_tip(
     reason: Option<&str>,
 ) -> Response {
     let tip = if enabled { tooltip } else { reason.or(tooltip) };
+    // A row can be as wide as the window: its tooltip follows the pointer along it.
     match tip {
-        Some(t) => response.on_hover_text(t).on_disabled_hover_text(t),
+        Some(t) => response.kit_tooltip(t).at_pointer().show(),
         None => response,
     }
 }

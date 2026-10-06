@@ -41,6 +41,8 @@ const TOOLTIP_GAP: f32 = 8.0;
 const POPOVER_GAP: f32 = 6.0;
 /// Widest tooltip.
 const TOOLTIP_WIDTH: f32 = 260.0;
+/// A tooltip's shortcut keycaps (spec 4.11: `KeyChord` at 18 pt).
+const TOOLTIP_KEYCAP: f32 = 18.0;
 /// Pointer-opened popups grow from this scale and drop this far from the anchor edge.
 pub(crate) const POPUP_SCALE: f32 = 0.95;
 const POPUP_DROP: f32 = 4.0;
@@ -553,6 +555,7 @@ impl TooltipExt for Response {
             text: text.into(),
             detail: None,
             shortcut: None,
+            at_pointer: false,
         }
     }
 }
@@ -560,7 +563,8 @@ impl TooltipExt for Response {
 /// A tooltip (concept `.k-tip`): the `tooltip` surface, 12 pt medium text, an optional dim second
 /// line and the shortcut as keycaps. Shown after `TOOLTIP_DELAY` (at once within `TOOLTIP_SKIP` of
 /// another), above the control and flipped to stay in the window, for enabled and disabled
-/// controls alike (a disabled one says why).
+/// controls alike (a disabled one says why). [`Tooltip::at_pointer`] places it by the pointer on
+/// a wide control instead.
 #[derive(Debug)]
 #[must_use = "call .show()"]
 pub struct Tooltip {
@@ -568,6 +572,28 @@ pub struct Tooltip {
     text: String,
     detail: Option<String>,
     shortcut: Option<Command>,
+    at_pointer: bool,
+}
+
+/// How far above and below the pointer a pointer-placed tooltip may still sit against the control
+/// (a row is shorter than this, so its tooltip clears the whole row).
+const POINTER_REACH: f32 = 24.0;
+
+/// What a pointer-placed tooltip on `control` is placed against: the control's column under the
+/// pointer, cut to `POINTER_REACH` above and below it (the control itself without a pointer).
+fn pointer_anchor(control: Rect, pointer: Option<Pos2>) -> Rect {
+    let Some(at) = pointer else {
+        return control;
+    };
+    let reach = Rangef::new(at.y - POINTER_REACH, at.y + POINTER_REACH);
+    let y = control.y_range().intersection(reach);
+    let y = if y.span() >= 0.0 {
+        y
+    } else {
+        Rangef::point(at.y)
+    };
+    let x = at.x.clamp(control.left(), control.right());
+    Rect::from_x_y_ranges(Rangef::point(x), y)
 }
 
 /// Above first, then below, then the sides.
@@ -589,6 +615,14 @@ impl Tooltip {
         self.shortcut = Some(command);
         self
     }
+    /// Placed by the pointer: above (or below) the control in the pointer's column, following it
+    /// along the control, for wide rows where a tooltip centred on the whole control lands far
+    /// from the pointer. On a control taller than a row it sits within `POINTER_REACH` of the
+    /// pointer.
+    pub fn at_pointer(mut self) -> Self {
+        self.at_pointer = true;
+        self
+    }
 
     pub fn show(self) -> Response {
         let Self {
@@ -596,6 +630,7 @@ impl Tooltip {
             text,
             detail,
             shortcut,
+            at_pointer,
         } = self;
         let mut tip = if response.enabled() {
             egui::containers::Tooltip::for_enabled(&response)
@@ -609,7 +644,17 @@ impl Tooltip {
             .align(RectAlign::TOP)
             .align_alternatives(&TOOLTIP_ALIGNS)
             .width(TOOLTIP_WIDTH);
-        let anchor = response.rect;
+        if at_pointer {
+            // In window coordinates, like egui's own anchor (the control's layer may be moving,
+            // such as a dialog growing in).
+            let control = response
+                .ctx
+                .layer_transform_to_global(response.layer_id)
+                .map_or(response.interact_rect, |t| t * response.interact_rect);
+            let pointer = response.ctx.pointer_hover_pos();
+            tip.popup = tip.popup.anchor(pointer_anchor(control, pointer));
+        }
+        let anchor = tip.popup.get_anchor_rect().unwrap_or(response.rect);
         let id = response.id.with("kit-tooltip");
         tip.show(|ui| {
             let layer = ui.layer_id();
@@ -692,16 +737,18 @@ pub(crate) fn tooltip_body(
         let p = theme::palette(ui.ctx());
         ui.set_max_width(TOOLTIP_WIDTH - f32::from(pad.left + pad.right));
         ui.spacing_mut().item_spacing = vec2(theme::SM, 2.0);
-        ui.horizontal(|ui| {
+        let font = FontId::new(m.tooltip_size, theme::medium());
+        // The keycaps sit on the first line's centre: the text drops by half the difference.
+        let line = ui.fonts_mut(|f| f.row_height(&font));
+        let drop = if keys.is_empty() {
+            0.0
+        } else {
+            ((TOOLTIP_KEYCAP - line) / 2.0).max(0.0)
+        };
+        ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
             ui.vertical(|ui| {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(text)
-                            .font(FontId::new(m.tooltip_size, theme::medium()))
-                            .color(p.on_tooltip),
-                    )
-                    .wrap(),
-                );
+                ui.add_space(drop);
+                ui.add(egui::Label::new(RichText::new(text).font(font).color(p.on_tooltip)).wrap());
                 if let Some(d) = detail {
                     ui.add(
                         egui::Label::new(
@@ -714,7 +761,9 @@ pub(crate) fn tooltip_body(
                 }
             });
             if !keys.is_empty() {
-                ui.horizontal(|ui| {
+                // Top-aligned like the text (a stock `horizontal` would centre the caps in a
+                // control-high row, below the first line).
+                ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 3.0;
                     for k in &keys {
                         tooltip_keycap(ui, k);
@@ -748,7 +797,7 @@ fn tooltip_keycap(ui: &mut Ui, key: &str) {
     let g = ui
         .painter()
         .layout_no_wrap(key.to_owned(), font, Color32::PLACEHOLDER);
-    let h = 18.0;
+    let h = TOOLTIP_KEYCAP;
     let w = (g.size().x + 10.0).max(h);
     let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
     let radius = CornerRadius::same(m.keycap_radius.min(4));
@@ -2288,5 +2337,167 @@ mod tests {
             "Tab reaches the left answer first: {focused:?}"
         );
         assert!(focused[1].contains(send), "then the right one: {focused:?}");
+    }
+
+    #[test]
+    fn a_pointer_anchor_is_the_rows_column_under_the_pointer() {
+        let row = Rect::from_min_size(pos2(0.0, 100.0), vec2(1200.0, 28.0));
+        let a = pointer_anchor(row, Some(pos2(1000.0, 110.0)));
+        assert_eq!(a.x_range(), Rangef::point(1000.0));
+        assert_eq!(a.y_range(), row.y_range(), "a row is cleared whole");
+        let tall = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 600.0));
+        let a = pointer_anchor(tall, Some(pos2(50.0, 300.0)));
+        assert_eq!(
+            a.y_range(),
+            Rangef::new(300.0 - POINTER_REACH, 300.0 + POINTER_REACH)
+        );
+        assert_eq!(pointer_anchor(row, None), row);
+        let outside = pointer_anchor(row, Some(pos2(1300.0, 110.0)));
+        assert_eq!(
+            outside.x_range(),
+            Rangef::point(row.right()),
+            "kept on the row"
+        );
+    }
+
+    /// Where the tooltip text `text` was painted, once the pointer has rested at `pointer` over a
+    /// 1000 pt wide row for longer than the tooltip delay.
+    fn tooltip_over_wide_row(at_pointer: bool, pointer: Pos2) -> (Rect, Option<Rect>) {
+        let ctx = context();
+        let text = "Fix the parser";
+        let mut row = Rect::NOTHING;
+        let mut found = None;
+        for i in 0..10 {
+            let events = if i == 1 {
+                vec![egui::Event::PointerMoved(pointer)]
+            } else {
+                Vec::new()
+            };
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 640.0))),
+                    time: Some(f64::from(i) * 0.2),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.add_space(200.0);
+                    let r = ui.allocate_response(vec2(1000.0, 28.0), Sense::hover());
+                    row = r.rect;
+                    let t = r.kit_tooltip(text);
+                    let _ = if at_pointer { t.at_pointer() } else { t }.show();
+                },
+            );
+            out.textures_delta.clear();
+            found = out.shapes.iter().find_map(|c| match &c.shape {
+                Shape::Text(t) if t.galley.text() == text => Some(t.visual_bounding_rect()),
+                _ => None,
+            });
+        }
+        (row, found)
+    }
+
+    /// views-1 F4: on a wide row the kit tooltip can sit by the pointer, above the row, instead
+    /// of centred over the whole row far from the pointer.
+    #[test]
+    fn a_pointer_placed_tooltip_sits_by_the_pointer_above_the_row() {
+        let pointer = pos2(900.0, 214.0);
+        let (row, tip) = tooltip_over_wide_row(true, pointer);
+        let tip = tip.expect("the tooltip shows");
+        assert!(
+            (tip.center().x - pointer.x).abs() < 120.0,
+            "by the pointer: {tip:?}"
+        );
+        assert!(tip.bottom() <= row.top(), "above the row: {tip:?} {row:?}");
+        let (row, tip) = tooltip_over_wide_row(false, pointer);
+        let tip = tip.expect("the tooltip shows");
+        assert!(
+            (tip.center().x - row.center().x).abs() < 120.0,
+            "without it, centred on the control: {tip:?}"
+        );
+    }
+
+    /// A tooltip's shortcut keycaps sit on its first line, not above it.
+    #[test]
+    fn tooltip_keycaps_centre_on_the_first_line() {
+        let ctx = context();
+        let out = run(&ctx, Vec::new(), |ui| {
+            tooltip_body(ui, "Fetch all remotes", None, Some(Command::Fetch));
+            tooltip_body(
+                ui,
+                "Push main",
+                Some("2 commits ahead"),
+                Some(Command::Fetch),
+            );
+        });
+        let shapes: Vec<Shape> = out
+            .shapes
+            .iter()
+            .flat_map(|c| match &c.shape {
+                Shape::Vec(v) => v.clone(),
+                other => vec![other.clone()],
+            })
+            .collect();
+        // The first line's centre: the galley's first row, where it was placed.
+        let line = |text: &str| {
+            shapes
+                .iter()
+                .find_map(|s| match s {
+                    Shape::Text(t) if t.galley.text() == text => {
+                        let row = t
+                            .galley
+                            .rows
+                            .first()
+                            .map(egui::epaint::text::PlacedRow::rect)?;
+                        Some(t.pos.y + row.center().y)
+                    }
+                    _ => None,
+                })
+                .expect(text)
+        };
+        let mut caps: Vec<f32> = shapes
+            .iter()
+            .filter_map(|s| match s {
+                Shape::Rect(r) if (r.rect.height() - TOOLTIP_KEYCAP).abs() < 0.01 => {
+                    Some(r.rect.center().y)
+                }
+                _ => None,
+            })
+            .collect();
+        // A keycap is a fill and a ring.
+        caps.dedup();
+        assert_eq!(caps.len(), 2, "{caps:?}");
+        for (label, cap) in [("Fetch all remotes", caps[0]), ("Push main", caps[1])] {
+            let d = (line(label) - cap).abs();
+            assert!(d <= 1.0, "{label}: {d} pt off the keycap's centre");
+        }
+    }
+
+    /// H15: in a light theme a tooltip over rows has a visible edge: its dark fill stands at least
+    /// 3:1 from every row ground it can cover (the pane, the panel, zebra, hover and selection).
+    #[test]
+    fn light_theme_tooltips_stand_out_from_every_row() {
+        for id in theme::ThemeId::ALL {
+            let p = id.palette();
+            if p.dark {
+                continue;
+            }
+            for style in theme::Style::ALL {
+                let s = p.surfaces(style);
+                for base in [s.pane, s.panel, s.elevated] {
+                    for wash in [
+                        Color32::TRANSPARENT,
+                        p.zebra(),
+                        p.hover(),
+                        p.hover_strong(),
+                        p.selected(),
+                    ] {
+                        let ground = theme::over(wash, base);
+                        let k = theme::contrast(s.tooltip.top, ground);
+                        assert!(k >= 3.0, "{id:?} {style:?}: {k:.2}:1 on {ground:?}");
+                    }
+                }
+            }
+        }
     }
 }

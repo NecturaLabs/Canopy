@@ -14,8 +14,9 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use super::button::{tooltip_text, with_tooltip};
+use super::button::tip as tip_for;
 use super::chip::{Badge, count_text};
+use super::overlay::TooltipExt;
 use super::toggle::{
     arrow_step, claim_arrows, component_id, gallery_caption, gallery_row, group_node, remembered,
     step,
@@ -472,7 +473,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                 .iter()
                 .find(|(at, _)| *at == i)
                 .map(|(_, c)| *c);
-            with_tooltip(r, tooltip_text(ok, tip, reason, shortcut));
+            tip_for(r, ok, tip, reason, shortcut);
         }
         let mut group = group_node(ui, group_id, track, &self.label, enabled);
         if changed {
@@ -977,7 +978,9 @@ pub(crate) fn gallery(ui: &mut Ui) {
             *open -= 1;
             *v = (*v).min(*open - 1);
         }
-        out.response.on_hover_text("Middle-click a tab to close it");
+        out.response
+            .kit_tooltip("Middle-click a tab to close it")
+            .show();
         if *open < 3 {
             let reopen = IconButton::new(icon::PLUS, "Reopen a tab")
                 .size(Size::Sm)
