@@ -327,25 +327,25 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = theme::SM;
                     let all = done == n;
-                    if Button::new("Save resolved file")
+                    let why = "Choose a resolution for every conflict first";
+                    let save = Button::new("Save resolved file")
                         .primary()
                         .icon(icon::CHECK)
                         .enabled(all)
                         .tooltip("Write this file and stage it as resolved")
-                        .disabled_reason("Choose a resolution for every conflict first")
-                        .show(ui)
-                        .clicked()
-                    {
+                        .disabled_reason(why)
+                        .show(ui);
+                    if commit_detail::say_unavailable(save, why).clicked() {
                         actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: true, expected: file.fingerprint() }));
                     }
-                    if Button::new("Save progress")
+                    let why = "Choose a resolution for a conflict first";
+                    let progress = Button::new("Save progress")
                         .icon(icon::FLOPPY_DISK)
                         .enabled(done > 0)
                         .tooltip("Write the chosen resolutions to the file; unresolved conflicts keep their markers")
-                        .disabled_reason("Choose a resolution for a conflict first")
-                        .show(ui)
-                        .clicked()
-                    {
+                        .disabled_reason(why)
+                        .show(ui);
+                    if commit_detail::say_unavailable(progress, why).clicked() {
                         actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: false, expected: file.fingerprint() }));
                     }
                     if done > 0

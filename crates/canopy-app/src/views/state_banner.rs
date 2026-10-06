@@ -58,7 +58,7 @@ pub fn show(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
             );
             child.set_clip_rect(rect.intersect(ui.clip_rect()));
             child.spacing_mut().item_spacing.x = theme::SM;
-            if Button::new(format!("Abort {command}…"))
+            let abort_button = Button::new(format!("Abort {command}…"))
                 .ghost()
                 .size(Size::Sm)
                 .icon(icon::X_CIRCLE)
@@ -66,9 +66,8 @@ pub fn show(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 .enabled(!busy)
                 .disabled_reason(WAIT)
                 .id_salt("state-abort")
-                .show(&mut child)
-                .clicked()
-            {
+                .show(&mut child);
+            if crate::views::commit_detail::say_unavailable(abort_button, WAIT).clicked() {
                 actions.push(abort(state, command));
             }
             let can_continue = conflicts == 0 && !busy;
@@ -77,7 +76,7 @@ pub fn show(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
             } else {
                 "Resolve and stage every conflicted file first"
             };
-            if Button::new("Continue")
+            let continue_button = Button::new("Continue")
                 .ghost()
                 .size(Size::Sm)
                 .icon(icon::ARROW_RIGHT)
@@ -85,9 +84,8 @@ pub fn show(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 .tooltip("Continue this operation using the staged resolutions")
                 .disabled_reason(why)
                 .id_salt("state-continue")
-                .show(&mut child)
-                .clicked()
-            {
+                .show(&mut child);
+            if crate::views::commit_detail::say_unavailable(continue_button, why).clicked() {
                 actions.push(Action::Op(Op::ContinueOrAbort {
                     state,
                     abort: false,

@@ -708,6 +708,23 @@ pub fn without_icons(response: egui::Response) -> egui::Response {
     response
 }
 
+/// Says in a disabled button's name that it is unavailable, and why in its description. The
+/// AT-SPI adapter (`accesskit_atspi_common` 0.18) reports every button as enabled whatever its
+/// disabled state, so on Linux a screen reader would otherwise offer a button that does nothing.
+/// Returns `response` for chaining.
+pub fn say_unavailable(response: egui::Response, reason: &str) -> egui::Response {
+    response.ctx.accesskit_node_builder(response.id, |node| {
+        if node.is_disabled()
+            && let Some(label) = node.label().map(str::to_owned)
+            && !label.ends_with(", unavailable")
+        {
+            node.set_label(format!("{label}, unavailable"));
+            node.set_description(reason);
+        }
+    });
+    response
+}
+
 /// The rows of a fixed-height list (`row_h` apart, no spacing) whose top is at `top`, that
 /// intersect `min_y..max_y`.
 pub fn visible_rows(n: usize, row_h: f32, top: f32, min_y: f32, max_y: f32) -> Range<usize> {

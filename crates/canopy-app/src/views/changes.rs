@@ -890,7 +890,8 @@ fn composer(
         if let Some(reason) = blocker {
             commit = commit.disabled_reason(reason);
         }
-        if commit.show(ui).clicked() && can {
+        let commit = commit.show(ui);
+        if commit_detail::say_unavailable(commit, blocker.unwrap_or_default()).clicked() && can {
             actions.push(Action::Commit);
         }
     };
@@ -1376,6 +1377,56 @@ mod tests {
         assert!(
             summary_y(&mut tab) > 300.0,
             "forty files: the composer pins to the bottom"
+        );
+    }
+
+    /// A11Y-19: a Commit button that cannot commit yet is disabled for a screen reader too, and
+    /// says so in its name (the Linux adapter reports every button as enabled); its reason is its
+    /// description.
+    #[test]
+    fn a_commit_that_cannot_run_is_disabled_for_screen_readers() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let mut snap = unstaged_snapshot();
+        snap.status.staged = vec![entry("src/lib.rs")];
+        snap.head.branch = Some("main".into());
+        let mut commit = None;
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(420.0, 700.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        composer(ui, &mut tab, &snap, &mut Vec::new(), true);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+            commit = out.platform_output.accesskit_update.and_then(|u| {
+                u.nodes
+                    .into_iter()
+                    .map(|(_, n)| n)
+                    .find(|n| n.label().is_some_and(|l| l.starts_with("Commit 1 file")))
+            });
+        }
+        let commit = commit.expect("the Commit button");
+        assert!(commit.is_disabled(), "no summary yet: {commit:?}");
+        assert_eq!(commit.label(), Some("Commit 1 file to main, unavailable"));
+        assert_eq!(commit.description(), Some("Write a summary to commit"));
+        assert!(
+            !commit.supports_action(egui::accesskit::Action::Click),
+            "{commit:?}"
         );
     }
 
