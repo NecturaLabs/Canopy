@@ -436,9 +436,8 @@ fn run(
                 while let Ok((oid, email)) = job_rx.recv() {
                     let result =
                         crate::avatars::load(&client, &forge, oid, &email, &avatars_enabled);
-                    // The author's email stays out of the log; the reason is about the repository.
                     if let Some(crate::avatars::Note::Blocked(why)) = &result.note {
-                        tracing::info!(host = %forge.host, reason = ?why, "author pictures stopped for this repository");
+                        log_blocked(&forge.host, why);
                     }
                     let _ = events.send(HostEvent::Avatar { oid, email, result });
                     ctx.request_repaint();
@@ -450,6 +449,19 @@ fn run(
         jobs
     };
     serve(&client, &forge, &jobs, &avatar_jobs, &emit);
+}
+
+/// Logs that author pictures stopped for the repository on `host`, and the kind of answer that
+/// stopped them. The author's email stays out of the log, and so do a refusal's words: the server
+/// chose them, and could echo the token it was sent.
+fn log_blocked(host: &str, why: &crate::avatars::Blocked) {
+    use crate::avatars::Blocked;
+    let reason = match why {
+        Blocked::NotFound => "not found",
+        Blocked::Refused(_) => "refused",
+        Blocked::Moved => "moved",
+    };
+    tracing::info!(host, reason, "author pictures stopped for this repository");
 }
 
 /// A list shown without its checks and reviews: the list job it answers (see [`serve`]), its
@@ -1168,6 +1180,46 @@ mod tests {
             .filter(|l| l.as_str() == "POST /graphql")
             .count();
         assert_eq!(queries, 2);
+    }
+
+    /// A log destination for one test.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log").extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_refused_repository_is_logged_without_the_servers_words() {
+        use crate::avatars::Blocked;
+        let captured = Captured::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            log_blocked(
+                "gitlab.example.com",
+                &Blocked::Refused("echoed glpat-secret-token".into()),
+            );
+            log_blocked("gitlab.example.com", &Blocked::NotFound);
+            log_blocked("gitlab.example.com", &Blocked::Moved);
+        });
+        let log = String::from_utf8(captured.0.lock().expect("log").clone()).expect("UTF-8");
+        assert_eq!(log.lines().count(), 3, "{log}");
+        assert!(!log.contains("glpat") && !log.contains("echoed"), "{log}");
+        for reason in ["refused", "not found", "moved"] {
+            assert!(log.contains(&format!("reason=\"{reason}\"")), "{log}");
+        }
     }
 
     #[test]
