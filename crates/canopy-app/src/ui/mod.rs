@@ -2,6 +2,8 @@
 
 pub mod art;
 pub mod cheatsheet;
+pub mod contrast;
+pub mod custom_theme;
 pub mod folder_picker;
 pub mod fonts;
 pub mod kit;

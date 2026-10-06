@@ -228,13 +228,13 @@ impl Deck {
             // The bar that meets the content loses its seam in a theme that parts regions by
             // tone; the tab strip above the action bar keeps it (both are the deck's fill).
             let strip = Rect::from_min_size(screen.min, vec2(screen.width(), m.tab_strip_height));
-            paint::deck_bar(painter, strip, p, s, style, !self.action_bar);
+            paint::deck_in(painter, strip, p, s, style);
             if self.action_bar {
                 let bar = Rect::from_min_size(
                     pos2(screen.left(), strip.bottom()),
                     vec2(screen.width(), m.action_bar_height),
                 );
-                paint::deck_bar(painter, bar, p, s, style, true);
+                paint::deck_in(painter, bar, p, s, style);
             }
         }
         deck
@@ -1201,7 +1201,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
     );
     let chosen_id = ui.id().with("gallery-choice");
     let mut chosen: usize = ui.ctx().data(|d| d.get_temp(chosen_id)).unwrap_or(0);
-    let choices = ["Midnight", "Daylight", "Forest"];
+    let choices = ["Midnight", "Daylight", "Observatory"];
     let grid = super::row::Roving::new(ui.ctx(), "gallery-choice", choices.len(), Some(chosen))
         .columns(choices.len());
     ui.horizontal_top(|ui| {

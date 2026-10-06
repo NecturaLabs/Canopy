@@ -233,11 +233,11 @@ pub fn show(
         commit_detail::show(&mut pane, tab, settings, actions);
         // The seam between the table and the details (concept 1's `.h-det` top border), in the
         // theme's pane separation.
-        let seam = paint::pane_seam(p, s.border, false);
+        let seam = paint::pane_seam(p, s.border);
         paint::seam_line_h(
             pane.painter(),
             top.x_range(),
-            top.top() + seam.map_or(0.0, |st| st.width) * 0.5,
+            top.top() + seam.width * 0.5,
             seam,
         );
         // Shown over both panes, so their scrolling cannot take the drag from it.
@@ -2074,10 +2074,10 @@ mod tests {
     }
 
     /// The history's ref pills keep their labels readable on every surface a row can have, in
-    /// every theme and lane colour: local branches and tags in the neutral text colour, remote
-    /// branches and detached HEAD in the dim one.
+    /// every theme and lane colour: a branch or tag label in its pill's own colour, lifted toward
+    /// the text colour only as far as 4.5:1 needs, and detached HEAD in the dim neutral one.
     #[test]
-    fn rendered_ref_pills_use_readable_neutral_text_in_every_theme() {
+    fn rendered_ref_pills_label_in_their_own_colour_in_every_theme() {
         use canopy_core::{RefKind, RefLabel};
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
@@ -2113,7 +2113,7 @@ mod tests {
                     let actual = text
                         .override_text_color
                         .unwrap_or(text.galley.job.sections[0].format.color);
-                    let (fill, _, _) = pill.colors(p);
+                    let (fill, _, ink) = pill.colors(p);
                     for surface in p.component_surfaces(p.s()) {
                         let ratio = theme::contrast(actual, theme::over(fill, surface));
                         assert!(
@@ -2122,15 +2122,22 @@ mod tests {
                             p.name
                         );
                     }
-                    let tone = match kind {
-                        RefKind::RemoteBranch | RefKind::Head => p.text_dim,
-                        _ => p.text,
-                    };
                     assert_eq!(
-                        actual, tone,
-                        "{} {kind:?} ref text keeps a consistent neutral tone",
+                        actual, ink,
+                        "{} {kind:?}: the label paints its own ink",
                         p.name
                     );
+                    if kind == RefKind::Head {
+                        assert_eq!(actual, p.text_dim, "{}: HEAD stays neutral", p.name);
+                    } else {
+                        let own = pill.color(p);
+                        assert_eq!(
+                            actual,
+                            p.ink(own, fill),
+                            "{} {kind:?} lane {lane}: the label is the pill's own colour, lifted only for contrast",
+                            p.name
+                        );
+                    }
                 }
             }
         }

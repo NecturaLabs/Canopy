@@ -17,22 +17,16 @@ use crate::ui::theme::{
 };
 
 /// Width of a seam, edge or ring (1 pt, as concept 1's 1 px borders). Painted seams, rims and
-/// control rings use [`edge`], the active theme's width (Contrast's are heavier).
+/// control rings use [`edge`], the active theme's width (heavier at high contrast).
 pub const SEAM: f32 = 1.0;
 /// Inset focus ring of rows, tabs, segments and menu items.
 pub const INSET_FOCUS_WIDTH: f32 = 1.5;
 /// Stroke width of a spinner's arc.
 pub const SPINNER_WIDTH: f32 = 1.6;
-/// How far a lit edge's glow reaches (`EdgeMode::Lit`), and its strength at the edge.
-pub const LIT_GLOW: f32 = 6.0;
-pub const LIT_GLOW_ALPHA: f32 = 0.3;
-/// A lifting hover's (`HoverStyle::Lift`) top highlight and bottom shade, at full hover.
-const LIFT_HIGHLIGHT: f32 = 22.0;
-const LIFT_SHADE: f32 = 90.0;
 
 /// The active theme's structure.
 fn design() -> &'static Design {
-    theme::active().design()
+    theme::active_design()
 }
 
 /// Width of seams, card edges and control rings in the active theme (`Design::edge_width`).
@@ -40,105 +34,38 @@ pub fn edge() -> f32 {
     design().edge_width
 }
 
-/// A soft glow of `color` around the outside of `rect` (rounded by `radius`): `width` points of
-/// concentric 1 pt rings from `alpha` at the edge to nothing. Lit edges and glowing focus rings.
-pub fn ring_glow(
-    painter: &Painter,
-    rect: Rect,
-    radius: CornerRadius,
-    color: Color32,
-    width: f32,
-    alpha: f32,
-) {
-    painter.extend(ring_glow_shapes(rect, radius, color, width, alpha));
-}
-
-fn ring_glow_shapes(
-    rect: Rect,
-    radius: CornerRadius,
-    color: Color32,
-    width: f32,
-    alpha: f32,
-) -> Vec<Shape> {
-    let steps = width.round().max(1.0);
-    let n = crate::ui::saturate_u8(steps);
-    (0..n)
-        .map(|i| {
-            let d = f32::from(i) + 0.5;
-            let k = 1.0 - d / steps;
-            let r = radius + CornerRadius::same(crate::ui::saturate_u8(d.round()));
-            RectShape::stroke(
-                rect.expand(d),
-                r,
-                Stroke::new(1.0, color.gamma_multiply(alpha * k * k)),
-                StrokeKind::Middle,
-            )
-            .into()
-        })
-        .collect()
-}
-
-/// A lit edge (`EdgeMode::Lit`): a 1 px `focus` ring inside `rect` with a soft glow of it outside,
-/// at strength `t` (0 to 1). Neon's focused pane, active tab and primary buttons.
-pub fn lit_edge(painter: &Painter, rect: Rect, radius: CornerRadius, focus: Color32, t: f32) {
-    if t <= 0.0 {
-        return;
-    }
-    ring_glow(painter, rect, radius, focus, LIT_GLOW, LIT_GLOW_ALPHA * t);
-    painter.rect_stroke(
-        rect,
-        radius,
-        Stroke::new(1.0, focus.gamma_multiply(t)),
-        StrokeKind::Inside,
-    );
-}
-
-/// Whether the active theme lights edges (`EdgeMode::Lit`).
-pub fn lit() -> bool {
-    design().edges == EdgeMode::Lit
-}
-
 /// The seam between Standard's flush panes (sidebar, content, details) in the active theme
-/// (`Design::panes`): a `hairline` (`Surfaces::border`), a `control_border` rule (`Outline`), or
-/// `None` where the tone step alone parts them. `tonal_step`: the two sides differ in fill (a
-/// tonal theme still draws a line between two panes of one fill).
-pub fn pane_seam(p: &Palette, hairline: Color32, tonal_step: bool) -> Option<Stroke> {
+/// (`Design::panes`): a `hairline` (`Surfaces::border`) or a `control_border` rule (`Outline`).
+pub fn pane_seam(p: &Palette, hairline: Color32) -> Stroke {
     let d = design();
     match d.panes {
-        PaneSeparation::Tonal if tonal_step => None,
-        PaneSeparation::Outline => Some(Stroke::new(d.edge_width, p.control_border)),
-        PaneSeparation::Seams | PaneSeparation::Tonal => Some(Stroke::new(SEAM, hairline)),
+        PaneSeparation::Outline => Stroke::new(d.edge_width, p.control_border),
+        PaneSeparation::Seams => Stroke::new(SEAM, hairline),
     }
 }
 
 /// The seam under a header or between two bars in the active theme (`Design::edges`): a
-/// `hairline` in its colour, a `control_border` rule (`Outline`), or `None` where the tone step
-/// alone parts them (`Tonal`, when `tonal_step`).
-pub fn edge_seam(p: &Palette, hairline: Color32, tonal_step: bool) -> Option<Stroke> {
+/// `hairline` in its colour or a `control_border` rule (`Outline`).
+pub fn edge_seam(p: &Palette, hairline: Color32) -> Stroke {
     let d = design();
     match d.edges {
-        EdgeMode::Tonal if tonal_step => None,
-        EdgeMode::Outline => Some(Stroke::new(d.edge_width, p.control_border)),
-        EdgeMode::Hairline | EdgeMode::Lit | EdgeMode::Tonal => Some(Stroke::new(SEAM, hairline)),
+        EdgeMode::Outline => Stroke::new(d.edge_width, p.control_border),
+        EdgeMode::Hairline => Stroke::new(SEAM, hairline),
     }
 }
 
-/// Paints `seam` (if any) along `y` across `x`, snapped to the pixel grid.
-pub fn seam_line_h(painter: &Painter, x: Rangef, y: f32, seam: Option<Stroke>) {
-    if let Some(stroke) = seam {
-        let mut y = y;
-        stroke.round_center_to_pixel(painter.pixels_per_point(), &mut y);
-        painter.hline(x, y, stroke);
-    }
+/// Paints `seam` along `y` across `x`, snapped to the pixel grid.
+pub fn seam_line_h(painter: &Painter, x: Rangef, y: f32, seam: Stroke) {
+    let mut y = y;
+    seam.round_center_to_pixel(painter.pixels_per_point(), &mut y);
+    painter.hline(x, y, seam);
 }
 
-/// Paints `seam` (if any) along `x` down `y`, snapped to the pixel grid.
-pub fn seam_line_v(painter: &Painter, x: f32, y: Rangef, seam: Option<Stroke>) {
-    if let Some(stroke) = seam {
-        let mut x = x;
-        stroke.round_center_to_pixel(painter.pixels_per_point(), &mut x);
-        painter.vline(x, y, stroke);
-    }
+/// Paints `seam` along `x` down `y`, snapped to the pixel grid.
+pub fn seam_line_v(painter: &Painter, x: f32, y: Rangef, seam: Stroke) {
+    let mut x = x;
+    seam.round_center_to_pixel(painter.pixels_per_point(), &mut x);
+    painter.vline(x, y, seam);
 }
 
 /// A row's selection mark over its wash, in the active theme's [`SelectionStyle`]: the leading
@@ -166,40 +93,11 @@ pub fn selection_mark(painter: &Painter, rect: Rect, radius: CornerRadius, p: &P
                 StrokeKind::Inside,
             );
         }
-        SelectionStyle::Glow => {
-            let band = 6.0_f32.min(rect.height() / 2.0);
-            let clear = Color32::TRANSPARENT;
-            let edge = p.selection.gamma_multiply(0.4);
-            for (from, to) in [
-                (FadeEdge::Top, rect.top() + band),
-                (FadeEdge::Bottom, rect.bottom() - band),
-            ] {
-                let mut mesh = egui::Mesh::default();
-                let (y0, y1) = match from {
-                    FadeEdge::Top => (rect.top(), to),
-                    _ => (to, rect.bottom()),
-                };
-                let (c0, c1) = match from {
-                    FadeEdge::Top => (edge, clear),
-                    _ => (clear, edge),
-                };
-                let l = rect.left() + f32::from(radius.nw.min(radius.sw)) * 0.5;
-                let r = rect.right() - f32::from(radius.ne.min(radius.se)) * 0.5;
-                mesh.colored_vertex(pos2(l, y0), c0);
-                mesh.colored_vertex(pos2(r, y0), c0);
-                mesh.colored_vertex(pos2(r, y1), c1);
-                mesh.colored_vertex(pos2(l, y1), c1);
-                mesh.add_triangle(0, 1, 2);
-                mesh.add_triangle(0, 2, 3);
-                painter.add(Shape::mesh(mesh));
-            }
-        }
     }
 }
 
 /// What a hovered row or quiet control adds over its hover wash in the active theme's
-/// [`HoverStyle`], at strength `t` (the hover's ease): `Lift` a light top edge and a shaded
-/// bottom edge (the item rises off its list), `Edge` a 1 px ring. `Tint` adds nothing.
+/// [`HoverStyle`], at strength `t` (the hover's ease): `Edge` a 1 px ring. `Tint` adds nothing.
 pub fn hover_mark(
     painter: &Painter,
     rect: Rect,
@@ -213,21 +111,6 @@ pub fn hover_mark(
     }
     match design().hover {
         HoverStyle::Tint => {}
-        HoverStyle::Lift => {
-            top_highlight(
-                painter,
-                rect,
-                radius,
-                crate::ui::saturate_u8(LIFT_HIGHLIGHT * t),
-            );
-            bottom_line(
-                painter,
-                rect,
-                radius,
-                p.shadow,
-                crate::ui::saturate_u8(LIFT_SHADE * t),
-            );
-        }
         HoverStyle::Edge => {
             let c = if p.strict { p.control_border } else { s.edge };
             painter.rect_stroke(
@@ -488,10 +371,10 @@ pub fn rim(painter: &Painter, rect: Rect, radius: CornerRadius, color: Color32) 
     painter.rect_stroke(rect, radius, Stroke::new(edge(), color), StrokeKind::Inside);
 }
 
-/// The outside focus ring in the active theme's [`FocusStyle`], `color` around the control with
-/// the gap filled by `moat` (the surface behind): `Ring` a ring of its width at its offset,
-/// `Glow` a 1.5 pt ring with a soft glow beyond it, `Double` a ring with a 1 pt ring of the ground
-/// inside it so it reads on any fill. The painter must not clip outside `rect`.
+/// The outside focus ring in the active theme's [`FocusStyle`], `color` around the control with the
+/// gap filled by `moat` (the surface behind): `Ring` a ring of its width at its offset, `Double` a
+/// ring with a 1 pt ring of the ground inside it so it reads on any fill. The painter must not clip
+/// outside `rect`.
 pub fn focus_ring(
     painter: &Painter,
     rect: Rect,
@@ -510,10 +393,9 @@ fn focus_ring_shapes(
     moat: Color32,
 ) -> Vec<Shape> {
     let grow = |by: f32| radius + CornerRadius::same(crate::ui::saturate_u8(by.round()));
-    let (offset, width, glow) = match style {
-        FocusStyle::Ring { width, offset } => (offset, width, 0.0),
-        FocusStyle::Glow { width } => (1.0, 1.5, width),
-        FocusStyle::Double { width } => (1.0, width, 0.0),
+    let (offset, width) = match style {
+        FocusStyle::Ring { width, offset } => (offset, width),
+        FocusStyle::Double { width } => (1.0, width),
     };
     let mut out = Vec::new();
     if moat.a() > 0 {
@@ -528,15 +410,6 @@ fn focus_ring_shapes(
         );
     }
     let ring = rect.expand(offset + width * 0.5);
-    if glow > 0.0 {
-        out.extend(ring_glow_shapes(
-            rect.expand(offset + width),
-            grow(offset + width),
-            color,
-            glow,
-            FOCUS_GLOW_ALPHA,
-        ));
-    }
     out.push(
         RectShape::stroke(
             ring,
@@ -549,34 +422,13 @@ fn focus_ring_shapes(
     out
 }
 
-/// A glowing focus ring's strength next to the ring (`FocusStyle::Glow`).
-const FOCUS_GLOW_ALPHA: f32 = 0.35;
-
 /// The inset focus ring of rows, tabs, segments and menu items, in the active theme's
-/// [`FocusStyle`]: `INSET_FOCUS_WIDTH` (or a `Double` ring's width), with a glowing theme's soft
-/// glow inside it.
+/// [`FocusStyle`]: `INSET_FOCUS_WIDTH`, or a `Double` ring's width.
 pub fn inset_ring(painter: &Painter, rect: Rect, radius: CornerRadius, color: Color32) {
     let width = match design().focus {
         FocusStyle::Double { width } => width.min(rect.height() / 4.0),
-        FocusStyle::Ring { .. } | FocusStyle::Glow { .. } => INSET_FOCUS_WIDTH,
+        FocusStyle::Ring { .. } => INSET_FOCUS_WIDTH,
     };
-    if let FocusStyle::Glow { .. } = design().focus {
-        for i in 1..=3_u8 {
-            let d = f32::from(i);
-            let r = CornerRadius {
-                nw: radius.nw.saturating_sub(i),
-                ne: radius.ne.saturating_sub(i),
-                sw: radius.sw.saturating_sub(i),
-                se: radius.se.saturating_sub(i),
-            };
-            painter.rect_stroke(
-                rect.shrink(width + d - 0.5),
-                r,
-                Stroke::new(1.0, color.gamma_multiply(0.22 * (1.0 - d / 4.0))),
-                StrokeKind::Middle,
-            );
-        }
-    }
     painter.rect_stroke(rect, radius, Stroke::new(width, color), StrokeKind::Inside);
 }
 
@@ -634,14 +486,9 @@ pub fn focus_edge_alpha(y: f32) -> f32 {
 }
 
 /// Deeper's focused-pane edge on `card` at strength `t` (0 to 1): the [`focus_edge`] with its top
-/// edge lit, so the pane that holds the keyboard (History's table) reads as the one in front. A
-/// theme with lit edges outlines the whole card in a glowing `focus` line instead.
+/// edge lit, so the pane that holds the keyboard (History's table) reads as the one in front.
 pub fn pane_focus(painter: &Painter, card: Rect, radius: CornerRadius, focus: Color32, t: f32) {
     if t <= 0.0 {
-        return;
-    }
-    if lit() {
-        lit_edge(painter, card, radius, focus, 0.7 * t);
         return;
     }
     focus_edge(painter, card, radius, focus, t);
@@ -701,23 +548,10 @@ pub fn deck(painter: &Painter, rect: Rect, p: &Palette, s: &Surfaces) {
 
 /// [`deck`] in `style`, whatever the active style (the gallery's side-by-side strip).
 pub fn deck_in(painter: &Painter, rect: Rect, p: &Palette, s: &Surfaces, style: Style) {
-    deck_bar(painter, rect, p, s, style, false);
-}
-
-/// [`deck_in`] for a bar whose bottom edge meets the content below (`over_content`): a theme
-/// that parts regions by tone draws no seam there (the bars above it keep theirs).
-pub fn deck_bar(
-    painter: &Painter,
-    rect: Rect,
-    p: &Palette,
-    s: &Surfaces,
-    style: Style,
-    over_content: bool,
-) {
     if style == Style::Standard {
         painter.rect_filled(rect, CornerRadius::ZERO, s.deck.top);
-        let seam = edge_seam(p, s.deck_edge, over_content);
-        let w = seam.map_or(SEAM, |st| st.width);
+        let seam = edge_seam(p, s.deck_edge);
+        let w = seam.width;
         seam_line_h(painter, rect.x_range(), rect.bottom() - w * 0.5, seam);
         return;
     }
@@ -937,9 +771,8 @@ pub fn glow(painter: &Painter, center: Pos2, radius: f32, color: Color32) {
 }
 
 /// The active theme's ground treatment (`Design::ground`) over `rect`, a window ground where no
-/// content sits (Deeper's gutter, the welcome screen): a vertical wash, a glow from a point or
-/// an aged-paper vignette, each a translucent ink over the ground already painted. `t` (0 to 1)
-/// scales it (a fade-in). Nothing for a flat ground.
+/// content sits (Deeper's gutter, the welcome screen): a vertical wash, a translucent ink over
+/// the ground already painted. `t` (0 to 1) scales it (a fade-in). Nothing for a flat ground.
 pub fn ground(painter: &Painter, rect: Rect, t: f32) {
     if t <= 0.0 || rect.width() <= 0.0 || rect.height() <= 0.0 {
         return;
@@ -957,77 +790,7 @@ pub fn ground(painter: &Painter, rect: Rect, t: f32) {
                 bottom: Palette::tint(ink, scale(bottom)),
             },
         ),
-        Ground::Glow {
-            ink,
-            alpha,
-            center,
-            radius,
-        } => glow(
-            &painter,
-            rect.min + vec2(center.0 * rect.width(), center.1 * rect.height()),
-            radius * rect.size().max_elem(),
-            Palette::tint(ink, scale(alpha)),
-        ),
-        Ground::Vignette { ink, alpha } => {
-            painter.add(vignette(rect, Palette::tint(ink, scale(alpha))));
-        }
     }
-}
-
-/// Where a vignette starts, as a fraction of the half diagonal: clear inside it.
-const VIGNETTE_CLEAR: f32 = 0.55;
-
-/// A vignette over `rect`: clear in the middle, `ink` (premultiplied) at the corners, rising with
-/// the square of the distance beyond [`VIGNETTE_CLEAR`] of the half diagonal: a ring of quads from
-/// the clear middle to the rect's edge, with a ray through each corner so none is cut off.
-fn vignette(rect: Rect, ink: Color32) -> Shape {
-    const STEPS: u16 = 72;
-    let c = rect.center();
-    let half = rect.size() / 2.0;
-    let hd = half.length().max(1.0);
-    let strength = |d: f32| {
-        let k = ((d / hd - VIGNETTE_CLEAR) / (1.0 - VIGNETTE_CLEAR)).clamp(0.0, 1.0);
-        ink.gamma_multiply(k * k)
-    };
-    let mut angles: Vec<f32> = (0..STEPS)
-        .map(|i| f32::from(i) / f32::from(STEPS) * std::f32::consts::TAU)
-        .collect();
-    for corner in [
-        rect.left_top(),
-        rect.right_top(),
-        rect.right_bottom(),
-        rect.left_bottom(),
-    ] {
-        let d = corner - c;
-        angles.push(d.y.atan2(d.x).rem_euclid(std::f32::consts::TAU));
-    }
-    angles.sort_by(f32::total_cmp);
-    let mut mesh = egui::Mesh::default();
-    for a in &angles {
-        let dir = vec2(a.cos(), a.sin());
-        // Distance along `dir` to the rect's edge.
-        let tx = if dir.x.abs() > 1e-6 {
-            half.x / dir.x.abs()
-        } else {
-            f32::INFINITY
-        };
-        let ty = if dir.y.abs() > 1e-6 {
-            half.y / dir.y.abs()
-        } else {
-            f32::INFINITY
-        };
-        let edge = tx.min(ty);
-        let inner = (VIGNETTE_CLEAR * hd).min(edge);
-        mesh.colored_vertex(c + dir * inner, Color32::TRANSPARENT);
-        mesh.colored_vertex(c + dir * edge, strength(edge));
-    }
-    let n = u32::try_from(angles.len()).unwrap_or(0);
-    for i in 0..n {
-        let j = (i + 1) % n;
-        mesh.add_triangle(2 * i, 2 * i + 1, 2 * j + 1);
-        mesh.add_triangle(2 * i, 2 * j + 1, 2 * j);
-    }
-    Shape::mesh(mesh)
 }
 
 /// How strongly a spinner's full circle shows under its turning arc.
@@ -1208,9 +971,6 @@ mod tests {
             moat,
         );
         assert_eq!(stroke_widths(&ring), [1.0, 2.0]);
-        let glow = focus_ring_shapes(FocusStyle::Glow { width: 4.0 }, rect, r, c, moat);
-        assert_eq!(glow.len(), 6, "moat, four glow rings, the ring");
-        assert_eq!(stroke_widths(&glow).last(), Some(&1.5));
         let double = focus_ring_shapes(FocusStyle::Double { width: 2.5 }, rect, r, c, moat);
         assert_eq!(stroke_widths(&double), [1.0, 2.5]);
         let Shape::Rect(inner) = &double[0] else {
@@ -1228,8 +988,8 @@ mod tests {
         out.shapes.into_iter().map(|c| c.shape).collect()
     }
 
-    /// A selected row carries its theme's mark: Midnight's leading bar, Neon's ring, Aurora's
-    /// band of light; Daylight's wash needs none.
+    /// A selected row carries its theme's mark: Observatory's leading bar, high contrast's ring;
+    /// concept 1's wash (Midnight, Daylight) needs none.
     #[test]
     fn selection_takes_the_themes_mark() {
         use theme::ThemeId as T;
@@ -1239,58 +999,37 @@ mod tests {
                 selection_mark(painter, rect, CornerRadius::same(4), t.palette());
             })
         };
-        let bar = mark(T::Midnight);
+        let bar = mark(T::Observatory);
         let Some(Shape::Rect(bar)) = bar.first() else {
             panic!("{bar:?}")
         };
         assert_eq!(bar.rect.width(), 2.0);
         assert_eq!(bar.rect.left(), rect.left());
-        assert_eq!(bar.fill, T::Midnight.palette().focus);
-        let ring = mark(T::Neon);
+        assert_eq!(bar.fill, T::Observatory.palette().focus);
+        theme::set_high_contrast(true);
+        let ring = mark(T::Midnight);
+        theme::set_high_contrast(false);
         let Some(Shape::Rect(ring)) = ring.first() else {
             panic!("{ring:?}")
         };
         assert_eq!(ring.rect, rect);
         assert!(ring.stroke.width > 0.0 && ring.fill == Color32::TRANSPARENT);
-        assert_eq!(mark(T::Aurora).len(), 2, "a glow along each long edge");
         assert_eq!(mark(T::Daylight).len(), 0);
+        assert_eq!(mark(T::Midnight).len(), 0);
     }
 
-    /// The ground treatment: nothing for a flat ground, a ramp for a vertical one, a glow, or a
-    /// vignette that is clear in the middle and strongest in the corners.
+    /// The ground treatment: nothing for a flat ground, a ramp for a vertical one (Observatory).
     #[test]
     fn grounds_take_the_themes_treatment() {
         use theme::ThemeId as T;
         let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 500.0));
         let ground_of = |t: T| painted(t, |painter| ground(painter, rect, 1.0));
         assert_eq!(ground_of(T::Daylight).len(), 0);
-        assert_eq!(ground_of(T::Contrast).len(), 0);
-        assert!(matches!(ground_of(T::Midnight)[..], [Shape::Rect(_)]));
-        assert!(matches!(ground_of(T::Aurora)[..], [Shape::Mesh(_)]));
-        let Shape::Mesh(v) = &ground_of(T::Paper)[0] else {
-            panic!("a vignette mesh")
-        };
-        let at = |p: Pos2| {
-            v.vertices
-                .iter()
-                .filter(|x| x.pos.distance(p) < 0.5)
-                .map(|x| x.color.a())
-                .max()
-                .unwrap_or(0)
-        };
-        let Ground::Vignette { alpha, .. } = T::Paper.design().ground else {
-            panic!("Paper's ground is a vignette")
-        };
-        for corner in [rect.left_top(), rect.right_bottom()] {
-            assert_eq!(at(corner), alpha, "{corner:?}");
-        }
-        assert!(v.vertices.iter().all(|x| rect.expand(0.5).contains(x.pos)));
-        assert!(
-            v.vertices
-                .iter()
-                .filter(|x| x.pos.distance(rect.center()) < 100.0)
-                .all(|x| x.color.a() == 0)
-        );
+        assert_eq!(ground_of(T::Midnight).len(), 0);
+        theme::set_high_contrast(true);
+        assert_eq!(ground_of(T::Observatory).len(), 0, "high contrast is flat");
+        theme::set_high_contrast(false);
+        assert!(matches!(ground_of(T::Observatory)[..], [Shape::Rect(_)]));
     }
 
     /// A shadow under a surface smaller than its blur (a one-line tooltip) keeps its whole blur:
@@ -1359,10 +1098,9 @@ mod tests {
     }
 
     /// The pane that holds the keyboard reads as the one in front, the same wherever a pane is
-    /// painted (the window's content pane, the gallery): Deeper lights its top edge, and a theme
-    /// with lit edges outlines the whole card in a glowing focus line.
+    /// painted (the window's content pane, the gallery): Deeper lights its top edge.
     #[test]
-    fn a_focused_pane_lights_its_top_or_its_whole_edge() {
+    fn a_focused_pane_lights_its_top_edge() {
         let card = Rect::from_min_size(pos2(10.0, 10.0), vec2(200.0, 120.0));
         let paint = |id: theme::ThemeId, focus: f32| {
             let ctx =
@@ -1390,21 +1128,5 @@ mod tests {
         assert_eq!(top_lines(focus, &shapes), 1, "a lit top edge: {shapes:?}");
         let (focus, shapes) = paint(theme::ThemeId::Midnight, 0.0);
         assert_eq!(top_lines(focus, &shapes), 0, "no edge without focus");
-        let rings = |focus_color: Color32, shapes: &[egui::epaint::ClippedShape]| {
-            shapes
-                .iter()
-                .filter(|c| match &c.shape {
-                    Shape::Rect(r) => {
-                        r.rect == card
-                            && (r.stroke.width - 1.0).abs() < 0.01
-                            && r.stroke.color == focus_color.gamma_multiply(0.7)
-                    }
-                    _ => false,
-                })
-                .count()
-        };
-        let (focus, shapes) = paint(theme::ThemeId::Neon, 1.0);
-        assert_eq!(rings(focus, &shapes), 1, "a lit outline: {shapes:?}");
-        assert_eq!(top_lines(focus, &shapes), 0, "and no separate top line");
     }
 }

@@ -293,25 +293,20 @@ pub fn scroll_animation() -> egui::style::ScrollAnimation {
 
 /// The active theme's motion character.
 fn character() -> MotionCharacter {
-    super::theme::active().design().motion
+    super::theme::active_design().motion
 }
 
-/// The easing things enter (and hovers rise) along: `EASE_OUT`, or `EASE_IN_OUT` in a theme whose
-/// motion is soft.
+/// The easing things enter (and hovers rise) along.
 pub fn enter_curve() -> fn(f32) -> f32 {
-    if character() == MotionCharacter::Soft {
-        |t| EASE_IN_OUT.at(t)
-    } else {
-        |t| EASE_OUT.at(t)
-    }
+    |t| EASE_OUT.at(t)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Durations and the entrance curve follow the theme's motion character; reduced motion still
-    /// turns every duration off.
+    /// Durations follow the theme's motion character; reduced motion still turns every duration
+    /// off.
     #[test]
     fn the_theme_sets_the_pace() {
         use crate::ui::theme::{self, Appearance, ThemeId};
@@ -320,19 +315,12 @@ mod tests {
             reduce_motion: false,
             ..Appearance::STILL
         };
-        for (id, scale) in [
-            (ThemeId::Midnight, 1.0),
-            (ThemeId::Neon, 0.8),
-            (ThemeId::Ember, 1.2),
-        ] {
-            theme::apply(&ctx, id, full);
-            assert!((time(0.5) - 0.5 * scale).abs() < 1e-6, "{id:?}");
+        for (high_contrast, scale) in [(false, 1.0), (true, 0.8)] {
+            theme::set_high_contrast(high_contrast);
+            theme::apply(&ctx, ThemeId::Midnight, full);
+            assert!((time(0.5) - 0.5 * scale).abs() < 1e-6, "{high_contrast}");
         }
-        theme::apply(&ctx, ThemeId::Ember, full);
-        assert!((enter_curve()(0.25) - EASE_IN_OUT.at(0.25)).abs() < 1e-6);
-        theme::apply(&ctx, ThemeId::Daylight, full);
-        assert!((enter_curve()(0.25) - EASE_OUT.at(0.25)).abs() < 1e-6);
-        theme::apply(&ctx, ThemeId::Ember, Appearance::STILL);
+        theme::apply(&ctx, ThemeId::Midnight, Appearance::STILL);
         assert!(time(0.5).abs() < f32::EPSILON);
     }
 

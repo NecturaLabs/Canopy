@@ -1,5 +1,5 @@
-//! [`Segmented`] (with its sliding thumb), [`ViewTabs`] and [`UnderlineTabs`] (with its sliding
-//! indicator). Design spec 4.7 and 4.8.
+//! [`Segmented`] (with its sliding thumb), [`ViewTabs`], [`UnderlineTabs`] (with its sliding
+//! indicator) and [`Swatches`]. Design spec 4.7 and 4.8.
 //!
 //! The thumb and the indicator are painted once, under the labels, and slide to the chosen option
 //! on the indicator springs, measured from the control's own left edge so scrolling never animates
@@ -491,6 +491,165 @@ impl<T: PartialEq + Clone> Widget for Segmented<'_, T> {
 /// The History / Changes / Requests switcher in the action bar: the segmented control with icons
 /// and labels (concept 1 puts a `.k-seg` at the start of the toolbar).
 pub type ViewTabs<'a, T> = Segmented<'a, T>;
+
+// ------------------------------------------------------------------------------------ Swatches
+
+/// Diameter of a colour swatch.
+const SWATCH: f32 = 22.0;
+
+/// A choice between colours: a row of round swatches, each named for screen readers and in its
+/// tooltip. The chosen one is ringed in `text`; like [`Segmented`], only it is a Tab stop and the
+/// arrow keys move the choice. A value none of the swatches holds (set elsewhere, by a slider)
+/// rings none.
+#[must_use = "call .show(ui) or ui.add(..)"]
+pub struct Swatches<'a, T: PartialEq + Clone> {
+    value: &'a mut T,
+    options: &'a [(T, Color32, &'a str)],
+    label: String,
+    id_salt: Option<Id>,
+}
+
+impl<'a, T: PartialEq + Clone> Swatches<'a, T> {
+    pub fn new(value: &'a mut T, options: &'a [(T, Color32, &'a str)]) -> Self {
+        Self {
+            value,
+            options,
+            label: String::new(),
+            id_salt: None,
+        }
+    }
+
+    /// The group's accessible name.
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
+    }
+
+    pub fn id_salt(mut self, salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        self.id_salt = Some(Id::new(salt));
+        self
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let ctx = ui.ctx().clone();
+        let p = theme::palette(&ctx);
+        let enabled = ui.is_enabled();
+        let group_id = component_id(ui, "kit-swatches", self.id_salt);
+        let gap = theme::SM;
+        let n = self.options.len();
+        let total = vec2(
+            SWATCH * crate::ui::count_f32(n) + gap * crate::ui::count_f32(n.saturating_sub(1)),
+            SWATCH,
+        );
+        let (track, _) = ui.allocate_exact_size(total + vec2(4.0, 4.0), Sense::hover());
+        let chosen = self.options.iter().position(|(v, _, _)| v == self.value);
+        let stop = chosen.unwrap_or(0);
+        let inner = ui.new_child(UiBuilder::new().max_rect(track));
+        group_node(&inner, Role::RadioGroup, &self.label, enabled);
+        let rects: Vec<Rect> = (0..n)
+            .map(|i| {
+                let x = track.left() + 2.0 + (SWATCH + gap) * crate::ui::count_f32(i);
+                Rect::from_min_size(pos2(x, track.top() + 2.0), Vec2::splat(SWATCH))
+            })
+            .collect();
+        let responses: Vec<Response> = rects
+            .iter()
+            .enumerate()
+            .map(|(i, rect)| {
+                let sense = match (enabled, stop == i) {
+                    (false, _) => Sense::hover(),
+                    (true, true) => Sense::click(),
+                    (true, false) => Sense::CLICK,
+                };
+                let r = inner.interact(*rect, group_id.with(i), sense);
+                ctx.accesskit_node_builder(r.id, |_| {});
+                r
+            })
+            .collect();
+
+        let mut now = chosen;
+        let mut changed = false;
+        for (i, r) in responses.iter().enumerate() {
+            if r.clicked() && now != Some(i) {
+                now = Some(i);
+                changed = true;
+            }
+        }
+        let focused = responses.iter().position(Response::has_focus);
+        if let Some(at) = focused {
+            claim_arrows(ui, responses[at].id, true, false);
+        }
+        if enabled
+            && let Some(at) = focused
+            && let Some(delta) = arrow_step(ui, false, true)
+        {
+            let next = step(at, delta, n);
+            if next != at {
+                now = Some(next);
+                responses[next].request_focus();
+                changed = true;
+            }
+        }
+        if changed && let Some(i) = now {
+            *self.value = self.options[i].0.clone();
+        }
+
+        if ui.is_rect_visible(track) {
+            let painter = super::content_painter(ui);
+            let s = p.s();
+            for (i, rect) in rects.iter().enumerate() {
+                let st = Interact::of(&ctx, &responses[i], enabled, None);
+                let on = anim::ease(
+                    &ctx,
+                    group_id.with(("kit-swatch-on", i)),
+                    now == Some(i),
+                    motion::BASE,
+                );
+                let centre = rect.center();
+                let radius = SWATCH / 2.0;
+                painter.circle_filled(centre, radius - 3.0 * on, self.options[i].1);
+                // The swatch's own edge, so a colour close to the ground still has a shape.
+                painter.circle_stroke(
+                    centre,
+                    radius - 3.0 * on - 0.5,
+                    egui::Stroke::new(1.0, s.edge.gamma_multiply(0.6)),
+                );
+                let ring = p
+                    .text_dim
+                    .lerp_to_gamma(p.text, on)
+                    .gamma_multiply(on.max(st.hover * 0.6));
+                if ring.a() > 0 {
+                    painter.circle_stroke(centre, radius - 0.75, egui::Stroke::new(1.5, ring));
+                }
+                if st.focus > 0.0 {
+                    painter.circle_stroke(
+                        centre,
+                        radius + 1.5,
+                        egui::Stroke::new(2.0, p.focus.gamma_multiply(st.focus)),
+                    );
+                }
+            }
+        }
+
+        for (i, r) in responses.into_iter().enumerate() {
+            let name = self.options[i].2;
+            let on = now == Some(i);
+            r.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, enabled, on, name));
+            tip_for(r, enabled, Some(name), None, None);
+        }
+        let mut group = ui.interact(track, group_id, Sense::hover());
+        if changed {
+            group.mark_changed();
+        }
+        group
+    }
+}
+
+impl<T: PartialEq + Clone> Widget for Swatches<'_, T> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        self.show(ui)
+    }
+}
 
 // ------------------------------------------------------------------------------- UnderlineTabs
 
@@ -1195,6 +1354,100 @@ mod tests {
             Segmented::icons(&mut layout, &[(0, icon::ROWS, "Unified")]).show(ui);
         });
         assert!(find(&nodes, "Unified").is_some(), "icon segments are named");
+    }
+
+    const SWATCHES: [(u16, Color32, &str); 3] = [
+        (0, Color32::RED, "Red"),
+        (120, Color32::GREEN, "Green"),
+        (240, Color32::BLUE, "Blue"),
+    ];
+
+    #[test]
+    fn swatches_choose_by_click_and_arrows() {
+        let ctx = testkit::ctx();
+        let mut v = 0_u16;
+        let mut row = Rect::NOTHING;
+        frame(&ctx, Vec::new(), |ui| {
+            row = Swatches::new(&mut v, &SWATCHES).show(ui).rect;
+        });
+        testkit::click(&ctx, pos2(row.right() - 13.0, row.center().y), |ui| {
+            Swatches::new(&mut v, &SWATCHES).show(ui);
+        });
+        assert_eq!(v, 240);
+        let press = |k: Key, v: &mut u16| {
+            frame(&ctx, key(k), |ui| {
+                Swatches::new(v, &SWATCHES).show(ui);
+                super::super::Button::new("After").show(ui);
+            });
+            frame(&ctx, Vec::new(), |ui| {
+                Swatches::new(v, &SWATCHES).show(ui);
+                super::super::Button::new("After").show(ui);
+            });
+        };
+        press(Key::Tab, &mut v);
+        press(Key::ArrowLeft, &mut v);
+        assert_eq!(v, 120, "Left moves to the previous swatch");
+        press(Key::ArrowLeft, &mut v);
+        assert_eq!(v, 0, "focus followed the choice");
+        press(Key::ArrowRight, &mut v);
+        assert_eq!(v, 120);
+    }
+
+    #[test]
+    fn disabled_swatches_ignore_input() {
+        let ctx = testkit::ctx();
+        let mut v = 0_u16;
+        let mut row = Rect::NOTHING;
+        let show = |ui: &mut Ui, v: &mut u16| {
+            ui.add_enabled_ui(false, |ui| Swatches::new(v, &SWATCHES).show(ui).rect)
+                .inner
+        };
+        frame(&ctx, Vec::new(), |ui| row = show(ui, &mut v));
+        testkit::click(&ctx, pos2(row.right() - 13.0, row.center().y), |ui| {
+            show(ui, &mut v);
+        });
+        for k in [Key::Tab, Key::ArrowRight] {
+            frame(&ctx, key(k), |ui| {
+                show(ui, &mut v);
+            });
+        }
+        assert_eq!(v, 0);
+    }
+
+    #[test]
+    fn swatches_speak_as_a_radio_group() {
+        let ctx = testkit::ctx();
+        let mut v = 120_u16;
+        let nodes = spoken(&ctx, |ui| {
+            Swatches::new(&mut v, &SWATCHES).label("Accent").show(ui);
+        });
+        assert_eq!(
+            find(&nodes, "Accent").map(|n| n.role),
+            Some(Role::RadioGroup)
+        );
+        let on = find(&nodes, "Green").expect("spoken");
+        assert_eq!(
+            (on.role, on.toggled),
+            (Role::RadioButton, Some(Toggled::True))
+        );
+        assert_eq!(
+            find(&nodes, "Red").and_then(|n| n.toggled),
+            Some(Toggled::False)
+        );
+        // A hue between the swatches (a slider's choice) checks none of them.
+        let mut between = 60_u16;
+        let nodes = spoken(&ctx, |ui| {
+            Swatches::new(&mut between, &SWATCHES)
+                .label("Accent")
+                .show(ui);
+        });
+        for name in ["Red", "Green", "Blue"] {
+            assert_eq!(
+                find(&nodes, name).and_then(|n| n.toggled),
+                Some(Toggled::False),
+                "{name}"
+            );
+        }
     }
 
     #[test]

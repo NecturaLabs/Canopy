@@ -83,7 +83,7 @@ thread.
 | `action.rs` | `Action`: what the user asked for during a frame. Views emit actions and never import `app`. |
 | `app/mod.rs` | `CanopyApp`: state, start-up, the frame (`eframe::App::ui`), opening repositories, theme. The window's AccessKit name ("<repository> — Canopy"); `Watched`, the copy of the settings whose change reloads diffs or forges, compared each frame instead of cloning `Settings`; and, for the app's tests, `test_app()` and `test_tab()`, a `CanopyApp` and a `RepoTab` with no threads. |
 | `app/input.rs` | Keyboard: bare keys, chords and the commands they run. |
-| `app/palette.rs` | The command palette's entries. |
+| `app/palette.rs` | The command palette's entries, including the Appearance ones (Style, Density, Translucent surfaces, High contrast, Motion). |
 | `app/dispatch.rs` | Applies the actions a frame collected. |
 | `app/background.rs` | Polled every frame: worker and hosting events, credential prompts, the update check, auto-fetch. |
 | `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. |
@@ -103,14 +103,14 @@ thread.
 | `logging.rs` | Structured per-run JSON-lines logs, timed spans, local crash files and the diagnostics Settings copies. |
 | `highlight.rs` | Diff syntax highlighting (`syntect`) on two shared highlighter threads, cached per file revision; stale requests are abandoned. |
 | `keymap.rs` | Every keyboard shortcut in one table (`BINDINGS`) that dispatches keys and renders the cheatsheet and Settings → Keyboard; see `docs/keybindings.md`. |
-| `settings.rs` | Settings persisted through eframe storage: appearance, Git, integrations, updates, privacy answers, trusted folders, per-repository choices (`repos`, keyed by working directory), recent and open repositories. |
+| `settings.rs` | Settings persisted through eframe storage: appearance, Git, integrations, updates, privacy answers, trusted folders, per-repository choices (`repos`, keyed by working directory), recent and open repositories. A saved theme or option this build no longer has reads as its default (`known`, `known_option`) and a setting it no longer has is ignored; the next save writes the file without either. |
 | `settings_file.rs` | Export, import and reset of preferences: the versioned JSON format, the keys that are never exported or replaced (consent, trust, session memory), validation, and the file choosers on a background thread. |
 | `repo_config.rs` | What the repository's git configuration says for the settings Canopy overrides (`branch.<name>.rebase`, `pull.rebase`, `pull.ff`, `fetch.prune`, `commit.gpgsign`, `gpg.format`) with where each is set, and the remotes' URLs, read with `git config --show-scope --show-origin` on a background thread for Settings, This repository. |
 | `system_apps.rs` | The editor, terminal and file manager the system provides (`$VISUAL`/`$EDITOR`/`$TERMINAL`, desktop defaults, `PATH`) and the installed ones (Linux desktop entries, macOS `/Applications`, Windows App Paths), resolved on one background thread and cached; `command_for` is what the open actions run. |
 | `trust.rs` | The trusted folders (`Settings::trusted_folders`) as a process-wide list the repository threads read; adding a folder (never a root) and the parent offered next to a repository's own folder (ADR 0009). |
 | `platform.rs` | Handing things to the operating system (web pages, folders, files in an editor, a terminal) and reading its settings, such as reduced motion, off the UI thread; running commands with quotes and `%f`/`%F`/`%d` placeholders. |
 | `ui/mod.rs` | The look-and-feel modules, and the conversions between egui's integer and float types (`points_i8`, `count_f32`, `int_f32`, `to_f32`, `saturate_u8`, `saturate_usize`), each a plain cast named for what it does out of range, so views never cast by hand. |
-| `ui/theme.rs` | Design tokens: the eight palettes (shared colours plus Standard and Deeper surfaces), elevation materials, metrics per density and style, the active look (`apply`, `palette`, `surfaces`, `metrics`, `appearance`) and the contrast tests. The only place colours and sizes are defined. |
+| `ui/theme.rs` | Design tokens: the three built-in palettes (shared colours plus Standard and Deeper surfaces), the custom theme's slot (`ThemeId::Custom`, `set_custom`), the high-contrast switch, the graph's node shape and curve, elevation materials, metrics per density and style, the active look (`apply`, `palette`, `surfaces`, `metrics`, `appearance`) and the contrast tests. The only place colours and sizes are defined. |
 | `ui/motion.rs` | Motion tokens (durations, Bézier curves, springs), the Motion preference, the system's answer (asked on a background thread) and whether motion is currently reduced. |
 | `ui/kit/mod.rs` | The component library: `Size`, `Tone`, `ForceState`, `KitResponse`, `focus_visible` and the shared interaction state. |
 | `ui/kit/anim.rs` | Eased booleans and values, springs, sliding rectangles, the press scale and `Flip` (list rows gliding to their new places); all instant with reduced motion. |
@@ -124,7 +124,7 @@ thread.
 | `ui/kit/field.rs` | `TextField`, `SearchField`, `TextArea` and `CodeArea`: frameless `TextEdit`s inside the kit's fill, border, focus and error halo. |
 | `ui/kit/select.rs` | `Select`, which replaces `ComboBox`: a Secondary trigger and a floating list driven from the keyboard. |
 | `ui/kit/toggle.rs` | `Checkbox` (with indeterminate), `Radio`, `RadioGroup` (arrow keys, one Tab stop) and `Switch`. |
-| `ui/kit/choice.rs` | `Segmented` with its sliding thumb, `ViewTabs` and `UnderlineTabs` with a sliding indicator. |
+| `ui/kit/choice.rs` | `Segmented` with its sliding thumb, `ViewTabs` and `UnderlineTabs` with a sliding indicator, and `Swatches`, a radio group of colour circles. |
 | `ui/kit/tabs.rs` | `DocTabs`, the title bar's repository tabs: busy spinner, ahead/behind counts, close on hover and middle click, sideways scrolling with edge fades, and closed tabs collapsing out. |
 | `ui/kit/range.rs` | `Slider`, which replaces `egui::Slider`: keyboard steps and a value bubble while dragged. |
 | `ui/kit/progress.rs` | `Progress` (determinate, indeterminate, line), `Spinner` and `Skeleton`; all static under reduced motion. |
@@ -138,7 +138,9 @@ thread.
 | `ui/kit/graph.rs` | The history row painter: circle nodes, hollow merges, the HEAD halo, a dashed WIP node and lane spacing by density. |
 | `ui/kit/split.rs` | `SplitHandle`, the handle between two panes of a custom split: pointer drag, double-click reset, arrow keys with keyboard focus, and a named splitter for screen readers. |
 | `ui/kit/testkit.rs` | Test-only helpers for the kit's tests: a themed context, frames with input events and the AccessKit nodes a frame produced. |
-| `ui/fonts.rs` | Registers the bundled fonts: Inter, JetBrains Mono NL, Phosphor, the theme heading faces and the Canopy CJK fallback. |
+| `ui/contrast.rs` | Colour maths on `OKLab` lightness: `derive` makes a theme's high-contrast palette (grounds and hues kept, each foreground moved to the ratio Midnight's contrast reference keeps), `lift` moves every foreground drawn on a ground to at least a reference palette's ratios times a margin, `fit` does that for one colour, and `clear` moves one colour until it reads at a given ratio on a given ground. |
+| `ui/custom_theme.rs` | The custom theme: `CustomTheme`, the saved choices (base Midnight or Daylight, accent hue and intensity, tint hue and strength) and the `Palette` they make. Each colour is recoloured at its own luminance; then the grounds keep the base's steps (`keep_steps`), `contrast::lift` moves foregrounds to the base theme's ratios times 1.04, and text colours clear every wash they are drawn over (`clear_text`). Status colours, graph lanes, syntax, danger and diff colours keep the base's hues. |
+| `ui/fonts.rs` | Registers the bundled fonts: Inter, JetBrains Mono NL, Phosphor, the heading face and the Canopy CJK fallback. |
 | `ui/art.rs` | The illustrations (logo mark, welcome canopy, empty-state spots) drawn with the painter in the active theme's colours; each grows in once when it appears. |
 | `ui/widgets.rs` | Ref pills, avatars, badges, segmented controls, switches, checkboxes, and the older button helpers, which now draw `ui::kit` buttons. |
 | `ui/folder_picker.rs` | Native folder selection on a background thread; a bounded result channel and requesting-field lifetime keep the event loop responsive. |

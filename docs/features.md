@@ -181,10 +181,13 @@ the session.
 | Keyboard-only use: one Tab stop per list with the arrows inside, Shift+F10 context menus, modal palette, cheatsheet and dialogs that give focus back | Unreleased | ? | ? | ? |
 | Native folder chooser without blocking the app | Unreleased | ? | ? | ? |
 | Configurable keybindings | Planned | ? | ? | ? |
-| Dark and light themes (two in v0.1, eight in `main`, one high-contrast) | Done | Yes | Yes | ? |
+| Dark and light themes (Midnight and Daylight) | Done | Yes | Yes | ? |
+| Observatory theme (the previous Midnight) | Unreleased | ? | ? | ? |
+| High contrast switch for every theme (keeps the theme's backgrounds and colours, raises text, outlines and focus) | Unreleased | ? | ? | ? |
+| History graph options: commit marks (dots, rings, squares, diamonds) and lines (curves, metro, circuit) | Unreleased | ? | ? | ? |
 | Appearance options: Style (Standard, Deeper), Density (Comfortable, Dense), Motion (match system, reduced, full); Translucent surfaces (off by default; menus, select lists, popovers, dialogs, toasts, the command palette and the cheatsheet) | Unreleased | ? | ? | ? |
-| Command palette entries for Style, Density, Translucent surfaces and Motion | Unreleased | ? | ? | ? |
-| Custom themes | Planned | No | Yes | No |
+| Command palette entries for Style, Density, Translucent surfaces, High contrast and Motion; High contrast also in the toolbar's theme menu | Unreleased | ? | ? | ? |
+| Custom theme: Midnight or Daylight recoloured from an accent (swatches, hue, intensity) and a tint (swatches, hue, strength); text and lines keep their contrast; works with High contrast | Unreleased | No | Yes | No |
 | Confirmation for destructive operations | Done | Yes | Yes | Yes |
 | Toast notifications with git's error output and a viewport-bounded overflow stack | Done | ? | ? | ? |
 | Localisation | Planned | ? | ? | Yes |

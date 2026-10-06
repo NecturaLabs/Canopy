@@ -24,9 +24,10 @@ use crate::keymap::{Command, Section as KeySection};
 use crate::repo_config::{ConfigValue, GitFacts};
 use crate::settings::{CloneProtocol, DiffPrefs, PullChoice, PullMode, Settings, WhitespaceMode};
 use crate::system_apps::Kind;
+use crate::ui::custom_theme::{self, CustomTheme};
 use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::Badge;
-use crate::ui::kit::choice::Segmented;
+use crate::ui::kit::choice::{Segmented, Swatches};
 use crate::ui::kit::field::{NumberField as KitNumber, SearchField, TextField};
 use crate::ui::kit::overlay;
 use crate::ui::kit::overlay::TooltipExt;
@@ -40,7 +41,8 @@ use crate::ui::kit::toggle::Switch;
 use crate::ui::kit::{Button, IconButton, Size, Tone};
 use crate::ui::motion::{self, MotionPref};
 use crate::ui::theme::{
-    self, Density, Elevation, Fill, GlassBlocked, Palette, Style, Surfaces, ThemeId, palette,
+    self, Curve, Density, Elevation, Fill, GlassBlocked, NodeShape, Palette, Style, Surfaces,
+    ThemeId, palette,
 };
 use crate::ui::widgets::forge_icon;
 use crate::updater::{self, UpdateState, Updater};
@@ -772,12 +774,13 @@ fn matches_all(words: &[String], texts: &[&str]) -> bool {
 /// Other words people use for a setting, so a search finds it by them too.
 fn synonyms(title: &str) -> &'static str {
     match title {
-        "Theme" => {
-            "colour color dark light mode midnight daylight aurora ember neon forest paper contrast"
-        }
+        "Theme" => "colour color dark light mode midnight daylight observatory contrast",
         "Style" => "standard deeper flat depth shadows look",
+        "High contrast" => "contrast accessibility low vision glare legibility readable bold",
         "Translucent surfaces" => "glass blur transparency transparent frosted",
         "Density" => "compact dense comfortable spacing row height",
+        "Graph nodes" => "commit graph dots rings squares diamonds shape nodes history",
+        "Graph lines" => "commit graph curves metro circuit lines edges branches history",
         "Motion" => "animation animations reduce reduced motion",
         "Zoom" => "scale size bigger smaller font text",
         "Dates" | "Commit date format" => "time relative calendar iso",
@@ -1625,6 +1628,123 @@ fn switch_with(switch: Switch<'_>, ui: &mut Ui, on: bool, name: &str) -> Respons
     response
 }
 
+/// The custom theme's choices: its base, the accent and the tint. Each applies as it changes.
+fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
+    let defaults = CustomTheme::default();
+    let m = theme::metrics();
+    let p = palette(ui.ctx());
+    let font = FontId::new(m.mono_size, FontFamily::Monospace);
+    // A slot as wide as the widest value, so the rail beside it stays put while dragging.
+    let slot = ui
+        .painter()
+        .layout_no_wrap("000%".to_owned(), font.clone(), p.text_dim)
+        .size()
+        .x;
+    let value = |ui: &mut Ui, text: String| {
+        let height = ui.spacing().interact_size.y;
+        ui.add_sized(
+            [slot, height],
+            egui::Label::new(RichText::new(text).font(font.clone()).color(p.text_dim)),
+        );
+    };
+    row(
+        ui,
+        "Based on",
+        "The theme your colours start from: its backgrounds, text, lines and shapes.",
+        |ui| {
+            let options = [(false, "Midnight"), (true, "Daylight")];
+            Segmented::new(&mut c.light, &options)
+                .label("Based on")
+                .show(ui);
+            revert(ui, &mut c.light, &defaults.light, "Based on");
+        },
+    );
+    let accents = custom_theme::HUES.map(|(hue, name)| (hue, c.accent_sample(hue), name));
+    row(
+        ui,
+        "Accent",
+        "Buttons, links, focus rings and the selection.",
+        |ui| {
+            Swatches::new(&mut c.accent_hue, &accents)
+                .label("Accent")
+                .id_salt("custom-accent")
+                .show(ui);
+            revert(ui, &mut c.accent_hue, &defaults.accent_hue, "Accent");
+        },
+    );
+    row(
+        ui,
+        "Accent hue",
+        "Any hue between the colours above.",
+        |ui| {
+            value(ui, format!("{}°", c.accent_hue));
+            Slider::new(&mut c.accent_hue, 0..=359)
+                .label("Accent hue")
+                .value_text(|v| format!("{v}°"))
+                .width(ZOOM_RAIL_WIDTH)
+                .id_salt("custom-accent-hue")
+                .show(ui);
+        },
+    );
+    row(
+        ui,
+        "Accent intensity",
+        "How vivid the accent is, against the base theme's.",
+        |ui| {
+            value(ui, format!("{}%", c.accent_intensity));
+            Slider::new(&mut c.accent_intensity, CustomTheme::ACCENT_INTENSITY)
+                .label("Accent intensity")
+                .value_text(|v| format!("{v}%"))
+                .width(ZOOM_RAIL_WIDTH)
+                .id_salt("custom-accent-intensity")
+                .show(ui);
+            revert(
+                ui,
+                &mut c.accent_intensity,
+                &defaults.accent_intensity,
+                "Accent intensity",
+            );
+        },
+    );
+    let tints = custom_theme::HUES.map(|(hue, name)| (hue, CustomTheme::tint_sample(hue), name));
+    row(
+        ui,
+        "Tint",
+        "A colour for backgrounds, lines and text. Text and lines keep their contrast.",
+        |ui| {
+            Swatches::new(&mut c.tint_hue, &tints)
+                .label("Tint")
+                .id_salt("custom-tint")
+                .show(ui);
+            revert(ui, &mut c.tint_hue, &defaults.tint_hue, "Tint");
+        },
+    );
+    row(ui, "Tint hue", "Any hue between the colours above.", |ui| {
+        value(ui, format!("{}°", c.tint_hue));
+        Slider::new(&mut c.tint_hue, 0..=359)
+            .label("Tint hue")
+            .value_text(|v| format!("{v}°"))
+            .width(ZOOM_RAIL_WIDTH)
+            .id_salt("custom-tint-hue")
+            .show(ui);
+    });
+    row(
+        ui,
+        "Tint strength",
+        "0% keeps the base theme's neutral backgrounds.",
+        |ui| {
+            value(ui, format!("{}%", c.tint));
+            Slider::new(&mut c.tint, CustomTheme::TINT)
+                .label("Tint strength")
+                .value_text(|v| format!("{v}%"))
+                .width(ZOOM_RAIL_WIDTH)
+                .id_salt("custom-tint-strength")
+                .show(ui);
+            revert(ui, &mut c.tint, &defaults.tint, "Tint strength");
+        },
+    );
+}
+
 /// The fewest and most commits a history page loads, and the stepper's step.
 const COMMIT_PAGE: RangeInclusive<f64> = 200.0..=50_000.0;
 const COMMIT_PAGE_STEP: f64 = 100.0;
@@ -1648,6 +1768,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             }
         }
     }
+    if s.theme == ThemeId::Custom {
+        group_gap(ui, theme::LG);
+        heading(ui, "Custom theme");
+        custom_theme_rows(ui, &mut s.custom_theme);
+    }
     group_gap(ui, theme::LG);
     heading(ui, "Look");
     row(
@@ -1660,6 +1785,26 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
                 .label("Style")
                 .show(ui);
             revert(ui, &mut s.style, &DEFAULTS.style, "Style");
+        },
+    );
+    row(
+        ui,
+        "High contrast",
+        "The chosen theme with stronger text, lines and focus rings, outlines instead of shadows and no translucency, for low vision and glare.",
+        |ui| {
+            let on = s.high_contrast;
+            switch_with(
+                Switch::new(&mut s.high_contrast, ""),
+                ui,
+                on,
+                "High contrast",
+            );
+            revert(
+                ui,
+                &mut s.high_contrast,
+                &DEFAULTS.high_contrast,
+                "High contrast",
+            );
         },
     );
     let blocked = theme::glass_blocked(
@@ -1702,6 +1847,30 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
                 .label("Density")
                 .show(ui);
             revert(ui, &mut s.density, &DEFAULTS.density, "Density");
+        },
+    );
+    row(
+        ui,
+        "Graph nodes",
+        "How commits are drawn in the history graph.",
+        |ui| {
+            let options = NodeShape::ALL.map(|v| (v, v.label()));
+            Segmented::new(&mut s.graph_node, &options)
+                .label("Graph nodes")
+                .show(ui);
+            revert(ui, &mut s.graph_node, &DEFAULTS.graph_node, "Graph nodes");
+        },
+    );
+    row(
+        ui,
+        "Graph lines",
+        "How the history graph joins a branch to the lane it leaves or merges into.",
+        |ui| {
+            let options = Curve::ALL.map(|v| (v, v.label()));
+            Segmented::new(&mut s.graph_curve, &options)
+                .label("Graph lines")
+                .show(ui);
+            revert(ui, &mut s.graph_curve, &DEFAULTS.graph_curve, "Graph lines");
         },
     );
     let system = match motion::system() {
@@ -4920,8 +5089,8 @@ mod tests {
         let terminal = found("TERMINAL here", &mut settings);
         assert_eq!(terminal.count(Section::Integrations), 1, "{terminal:?}");
         // The theme cards are found by a theme's name.
-        let paper = found("paper", &mut settings);
-        assert_eq!(paper.count(Section::Appearance), 1, "{paper:?}");
+        let observatory = found("observatory", &mut settings);
+        assert_eq!(observatory.count(Section::Appearance), 1, "{observatory:?}");
         // A section's name finds all of its rows.
         let updates = found("updates", &mut settings);
         assert!(updates.count(Section::Updates) >= 3, "{updates:?}");

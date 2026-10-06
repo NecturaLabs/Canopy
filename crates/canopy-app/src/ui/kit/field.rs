@@ -185,8 +185,8 @@ pub(crate) fn edge_shape(rect: Rect, radius: CornerRadius, side: Color32, base: 
 
 /// A field's box: the `fill` (a translucent well or an opaque disabled fill), the halo `(colour,
 /// alpha, strength)` outside, and the edge (the theme's edge width), `side` turning to `base` along
-/// the bottom. The halo takes the theme's focus style (`Design::focus`): a tinted band (`Ring`), a
-/// soft glow (`Glow`), or a solid ring past a gap of the ground (`Double`, Contrast).
+/// the bottom. The halo takes the theme's focus style (`Design::focus`): a tinted band (`Ring`) or
+/// a solid ring past a gap of the ground (`Double`, high contrast).
 pub(crate) fn paint_box(
     painter: &Painter,
     rect: Rect,
@@ -196,7 +196,7 @@ pub(crate) fn paint_box(
 ) {
     if let Some((color, alpha, t)) = halo {
         let grow = |by: f32| radius + CornerRadius::same(crate::ui::saturate_u8(by.round()));
-        match theme::active().design().focus {
+        match theme::active_design().focus {
             FocusStyle::Ring { .. } => {
                 let w = HALO * t;
                 painter.rect_stroke(
@@ -206,14 +206,6 @@ pub(crate) fn paint_box(
                     StrokeKind::Middle,
                 );
             }
-            FocusStyle::Glow { width } => paint::ring_glow(
-                painter,
-                rect,
-                radius,
-                color,
-                width,
-                f32::from(alpha) / 255.0 * 2.0 * t,
-            ),
             FocusStyle::Double { width } => {
                 let w = width * t;
                 painter.rect_stroke(
@@ -2266,8 +2258,8 @@ mod tests {
         );
     }
 
-    /// A focused field's halo takes the theme's focus style: Contrast's solid ring past a gap,
-    /// Neon's glow (rings fading outwards), and the edges come in the theme's edge width.
+    /// A focused field's halo takes the theme's focus style: high contrast's solid ring past a gap,
+    /// and the edges come in the theme's edge width.
     #[test]
     fn the_focus_halo_takes_the_themes_focus_style() {
         let strokes = |theme: theme::ThemeId| {
@@ -2281,7 +2273,7 @@ mod tests {
             let shapes = frame(&ctx, Vec::new(), |ui| {
                 TextField::new(&mut text).id_salt("h").show(ui);
             });
-            let p = theme.palette();
+            let p = theme::active_palette();
             shapes
                 .iter()
                 .filter_map(|c| match &c.shape {
@@ -2292,15 +2284,12 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         };
-        let contrast = strokes(theme::ThemeId::Contrast);
+        theme::set_high_contrast(true);
+        let contrast = strokes(theme::ThemeId::Midnight);
+        theme::set_high_contrast(false);
         assert!(
             contrast.contains(&(true, 2.5)),
             "a solid 2.5 pt focus ring: {contrast:?}"
-        );
-        let neon = strokes(theme::ThemeId::Neon);
-        assert!(
-            neon.iter().filter(|(_, w)| (*w - 1.0).abs() < 0.01).count() >= 4,
-            "a glow of thin rings: {neon:?}"
         );
     }
 

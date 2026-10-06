@@ -1,7 +1,9 @@
 //! Design tokens. This is the only place colours, geometry and type sizes are defined; see
 //! `docs/design.md`.
 //!
-//! Canopy ships eight themes. Each is a [`Palette`]: the colours both styles share, plus one
+//! Canopy ships three themes, Midnight and Daylight (the default look) and Observatory, plus the
+//! custom theme recoloured from either of the first two (`ui/custom_theme.rs`). Each is a
+//! [`Palette`]: the colours both styles share, plus one
 //! [`Surfaces`] set per [`Style`] (Standard, the default, and Deeper). Geometry and type come from
 //! [`Metrics`], one table per ([`Density`], [`Style`]) pair. The active theme, style, density and
 //! translucency are globals set by [`apply`], so views ask [`palette`], [`surfaces`], [`metrics`]
@@ -16,14 +18,16 @@
 )]
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{LazyLock, Mutex, PoisonError, RwLock};
 
 use egui::{
     Color32, CornerRadius, FontFamily, FontId, Margin, Shadow, Stroke, TextStyle, Theme, Visuals,
     vec2,
 };
 use serde::{Deserialize, Serialize};
+
+pub use super::custom_theme::CustomTheme;
 
 pub const XS: f32 = 4.0;
 pub const SM: f32 = 8.0;
@@ -39,7 +43,7 @@ pub const MEASURE: f32 = 920.0;
 /// A disabled control's opacity (the whole control, label included).
 pub const DISABLED_ALPHA: f32 = 0.42;
 /// Opacity of the status washes over their [`Tones`] (16%).
-const TONE_ALPHA: u8 = 41;
+pub(super) const TONE_ALPHA: u8 = 41;
 
 pub const MIN_WINDOW_SIZE: egui::Vec2 = vec2(900.0, 560.0);
 /// Shared control geometry, in logical points before interface zoom.
@@ -191,17 +195,17 @@ pub struct Palette {
     pub concept: &'static str,
     /// Dark theme (egui's dark visuals as the base).
     pub dark: bool,
-    /// Stricter contrast targets (Contrast): text 10:1, outlines and focus 4.5:1.
+    /// Stricter contrast targets (high contrast): text 10:1, outlines and focus 4.5:1.
     pub strict: bool,
     pub standard: Surfaces,
     pub deeper: Surfaces,
-    /// Primary text: 7:1 on every surface, row state and diff background (10:1 in Contrast).
+    /// Primary text: 7:1 on every surface, row state and diff background (10:1 at high contrast).
     pub text: Color32,
-    /// Secondary text: authors, dates, paths, inactive labels. 4.5:1 (7:1 in Contrast).
+    /// Secondary text: authors, dates, paths, inactive labels. 4.5:1 (7:1 at high contrast).
     pub text_dim: Color32,
     /// Tertiary text: placeholders, line numbers, shortcuts, section labels. 4.5:1 (5.5:1).
     pub text_faint: Color32,
-    /// Label and icon of a disabled control: 3:1 (4.5:1 in Contrast) on `disabled_fill`, every
+    /// Label and icon of a disabled control: 3:1 (4.5:1 at high contrast) on `disabled_fill`, every
     /// `raised*` fill, the grounds and their hover tints, dimmer than `text_faint`. Controls drawn
     /// with it are not also faded by [`DISABLED_ALPHA`].
     pub disabled_text: Color32,
@@ -229,7 +233,7 @@ pub struct Palette {
     /// Bases of the status washes (banners, callouts, dialog discs, diff lines).
     pub tones: Tones,
     /// Outlines that identify an input: text fields, checkbox and radio rims. 3:1 on every surface
-    /// (4.5:1 in Contrast).
+    /// (4.5:1 at high contrast).
     pub control_border: Color32,
     /// Tooltip text and its second line.
     pub on_tooltip: Color32,
@@ -274,9 +278,409 @@ const fn hex(rgb: u32) -> Color32 {
 // Each theme is an OKLCH surface ladder in its own neutral hue (Standard: flat chrome one clear
 // step off the ground; Deeper: a receding ground under lifted cards), its signature colours, status
 // tones and ten lanes at least dE 25 apart, contrast-fitted against the tests at the end of this file.
-/// "Midnight" (Observatory: navy-ink night, periwinkle signature, starlight links): Observatory: navy-ink night, a periwinkle signature and starlight links, precise as an instrument.
+/// "Midnight" (concept 1, the default): neutral blue-black, two-tone chrome, an indigo signature.
 pub const MIDNIGHT: Palette = Palette {
     name: "Midnight",
+    concept: "Neutral blue-black with two-tone chrome and an indigo signature.",
+    dark: true,
+    strict: false,
+    standard: Surfaces {
+        bg: hex(0x0F1012),
+        panel: hex(0x151619),
+        pane: hex(0x0F1012),
+        elevated: hex(0x1B1C20),
+        overlay: hex(0x1B1C20),
+        field: hex(0x111214),
+        track: hex(0x0C0D0F),
+        switch_off: hex(0x30323A),
+        badge: hex(0x2B2D33),
+        border: hex(0x24262B),
+        edge: hex(0x2B2D33),
+        raised_edge: hex(0x2B2D33),
+        overlay_edge: hex(0x2B2D33),
+        tab_edge: hex(0x2B2D33),
+        track_edge: hex(0x24262B),
+        pane_edge: None,
+        keycap_edge: hex(0x0B0B0D),
+        raised: Fill::flat(hex(0x1B1C20)),
+        raised_hover: Fill::flat(hex(0x222329)),
+        raised_pressed: Fill::flat(hex(0x17181B)),
+        thumb: Fill::flat(hex(0x26282E)),
+        keycap: Fill::flat(hex(0x24262B)),
+        tab: Fill::flat(hex(0x1B1C20)),
+        tooltip: Fill::flat(hex(0x2A2C32)),
+        tooltip_key: hex(0x24262B),
+        tooltip_key_edge: hex(0x2B2D33),
+        tooltip_key_base: Some(hex(0x0B0B0D)),
+        on_tooltip_key: hex(0xA4A6AD),
+        knob: Fill::flat(hex(0xFFFFFF)),
+        primary: Fill::flat(hex(0x5E6AD2)),
+        primary_hover: Fill::flat(hex(0x5964CC)),
+        primary_pressed: Fill::flat(hex(0x5560C4)),
+        danger_solid: Fill::flat(hex(0xD63C42)),
+        danger_solid_hover: Fill::flat(hex(0xD0353D)),
+        danger_solid_pressed: Fill::flat(hex(0xC2353B)),
+        added_bg: hex(0x15211C),
+        removed_bg: hex(0x231517),
+        added_gutter: hex(0x192E26),
+        removed_gutter: hex(0x33191C),
+        deck: Fill::flat(hex(0x151619)),
+        deck_edge: hex(0x24262B),
+        pane_header: hex(0x0F1012),
+        pane_header_seam: hex(0x24262B),
+        knob_edge: None,
+        disabled_fill: hex(0x17181C),
+        disabled_edge: hex(0x25272C),
+    },
+    deeper: Surfaces {
+        bg: hex(0x0A0B0D),
+        panel: hex(0x0A0B0D),
+        pane: hex(0x151619),
+        elevated: hex(0x1D1E23),
+        overlay: hex(0x1D1E23),
+        field: hex(0x0F1013),
+        track: hex(0x0B0C0E),
+        switch_off: hex(0x30323A),
+        badge: hex(0x2A2C32),
+        border: hex(0x22242A),
+        edge: hex(0x2D2F36),
+        raised_edge: hex(0x2F3138),
+        overlay_edge: hex(0x2E3037),
+        tab_edge: hex(0x2A2C32),
+        track_edge: hex(0x1F2126),
+        pane_edge: Some(hex(0x1F2126)),
+        keycap_edge: hex(0x08080A),
+        raised: Fill {
+            top: hex(0x26282E),
+            bottom: hex(0x1D1E23),
+        },
+        raised_hover: Fill {
+            top: hex(0x2C2E35),
+            bottom: hex(0x222329),
+        },
+        raised_pressed: Fill {
+            top: hex(0x1A1B1F),
+            bottom: hex(0x1F2025),
+        },
+        thumb: Fill {
+            top: hex(0x2D2F36),
+            bottom: hex(0x25272D),
+        },
+        keycap: Fill {
+            top: hex(0x2A2C32),
+            bottom: hex(0x202126),
+        },
+        tab: Fill {
+            top: hex(0x202227),
+            bottom: hex(0x1A1B20),
+        },
+        tooltip: Fill {
+            top: hex(0x2C2E35),
+            bottom: hex(0x24262C),
+        },
+        tooltip_key: hex(0x2A2C32),
+        tooltip_key_edge: hex(0x2D2F36),
+        tooltip_key_base: Some(hex(0x08080A)),
+        on_tooltip_key: hex(0xA4A6AD),
+        knob: Fill {
+            top: hex(0xFFFFFF),
+            bottom: hex(0xE6E7EC),
+        },
+        primary: Fill {
+            top: hex(0x616CD6),
+            bottom: hex(0x4753BE),
+        },
+        primary_hover: Fill {
+            top: hex(0x5C66D0),
+            bottom: hex(0x434DB8),
+        },
+        primary_pressed: Fill {
+            top: hex(0x5260C8),
+            bottom: hex(0x4F5AC2),
+        },
+        danger_solid: Fill {
+            top: hex(0xD63E44),
+            bottom: hex(0xBB282E),
+        },
+        danger_solid_hover: Fill {
+            top: hex(0xD0373F),
+            bottom: hex(0xB52029),
+        },
+        danger_solid_pressed: Fill {
+            top: hex(0xC2353B),
+            bottom: hex(0xC9363C),
+        },
+        added_bg: hex(0x192522),
+        removed_bg: hex(0x27191D),
+        added_gutter: hex(0x1E322B),
+        removed_gutter: hex(0x381D21),
+        deck: Fill {
+            top: hex(0x1C1D20),
+            bottom: hex(0x17181B),
+        },
+        deck_edge: hex(0x060608),
+        pane_header: hex(0x191A1D),
+        pane_header_seam: hex(0x323556),
+        knob_edge: None,
+        disabled_fill: hex(0x1A1B1F),
+        disabled_edge: hex(0x26282E),
+    },
+    text: hex(0xECECEF),
+    text_dim: hex(0xA4A6AD),
+    text_faint: hex(0x9698A0),
+    disabled_text: hex(0x8A8C94),
+    accent: hex(0x9AA2FF),
+    accent2: hex(0x7EC8F2),
+    focus: hex(0x7C86FF),
+    selection: hex(0x7C86FF),
+    selection_alpha: 33,
+    on_accent: hex(0xFFFFFF),
+    success: hex(0x4CC38A),
+    warning: hex(0xD9A54A),
+    danger: hex(0xFF7D81),
+    danger_base: hex(0xE5484D),
+    on_danger: hex(0xFFFFFF),
+    tones: Tones {
+        accent: hex(0x7C86FF),
+        success: hex(0x4CC38A),
+        warning: hex(0xD9A54A),
+        danger: hex(0xE5484D),
+    },
+    control_border: hex(0x787A81),
+    on_tooltip: hex(0xECECEF),
+    on_tooltip_dim: hex(0xB6B6BA),
+    hover_ink: hex(0xFFFFFF),
+    shadow: hex(0x000000),
+    primary_shadow: hex(0x000000),
+    danger_shadow: hex(0x000000),
+    scrim: Color32::from_rgba_premultiplied(4, 4, 5, 158),
+    glass_alpha: 204,
+    glass_luminance: 0.03,
+    lanes: [
+        hex(0x7C86FF),
+        hex(0x4CC38A),
+        hex(0xE5739F),
+        hex(0xD9A54A),
+        hex(0x4EB8E9),
+        hex(0xEE8266),
+        hex(0xCB81E4),
+        hex(0x43C3C3),
+        hex(0x9EBF5F),
+        hex(0xDDAA88),
+    ],
+    syntax: Syntax {
+        keyword: hex(0xADB8FF),
+        string: hex(0x7BD4A4),
+        comment: hex(0x9698A0),
+        number: hex(0xF3B17A),
+        function: hex(0x82CBF6),
+        type_: hex(0x7BDAD9),
+        constant: hex(0xF49CBB),
+    },
+};
+
+/// "Daylight" (concept 1 by day): white canvas, light-grey chrome and the same indigo.
+pub const DAYLIGHT: Palette = Palette {
+    name: "Daylight",
+    concept: "White canvas, light-grey chrome and the same indigo: Midnight by day.",
+    dark: false,
+    strict: false,
+    standard: Surfaces {
+        bg: hex(0xFFFFFF),
+        panel: hex(0xF7F7F8),
+        pane: hex(0xFFFFFF),
+        elevated: hex(0xFFFFFF),
+        overlay: hex(0xFFFFFF),
+        field: hex(0xFFFFFF),
+        track: hex(0xEFEFF1),
+        switch_off: hex(0xD4D4DA),
+        badge: hex(0xECECEF),
+        border: hex(0xE6E6EA),
+        edge: hex(0xD9D9DF),
+        raised_edge: hex(0xD9D9DF),
+        overlay_edge: hex(0xE1E1E6),
+        tab_edge: hex(0xE1E1E6),
+        track_edge: hex(0xE3E3E8),
+        pane_edge: None,
+        keycap_edge: hex(0xCDCED5),
+        raised: Fill::flat(hex(0xFFFFFF)),
+        raised_hover: Fill::flat(hex(0xF6F6F8)),
+        raised_pressed: Fill::flat(hex(0xEFEFF2)),
+        thumb: Fill::flat(hex(0xFFFFFF)),
+        keycap: Fill::flat(hex(0xF3F3F5)),
+        tab: Fill::flat(hex(0xFFFFFF)),
+        tooltip: Fill::flat(hex(0x18181B)),
+        tooltip_key: hex(0x2E2E33),
+        tooltip_key_edge: hex(0x3C3C42),
+        tooltip_key_base: None,
+        on_tooltip_key: hex(0xD4D4D8),
+        knob: Fill::flat(hex(0xFFFFFF)),
+        primary: Fill::flat(hex(0x5E6AD2)),
+        primary_hover: Fill::flat(hex(0x5560C8)),
+        primary_pressed: Fill::flat(hex(0x4B56B8)),
+        danger_solid: Fill::flat(hex(0xD83C41)),
+        danger_solid_hover: Fill::flat(hex(0xCC3238)),
+        danger_solid_pressed: Fill::flat(hex(0xB92B31)),
+        added_bg: hex(0xEDF7F2),
+        removed_bg: hex(0xFCF0F0),
+        added_gutter: hex(0xDDF0E7),
+        removed_gutter: hex(0xF9E2E3),
+        deck: Fill::flat(hex(0xF7F7F8)),
+        deck_edge: hex(0xE6E6EA),
+        pane_header: hex(0xFFFFFF),
+        pane_header_seam: hex(0xE6E6EA),
+        knob_edge: Some(hex(0x94949A)),
+        disabled_fill: hex(0xF0F0F2),
+        disabled_edge: hex(0xE1E1E6),
+    },
+    deeper: Surfaces {
+        bg: hex(0xECEEF1),
+        panel: hex(0xECEEF1),
+        pane: hex(0xFFFFFF),
+        elevated: hex(0xFFFFFF),
+        overlay: hex(0xFFFFFF),
+        field: hex(0xFFFFFF),
+        track: hex(0xE2E4E8),
+        switch_off: hex(0xD4D4DA),
+        badge: hex(0xECECEF),
+        border: hex(0xE3E5EA),
+        edge: hex(0xD3D6DC),
+        raised_edge: hex(0xD3D6DC),
+        overlay_edge: hex(0xDFE1E6),
+        tab_edge: hex(0xD9DCE1),
+        track_edge: hex(0xD9DCE1),
+        pane_edge: Some(hex(0xE3E5EA)),
+        keycap_edge: hex(0xC9CCD3),
+        raised: Fill {
+            top: hex(0xFFFFFF),
+            bottom: hex(0xF4F5F7),
+        },
+        raised_hover: Fill {
+            top: hex(0xFFFFFF),
+            bottom: hex(0xEEF0F3),
+        },
+        raised_pressed: Fill {
+            top: hex(0xECEEF1),
+            bottom: hex(0xF2F3F5),
+        },
+        thumb: Fill {
+            top: hex(0xFFFFFF),
+            bottom: hex(0xF6F7F9),
+        },
+        keycap: Fill {
+            top: hex(0xFFFFFF),
+            bottom: hex(0xF0F1F4),
+        },
+        tab: Fill {
+            top: hex(0xFFFFFF),
+            bottom: hex(0xF6F7F9),
+        },
+        tooltip: Fill::flat(hex(0x18181B)),
+        tooltip_key: hex(0x2E2E33),
+        tooltip_key_edge: hex(0x3C3C42),
+        tooltip_key_base: None,
+        on_tooltip_key: hex(0xD4D4D8),
+        knob: Fill {
+            top: hex(0xFFFFFF),
+            bottom: hex(0xF1F2F5),
+        },
+        primary: Fill {
+            top: hex(0x616CD6),
+            bottom: hex(0x4753BE),
+        },
+        primary_hover: Fill {
+            top: hex(0x5C66D0),
+            bottom: hex(0x434DB8),
+        },
+        primary_pressed: Fill {
+            top: hex(0x4F5BC4),
+            bottom: hex(0x5561CC),
+        },
+        danger_solid: Fill {
+            top: hex(0xD63E44),
+            bottom: hex(0xBB282E),
+        },
+        danger_solid_hover: Fill {
+            top: hex(0xD0373F),
+            bottom: hex(0xB52029),
+        },
+        danger_solid_pressed: Fill {
+            top: hex(0xBF3036),
+            bottom: hex(0xC9363C),
+        },
+        added_bg: hex(0xEDF7F2),
+        removed_bg: hex(0xFCF0F0),
+        added_gutter: hex(0xDDF0E7),
+        removed_gutter: hex(0xF9E2E3),
+        deck: Fill {
+            top: hex(0xF8FAFD),
+            bottom: hex(0xF3F5F8),
+        },
+        deck_edge: hex(0xD3D5D8),
+        pane_header: hex(0xFAFAFA),
+        pane_header_seam: hex(0xCED1EE),
+        knob_edge: Some(hex(0x898C92)),
+        disabled_fill: hex(0xF1F2F4),
+        disabled_edge: hex(0xDCDEE3),
+    },
+    text: hex(0x18181B),
+    text_dim: hex(0x575962),
+    text_faint: hex(0x5D5F69),
+    disabled_text: hex(0x6A6B73),
+    accent: hex(0x4651C0),
+    accent2: hex(0x006790),
+    focus: hex(0x5E6AD2),
+    selection: hex(0x5E6AD2),
+    selection_alpha: 26,
+    on_accent: hex(0xFFFFFF),
+    success: hex(0x006A4B),
+    warning: hex(0x805500),
+    danger: hex(0xB2191F),
+    danger_base: hex(0xD93D42),
+    on_danger: hex(0xFFFFFF),
+    tones: Tones {
+        accent: hex(0x6E78E0),
+        success: hex(0x23BA7D),
+        warning: hex(0xF8AC3D),
+        danger: hex(0xF05656),
+    },
+    control_border: hex(0x7C7D85),
+    on_tooltip: hex(0xF4F4F5),
+    on_tooltip_dim: hex(0xB6B6B8),
+    hover_ink: hex(0x14141E),
+    shadow: hex(0x101018),
+    primary_shadow: hex(0x1E1E50),
+    danger_shadow: hex(0x781414),
+    scrim: Color32::from_rgba_premultiplied(6, 6, 9, 82),
+    glass_alpha: 214,
+    glass_luminance: 0.8,
+    lanes: [
+        hex(0x5E6AD2),
+        hex(0x1D9A5F),
+        hex(0xCC477C),
+        hex(0xB07A1C),
+        hex(0x017EAF),
+        hex(0xC64E31),
+        hex(0x822E9E),
+        hex(0x02888E),
+        hex(0x648828),
+        hex(0x8A4F28),
+    ],
+    syntax: Syntax {
+        keyword: hex(0x4B50B0),
+        string: hex(0x116F42),
+        comment: hex(0x696B75),
+        number: hex(0x974C01),
+        function: hex(0x006495),
+        type_: hex(0x006B70),
+        constant: hex(0xA22C5E),
+    },
+};
+
+/// "Observatory" (Midnight until build 690): navy-ink night, a periwinkle signature and starlight
+/// links.
+pub const OBSERVATORY: Palette = Palette {
+    name: "Observatory",
     concept: "Observatory: navy-ink night, a periwinkle signature and starlight links, precise as an instrument.",
     dark: true,
     strict: false,
@@ -475,1377 +879,178 @@ pub const MIDNIGHT: Palette = Palette {
     },
 };
 
-/// "Daylight" (Drafting studio: white sheets on slate, cobalt ink, teal pen): Drafting studio: cool white sheets on a slate desk, cobalt ink and a teal second pen.
-pub const DAYLIGHT: Palette = Palette {
-    name: "Daylight",
-    concept: "Drafting studio: cool white sheets on a slate desk, cobalt ink and a teal second pen.",
-    dark: false,
-    strict: false,
-    standard: Surfaces {
-        bg: hex(0xF7F9FC),
-        panel: hex(0xE4EBF5),
-        pane: hex(0xF7F9FC),
-        elevated: hex(0xFFFFFF),
-        overlay: hex(0xFFFFFF),
-        field: hex(0xFFFFFF),
-        track: hex(0xE6ECF4),
-        switch_off: hex(0xC3CEDD),
-        badge: hex(0xDEE5EF),
-        border: hex(0xD5DEEA),
-        edge: hex(0xC9D4E3),
-        raised_edge: hex(0xC9D4E3),
-        overlay_edge: hex(0xD1DBE8),
-        tab_edge: hex(0xD1DBE8),
-        track_edge: hex(0xD8E1EC),
-        pane_edge: None,
-        keycap_edge: hex(0xB7C2D1),
-        raised: Fill::flat(hex(0xFFFFFF)),
-        raised_hover: Fill::flat(hex(0xF0F3F9)),
-        raised_pressed: Fill::flat(hex(0xE9EEF5)),
-        thumb: Fill::flat(hex(0xFFFFFF)),
-        keycap: Fill::flat(hex(0xECF1F7)),
-        tab: Fill::flat(hex(0xFFFFFF)),
-        tooltip: Fill::flat(hex(0x181E29)),
-        tooltip_key: hex(0x2C313C),
-        tooltip_key_edge: hex(0x3B404A),
-        tooltip_key_base: None,
-        on_tooltip_key: hex(0xD1D3D9),
-        knob: Fill::flat(hex(0xFFFFFF)),
-        primary: Fill::flat(hex(0x2C5FDD)),
-        primary_hover: Fill::flat(hex(0x2658D5)),
-        primary_pressed: Fill::flat(hex(0x2354D1)),
-        danger_solid: Fill::flat(hex(0xD73E41)),
-        danger_solid_hover: Fill::flat(hex(0xD2383D)),
-        danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0xE7F4F2),
-        removed_bg: hex(0xF7ECEF),
-        added_gutter: hex(0xD7F0E9),
-        removed_gutter: hex(0xF6E1E3),
-        deck: Fill::flat(hex(0xE4EBF5)),
-        deck_edge: hex(0xD5DEEA),
-        pane_header: hex(0xF7F9FC),
-        pane_header_seam: hex(0xD5DEEA),
-        knob_edge: Some(hex(0x94928B)),
-        disabled_fill: hex(0xE2E8F1),
-        disabled_edge: hex(0xD3DCE9),
-    },
-    deeper: Surfaces {
-        bg: hex(0xDCE3EE),
-        panel: hex(0xDCE3EE),
-        pane: hex(0xFFFFFF),
-        elevated: hex(0xFFFFFF),
-        overlay: hex(0xFFFFFF),
-        field: hex(0xFFFFFF),
-        track: hex(0xD8E1EC),
-        switch_off: hex(0xC3CEDD),
-        badge: hex(0xDEE5EF),
-        border: hex(0xD8E1EC),
-        edge: hex(0xC8D3E2),
-        raised_edge: hex(0xC8D3E2),
-        overlay_edge: hex(0xD3DCE9),
-        tab_edge: hex(0xCFD9E7),
-        track_edge: hex(0xCFD9E7),
-        pane_edge: Some(hex(0xD3DCE9)),
-        keycap_edge: hex(0xB6C1D0),
-        raised: Fill {
-            top: hex(0xFFFFFF),
-            bottom: hex(0xF0F4F9),
-        },
-        raised_hover: Fill {
-            top: hex(0xF7F9FC),
-            bottom: hex(0xECF0F7),
-        },
-        raised_pressed: Fill {
-            top: hex(0xE7ECF4),
-            bottom: hex(0xEBF0F6),
-        },
-        thumb: Fill {
-            top: hex(0xFFFFFF),
-            bottom: hex(0xF3F6FA),
-        },
-        keycap: Fill {
-            top: hex(0xF7F9FC),
-            bottom: hex(0xEEF2F8),
-        },
-        tab: Fill {
-            top: hex(0xFFFFFF),
-            bottom: hex(0xF2F5FA),
-        },
-        tooltip: Fill::flat(hex(0x181E29)),
-        tooltip_key: hex(0x2C313C),
-        tooltip_key_edge: hex(0x3B404A),
-        tooltip_key_base: None,
-        on_tooltip_key: hex(0xD1D3D9),
-        knob: Fill {
-            top: hex(0xFFFFFF),
-            bottom: hex(0xF3F5F8),
-        },
-        primary: Fill {
-            top: hex(0x3569E7),
-            bottom: hex(0x2354D1),
-        },
-        primary_hover: Fill {
-            top: hex(0x2F62E0),
-            bottom: hex(0x1D4DC9),
-        },
-        primary_pressed: Fill {
-            top: hex(0x2050CD),
-            bottom: hex(0x2455D2),
-        },
-        danger_solid: Fill {
-            top: hex(0xD73E40),
-            bottom: hex(0xC2282F),
-        },
-        danger_solid_hover: Fill {
-            top: hex(0xD1373B),
-            bottom: hex(0xBC202A),
-        },
-        danger_solid_pressed: Fill {
-            top: hex(0xC72C34),
-            bottom: hex(0xCC3239),
-        },
-        added_bg: hex(0xEEFAF5),
-        removed_bg: hex(0xFEF2F2),
-        added_gutter: hex(0xDEF5EC),
-        removed_gutter: hex(0xFDE6E6),
-        deck: Fill {
-            top: hex(0xF7F9FC),
-            bottom: hex(0xEFF3F8),
-        },
-        deck_edge: hex(0xC4CFDE),
-        pane_header: hex(0xF2F4FA),
-        pane_header_seam: hex(0xA9BFF2),
-        knob_edge: Some(hex(0x878B91)),
-        disabled_fill: hex(0xE3E9F2),
-        disabled_edge: hex(0xD1DBE8),
-    },
-    text: hex(0x131720),
-    text_dim: hex(0x4E5767),
-    text_faint: hex(0x515A67),
-    disabled_text: hex(0x626A7A),
-    accent: hex(0x1C4BC1),
-    accent2: hex(0x006273),
-    focus: hex(0x386BE2),
-    selection: hex(0x5280E8),
-    selection_alpha: 30,
-    on_accent: hex(0xFFFFFF),
-    success: hex(0x00624B),
-    warning: hex(0x744F00),
-    danger: hex(0xA70E14),
-    danger_base: hex(0xD93D42),
-    on_danger: hex(0xFFFFFF),
-    tones: Tones {
-        accent: hex(0x628EED),
-        success: hex(0x23BA7D),
-        warning: hex(0xF8AC3D),
-        danger: hex(0xF05656),
-    },
-    control_border: hex(0x6D7785),
-    on_tooltip: hex(0xF1F3F8),
-    on_tooltip_dim: hex(0xB0B3BA),
-    hover_ink: hex(0x10161F),
-    shadow: hex(0x16243C),
-    primary_shadow: hex(0x062372),
-    danger_shadow: hex(0x781414),
-    scrim: Color32::from_rgba_premultiplied(5, 7, 12, 82),
-    glass_alpha: 178,
-    glass_luminance: 0.38,
-    lanes: [
-        hex(0x3764CD),
-        hex(0x02798B),
-        hex(0xB73E00),
-        hex(0x077D0A),
-        hex(0x913DA1),
-        hex(0x7E5C01),
-        hex(0x0181C4),
-        hex(0xB83241),
-        hex(0x007A54),
-        hex(0xA02366),
-    ],
-    syntax: Syntax {
-        keyword: hex(0x2D4FCB),
-        string: hex(0x13703F),
-        comment: hex(0x656C7C),
-        number: hex(0xA04800),
-        function: hex(0x00658C),
-        type_: hex(0x7440BC),
-        constant: hex(0xB0295C),
-    },
-};
-
-/// "Aurora" (Polar night: deep marine sky, ice-teal and aurora violet): Polar night: deep marine sky lit by ice-teal and aurora violet, with green lights in the lanes.
-pub const AURORA: Palette = Palette {
-    name: "Aurora",
-    concept: "Polar night: deep marine sky lit by ice-teal and aurora violet, with green lights in the lanes.",
-    dark: true,
-    strict: false,
-    standard: Surfaces {
-        bg: hex(0x001B26),
-        panel: hex(0x001121),
-        pane: hex(0x001B26),
-        elevated: hex(0x032A38),
-        overlay: hex(0x042B3A),
-        field: hex(0x011F2A),
-        track: hex(0x001822),
-        switch_off: hex(0x164253),
-        badge: hex(0x0C3A4B),
-        border: hex(0x063040),
-        edge: hex(0x093849),
-        raised_edge: hex(0x093849),
-        overlay_edge: hex(0x093748),
-        tab_edge: hex(0x083747),
-        track_edge: hex(0x042C3B),
-        pane_edge: None,
-        keycap_edge: hex(0x00131D),
-        raised: Fill::flat(hex(0x032A38)),
-        raised_hover: Fill::flat(hex(0x052F3E)),
-        raised_pressed: Fill::flat(hex(0x022634)),
-        thumb: Fill::flat(hex(0x063242)),
-        keycap: Fill::flat(hex(0x052E3E)),
-        tab: Fill::flat(hex(0x032A38)),
-        tooltip: Fill::flat(hex(0x0C3A4B)),
-        tooltip_key: hex(0x052E3E),
-        tooltip_key_edge: hex(0x093849),
-        tooltip_key_base: Some(hex(0x00131D)),
-        on_tooltip_key: hex(0xACC8D0),
-        knob: Fill::flat(hex(0xFFFFFF)),
-        primary: Fill::flat(hex(0x2BD7D6)),
-        primary_hover: Fill::flat(hex(0x38DFDD)),
-        primary_pressed: Fill::flat(hex(0x08CCCB)),
-        danger_solid: Fill::flat(hex(0xD73E41)),
-        danger_solid_hover: Fill::flat(hex(0xD2383D)),
-        danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0x0A2D2E),
-        removed_bg: hex(0x151F2A),
-        added_gutter: hex(0x133B35),
-        removed_gutter: hex(0x27222D),
-        deck: Fill::flat(hex(0x001121)),
-        deck_edge: hex(0x063040),
-        pane_header: hex(0x001B26),
-        pane_header_seam: hex(0x063040),
-        knob_edge: None,
-        disabled_fill: hex(0x032735),
-        disabled_edge: hex(0x063141),
-    },
-    deeper: Surfaces {
-        bg: hex(0x001121),
-        panel: hex(0x001121),
-        pane: hex(0x02232F),
-        elevated: hex(0x052E3E),
-        overlay: hex(0x063040),
-        field: hex(0x001D29),
-        track: hex(0x001119),
-        switch_off: hex(0x164253),
-        badge: hex(0x0D3A4B),
-        border: hex(0x063040),
-        edge: hex(0x0D3A4B),
-        raised_edge: hex(0x103C4E),
-        overlay_edge: hex(0x0D3A4B),
-        tab_edge: hex(0x0B394A),
-        track_edge: hex(0x042A39),
-        pane_edge: Some(hex(0x073444)),
-        keycap_edge: hex(0x000C13),
-        raised: Fill {
-            top: hex(0x093849),
-            bottom: hex(0x052F3E),
-        },
-        raised_hover: Fill {
-            top: hex(0x103D4E),
-            bottom: hex(0x073445),
-        },
-        raised_pressed: Fill {
-            top: hex(0x042B3A),
-            bottom: hex(0x052E3D),
-        },
-        thumb: Fill {
-            top: hex(0x0F3C4D),
-            bottom: hex(0x073445),
-        },
-        keycap: Fill {
-            top: hex(0x0B394A),
-            bottom: hex(0x063040),
-        },
-        tab: Fill {
-            top: hex(0x073445),
-            bottom: hex(0x052E3D),
-        },
-        tooltip: Fill {
-            top: hex(0x123E50),
-            bottom: hex(0x0A3849),
-        },
-        tooltip_key: hex(0x0B394A),
-        tooltip_key_edge: hex(0x0D3A4B),
-        tooltip_key_base: Some(hex(0x000C13)),
-        on_tooltip_key: hex(0xACC8D0),
-        knob: Fill {
-            top: hex(0xFFFFFF),
-            bottom: hex(0xECEFF0),
-        },
-        primary: Fill {
-            top: hex(0x3CE1E0),
-            bottom: hex(0x08CCCB),
-        },
-        primary_hover: Fill {
-            top: hex(0x47E9E7),
-            bottom: hex(0x21D3D2),
-        },
-        primary_pressed: Fill {
-            top: hex(0x02C8C7),
-            bottom: hex(0x0FCDCC),
-        },
-        danger_solid: Fill {
-            top: hex(0xD73E40),
-            bottom: hex(0xC2282F),
-        },
-        danger_solid_hover: Fill {
-            top: hex(0xD1373B),
-            bottom: hex(0xBC202A),
-        },
-        danger_solid_pressed: Fill {
-            top: hex(0xC72C34),
-            bottom: hex(0xCC3239),
-        },
-        added_bg: hex(0x0C3436),
-        removed_bg: hex(0x172632),
-        added_gutter: hex(0x15423C),
-        removed_gutter: hex(0x292934),
-        deck: Fill {
-            top: hex(0x063242),
-            bottom: hex(0x042A39),
-        },
-        deck_edge: hex(0x000C14),
-        pane_header: hex(0x0B333E),
-        pane_header_seam: hex(0x237D81),
-        knob_edge: None,
-        disabled_fill: hex(0x042A39),
-        disabled_edge: hex(0x073445),
-    },
-    text: hex(0xE6F3F5),
-    text_dim: hex(0xACC8D0),
-    text_faint: hex(0x97B5BF),
-    disabled_text: hex(0x7B959C),
-    accent: hex(0x56E3E1),
-    accent2: hex(0xCBACFC),
-    focus: hex(0x49E1DC),
-    selection: hex(0x56D4D5),
-    selection_alpha: 30,
-    on_accent: hex(0x001925),
-    success: hex(0x7EE888),
-    warning: hex(0xF9C468),
-    danger: hex(0xFE8291),
-    danger_base: hex(0xE5484D),
-    on_danger: hex(0xFFFFFF),
-    tones: Tones {
-        accent: hex(0x45D6D4),
-        success: hex(0x72D97C),
-        warning: hex(0xFBA541),
-        danger: hex(0xE5484D),
-    },
-    control_border: hex(0x698F9D),
-    on_tooltip: hex(0xE6F3F5),
-    on_tooltip_dim: hex(0xA5BCC2),
-    hover_ink: hex(0xE6F3F5),
-    shadow: hex(0x000000),
-    primary_shadow: hex(0x000000),
-    danger_shadow: hex(0x000000),
-    scrim: Color32::from_rgba_premultiplied(2, 2, 3, 158),
-    glass_alpha: 153,
-    glass_luminance: 0.05,
-    lanes: [
-        hex(0x01DAD9),
-        hex(0xCDADFF),
-        hex(0x7AD983),
-        hex(0xFF9BCB),
-        hex(0xD7AB1B),
-        hex(0x01CEFE),
-        hex(0xFE9C4C),
-        hex(0xB2CFFF),
-        hex(0xC9DA5D),
-        hex(0xFFBA93),
-    ],
-    syntax: Syntax {
-        keyword: hex(0xCBAAFF),
-        string: hex(0x82E8B4),
-        comment: hex(0x8FA6BA),
-        number: hex(0xF6C98C),
-        function: hex(0x72DDE8),
-        type_: hex(0x9EC6FF),
-        constant: hex(0xF6A6CA),
-    },
-};
-
-/// "Ember" (Forge at dusk: smoked oak, cream type, molten copper): Forge at dusk: smoked oak and cream type around a molten copper glow, with cool steel links.
-pub const EMBER: Palette = Palette {
-    name: "Ember",
-    concept: "Forge at dusk: smoked oak and cream type around a molten copper glow, with cool steel links.",
-    dark: true,
-    strict: false,
-    standard: Surfaces {
-        bg: hex(0x1A120C),
-        panel: hex(0x25190F),
-        pane: hex(0x1A120C),
-        elevated: hex(0x2B1E16),
-        overlay: hex(0x2D2017),
-        field: hex(0x1F150E),
-        track: hex(0x180F09),
-        switch_off: hex(0x453428),
-        badge: hex(0x3D2C20),
-        border: hex(0x32241A),
-        edge: hex(0x3B2A1F),
-        raised_edge: hex(0x3B2A1F),
-        overlay_edge: hex(0x3A2A1E),
-        tab_edge: hex(0x3A291E),
-        track_edge: hex(0x2E2117),
-        pane_edge: None,
-        keycap_edge: hex(0x140B05),
-        raised: Fill::flat(hex(0x2B1E16)),
-        raised_hover: Fill::flat(hex(0x312319)),
-        raised_pressed: Fill::flat(hex(0x271B13)),
-        thumb: Fill::flat(hex(0x35261B)),
-        keycap: Fill::flat(hex(0x312219)),
-        tab: Fill::flat(hex(0x2B1E16)),
-        tooltip: Fill::flat(hex(0x3D2C20)),
-        tooltip_key: hex(0x312219),
-        tooltip_key_edge: hex(0x3B2A1F),
-        tooltip_key_base: Some(hex(0x140B05)),
-        on_tooltip_key: hex(0xCCBCAB),
-        knob: Fill::flat(hex(0xFEF9F1)),
-        primary: Fill::flat(hex(0xF69445)),
-        primary_hover: Fill::flat(hex(0xFE9B4D)),
-        primary_pressed: Fill::flat(hex(0xEA8839)),
-        danger_solid: Fill::flat(hex(0xD73E41)),
-        danger_solid_hover: Fill::flat(hex(0xD2383D)),
-        danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0x272213),
-        removed_bg: hex(0x2D1713),
-        added_gutter: hex(0x31311A),
-        removed_gutter: hex(0x3D1C19),
-        deck: Fill::flat(hex(0x25190F)),
-        deck_edge: hex(0x32241A),
-        pane_header: hex(0x1A120C),
-        pane_header_seam: hex(0x32241A),
-        knob_edge: None,
-        disabled_fill: hex(0x281C14),
-        disabled_edge: hex(0x34251A),
-    },
-    deeper: Surfaces {
-        bg: hex(0x130904),
-        panel: hex(0x130904),
-        pane: hex(0x231811),
-        elevated: hex(0x312219),
-        overlay: hex(0x32241A),
-        field: hex(0x1D140E),
-        track: hex(0x120803),
-        switch_off: hex(0x453428),
-        badge: hex(0x3E2D21),
-        border: hex(0x32241A),
-        edge: hex(0x3E2D21),
-        raised_edge: hex(0x402F23),
-        overlay_edge: hex(0x3E2D21),
-        tab_edge: hex(0x3D2C20),
-        track_edge: hex(0x2C1F16),
-        pane_edge: Some(hex(0x37271C)),
-        keycap_edge: hex(0x0E0501),
-        raised: Fill {
-            top: hex(0x3B2A1F),
-            bottom: hex(0x312319),
-        },
-        raised_hover: Fill {
-            top: hex(0x402F23),
-            bottom: hex(0x37271C),
-        },
-        raised_pressed: Fill {
-            top: hex(0x2D2017),
-            bottom: hex(0x302218),
-        },
-        thumb: Fill {
-            top: hex(0x3F2E22),
-            bottom: hex(0x37271C),
-        },
-        keycap: Fill {
-            top: hex(0x3D2C20),
-            bottom: hex(0x32241A),
-        },
-        tab: Fill {
-            top: hex(0x37271C),
-            bottom: hex(0x302218),
-        },
-        tooltip: Fill {
-            top: hex(0x423125),
-            bottom: hex(0x3B2B1F),
-        },
-        tooltip_key: hex(0x3D2C20),
-        tooltip_key_edge: hex(0x3E2D21),
-        tooltip_key_base: Some(hex(0x0E0501)),
-        on_tooltip_key: hex(0xCCBCAB),
-        knob: Fill {
-            top: hex(0xFEF9F1),
-            bottom: hex(0xEEE8DE),
-        },
-        primary: Fill {
-            top: hex(0xFF9E54),
-            bottom: hex(0xEA8839),
-        },
-        primary_hover: Fill {
-            top: hex(0xFFA96A),
-            bottom: hex(0xF28F41),
-        },
-        primary_pressed: Fill {
-            top: hex(0xE68534),
-            bottom: hex(0xEC8A3A),
-        },
-        danger_solid: Fill {
-            top: hex(0xD73E40),
-            bottom: hex(0xC2282F),
-        },
-        danger_solid_hover: Fill {
-            top: hex(0xD1373B),
-            bottom: hex(0xBC202A),
-        },
-        danger_solid_pressed: Fill {
-            top: hex(0xC72C34),
-            bottom: hex(0xCC3239),
-        },
-        added_bg: hex(0x2F2817),
-        removed_bg: hex(0x351D17),
-        added_gutter: hex(0x38361E),
-        removed_gutter: hex(0x44211D),
-        deck: Fill {
-            top: hex(0x35261B),
-            bottom: hex(0x2C1F16),
-        },
-        deck_edge: hex(0x0F0501),
-        pane_header: hex(0x352519),
-        pane_header_seam: hex(0x8B562E),
-        knob_edge: None,
-        disabled_fill: hex(0x2C1F16),
-        disabled_edge: hex(0x37271C),
-    },
-    text: hex(0xF4EDE1),
-    text_dim: hex(0xCCBCAB),
-    text_faint: hex(0xBAA796),
-    disabled_text: hex(0x9A8B7A),
-    accent: hex(0xFBA156),
-    accent2: hex(0x94C3E1),
-    focus: hex(0xFF9B4E),
-    selection: hex(0xFBC499),
-    selection_alpha: 33,
-    on_accent: hex(0x22130B),
-    success: hex(0xB1D372),
-    warning: hex(0xEDD46E),
-    danger: hex(0xFC8191),
-    danger_base: hex(0xE5484D),
-    on_danger: hex(0xFFFFFF),
-    tones: Tones {
-        accent: hex(0xFBA156),
-        success: hex(0xA3C75D),
-        warning: hex(0xEFCA55),
-        danger: hex(0xE94E5A),
-    },
-    control_border: hex(0x928072),
-    on_tooltip: hex(0xF4EDE1),
-    on_tooltip_dim: hex(0xBDB3A7),
-    hover_ink: hex(0xF4EDE1),
-    shadow: hex(0x000000),
-    primary_shadow: hex(0x000000),
-    danger_shadow: hex(0x000000),
-    scrim: Color32::from_rgba_premultiplied(2, 2, 3, 158),
-    glass_alpha: 153,
-    glass_luminance: 0.043,
-    lanes: [
-        hex(0xFDA258),
-        hex(0x62C6FF),
-        hex(0xA6CA60),
-        hex(0xFF98A5),
-        hex(0x37E5CA),
-        hex(0xE789CC),
-        hex(0xDDBF47),
-        hex(0x03C4D5),
-        hex(0xBAB4FF),
-        hex(0x61C780),
-    ],
-    syntax: Syntax {
-        keyword: hex(0xF8AF7C),
-        string: hex(0xC3D98F),
-        comment: hex(0xA99A8B),
-        number: hex(0xECCB72),
-        function: hex(0x93C8EB),
-        type_: hex(0xF0ABCB),
-        constant: hex(0xD9B5F0),
-    },
-};
-
-/// "Neon" (Night city: black-violet, hot magenta and electric cyan): Night city: black-violet streets under hot magenta and electric cyan signs.
-pub const NEON: Palette = Palette {
-    name: "Neon",
-    concept: "Night city: black-violet streets under hot magenta and electric cyan signs.",
-    dark: true,
-    strict: false,
-    standard: Surfaces {
-        bg: hex(0x0E091A),
-        panel: hex(0x020108),
-        pane: hex(0x0E091A),
-        elevated: hex(0x1D1330),
-        overlay: hex(0x1F1433),
-        field: hex(0x120B1F),
-        track: hex(0x0C0618),
-        switch_off: hex(0x342550),
-        badge: hex(0x2D1E47),
-        border: hex(0x23173A),
-        edge: hex(0x2B1C45),
-        raised_edge: hex(0x2B1C45),
-        overlay_edge: hex(0x2A1B45),
-        tab_edge: hex(0x2A1B44),
-        track_edge: hex(0x201434),
-        pane_edge: None,
-        keycap_edge: hex(0x090316),
-        raised: Fill::flat(hex(0x1D1330)),
-        raised_hover: Fill::flat(hex(0x221638)),
-        raised_pressed: Fill::flat(hex(0x1A102B)),
-        thumb: Fill::flat(hex(0x26183D)),
-        keycap: Fill::flat(hex(0x221637)),
-        tab: Fill::flat(hex(0x1D1330)),
-        tooltip: Fill::flat(hex(0x2D1E47)),
-        tooltip_key: hex(0x221637),
-        tooltip_key_edge: hex(0x2B1C45),
-        tooltip_key_base: Some(hex(0x090316)),
-        on_tooltip_key: hex(0xC8BCD9),
-        knob: Fill::flat(hex(0xFFFFFF)),
-        primary: Fill::flat(hex(0xFD53BE)),
-        primary_hover: Fill::flat(hex(0xFF63C2)),
-        primary_pressed: Fill::flat(hex(0xF046B2)),
-        danger_solid: Fill::flat(hex(0xD73E41)),
-        danger_solid_hover: Fill::flat(hex(0xD2383D)),
-        danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0x161E24),
-        removed_bg: hex(0x220E1F),
-        added_gutter: hex(0x1D312C),
-        removed_gutter: hex(0x331323),
-        deck: Fill::flat(hex(0x020108)),
-        deck_edge: hex(0x23173A),
-        pane_header: hex(0x0E091A),
-        pane_header_seam: hex(0x23173A),
-        knob_edge: None,
-        disabled_fill: hex(0x1B112C),
-        disabled_edge: hex(0x25173C),
-    },
-    deeper: Surfaces {
-        bg: hex(0x04010D),
-        panel: hex(0x04010D),
-        pane: hex(0x160E25),
-        elevated: hex(0x221637),
-        overlay: hex(0x23173A),
-        field: hex(0x110A1D),
-        track: hex(0x070115),
-        switch_off: hex(0x342550),
-        badge: hex(0x2D1E48),
-        border: hex(0x23173A),
-        edge: hex(0x2D1E48),
-        raised_edge: hex(0x2F204A),
-        overlay_edge: hex(0x2D1E48),
-        tab_edge: hex(0x2C1D47),
-        track_edge: hex(0x1E1331),
-        pane_edge: Some(hex(0x271940)),
-        keycap_edge: hex(0x050011),
-        raised: Fill {
-            top: hex(0x2B1C45),
-            bottom: hex(0x221638),
-        },
-        raised_hover: Fill {
-            top: hex(0x30214B),
-            bottom: hex(0x281A40),
-        },
-        raised_pressed: Fill {
-            top: hex(0x1F1433),
-            bottom: hex(0x211537),
-        },
-        thumb: Fill {
-            top: hex(0x2F204A),
-            bottom: hex(0x281A40),
-        },
-        keycap: Fill {
-            top: hex(0x2C1D47),
-            bottom: hex(0x23173A),
-        },
-        tab: Fill {
-            top: hex(0x281A40),
-            bottom: hex(0x211537),
-        },
-        tooltip: Fill {
-            top: hex(0x31224C),
-            bottom: hex(0x2B1C46),
-        },
-        tooltip_key: hex(0x2C1D47),
-        tooltip_key_edge: hex(0x2D1E48),
-        tooltip_key_base: Some(hex(0x050011)),
-        on_tooltip_key: hex(0xC8BCD9),
-        knob: Fill {
-            top: hex(0xFFFFFF),
-            bottom: hex(0xEFEEF1),
-        },
-        primary: Fill {
-            top: hex(0xFF6AC4),
-            bottom: hex(0xF046B2),
-        },
-        primary_hover: Fill {
-            top: hex(0xFF7AC8),
-            bottom: hex(0xF84EB9),
-        },
-        primary_pressed: Fill {
-            top: hex(0xEC41AF),
-            bottom: hex(0xF247B4),
-        },
-        danger_solid: Fill {
-            top: hex(0xD73E40),
-            bottom: hex(0xC2282F),
-        },
-        danger_solid_hover: Fill {
-            top: hex(0xD1373B),
-            bottom: hex(0xBC202A),
-        },
-        danger_solid_pressed: Fill {
-            top: hex(0xC72C34),
-            bottom: hex(0xCC3239),
-        },
-        added_bg: hex(0x1D232E),
-        removed_bg: hex(0x291329),
-        added_gutter: hex(0x233635),
-        removed_gutter: hex(0x39182C),
-        deck: Fill {
-            top: hex(0x26183D),
-            bottom: hex(0x1E1331),
-        },
-        deck_edge: hex(0x050012),
-        pane_header: hex(0x1D1F37),
-        pane_header_seam: hex(0x27798B),
-        knob_edge: None,
-        disabled_fill: hex(0x1E1331),
-        disabled_edge: hex(0x281A40),
-    },
-    text: hex(0xF3F0FB),
-    text_dim: hex(0xC8BCD9),
-    text_faint: hex(0xB4A7C7),
-    disabled_text: hex(0x8D849A),
-    accent: hex(0xFF6EC5),
-    accent2: hex(0x39F3FC),
-    focus: hex(0x39F3FC),
-    selection: hex(0xF160B8),
-    selection_alpha: 34,
-    on_accent: hex(0x10091A),
-    success: hex(0x60F882),
-    warning: hex(0xF7E343),
-    danger: hex(0xFF7455),
-    danger_base: hex(0xE5484D),
-    on_danger: hex(0xFFFFFF),
-    tones: Tones {
-        accent: hex(0xFB51BC),
-        success: hex(0x64F784),
-        warning: hex(0xF7E343),
-        danger: hex(0xE5484D),
-    },
-    control_border: hex(0x837599),
-    on_tooltip: hex(0xF3F0FB),
-    on_tooltip_dim: hex(0xB8B1C5),
-    hover_ink: hex(0xF3F0FB),
-    shadow: hex(0x000000),
-    primary_shadow: hex(0x000000),
-    danger_shadow: hex(0x000000),
-    scrim: Color32::from_rgba_premultiplied(2, 2, 3, 158),
-    glass_alpha: 153,
-    glass_luminance: 0.036,
-    lanes: [
-        hex(0xFF9CD3),
-        hex(0x02DBE4),
-        hex(0x57E176),
-        hex(0xD7C301),
-        hex(0xCF92FF),
-        hex(0xB0E649),
-        hex(0x9DBAFF),
-        hex(0xFA9D01),
-        hex(0xFFBEB0),
-        hex(0xFF8E61),
-    ],
-    syntax: Syntax {
-        keyword: hex(0xFF7DD8),
-        string: hex(0x6BF29A),
-        comment: hex(0xA597BE),
-        number: hex(0xF5E05D),
-        function: hex(0x49EAF5),
-        type_: hex(0xC6A4FF),
-        constant: hex(0xFFAF78),
-    },
-};
-
-/// "Forest" (Evergreen at dusk: moss and shade, sunlit gold, lake water): Evergreen at dusk: moss and deep shade under cream type, sunlit gold and lake water.
-pub const FOREST: Palette = Palette {
-    name: "Forest",
-    concept: "Evergreen at dusk: moss and deep shade under cream type, sunlit gold and lake water.",
-    dark: true,
-    strict: false,
-    standard: Surfaces {
-        bg: hex(0x071B10),
-        panel: hex(0x00140A),
-        pane: hex(0x071B10),
-        elevated: hex(0x0F2B1C),
-        overlay: hex(0x102D1D),
-        field: hex(0x091F14),
-        track: hex(0x04190D),
-        switch_off: hex(0x214331),
-        badge: hex(0x193B29),
-        border: hex(0x133121),
-        edge: hex(0x173927),
-        raised_edge: hex(0x173927),
-        overlay_edge: hex(0x173927),
-        tab_edge: hex(0x163826),
-        track_edge: hex(0x112E1E),
-        pane_edge: None,
-        keycap_edge: hex(0x011509),
-        raised: Fill::flat(hex(0x0F2B1C)),
-        raised_hover: Fill::flat(hex(0x123020)),
-        raised_pressed: Fill::flat(hex(0x0D2719)),
-        thumb: Fill::flat(hex(0x143423)),
-        keycap: Fill::flat(hex(0x123020)),
-        tab: Fill::flat(hex(0x0F2B1C)),
-        tooltip: Fill::flat(hex(0x193B29)),
-        tooltip_key: hex(0x123020),
-        tooltip_key_edge: hex(0x173927),
-        tooltip_key_base: Some(hex(0x011509)),
-        on_tooltip_key: hex(0xC0C2AA),
-        knob: Fill::flat(hex(0xFCFAF0)),
-        primary: Fill::flat(hex(0xE6B441)),
-        primary_hover: Fill::flat(hex(0xEEBB49)),
-        primary_pressed: Fill::flat(hex(0xDBA833)),
-        danger_solid: Fill::flat(hex(0xD73E41)),
-        danger_solid_hover: Fill::flat(hex(0xD2383D)),
-        danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0x102C18),
-        removed_bg: hex(0x1A2115),
-        added_gutter: hex(0x19391F),
-        removed_gutter: hex(0x2B2419),
-        deck: Fill::flat(hex(0x00140A)),
-        deck_edge: hex(0x133121),
-        pane_header: hex(0x071B10),
-        pane_header_seam: hex(0x133121),
-        knob_edge: None,
-        disabled_fill: hex(0x0E281A),
-        disabled_edge: hex(0x133322),
-    },
-    deeper: Surfaces {
-        bg: hex(0x001309),
-        panel: hex(0x001309),
-        pane: hex(0x0B2317),
-        elevated: hex(0x123020),
-        overlay: hex(0x133121),
-        field: hex(0x081E12),
-        track: hex(0x001207),
-        switch_off: hex(0x214331),
-        badge: hex(0x1A3C2A),
-        border: hex(0x133121),
-        edge: hex(0x1A3C2A),
-        raised_edge: hex(0x1C3E2B),
-        overlay_edge: hex(0x1A3C2A),
-        tab_edge: hex(0x193B29),
-        track_edge: hex(0x102B1D),
-        pane_edge: Some(hex(0x153524)),
-        keycap_edge: hex(0x000D05),
-        raised: Fill {
-            top: hex(0x173927),
-            bottom: hex(0x123020),
-        },
-        raised_hover: Fill {
-            top: hex(0x1D3F2C),
-            bottom: hex(0x153624),
-        },
-        raised_pressed: Fill {
-            top: hex(0x102D1D),
-            bottom: hex(0x122F1F),
-        },
-        thumb: Fill {
-            top: hex(0x1C3D2B),
-            bottom: hex(0x153624),
-        },
-        keycap: Fill {
-            top: hex(0x193B29),
-            bottom: hex(0x133121),
-        },
-        tab: Fill {
-            top: hex(0x153624),
-            bottom: hex(0x122F1F),
-        },
-        tooltip: Fill {
-            top: hex(0x1E402D),
-            bottom: hex(0x183A28),
-        },
-        tooltip_key: hex(0x193B29),
-        tooltip_key_edge: hex(0x1A3C2A),
-        tooltip_key_base: Some(hex(0x000D05)),
-        on_tooltip_key: hex(0xC0C2AA),
-        knob: Fill {
-            top: hex(0xFCFAF0),
-            bottom: hex(0xECE9DE),
-        },
-        primary: Fill {
-            top: hex(0xF0BD4C),
-            bottom: hex(0xDBA833),
-        },
-        primary_hover: Fill {
-            top: hex(0xF8C454),
-            bottom: hex(0xE2AF3C),
-        },
-        primary_pressed: Fill {
-            top: hex(0xD7A52E),
-            bottom: hex(0xDCAA35),
-        },
-        danger_solid: Fill {
-            top: hex(0xD73E40),
-            bottom: hex(0xC2282F),
-        },
-        danger_solid_hover: Fill {
-            top: hex(0xD1373B),
-            bottom: hex(0xBC202A),
-        },
-        danger_solid_pressed: Fill {
-            top: hex(0xC72C34),
-            bottom: hex(0xCC3239),
-        },
-        added_bg: hex(0x14331E),
-        removed_bg: hex(0x1E281B),
-        added_gutter: hex(0x1C4025),
-        removed_gutter: hex(0x2E2B1F),
-        deck: Fill {
-            top: hex(0x143423),
-            bottom: hex(0x102B1D),
-        },
-        deck_edge: hex(0x000E05),
-        pane_header: hex(0x1D3220),
-        pane_header_seam: hex(0x766E36),
-        knob_edge: None,
-        disabled_fill: hex(0x102B1D),
-        disabled_edge: hex(0x153624),
-    },
-    text: hex(0xF2EDDB),
-    text_dim: hex(0xC0C2AA),
-    text_faint: hex(0xA6AF99),
-    disabled_text: hex(0x8E917C),
-    accent: hex(0xEDC15A),
-    accent2: hex(0x83C7E4),
-    focus: hex(0xEDC15A),
-    selection: hex(0x7AC7E2),
-    selection_alpha: 34,
-    on_accent: hex(0x1E1908),
-    success: hex(0x87E17E),
-    warning: hex(0xFFA963),
-    danger: hex(0xFA8798),
-    danger_base: hex(0xE5484D),
-    on_danger: hex(0xFFFFFF),
-    tones: Tones {
-        accent: hex(0xEDC15A),
-        success: hex(0x71D268),
-        warning: hex(0xFE9D4A),
-        danger: hex(0xD95448),
-    },
-    control_border: hex(0x798E79),
-    on_tooltip: hex(0xF2EDDB),
-    on_tooltip_dim: hex(0xB1B8A6),
-    hover_ink: hex(0xF2EDDB),
-    shadow: hex(0x000000),
-    primary_shadow: hex(0x000000),
-    danger_shadow: hex(0x000000),
-    scrim: Color32::from_rgba_premultiplied(2, 2, 3, 158),
-    glass_alpha: 153,
-    glass_luminance: 0.05,
-    lanes: [
-        hex(0xE2B33F),
-        hex(0x33CCFF),
-        hex(0x84D17C),
-        hex(0xFF9A97),
-        hex(0x7BAFFF),
-        hex(0xA9B945),
-        hex(0xC296F5),
-        hex(0xF39254),
-        hex(0x00C7C2),
-        hex(0xFFA4D5),
-    ],
-    syntax: Syntax {
-        keyword: hex(0x92DCA1),
-        string: hex(0xD9D682),
-        comment: hex(0x93A493),
-        number: hex(0xF4C677),
-        function: hex(0x87CFF0),
-        type_: hex(0xCCB9F1),
-        constant: hex(0xF2ACCA),
-    },
-};
-
-/// "Paper" (Letterpress: cream stock on kraft, Prussian ink, highlighter): Letterpress: cream stock on a kraft desk, Prussian ink, sepia notes and a yellow highlighter.
-pub const PAPER: Palette = Palette {
-    name: "Paper",
-    concept: "Letterpress: cream stock on a kraft desk, Prussian ink, sepia notes and a yellow highlighter.",
-    dark: false,
-    strict: false,
-    standard: Surfaces {
-        bg: hex(0xF9F2E4),
-        panel: hex(0xEEE0CB),
-        pane: hex(0xF9F2E4),
-        elevated: hex(0xFFF9EE),
-        overlay: hex(0xFFF9EE),
-        field: hex(0xFFF9EE),
-        track: hex(0xECE4D3),
-        switch_off: hex(0xD0C5AF),
-        badge: hex(0xE6DDCB),
-        border: hex(0xE0D5C1),
-        edge: hex(0xD6CBB5),
-        raised_edge: hex(0xD6CBB5),
-        overlay_edge: hex(0xDDD2BE),
-        tab_edge: hex(0xDDD2BE),
-        track_edge: hex(0xE2D8C5),
-        pane_edge: None,
-        keycap_edge: hex(0xC4B9A4),
-        raised: Fill::flat(hex(0xFFF9EE)),
-        raised_hover: Fill::flat(hex(0xF3ECDC)),
-        raised_pressed: Fill::flat(hex(0xEFE6D6)),
-        thumb: Fill::flat(hex(0xFFF9EE)),
-        keycap: Fill::flat(hex(0xF1E9D9)),
-        tab: Fill::flat(hex(0xFFF9EE)),
-        tooltip: Fill::flat(hex(0x2C2017)),
-        tooltip_key: hex(0x3E332A),
-        tooltip_key_edge: hex(0x4C4239),
-        tooltip_key_base: None,
-        on_tooltip_key: hex(0xD9D4CB),
-        knob: Fill::flat(hex(0xFFFEFD)),
-        primary: Fill::flat(hex(0x125CA1)),
-        primary_hover: Fill::flat(hex(0x07559A)),
-        primary_pressed: Fill::flat(hex(0x005295)),
-        danger_solid: Fill::flat(hex(0xD53C3F)),
-        danger_solid_hover: Fill::flat(hex(0xCF353A)),
-        danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0xEEEDDA),
-        removed_bg: hex(0xF7E7D9),
-        added_gutter: hex(0xE5E8D1),
-        removed_gutter: hex(0xF6DDD0),
-        deck: Fill::flat(hex(0xEEE0CB)),
-        deck_edge: hex(0xE0D5C1),
-        pane_header: hex(0xF9F2E4),
-        pane_header_seam: hex(0xE0D5C1),
-        knob_edge: Some(hex(0x96908B)),
-        disabled_fill: hex(0xE9E0CF),
-        disabled_edge: hex(0xDED4BF),
-    },
-    deeper: Surfaces {
-        bg: hex(0xE5DBC8),
-        panel: hex(0xE5DBC8),
-        pane: hex(0xFFF9EE),
-        elevated: hex(0xFFF9EE),
-        overlay: hex(0xFFF9EE),
-        field: hex(0xFFF9EE),
-        track: hex(0xE2D8C5),
-        switch_off: hex(0xD0C5AF),
-        badge: hex(0xE6DDCB),
-        border: hex(0xE2D8C5),
-        edge: hex(0xD6CBB5),
-        raised_edge: hex(0xD6CBB5),
-        overlay_edge: hex(0xDED4BF),
-        tab_edge: hex(0xDBD0BB),
-        track_edge: hex(0xDBD0BB),
-        pane_edge: Some(hex(0xDED4BF)),
-        keycap_edge: hex(0xC4B9A3),
-        raised: Fill {
-            top: hex(0xFFF9EE),
-            bottom: hex(0xF4ECDD),
-        },
-        raised_hover: Fill {
-            top: hex(0xF9F2E4),
-            bottom: hex(0xF1E8D8),
-        },
-        raised_pressed: Fill {
-            top: hex(0xEDE4D3),
-            bottom: hex(0xF0E8D7),
-        },
-        thumb: Fill {
-            top: hex(0xFFF9EE),
-            bottom: hex(0xF6EEE0),
-        },
-        keycap: Fill {
-            top: hex(0xF9F2E4),
-            bottom: hex(0xF2EADB),
-        },
-        tab: Fill {
-            top: hex(0xFFF9EE),
-            bottom: hex(0xF5EEDF),
-        },
-        tooltip: Fill::flat(hex(0x2C2017)),
-        tooltip_key: hex(0x3E332A),
-        tooltip_key_edge: hex(0x4C4239),
-        tooltip_key_base: None,
-        on_tooltip_key: hex(0xD9D4CB),
-        knob: Fill {
-            top: hex(0xFFFEFD),
-            bottom: hex(0xF6F4F0),
-        },
-        primary: Fill {
-            top: hex(0x1E65AA),
-            bottom: hex(0x005295),
-        },
-        primary_hover: Fill {
-            top: hex(0x165EA3),
-            bottom: hex(0x004C8B),
-        },
-        primary_pressed: Fill {
-            top: hex(0x004E90),
-            bottom: hex(0x025397),
-        },
-        danger_solid: Fill {
-            top: hex(0xD53C3E),
-            bottom: hex(0xC0262D),
-        },
-        danger_solid_hover: Fill {
-            top: hex(0xCF3539),
-            bottom: hex(0xBA1E28),
-        },
-        danger_solid_pressed: Fill {
-            top: hex(0xC72C34),
-            bottom: hex(0xCC3239),
-        },
-        added_bg: hex(0xF4F3E3),
-        removed_bg: hex(0xFDEDE2),
-        added_gutter: hex(0xEAEEDA),
-        removed_gutter: hex(0xFBE3D9),
-        deck: Fill {
-            top: hex(0xF9F2E4),
-            bottom: hex(0xF3EBDC),
-        },
-        deck_edge: hex(0xD2C7B1),
-        pane_header: hex(0xF0EEE8),
-        pane_header_seam: hex(0x9EBDD6),
-        knob_edge: Some(hex(0x8D8A83)),
-        disabled_fill: hex(0xEAE1CF),
-        disabled_edge: hex(0xDDD2BD),
-    },
-    text: hex(0x2A1F17),
-    text_dim: hex(0x615246),
-    text_faint: hex(0x635547),
-    disabled_text: hex(0x736356),
-    accent: hex(0x005393),
-    accent2: hex(0x764627),
-    focus: hex(0x1D6CB8),
-    selection: hex(0xF8E048),
-    selection_alpha: 100,
-    on_accent: hex(0xFFFDFA),
-    success: hex(0x235E1E),
-    warning: hex(0x6E4C00),
-    danger: hex(0x9C1A25),
-    danger_base: hex(0xD93D42),
-    on_danger: hex(0xFFFDFA),
-    tones: Tones {
-        accent: hex(0x2A80E2),
-        success: hex(0x75B168),
-        warning: hex(0xEBAE42),
-        danger: hex(0xE3645C),
-    },
-    control_border: hex(0x7D705E),
-    on_tooltip: hex(0xF7F3EB),
-    on_tooltip_dim: hex(0xBAB4AB),
-    hover_ink: hex(0x1A150B),
-    shadow: hex(0x311C09),
-    primary_shadow: hex(0x03294F),
-    danger_shadow: hex(0x781414),
-    scrim: Color32::from_rgba_premultiplied(11, 8, 5, 82),
-    glass_alpha: 178,
-    glass_luminance: 0.35,
-    lanes: [
-        hex(0x005DA1),
-        hex(0x9E2E21),
-        hex(0x426800),
-        hex(0x6955B8),
-        hex(0x007E45),
-        hex(0xAB3A60),
-        hex(0x02796F),
-        hex(0x822A75),
-        hex(0x644A00),
-        hex(0x01556E),
-    ],
-    syntax: Syntax {
-        keyword: hex(0x2852A3),
-        string: hex(0x466A1E),
-        comment: hex(0x766759),
-        number: hex(0xA2470F),
-        function: hex(0x644792),
-        type_: hex(0x02686C),
-        constant: hex(0x8F3662),
-    },
-};
-
-/// "Contrast" (Signal: black, white type, strong outlines and a yellow focus ring): Pure black, white type, strong outlines and a yellow focus ring, for low vision and glare.
-pub const CONTRAST: Palette = Palette {
+/// High contrast's reference: Midnight at full contrast. Every theme's high contrast
+/// ([`super::contrast::derive`]) keeps the ratios these colours keep against this ground.
+pub const CONTRAST_REFERENCE: Palette = Palette {
     name: "Contrast",
-    concept: "Pure black, white type, strong outlines and a yellow focus ring, for low vision and glare.",
+    concept: "Midnight at full contrast: white type, strong outlines and a bright indigo focus ring, for low vision and glare.",
     dark: true,
     strict: true,
     standard: Surfaces {
-        bg: hex(0x000000),
-        panel: hex(0x0E0E0E),
-        pane: hex(0x000000),
-        elevated: hex(0x161616),
-        overlay: hex(0x161616),
-        field: hex(0x0A0A0A),
-        track: hex(0x000000),
-        switch_off: hex(0x3A3A3A),
-        badge: hex(0x2A2A2A),
-        border: hex(0x767676),
-        edge: hex(0x9A9A9A),
-        raised_edge: hex(0x9A9A9A),
-        overlay_edge: hex(0xCACACA),
-        tab_edge: hex(0x9A9A9A),
-        track_edge: hex(0x767676),
+        bg: hex(0x0F1012),
+        panel: hex(0x151619),
+        pane: hex(0x0F1012),
+        elevated: hex(0x1B1C20),
+        overlay: hex(0x1B1C20),
+        field: hex(0x111214),
+        track: hex(0x0C0D0F),
+        switch_off: hex(0x3F4149),
+        badge: hex(0x2B2D33),
+        border: hex(0x7B7D83),
+        edge: hex(0xA0A3AA),
+        raised_edge: hex(0xA0A3AA),
+        overlay_edge: hex(0xD1D4DB),
+        tab_edge: hex(0xA0A3AA),
+        track_edge: hex(0x7B7D83),
         pane_edge: None,
-        keycap_edge: hex(0x767676),
-        raised: Fill::flat(hex(0x1C1C1C)),
-        raised_hover: Fill::flat(hex(0x262626)),
-        raised_pressed: Fill::flat(hex(0x121212)),
-        thumb: Fill::flat(hex(0x2E2E2E)),
-        keycap: Fill::flat(hex(0x1E1E1E)),
-        tab: Fill::flat(hex(0x1C1C1C)),
-        tooltip: Fill::flat(hex(0x1E1E1E)),
-        tooltip_key: hex(0x1E1E1E),
-        tooltip_key_edge: hex(0x9A9A9A),
-        tooltip_key_base: Some(hex(0x767676)),
-        on_tooltip_key: hex(0xE9E9E9),
+        keycap_edge: hex(0x7D7D80),
+        raised: Fill::flat(hex(0x1B1C20)),
+        raised_hover: Fill::flat(hex(0x222329)),
+        raised_pressed: Fill::flat(hex(0x17181B)),
+        thumb: Fill::flat(hex(0x26282E)),
+        keycap: Fill::flat(hex(0x24262B)),
+        tab: Fill::flat(hex(0x1B1C20)),
+        tooltip: Fill::flat(hex(0x2A2C32)),
+        tooltip_key: hex(0x24262B),
+        tooltip_key_edge: hex(0xA0A3AA),
+        tooltip_key_base: Some(hex(0x7D7D80)),
+        on_tooltip_key: hex(0xF2F4FC),
         knob: Fill::flat(hex(0xFFFFFF)),
-        primary: Fill::flat(hex(0x71C8FF)),
-        primary_hover: Fill::flat(hex(0x91D3FF)),
-        primary_pressed: Fill::flat(hex(0x56BEFB)),
-        danger_solid: Fill::flat(hex(0xFF8987)),
-        danger_solid_hover: Fill::flat(hex(0xFF9C99)),
-        danger_solid_pressed: Fill::flat(hex(0xF37A79)),
-        added_bg: hex(0x08180E),
-        removed_bg: hex(0x190909),
-        added_gutter: hex(0x0E2B19),
-        removed_gutter: hex(0x2A0F10),
-        deck: Fill::flat(hex(0x0E0E0E)),
-        deck_edge: hex(0x767676),
-        pane_header: hex(0x000000),
-        pane_header_seam: hex(0x767676),
+        primary: Fill::flat(hex(0x94A4FF)),
+        primary_hover: Fill::flat(hex(0xA5B3FF)),
+        primary_pressed: Fill::flat(hex(0x8999FF)),
+        danger_solid: Fill::flat(hex(0xFF9892)),
+        danger_solid_hover: Fill::flat(hex(0xFFACA7)),
+        danger_solid_pressed: Fill::flat(hex(0xFF817D)),
+        added_bg: hex(0x15211C),
+        removed_bg: hex(0x231517),
+        added_gutter: hex(0x192E26),
+        removed_gutter: hex(0x33191C),
+        deck: Fill::flat(hex(0x151619)),
+        deck_edge: hex(0x7B7D83),
+        pane_header: hex(0x0F1012),
+        pane_header_seam: hex(0x7B7D83),
         knob_edge: None,
-        disabled_fill: hex(0x141414),
-        disabled_edge: hex(0x5C5C5C),
+        disabled_fill: hex(0x17181C),
+        disabled_edge: hex(0x606368),
     },
     deeper: Surfaces {
-        bg: hex(0x000000),
-        panel: hex(0x000000),
-        pane: hex(0x0A0A0A),
-        elevated: hex(0x181818),
-        overlay: hex(0x181818),
-        field: hex(0x000000),
-        track: hex(0x000000),
-        switch_off: hex(0x3A3A3A),
-        badge: hex(0x2A2A2A),
-        border: hex(0x767676),
-        edge: hex(0x9A9A9A),
-        raised_edge: hex(0x9A9A9A),
-        overlay_edge: hex(0xCACACA),
-        tab_edge: hex(0x9A9A9A),
-        track_edge: hex(0x767676),
-        pane_edge: Some(hex(0x8A8A8A)),
-        keycap_edge: hex(0x767676),
+        bg: hex(0x0A0B0D),
+        panel: hex(0x0A0B0D),
+        pane: hex(0x151619),
+        elevated: hex(0x1D1E23),
+        overlay: hex(0x1D1E23),
+        field: hex(0x0F1013),
+        track: hex(0x0B0C0E),
+        switch_off: hex(0x3C3E46),
+        badge: hex(0x2A2C32),
+        border: hex(0x787B82),
+        edge: hex(0x9EA0A9),
+        raised_edge: hex(0x9EA0A9),
+        overlay_edge: hex(0xCED1DA),
+        tab_edge: hex(0x9EA0A8),
+        track_edge: hex(0x787B81),
+        pane_edge: Some(hex(0x8D8F95)),
+        keycap_edge: hex(0x7B7B7E),
         raised: Fill {
-            top: hex(0x262626),
-            bottom: hex(0x1C1C1C),
+            top: hex(0x26282E),
+            bottom: hex(0x1D1E23),
         },
         raised_hover: Fill {
-            top: hex(0x323232),
-            bottom: hex(0x262626),
+            top: hex(0x2C2E35),
+            bottom: hex(0x222329),
         },
         raised_pressed: Fill {
-            top: hex(0x121212),
-            bottom: hex(0x181818),
+            top: hex(0x1A1B1F),
+            bottom: hex(0x1F2025),
         },
         thumb: Fill {
-            top: hex(0x363636),
-            bottom: hex(0x2C2C2C),
+            top: hex(0x2D2F36),
+            bottom: hex(0x25272D),
         },
         keycap: Fill {
-            top: hex(0x2C2C2C),
-            bottom: hex(0x1E1E1E),
+            top: hex(0x2A2C32),
+            bottom: hex(0x202126),
         },
         tab: Fill {
-            top: hex(0x242424),
-            bottom: hex(0x1C1C1C),
+            top: hex(0x202227),
+            bottom: hex(0x1A1B20),
         },
         tooltip: Fill {
-            top: hex(0x282828),
-            bottom: hex(0x1E1E1E),
+            top: hex(0x2C2E35),
+            bottom: hex(0x24262C),
         },
-        tooltip_key: hex(0x2C2C2C),
-        tooltip_key_edge: hex(0x9A9A9A),
-        tooltip_key_base: Some(hex(0x767676)),
-        on_tooltip_key: hex(0xE9E9E9),
+        tooltip_key: hex(0x2A2C32),
+        tooltip_key_edge: hex(0x9EA0A9),
+        tooltip_key_base: Some(hex(0x7B7B7E)),
+        on_tooltip_key: hex(0xEFF1F8),
         knob: Fill {
             top: hex(0xFFFFFF),
-            bottom: hex(0xE8E8E8),
+            bottom: hex(0xEEEFF4),
         },
         primary: Fill {
-            top: hex(0x9CD7FF),
-            bottom: hex(0x59C0FE),
+            top: hex(0xA3B1FF),
+            bottom: hex(0x8DA0FF),
         },
         primary_hover: Fill {
-            top: hex(0xB4E1FF),
-            bottom: hex(0x70C8FF),
+            top: hex(0xB2BEFF),
+            bottom: hex(0x9BADFF),
         },
         primary_pressed: Fill {
-            top: hex(0x57BEFC),
-            bottom: hex(0x50B8F6),
+            top: hex(0x869AFF),
+            bottom: hex(0x8EA0FF),
         },
         danger_solid: Fill {
-            top: hex(0xFFA19E),
-            bottom: hex(0xF87E7D),
+            top: hex(0xFFACA7),
+            bottom: hex(0xFF847D),
         },
         danger_solid_hover: Fill {
-            top: hex(0xFFB1AD),
-            bottom: hex(0xFF8886),
+            top: hex(0xFFBBB7),
+            bottom: hex(0xFF928B),
         },
         danger_solid_pressed: Fill {
-            top: hex(0xF37A79),
-            bottom: hex(0xF87E7D),
+            top: hex(0xFF7C78),
+            bottom: hex(0xFF8580),
         },
-        added_bg: hex(0x112117),
-        removed_bg: hex(0x221212),
-        added_gutter: hex(0x163321),
-        removed_gutter: hex(0x321718),
+        added_bg: hex(0x192522),
+        removed_bg: hex(0x27191D),
+        added_gutter: hex(0x1E322B),
+        removed_gutter: hex(0x381D21),
         deck: Fill {
-            top: hex(0x1A1A1A),
-            bottom: hex(0x101010),
+            top: hex(0x1C1D20),
+            bottom: hex(0x17181B),
         },
-        deck_edge: hex(0x767676),
-        pane_header: hex(0x141414),
-        pane_header_seam: hex(0xFDEA4C),
+        deck_edge: hex(0x7B7B7F),
+        pane_header: hex(0x191A1D),
+        pane_header_seam: hex(0xA3A8D0),
         knob_edge: None,
-        disabled_fill: hex(0x161616),
-        disabled_edge: hex(0x5C5C5C),
+        disabled_fill: hex(0x1A1B1F),
+        disabled_edge: hex(0x5F6168),
     },
     text: hex(0xFFFFFF),
-    text_dim: hex(0xE9E9E9),
-    text_faint: hex(0xD6D6D6),
-    disabled_text: hex(0xA1A1A1),
-    accent: hex(0x7ECFFF),
-    accent2: hex(0xFDEA4C),
-    focus: hex(0xFDEA4C),
-    selection: hex(0xFFFFFF),
+    text_dim: hex(0xF2F4FC),
+    text_faint: hex(0xDEE0E9),
+    disabled_text: hex(0xA8AAB2),
+    accent: hex(0xC7CDFF),
+    accent2: hex(0x88D2FD),
+    focus: hex(0xC3CCFF),
+    selection: hex(0xADB8FF),
     selection_alpha: 40,
     on_accent: hex(0x000000),
-    success: hex(0x54FC93),
-    warning: hex(0xFFB573),
-    danger: hex(0xFF8C8A),
-    danger_base: hex(0xF3565B),
+    success: hex(0x5BD197),
+    warning: hex(0xE8B459),
+    danger: hex(0xFF9797),
+    danger_base: hex(0xFD5E60),
     on_danger: hex(0x000000),
     tones: Tones {
-        accent: hex(0x7ECFFF),
-        success: hex(0x54FC93),
-        warning: hex(0xFFB573),
-        danger: hex(0xF3565B),
+        accent: hex(0xC4CDFF),
+        success: hex(0x5BD197),
+        warning: hex(0xE8B459),
+        danger: hex(0xFF9691),
     },
-    control_border: hex(0xCACACA),
+    control_border: hex(0xD1D4DB),
     on_tooltip: hex(0xFFFFFF),
-    on_tooltip_dim: hex(0xC4C4C4),
+    on_tooltip_dim: hex(0xCECED2),
     hover_ink: hex(0xFFFFFF),
     shadow: hex(0x000000),
     primary_shadow: hex(0x000000),
@@ -1854,27 +1059,32 @@ pub const CONTRAST: Palette = Palette {
     glass_alpha: 0,
     glass_luminance: 0.03,
     lanes: [
-        hex(0x96D7FF),
-        hex(0xE4D127),
-        hex(0xEF96FF),
-        hex(0x57FCB4),
-        hex(0xFFA83D),
-        hex(0x01F1F1),
-        hex(0xFFA09A),
-        hex(0x9EE064),
-        hex(0xFFCBF8),
-        hex(0xFFD799),
+        hex(0x9CA8FF),
+        hex(0x4CC38A),
+        hex(0xFD89B4),
+        hex(0xD9A54A),
+        hex(0x4FB9EA),
+        hex(0xFD9073),
+        hex(0xDC91F5),
+        hex(0x43C3C3),
+        hex(0x9EBF5F),
+        hex(0xDDAA88),
     ],
     syntax: Syntax {
-        keyword: hex(0x8ED4FF),
-        string: hex(0x87F7A9),
-        comment: hex(0xC4C4C4),
-        number: hex(0xFFC38F),
-        function: hex(0xFDEA4C),
-        type_: hex(0xD4BDFF),
-        constant: hex(0xFEADDB),
+        keyword: hex(0xADB8FF),
+        string: hex(0x7BD4A4),
+        comment: hex(0xB0B3BB),
+        number: hex(0xF3B17A),
+        function: hex(0x82CBF6),
+        type_: hex(0x7BDAD9),
+        constant: hex(0xFAA2C1),
     },
 };
+
+/// The built-in themes at high contrast, in [`ThemeId::BUILT_IN`] order.
+static HIGH_CONTRAST: LazyLock<[Palette; 3]> = LazyLock::new(|| {
+    ThemeId::BUILT_IN.map(|t| super::contrast::derive(t.palette(), &CONTRAST_REFERENCE))
+});
 
 /// A theme the user can pick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -1882,52 +1092,71 @@ pub enum ThemeId {
     #[default]
     Midnight,
     Daylight,
-    Aurora,
-    Ember,
-    Neon,
-    Forest,
-    Paper,
-    Contrast,
+    Observatory,
+    /// The user's own colours on Midnight or Daylight ([`CustomTheme`], [`set_custom`]).
+    Custom,
 }
 
 impl ThemeId {
     /// Every theme, in menu order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 4] = [
         Self::Midnight,
         Self::Daylight,
-        Self::Aurora,
-        Self::Ember,
-        Self::Neon,
-        Self::Forest,
-        Self::Paper,
-        Self::Contrast,
+        Self::Observatory,
+        Self::Custom,
     ];
 
-    /// The theme's colours.
+    /// The themes Canopy ships, whose colours never change.
+    pub const BUILT_IN: [Self; 3] = [Self::Midnight, Self::Daylight, Self::Observatory];
+
+    /// The theme's colours (the custom theme's as last set by [`set_custom`]).
     pub fn palette(self) -> &'static Palette {
         match self {
             Self::Midnight => &MIDNIGHT,
             Self::Daylight => &DAYLIGHT,
-            Self::Aurora => &AURORA,
-            Self::Ember => &EMBER,
-            Self::Neon => &NEON,
-            Self::Forest => &FOREST,
-            Self::Paper => &PAPER,
-            Self::Contrast => &CONTRAST,
+            Self::Observatory => &OBSERVATORY,
+            Self::Custom => custom_built().palette,
         }
     }
 
-    /// The theme's structure.
+    /// The theme's structure: the custom theme takes its base's.
     pub fn design(self) -> &'static Design {
-        match self {
-            Self::Midnight => &MIDNIGHT_DESIGN,
+        match self.built_in() {
             Self::Daylight => &DAYLIGHT_DESIGN,
-            Self::Aurora => &AURORA_DESIGN,
-            Self::Ember => &EMBER_DESIGN,
-            Self::Neon => &NEON_DESIGN,
-            Self::Forest => &FOREST_DESIGN,
-            Self::Paper => &PAPER_DESIGN,
-            Self::Contrast => &CONTRAST_DESIGN,
+            Self::Observatory => &OBSERVATORY_DESIGN,
+            Self::Midnight | Self::Custom => &MIDNIGHT_DESIGN,
+        }
+    }
+
+    /// The built-in theme whose structure and corners this one shows: itself, or the custom
+    /// theme's base.
+    fn built_in(self) -> Self {
+        match self {
+            Self::Custom if custom().light => Self::Daylight,
+            Self::Custom => Self::Midnight,
+            other => other,
+        }
+    }
+
+    /// The colours shown: the theme's own, or at high contrast.
+    pub fn shown_palette(self, high_contrast: bool) -> &'static Palette {
+        match (self, high_contrast) {
+            (_, false) => self.palette(),
+            (Self::Custom, true) => custom_built().high_contrast,
+            // `HIGH_CONTRAST` follows `BUILT_IN`, which holds every theme but Custom.
+            (_, true) => {
+                let i = Self::BUILT_IN.iter().position(|t| *t == self).unwrap_or(0);
+                &HIGH_CONTRAST[i]
+            }
+        }
+    }
+
+    /// The structure shown: the theme's own, or high contrast's.
+    pub fn shown_design(self, high_contrast: bool) -> &'static Design {
+        if high_contrast {
+            &HIGH_CONTRAST_DESIGN
+        } else {
+            self.design()
         }
     }
 
@@ -2011,6 +1240,57 @@ impl Density {
     }
 }
 
+/// Shape of a commit node in the history graph (Settings, Appearance).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum NodeShape {
+    /// A filled circle on a ring of the row's ground.
+    #[default]
+    Dot,
+    /// A hollow circle: a ring in the lane colour around the row's ground.
+    Ring,
+    /// A filled square with `Metrics::radius_sm` scaled corners.
+    Square,
+    /// A filled diamond (a square turned 45 degrees).
+    Diamond,
+}
+
+impl NodeShape {
+    pub const ALL: [Self; 4] = [Self::Dot, Self::Ring, Self::Square, Self::Diamond];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dot => "Dots",
+            Self::Ring => "Rings",
+            Self::Square => "Squares",
+            Self::Diamond => "Diamonds",
+        }
+    }
+}
+
+/// How the history graph draws an edge between lanes (Settings, Appearance).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum Curve {
+    /// A cubic curve leaving and entering vertically.
+    #[default]
+    Smooth,
+    /// Vertical, then a rounded corner, horizontal, a rounded corner, vertical (a metro map).
+    Rounded,
+    /// Vertical, then a straight diagonal across one row, then vertical (a circuit trace).
+    Angular,
+}
+
+impl Curve {
+    pub const ALL: [Self; 3] = [Self::Smooth, Self::Rounded, Self::Angular];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Smooth => "Curves",
+            Self::Rounded => "Metro",
+            Self::Angular => "Circuit",
+        }
+    }
+}
+
 /// What renders, resolved from the settings, the theme and the graphics backend each time any of
 /// them changes ([`Appearance::resolve`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -2025,7 +1305,7 @@ pub struct Appearance {
 /// Why Translucent surfaces cannot be on right now, for the setting's disabled state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GlassBlocked {
-    /// The theme never uses glass (Contrast).
+    /// High contrast never uses glass.
     Theme,
     /// The operating system asks for reduced transparency.
     System,
@@ -2036,7 +1316,7 @@ pub enum GlassBlocked {
 impl GlassBlocked {
     pub fn reason(self) -> &'static str {
         match self {
-            Self::Theme => "Not available with the Contrast theme",
+            Self::Theme => "Not available with high contrast",
             Self::System => "Your system asks for reduced transparency",
             Self::Backend => "Not supported by this graphics driver",
         }
@@ -2081,7 +1361,7 @@ pub fn glass_blocked(
     glass_available: bool,
     reduced_transparency: Option<bool>,
 ) -> Option<GlassBlocked> {
-    if theme.palette().glass_alpha == 0 {
+    if high_contrast() || theme.palette().glass_alpha == 0 {
         Some(GlassBlocked::Theme)
     } else if reduced_transparency == Some(true) {
         Some(GlassBlocked::System)
@@ -2098,6 +1378,11 @@ struct Look {
     style: AtomicU8,
     density: AtomicU8,
     glass: AtomicBool,
+    node: AtomicU8,
+    curve: AtomicU8,
+    contrast: AtomicBool,
+    /// The custom theme's choices and colours; `None` until [`set_custom`] (Midnight's colours).
+    custom: RwLock<Option<CustomBuilt>>,
 }
 
 impl Look {
@@ -2107,6 +1392,10 @@ impl Look {
             style: AtomicU8::new(0),
             density: AtomicU8::new(0),
             glass: AtomicBool::new(false),
+            node: AtomicU8::new(0),
+            curve: AtomicU8::new(0),
+            contrast: AtomicBool::new(false),
+            custom: RwLock::new(None),
         }
     }
 }
@@ -2152,6 +1441,109 @@ pub fn density() -> Density {
     } else {
         Density::Comfortable
     }
+}
+
+/// Turns high contrast on or off over every theme. Call before [`apply`], which installs egui's
+/// visuals from the colours shown.
+pub fn set_high_contrast(on: bool) {
+    look(|l| l.contrast.store(on, Ordering::Relaxed));
+}
+
+/// Whether high contrast is on.
+pub fn high_contrast() -> bool {
+    look(|l| l.contrast.load(Ordering::Relaxed))
+}
+
+/// The custom theme's colours for one set of choices, as and at high contrast.
+#[derive(Clone, Copy)]
+struct CustomBuilt {
+    choice: CustomTheme,
+    palette: &'static Palette,
+    high_contrast: &'static Palette,
+}
+
+/// Every custom palette built in this run, by choice. The palettes are borrowed for the life of
+/// the program like the built-in ones, so each choice is built and kept once: dragging a slider
+/// back and forth reuses them, and the choices are whole degrees and percents, so they stay few.
+fn build_custom(choice: CustomTheme) -> CustomBuilt {
+    static BUILT: LazyLock<Mutex<HashMap<CustomTheme, CustomBuilt>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let mut built = BUILT.lock().unwrap_or_else(PoisonError::into_inner);
+    *built.entry(choice).or_insert_with(|| {
+        let palette: &'static Palette = Box::leak(Box::new(choice.palette()));
+        CustomBuilt {
+            choice,
+            palette,
+            high_contrast: Box::leak(Box::new(super::contrast::derive(
+                palette,
+                &CONTRAST_REFERENCE,
+            ))),
+        }
+    })
+}
+
+/// Sets the custom theme's colours. Call before [`apply`], like [`set_high_contrast`].
+pub fn set_custom(choice: CustomTheme) {
+    let choice = choice.clamped();
+    if custom_slot() == Some(choice) {
+        return;
+    }
+    let built = build_custom(choice);
+    look(|l| *l.custom.write().unwrap_or_else(PoisonError::into_inner) = Some(built));
+}
+
+fn custom_slot() -> Option<CustomTheme> {
+    look(|l| {
+        l.custom
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .map(|b| b.choice)
+    })
+}
+
+/// The custom theme's current choices.
+pub fn custom() -> CustomTheme {
+    custom_slot().unwrap_or_default()
+}
+
+fn custom_built() -> CustomBuilt {
+    look(|l| *l.custom.read().unwrap_or_else(PoisonError::into_inner))
+        .unwrap_or_else(|| build_custom(CustomTheme::default()))
+}
+
+/// The colours currently shown (the active theme, at high contrast when it is on).
+pub fn active_palette() -> &'static Palette {
+    active().shown_palette(high_contrast())
+}
+
+/// The structure currently shown.
+pub fn active_design() -> &'static Design {
+    active().shown_design(high_contrast())
+}
+
+/// Sets the history graph's node shape and edge curve (the user's choice in Settings).
+pub fn set_graph(node: NodeShape, curve: Curve) {
+    let index = |i: Option<usize>| i.and_then(|i| u8::try_from(i).ok()).unwrap_or(0);
+    let n = index(NodeShape::ALL.iter().position(|v| *v == node));
+    let c = index(Curve::ALL.iter().position(|v| *v == curve));
+    look(|l| {
+        l.node.store(n, Ordering::Relaxed);
+        l.curve.store(c, Ordering::Relaxed);
+    });
+}
+
+/// The history graph's node shape and edge curve currently shown.
+pub fn graph_shape() -> (NodeShape, Curve) {
+    let (n, c) = look(|l| {
+        (
+            l.node.load(Ordering::Relaxed),
+            l.curve.load(Ordering::Relaxed),
+        )
+    });
+    (
+        NodeShape::ALL[usize::from(n) % NodeShape::ALL.len()],
+        Curve::ALL[usize::from(c) % Curve::ALL.len()],
+    )
 }
 
 /// The options currently rendering.
@@ -2258,7 +1650,7 @@ impl Palette {
     /// component surface, so it keeps its hue wherever the component is drawn.
     pub fn ink(&self, fg: Color32, fill: Color32) -> Color32 {
         let style = style();
-        let key = (self.name, style, fg, fill);
+        let key = (std::ptr::from_ref(self).addr(), style, fg, fill);
         if let Some(c) = INKS.with(|m| m.borrow().get(&key).copied()) {
             return c;
         }
@@ -2277,14 +1669,14 @@ impl Palette {
             .unwrap_or(self.text)
     }
 
-    /// Fill of a ref pill in colour `c` (15%); the current branch is stronger (26%).
+    /// Fill of a ref pill in colour `c` (24%); the current branch is stronger (34%).
     pub const fn pill_fill(c: Color32, current: bool) -> Color32 {
-        Self::tint(c, if current { 66 } else { 38 })
+        Self::tint(c, if current { 87 } else { 61 })
     }
 
-    /// The ring of a ref pill (42%), the same for the current branch.
+    /// The ring of a ref pill (60%), the same for the current branch.
     pub const fn pill_border(c: Color32) -> Color32 {
-        Self::tint(c, 107)
+        Self::tint(c, 153)
     }
 
     /// Fill of an initials avatar in colour `c` (24%).
@@ -2313,7 +1705,7 @@ impl Palette {
     }
 
     /// The material of `level` in `style` for this theme: its shadow layers in the theme's
-    /// [`ShadowCharacter`] (`Design::shadows`); Contrast has no highlights.
+    /// [`ShadowCharacter`] (`Design::shadows`); high contrast has no highlights.
     pub fn material(&self, style: Style, level: Elevation) -> Material {
         let m = *material(style, self.dark, level);
         let m = Material {
@@ -2331,9 +1723,12 @@ impl Palette {
         }
     }
 
-    /// The structure of the theme this palette belongs to (Midnight's for a palette no theme
-    /// owns).
+    /// The structure of the theme this palette belongs to: high contrast's for a strict palette,
+    /// Midnight's for a palette no theme owns.
     pub fn design(&self) -> &'static Design {
+        if self.strict {
+            return &HIGH_CONTRAST_DESIGN;
+        }
         ThemeId::ALL
             .into_iter()
             .find(|t| t.palette().name == self.name)
@@ -2358,7 +1753,7 @@ impl Palette {
         Self::tint(over(self.design().glass_tint, s.overlay), self.glass_alpha)
     }
 
-    /// Ring of floating layers: `overlay_edge`, or `control_border` in Contrast.
+    /// Ring of floating layers: `overlay_edge`, or `control_border` at high contrast.
     pub fn floating_ring(&self, s: &Surfaces) -> Color32 {
         if self.strict {
             self.control_border
@@ -2369,7 +1764,7 @@ impl Palette {
 }
 
 /// Relative luminance (WCAG 2.2) of an opaque colour.
-fn luminance(c: Color32) -> f64 {
+pub fn luminance(c: Color32) -> f64 {
     let ch = |v: u8| {
         let v = f64::from(v) / 255.0;
         if v <= 0.039_28 {
@@ -2453,7 +1848,9 @@ pub fn clamp_backdrop(c: Color32, dark: bool, cap: f32) -> Color32 {
 }
 
 /// Theme, style, colour and fill of a worked-out ink.
-type InkKey = (&'static str, Style, Color32, Color32);
+/// The palette is told apart by its address: a theme and its high-contrast version share a name,
+/// and every custom palette is named Custom.
+type InkKey = (usize, Style, Color32, Color32);
 
 thread_local! {
     /// Inks already worked out, per theme, style, colour and fill: views ask for the same few
@@ -2464,18 +1861,18 @@ thread_local! {
 
 /// The palette of the active theme.
 pub fn palette(_ctx: &egui::Context) -> &'static Palette {
-    active().palette()
+    active_palette()
 }
 
 /// The surfaces of the active theme and style.
 pub fn surfaces(_ctx: &egui::Context) -> &'static Surfaces {
-    active().palette().surfaces(style())
+    active_palette().surfaces(style())
 }
 
 /// The structure of the active theme: how it draws corners, edges, shadows, selection, focus,
 /// labels, headings, the graph and its art.
 pub fn design(_ctx: &egui::Context) -> &'static Design {
-    active().design()
+    active_design()
 }
 
 // -------------------------------------------------------------------------------------- design
@@ -2486,7 +1883,7 @@ pub use design::*;
 mod design {
     use egui::{Color32, FontFamily};
 
-    use super::{Elevation, FULL, Palette, ShadowLayer, hex, medium, semibold};
+    use super::{Elevation, FULL, Palette, ShadowLayer, hex};
 
     /// A theme's structure, the half of its identity colour cannot carry: corners, edges, shadows,
     /// how panes separate, the ground, the interaction voice, type, the graph, icons, art and motion.
@@ -2512,7 +1909,7 @@ mod design {
         /// The active repository tab and the active view tab.
         pub active_tab: TabStyle,
         /// Links are underlined at rest, not only when hovered or focused: where the link colour
-        /// alone does not set a link apart from body text (Paper) or for low vision (Contrast).
+        /// alone does not set a link apart from body text, or for low vision (high contrast).
         pub link_underline: bool,
         /// Section labels (sidebar sections, settings groups, table headers, menu headings).
         pub labels: LabelStyle,
@@ -2534,14 +1931,8 @@ mod design {
     pub enum EdgeMode {
         /// 1 px seams in `Surfaces::border` between regions and under headers; controls ringed.
         Hairline,
-        /// No seams between regions of different tone: the tonal step alone parts them (a seam only
-        /// where both sides share one tone). Controls keep their rings.
-        Tonal,
         /// Strong lines: seams and card edges in `Palette::control_border` at `edge_width`.
         Outline,
-        /// Hairlines, plus edges that light up: the focused pane, the active tab and primary buttons
-        /// carry a 1 px `focus` edge with a soft glow of it (neon tubes).
-        Lit,
     }
 
     /// Character of shadows, applied to every [`Material`] layer by [`Palette::material`]
@@ -2550,12 +1941,8 @@ mod design {
     pub enum ShadowCharacter {
         /// The material tables as they are: long, soft, low-alpha layers.
         Soft,
-        /// Short and close like a sheet on a desk: blur under half, offset halved, slightly darker.
-        Crisp,
         /// No shadows below floating layers; floating layers keep a faint, short one so they lift.
         Flat,
-        /// Light, not shade: every layer centred under its surface (no drop) and a little wider.
-        Glow,
     }
 
     /// How Standard's flush regions (sidebar, content, details) part.
@@ -2563,8 +1950,6 @@ mod design {
     pub enum PaneSeparation {
         /// A 1 px seam in `Surfaces::border`.
         Seams,
-        /// The tone step alone (sidebar and content differ by `Surfaces::panel`).
-        Tonal,
         /// A strong rule in `Palette::control_border` at `Design::edge_width`.
         Outline,
     }
@@ -2572,7 +1957,7 @@ mod design {
     /// The window ground's treatment where no content sits. Every variant is a translucent `ink`
     /// laid over the style's ground (`Surfaces::bg`, and `pane` on the welcome screen in Standard),
     /// so text and controls painted over it keep their contrast (tested).
-    #[derive(Debug, Clone, Copy, PartialEq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum Ground {
         Flat,
         /// `ink` at `top` alpha at the top edge, fading linearly to `bottom` alpha at the bottom.
@@ -2580,20 +1965,6 @@ mod design {
             ink: Color32,
             top: u8,
             bottom: u8,
-        },
-        /// A radial glow of `ink` at `alpha`, centred at `center` (fractions of the rect, may lie
-        /// outside it) with a radius of `radius` times the rect's longer side, fading smoothly
-        /// (`kit::paint`'s banding-free glow).
-        Glow {
-            ink: Color32,
-            alpha: u8,
-            center: (f32, f32),
-            radius: f32,
-        },
-        /// The edges darkened by `ink` at `alpha` (aged stock), clear in the middle.
-        Vignette {
-            ink: Color32,
-            alpha: u8,
         },
     }
 
@@ -2608,8 +1979,6 @@ mod design {
         Bar { width: f32 },
         /// The wash plus a ring of `width` points in `Palette::focus` at 70%.
         Outline { width: f32 },
-        /// The wash plus a soft inner glow of `Palette::selection` along its edges (6 pt, 40% to 0).
-        Glow,
     }
 
     /// The keyboard focus ring.
@@ -2617,8 +1986,6 @@ mod design {
     pub enum FocusStyle {
         /// A ring of `width` in `Palette::focus`, `offset` points outside the control.
         Ring { width: f32, offset: f32 },
-        /// A 1.5 pt ring of `Palette::focus` plus a soft glow of it `width` points wide (35% to 0).
-        Glow { width: f32 },
         /// A ring of `width` in `Palette::focus` with a 1 pt ring of the ground inside it, so it
         /// reads on any fill.
         Double { width: f32 },
@@ -2629,9 +1996,7 @@ mod design {
     pub enum HoverStyle {
         /// The translucent [`Palette::hover`] wash.
         Tint,
-        /// The wash plus the raised fill's top highlight and a contact shadow: the item lifts.
-        Lift,
-        /// The wash plus a 1 px ring in `Surfaces::edge` (`control_border` in Contrast).
+        /// The wash plus a 1 px ring in `Surfaces::edge` (`control_border` at high contrast).
         Edge,
     }
 
@@ -2642,53 +2007,13 @@ mod design {
         Lifted,
         /// No fill: an underline of `width` points in `Palette::focus` under the label.
         Underline { width: f32 },
-        /// A filled tab with a rule of `width` points in `Palette::accent` along its top edge
-        /// (a bookmark).
-        TopRule { width: f32 },
     }
 
-    /// Letter case of section labels.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum LabelCase {
-        /// ALL CAPS at `Metrics::micro_size`.
-        Upper,
-        /// As written (labels are authored in title case), at `Metrics::small_size`.
-        Title,
-    }
-
-    /// A weight of the UI face.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum Weight {
-        Medium,
-        Semibold,
-    }
-
-    impl Weight {
-        /// The bundled face of this weight.
-        pub fn family(self) -> FontFamily {
-            match self {
-                Self::Medium => medium(),
-                Self::Semibold => semibold(),
-            }
-        }
-    }
-
-    /// Section labels: case, letter-spacing (em, times the label's size) and weight.
+    /// Section labels, set in capitals at `Metrics::micro_size` in Inter Semibold: their
+    /// letter-spacing (em, times the label's size).
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct LabelStyle {
-        pub case: LabelCase,
         pub tracking: f32,
-        pub weight: Weight,
-    }
-
-    impl LabelStyle {
-        /// `text` in this style's case.
-        pub fn cased(self, text: &str) -> String {
-            match self.case {
-                LabelCase::Upper => text.to_uppercase(),
-                LabelCase::Title => text.to_owned(),
-            }
-        }
     }
 
     /// Face of titles and headlines.
@@ -2696,9 +2021,7 @@ mod design {
     pub enum HeadingFace {
         /// Inter Semibold, like the rest of the interface.
         Ui,
-        /// Canopy Serif Bold (a Latin subset of PT Serif Bold): a book face for Paper's titles.
-        Serif,
-        /// Atkinson Hyperlegible Bold: designed for low vision, for Contrast's titles.
+        /// Atkinson Hyperlegible Bold: designed for low vision, for titles at high contrast.
         Hyperlegible,
     }
 
@@ -2707,7 +2030,6 @@ mod design {
         pub const fn family_name(self) -> &'static str {
             match self {
                 Self::Ui => "semibold",
-                Self::Serif => "heading-serif",
                 Self::Hyperlegible => "heading-hyperlegible",
             }
         }
@@ -2720,45 +2042,18 @@ mod design {
         pub const fn size_scale(self) -> f32 {
             match self {
                 Self::Ui => 1.0,
-                Self::Serif => 1.06,
                 Self::Hyperlegible => 1.04,
             }
         }
     }
 
-    /// Shape of a commit node in the graph.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum NodeShape {
-        /// A filled circle on a ring of the row's ground.
-        Dot,
-        /// A hollow circle: a ring in the lane colour around the row's ground.
-        Ring,
-        /// A filled square with `Metrics::radius_sm` scaled corners.
-        Square,
-        /// A filled diamond (a square turned 45 degrees).
-        Diamond,
-    }
-
-    /// How an edge between lanes is drawn.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum Curve {
-        /// A cubic curve leaving and entering vertically.
-        Smooth,
-        /// Vertical, then a rounded corner, horizontal, a rounded corner, vertical (a metro map).
-        Rounded,
-        /// Vertical, then a straight diagonal across one row, then vertical (a circuit trace).
-        Angular,
-    }
-
-    /// The history graph's drawing.
+    /// The history graph's drawing: round nodes on smooth curves, scaled per theme.
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct GraphStyle {
-        pub node: NodeShape,
         /// Factor on `Metrics::graph_node_r` and `graph_head_halo`.
         pub node_scale: f32,
         /// Factor on `Metrics::graph_edge` and `graph_merge_stroke`.
         pub line_scale: f32,
-        pub curve: Curve,
     }
 
     /// Phosphor weight for icons.
@@ -2774,21 +2069,11 @@ mod design {
     /// The motif `ui/art.rs` draws the welcome backdrop and the empty states from.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub enum ArtMotif {
-        /// Midnight: stars joined into constellations, the commits as stars.
+        /// Midnight and Daylight (concept 1): the illustrations as drawn, over a plain ground.
+        Plain,
+        /// Observatory: stars joined into constellations, the commits as stars.
         Constellation,
-        /// Daylight: drafting geometry: circles, construction lines and a low sun.
-        Drafting,
-        /// Aurora: curtains of light in bands across the top.
-        Aurora,
-        /// Ember: sparks rising from a warm glow below.
-        Embers,
-        /// Neon: a perspective grid running to a lit horizon.
-        NeonGrid,
-        /// Forest: layered branching silhouettes, a canopy over the tree.
-        Canopy,
-        /// Paper: ink strokes and fibres on the stock, a fountain-pen line.
-        Ink,
-        /// Contrast: bold line art, no glows or gradients.
+        /// High contrast: bold line art, no glows or gradients.
         Signal,
     }
 
@@ -2798,8 +2083,6 @@ mod design {
         /// Quick and exact: 0.8 times the durations.
         Crisp,
         Standard,
-        /// Unhurried: 1.2 times the durations, ease-in-out instead of ease-out for enters.
-        Soft,
     }
 
     impl MotionCharacter {
@@ -2808,7 +2091,6 @@ mod design {
             match self {
                 Self::Crisp => 0.8,
                 Self::Standard => 1.0,
-                Self::Soft => 1.2,
             }
         }
     }
@@ -2825,56 +2107,71 @@ mod design {
     }
 
     impl ShadowCharacter {
-        pub const ALL: [Self; 4] = [Self::Soft, Self::Crisp, Self::Flat, Self::Glow];
+        pub const ALL: [Self; 2] = [Self::Soft, Self::Flat];
 
         /// Shadow `layer` of `level` in this character, or `None` when it draws no shadow there.
         pub fn shape(self, level: Elevation, layer: ShadowLayer) -> Option<ShadowLayer> {
             let scale = |v: u8, f: f32| crate::ui::saturate_u8((f32::from(v) * f).round());
             match self {
                 Self::Soft => Some(layer),
-                Self::Crisp => Some(ShadowLayer {
-                    dy: layer.dy.signum() * (layer.dy.abs() / 2).max(1),
-                    blur: scale(layer.blur, 0.45).max(1),
-                    alpha: scale(layer.alpha, 1.1),
-                    ..layer
-                }),
                 Self::Flat => (level == Elevation::Floating).then_some(ShadowLayer {
                     dy: layer.dy.min(4),
                     blur: scale(layer.blur, 0.4),
                     alpha: scale(layer.alpha, 0.6),
                     ..layer
                 }),
-                Self::Glow => Some(ShadowLayer {
-                    dy: 0,
-                    blur: scale(layer.blur, 1.2),
-                    spread: layer.spread.max(0),
-                    alpha: scale(layer.alpha, 0.8),
-                    ..layer
-                }),
             }
         }
     }
 
-    const fn labels(case: LabelCase, tracking: f32, weight: Weight) -> LabelStyle {
-        LabelStyle {
-            case,
-            tracking,
-            weight,
-        }
+    const fn labels(tracking: f32) -> LabelStyle {
+        LabelStyle { tracking }
     }
 
-    const fn graph(node: NodeShape, node_scale: f32, line_scale: f32, curve: Curve) -> GraphStyle {
+    const fn graph(node_scale: f32, line_scale: f32) -> GraphStyle {
         GraphStyle {
-            node,
             node_scale,
             line_scale,
-            curve,
         }
     }
 
-    /// Midnight, "Observatory": precise as an instrument. Hairlines, soft long shadows, a selection
+    /// Round-2 concept 1, the design the owner locked for the default themes: flat two-tone chrome
+    /// parted by 1 pt seams, soft shadows only under floating layers, the selection a wash with no
+    /// bar, the active tab lifted, a 2 pt focus ring 2 pt outside the control, circle nodes on
+    /// smooth curves, a flat ground and the illustrations as drawn.
+    const CONCEPT_ONE: Design = Design {
+        radius_scale: 1.0,
+        edge_width: 1.0,
+        edges: EdgeMode::Hairline,
+        shadows: ShadowCharacter::Soft,
+        panes: PaneSeparation::Seams,
+        ground: Ground::Flat,
+        selection: SelectionStyle::Wash,
+        focus: FocusStyle::Ring {
+            width: 2.0,
+            offset: 2.0,
+        },
+        hover: HoverStyle::Tint,
+        active_tab: TabStyle::Lifted,
+        link_underline: false,
+        labels: labels(0.07),
+        heading: HeadingFace::Ui,
+        graph: graph(1.0, 1.0),
+        icons: IconWeight::Regular,
+        art: ArtMotif::Plain,
+        motion: MotionCharacter::Standard,
+        glass_tint: Color32::TRANSPARENT,
+    };
+
+    /// Midnight: concept 1 in the dark.
+    pub const MIDNIGHT_DESIGN: Design = CONCEPT_ONE;
+
+    /// Daylight: concept 1 by day, the same design as Midnight.
+    pub const DAYLIGHT_DESIGN: Design = CONCEPT_ONE;
+
+    /// Observatory: precise as an instrument. Hairlines, soft long shadows, a selection
     /// bar like an indicator, a faint zenith-to-horizon lift, constellations.
-    pub const MIDNIGHT_DESIGN: Design = Design {
+    pub const OBSERVATORY_DESIGN: Design = Design {
         radius_scale: 1.0,
         edge_width: 1.0,
         edges: EdgeMode::Hairline,
@@ -2893,190 +2190,19 @@ mod design {
         hover: HoverStyle::Tint,
         active_tab: TabStyle::Lifted,
         link_underline: false,
-        labels: labels(LabelCase::Upper, 0.07, Weight::Semibold),
+        labels: labels(0.07),
         heading: HeadingFace::Ui,
-        graph: graph(NodeShape::Dot, 1.0, 1.0, Curve::Smooth),
+        graph: graph(1.0, 1.0),
         icons: IconWeight::Regular,
         art: ArtMotif::Constellation,
         motion: MotionCharacter::Standard,
         glass_tint: Palette::tint(hex(0x1A1F4A), 28),
     };
 
-    /// Daylight, "Drafting studio": crisp daylight geometry. Tighter corners, hairlines, short cool
-    /// shadows, a clean cobalt wash, an underlined active tab, hollow nodes on a metro map.
-    pub const DAYLIGHT_DESIGN: Design = Design {
-        radius_scale: 0.72,
-        edge_width: 1.0,
-        edges: EdgeMode::Hairline,
-        shadows: ShadowCharacter::Crisp,
-        panes: PaneSeparation::Seams,
-        ground: Ground::Flat,
-        selection: SelectionStyle::Wash,
-        focus: FocusStyle::Ring {
-            width: 2.0,
-            offset: 1.0,
-        },
-        hover: HoverStyle::Tint,
-        active_tab: TabStyle::Underline { width: 2.0 },
-        link_underline: false,
-        labels: labels(LabelCase::Title, 0.0, Weight::Semibold),
-        heading: HeadingFace::Ui,
-        graph: graph(NodeShape::Ring, 1.05, 0.85, Curve::Rounded),
-        icons: IconWeight::Regular,
-        art: ArtMotif::Drafting,
-        motion: MotionCharacter::Crisp,
-        glass_tint: Palette::tint(hex(0xDCE5FF), 30),
-    };
-
-    /// Aurora, "Polar night": luminous and soft. Rounder corners, no hard seams, a glow from the top
-    /// of the sky, a lit selection band, a glowing focus ring, a band of light under the active
-    /// tab, hollow nodes like stars, curtains of light.
-    pub const AURORA_DESIGN: Design = Design {
-        radius_scale: 1.1,
-        edge_width: 1.0,
-        edges: EdgeMode::Tonal,
-        shadows: ShadowCharacter::Soft,
-        panes: PaneSeparation::Tonal,
-        ground: Ground::Glow {
-            ink: hex(0x5FD6E0),
-            alpha: 20,
-            center: (0.5, -0.25),
-            radius: 1.1,
-        },
-        selection: SelectionStyle::Glow,
-        focus: FocusStyle::Glow { width: 4.0 },
-        hover: HoverStyle::Tint,
-        active_tab: TabStyle::Underline { width: 2.0 },
-        link_underline: false,
-        labels: labels(LabelCase::Upper, 0.09, Weight::Medium),
-        heading: HeadingFace::Ui,
-        graph: graph(NodeShape::Ring, 1.05, 1.1, Curve::Smooth),
-        icons: IconWeight::Regular,
-        art: ArtMotif::Aurora,
-        motion: MotionCharacter::Soft,
-        glass_tint: Palette::tint(hex(0x0B3A44), 30),
-    };
-
-    /// Ember, "Forge at dusk": warm and hand-made. The softest corners, tonal fields instead of
-    /// lines, a hearth glow rising from below, items that lift when hovered, sparks.
-    pub const EMBER_DESIGN: Design = Design {
-        radius_scale: 1.3,
-        edge_width: 1.0,
-        edges: EdgeMode::Tonal,
-        shadows: ShadowCharacter::Soft,
-        panes: PaneSeparation::Tonal,
-        ground: Ground::Glow {
-            ink: hex(0xF0954A),
-            alpha: 18,
-            center: (0.5, 1.2),
-            radius: 1.0,
-        },
-        selection: SelectionStyle::Wash,
-        focus: FocusStyle::Glow { width: 4.0 },
-        hover: HoverStyle::Lift,
-        active_tab: TabStyle::Lifted,
-        link_underline: false,
-        labels: labels(LabelCase::Title, 0.01, Weight::Semibold),
-        heading: HeadingFace::Ui,
-        graph: graph(NodeShape::Dot, 1.1, 1.2, Curve::Smooth),
-        icons: IconWeight::FillAccents,
-        art: ArtMotif::Embers,
-        motion: MotionCharacter::Soft,
-        glass_tint: Palette::tint(hex(0x4A2410), 26),
-    };
-
-    /// Neon, "Night city": sharp and lit. Near-square corners, edges that glow instead of shadows
-    /// that drop, an outlined selection, wide-tracked signage labels, diamonds on circuit traces, a
-    /// grid running to a magenta horizon.
-    pub const NEON_DESIGN: Design = Design {
-        radius_scale: 0.4,
-        edge_width: 1.0,
-        edges: EdgeMode::Lit,
-        shadows: ShadowCharacter::Glow,
-        panes: PaneSeparation::Seams,
-        ground: Ground::Vertical {
-            ink: hex(0xFF4FCB),
-            top: 0,
-            bottom: 16,
-        },
-        selection: SelectionStyle::Outline { width: 1.0 },
-        focus: FocusStyle::Glow { width: 5.0 },
-        hover: HoverStyle::Edge,
-        active_tab: TabStyle::Underline { width: 2.0 },
-        link_underline: false,
-        labels: labels(LabelCase::Upper, 0.14, Weight::Semibold),
-        heading: HeadingFace::Ui,
-        graph: graph(NodeShape::Diamond, 1.1, 1.0, Curve::Angular),
-        icons: IconWeight::Regular,
-        art: ArtMotif::NeonGrid,
-        motion: MotionCharacter::Crisp,
-        glass_tint: Palette::tint(hex(0x3A0F4A), 30),
-    };
-
-    /// Forest, "Evergreen at dusk": organic and calm. Rounded corners, tonal fields, sunlight
-    /// filtering down from above, a trunk-like selection bar, thick branch-like lines, a canopy.
-    pub const FOREST_DESIGN: Design = Design {
-        radius_scale: 1.2,
-        edge_width: 1.0,
-        edges: EdgeMode::Tonal,
-        shadows: ShadowCharacter::Soft,
-        panes: PaneSeparation::Tonal,
-        ground: Ground::Vertical {
-            ink: hex(0xE7BF57),
-            top: 12,
-            bottom: 0,
-        },
-        selection: SelectionStyle::Bar { width: 3.0 },
-        focus: FocusStyle::Ring {
-            width: 2.0,
-            offset: 1.0,
-        },
-        hover: HoverStyle::Tint,
-        active_tab: TabStyle::Lifted,
-        link_underline: false,
-        labels: labels(LabelCase::Title, 0.02, Weight::Medium),
-        heading: HeadingFace::Ui,
-        graph: graph(NodeShape::Dot, 1.0, 1.3, Curve::Smooth),
-        icons: IconWeight::Regular,
-        art: ArtMotif::Canopy,
-        motion: MotionCharacter::Soft,
-        glass_tint: Palette::tint(hex(0x123A20), 26),
-    };
-
-    /// Paper, "Letterpress": printed matter. Sharp corners, ruled hairlines, short warm sheet
-    /// shadows, aged edges on the stock, a highlighter selection, a bookmark on the active tab,
-    /// small-caps labels, serif titles, ink rings on the graph.
-    pub const PAPER_DESIGN: Design = Design {
-        radius_scale: 0.45,
-        edge_width: 1.0,
-        edges: EdgeMode::Hairline,
-        shadows: ShadowCharacter::Crisp,
-        panes: PaneSeparation::Seams,
-        ground: Ground::Vignette {
-            ink: hex(0x6B4A22),
-            alpha: 18,
-        },
-        selection: SelectionStyle::Wash,
-        focus: FocusStyle::Ring {
-            width: 1.5,
-            offset: 1.0,
-        },
-        hover: HoverStyle::Tint,
-        active_tab: TabStyle::TopRule { width: 2.0 },
-        link_underline: true,
-        labels: labels(LabelCase::Upper, 0.11, Weight::Semibold),
-        heading: HeadingFace::Serif,
-        graph: graph(NodeShape::Ring, 1.0, 0.9, Curve::Smooth),
-        icons: IconWeight::Regular,
-        art: ArtMotif::Ink,
-        motion: MotionCharacter::Standard,
-        glass_tint: Palette::tint(hex(0xFFF3D6), 30),
-    };
-
-    /// Contrast, "Signal": maximum legibility, still designed. Strong outlines instead of shadows,
+    /// High contrast, over any theme: built for legibility. Strong outlines instead of shadows,
     /// an outlined selection, a double focus ring, a thick underline, bold labels, Atkinson
-    /// Hyperlegible titles, square nodes on thick lines, line art without glows.
-    pub const CONTRAST_DESIGN: Design = Design {
+    /// Hyperlegible titles, Midnight's round nodes on thicker lines, line art without glows.
+    pub const HIGH_CONTRAST_DESIGN: Design = Design {
         radius_scale: 0.6,
         edge_width: 1.5,
         edges: EdgeMode::Outline,
@@ -3088,9 +2214,9 @@ mod design {
         hover: HoverStyle::Edge,
         active_tab: TabStyle::Underline { width: 3.0 },
         link_underline: true,
-        labels: labels(LabelCase::Upper, 0.06, Weight::Semibold),
+        labels: labels(0.06),
         heading: HeadingFace::Hyperlegible,
-        graph: graph(NodeShape::Square, 1.15, 1.25, Curve::Rounded),
+        graph: graph(1.15, 1.25),
         icons: IconWeight::FillAccents,
         art: ArtMotif::Signal,
         motion: MotionCharacter::Crisp,
@@ -3788,7 +2914,7 @@ pub fn metrics_in(theme: ThemeId, density: Density, style: Style) -> &'static Me
         (Density::Dense, Style::Deeper),
     ];
     static SHAPED: LazyLock<Vec<Metrics>> = LazyLock::new(|| {
-        ThemeId::ALL
+        ThemeId::BUILT_IN
             .into_iter()
             .flat_map(|t| PAIRS.map(|(d, s)| metrics_for(d, s).shaped(t.design())))
             .collect()
@@ -3798,12 +2924,26 @@ pub fn metrics_in(theme: ThemeId, density: Density, style: Style) -> &'static Me
         .position(|&pair| pair == (density, style))
         .unwrap_or(0);
     SHAPED
-        .get(usize::from(theme.index()) * PAIRS.len() + pair)
+        .get(usize::from(theme.built_in().index()) * PAIRS.len() + pair)
         .unwrap_or_else(|| metrics_for(density, style))
 }
 
 /// The active metrics, in the active theme's corners.
 pub fn metrics() -> &'static Metrics {
+    if high_contrast() {
+        static SHAPED: LazyLock<[Metrics; 4]> = LazyLock::new(|| {
+            [
+                (Density::Comfortable, Style::Standard),
+                (Density::Dense, Style::Standard),
+                (Density::Comfortable, Style::Deeper),
+                (Density::Dense, Style::Deeper),
+            ]
+            .map(|(d, s)| metrics_for(d, s).shaped(&HIGH_CONTRAST_DESIGN))
+        });
+        let i =
+            usize::from(density() == Density::Dense) + 2 * usize::from(style() == Style::Deeper);
+        return &SHAPED[i];
+    }
     metrics_in(active(), density(), style())
 }
 
@@ -4102,22 +3242,17 @@ pub fn medium() -> FontFamily {
     FontFamily::Name("medium".into())
 }
 
-/// A section label (sidebar sections, settings groups, table column headers, menu headings) in
-/// the active theme's [`LabelStyle`]: its case, size (`micro_size` in capitals, `small_size` in
-/// title case), weight and tracking.
+/// A section label (sidebar sections, settings groups, table column headers, menu headings): in
+/// capitals at `micro_size`, semibold, with the active theme's tracking ([`LabelStyle`]).
 pub fn section_label(text: &str, color: Color32) -> egui::text::LayoutJob {
-    let style = active().design().labels;
-    let m = metrics();
-    let size = match style.case {
-        LabelCase::Upper => m.micro_size,
-        LabelCase::Title => m.small_size,
-    };
+    let style = active_design().labels;
+    let size = metrics().micro_size;
     let mut job = egui::text::LayoutJob::default();
     job.append(
-        &style.cased(text),
+        &text.to_uppercase(),
         0.0,
         egui::TextFormat {
-            font_id: FontId::new(size, style.weight.family()),
+            font_id: FontId::new(size, semibold()),
             color,
             extra_letter_spacing: style.tracking * size,
             ..Default::default()
@@ -4129,7 +3264,7 @@ pub fn section_label(text: &str, color: Color32) -> egui::text::LayoutJob {
 /// A title or headline at `size` (`Metrics::title_size`, `headline_size`, `subtitle_size` for card
 /// titles, `display_size`, `hero_size`) in the active theme's heading face ([`HeadingFace`]).
 pub fn heading(size: f32) -> FontId {
-    let face = active().design().heading;
+    let face = active_design().heading;
     FontId::new(size * face.size_scale(), face.family())
 }
 
@@ -4137,7 +3272,7 @@ pub fn heading(size: f32) -> FontId {
 /// toggled) and the theme fills its active icons ([`IconWeight::FillAccents`]), else the regular
 /// one.
 pub fn icon_font(size: f32, lit: bool) -> FontId {
-    if lit && active().design().icons == IconWeight::FillAccents {
+    if lit && active_design().icons == IconWeight::FillAccents {
         FontId::new(size, FontFamily::Name(super::fonts::FILL.into()))
     } else {
         FontId::proportional(size)
@@ -4301,12 +3436,12 @@ pub fn with_look<R>(style: Style, density: Density, f: impl FnOnce() -> R) -> R 
 pub fn apply(ctx: &egui::Context, id: ThemeId, look: Appearance) {
     look_set(id, look.style, look.density, look.glass);
     super::motion::set_reduced(look.reduce_motion);
-    let p = id.palette();
-    let m = metrics_in(id, look.density, look.style);
+    let p = active_palette();
+    let m = metrics();
     let theme = if p.dark { Theme::Dark } else { Theme::Light };
     let mut style = (*ctx.style_of(theme)).clone();
     style.visuals = visuals(p, look.style, m);
-    let face = id.design().heading;
+    let face = active_design().heading;
     style.text_styles = [
         (
             TextStyle::Heading,
@@ -4354,6 +3489,212 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, look: Appearance) {
 mod tests {
     use super::*;
 
+    /// Every palette shown: each built-in theme and a sweep of custom ones (both bases, every
+    /// accent swatch at the weakest and strongest intensity, no tint and full tints around the
+    /// wheel), each also at high contrast.
+    fn every_palette() -> Vec<&'static Palette> {
+        let mut all: Vec<&'static Palette> = ThemeId::BUILT_IN
+            .iter()
+            .flat_map(|t| [t.palette(), t.shown_palette(true)])
+            .collect();
+        for choice in custom_sweep() {
+            let built = build_custom(choice);
+            all.extend([built.palette, built.high_contrast]);
+        }
+        all
+    }
+
+    /// The ink cache tells palettes apart: a theme and its high-contrast version share a name,
+    /// and every custom palette is named Custom, yet each gets the ink worked out for itself.
+    #[test]
+    fn each_palette_keeps_its_own_inks() {
+        let red = build_custom(CustomTheme {
+            accent_hue: 28,
+            ..CustomTheme::default()
+        });
+        let green = build_custom(CustomTheme {
+            accent_hue: 150,
+            ..CustomTheme::default()
+        });
+        let palettes = [
+            ThemeId::Midnight.palette(),
+            ThemeId::Midnight.shown_palette(true),
+            red.palette,
+            green.palette,
+        ];
+        let base = ThemeId::Midnight.palette();
+        let (fg, fill) = (base.lane(3), Palette::pill_fill(base.text_faint, true));
+        let fresh: Vec<Color32> = palettes
+            .iter()
+            .map(|p| p.ink_on(p.surfaces(style()), fg, fill))
+            .collect();
+        assert!(
+            fresh.windows(2).any(|w| w[0] != w[1]),
+            "the palettes must disagree for the test to tell them apart"
+        );
+        for (p, want) in palettes.iter().zip(fresh) {
+            assert_eq!(p.ink(fg, fill), want, "{}", p.name);
+        }
+    }
+
+    /// Custom choices the contrast tests run over: every swatch hue and hues between them, the
+    /// extremes of intensity, no tint and full tints around the wheel, plus choices that once
+    /// missed a gate by a hair (a vivid red selection on Daylight, near-black tinted grounds).
+    /// The fix was checked over 2,880 choices (hue every 10 degrees, four intensities, ten tints).
+    fn custom_sweep() -> Vec<CustomTheme> {
+        let hues = super::super::custom_theme::HUES
+            .iter()
+            .map(|(h, _)| *h)
+            .chain((7..360).step_by(30));
+        let mut out = Vec::new();
+        for light in [false, true] {
+            for accent_hue in hues.clone() {
+                for accent_intensity in [20, 140] {
+                    for (tint, tint_hue) in [(0, 0), (100, 28), (100, 150), (100, 250), (100, 335)]
+                    {
+                        out.push(CustomTheme {
+                            light,
+                            accent_hue,
+                            accent_intensity,
+                            tint_hue,
+                            tint,
+                        });
+                    }
+                }
+            }
+        }
+        for (light, accent_hue, accent_intensity, tint_hue, tint) in [
+            (true, 21, 140, 240, 100),
+            (true, 21, 140, 0, 0),
+            (true, 10, 140, 190, 100),
+            (false, 0, 20, 240, 100),
+            (false, 234, 52, 335, 100),
+        ] {
+            out.push(CustomTheme {
+                light,
+                accent_hue,
+                accent_intensity,
+                tint_hue,
+                tint,
+            });
+        }
+        out
+    }
+
+    /// The custom theme starts as its base theme: the default choices change no colour.
+    #[test]
+    fn the_default_custom_theme_is_midnight_and_its_light_one_daylight() {
+        for (light, base) in [(false, &MIDNIGHT), (true, &DAYLIGHT)] {
+            let custom = CustomTheme {
+                light,
+                ..CustomTheme::default()
+            }
+            .palette();
+            assert_eq!(custom.name, "Custom");
+            assert_eq!(
+                format!("{:?}", custom.standard),
+                format!("{:?}", base.standard)
+            );
+            assert_eq!(format!("{:?}", custom.deeper), format!("{:?}", base.deeper));
+            for (got, want) in [
+                (custom.text, base.text),
+                (custom.text_dim, base.text_dim),
+                (custom.accent, base.accent),
+                (custom.focus, base.focus),
+                (custom.selection, base.selection),
+                (custom.on_accent, base.on_accent),
+                (custom.control_border, base.control_border),
+            ] {
+                assert_eq!(got, want, "{}", base.name);
+            }
+        }
+    }
+
+    /// The accent recolours the indigo family and the tint the neutrals, at the base's luminance;
+    /// status colours, lanes and syntax stay the base's.
+    #[test]
+    fn custom_choices_recolour_the_accent_and_the_neutrals_only() {
+        let green = CustomTheme {
+            accent_hue: 150,
+            tint: 100,
+            tint_hue: 150,
+            ..CustomTheme::default()
+        }
+        .palette();
+        let hue = |c: Color32| {
+            let [_, a, b] = super::super::contrast::oklab(c);
+            b.atan2(a).to_degrees().rem_euclid(360.0)
+        };
+        for c in [green.standard.primary.top, green.accent, green.focus] {
+            assert!((hue(c) - 150.0).abs() < 15.0, "{c:?} is not green");
+        }
+        assert!(
+            (hue(green.standard.bg) - 150.0).abs() < 15.0,
+            "the ground takes the tint"
+        );
+        let delta = (luminance(green.standard.bg) - luminance(MIDNIGHT.standard.bg)).abs();
+        assert!(delta < 0.002, "the ground keeps its luminance ({delta})");
+        // Status colours, lanes and syntax keep their hues; contrast may move them a little.
+        let pairs = [
+            (green.success, MIDNIGHT.success),
+            (green.danger, MIDNIGHT.danger),
+            (green.syntax.keyword, MIDNIGHT.syntax.keyword),
+        ];
+        for (got, want) in pairs
+            .into_iter()
+            .chain(green.lanes.into_iter().zip(MIDNIGHT.lanes))
+        {
+            let d = (hue(got) - hue(want)).abs();
+            assert!(d.min(360.0 - d) < 4.0, "{got:?} left {want:?}'s hue");
+        }
+    }
+
+    /// Choosing the custom theme shows the colours last set, at high contrast too, and the inks
+    /// worked out for one palette are never reused for another of the same name.
+    #[test]
+    fn the_custom_theme_shows_the_colours_last_set() {
+        let ctx = egui::Context::default();
+        let teal = CustomTheme {
+            accent_hue: 205,
+            ..CustomTheme::default()
+        };
+        set_custom(teal);
+        apply(&ctx, ThemeId::Custom, Appearance::STILL);
+        assert_eq!(custom(), teal);
+        let shown = palette(&ctx);
+        assert_eq!(shown.accent, teal.palette().accent);
+        let ink = shown.ink(shown.accent, Color32::TRANSPARENT);
+        set_custom(CustomTheme::default());
+        apply(&ctx, ThemeId::Custom, Appearance::STILL);
+        let midnight_ink = palette(&ctx).ink(palette(&ctx).accent, Color32::TRANSPARENT);
+        assert_ne!(ink, midnight_ink, "a stale ink from the teal palette");
+        set_high_contrast(true);
+        assert!(ThemeId::Custom.shown_palette(true).strict);
+        set_high_contrast(false);
+        assert_eq!(
+            ThemeId::Custom.design().heading,
+            MIDNIGHT_DESIGN.heading,
+            "the custom theme takes its base's structure"
+        );
+    }
+
+    /// Out-of-range choices from a hand-edited settings file are brought into range.
+    #[test]
+    fn custom_choices_are_clamped() {
+        let c = CustomTheme {
+            light: true,
+            accent_hue: 725,
+            accent_intensity: 250,
+            tint_hue: 360,
+            tint: 180,
+        }
+        .clamped();
+        assert_eq!(
+            (c.accent_hue, c.accent_intensity, c.tint_hue, c.tint),
+            (5, 140, 0, 100)
+        );
+    }
+
     /// Collects failed pairings so one run lists all of them.
     struct Gate {
         failures: Vec<String>,
@@ -4381,7 +3722,8 @@ mod tests {
         }
     }
 
-    /// (`text`, `text_dim`, `text_faint`, `outline` and `focus`) minimums: Contrast is stricter.
+    /// (`text`, `text_dim`, `text_faint`, `outline` and `focus`) minimums: high contrast is
+    /// stricter.
     fn targets(p: &Palette) -> (f64, f64, f64, f64) {
         if p.strict {
             (10.0, 7.0, 5.5, 4.5)
@@ -4424,8 +3766,7 @@ mod tests {
     #[test]
     fn every_theme_meets_contrast_targets() {
         let mut failures = Vec::new();
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette() {
             for style in Style::ALL {
                 let s = p.surfaces(style);
                 let mut gate = Gate::new(p, style);
@@ -4590,7 +3931,7 @@ mod tests {
                     ("warning", p.warning),
                     ("danger", p.danger),
                 ] {
-                    let tint = Palette::tint(c, 41);
+                    let tint = Palette::tint(c, TONE_ALPHA);
                     for (on, bg) in &surfaces[..4] {
                         let b = over(tint, *bg);
                         gate.need(
@@ -4614,8 +3955,7 @@ mod tests {
     #[test]
     fn amendment_tokens_meet_their_targets() {
         let mut failures = Vec::new();
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette() {
             for style in Style::ALL {
                 let s = p.surfaces(style);
                 let mut gate = Gate::new(p, style);
@@ -4701,8 +4041,7 @@ mod tests {
     #[test]
     fn coloured_components_are_readable() {
         let mut failures = Vec::new();
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette() {
             for style in Style::ALL {
                 let s = p.surfaces(style);
                 let mut colours: Vec<Color32> = p.lanes.to_vec();
@@ -4754,10 +4093,9 @@ mod tests {
             ("grey", Color32::from_gray(128)),
         ];
         let mut failures = Vec::new();
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette() {
             if p.glass_alpha == 0 {
-                assert!(p.strict, "{}: only Contrast never uses glass", p.name);
+                assert!(p.strict, "{}: only high contrast never uses glass", p.name);
                 continue;
             }
             for style in Style::ALL {
@@ -4790,13 +4128,12 @@ mod tests {
     }
 
     /// A disabled control stays readable (QA wave 1: labels at 1.3 to 2.3:1): `disabled_text` at
-    /// 3:1 (4.5:1 in Contrast) on every surface a disabled control is painted on, dimmer than
+    /// 3:1 (4.5:1 at high contrast) on every surface a disabled control is painted on, dimmer than
     /// `text_faint` so it still reads as disabled, on a neutral fill with a ring of its own.
     #[test]
     fn disabled_tokens_are_readable() {
         let mut failures = Vec::new();
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette() {
             let min = if p.strict { 4.5 } else { 3.0 };
             for style in Style::ALL {
                 let s = p.surfaces(style);
@@ -4872,8 +4209,7 @@ mod tests {
     #[test]
     fn graph_lanes_are_distinct() {
         let mut failures = Vec::new();
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette() {
             for (i, a) in p.lanes.iter().enumerate() {
                 for (j, b) in p.lanes.iter().enumerate().skip(i + 1) {
                     let d = delta_e(*a, *b);
@@ -4891,8 +4227,7 @@ mod tests {
     #[test]
     fn status_washes_keep_text_readable() {
         let mut failures = Vec::new();
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette() {
             for style in Style::ALL {
                 let s = p.surfaces(style);
                 let mut gate = Gate::new(p, style);
@@ -4921,22 +4256,25 @@ mod tests {
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
-    /// Paper's sepia links share body text's hue family and Contrast serves low vision, so there a
-    /// link carries a cue beyond colour: it is underlined at rest (QV2-3, WCAG 1.4.1). Elsewhere
-    /// the underline appears on hover.
+    /// High contrast serves low vision, so there a link carries a cue beyond colour: it is
+    /// underlined at rest (QV2-3, WCAG 1.4.1). Elsewhere the underline appears on hover.
     #[test]
-    fn links_are_underlined_at_rest_in_paper_and_contrast() {
+    fn links_are_underlined_at_rest_at_high_contrast() {
         use crate::ui::kit::button::LinkButton;
-        for id in ThemeId::ALL {
+        for (id, hc) in ThemeId::ALL
+            .into_iter()
+            .flat_map(|t| [(t, false), (t, true)])
+        {
             let ctx = egui::Context::default();
             crate::ui::fonts::install(&ctx);
+            set_high_contrast(hc);
             apply(&ctx, id, Appearance::STILL);
             let mut text = egui::Rect::NOTHING;
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 text = LinkButton::new("Create a token").show(ui).rect;
             });
             out.textures_delta.clear();
-            let p = id.palette();
+            let p = id.shown_palette(hc);
             let underlined = out.shapes.iter().any(|c| match &c.shape {
                 egui::Shape::LineSegment { points, stroke } => {
                     stroke.color == p.accent2
@@ -4946,9 +4284,8 @@ mod tests {
                 }
                 _ => false,
             });
-            let want = matches!(id, ThemeId::Paper | ThemeId::Contrast);
-            assert_eq!(underlined, want, "{id:?}");
-            assert_eq!(id.design().link_underline, want, "{id:?}");
+            assert_eq!(underlined, hc, "{id:?} high contrast {hc}");
+            assert_eq!(id.shown_design(hc).link_underline, hc, "{id:?}");
         }
     }
 
@@ -4956,12 +4293,11 @@ mod tests {
     /// text keeps the 3:1 floor on every status wash over every ground, and a clear margin, 3.5:1,
     /// on the grounds banners sit on (pane, panel, Deeper's window ground), so it still reads as
     /// the step that will come (QV2-9: Ember was 3.16:1; washes over dialogs were down to 2.71:1).
-    /// Contrast keeps 4.5:1 everywhere.
+    /// High contrast keeps 4.5:1 everywhere.
     #[test]
     fn disabled_actions_read_on_banners() {
         let mut failures = Vec::new();
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette() {
             let floor = if p.strict { 4.5 } else { 3.0 };
             let banner = if p.strict { 4.5 } else { 3.5 };
             for style in Style::ALL {
@@ -4996,7 +4332,7 @@ mod tests {
 
     /// Structure you can see (QA wave 1: every ladder was one uniform 1 to 2 L* step): Standard's
     /// chrome sits at least 2.5 L* off the content ground, and Deeper's cards at least 4 L* off
-    /// their ground (Contrast outlines its cards instead).
+    /// their ground (high contrast outlines its cards instead).
     #[test]
     fn solid_scroll_bars_stay_thin_and_quiet() {
         let solid = solid_scroll();
@@ -5017,8 +4353,7 @@ mod tests {
 
     #[test]
     fn surface_steps_are_visible() {
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette() {
             let l = |c: Color32| lab(c)[0];
             let st = &p.standard;
             let chrome = (l(st.panel) - l(st.pane)).abs();
@@ -5062,15 +4397,14 @@ mod tests {
     }
 
     /// The accent never reads as a status: at least 40 degrees of OKLCH hue from success and
-    /// danger in every theme.
+    /// danger in every built-in theme. A custom theme's accent is the user's own choice.
     #[test]
     fn accent_clears_status_hues() {
         let dist = |a: f64, b: f64| {
             let d = (a - b).abs() % 360.0;
             d.min(360.0 - d)
         };
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette().into_iter().filter(|p| p.name != "Custom") {
             let accent = oklch_hue(p.accent);
             for (what, c) in [("success", p.success), ("danger", p.danger)] {
                 let d = dist(accent, oklch_hue(c));
@@ -5082,8 +4416,7 @@ mod tests {
     /// Standard is concept 1: flat fills, flush panes, the content ground is the window ground.
     #[test]
     fn standard_is_flat_and_flush() {
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette() {
             let s = &p.standard;
             for (name, fill) in [
                 ("raised", s.raised),
@@ -5118,13 +4451,14 @@ mod tests {
     }
 
     #[test]
-    fn contrast_has_no_highlights() {
-        let p = ThemeId::Contrast.palette();
-        for style in Style::ALL {
-            for level in Elevation::ALL {
-                assert_eq!(p.material(style, level).highlight, 0);
+    fn high_contrast_has_no_highlights() {
+        for p in ThemeId::ALL.map(|t| t.shown_palette(true)) {
+            for style in Style::ALL {
+                for level in Elevation::ALL {
+                    assert_eq!(p.material(style, level).highlight, 0);
+                }
+                assert_eq!(p.floating_ring(p.surfaces(style)), p.control_border);
             }
-            assert_eq!(p.floating_ring(p.surfaces(style)), p.control_border);
         }
     }
 
@@ -5175,7 +4509,10 @@ mod tests {
     #[test]
     fn theme_names_accept_display_and_variant_names() {
         assert_eq!(ThemeId::from_name("midnight"), Some(ThemeId::Midnight));
-        assert_eq!(ThemeId::from_name("CONTRAST"), Some(ThemeId::Contrast));
+        assert_eq!(
+            ThemeId::from_name("OBSERVATORY"),
+            Some(ThemeId::Observatory)
+        );
         assert_eq!(ThemeId::from_name("nope"), None);
         assert_eq!(Style::from_name("deeper"), Some(Style::Deeper));
         assert_eq!(Density::from_name("Dense"), Some(Density::Dense));
@@ -5199,7 +4536,6 @@ mod tests {
         assert!(on(ThemeId::Midnight, true, Some(false)));
         assert!(!on(ThemeId::Midnight, true, Some(true)));
         assert!(!on(ThemeId::Midnight, false, None));
-        assert!(!on(ThemeId::Contrast, true, None));
         let off = Appearance::resolve(
             ThemeId::Midnight,
             Style::Standard,
@@ -5210,19 +4546,138 @@ mod tests {
             None,
         );
         assert!(!off.glass);
+        set_high_contrast(true);
+        assert!(!on(ThemeId::Midnight, true, None));
         assert_eq!(
-            glass_blocked(ThemeId::Contrast, true, None),
+            glass_blocked(ThemeId::Midnight, true, None),
             Some(GlassBlocked::Theme)
         );
+        set_high_contrast(false);
     }
 
+    /// Owner (6 Oct 2026): three themes, Midnight and Daylight (concept 1) and Observatory (the
+    /// Midnight that build 690 shipped, kept as a theme of its own), plus a custom theme the user
+    /// colours, starting from Midnight; high contrast is a switch over any of them.
     #[test]
-    fn next_cycles_through_all_themes() {
-        let mut t = ThemeId::Midnight;
-        for _ in 0..ThemeId::ALL.len() {
-            t = t.next();
+    fn the_themes_are_midnight_daylight_observatory_and_custom() {
+        assert_eq!(
+            ThemeId::BUILT_IN,
+            [ThemeId::Midnight, ThemeId::Daylight, ThemeId::Observatory]
+        );
+        assert_eq!(
+            ThemeId::ALL,
+            [
+                ThemeId::Midnight,
+                ThemeId::Daylight,
+                ThemeId::Observatory,
+                ThemeId::Custom
+            ]
+        );
+        assert_eq!(ThemeId::default(), ThemeId::Midnight);
+        let mut seen = vec![ThemeId::Midnight];
+        while seen.len() < ThemeId::ALL.len() {
+            let next = seen[seen.len() - 1].next();
+            assert!(!seen.contains(&next), "{next:?} came round early");
+            seen.push(next);
         }
-        assert_eq!(t, ThemeId::Midnight);
+        assert_eq!(seen[seen.len() - 1].next(), ThemeId::Midnight);
+    }
+
+    /// Observatory keeps build 690's Midnight: its navy ground, periwinkle primary and indigo
+    /// focus, and its structure (the selection bar and the zenith lift).
+    #[test]
+    fn observatory_is_the_released_midnight() {
+        let s = OBSERVATORY.standard;
+        assert_eq!(
+            [s.bg, s.panel, s.border, s.primary.top],
+            [hex(0x0B0F19), hex(0x111723), hex(0x1B2233), hex(0x646CD6)]
+        );
+        assert_eq!(OBSERVATORY.focus, hex(0x7F89FF));
+        assert_eq!(
+            OBSERVATORY_DESIGN.selection,
+            SelectionStyle::Bar { width: 2.0 }
+        );
+        assert_eq!(OBSERVATORY_DESIGN.art, ArtMotif::Constellation);
+    }
+
+    /// Owner (6 Oct 2026): high contrast applies over the chosen theme. Each theme keeps its
+    /// grounds and its hues (a colour's hue moves by little), and turns strict.
+    #[test]
+    fn high_contrast_keeps_each_themes_grounds_and_hues() {
+        let hue = |c: Color32| {
+            let [r, g, b, _] = c.to_array();
+            let (r, g, b) = (f32::from(r), f32::from(g), f32::from(b));
+            (3.0_f32.sqrt() * (g - b)).atan2(2.0 * r - g - b)
+        };
+        for t in ThemeId::ALL {
+            let (base, hc) = (t.palette(), t.shown_palette(true));
+            assert!(hc.strict && !base.strict, "{t:?}");
+            assert_eq!(hc.dark, base.dark);
+            for style in Style::ALL {
+                let (c, m) = (hc.surfaces(style), base.surfaces(style));
+                assert_eq!(
+                    [c.bg, c.panel, c.pane, c.elevated, c.field],
+                    [m.bg, m.panel, m.pane, m.elevated, m.field],
+                    "{t:?} {style:?}"
+                );
+            }
+            for (a, b) in [
+                (hc.standard.primary.top, base.standard.primary.top),
+                (hc.focus, base.focus),
+                (hc.accent, base.accent),
+            ] {
+                let d = (hue(a) - hue(b)).abs();
+                let d = d.min(std::f32::consts::TAU - d);
+                assert!(d < 0.35, "{t:?}: {a:?} left {b:?}'s hue");
+            }
+        }
+    }
+
+    /// Owner's lock (5 Oct 2026, round 2): the default look is concept 1 exactly. Midnight carries
+    /// its dark palette and Daylight its light one, both with the indigo primary, and both use
+    /// concept 1's structure: flat ground, a wash with no bar, a lifted tab and a 2 pt focus ring
+    /// 2 pt outside the control.
+    #[test]
+    fn the_default_themes_are_concept_one() {
+        let s = MIDNIGHT.standard;
+        assert_eq!(
+            [s.bg, s.panel, s.elevated, s.border],
+            [hex(0x0F1012), hex(0x151619), hex(0x1B1C20), hex(0x24262B)]
+        );
+        assert_eq!(
+            [MIDNIGHT.text, MIDNIGHT.text_dim, MIDNIGHT.focus],
+            [hex(0xECECEF), hex(0xA4A6AD), hex(0x7C86FF)]
+        );
+        let d = DAYLIGHT.standard;
+        assert_eq!(
+            [d.bg, d.panel, d.border],
+            [hex(0xFFFFFF), hex(0xF7F7F8), hex(0xE6E6EA)]
+        );
+        assert_eq!(DAYLIGHT.text, hex(0x18181B));
+        for p in [&MIDNIGHT, &DAYLIGHT] {
+            assert_eq!(p.standard.primary.top, hex(0x5E6AD2), "{}", p.name);
+            assert_eq!(p.standard.primary.bottom, hex(0x5E6AD2), "{}", p.name);
+            assert_eq!(p.danger_base == hex(0xE5484D), p.dark, "{}", p.name);
+        }
+        for id in [ThemeId::Midnight, ThemeId::Daylight] {
+            let d = id.design();
+            assert_eq!(d.ground, Ground::Flat);
+            assert_eq!(d.selection, SelectionStyle::Wash);
+            assert_eq!(d.active_tab, TabStyle::Lifted);
+            assert_eq!(
+                d.focus,
+                FocusStyle::Ring {
+                    width: 2.0,
+                    offset: 2.0
+                }
+            );
+            assert!((d.radius_scale - 1.0).abs() < f32::EPSILON);
+            assert_eq!(d.shadows, ShadowCharacter::Soft);
+            assert_eq!(d.hover, HoverStyle::Tint);
+            assert_eq!(d.heading, HeadingFace::Ui);
+            assert_eq!(d.art, ArtMotif::Plain);
+            assert_eq!(d.glass_tint, Color32::TRANSPARENT);
+        }
     }
 
     #[test]
@@ -5249,7 +4704,10 @@ mod tests {
     }
 
     /// Owner (6 Oct 2026): each theme is a design of its own, not a recolour. Every pair of themes
-    /// differs in at least four structural choices, and no two share an art motif.
+    /// differs in at least four structural choices, and no two share an art motif. The Midnight
+    /// family is the exception: Midnight and Daylight are the locked concept 1 in dark and light,
+    /// and Observatory is build 690's Midnight, kept as it shipped (its own palette, ground,
+    /// selection bar and motif).
     #[test]
     fn every_theme_is_a_design_of_its_own() {
         use std::mem::discriminant as kind;
@@ -5264,25 +4722,41 @@ mod tests {
                 format!("{:?}", kind(&d.focus)),
                 format!("{:?}", d.hover),
                 format!("{:?}", kind(&d.active_tab)),
-                format!("{:?}{:?}", d.labels.case, d.labels.weight),
+                format!("{:.2}", d.labels.tracking),
                 format!("{:?}", d.heading),
-                format!("{:?}{:?}", d.graph.node, d.graph.curve),
+                format!("{:.2}{:.2}", d.graph.node_scale, d.graph.line_scale),
                 format!("{:?}", d.icons),
                 format!("{:?}", d.motion),
             ]
         };
+        let pair = [ThemeId::Midnight, ThemeId::Daylight];
+        let family = [ThemeId::Midnight, ThemeId::Daylight, ThemeId::Observatory];
+        assert_eq!(
+            traits(ThemeId::Midnight.design()),
+            traits(ThemeId::Daylight.design())
+        );
         let mut motifs = std::collections::HashSet::new();
-        for (i, a) in ThemeId::ALL.iter().enumerate() {
-            assert!(
-                motifs.insert(a.design().art),
-                "{}: art motif shared",
-                a.name()
-            );
-            for b in ThemeId::ALL.iter().skip(i + 1) {
+        for (i, a) in ThemeId::BUILT_IN.iter().enumerate() {
+            if *a != ThemeId::Daylight {
+                assert!(
+                    motifs.insert(a.design().art),
+                    "{}: art motif shared",
+                    a.name()
+                );
+            }
+            for b in ThemeId::BUILT_IN.iter().skip(i + 1) {
+                if pair.contains(a) && pair.contains(b) {
+                    continue;
+                }
                 let (x, y) = (traits(a.design()), traits(b.design()));
                 let differ = x.iter().zip(&y).filter(|(p, q)| p != q).count();
+                let least = if family.contains(a) && family.contains(b) {
+                    2
+                } else {
+                    4
+                };
                 assert!(
-                    differ >= 4,
+                    differ >= least,
                     "{} and {} differ in only {differ} structural choices",
                     a.name(),
                     b.name()
@@ -5291,8 +4765,9 @@ mod tests {
         }
     }
 
-    /// A theme's radius scale reshapes every corner but keeps pills full, square corners square
-    /// and a rounded corner from collapsing; sharp themes stay sharper than soft ones.
+    /// A theme's radius scale reshapes every corner but keeps pills full, square corners square and
+    /// a rounded corner from collapsing; high contrast's tighter corners stay tighter than
+    /// Midnight's.
     #[test]
     fn design_radii_scale_and_keep_their_shape() {
         for id in ThemeId::ALL {
@@ -5308,11 +4783,7 @@ mod tests {
             }
         }
         let r = |id: ThemeId| id.design().radius(COMFORTABLE.radius);
-        for sharp in [ThemeId::Neon, ThemeId::Paper, ThemeId::Daylight] {
-            for soft in [ThemeId::Ember, ThemeId::Forest, ThemeId::Aurora] {
-                assert!(r(sharp) < r(soft), "{sharp:?} sharper than {soft:?}");
-            }
-        }
+        assert!(HIGH_CONTRAST_DESIGN.radius(COMFORTABLE.radius) < r(ThemeId::Midnight));
     }
 
     /// Lines, rings and markers the record sizes stay visible and never heavy.
@@ -5325,19 +4796,19 @@ mod tests {
                 SelectionStyle::Bar { width } | SelectionStyle::Outline { width } => {
                     widths.push(("selection", width));
                 }
-                SelectionStyle::Wash | SelectionStyle::Glow => {}
+                SelectionStyle::Wash => {}
             }
             match d.focus {
                 FocusStyle::Ring { width, offset } => {
                     widths.push(("focus", width));
                     assert!((0.0..=2.0).contains(&offset), "{}", id.name());
                 }
-                FocusStyle::Glow { width } | FocusStyle::Double { width } => {
+                FocusStyle::Double { width } => {
                     widths.push(("focus", width));
                 }
             }
             match d.active_tab {
-                TabStyle::Underline { width } | TabStyle::TopRule { width } => {
+                TabStyle::Underline { width } => {
                     widths.push(("tab", width));
                 }
                 TabStyle::Lifted => {}
@@ -5352,8 +4823,8 @@ mod tests {
             assert!((0.7..=1.3).contains(&d.motion.duration_scale()));
             assert!((1.0..=1.1).contains(&d.heading.size_scale()));
         }
-        // Contrast keeps the strongest structure: outlines, a double ring, no shadows.
-        let c = ThemeId::Contrast.design();
+        // High contrast keeps the strongest structure: outlines, a double ring, no shadows.
+        let c = &HIGH_CONTRAST_DESIGN;
         assert_eq!(c.edges, EdgeMode::Outline);
         assert!(matches!(c.focus, FocusStyle::Double { .. }));
         assert_eq!(c.shadows, ShadowCharacter::Flat);
@@ -5365,14 +4836,10 @@ mod tests {
     #[test]
     fn ground_treatments_keep_text_readable() {
         let mut failures = Vec::new();
-        for id in ThemeId::ALL {
-            let p = id.palette();
-            let wash = match id.design().ground {
+        for p in every_palette() {
+            let wash = match p.design().ground {
                 Ground::Flat => continue,
                 Ground::Vertical { ink, top, bottom } => Palette::tint(ink, top.max(bottom)),
-                Ground::Glow { ink, alpha, .. } | Ground::Vignette { ink, alpha } => {
-                    Palette::tint(ink, alpha)
-                }
             };
             for style in Style::ALL {
                 let s = p.surfaces(style);
@@ -5395,7 +4862,7 @@ mod tests {
     }
 
     /// The theme's glass tint keeps every pairing `glass_keeps_contrast_over_any_backdrop` checks;
-    /// Contrast never tints (it never uses glass).
+    /// High contrast never tints (it never uses glass).
     #[test]
     fn glass_tint_keeps_contrast_over_any_backdrop() {
         let probes = [
@@ -5410,9 +4877,8 @@ mod tests {
             Color32::from_gray(128),
         ];
         let mut failures = Vec::new();
-        for id in ThemeId::ALL {
-            let p = id.palette();
-            let tint = id.design().glass_tint;
+        for p in every_palette() {
+            let tint = p.design().glass_tint;
             if p.glass_alpha == 0 {
                 assert_eq!(tint, Color32::TRANSPARENT, "{}", p.name);
                 continue;
@@ -5446,8 +4912,7 @@ mod tests {
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
-    /// Shadow characters: Soft keeps the tables, Crisp shortens, Flat keeps only a faint floating
-    /// lift, Glow centres every layer.
+    /// Shadow characters: Soft keeps the tables, Flat keeps only a faint floating lift.
     #[test]
     fn shadow_characters_reshape_the_layers() {
         use ShadowCharacter as C;
@@ -5459,38 +4924,28 @@ mod tests {
             tint: ShadowTint::Shadow,
         };
         assert_eq!(C::Soft.shape(Elevation::Pane, drop), Some(drop));
-        let crisp = C::Crisp.shape(Elevation::Floating, drop).unwrap();
-        assert!(crisp.blur < drop.blur / 2 && crisp.dy < drop.dy && crisp.dy > 0);
         assert_eq!(C::Flat.shape(Elevation::Control, drop), None);
         assert_eq!(C::Flat.shape(Elevation::Pane, drop), None);
         let lift = C::Flat.shape(Elevation::Floating, drop).unwrap();
         assert!(lift.alpha < drop.alpha && lift.blur < drop.blur);
-        let glow = C::Glow.shape(Elevation::Primary, drop).unwrap();
-        assert_eq!(glow.dy, 0);
-        assert!(glow.spread >= 0 && glow.blur > drop.blur);
     }
 
-    /// Every material a theme hands the kit is already in its shadow character: Contrast's
-    /// controls cast nothing, Neon's layers glow around their surface, Daylight's are short.
+    /// Every material a theme hands the kit is already in its shadow character: high contrast's
+    /// controls cast nothing, and the soft themes hand over the material tables as they are.
     #[test]
     fn materials_come_in_the_themes_shadow_character() {
         for style in [Style::Standard, Style::Deeper] {
             for level in Elevation::ALL {
-                let contrast = ThemeId::Contrast.palette().material(style, level);
-                if level != Elevation::Floating {
-                    assert!(contrast.layers.is_empty(), "Contrast {style:?} {level:?}");
+                for t in ThemeId::ALL {
+                    let contrast = t.shown_palette(true).material(style, level);
+                    if level != Elevation::Floating {
+                        assert!(contrast.layers.is_empty(), "{t:?} {style:?} {level:?}");
+                    }
                 }
-                let neon = ThemeId::Neon.palette().material(style, level);
-                assert!(
-                    neon.layers.iter().all(|l| l.dy == 0),
-                    "Neon {style:?} {level:?}"
+                assert_eq!(
+                    ThemeId::Daylight.palette().material(style, level).layers,
+                    material(style, false, level).layers
                 );
-                let soft = material(style, false, level);
-                let crisp = ThemeId::Daylight.palette().material(style, level);
-                assert_eq!(crisp.layers.len(), soft.layers.len());
-                for (c, s) in crisp.layers.iter().zip(soft.layers) {
-                    assert!(c.blur <= s.blur.max(1), "Daylight {style:?} {level:?}");
-                }
                 assert_eq!(
                     ThemeId::Midnight.palette().material(style, level).layers,
                     material(style, true, level).layers
@@ -5499,28 +4954,12 @@ mod tests {
         }
     }
 
-    /// Heading faces and label weights resolve to the families `ui/fonts.rs` registers, and label
-    /// case is applied as the record says.
+    /// Heading faces resolve to the families `ui/fonts.rs` registers, and every theme's design is
+    /// the one `apply` installs.
     #[test]
     fn type_tokens_resolve() {
         assert_eq!(HeadingFace::Ui.family(), semibold());
-        assert_ne!(
-            HeadingFace::Serif.family(),
-            HeadingFace::Hyperlegible.family()
-        );
-        assert_eq!(Weight::Semibold.family(), semibold());
-        assert_eq!(Weight::Medium.family(), medium());
-        let upper = LabelStyle {
-            case: LabelCase::Upper,
-            tracking: 0.1,
-            weight: Weight::Semibold,
-        };
-        assert_eq!(upper.cased("Remotes"), "REMOTES");
-        let title = LabelStyle {
-            case: LabelCase::Title,
-            ..upper
-        };
-        assert_eq!(title.cased("Remotes"), "Remotes");
+        assert_ne!(HeadingFace::Ui.family(), HeadingFace::Hyperlegible.family());
         let ctx = egui::Context::default();
         for id in ThemeId::ALL {
             apply(&ctx, id, Appearance::STILL);
@@ -5528,8 +4967,8 @@ mod tests {
         }
         assert_ne!(
             IconWeight::Regular,
-            ThemeId::Contrast.design().icons,
-            "Contrast's active icons are filled"
+            HIGH_CONTRAST_DESIGN.icons,
+            "high contrast's active icons are filled"
         );
     }
 
@@ -5555,49 +4994,52 @@ mod tests {
                 }
             }
         }
-        look_set(ThemeId::Neon, Style::Deeper, Density::Comfortable, false);
+        set_high_contrast(true);
+        look_set(
+            ThemeId::Daylight,
+            Style::Deeper,
+            Density::Comfortable,
+            false,
+        );
         assert_eq!(
             metrics().radius,
-            ThemeId::Neon.design().radius(DEEPER_COMFORTABLE.radius)
+            HIGH_CONTRAST_DESIGN.radius(DEEPER_COMFORTABLE.radius)
         );
         assert!(
             metrics().radius < DEEPER_COMFORTABLE.radius,
-            "Neon is sharper"
+            "high contrast is sharper"
         );
-        look_set(ThemeId::Ember, Style::Deeper, Density::Comfortable, false);
-        assert!(
-            metrics().radius > DEEPER_COMFORTABLE.radius,
-            "Ember is softer"
-        );
+        set_high_contrast(false);
     }
 
-    /// Section labels take the theme's case, size, weight and tracking; titles its heading face;
-    /// active icons its icon weight.
+    /// Section labels are capitals at `micro_size` in the theme's tracking; titles take its heading
+    /// face; active icons its icon weight.
     #[test]
     fn labels_titles_and_icons_follow_the_theme() {
         let job_of = |id: ThemeId| {
             look_set(id, Style::Standard, Density::Comfortable, false);
             section_label("Branches", Color32::WHITE)
         };
-        let paper = job_of(ThemeId::Paper);
-        assert_eq!(paper.text, "BRANCHES");
-        let format = &paper.sections[0].format;
-        assert_eq!(format.font_id.size, COMFORTABLE.micro_size);
-        assert!((format.extra_letter_spacing - 0.11 * COMFORTABLE.micro_size).abs() < 1e-4);
-        let daylight = job_of(ThemeId::Daylight);
-        assert_eq!(daylight.text, "Branches");
+        set_high_contrast(true);
+        let contrast = job_of(ThemeId::Midnight);
+        set_high_contrast(false);
+        assert_eq!(contrast.text, "BRANCHES");
+        let format = &contrast.sections[0].format;
         assert_eq!(
-            daylight.sections[0].format.font_id,
-            FontId::new(COMFORTABLE.small_size, semibold())
+            format.font_id,
+            FontId::new(COMFORTABLE.micro_size, semibold())
         );
-        look_set(ThemeId::Paper, Style::Standard, Density::Comfortable, false);
-        assert_eq!(
-            heading(20.0),
-            FontId::new(20.0 * 1.06, HeadingFace::Serif.family())
+        assert!((format.extra_letter_spacing - 0.06 * COMFORTABLE.micro_size).abs() < 1e-4);
+        look_set(
+            ThemeId::Observatory,
+            Style::Standard,
+            Density::Comfortable,
+            false,
         );
         assert_eq!(icon_font(14.0, true), FontId::proportional(14.0));
+        set_high_contrast(true);
         look_set(
-            ThemeId::Contrast,
+            ThemeId::Midnight,
             Style::Standard,
             Density::Comfortable,
             false,
@@ -5605,6 +5047,7 @@ mod tests {
         assert_eq!(heading(20.0).family, HeadingFace::Hyperlegible.family());
         assert_ne!(icon_font(14.0, true), FontId::proportional(14.0));
         assert_eq!(icon_font(14.0, false), FontId::proportional(14.0));
+        set_high_contrast(false);
         look_set(
             ThemeId::Midnight,
             Style::Standard,
@@ -5614,18 +5057,17 @@ mod tests {
         assert_eq!(heading(20.0), FontId::new(20.0, semibold()));
     }
 
-    /// The glass fill leans to the theme's light; Contrast has none.
+    /// The glass fill leans to the theme's light; high contrast has none.
     #[test]
     fn glass_leans_to_the_theme() {
-        for id in ThemeId::ALL {
-            let p = id.palette();
+        for p in every_palette() {
             let s = p.surfaces(Style::Standard);
             let glass = p.glass(s);
-            assert_eq!(glass.a(), p.glass_alpha, "{id:?}");
-            if id.design().glass_tint == Color32::TRANSPARENT {
+            assert_eq!(glass.a(), p.glass_alpha, "{}", p.name);
+            if p.design().glass_tint == Color32::TRANSPARENT {
                 assert_eq!(glass, Palette::tint(s.overlay, p.glass_alpha));
             } else {
-                assert_ne!(glass, Palette::tint(s.overlay, p.glass_alpha), "{id:?}");
+                assert_ne!(glass, Palette::tint(s.overlay, p.glass_alpha), "{}", p.name);
             }
         }
     }

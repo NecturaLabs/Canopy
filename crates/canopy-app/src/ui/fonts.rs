@@ -1,7 +1,7 @@
 //! Bundled fonts: Inter for the interface, JetBrains Mono NL (no ligatures) for code and ids,
-//! Phosphor for icons (regular, and filled for themes that fill active icons), two theme heading
-//! faces, Canopy Serif Bold (Paper) and Atkinson Hyperlegible Bold (Contrast), and Canopy CJK, the
-//! fallback for Chinese, Japanese and Korean text.
+//! Phosphor for icons (regular, and filled for themes that fill active icons), Atkinson
+//! Hyperlegible Bold for headings at high contrast, and Canopy CJK, the fallback for Chinese,
+//! Japanese and Korean text.
 //! Licences: `crates/canopy-app/assets/fonts/README.md`.
 
 use std::sync::Arc;
@@ -40,10 +40,6 @@ pub fn install(ctx: &egui::Context) {
     add(
         "jetbrains-mono",
         include_bytes!("../../assets/fonts/JetBrainsMonoNL-Regular.ttf"),
-    );
-    add(
-        "canopy-serif-bold",
-        include_bytes!("../../assets/fonts/CanopySerif-Bold.ttf"),
     );
     add(
         "atkinson-hyperlegible-bold",
@@ -92,16 +88,13 @@ pub fn install(ctx: &egui::Context) {
     fonts
         .families
         .insert(FontFamily::Name("semibold".into()), with("inter-semibold"));
-    // Theme heading faces cover Latin only: anything else falls back to Inter SemiBold, then the
+    // The heading face covers Latin only: anything else falls back to Inter SemiBold, then the
     // icons and egui's fonts.
-    for (face, data) in [
-        (HeadingFace::Serif, "canopy-serif-bold"),
-        (HeadingFace::Hyperlegible, "atkinson-hyperlegible-bold"),
-    ] {
-        let mut chain = vec![data.to_owned()];
-        chain.extend(with("inter-semibold"));
-        fonts.families.insert(face.family(), chain);
-    }
+    let mut chain = vec!["atkinson-hyperlegible-bold".to_owned()];
+    chain.extend(with("inter-semibold"));
+    fonts
+        .families
+        .insert(HeadingFace::Hyperlegible.family(), chain);
     // Inter first (Phosphor maps letters to the blank glyphs its ligatures use), then the filled
     // icons in place of the regular ones.
     let mut fill = vec!["inter".to_owned(), FILL.to_owned()];
@@ -124,14 +117,14 @@ mod tests {
 
     use super::*;
 
-    /// The theme heading faces and the filled icons are registered as families of their own, so
-    /// Paper's and Contrast's titles and a filled icon draw in their own faces, not Inter's.
+    /// The heading face and the filled icons are registered as families of their own, so titles
+    /// at high contrast and a filled icon draw in their own faces, not Inter's.
     #[test]
     fn theme_faces_and_filled_icons_are_installed() {
         let ctx = egui::Context::default();
         install(&ctx);
         let fill = FontFamily::Name(FILL.into());
-        let title = "Letterpress Signal";
+        let title = "Commit history";
         let mut widths = Vec::new();
         // Laying out text in a family that is not installed panics.
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -143,7 +136,6 @@ mod tests {
             };
             widths = vec![
                 width(title, FontId::new(20.0, HeadingFace::Ui.family())),
-                width(title, FontId::new(20.0, HeadingFace::Serif.family())),
                 width(title, FontId::new(20.0, HeadingFace::Hyperlegible.family())),
                 width(
                     egui_phosphor::regular::STAR,
@@ -154,12 +146,13 @@ mod tests {
             ];
         });
         out.textures_delta.clear();
-        let [inter, serif, hyper, star, fill_text, text] = widths[..] else {
+        let [inter, hyper, star, fill_text, text] = widths[..] else {
             panic!("{widths:?}");
         };
-        for (face, w) in [("serif", serif), ("hyperlegible", hyper)] {
-            assert!(w > 0.0 && (w - inter).abs() > 1.0, "{face} draws as Inter");
-        }
+        assert!(
+            hyper > 0.0 && (hyper - inter).abs() > 1.0,
+            "hyperlegible draws as Inter"
+        );
         assert!(star > 0.0);
         // Text in the filled family stays Inter (Phosphor maps letters to blank ligature glyphs).
         assert!((fill_text - text).abs() < 0.01);
@@ -175,7 +168,7 @@ mod tests {
             FontFamily::Proportional,
             FontFamily::Monospace,
             FontFamily::Name("semibold".into()),
-            HeadingFace::Serif.family(),
+            HeadingFace::Hyperlegible.family(),
         ];
         let mut missing = Vec::new();
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {

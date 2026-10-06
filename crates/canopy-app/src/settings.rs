@@ -11,7 +11,7 @@ use canopy_core::Whitespace;
 use canopy_core::ops::PullStrategy;
 
 use crate::ui::motion::MotionPref;
-use crate::ui::theme::{Density, Style, ThemeId};
+use crate::ui::theme::{Curve, CustomTheme, Density, NodeShape, Style, ThemeId};
 
 /// Storage key.
 pub const KEY: &str = "canopy-settings-v1";
@@ -193,8 +193,16 @@ pub struct Settings {
     pub style: Style,
     /// Blurred translucent floating layers.
     pub translucent: bool,
+    /// The chosen theme at high contrast: stronger text, lines and focus, outlines for shadows.
+    pub high_contrast: bool,
+    /// The custom theme's colours (Settings, Appearance, with the Custom theme chosen).
+    pub custom_theme: CustomTheme,
     /// Row heights, radii, toolbar layout and type size.
     pub density: Density,
+    /// The history graph's commit nodes.
+    pub graph_node: NodeShape,
+    /// The history graph's lines between lanes.
+    pub graph_curve: Curve,
     /// Match the system, always reduce, or always animate.
     pub motion: MotionPref,
     /// Pre-0.3 switch, read once by `migrate` and never written again.
@@ -300,7 +308,11 @@ impl Default for Settings {
             download_avatars: true,
             style: Style::Standard,
             translucent: false,
+            high_contrast: false,
+            custom_theme: CustomTheme::default(),
             density: Density::Comfortable,
+            graph_node: NodeShape::Dot,
+            graph_curve: Curve::Smooth,
             motion: MotionPref::System,
             reduce_motion: None,
             pull_mode: PullMode::Merge,

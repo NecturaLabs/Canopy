@@ -9,30 +9,39 @@ license: Proprietary (NecturaLabs); see LICENSE
 `crates/canopy-app/src/ui/theme.rs` is the only place a colour is defined; views ask `palette()`.
 A theme is one `Palette` constant plus one `ThemeId` variant. The theme cards in Settings, the
 toolbar menu, the "Theme: X" palette entries, `--theme NAME` and the cycling in `ThemeId::next` all
-iterate `ThemeId::ALL`, so none of them is edited. Work through the steps in order.
+iterate `ThemeId::ALL`, so none of them is edited. `ThemeId::Custom` is the user's own colours
+(`ui/custom_theme.rs`) and is not a built-in theme: it is in `ALL` but not in `BUILT_IN`. Work through the steps in order.
 
 ## 1. Decide
 
 - A name (one word, shown in Settings), dark or light, and the idea in a sentence. Palettes in the
-  file to compare against: Midnight and Daylight (the defaults), Aurora, Ember, Neon, Forest,
-  Paper. A new one should differ in character, not by a few shades.
+  file to compare against: Midnight and Daylight (the defaults) and Observatory. A new one
+  should differ in character, not by a few shades.
 - `dark: true` makes egui start from its dark visuals, `false` from its light ones; the field must
   match the surfaces. The default theme is `ThemeId::Midnight` and stays so.
 
 ## 2. The `Palette` constant
 
-Add `pub const NAME: Palette = Palette { ... };` next to the others, with every field:
+Add `pub const NAME: Palette = Palette { ... };` next to the others, with every field (copy
+`MIDNIGHT` or `DAYLIGHT` and retune; the doc comment on each field states its contrast target):
 
 | Group | Fields |
 |---|---|
-| Surfaces | `bg`, `panel`, `elevated`, `hover` |
-| Lines | `border` (decorative hairline), `control_border` (outline of a text field, checkbox or switch track, 3:1 on every surface) |
-| Text | `text`, `text_dim`, `text_faint` |
-| Colour with a job | `accent`, `accent2`, `success`, `warning`, `danger`, `added_bg`, `removed_bg` |
-| Primary button | `button`, `button2` (a gradient), `on_button` (its label) |
-| Graph | `lanes`: ten colours, in order (`DARK_LANES` and `LIGHT_LANES` are shared by the default pair; a distinctive theme gets its own) |
-| Code | `syntax`: `keyword`, `string`, `comment`, `number`, `function`, `type_`, `constant` |
-| Mode | `name`, `dark` |
+| Identity | `name` (one word, shown in Settings), `concept` (a sentence, shown on the theme card), `dark`, `strict` (`false`; only high contrast sets it) |
+| Surfaces | `standard` and `deeper`, each a `Surfaces`: the grounds (`bg`, `panel`, `pane`, `elevated`, `overlay`), control grounds (`field`, `track`, `switch_off`, `badge`), edges (`border`, `edge`, `raised_edge`, `overlay_edge`, `tab_edge`, `track_edge`, `pane_edge`, `keycap_edge`) and the `Fill` gradients (`raised*`, `primary*`, `thumb`, `keycap`, `tab`, `tooltip`, `knob`, with `tooltip_key*` and `on_tooltip_key`); read the struct for the full list |
+| Text | `text`, `text_dim`, `text_faint`, `disabled_text`, `on_tooltip`, `on_tooltip_dim` |
+| Accent | `accent` (text-grade), `accent2` (links), `focus`, `selection` with `selection_alpha`, `on_accent` (the label on `primary*`) |
+| Status | `success`, `warning`, `danger`, `danger_base`, `on_danger`, and `tones` (`Tones`: the bases of the `accent`, `success`, `warning` and `danger` washes) |
+| Outlines and overlays | `control_border`, `hover_ink` (base of hover, pressed and zebra overlays), `scrim` |
+| Shadows | `shadow`, `primary_shadow`, `danger_shadow` |
+| Glass | `glass_alpha`, `glass_luminance` |
+| Graph | `lanes`: ten colours, in order, written in each palette (no shared constant) |
+| Code | `syntax`: `Syntax` with `keyword`, `string`, `comment`, `number`, `function`, `type_`, `constant` |
+
+A theme's structure is a separate `Design` record in `mod design` (radius scale, edges, shadows,
+panes, selection, focus, hover, tabs, labels, heading face, graph, icons, art, motion, glass
+tint). Midnight and Daylight share `CONCEPT_ONE`; add `NAME_DESIGN` (reuse an existing one, or
+write a `Design` of its own) and select it in `ThemeId::design`.
 
 Write colours with `hex(0xRRGGBB)`. Hex literals are allowed here and nowhere else (not in
 `views/`, `ui/widgets.rs`, `app/`). Selection, hover and focus colours are derived from these in
@@ -40,28 +49,57 @@ Write colours with `hex(0xRRGGBB)`. Hex literals are allowed here and nowhere el
 
 ## 3. Register it
 
-- Add the variant to `enum ThemeId`, add it to `ThemeId::ALL` (the array length is part of the
-  type: update `[ThemeId; N]`), and add the arm in `ThemeId::palette`.
-- Never rename or remove an existing variant: settings store the variant name (`Settings.theme`,
-  serde), and an unknown name makes the whole settings file fail to load, so every setting falls
-  back to its default. To retire or rename one, keep the old name deserialising (a
-  `#[serde(alias = "OldName")]` on the variant that replaces it); `Settings::migrate` shows how
-  the pre-0.2 `dark` flag was mapped to Daylight.
-- Update the module doc ("Canopy ships seven themes") if the count is written there.
+- Add the variant to `enum ThemeId`, add it to `ThemeId::ALL` and to `ThemeId::BUILT_IN` (the array
+  lengths are part of the types: update `[ThemeId; N]`), and add the arm in `ThemeId::palette` and
+  in `ThemeId::design` (a theme without a design of its own takes Midnight's).
+- Removing or renaming a variant needs no alias or migration (no migrations yet): settings store the
+  variant name, and a saved theme this build no longer has reads as the default theme through
+  `known` in `settings.rs`, without resetting the other settings.
+- Update the module doc ("Canopy ships three themes") if the count is written there.
+- High contrast is a switch, not a theme: `ui/contrast.rs` derives every theme's high-contrast
+  version from its palette, keeping its grounds and hues and raising each foreground token to
+  the ratio `CONTRAST_REFERENCE` (Midnight at full contrast) keeps against its ground. A new
+  theme gets it for free; never hand-write a contrast variant. `HIGH_CONTRAST` is built over
+  `ThemeId::BUILT_IN` and indexed by position, so its array length (`[Palette; N]`) must equal
+  the length of `BUILT_IN`.
+- The Custom theme is built from Midnight's or Daylight's palette and design, and its high contrast
+  is derived when it is built (`build_custom`). It is not in `BUILT_IN` or `HIGH_CONTRAST`; a
+  change to a base palette reaches it through `CustomTheme::palette`.
 
 ## 4. Contrast
 
 `cargo test -p canopy-app theme` runs `every_theme_meets_contrast_targets`, which loops over
-`ThemeId::ALL` and fails with one line per violation (theme, token, surface, ratio):
+`every_palette()` (each built-in theme and a sweep of custom ones, each as it is and with high
+contrast on, in both styles) and fails with one line per violation (theme, token, surface,
+ratio):
 
-- `text` 7:1 on `bg`, `panel`, `elevated`, `hover`, the selected row (over `panel` and `bg`),
-  `added_bg` and `removed_bg`; `text_dim` and `text_faint` 4.5:1 on the same;
-- `accent`, `accent2`, `success`, `warning`, `danger` 4.5:1 and `control_border` and every lane 3:1
-  on the four plain surfaces; `on_button` 4.5:1 on `button` and `button2`;
-- every `syntax` colour 4.5:1 on `bg`, `added_bg` and `removed_bg`.
+- Minimums (`targets`): `text` 7:1, `text_dim` and `text_faint` 4.5:1, `control_border` and `focus`
+  3:1; at high contrast (`strict`) 10:1, 7:1, 5.5:1 and 4.5:1.
+- Grounds (`grounds`): `pane`, `panel`, `elevated`, `overlay` and, in Deeper, `bg`, plus `field`,
+  `track`, the zebra row, every hover, strong-hover and pressed state over each ground, the
+  selected row and the hovered selected row, and the diff grounds (`added_bg`, `removed_bg`, the
+  gutters, the selected and hovered diff lines, the warning tint). `text`, `text_dim` and
+  `text_faint` meet their minimums on all of them.
+- `accent`, and `control_border` and `focus` at their minimum, hold on the plain grounds and hover
+  states; `accent2`, `success`, `warning` and `danger` 4.5:1 on those and the selected rows; and
+  `success`, `danger` and `warning` on the diff grounds they mark; `focus` also on the diff grounds
+  and the ends of `raised`.
+- Every `lanes` colour 3:1 on `pane`, `panel`, `pane` under hover and the selected row.
+- Every `syntax` colour 4.5:1 on `pane`, `added_bg` and `removed_bg`.
+- Labels on fills, at both ends of each gradient: `on_accent` on `primary*` and `on_danger` on
+  `danger_solid*` 4.5:1; `text` and `text_dim` on `raised*`, `thumb` and `tab`; `text` on `badge`;
+  `on_tooltip` and `on_tooltip_dim` on `tooltip`; `on_tooltip_key` on `tooltip_key`; a dark theme's
+  `knob` 3:1 on `switch_off`.
+- Each status colour's 16% wash (alpha 41): `text` at its minimum and the colour itself 4.5:1 over it.
+
+`amendment_tokens_meet_their_targets` adds `danger_base` on the grounds, the danger highlight and
+tint under `text` and `danger`, Deeper's deck and pane header under every text token, and the
+knob ring; `coloured_components_are_readable` requires the ink of each lane, accent, status and
+`text_dim` colour (`Palette::ink_on`) to read 4.5:1 on its ref pill, avatar, badge and change fills.
 
 Fix the colours, never the test or its thresholds (AGENTS.md: do not weaken a test to pass). Also
-run `cargo test -p canopy-app` (the `next_cycles_through_all_themes` test and the settings tests).
+run `cargo test -p canopy-app` (`the_themes_are_midnight_daylight_observatory_and_custom` and the
+settings tests).
 A new token (a field on `Palette`) goes into every existing theme, into this test, and into
 `docs/design.md`.
 
@@ -89,11 +127,11 @@ drawn from the palette) and that the new card selects and persists. For a full p
 
 ## 6. Docs
 
-- `docs/design.md`: add a section `### Name (dark|light)` after the existing theme sections, with
-  the same table as Midnight: one row per token (`bg`, `panel`, `elevated`, `hover`, `border`,
-  `control-border`, `text`, `text-dim`, `text-faint`, `accent`, `accent-2`, `success`, `warning`,
-  `danger`, `added-bg`, `removed-bg`) with its hex and use. Keep the hex values equal to
-  `theme.rs`, and fix any sentence that counts the themes.
+- `docs/design.md`: add a row to the theme table under "Colour tokens" (columns Theme, Idea,
+  Ground and signature: the `bg`, `panel` and `border` hex values and the primary and focus
+  colours, equal to `theme.rs`) and a sentence on what its `Design` does differently, and fix any
+  sentence that counts the themes ("Three themes."). Tokens are described there by group, not
+  one row each; a new `Palette` field goes into the paragraph that covers its group.
 - `CHANGELOG.md` under `[Unreleased]`, and `docs/features.md` / `README.md` where they list the
   themes by name.
 

@@ -464,9 +464,8 @@ fn doc_tab(
 }
 
 /// The active tab's mark in the active theme's [`TabStyle`]: `Lifted` the `tab` fill with its
-/// `tab_edge` ring (and `Elevation::Tab` in Deeper); `Underline` no fill, a `focus` underline (lit
-/// in a theme with lit edges, the hover wash while hovered); `TopRule` the lifted tab with an
-/// `accent` rule along its top, like a bookmark.
+/// `tab_edge` ring (and `Elevation::Tab` in Deeper); `Underline` no fill, a `focus` underline (the
+/// hover wash while hovered).
 pub(crate) fn active_tab(painter: &egui::Painter, rect: Rect, radius: CornerRadius, hover: f32) {
     let p = theme::palette(painter.ctx());
     let style = theme::style();
@@ -483,7 +482,7 @@ pub(crate) fn active_tab(painter: &egui::Painter, rect: Rect, radius: CornerRadi
             Some(s.tab_edge),
         );
     };
-    match theme::active().design().active_tab {
+    match theme::active_design().active_tab {
         TabStyle::Lifted => lifted(),
         TabStyle::Underline { width } => {
             if hover > 0.0 {
@@ -495,36 +494,7 @@ pub(crate) fn active_tab(painter: &egui::Painter, rect: Rect, radius: CornerRadi
                 pos2(rect.right() - inset, rect.bottom()),
             );
             let round = CornerRadius::same(crate::ui::saturate_u8((width / 2.0).round()));
-            if paint::lit() {
-                paint::ring_glow(
-                    painter,
-                    bar,
-                    round,
-                    p.focus,
-                    paint::LIT_GLOW,
-                    paint::LIT_GLOW_ALPHA,
-                );
-            }
             painter.rect_filled(bar, round, p.focus);
-        }
-        TabStyle::TopRule { width } => {
-            lifted();
-            let r = f32::from(radius.nw.max(radius.ne));
-            let rule = Rect::from_min_max(
-                pos2(rect.left() + r / 2.0, rect.top()),
-                pos2(rect.right() - r / 2.0, rect.top() + width),
-            );
-            let corner = crate::ui::saturate_u8(r.min(width).round());
-            painter.rect_filled(
-                rule,
-                CornerRadius {
-                    nw: corner,
-                    ne: corner,
-                    sw: 0,
-                    se: 0,
-                },
-                p.accent,
-            );
         }
     }
 }

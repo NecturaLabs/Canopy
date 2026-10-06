@@ -317,12 +317,12 @@ pub(super) fn paint_header_strip(ui: &Ui, rect: Rect) {
         s.panel
     };
     ui.painter().rect_filled(rect, CornerRadius::ZERO, fill);
-    // The header's own fill parts it from the pane in Standard: a tonal theme drops the line.
-    let seam = paint::edge_seam(p, s.border, fill != s.pane);
+    // The header's own fill parts it from the pane in Standard; the seam follows the theme's edges.
+    let seam = paint::edge_seam(p, s.border);
     paint::seam_line_h(
         ui.painter(),
         rect.x_range(),
-        rect.bottom() - seam.map_or(0.0, |st| st.width) * 0.5,
+        rect.bottom() - seam.width * 0.5,
         seam,
     );
 }

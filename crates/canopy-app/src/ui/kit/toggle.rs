@@ -989,7 +989,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
             .show_forced(ui, ForceState::FOCUS);
         Switch::new(&mut true, "Disabled")
             .enabled(false)
-            .disabled_reason("Not available with the Contrast theme")
+            .disabled_reason("Not available with High contrast")
             .id_salt("g-s6")
             .show(ui);
         remembered(ui, "switch", true, |ui, v| {

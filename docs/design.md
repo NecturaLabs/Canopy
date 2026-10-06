@@ -36,9 +36,8 @@ the shared colours with `theme::palette(ctx)`.
   highlights and layered shadows. History splits into two cards, the commit table and the commit
   details, at the details panel's resize handle; a hovered or dragged split shows a thin
   `focus`-tinted line. The focused card carries the `focus` gradient edge and a lit `focus` line
-  along its top, over the `pane_header` strip with its `focus`-tinted seam; a theme with lit edges
-  (Neon) outlines the whole card in a glowing `focus` line instead (`kit::paint::pane_focus`, which
-  the gallery's pane samples use too).
+  along its top, over the `pane_header` strip with its `focus`-tinted seam
+  (`kit::paint::pane_focus`, which the gallery's pane samples use too).
 
 Each theme builds both styles from one surface ladder in its own neutral hue: Standard's chrome is
 at least 2.5 L* off the ground and Deeper's cards at least 4 L* (`surface_steps_are_visible`), so
@@ -54,27 +53,56 @@ rather than beige, khaki or lilac; text and the status colour stay readable on e
 fills the danger button. Light themes ring the switch knob in `knob_edge`. Disabled controls use
 `Palette::disabled_text` on `Surfaces::disabled_fill` with a `disabled_edge` ring, flat in both
 styles and never dimmed again with `DISABLED_ALPHA` (`disabled_tokens_are_readable`: at least
-3:1, 4.5:1 in Contrast). A banner's or callout's action can be disabled too, so disabled text
+3:1, 4.5:1 at high contrast). A banner's or callout's action can be disabled too, so disabled text
 also keeps 3:1 on every status wash and 3.5:1 on the washes of the grounds banners sit on
-(`disabled_actions_read_on_banners`; Contrast 4.5:1 throughout).
+(`disabled_actions_read_on_banners`; high contrast 4.5:1 throughout).
 
-Each theme has one idea, carried by its ladder, signature, selection and status colours:
+Three themes. Midnight and Daylight are round-2 concept 1, the look the owner locked: one design
+in dark and in light (`CONCEPT_ONE` in `theme.rs`, `the_default_themes_are_concept_one`).
+Observatory is the Midnight that build 690 shipped, kept as a theme of its own with its navy
+ground, periwinkle signature, selection bar, zenith lift and constellation art
+(`observatory_is_the_released_midnight`).
 
 | Theme | Idea | Ground and signature |
 |---|---|---|
-| Midnight (default) | Observatory | blue-black graphite with a cool cast, an indigo signature, starlight-blue links |
-| Daylight | Studio morning | white canvas in cool slate chrome, indigo ink, clean mint, apricot, rose and periwinkle washes |
-| Aurora | Polar night | deep marine, a polar-sky blue signature, aurora violet and teal lanes, amber caution |
-| Ember | Forge at dusk | warm charcoal and cream type, a copper signature, steel-blue links, an apricot selection glow |
-| Neon | Night city | black-violet, electric cyan with a hot magenta second voice, a true green for success |
-| Forest | Evergreen at dusk | deep green shade, a sunlit-gold signature, a lake-blue selection |
-| Paper | Letterpress | warm cream stock on a kraft desk, whiter fields and sheets, Prussian ink, sepia links underlined like print, a yellow highlighter selection |
-| Contrast | Signal | pure black, white type, strong outlines, a yellow focus ring, links underlined at rest, a neutral white selection |
+| Midnight (default) | Concept 1 | neutral blue-black `#0F1012` under `#151619` chrome, `#24262B` seams, an indigo `#5E6AD2` primary and `#7C86FF` focus |
+| Daylight | Concept 1 by day | white canvas `#FFFFFF` under `#F7F7F8` chrome, `#E6E6EA` seams, the same indigo primary |
+| Observatory | Build 690's Midnight | navy-ink `#0B0F19` under `#111723` chrome, a periwinkle `#646CD6` primary, starlight links |
+
+Custom is a fourth choice, not a palette in the table: Midnight or Daylight recoloured from the
+user's choices (`ui/custom_theme.rs`, saved as `custom_theme`). Settings, Appearance shows a
+"Custom theme" group when it is chosen: Based on (Midnight or Daylight), Accent (nine hue swatches),
+Accent hue (0 to 359), Accent intensity (20 to 140%), Tint (the same swatches), Tint hue and Tint
+strength (0 to 100%). The defaults are Midnight's own colours. The accent recolours the indigo
+family (accent, focus, selection, the primary button and its tones) and the tint gives the grounds,
+lines and text a hue. Every colour keeps its luminance; the grounds are then kept as far apart as
+the base keeps them (Standard's panel 2.5 L* from its panes, Deeper's cards 4 L* from the window),
+`contrast::lift` moves each foreground to at least the base theme's contrast ratios times 1.04, and
+every colour drawn as text is moved until it reads on each wash it is drawn over (hover, selection,
+diff rows, status tints). Status colours, graph lanes, syntax, danger and diff colours keep the
+base's hues, and the structure (`Design`) is the base's. It is not in `ThemeId::BUILT_IN`; its
+high-contrast version is derived when it is built, like the others.
+
+High contrast is a switch over any theme, Custom included (Settings, Appearance; the toolbar's
+theme menu; the command palette's "High contrast: On" and "Off"), not a theme. `ui/contrast.rs`
+derives each theme's high-contrast colours once: the theme's grounds and hues stay, and every
+colour drawn on them moves, in `OKLab` lightness, to the contrast ratio the reference keeps on
+its ground (`theme::CONTRAST_REFERENCE`, Midnight at full contrast): lighter on a dark theme,
+darker on a light one. A colour that already contrasts more, the graph lanes (3:1 already) and the
+selection wash stay the theme's own; text on solid fills takes white or black, whichever reads.
+The structure is `HIGH_CONTRAST_DESIGN` for every theme: outlines instead of shadows, an outlined
+selection, a double focus ring, an underlined active tab, links underlined at rest, Atkinson
+Hyperlegible titles, filled active icons, line art without glows, tighter corners, no glass. The
+strict targets (text 10:1, outlines and focus 4.5:1) are tested for every theme at high contrast
+(`every_palette` in the theme tests).
+
+The history graph's node shape (dots, rings, squares, diamonds) and its lines between lanes
+(curves, metro, circuit) are the user's choice in Settings (`theme::NodeShape`, `theme::Curve`,
+`theme::set_graph`), the same in every theme.
 
 Link buttons are `accent2` and underlined on hover and focus; where the link colour alone does
 not set a link apart from body text, the theme's `Design::link_underline` underlines them at rest
-too (Paper, whose sepia shares the ink's hue family, and Contrast, for low vision;
-`links_are_underlined_at_rest_in_paper_and_contrast`). Inline links in the legal texts still
+too: at high contrast, for low vision. Inline links in the legal texts still
 underline only on hover and focus.
 
 Every pairing (text on every surface and state, labels on every fill end, focus, outlines, lanes,
@@ -92,11 +120,14 @@ panel colour. Midnight's set:
 
 | Index | Hex | | Index | Hex |
 |---|---|---|---|---|
-| 0 | `#A5B1FF` periwinkle | | 5 | `#F59BF0` orchid |
-| 1 | `#4CD494` green | | 6 | `#01DEDF` cyan |
-| 2 | `#ED9234` orange | | 7 | `#8EBE4F` leaf |
-| 3 | `#00BFF7` sky blue | | 8 | `#F980A0` rose |
-| 4 | `#DFC43D` gold | | 9 | `#FFAD8E` peach |
+| 0 | `#7C86FF` indigo | | 5 | `#EE8266` coral |
+| 1 | `#4CC38A` green | | 6 | `#CB81E4` orchid |
+| 2 | `#E5739F` rose | | 7 | `#43C3C3` teal |
+| 3 | `#D9A54A` gold | | 8 | `#9EBF5F` leaf |
+| 4 | `#4EB8E9` sky blue | | 9 | `#DDAA88` sand |
+
+Lanes 0 to 3 are concept 1's; 4 to 9 are derived at the same lightness, with 6 and 9 moved the
+smallest step that keeps every pair dE 25 apart.
 
 Avatar backgrounds are picked from the same ten colours by a stable hash of the author's email.
 
@@ -182,9 +213,8 @@ segmented thumb and the switch knob carry a 1 to 2 px contact shadow, and floati
 popovers, tooltips, toasts, dialogs, palette, cheatsheet) a two-layer soft shadow with a 1 pt
 `overlay_edge` ring. Deeper adds two-layer shadows to controls, coloured glows under primary and
 danger buttons, the `Pane` shadow under cards, the field recess and the deck. Shadows take each
-theme's own tinted `shadow` colour (cool slate in Daylight, warm umber in Paper, the ground's hue
-in dark themes), and Deeper's light-theme cards add a tight contact layer under a wide soft one,
-so they lift off a light ground as clearly as off a dark one. Contrast has no
+theme's own tinted `shadow` colour (cool slate in Daylight, the ground's hue in dark themes), and Deeper's light-theme cards add a tight contact layer under a wide soft one,
+so they lift off a light ground as clearly as off a dark one. High contrast has no
 highlights and rings floating layers in `control_border`. The top highlight line is white at the
 level's alpha, from `theme::highlight_line`.
 
@@ -204,7 +234,7 @@ it into the glass). The command palette and menus still place the one shape afte
 other floating layers get glass as they move to the kit. At most four layers a frame are glass; tooltips, the settings
 screen and panes stay opaque. Dark themes leave glass little room: the dimmest text on it must
 keep 4.5:1, so the backdrop shows as soft light and dark shapes rather than colour. The
-setting is unavailable with the Contrast theme, when the system asks for reduced transparency
+setting is unavailable with high contrast, when the system asks for reduced transparency
 (macOS, Windows) and when the graphics driver cannot run the blur; any failure at run time turns
 it off for the session and every layer is opaque again.
 
@@ -433,10 +463,23 @@ never takes focus; Tab does.
 ### Ref pill
 
 Rounded rectangle (10-point radius, height 19px, horizontal padding 7px) with a Small Medium label and a
-leading icon. Branch, remote, tag and HEAD colours use distinct tinted fills and outlines;
-the actual drawn text uses a neutral ink with at least 4.5:1 contrast against its fill.
+leading icon. A branch pill takes its lane's colour (a tag `warning`): a 24% fill (34% for the
+current branch) and a 60% ring, and a remote branch only the ring. The label is the pill's own
+colour, lifted toward `text` only as far as 4.5:1 needs against the pill's fill over every
+surface (`Palette::ink`); HEAD and stash pills stay neutral.
 When a local branch and its upstream point to the same commit they merge into one pill showing
 both icons. Pills that do not fit collapse to a `+N` badge with a tooltip.
+
+### Swatches
+
+`kit::choice::Swatches` is a choice between colours: a row of 22-point circles, 8 pt apart, each
+with a hairline edge so a colour close to the ground keeps a shape. The chosen one shrinks a little
+and is ringed in `text`; hover rings the others in `text-dim`. It takes (value, colour, name)
+options, and a value none of them holds (set by a slider beside it) rings none. Like a segmented
+control it is a radio group for assistive technology: each swatch is a radio button named by its
+colour name, which is also its tooltip. Only the chosen swatch is a Tab stop and Left and Right
+move the choice; the focus ring sits 1.5 pt outside the circle. Settings uses it for the custom
+theme's Accent and Tint.
 
 ### Segmented control
 
@@ -508,7 +551,9 @@ button named "Close <name>".
 
 Drawn in code in the theme's colours (`ui/art.rs`, `docs/art-prompts.md`): the logo mark, the
 welcome canopy and four empty-state spots. Each grows in once when it appears and then stays
-still; reduce motion shows it finished.
+still; reduce motion shows it finished. Midnight and Daylight show them as drawn over a plain
+ground (`ArtMotif::Plain`); Observatory joins them into constellations (`Constellation`) and high
+contrast draws bold line art without glows (`Signal`).
 
 ### Context menu
 

@@ -41,8 +41,7 @@ ARGS:
 
 OPTIONS:
         --light               Start with the Daylight theme
-        --theme <THEME>       Start with a theme: midnight, daylight, aurora, ember, neon,
-                              forest, paper or contrast
+        --theme <THEME>       Start with a theme: midnight, daylight, observatory or custom
         --view <VIEW>         Initial view: history, changes or requests
         --split               Show diffs side by side
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
@@ -64,6 +63,10 @@ OPTIONS:
         --style <STYLE>       Start with a style: standard or deeper
         --density <DENSITY>   Start with a density: comfortable or dense
         --translucent <ON>    Translucent surfaces: on or off
+        --contrast <ON>       High contrast: on or off
+        --custom-theme <SPEC> The custom theme's colours, comma-separated: base=midnight|daylight,
+                              accent=<hue 0-359>, intensity=<20-140>, tint=<0-100>,
+                              tint-hue=<0-359> (with --theme custom)
         --motion <MOTION>     Motion: system, reduced or full
         --gallery-page <N>    With --overlay gallery, scroll down N window heights
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
@@ -136,6 +139,19 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                         "on" => true,
                         "off" => false,
                         _ => return Err("--translucent takes on or off".into()),
+                    },
+                );
+            }
+            "--custom-theme" => {
+                let spec = next_text(&mut args, "--custom-theme needs a list, see --help")?;
+                launch.custom_theme = Some(parse_custom_theme(&spec)?);
+            }
+            "--contrast" => {
+                launch.high_contrast = Some(
+                    match next_text(&mut args, "--contrast needs on or off")?.as_str() {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err("--contrast takes on or off".into()),
                     },
                 );
             }
@@ -236,6 +252,46 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
     Ok((launch, size))
 }
 
+/// The custom theme of a `--custom-theme` argument: `key=value` pairs over the defaults.
+fn parse_custom_theme(spec: &str) -> Result<ui::custom_theme::CustomTheme, String> {
+    let mut c = ui::custom_theme::CustomTheme::default();
+    for pair in spec.split(',').filter(|p| !p.is_empty()) {
+        let (key, value) = pair
+            .split_once('=')
+            .ok_or_else(|| format!("--custom-theme: {pair} is not key=value"))?;
+        // Every range here fits a u8 where the field is one.
+        let small = |v: u16| u8::try_from(v).unwrap_or(u8::MAX);
+        let number = |range: std::ops::RangeInclusive<u16>| {
+            value
+                .parse::<u16>()
+                .ok()
+                .filter(|v| range.contains(v))
+                .ok_or_else(|| {
+                    format!(
+                        "--custom-theme: {key} takes {}-{}",
+                        range.start(),
+                        range.end()
+                    )
+                })
+        };
+        match key {
+            "base" => {
+                c.light = match value {
+                    "midnight" => false,
+                    "daylight" => true,
+                    _ => return Err("--custom-theme: base takes midnight or daylight".into()),
+                };
+            }
+            "accent" => c.accent_hue = number(0..=359)?,
+            "tint-hue" => c.tint_hue = number(0..=359)?,
+            "intensity" => c.accent_intensity = small(number(20..=140)?),
+            "tint" => c.tint = small(number(0..=100)?),
+            _ => return Err(format!("--custom-theme: unknown key {key}; see --help")),
+        }
+    }
+    Ok(c)
+}
+
 /// The next argument as text, or `missing` when there is none.
 fn next_text(
     args: &mut impl Iterator<Item = std::ffi::OsString>,
@@ -327,6 +383,41 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_theme_specs_set_their_keys_over_the_defaults() {
+        use ui::custom_theme::CustomTheme;
+        assert_eq!(parse_custom_theme(""), Ok(CustomTheme::default()));
+        assert_eq!(
+            parse_custom_theme("base=daylight,accent=150,intensity=140,tint-hue=28,tint=40"),
+            Ok(CustomTheme {
+                light: true,
+                accent_hue: 150,
+                accent_intensity: 140,
+                tint_hue: 28,
+                tint: 40,
+            })
+        );
+        // A later value for the same key wins, like repeated flags.
+        assert_eq!(
+            parse_custom_theme("accent=10,accent=20").map(|c| c.accent_hue),
+            Ok(20)
+        );
+        for bad in [
+            "accent=360",
+            "intensity=19",
+            "intensity=141",
+            "tint=101",
+            "tint-hue=-1",
+            "base=paper",
+            "Base=daylight",
+            "colour=red",
+            "accent",
+            "accent=ten",
+        ] {
+            assert!(parse_custom_theme(bad).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn initial_zoom_requires_a_finite_supported_factor() {

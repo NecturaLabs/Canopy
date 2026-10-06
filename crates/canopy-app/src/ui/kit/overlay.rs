@@ -2965,7 +2965,10 @@ mod tests {
 
     #[test]
     fn light_themes_get_the_dark_opaque_tooltip() {
-        for id in [theme::ThemeId::Daylight, theme::ThemeId::Paper] {
+        for id in theme::ThemeId::ALL
+            .into_iter()
+            .filter(|t| !t.palette().dark)
+        {
             let ctx = Context::default();
             crate::ui::fonts::install(&ctx);
             theme::apply(&ctx, id, theme::Appearance::STILL);

@@ -5,7 +5,7 @@
 use egui::epaint::{ClippedShape, RectShape};
 
 use super::*;
-use crate::ui::theme::{Appearance, Density, Style, ThemeId};
+use crate::ui::theme::{self, Appearance, Density, Style, ThemeId};
 
 fn at(x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
     Rect::from_min_max(pos2(x0, y0), pos2(x1, y1))
@@ -379,7 +379,9 @@ fn glass_needs_the_switch_the_theme_the_driver_and_the_system() {
     assert!(!resolve(ThemeId::Midnight, false, true, None));
     assert!(!resolve(ThemeId::Midnight, true, false, None));
     assert!(!resolve(ThemeId::Midnight, true, true, Some(true)));
-    assert!(!resolve(ThemeId::Contrast, true, true, None));
+    theme::set_high_contrast(true);
+    assert!(!resolve(ThemeId::Midnight, true, true, None));
+    theme::set_high_contrast(false);
     // Reduced motion leaves glass alone.
     let moving = Appearance::resolve(
         ThemeId::Midnight,
@@ -428,7 +430,7 @@ fn with_translucent_surfaces_off_layers_are_opaque() {
 #[test]
 fn a_glass_layer_blurs_its_backdrop_under_a_translucent_fill() {
     let ctx = egui::Context::default();
-    for theme in [ThemeId::Midnight, ThemeId::Daylight, ThemeId::Aurora] {
+    for theme in [ThemeId::Midnight, ThemeId::Daylight, ThemeId::Observatory] {
         setup(&ctx, theme, true, Backend::Supported);
         let shapes = frame(&ctx, |ui| {
             let fill = layer_fill(
@@ -456,9 +458,10 @@ fn a_glass_layer_blurs_its_backdrop_under_a_translucent_fill() {
 }
 
 #[test]
-fn the_contrast_theme_never_uses_glass() {
+fn high_contrast_never_uses_glass() {
     let ctx = egui::Context::default();
-    setup(&ctx, ThemeId::Contrast, true, Backend::Supported);
+    theme::set_high_contrast(true);
+    setup(&ctx, ThemeId::Midnight, true, Backend::Supported);
     let shapes = frame(&ctx, |ui| {
         let fill = layer_fill_with(
             ui.painter(),

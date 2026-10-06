@@ -44,8 +44,6 @@ ASSET_FOLDERS = {"fonts", "licenses", "LICENSES"}
 FONTS = [
     ("Inter 4.1 by Rasmus Andersson", "crates/canopy-app/assets/fonts/OFL-Inter.txt"),
     ("JetBrains Mono by JetBrains", "crates/canopy-app/assets/fonts/OFL-JetBrainsMono.txt"),
-    ("Canopy Serif Bold, a modified version of PT Serif Bold by ParaType",
-     "crates/canopy-app/assets/fonts/OFL-PTSerif.txt"),
     ("Atkinson Hyperlegible Bold by the Braille Institute of America",
      "crates/canopy-app/assets/fonts/OFL-AtkinsonHyperlegible.txt"),
     ("Canopy CJK, a modified version of Noto Sans CJK JP by Adobe for Google",

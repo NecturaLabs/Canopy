@@ -40,20 +40,14 @@ yet true, then correctness and the features people meet first, then polish. Take
       RD-8, in the working record): `design.md` rewritten from the shipped kit
       and the Design record, features, CHANGELOG Unreleased, architecture, README and
       `tools/README.md` options, the `add-theme` and `screenshot` skills, ADR 0003/0004 wording.
-- [ ] Component library final QA: re-render the full matrix (8 themes, both styles and densities,
-      960x600 to 4K) and read every image; frame-capture the commit and branch clicks (O2); Motion
-      Match system / Reduced / Full live; owner before | after page per theme.
+- [ ] Component library final QA: re-render the full matrix (4 themes and High contrast, both styles
+      and densities, 960x600 to 4K) and read every image; frame-capture the commit and branch clicks
+      (O2); Motion Match system / Reduced / Full live; owner before | after page per theme.
 - [ ] Accessibility: `accesskit_unix` 0.21.1 unwraps a failed AT-SPI registry call in a thread,
       so a missing accessibility bus writes a crash report; report upstream or guard it.
-- [ ] Themes, structure: Midnight, Aurora and Forest in Standard still read as recolours at
-      thumbnail size, and Midnight and Forest share one interaction grammar (bar selection,
-      lifted tab, dot nodes); give each its own selection, tab and node treatment, then an
-      8-theme before | after sheet.
-- [ ] Themes, details: Paper's conflict card is a cold grey slab with faint text at 4.41:1 (warm
-      it, faint text >= 4.5:1, with a test); Aurora's welcome art lacks the curtains of light, and
-      Forest's canopy and ground are faint in Deeper; Daylight's Changes scroll thumb is
-      near-black against the light composer; `docs/design.md` theme table rows other than Paper
-      and Contrast still describe the wave-2 colours.
+- [ ] Daylight: check the Changes scroll thumb against the light composer (reported near-black
+      on the wave-2 palette); `docs/design.md` gives the action bar as 52/40 in Layout but
+      58/46 in its table and `theme.rs`.
 - [ ] Legal reader links: a link that starts at a line wrap gets the previous row's end as its
       rect (`legal.rs:348` `pos_from_cursor`), so hover, focus underline and click land wrong.
 - [ ] Accessibility, kit: kit `Callout` speaks title and body twice and its icon as a
@@ -265,7 +259,7 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] Diff settings, syntax highlighting, side-by-side diffs.
 - [ ] Three-way conflict resolver.
 - [ ] GitHub and GitLab pull and merge requests.
-- [ ] Eight themes (Midnight, Daylight, Aurora, Ember, Neon, Forest, Paper, Contrast).
+- [ ] Three themes (Midnight, Daylight, Observatory) and High contrast on each.
 - [ ] Partial clones on real `--filter=blob:none` and `--filter=tree:0` clones.
 - [ ] Checks the development machine cannot make, left open by the visual polish review (PR #5,
       merged 4 Oct 2026): real hosting credentials and account persistence, external links and

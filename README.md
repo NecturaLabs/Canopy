@@ -71,9 +71,11 @@ Screenshots are rendered by Canopy itself from the deterministic fixture reposit
 - **Workflow**: command palette for every command and branch checkout, keyboard shortcuts with a
   cheatsheet, toasts that carry git's own error output, automatic refresh on file changes and
   window focus, status bar with branch, ahead/behind, repository state and the running job.
-- **Appearance and settings**: eight themes (Midnight, the default, then Daylight, Aurora, Ember,
-  Neon, Forest, Paper and the high-contrast Contrast), interface zoom, reduced motion, and a settings screen (Ctrl+,) for
-  appearance, Git, integrations, accounts, updates and privacy.
+- **Appearance and settings**: three themes, Midnight (the default), Daylight and Observatory, a
+  Custom theme (Midnight or Daylight with your own accent and tint), a
+  High contrast switch that works with each, a choice of graph marks and lines, interface zoom,
+  reduced motion, and a settings screen (Ctrl+,) for appearance, Git, integrations, accounts,
+  updates and privacy.
 - **Diagnostics and privacy**: structured per-run logs and local crash reports in Canopy's data
   folder; opt-in, scrubbed crash reports to NecturaLabs after you accept the Terms and Privacy
   Policy and answer the question. The update check can be turned off.
@@ -188,7 +190,9 @@ path, the welcome screen lists recent repositories.
 | Option | Effect |
 |---|---|
 | `--light` | Start with the Daylight theme. |
-| `--theme <THEME>` | Start with a theme: `midnight`, `daylight`, `aurora`, `ember`, `neon`, `forest`, `paper` or `contrast`. |
+| `--theme <THEME>` | Start with a theme: `midnight`, `daylight`, `observatory` or `custom`. |
+| `--custom-theme <SPEC>` | The custom theme's colours, comma-separated `key=value`: `base=midnight\|daylight`, `accent=0-359` (hue), `intensity=20-140`, `tint-hue=0-359`, `tint=0-100`. Missing keys keep Midnight's own colours; it shows with `--theme custom`. |
+| `--contrast <on\|off>` | Start with High contrast on or off. |
 | `--view <history\|changes\|requests>` | Initial view. |
 | `--split` | Show diffs side by side. |
 | `--overlay <NAME>` | Open an overlay (for screenshots): `settings`, `privacy`, `cheatsheet`, `palette`, `consent`, `crash-consent`, `legal`, `licences`, `credential`, `host-key` or `merge`. |

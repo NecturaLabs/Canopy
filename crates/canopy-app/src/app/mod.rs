@@ -120,6 +120,8 @@ pub struct Launch {
     pub style: Option<theme::Style>,
     pub density: Option<theme::Density>,
     pub translucent: Option<bool>,
+    pub high_contrast: Option<bool>,
+    pub custom_theme: Option<crate::ui::custom_theme::CustomTheme>,
     pub motion: Option<crate::ui::motion::MotionPref>,
     /// The gallery page (window heights scrolled) for `--overlay gallery`.
     pub gallery_page: usize,
@@ -189,7 +191,7 @@ pub struct CanopyApp {
     /// `trust::changes()` as the tabs last saw it.
     trust_seen: u64,
     /// The theme and appearance installed in egui, so they are re-applied only when they change.
-    applied: Option<(ThemeId, theme::Appearance)>,
+    applied: Option<(ThemeId, bool, theme::CustomTheme, theme::Appearance)>,
     /// The gallery overlay (`--overlay gallery`) and the page it shows.
     gallery: Option<usize>,
     /// The translucent-surfaces soak run (`--glass-soak`), if one was asked for.
@@ -253,6 +255,12 @@ impl CanopyApp {
         }
         if let Some(translucent) = launch.translucent {
             settings.translucent = translucent;
+        }
+        if let Some(high_contrast) = launch.high_contrast {
+            settings.high_contrast = high_contrast;
+        }
+        if let Some(custom) = launch.custom_theme {
+            settings.custom_theme = custom;
         }
         if let Some(motion) = launch.motion {
             settings.motion = motion;
@@ -539,12 +547,20 @@ impl CanopyApp {
     /// Installs the theme and appearance when either changed (a setting, or the system's motion
     /// answer arriving).
     fn apply_look(&mut self, ctx: &egui::Context) {
+        theme::set_high_contrast(self.settings.high_contrast);
+        theme::set_custom(self.settings.custom_theme);
         let look = self.look();
-        let wanted = (self.settings.theme, look);
+        let wanted = (
+            self.settings.theme,
+            self.settings.high_contrast,
+            self.settings.custom_theme,
+            look,
+        );
         if self.applied != Some(wanted) {
             theme::apply(ctx, self.settings.theme, look);
             self.applied = Some(wanted);
         }
+        theme::set_graph(self.settings.graph_node, self.settings.graph_curve);
     }
 
     /// The text "Copy diagnostics" puts on the clipboard, with the home folder shown as `~`.
@@ -569,6 +585,15 @@ impl CanopyApp {
         );
         let _ = writeln!(t, "Log detail: {}", self.settings.log_level.label());
         let _ = writeln!(t, "Theme: {}", self.settings.theme.name());
+        let _ = writeln!(
+            t,
+            "High contrast: {}",
+            if self.settings.high_contrast {
+                "on"
+            } else {
+                "off"
+            }
+        );
         let _ = writeln!(
             t,
             "Translucent surfaces: {}, blur {}",
@@ -840,8 +865,8 @@ impl eframe::App for CanopyApp {
                 if !deeper {
                     ui.painter()
                         .rect_filled(bar, egui::CornerRadius::ZERO, s.panel);
-                    let seam = crate::ui::kit::paint::edge_seam(p, s.border, true);
-                    let w = seam.map_or(0.0, |st| st.width);
+                    let seam = crate::ui::kit::paint::edge_seam(p, s.border);
+                    let w = seam.width;
                     crate::ui::kit::paint::seam_line_h(
                         ui.painter(),
                         bar.x_range(),
@@ -887,8 +912,8 @@ impl eframe::App for CanopyApp {
                     .show(ui, |ui| {
                         if !deeper {
                             let r = ui.max_rect().expand2(egui::vec2(m.sidebar_pad, 0.0));
-                            let seam = crate::ui::kit::paint::pane_seam(p, s.border, true);
-                            let w = seam.map_or(0.0, |st| st.width);
+                            let seam = crate::ui::kit::paint::pane_seam(p, s.border);
+                            let w = seam.width;
                             crate::ui::kit::paint::seam_line_v(
                                 ui.painter(),
                                 r.right() - w * 0.5,
@@ -1307,18 +1332,13 @@ fn corner_mask(
 }
 
 /// Deeper's focused-pane edge on `card`, its top edge lit at full strength so the pane that holds
-/// the keyboard (History's table) reads as the one in front. A theme with lit edges outlines the
-/// whole card in a glowing `focus` line instead.
+/// the keyboard (History's table) reads as the one in front.
 fn focused_edge(
     painter: &egui::Painter,
     card: egui::Rect,
     radius: egui::CornerRadius,
     focus: egui::Color32,
 ) {
-    if crate::ui::kit::paint::lit() {
-        crate::ui::kit::paint::lit_edge(painter, card, radius, focus, 0.7);
-        return;
-    }
     crate::ui::kit::paint::focus_edge(painter, card, radius, focus, 1.0);
     let r = f32::from(radius.nw);
     let width = 1.5;

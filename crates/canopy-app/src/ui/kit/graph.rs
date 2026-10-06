@@ -179,7 +179,8 @@ pub fn node_center(painter: &Painter, rect: Rect, lanes: Lanes, lane: u16) -> Po
 pub fn paint_row(painter: &Painter, rect: Rect, lanes: Lanes, row: &GraphRow, marks: Marks) {
     let p = theme::palette(painter.ctx());
     let m = theme::metrics();
-    let style = theme::active().design().graph;
+    let style = theme::active_design().graph;
+    let (node, curve) = theme::graph_shape();
     let painter = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
     let width = m.graph_edge * style.line_scale;
     let faint = Stroke::new(width, p.text_faint);
@@ -195,13 +196,13 @@ pub fn paint_row(painter: &Painter, rect: Rect, lanes: Lanes, row: &GraphRow, ma
             && s.from_lane == row.lane
             && s.to_lane == row.lane;
         if from_wip || into_wip {
-            dashed(&painter, a, b, faint, style.curve, lanes.pitch);
+            dashed(&painter, a, b, faint, curve, lanes.pitch);
             continue;
         }
         let color = p.lane(s.color);
         if s.from_lane == s.to_lane {
             painter.line_segment([a, b], Stroke::new(width, color));
-        } else if style.curve == Curve::Smooth {
+        } else if curve == Curve::Smooth {
             painter.add(CubicBezierShape::from_points_stroke(
                 edge_points(a, b),
                 false,
@@ -210,12 +211,12 @@ pub fn paint_row(painter: &Painter, rect: Rect, lanes: Lanes, row: &GraphRow, ma
             ));
         } else {
             painter.add(Shape::line(
-                edge_path(a, b, style.curve, lanes.pitch),
+                edge_path(a, b, curve, lanes.pitch),
                 Stroke::new(width, color),
             ));
         }
     }
-    paint_node(&painter, rect, lanes, row, marks, p, style);
+    paint_node(&painter, rect, lanes, row, marks, p, (style, node));
 }
 
 /// The outline of a `shape` node of radius `r` around `c`, grown by `grow`: a square with its
@@ -276,7 +277,7 @@ fn paint_node(
     row: &GraphRow,
     marks: Marks,
     p: &Palette,
-    style: GraphStyle,
+    (style, node): (GraphStyle, NodeShape),
 ) {
     let m = theme::metrics();
     let c = node_center(painter, rect, lanes, row.lane);
@@ -291,12 +292,12 @@ fn paint_node(
         );
     }
     let shape = Polygon {
-        shape: style.node,
+        shape: node,
         c,
         r,
         corner: f32::from(m.radius_sm) / 2.0,
     };
-    match style.node {
+    match node {
         NodeShape::Dot | NodeShape::Ring => {
             painter.circle_filled(c, r + m.graph_ring, marks.ground);
         }
@@ -306,8 +307,8 @@ fn paint_node(
     }
     if marks.wip {
         let stroke = Stroke::new(m.graph_merge_stroke, p.text_faint);
-        if matches!(style.node, NodeShape::Square | NodeShape::Diamond) {
-            let mut outline = polygon(style.node, c, r - 0.2, 0.0);
+        if matches!(node, NodeShape::Square | NodeShape::Diamond) {
+            let mut outline = polygon(node, c, r - 0.2, 0.0);
             outline.push(outline[0]);
             painter.extend(Shape::dashed_line(&outline, stroke, 2.5, 2.0));
             return;
@@ -325,7 +326,7 @@ fn paint_node(
         }
         return;
     }
-    match (style.node, row.is_merge) {
+    match (node, row.is_merge) {
         // A merge is hollow in every shape; a ring theme's commits are rings too, so its merges
         // are the thinner, emptier ring.
         (NodeShape::Dot, true) => {
@@ -585,11 +586,12 @@ mod tests {
         );
     }
 
-    /// What one row's node paints in `theme`: (circles, rects, other paths).
-    fn node_shapes(theme: theme::ThemeId, merge: bool) -> (usize, usize, usize) {
+    /// What one row's node paints in `shape`: (circles, rects, other paths).
+    fn node_shapes(shape: NodeShape, merge: bool) -> (usize, usize, usize) {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme, theme::Appearance::STILL);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        theme::set_graph(shape, Curve::Smooth);
         let row = GraphRow {
             lane: 0,
             color: 1,
@@ -620,17 +622,16 @@ mod tests {
         n
     }
 
-    /// Each theme draws its own nodes: dots and rings as circles, Contrast's squares as rects,
-    /// Neon's diamonds as polygons, and a merge stays hollow in every shape.
+    /// The node shape chosen in Settings: dots and rings as circles, squares as rects, diamonds as
+    /// polygons, and a merge stays hollow in every shape.
     #[test]
-    fn nodes_take_the_themes_shape() {
-        use theme::ThemeId as T;
-        assert_eq!(node_shapes(T::Midnight, false), (2, 0, 0));
-        assert_eq!(node_shapes(T::Paper, false), (2, 0, 0));
-        assert_eq!(node_shapes(T::Contrast, false), (0, 2, 0));
-        assert_eq!(node_shapes(T::Contrast, true), (0, 2, 0));
-        assert_eq!(node_shapes(T::Neon, false), (0, 0, 2));
-        assert_eq!(node_shapes(T::Neon, true), (0, 0, 2));
+    fn nodes_take_the_chosen_shape() {
+        assert_eq!(node_shapes(NodeShape::Dot, false), (2, 0, 0));
+        assert_eq!(node_shapes(NodeShape::Ring, false), (2, 0, 0));
+        assert_eq!(node_shapes(NodeShape::Square, false), (0, 2, 0));
+        assert_eq!(node_shapes(NodeShape::Square, true), (0, 2, 0));
+        assert_eq!(node_shapes(NodeShape::Diamond, false), (0, 0, 2));
+        assert_eq!(node_shapes(NodeShape::Diamond, true), (0, 0, 2));
     }
 
     #[test]

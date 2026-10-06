@@ -14,17 +14,28 @@ commits since the previous build.
   Canopy has a token for the server: passed, failed or running checks, and approved, changes
   requested or (GitHub) review required. Loading the list sends one more request to the same
   server.
-- Redesigned themes and appearance options. All eight themes take the new look, each with its
-  own character: quiet two-tone chrome in the theme's own tint, signature and status colours in
-  its own temperature, clean coloured banners, graph lines that never look alike, and soft
-  shadows only under menus and dialogs. Settings → Appearance adds Style (Standard, or Deeper,
-  where the action bar and panes float as cards, History splits into a commit card and a details
-  card, and the focused pane is lit along its top), Density (Comfortable, or Dense with 24-point rows and a one-row toolbar) and
-  Motion (match the system, reduced or full; reduced also makes scrolling jump instead of glide),
-  which replaces the Reduce motion switch; an earlier
-  "reduce motion" choice carries over as Reduced.
+- Redesigned themes and appearance options. Three themes take the new look: Midnight (the
+  default) and Daylight, with quiet two-tone chrome in neutral blue-black or white, an indigo
+  signature, clean coloured banners, graph lines that never look alike and soft shadows only
+  under menus and dialogs; and Observatory, the previous Midnight, kept as it was. Aurora, Ember,
+  Neon, Forest and Paper are gone, and Contrast is now a High contrast switch that works with
+  every theme: it keeps the theme's backgrounds and colours and raises text, outlines and focus
+  to the contrast Midnight's high-contrast version has. Settings → Appearance adds Style
+  (Standard, or Deeper, where the action bar and panes float as cards, History splits into a
+  commit card and a details card, and the focused pane is lit along its top), Density
+  (Comfortable, or Dense with 24-point rows and a one-row toolbar), Motion (match the system,
+  reduced or full; reduced also makes scrolling jump instead of glide), which replaces the Reduce
+  motion switch (an earlier "reduce motion" choice carries over as Reduced), and the history graph's commit marks (dots, rings, squares or diamonds) and
+  lines (curves, metro or circuit).
+- A Custom theme, a fourth choice in Settings → Appearance and the toolbar's theme menu (also
+  `--theme custom`). Start from Midnight or Daylight and pick an accent (a swatch, any hue, and how
+  vivid it is) and a tint for backgrounds, lines and text. Text and lines keep at least the
+  base theme's contrast, status, graph, syntax and diff colours keep their hues, and High
+  contrast works over it. `--custom-theme` sets its colours from the command line.
+- High contrast is in the toolbar's theme menu and the command palette ("High contrast: On" and
+  "Off"), as well as in Settings. `--contrast on|off` starts Canopy with it on or off.
 - Translucent surfaces in Settings → Appearance: the command palette blurs what is behind it.
-  Off by default; unavailable with the Contrast theme, when the system asks for reduced
+  Off by default; unavailable with high contrast, when the system asks for reduced
   transparency, or when the graphics driver cannot do it.
 - Git identity in Settings shows the effective author and its source for the open repository, and
   lets you save or clear repository or global Git configuration. A warning in Changes links to it
@@ -93,6 +104,9 @@ commits since the previous build.
 
 ### Fixed
 
+- A saved theme or option this build no longer has, such as a removed theme, now reads as its
+  default instead of resetting every setting. Settings the build no longer has are dropped at the
+  first save after launch (Canopy saves every 30 seconds).
 - Keyboard use: each list (History's commits, every sidebar section) is one Tab stop and the
   arrows move inside it, History's commit list comes before the details, and a row's buttons stay
   visible while one of them has focus. Shift+F10 opens the focused row's context menu; in a menu
@@ -202,6 +216,9 @@ commits since the previous build.
 
 ### Changed
 
+- Branch and tag pills are brighter and easier to read: a 24% fill of the pill's own colour (34%
+  for the current branch), a 60% ring, and a label in that colour adjusted to read at 4.5:1.
+  Remote branches have a ring only; HEAD and stash stay neutral.
 - Settings rows now keep their controls in one aligned column.
 - Releases are numbered builds, named by `git rev-list --count` of their commit on `main` and its
   short hash (`build 412 (a1b2c3d)`), instead of semantic versions. The number is shown in About,

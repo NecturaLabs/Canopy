@@ -80,7 +80,7 @@ pub fn shortcut_text(command: Command) -> String {
 /// item: no frame at rest, the strong hover ground, the item radius and height.
 pub fn stock_style(style: &mut egui::Style) {
     let m = theme::metrics();
-    let p = theme::active().palette();
+    let p = theme::active_palette();
     let r = item_radius();
     style.spacing.button_padding = vec2(
         ITEM_PAD,

@@ -94,8 +94,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
         .show(ui, |ui| {
             // The seam to the diff; the pane's other edges are the card's or the window's.
             let edge = ui.max_rect();
-            let seam = paint::pane_seam(palette(ui.ctx()), s.border, false);
-            let w = seam.map_or(0.0, |st| st.width);
+            let seam = paint::pane_seam(palette(ui.ctx()), s.border);
+            let w = seam.width;
             paint::seam_line_v(ui.painter(), edge.right() - w * 0.5, edge.y_range(), seam);
             let list_frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 8));
             // The composer follows the lists while both fit; once the lists would crowd it, it

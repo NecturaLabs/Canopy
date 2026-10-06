@@ -383,14 +383,23 @@ impl RefPill {
         let c = self.color(p);
         match self.kind {
             RefKind::Head => (s.elevated, s.edge, p.text_dim),
-            RefKind::RemoteBranch => (Color32::TRANSPARENT, Palette::pill_border(c), p.text_dim),
-            RefKind::CurrentBranch => {
-                let fill = Palette::pill_fill(c, true);
-                (fill, Palette::pill_border(c), p.ink(p.text, fill))
-            }
-            _ => {
+            RefKind::Stash => {
                 let fill = Palette::pill_fill(c, false);
                 (fill, Palette::pill_border(c), p.ink(p.text, fill))
+            }
+            // Labels take the pill's own colour, lifted toward `text` only as far as 4.5:1 needs.
+            RefKind::RemoteBranch => (
+                Color32::TRANSPARENT,
+                Palette::pill_border(c),
+                p.ink(c, Color32::TRANSPARENT),
+            ),
+            RefKind::CurrentBranch => {
+                let fill = Palette::pill_fill(c, true);
+                (fill, Palette::pill_border(c), p.ink(c, fill))
+            }
+            RefKind::LocalBranch | RefKind::Tag => {
+                let fill = Palette::pill_fill(c, false);
+                (fill, Palette::pill_border(c), p.ink(c, fill))
             }
         }
     }
@@ -1483,7 +1492,7 @@ mod tests {
                 let (fill, ring, ink) = remote.colors(p);
                 assert_eq!(fill, Color32::TRANSPARENT, "a remote pill is outlined");
                 assert_eq!(ring, Palette::pill_border(p.lane(lane)));
-                assert_eq!(ink, p.text_dim);
+                assert_eq!(ink, p.ink(p.lane(lane), Color32::TRANSPARENT));
             }
             let tag = RefPill::new("v1.0.0", RefKind::Tag).lane(3);
             assert_eq!(

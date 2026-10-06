@@ -610,10 +610,6 @@ impl Button {
                 }
                 _ => {}
             }
-            if enabled && self.kind == ButtonKind::Primary && paint::lit() {
-                // Neon: the primary button glows in its own colour, like a lit sign.
-                paint::lit_edge(&painter, rect, radius, s.primary.top, 0.7 + 0.3 * st.hover);
-            }
             if enabled && self.kind == ButtonKind::Ghost {
                 paint::hover_mark(&painter, rect, radius, p, s, st.hover);
             }

@@ -2,6 +2,7 @@
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
 #                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-search|about|toasts|gallery|menu-remotes|menu-branch|menu-commit|menu-file|<dialog>]
 #                            [--style standard|deeper] [--density comfortable|dense] [--translucent on|off]
+#                            [--contrast on|off] [--custom-theme SPEC]
 #                            [--motion system|reduced|full] [--gallery-page N]
 #                            [--demo-requests SCENARIO] [--size WxH] [--zoom 0.8..1.6]
 #
@@ -50,6 +51,8 @@ while [[ $# -gt 0 ]]; do
     --style) extra+=(--style "${2:?--style needs standard or deeper}"); shift 2 ;;
     --density) extra+=(--density "${2:?--density needs comfortable or dense}"); shift 2 ;;
     --translucent) extra+=(--translucent "${2:?--translucent needs on or off}"); shift 2 ;;
+    --contrast) extra+=(--contrast "${2:?--contrast needs on or off}"); shift 2 ;;
+    --custom-theme) extra+=(--custom-theme "${2:?--custom-theme needs a list, see --help}"); shift 2 ;;
     --motion) extra+=(--motion "${2:?--motion needs system, reduced or full}"); shift 2 ;;
     --gallery-page) extra+=(--gallery-page "${2:?--gallery-page needs a number}"); shift 2 ;;
     --demo-requests) extra+=(--demo-requests "${2:?--demo-requests needs a scenario, see --help}"); shift 2 ;;
