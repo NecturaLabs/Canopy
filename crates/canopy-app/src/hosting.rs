@@ -500,9 +500,12 @@ fn serve(
     let last = LastList::new(0);
     let (rollups, shown) = unbounded::<Shown>();
     std::thread::scope(|scope| {
+        let lane_last = &last;
+        // The lane owns the receiver: if it cannot start, the receiver goes with it and lists
+        // queue nothing for a lane that will never read them.
         let lane = std::thread::Builder::new()
             .name(format!("request-checks:{}", forge.host))
-            .spawn_scoped(scope, || add_rollups(client, &shown, &last, emit));
+            .spawn_scoped(scope, move || add_rollups(client, &shown, lane_last, emit));
         if let Err(e) = &lane {
             tracing::error!("could not start the request-checks thread: {e}");
         }
