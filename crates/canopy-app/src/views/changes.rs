@@ -816,7 +816,8 @@ fn composer(
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
     let m = theme::metrics();
-    ui.style_mut().spacing.scroll.floating = false;
+    // Always-visible bars with their own room, so a handle never covers the fields' text.
+    ui.spacing_mut().scroll = theme::solid_scroll();
     if composer_is_quiet(tab, snap) {
         quiet_composer(ui, tab, snap, actions);
         return;
@@ -1381,6 +1382,68 @@ mod tests {
             publish_visible,
             "the clean-state primary action must remain reachable in a short pane"
         );
+    }
+
+    /// The commit fields' scroll bar is the kit's solid bar (a thin handle at 45% of the text
+    /// colour), never egui's 8-point slab in the full text colour, which read as a black bar in
+    /// Daylight beside a short composer.
+    #[test]
+    fn the_commit_fields_scroll_bar_is_a_thin_handle() {
+        for id in [theme::ThemeId::Daylight, theme::ThemeId::Midnight] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, id, theme::Appearance::STILL);
+            let text = palette(&ctx).text;
+            let (worker, _, _) = crate::worker::Worker::detached();
+            let mut tab = RepoTab::with_worker(
+                std::path::PathBuf::from("fixture"),
+                100,
+                crate::settings::DiffPrefs::default(),
+                worker,
+            );
+            tab.commit_summary = "Add metrics".into();
+            tab.commit_body = "A body long enough to scroll.\n".repeat(30);
+            let mut snap = unstaged_snapshot();
+            snap.status.staged = vec![entry("src/lib.rs")];
+            let mut handles = Vec::new();
+            for _ in 0..3 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(340.0, 260.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            composer(ui, &mut tab, &snap, &mut Vec::new(), false);
+                        });
+                    },
+                );
+                out.textures_delta.clear();
+                handles = out
+                    .shapes
+                    .iter()
+                    .filter_map(|c| match &c.shape {
+                        egui::Shape::Rect(r)
+                            if r.rect.height() > 20.0 && r.rect.width() <= 10.0 =>
+                        {
+                            Some((r.rect, r.fill))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+            }
+            assert!(!handles.is_empty(), "{id:?}: the fields do not scroll");
+            for (rect, fill) in handles {
+                assert!(
+                    rect.width() <= 4.5 && fill.a() < text.a(),
+                    "{id:?}: a {}-point handle in {fill:?} (text {text:?})",
+                    rect.width()
+                );
+            }
+        }
     }
 
     #[test]
