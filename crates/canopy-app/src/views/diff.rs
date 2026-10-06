@@ -691,12 +691,16 @@ fn layout_toggle(
     } else {
         Segmented::icons(&mut value, &OPTIONS)
     };
+    // A new or deleted file stays on Unified, chosen and lit; only Side by side is off.
     let changed = segmented
         .size(Size::Sm)
         .label("Diff layout")
         .id_salt("diff-layout")
-        .enabled(!one_column)
-        .disabled_reason("A new or deleted file has nothing to set beside it, so it is one column")
+        .option_enabled(
+            1,
+            !one_column,
+            Some("A new or deleted file has nothing to set beside it, so it is one column"),
+        )
         .show(ui)
         .changed();
     if changed {
@@ -1535,5 +1539,61 @@ mod tests {
         assert_eq!(job.text, "    fn x");
         assert_eq!(job.sections.len(), 3);
         assert_eq!(job.sections[1].format.color, syntax.keyword);
+    }
+
+    /// H3 (kit-a F1): a new or deleted file keeps Unified chosen and live; only Side by side is
+    /// off, and a click on it changes nothing.
+    #[test]
+    fn a_one_column_file_turns_off_only_side_by_side() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        ctx.enable_accesskit();
+        let run = |events: Vec<egui::Event>, actions: &mut Vec<Action>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| layout_toggle(ui, true, true, true, actions),
+            );
+            out.textures_delta.clear();
+            out.platform_output
+                .accesskit_update
+                .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+        let mut actions = Vec::new();
+        let _ = run(Vec::new(), &mut actions);
+        let nodes = run(Vec::new(), &mut actions);
+        let option = |label: &str| {
+            nodes
+                .iter()
+                .find(|n| {
+                    n.role() == egui::accesskit::Role::RadioButton && n.label() == Some(label)
+                })
+                .unwrap_or_else(|| panic!("{label}"))
+                .clone()
+        };
+        let unified = option("Unified");
+        let side = option("Side by side");
+        assert!(!unified.is_disabled(), "Unified stays live");
+        assert_eq!(unified.toggled(), Some(egui::accesskit::Toggled::True));
+        assert!(side.is_disabled(), "Side by side is off");
+        let b = side.bounds().expect("bounds");
+        let at = pos2(
+            crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+            crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+        );
+        let mut events = vec![egui::Event::PointerMoved(at)];
+        for pressed in [true, false] {
+            events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            });
+        }
+        let _ = run(events, &mut actions);
+        assert!(actions.is_empty(), "{actions:?}");
     }
 }
