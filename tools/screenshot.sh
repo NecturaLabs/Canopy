@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
-#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-search|about|toasts|gallery|<dialog>]
+#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-search|about|toasts|gallery|menu-remotes|menu-branch|menu-commit|menu-file|<dialog>]
 #                            [--style standard|deeper] [--density comfortable|dense] [--translucent on|off]
 #                            [--motion system|reduced|full] [--gallery-page N]
 #                            [--demo-requests SCENARIO] [--size WxH] [--zoom 0.8..1.6]
 #
 # <dialog> is any dialog overlay the app lists in its own --help (open, clone-error, confirm, terms,
 # approve, ...).
+#
+# menu-* opens a context menu by a right click once the window has settled: the Remotes header's,
+# the feature/auth branch row's, the top commit row's or the src/main.rs changed file row's (the
+# showcase fixture's names).
 #
 # <repo> may be "-" to render the welcome screen with no repository open.
 #

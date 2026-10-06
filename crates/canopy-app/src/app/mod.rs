@@ -70,6 +70,10 @@ pub const OVERLAYS: &[&str] = &[
     "about",
     "toasts",
     "gallery",
+    "menu-remotes",
+    "menu-branch",
+    "menu-commit",
+    "menu-file",
     "open",
     "open-error",
     "clone",
@@ -276,15 +280,9 @@ impl CanopyApp {
             palette: CommandPalette::default(),
             cheatsheet: Cheatsheet::default(),
             toasts: Toasts::default(),
-            screenshot: launch.screenshot.map(|path| Screenshot {
-                path,
-                ready_frames: 0,
-                ready_since: None,
-                requested: false,
-                started: 0.0,
-                popup: (launch.overlay.as_deref() == Some("diff-options"))
-                    .then(|| egui::Id::new(crate::views::diff::OPTIONS_POPUP)),
-            }),
+            screenshot: launch
+                .screenshot
+                .map(|path| Screenshot::new(path, launch.overlay.as_deref())),
             initial_view: launch.view,
             clone: None,
             opener: open::start(&cc.egui_ctx),
@@ -328,6 +326,11 @@ impl CanopyApp {
         }
         if !shooting && !app.settings.identity_asked {
             app.request_identity(IdentityJob::ReadGlobal);
+        }
+        if let Some(menu) = app.screenshot.as_ref().and_then(|s| s.menu.as_ref()) {
+            // The menu's widget is found by what a screen reader hears.
+            cc.egui_ctx.enable_accesskit();
+            app.initial_view.get_or_insert(menu.view);
         }
         match launch.overlay.as_deref() {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
@@ -452,8 +455,9 @@ impl CanopyApp {
                 repo: None,
                 scope: canopy_core::identity::Scope::Global,
             }),
-            Some(other) => app.open_dialog_overlay(other),
-            None => {}
+            // A menu (screenshot::MenuShot) opens by a right click once the window has settled.
+            Some(other) if !other.starts_with("menu-") => app.open_dialog_overlay(other),
+            Some(_) | None => {}
         }
         if git_version_missing(&app.git_version) {
             app.toasts.push(&cc.egui_ctx, ToastKind::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
@@ -1056,9 +1060,7 @@ impl eframe::App for CanopyApp {
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        if self.screenshot.is_some() {
-            screenshot::without_pointer(raw_input);
-        }
+        self.screenshot_input(raw_input);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

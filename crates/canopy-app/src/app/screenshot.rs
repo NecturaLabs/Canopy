@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use egui::accesskit::Role;
+
 use super::*;
 
 #[derive(Debug)]
@@ -13,6 +15,84 @@ pub(super) struct Screenshot {
     pub(super) started: f64,
     /// A popup kept open for the picture: popups close when a frame does not show them.
     pub(super) popup: Option<egui::Id>,
+    /// The context menu `--overlay menu-*` opens for the picture.
+    pub(super) menu: Option<MenuShot>,
+}
+
+impl Screenshot {
+    /// A picture saved to `path`, of `overlay` when that is one this module opens itself.
+    pub(super) fn new(path: PathBuf, overlay: Option<&str>) -> Self {
+        Self {
+            path,
+            ready_frames: 0,
+            ready_since: None,
+            requested: false,
+            started: 0.0,
+            popup: (overlay == Some("diff-options"))
+                .then(|| egui::Id::new(crate::views::diff::OPTIONS_POPUP)),
+            menu: overlay.and_then(MenuShot::of),
+        }
+    }
+}
+
+/// `--overlay menu-*`: a context menu opened for the picture by a right click on the top-most
+/// (then left-most) widget whose AccessKit role and name match, once the window has settled.
+/// Found by what a screen reader hears, so the picture does not depend on any view's ids.
+#[derive(Debug)]
+pub(super) struct MenuShot {
+    role: Option<Role>,
+    name: &'static str,
+    /// The view the widget is in.
+    pub(super) view: View,
+    /// Where the click goes once the widget is found, and how many of its two frames (press,
+    /// then release) were sent.
+    click: Option<(egui::Pos2, u8)>,
+}
+
+impl MenuShot {
+    fn of(overlay: &str) -> Option<Self> {
+        let (role, name, view) = match overlay {
+            "menu-remotes" => (None, "Remotes", View::History),
+            "menu-branch" => (Some(Role::ListItem), "feature/auth", View::History),
+            "menu-commit" => (None, "Commit ", View::History),
+            "menu-file" => (Some(Role::ListItem), "src/main.rs", View::Changes),
+            _ => return None,
+        };
+        Some(Self {
+            role,
+            name,
+            view,
+            click: None,
+        })
+    }
+
+    /// Whether the menu is open: finds its widget in this frame's AccessKit tree and aims the
+    /// click at it, then waits for the click's two frames.
+    fn opened(&mut self, ctx: &egui::Context) -> bool {
+        if let Some((_, sent)) = self.click {
+            return sent >= 2;
+        }
+        let found = ctx.viewport(|v| {
+            let nodes = &v.this_pass.accesskit_state.as_ref()?.nodes;
+            nodes
+                .iter()
+                .filter(|(_, n)| {
+                    self.role.is_none_or(|r| n.role() == r)
+                        && n.label().is_some_and(|l| l.starts_with(self.name))
+                })
+                .filter_map(|(id, _)| v.this_pass.widgets.get(*id).map(|w| w.rect))
+                .filter(egui::Rect::is_positive)
+                .min_by(|a, b| {
+                    (a.top(), a.left())
+                        .partial_cmp(&(b.top(), b.left()))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        if let Some(rect) = found {
+            self.click = Some((rect.center(), 0));
+        }
+        false
+    }
 }
 
 impl CanopyApp {
@@ -68,6 +148,8 @@ impl CanopyApp {
                     && requests_ready
                     && !t.avatars.pending()
             });
+        // A menu opens only once everything under it is final, and the picture waits for it.
+        let ready = ready && shot.menu.as_mut().is_none_or(|menu| menu.opened(ctx));
         if ready {
             if let Some(id) = shot.popup {
                 egui::Popup::open_id(ctx, id);
@@ -320,10 +402,34 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
     })
 }
 
+impl CanopyApp {
+    /// A screenshot's input: no pointer (see [`without_pointer`]) but the right click that opens
+    /// an `--overlay menu-*` menu.
+    pub(super) fn screenshot_input(&mut self, input: &mut egui::RawInput) {
+        let Some(shot) = &mut self.screenshot else {
+            return;
+        };
+        without_pointer(input);
+        if let Some((at, sent)) = shot.menu.as_mut().and_then(|m| m.click.as_mut())
+            && *sent < 2
+        {
+            input.events.retain(|e| *e != egui::Event::PointerGone);
+            input.events.push(egui::Event::PointerMoved(*at));
+            input.events.push(egui::Event::PointerButton {
+                pos: *at,
+                button: egui::PointerButton::Secondary,
+                pressed: *sent == 0,
+                modifiers: egui::Modifiers::NONE,
+            });
+            *sent += 1;
+        }
+    }
+}
+
 /// Takes the pointer out of a screenshot's input, so the picture never depends on where the
 /// virtual screen left it: Xvfb starts the pointer in the middle of the screen, where it would
 /// hover (and give a tooltip to) whatever lies there.
-pub(super) fn without_pointer(input: &mut egui::RawInput) {
+fn without_pointer(input: &mut egui::RawInput) {
     input.events.retain(|event| {
         !matches!(
             event,
@@ -368,14 +474,7 @@ mod tests {
         use eframe::App as _;
         let ctx = egui::Context::default();
         let mut app = test_app();
-        app.screenshot = Some(Screenshot {
-            path: PathBuf::from("shot.png"),
-            ready_frames: 0,
-            ready_since: None,
-            requested: false,
-            started: 0.0,
-            popup: None,
-        });
+        app.screenshot = Some(Screenshot::new(PathBuf::from("shot.png"), None));
         let at = egui::pos2(480.0, 300.0);
         let mut input = egui::RawInput {
             events: vec![
@@ -403,6 +502,68 @@ mod tests {
         };
         app.raw_input_hook(&ctx, &mut input);
         assert_eq!(input.events, [egui::Event::PointerMoved(at)]);
+    }
+
+    /// CR-6: `--overlay menu-*` opens its context menu by a right click on the widget it names,
+    /// once the window has settled, and the picture waits for the menu.
+    #[test]
+    fn a_menu_overlay_opens_its_context_menu() {
+        use eframe::App as _;
+        // (The other menus need a repository's commits, branches or a loaded diff: their
+        // pictures are checked with tools/screenshot.sh.)
+        let (overlay, item) = ("menu-remotes", "Add remote…");
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        ctx.enable_accesskit();
+        let mut app = test_app();
+        app.settings.accepted_terms = crate::ui::legal::TERMS_VERSION.to_owned();
+        app.settings.accepted_privacy = crate::ui::legal::PRIVACY_VERSION.to_owned();
+        app.settings.crash_reports = Some(false);
+        app.settings.crash_reports_version = crate::crash_reports::DATA_VERSION;
+        app.settings.seen_intro = true;
+        // A remote, so "Add remote…" is only in the header's menu (not a local-only link).
+        let mut tab = test_tab(canopy_core::RepoSnapshot {
+            remotes: vec![canopy_core::RemoteInfo {
+                name: "origin".into(),
+                url: Some("https://example.com/r.git".into()),
+                default_branch: None,
+            }],
+            ..Default::default()
+        });
+        app.screenshot = Some(Screenshot::new(PathBuf::from("shot.png"), Some(overlay)));
+        if let Some(menu) = app.screenshot.as_ref().and_then(|s| s.menu.as_ref()) {
+            tab.view = menu.view;
+        }
+        app.tabs.push(tab);
+        let mut frame = eframe::Frame::_new_kittest();
+        let mut shown = false;
+        for i in 0..90 {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                time: Some(f64::from(i) * 0.05),
+                ..Default::default()
+            };
+            app.raw_input_hook(&ctx, &mut input);
+            let mut out = ctx.run_ui(input, |ui| app.ui(ui, &mut frame));
+            out.textures_delta.clear();
+            shown = out.shapes.iter().any(|c| {
+                fn has(shape: &egui::Shape, text: &str) -> bool {
+                    match shape {
+                        egui::Shape::Text(t) => t.galley.text() == text,
+                        egui::Shape::Vec(v) => v.iter().any(|s| has(s, text)),
+                        _ => false,
+                    }
+                }
+                has(&c.shape, item)
+            });
+            if shown {
+                break;
+            }
+        }
+        assert!(shown, "--overlay {overlay} never showed {item:?}");
     }
 
     /// secfix2 F7: `--overlay add-remote-refused` shows Add remote with a URL Canopy refuses
