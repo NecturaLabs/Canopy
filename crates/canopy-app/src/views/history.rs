@@ -146,23 +146,31 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
             });
     } else {
         let detail_max = (h - table_min).min(h * 0.70);
-        let default_height = (h * 0.40).max(260.0).min(detail_max);
-        let default_height = tab.diff.as_ref().map_or(default_height, |d| {
-            diff::inspector_height(d, default_height)
-                .max(260.0)
-                .min(detail_max)
-        });
+        let detail_min = 260.0_f32.min(detail_max);
         let panel_id = egui::Id::new("details");
         let automatic_id = panel_id.with("automatic-height");
-        let previous_default = ui.ctx().data(|d| d.get_temp::<f32>(automatic_id));
+        let previous_default = ui.ctx().data_mut(|d| d.get_persisted::<f32>(automatic_id));
+        let fallback = (h * 0.40).max(260.0).min(detail_max);
+        // Fitted to the open diff. Without one (the selected commit's details or diff still on
+        // their way, a commit with no files, an error) the pane keeps the height it has: a click
+        // must not show the pane at another height for the frames before the diff arrives.
+        let default_height = match &tab.diff {
+            Some(d) => diff::inspector_height(d, fallback)
+                .max(260.0)
+                .min(detail_max),
+            None => {
+                previous_default.map_or(fallback, |previous| previous.clamp(detail_min, detail_max))
+            }
+        };
         let state = egui::containers::panel::PanelState::load(ui.ctx(), panel_id);
         let automatic = state.is_none()
             || state
                 .zip(previous_default)
                 .is_some_and(|(state, previous)| (state.size().y - previous).abs() <= 1.0);
+        // Kept with the panel's own state, so the pane still fits its diffs after a restart.
         if automatic {
             ui.ctx().data_mut(|data| {
-                data.insert_temp(automatic_id, default_height);
+                data.insert_persisted(automatic_id, default_height);
                 if let Some(mut state) = state {
                     state.outer_rect.min.y = state.outer_rect.max.y - default_height;
                     data.insert_persisted(panel_id, state);
@@ -175,7 +183,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
             .resizable(true)
             .show_separator_line(false)
             .default_size(default_height)
-            .min_size(260.0_f32.min(detail_max))
+            .min_size(detail_min)
             .max_size(detail_max)
             .frame(egui::Frame::new().fill(s.pane))
             .show(ui, |ui| {
@@ -1184,6 +1192,152 @@ mod tests {
             panel.size().y <= 320.0,
             "a loaded short diff must reclaim the automatic empty pane space: {:?}",
             panel.size()
+        );
+    }
+
+    /// The top of the details pane after one frame of History at `size`.
+    fn details_top(ctx: &egui::Context, tab: &mut RepoTab, size: egui::Vec2) -> f32 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                ..Default::default()
+            },
+            |ui| {
+                egui::Panel::top("test-actions")
+                    .exact_size(96.0)
+                    .show(ui, |_| {});
+                egui::Panel::bottom("test-status")
+                    .exact_size(26.0)
+                    .show(ui, |_| {});
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::new())
+                    .show(ui, |ui| {
+                        show(ui, tab, &Settings::default(), &mut Vec::new());
+                    });
+            },
+        );
+        output.textures_delta.clear();
+        egui::containers::panel::PanelState::load(ctx, egui::Id::new("details"))
+            .map_or(f32::NAN, |state| state.outer_rect.top())
+    }
+
+    /// O2: clicking another commit must not show the details pane at another height for the
+    /// frames before the commit's details and diff arrive. Frame by frame, from the click until
+    /// the new (equally short) diff is on screen, the pane's top stays where it was.
+    #[test]
+    fn selecting_a_commit_keeps_the_details_pane_in_place_while_it_loads() {
+        for style in [theme::Style::Standard, theme::Style::Deeper] {
+            for density in [theme::Density::Comfortable, theme::Density::Dense] {
+                let ctx = egui::Context::default();
+                crate::ui::fonts::install(&ctx);
+                theme::apply(
+                    &ctx,
+                    theme::ThemeId::Midnight,
+                    theme::Appearance {
+                        style,
+                        density,
+                        ..theme::Appearance::STILL
+                    },
+                );
+                let (mut tab, _dir) = populated_tab(&ctx);
+                let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
+                diff.hunks[0].lines.truncate(7);
+                let diff = std::sync::Arc::new(diff);
+                tab.diff = Some(std::sync::Arc::clone(&diff));
+                let size = vec2(1440.0, 900.0);
+                let mut settled = f32::NAN;
+                for _ in 0..4 {
+                    settled = details_top(&ctx, &mut tab, size);
+                }
+                let next = Oid::from_bytes(&[2; 20]).expect("fixture oid");
+                let mut details = (**tab.details.as_ref().expect("fixture details")).clone();
+                details.oid = next;
+                let entry = details.files[0].clone();
+                tab.select_commit(next);
+                let mut tops = Vec::new();
+                // The click: nothing of the new commit has arrived.
+                for _ in 0..3 {
+                    tops.push(details_top(&ctx, &mut tab, size));
+                }
+                // Its details arrive; the diff is still on its way.
+                tab.details = Some(std::sync::Arc::new(details));
+                tops.push(details_top(&ctx, &mut tab, size));
+                // The diff arrives.
+                tab.file = Some(crate::tab::FileSelection {
+                    source: canopy_core::DiffSource::Commit(next),
+                    entry,
+                    conflicted: false,
+                });
+                tab.diff = Some(std::sync::Arc::clone(&diff));
+                for _ in 0..3 {
+                    tops.push(details_top(&ctx, &mut tab, size));
+                }
+                assert!(
+                    tops.iter().all(|top| (top - settled).abs() < 0.5),
+                    "{style:?} {density:?}: the details pane settled at {settled} and then \
+                     moved, frame by frame: {tops:?}"
+                );
+            }
+        }
+    }
+
+    /// eframe's storage in memory: what it writes to disk on exit.
+    #[derive(Default)]
+    struct Saved(std::collections::HashMap<String, String>);
+
+    impl eframe::Storage for Saved {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_owned(), value);
+        }
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+        fn flush(&mut self) {}
+    }
+
+    /// A pane the user never resized still fits its diffs after a restart (egui keeps the panel's
+    /// state across runs; the height it was fitted to must come with it, or the restored pane
+    /// reads as resized by hand and stops following the diff).
+    #[test]
+    fn the_automatic_inspector_height_survives_a_restart() {
+        let size = vec2(1440.0, 900.0);
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let (mut tab, _dir) = populated_tab(&ctx);
+        let long = std::sync::Arc::clone(tab.diff.as_ref().expect("fixture diff"));
+        let mut short = (*long).clone();
+        short.hunks[0].lines.truncate(7);
+        tab.diff = Some(std::sync::Arc::new(short));
+        let mut short_top = f32::NAN;
+        for _ in 0..4 {
+            short_top = details_top(&ctx, &mut tab, size);
+        }
+        // What eframe saves on exit and restores at the next start, through its own storage.
+        let mut saved = Saved::default();
+        eframe::set_value(&mut saved, eframe::APP_KEY, &ctx.memory(Clone::clone));
+        let restarted = egui::Context::default();
+        let memory: egui::Memory =
+            eframe::get_value(&saved, eframe::APP_KEY).expect("restored memory");
+        restarted.memory_mut(|m| *m = memory);
+        crate::ui::fonts::install(&restarted);
+        theme::apply(
+            &restarted,
+            theme::ThemeId::Midnight,
+            theme::Appearance::STILL,
+        );
+        let (mut tab, _dir) = populated_tab(&restarted);
+        tab.diff = Some(long);
+        let mut long_top = f32::NAN;
+        for _ in 0..4 {
+            long_top = details_top(&restarted, &mut tab, size);
+        }
+        assert!(
+            long_top < short_top - 20.0,
+            "after a restart the pane must still grow to a longer diff: {short_top} -> {long_top}"
         );
     }
 
