@@ -1579,6 +1579,25 @@ mod tests {
         assert_eq!(shown(&s), "notice");
     }
 
+    /// The app's Escape binding reaches the stack before the dialog draws, so going back from a
+    /// document read inside the consent has to happen here.
+    #[test]
+    fn escape_goes_back_from_a_document_read_in_the_consent() {
+        let mut s = DialogStack::default();
+        s.open(Dialog::Consent {
+            step: Pending::Terms,
+            updated: false,
+            reading: Some(Document::Terms),
+        });
+        s.dismiss();
+        assert!(
+            matches!(s.current(), Some(Dialog::Consent { reading: None, .. })),
+            "back to the consent summary, still open"
+        );
+        s.dismiss();
+        assert_eq!(shown(&s), "consent");
+    }
+
     #[test]
     fn legal_documents_are_not_replaced() {
         let mut s = DialogStack::default();
