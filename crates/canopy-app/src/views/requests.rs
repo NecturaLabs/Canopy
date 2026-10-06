@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use egui::text::LayoutJob;
 use egui::{
-    Align, Align2, Color32, CornerRadius, FontFamily, FontId, Galley, Id, Layout, Margin, Painter,
-    Rect, Response, RichText, Stroke, Ui, pos2, vec2,
+    Align, Align2, Color32, CornerRadius, FontId, Galley, Id, Layout, Margin, Painter, Rect,
+    Response, RichText, Ui, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -31,10 +31,10 @@ use crate::ui::kit::field::TextArea;
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::{Skeleton, Spinner};
 use crate::ui::kit::row::{Disclosure, ListRow, RowKind, SectionHeader};
-use crate::ui::kit::select::Select;
+use crate::ui::kit::select::{self, Select};
 use crate::ui::kit::surface::{Callout, EmptyAction, EmptyState, InsetBox, NoticeAction};
 use crate::ui::kit::{self, Button, IconButton, Size, Tone, paint};
-use crate::ui::theme::{self, Elevation, Style, palette};
+use crate::ui::theme::{self, Style, palette};
 use crate::ui::widgets::{self, forge_icon};
 use crate::views::dialogs::Dialog;
 use crate::views::{commit_detail, state_banner};
@@ -47,12 +47,14 @@ const LOADING: &str = "Loading the request…";
 const DETAILS_FAILED: &str = "The request's details could not be loaded";
 /// The widest a branch pill in the request header grows before it is cut.
 const BRANCH_PILL_MAX: f32 = 240.0;
-/// What the kit's select trigger spends besides its label and caret: 10 left of the label, 8
-/// between it and the caret, 8 right of the caret (`kit::select`'s trigger padding).
-const SELECT_PADDING: f32 = 26.0;
-
-/// Draws the view.
-pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec<Action>) {
+/// Shows the requests view. Returns the list panel's rectangle when the list and the details sit
+/// side by side, for the content pane's two cards (`app::PaneSplit::beside`).
+pub fn show(
+    ui: &mut Ui,
+    tab: &mut RepoTab,
+    api_enabled: bool,
+    actions: &mut Vec<Action>,
+) -> Option<Rect> {
     state_banner::show(ui, tab, actions);
     let Some((_, forge)) = tab.forge().cloned() else {
         let local = tab.snap.as_ref().is_some_and(|s| s.remotes.is_empty());
@@ -65,7 +67,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec
             Some(button),
             actions,
         );
-        return;
+        return None;
     };
     let kind = forge.kind;
     if !api_enabled {
@@ -88,7 +90,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec
             )),
             actions,
         );
-        return;
+        return None;
     }
 
     let s = theme::surfaces(ui.ctx());
@@ -124,107 +126,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, api_enabled: bool, actions: &mut Vec
             ..Margin::ZERO
         }))
         .show(ui, |ui| detail(ui, tab, kind, actions));
-    if deeper {
-        let card = ui.max_rect();
-        let seam = list_panel.response.rect.right();
-        let gap = theme::metrics().pane_gutter;
-        let cards = [
-            Rect::from_x_y_ranges(card.left()..=seam - gap / 2.0, card.y_range()),
-            Rect::from_x_y_ranges(seam + gap / 2.0..=card.right(), card.y_range()),
-        ];
-        two_cards(ui, cards);
-    }
+    Some(list_panel.response.rect)
 }
 
 /// The list panel's id: its resize handle, `<id>/__resize`, marks the seam between the two cards.
-const LIST_PANEL: &str = "requests-list";
-
-fn list_handle() -> Id {
-    Id::new(LIST_PANEL).with("__resize")
-}
-
-/// Deeper: the list and the details as two cards side by side, as History's table and details are
-/// (`app/mod.rs` `split_gutter`, turned on its side). The content pane paints one card behind
-/// both; this paints the gutter between them over the content, the ground, the shadows falling
-/// into it, each card's inner corners and edges, and the seam handle's line while it is hovered or
-/// dragged. The focused-pane edge the content pane draws still spans the pair.
-fn two_cards(ui: &Ui, cards: [Rect; 2]) {
-    let [left, right] = cards;
-    let ctx = ui.ctx();
-    let p = palette(ctx);
-    let s = theme::surfaces(ctx);
-    let m = theme::metrics();
-    // Unclipped: the cards' edges lie on the content pane's clip.
-    let painter = ctx.layer_painter(ui.layer_id());
-    let radius = CornerRadius::same(m.pane_radius);
-    let band = Rect::from_x_y_ranges(left.right()..=right.left(), left.y_range());
-    painter.rect_filled(band, CornerRadius::ZERO, s.bg);
-    let material = p.material(Style::Deeper, Elevation::Pane);
-    for card in cards {
-        painter
-            .with_clip_rect(band)
-            .extend(paint::shadow_shapes(card, radius, p, &material));
-    }
-    let r = f32::from(radius.nw);
-    let quarter = std::f32::consts::FRAC_PI_2;
-    for (corner, centre, from) in [
-        (
-            left.right_top(),
-            left.right_top() + vec2(-r, r),
-            3.0 * quarter,
-        ),
-        (left.right_bottom(), left.right_bottom() + vec2(-r, -r), 0.0),
-        (
-            right.left_top(),
-            right.left_top() + vec2(r, r),
-            2.0 * quarter,
-        ),
-        (
-            right.left_bottom(),
-            right.left_bottom() + vec2(r, -r),
-            quarter,
-        ),
-    ] {
-        corner_mask(&painter, corner, centre, r, from, s.bg);
-    }
-    if let Some(edge) = s.pane_edge {
-        paint::rim(&painter, left, radius, edge);
-        paint::rim(&painter, right, radius, edge);
-    }
-    if ctx
-        .read_response(list_handle())
-        .is_some_and(|handle| handle.hovered() || handle.dragged())
-    {
-        painter.vline(
-            band.center().x,
-            band.y_range().shrink(r),
-            Stroke::new(2.0, theme::Palette::tint(p.focus, 150)),
-        );
-    }
-}
-
-/// Paints `color` over the part of a square corner outside its rounded arc: a fan from `corner`
-/// over the quarter arc of radius `r` around `centre` that starts at angle `from`.
-fn corner_mask(
-    painter: &Painter,
-    corner: egui::Pos2,
-    centre: egui::Pos2,
-    r: f32,
-    from: f32,
-    color: Color32,
-) {
-    const STEPS: u16 = 8;
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(corner, color);
-    for i in 0..=STEPS {
-        let a = from + std::f32::consts::FRAC_PI_2 * f32::from(i) / f32::from(STEPS);
-        mesh.colored_vertex(centre + r * vec2(a.cos(), a.sin()), color);
-    }
-    for i in 1..=u32::from(STEPS) {
-        mesh.add_triangle(0, i, i + 1);
-    }
-    painter.add(mesh);
-}
+pub const LIST_PANEL: &str = "requests-list";
 
 fn cap(s: &str) -> String {
     let mut c = s.chars();
@@ -1166,21 +1072,6 @@ fn risk_note(risks: &[(Tone, String)]) -> Option<Note> {
     })
 }
 
-/// The width a select needs to show its longest label whole.
-fn select_width(ui: &Ui, labels: impl Iterator<Item = &'static str>) -> f32 {
-    let m = theme::metrics();
-    let font = FontId::new(m.body_size, FontFamily::Proportional);
-    let widest = labels
-        .map(|label| {
-            ui.painter()
-                .layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER)
-                .size()
-                .x
-        })
-        .fold(0.0, f32::max);
-    (widest + SELECT_PADDING + m.icon_md).ceil()
-}
-
 /// The action buttons. Merge and close ask for confirmation in a dialog. `d` is the loaded
 /// details of `r`; without them (still loading, or failed) nothing that needs them is on.
 fn action_bar(
@@ -1308,7 +1199,7 @@ fn action_bar(
                 ui.horizontal_wrapped(|ui| {
                     let methods = MergeMethod::ALL.map(|method| (method, method.label()));
                     let fit =
-                        select_width(ui, MergeMethod::ALL.into_iter().map(MergeMethod::label));
+                        select::fit_width(ui, MergeMethod::ALL.into_iter().map(MergeMethod::label));
                     Select::new(&mut tab.requests.merge_method, &methods)
                         .name("Merge method")
                         .width(fit.min(ui.available_width().max(80.0)))
@@ -2384,7 +2275,7 @@ mod tests {
                     edge = Some(list.response.rect.right());
                     handle = ui
                         .ctx()
-                        .read_response(list_handle())
+                        .read_response(Id::new(LIST_PANEL).with("__resize"))
                         .map(|r| r.rect.center().x);
                 });
             });

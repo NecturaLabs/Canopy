@@ -867,10 +867,8 @@ impl eframe::App for CanopyApp {
                 }
                 View::Changes => changes::show(ui, tab, &mut actions)
                     .and_then(|list| PaneSplit::beside(list, changes::LIST_PANEL)),
-                View::Requests => {
-                    requests::show(ui, tab, self.settings.hosting_api, &mut actions);
-                    None
-                }
+                View::Requests => requests::show(ui, tab, self.settings.hosting_api, &mut actions)
+                    .and_then(|list| PaneSplit::beside(list, requests::LIST_PANEL)),
             });
         } else {
             content_pane(ui, |ui| {
