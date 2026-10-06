@@ -3,6 +3,9 @@
 use super::*;
 use crate::ui::kit::overlay::TooltipExt;
 
+/// The tallest git's question grows before it scrolls.
+const QUESTION_HEIGHT: f32 = 180.0;
+
 /// The credential prompt: the question as git or ssh asked it, and the answer. It is answered
 /// with its buttons (or Esc, which declines through the dialog stack), never by a stray click on
 /// the scrim.
@@ -216,20 +219,14 @@ pub(super) fn credential(
 fn question(ui: &mut Ui, text: &str) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
-    InsetBox::new().show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        egui::ScrollArea::vertical()
-            .id_salt("credential-question")
-            .max_height(180.0)
-            .show(ui, |ui| {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(text)
-                            .font(FontId::monospace(m.mono_size))
-                            .color(p.text),
-                    )
-                    .wrap(),
-                );
-            });
+    inset_scroll(ui, "credential-question", QUESTION_HEIGHT, |ui| {
+        ui.add(
+            egui::Label::new(
+                RichText::new(text)
+                    .font(FontId::monospace(m.mono_size))
+                    .color(p.text),
+            )
+            .wrap(),
+        );
     });
 }

@@ -101,6 +101,204 @@ impl CanopyApp {
     }
 }
 
+/// `--overlay` names for the dialogs no other overlay opens (also listed in `OVERLAYS`);
+/// [`dialog_overlay`] says what each shows.
+#[cfg(test)]
+const DIALOG_OVERLAYS: &[&str] = &[
+    "open",
+    "open-error",
+    "clone",
+    "clone-running",
+    "clone-error",
+    "init",
+    "new-branch",
+    "rename",
+    "new-tag",
+    "stash",
+    "add-remote",
+    "publish",
+    "new-request",
+    "confirm",
+    "confirm-danger",
+    "confirm-host",
+    "confirm-merge-risky",
+    "whats-new",
+    "crash",
+    "update-available",
+    "update-failed",
+    "terms",
+    "consent-reading",
+    "crash-reading",
+    "username",
+    "password",
+];
+
+impl CanopyApp {
+    /// Opens the dialog `--overlay name` names (the names of `DIALOG_OVERLAYS`), with the state
+    /// it shows.
+    #[expect(dead_code, reason = "the launch match in app/mod.rs calls it")]
+    pub(super) fn open_dialog_overlay(&mut self, name: &str) {
+        if name == "update-failed" {
+            self.updater.install = updater::InstallState::Failed {
+                build: 1001,
+                error: "The download's checksum does not match the release (expected 9f2c…e1, got 41aa…07).".into(),
+            };
+        }
+        if let Some(d) = dialog_overlay(name, &self.settings) {
+            self.dialogs.open(d);
+        }
+    }
+}
+
+/// The dialog `--overlay name` opens for a screenshot, filled with fixed illustrative content so
+/// the picture never shows a fixture's temporary path; `None` for a name that is not a dialog's.
+fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
+    use crate::askpass::Prompt;
+    use crate::ui::legal::{Document, Pending};
+    use canopy_core::forge::ForgeKind;
+
+    let commit = canopy_core::Oid::from_str("38b14e7c2d9a4f61b0e5a7c3d2f1e0b9a8c7d6e5").ok()?;
+    let available = |notes: &str| updater::Available {
+        build: 1001,
+        manifest: canopy_hosting::updates::UpdateManifest {
+            version: "1001".into(),
+            notes: notes.to_owned(),
+            pub_date: Some("2026-10-04T09:30:00Z".into()),
+            release_page: None,
+            platforms: std::collections::BTreeMap::default(),
+        },
+    };
+    let notes = "### Added\n\n- Settings search finds any option by name, description or synonym.\n- Repository settings: clone protocol, pull strategy and identity per repository.\n\n### Fixed\n\n- Author pictures load again for public GitHub repositories.";
+    Some(match name {
+        "open" | "open-error" => Dialog::Open {
+            path: if name == "open" {
+                "~/src/".into()
+            } else {
+                "~/Downloads".into()
+            },
+            recent: ["tidepool", "canopy", "lighthouse-api", "dotfiles"]
+                .into_iter()
+                .map(|n| PathBuf::from("/home/ada/src").join(n))
+                .collect(),
+            pending: None,
+            error: (name == "open-error").then(|| dialogs::OpenFailure {
+                message: "/home/ada/Downloads is not a Git repository".into(),
+                not_a_repository: true,
+            }),
+        },
+        "clone" | "clone-running" | "clone-error" => {
+            let mut d = Dialog::clone_default(settings);
+            if let Dialog::Clone {
+                builder,
+                parent,
+                pending,
+                error,
+            } = &mut d
+            {
+                builder.project = "rust-lang/rustlings".into();
+                *parent = "~/src".into();
+                *pending = name == "clone-running";
+                if name == "clone-error" {
+                    *error = Some("fatal: destination path 'rustlings' already exists and is not an empty directory.".into());
+                }
+            }
+            d
+        }
+        "init" => Dialog::Init {
+            path: "~/src/tidepool".into(),
+        },
+        "new-branch" => Dialog::new_branch_at(Start::Head),
+        "rename" => Dialog::Rename {
+            old: "feature/search".into(),
+            new: "feature/search-v2".into(),
+        },
+        "new-tag" => Dialog::NewTag {
+            name: "v1.4.0".into(),
+            target: commit,
+            message: String::new(),
+        },
+        "stash" => Dialog::Stash {
+            message: String::new(),
+            untracked: true,
+        },
+        "add-remote" | "publish" => {
+            let mut d = Dialog::add_remote(settings);
+            if name == "publish" {
+                d = d.publishing();
+            } else {
+                // As the app names it beside the fixture's own origin.
+                d.name_remote(&["origin".to_owned()]);
+            }
+            d
+        }
+        "new-request" => Dialog::NewRequest {
+            kind: ForgeKind::GitHub,
+            request: NewRequest {
+                title: "Add settings search".into(),
+                body: String::new(),
+                source: "feature/settings-search".into(),
+                target: "main".into(),
+                draft: false,
+            },
+            branches: vec!["main".into(), "develop".into(), "release/2026.10".into()],
+        },
+        "confirm" => Dialog::Confirm {
+            title: "Check out 38b14e7?".into(),
+            body: "HEAD will point at this commit, not at a branch (a detached HEAD). Commits you make there belong to no branch until you create one.".into(),
+            confirm: "Check out commit".into(),
+            danger: false,
+            op: Op::Checkout("38b14e7".into()),
+        },
+        "confirm-danger" => Dialog::Confirm {
+            title: "Delete branch feature/dark-mode?".into(),
+            body: "feature/dark-mode has 1 commit that is on no other branch. You can restore it from the reflog for 90 days.".into(),
+            confirm: "Delete branch".into(),
+            danger: true,
+            op: Op::DeleteBranch {
+                name: "feature/dark-mode".into(),
+                force: false,
+            },
+        },
+        "confirm-host" => Dialog::ConfirmHost {
+            title: "Approve pull request #428?".into(),
+            body: "GitHub records your approval of Add settings search under your account.".into(),
+            confirm: "Approve".into(),
+            danger: false,
+            job: HostJob::Approve(428),
+        },
+        "confirm-merge-risky" => Dialog::ConfirmHost {
+            title: "Merge pull request #428 anyway?".into(),
+            body: "Checks failed on Add settings search and a reviewer requested changes. Merging now puts it on main as it is.".into(),
+            confirm: "Merge anyway".into(),
+            danger: true,
+            job: HostJob::Merge(428, canopy_hosting::MergeMethod::Merge, None),
+        },
+        "whats-new" => Dialog::WhatsNew {
+            version: "build 1001".into(),
+            notes: notes.into(),
+        },
+        "crash" => Dialog::Crash(crate::logging::CrashReport {
+            path: PathBuf::from("/home/ada/.local/share/canopy/crashes/2026-10-05T18-22-41Z.txt"),
+            message: "called `Option::unwrap()` on a `None` value at crates/canopy-app/src/views/history.rs:412:31".into(),
+        }),
+        "update-available" | "update-failed" => Dialog::Update(Box::new(available(notes))),
+        "terms" => Dialog::Legal(Document::Terms),
+        "consent-reading" => Dialog::Consent {
+            step: Pending::Terms,
+            updated: false,
+            reading: Some(Document::Terms),
+        },
+        "crash-reading" => Dialog::Consent {
+            step: Pending::CrashReports,
+            updated: false,
+            reading: Some(Document::Privacy),
+        },
+        "username" => Dialog::credential(Prompt::preview("Username for 'https://gitlab.example.com': ")),
+        "password" => Dialog::credential(Prompt::preview("Password for 'https://ada@gitlab.example.com': ")),
+        _ => return None,
+    })
+}
+
 fn save_png(path: &std::path::Path, image: &egui::ColorImage) -> anyhow::Result<()> {
     let file = std::fs::File::create(path)?;
     let mut enc = png::Encoder::new(
@@ -118,4 +316,38 @@ fn save_png(path: &std::path::Path, image: &egui::ColorImage) -> anyhow::Result<
         .collect();
     writer.write_image_data(&bytes)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_dialog_overlay_opens_a_dialog_that_draws() {
+        let settings = Settings::default();
+        let updater = Updater::default();
+        let mut picker = crate::ui::folder_picker::FolderPicker::default();
+        for name in DIALOG_OVERLAYS {
+            let mut dialog = dialog_overlay(name, &settings)
+                .unwrap_or_else(|| panic!("--overlay {name} opens no dialog"));
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            for _ in 0..2 {
+                let mut output = ctx.run_ui(egui::RawInput::default(), |_| {
+                    dialogs::show(
+                        &ctx,
+                        &mut dialog,
+                        None,
+                        &mut picker,
+                        false,
+                        &updater,
+                        "git version 2.55.0",
+                    );
+                });
+                output.textures_delta.clear();
+                assert!(!output.shapes.is_empty(), "--overlay {name} drew nothing");
+            }
+        }
+        assert!(dialog_overlay("settings", &settings).is_none());
+    }
 }
