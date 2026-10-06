@@ -92,8 +92,9 @@ impl CanopyApp {
                     }
                 }
                 Action::Fetch => {
-                    let prune = self.settings.prune_on_fetch;
-                    if let Some(t) = self.tab() {
+                    let settings = &self.settings;
+                    if let Some(t) = self.tabs.get_mut(self.active) {
+                        let prune = settings.prune_for(&t.path);
                         t.op(Op::Fetch {
                             prune,
                             quiet: false,
@@ -101,8 +102,9 @@ impl CanopyApp {
                     }
                 }
                 Action::Pull => {
-                    let strategy = self.settings.pull_mode.strategy();
-                    if let Some(t) = self.tab() {
+                    let settings = &self.settings;
+                    if let Some(t) = self.tabs.get_mut(self.active) {
+                        let strategy = settings.pull_mode_for(&t.path).strategy();
                         t.op(Op::Pull { strategy });
                     }
                 }
@@ -112,8 +114,8 @@ impl CanopyApp {
                         .get(self.active)
                         .is_some_and(RepoTab::is_local_only)
                     {
-                        self.dialogs
-                            .open(Dialog::add_remote(&self.settings).publishing());
+                        let dialog = self.add_remote_dialog().publishing();
+                        self.dialogs.open(dialog);
                     } else if let Some(t) = self.tab() {
                         t.op(Op::Push { force: false });
                     }
@@ -152,14 +154,20 @@ impl CanopyApp {
                     }
                 }
                 Action::AddRemoteDialog => {
-                    self.dialogs.open(Dialog::add_remote(&self.settings));
+                    let dialog = self.add_remote_dialog();
+                    self.dialogs.open(dialog);
                 }
                 Action::Publish => {
-                    self.dialogs
-                        .open(Dialog::add_remote(&self.settings).publishing());
+                    let dialog = self.add_remote_dialog().publishing();
+                    self.dialogs.open(dialog);
                 }
                 Action::Commit => {
-                    let signoff = self.settings.signoff;
+                    let signoff = self
+                        .tabs
+                        .get(self.active)
+                        .map_or(self.settings.signoff, |t| {
+                            self.settings.signoff_for(&t.path)
+                        });
                     if let Some(t) = self.tab().filter(|tab| tab.can_commit()) {
                         let mut message = t.commit_summary.trim().to_owned();
                         if !t.commit_body.trim().is_empty() {
@@ -190,21 +198,42 @@ impl CanopyApp {
                 }
                 Action::Palette => self.palette.open(),
                 Action::Cheatsheet => self.cheatsheet.toggle(),
-                Action::Settings => {
-                    self.settings_screen = Some(SettingsScreen::default());
-                    if let Some(t) = self.tabs.get(self.active) {
-                        self.request_identity(IdentityJob::ReadRepo(t.path.clone()));
-                    } else {
-                        self.request_identity(IdentityJob::ReadGlobal);
+                Action::Settings => self.open_settings(SettingsScreen::default()),
+                Action::SettingsAt(section) => self.open_settings(SettingsScreen::at(section)),
+                Action::RepositorySettings(path) => {
+                    if let Some(i) = self.tabs.iter().position(|t| t.path == path) {
+                        self.active = i;
+                        self.open_settings(SettingsScreen::at(
+                            settings_screen::Section::Repository,
+                        ));
+                    }
+                }
+                Action::SetRepoDiff { path, prefs } => {
+                    match prefs {
+                        Some(prefs) => self.settings.repo_diff.insert(path.clone(), prefs),
+                        None => self.settings.repo_diff.remove(&path),
+                    };
+                    let prefs = prefs.unwrap_or(self.settings.diff);
+                    for t in self.tabs.iter_mut().filter(|t| t.path == path) {
+                        if t.diff_prefs != prefs {
+                            t.diff_prefs = prefs;
+                            t.reload_diff();
+                        }
+                    }
+                }
+                Action::ResetRepoSettings => {
+                    self.settings.repos.clear();
+                    self.settings.repo_diff.clear();
+                    let prefs = self.settings.diff;
+                    for t in &mut self.tabs {
+                        if t.diff_prefs != prefs {
+                            t.diff_prefs = prefs;
+                            t.reload_diff();
+                        }
                     }
                 }
                 Action::IdentitySettings => {
-                    self.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git));
-                    if let Some(t) = self.tabs.get(self.active) {
-                        self.request_identity(IdentityJob::ReadRepo(t.path.clone()));
-                    } else {
-                        self.request_identity(IdentityJob::ReadGlobal);
-                    }
+                    self.open_settings(SettingsScreen::at(settings_screen::Section::Git));
                 }
                 Action::SaveIdentity {
                     repo,
@@ -341,5 +370,27 @@ impl CanopyApp {
                 }
             }
         }
+    }
+
+    /// Opens Settings, reading the identity it shows (the active repository's, else the global
+    /// one) off the UI thread.
+    fn open_settings(&mut self, screen: SettingsScreen) {
+        self.settings_screen = Some(screen);
+        if let Some(t) = self.tabs.get(self.active) {
+            self.request_identity(IdentityJob::ReadRepo(t.path.clone()));
+        } else {
+            self.request_identity(IdentityJob::ReadGlobal);
+        }
+    }
+
+    /// The add-remote dialog, its URL protocol the active repository's choice.
+    fn add_remote_dialog(&self) -> Dialog {
+        let mut dialog = Dialog::add_remote(&self.settings);
+        if let (Some(t), Dialog::AddRemote { builder, .. }) =
+            (self.tabs.get(self.active), &mut dialog)
+        {
+            builder.ssh = self.settings.protocol_for(&t.path) == settings::CloneProtocol::Ssh;
+        }
+        dialog
     }
 }

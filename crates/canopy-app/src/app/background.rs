@@ -393,21 +393,28 @@ impl CanopyApp {
 
     /// Queues background fetches for tabs whose auto-fetch interval has passed.
     pub(super) fn auto_fetch(&mut self, ctx: &egui::Context) {
-        let minutes = self.settings.auto_fetch_minutes;
-        if minutes == 0 || self.screenshot.is_some() {
+        if self.screenshot.is_some() {
             return;
         }
-        let every = Duration::from_secs(u64::from(minutes) * 60);
-        let prune = self.settings.prune_on_fetch;
+        let mut any = false;
         for t in &mut self.tabs {
+            let minutes = self.settings.auto_fetch_for(&t.path);
+            if minutes == 0 {
+                continue;
+            }
+            any = true;
+            let every = Duration::from_secs(u64::from(minutes) * 60);
             let idle = t.running.is_none();
             let has_remote = t.snap.as_ref().is_some_and(|s| !s.remotes.is_empty());
             if idle && has_remote && t.last_fetch.elapsed() >= every {
                 t.last_fetch = Instant::now();
+                let prune = self.settings.prune_for(&t.path);
                 t.op(Op::Fetch { prune, quiet: true });
             }
         }
-        ctx.request_repaint_after(Duration::from_secs(30));
+        if any {
+            ctx.request_repaint_after(Duration::from_secs(30));
+        }
     }
 }
 

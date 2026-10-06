@@ -14,6 +14,7 @@ mod identity_worker;
 mod keymap;
 mod logging;
 mod platform;
+mod repo_config;
 mod selfupdate;
 mod settings;
 mod tab;
