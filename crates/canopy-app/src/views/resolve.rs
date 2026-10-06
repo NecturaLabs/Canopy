@@ -173,55 +173,74 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
     );
 }
 
+/// What a whole-file choice says for a conflict of `kind` (`error`: the file cannot be parsed):
+/// its title and explanation.
+fn whole_file_text(
+    kind: Option<ConflictKind>,
+    error: Option<&str>,
+) -> (&'static str, &'static str) {
+    match (kind, error) {
+        (Some(ConflictKind::DeletedByThem), _) => (
+            "The incoming side deleted this file; the current side changed it",
+            "Keep the current version, or accept the incoming deletion.",
+        ),
+        (Some(ConflictKind::DeletedByUs), _) => (
+            "The current side deleted this file; the incoming side changed it",
+            "Keep it deleted, or restore the incoming version.",
+        ),
+        (Some(ConflictKind::AddedByUs), _) => (
+            "Only the current side added this file",
+            "Keep the current file, or accept its absence on the incoming side.",
+        ),
+        (Some(ConflictKind::AddedByThem), _) => (
+            "Only the incoming side added this file",
+            "Leave it out, or take the incoming file.",
+        ),
+        (Some(ConflictKind::BothDeleted), _) => (
+            "Both sides deleted this file",
+            "It was renamed differently on each side. Delete it here.",
+        ),
+        (_, Some(_)) => (
+            "Canopy cannot show this file line by line",
+            "It is binary, a link, or not UTF-8 text. Choose a whole side, or open it in an editor.",
+        ),
+        _ => ("Choose a side", ""),
+    }
+}
+
+/// The sides a whole-file choice offers for a conflict of `kind`, each with its button label. A
+/// file both sides deleted has one answer: either side removes it.
+fn whole_file_sides(kind: Option<ConflictKind>) -> Vec<(Side, &'static str)> {
+    match kind {
+        Some(ConflictKind::DeletedByThem) => vec![
+            (Side::Ours, "Keep current version"),
+            (Side::Theirs, "Delete the file"),
+        ],
+        Some(ConflictKind::DeletedByUs) => vec![
+            (Side::Ours, "Keep it deleted"),
+            (Side::Theirs, "Restore incoming version"),
+        ],
+        Some(ConflictKind::AddedByUs) => {
+            vec![(Side::Ours, "Keep it"), (Side::Theirs, "Leave it out")]
+        }
+        Some(ConflictKind::AddedByThem) => vec![
+            (Side::Ours, "Leave it out"),
+            (Side::Theirs, "Take incoming file"),
+        ],
+        Some(ConflictKind::BothDeleted) => vec![(Side::Ours, "Delete it")],
+        _ => vec![
+            (Side::Ours, "Keep current version"),
+            (Side::Theirs, "Keep incoming version"),
+        ],
+    }
+}
+
 /// Whole-file choice: binary or non-UTF-8 files, and deleted-on-one-side conflicts.
 fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let path = r.path.clone();
-    let (title, body, ours, theirs) = match (r.kind, error) {
-        (Some(ConflictKind::DeletedByThem), _) => (
-            "The incoming side deleted this file; the current side changed it",
-            "Keep the current version, or accept the incoming deletion.",
-            "Keep current version",
-            "Delete the file",
-        ),
-        (Some(ConflictKind::DeletedByUs), _) => (
-            "The current side deleted this file; the incoming side changed it",
-            "Keep it deleted, or restore the incoming version.",
-            "Keep it deleted",
-            "Restore incoming version",
-        ),
-        (Some(ConflictKind::AddedByUs), _) => (
-            "Only the current side added this file",
-            "Keep the current file, or accept its absence on the incoming side.",
-            "Keep it",
-            "Leave it out",
-        ),
-        (Some(ConflictKind::AddedByThem), _) => (
-            "Only the incoming side added this file",
-            "Leave it out, or take the incoming file.",
-            "Leave it out",
-            "Take incoming file",
-        ),
-        (Some(ConflictKind::BothDeleted), _) => (
-            "Both sides deleted this file",
-            "It was renamed differently on each side. Delete it here.",
-            "Delete it",
-            "Delete it",
-        ),
-        (_, Some(_)) => (
-            "Canopy cannot show this file line by line",
-            "It is binary, a link, or not UTF-8 text. Choose a whole side, or open it in an editor.",
-            "Keep current version",
-            "Keep incoming version",
-        ),
-        _ => (
-            "Choose a side",
-            "",
-            "Keep current version",
-            "Keep incoming version",
-        ),
-    };
+    let (title, body) = whole_file_text(r.kind, error);
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
         ui.label(RichText::new(icon::GIT_DIFF).size(m.icon_hero).color(p.warning));
@@ -240,10 +259,10 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
             ui.spacing_mut().item_spacing.x = theme::SM;
             ui.add_space(((ui.available_width() - last) / 2.0).max(0.0));
             let start = ui.cursor().left();
-            for (side, label) in [(Side::Ours, ours), (Side::Theirs, theirs)] {
+            for (side, label) in whole_file_sides(r.kind) {
                 if Button::new(label)
                     .size(Size::Lg)
-                    .id_salt(("whole-file", label))
+                    .id_salt(("whole-file", side_name(side)))
                     .show(ui)
                     .clicked()
                 {
@@ -264,6 +283,14 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
             ui.ctx().request_repaint();
         }
     });
+}
+
+/// A side's name in widget ids.
+fn side_name(side: Side) -> &'static str {
+    match side {
+        Side::Ours => "ours",
+        Side::Theirs => "theirs",
+    }
 }
 
 fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
@@ -1011,6 +1038,65 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// What a whole-file choice for a conflict of `kind` shows: the button labels painted, and
+    /// the buttons a screen reader finds (one node per widget id).
+    fn whole_file_buttons(kind: ConflictKind) -> (Vec<String>, usize) {
+        let ctx = context();
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let mut r = Resolver::new("f".into());
+        r.reload(Some(kind), Ok(Arc::new(ConflictFile::parse("a\n"))));
+        let mut painted = Vec::new();
+        let mut nodes = 0;
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(1000.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        whole_file(ui, &r, None, &mut Vec::new());
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            painted = output
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .filter(|t| (t.starts_with("Delete") || t.starts_with("Keep")) && !t.ends_with('.'))
+                .collect();
+            nodes = output.platform_output.accesskit_update.map_or(0, |u| {
+                u.nodes
+                    .iter()
+                    .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+                    .count()
+            });
+        }
+        (painted, nodes)
+    }
+
+    #[test]
+    fn a_file_both_sides_deleted_offers_one_delete() {
+        let (painted, nodes) = whole_file_buttons(ConflictKind::BothDeleted);
+        assert_eq!(painted, ["Delete it"], "one button, not two the same");
+        assert_eq!(nodes, 1);
+        let (painted, nodes) = whole_file_buttons(ConflictKind::DeletedByThem);
+        assert_eq!(
+            painted.len(),
+            2,
+            "a real choice keeps both sides: {painted:?}"
+        );
+        assert_eq!(nodes, 2, "each side its own widget");
     }
 
     #[test]
