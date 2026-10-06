@@ -1,6 +1,7 @@
-//! Animation helpers for the kit: eased booleans and values, springs, entrances and a sliding
-//! rectangle. Durations, curves and spring constants come from `ui::motion`. With reduced motion
-//! every helper returns its end state at once. Nothing here repaints unless a value is moving.
+//! Animation helpers for the kit: eased booleans and values, springs, a sliding rectangle, the
+//! press scale and [`Flip`]. Durations, curves and spring constants come from `ui::motion`. With
+//! reduced motion every helper returns its end state at once. Nothing here repaints unless a
+//! value is moving.
 
 use egui::epaint::ClippedShape;
 use egui::layers::{PaintList, ShapeIdx};

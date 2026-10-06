@@ -113,7 +113,8 @@ thread.
 | `ui/theme.rs` | Design tokens: the eight palettes (shared colours plus Standard and Deeper surfaces), elevation materials, metrics per density and style, the active look (`apply`, `palette`, `surfaces`, `metrics`, `appearance`) and the contrast tests. The only place colours and sizes are defined. |
 | `ui/motion.rs` | Motion tokens (durations, Bézier curves, springs), the Motion preference, the system's answer (asked on a background thread) and whether motion is currently reduced. |
 | `ui/kit/mod.rs` | The component library: `Size`, `Tone`, `ForceState`, `KitResponse`, `focus_visible` and the shared interaction state. |
-| `ui/kit/anim.rs` | Eased booleans and values, springs, entrances, sliding rectangles and the press scale; all instant with reduced motion. |
+| `ui/kit/anim.rs` | Eased booleans and values, springs, sliding rectangles, the press scale and `Flip` (list rows gliding to their new places); all instant with reduced motion. |
+| `ui/kit/a11y.rs` | What screen readers and the keyboard need beyond each widget's own role: named groups and modal dialogs over a `Ui`'s node, open or closed states in a disclosure's name, focus given back when an overlay closes (`FocusReturn`) and Tab kept inside an open overlay (`trap_focus`). |
 | `ui/kit/paint.rs` | Shadows, gradient fills, highlights, recesses, focus rings, pixel-snapped seams, Deeper panes and deck, spinners and scroll fades. |
 | `ui/kit/button.rs` | `Button` (primary, secondary, ghost, danger), `IconButton`, `ToolButton`, `LinkButton`, `SplitButton`: the reference component. |
 | `ui/kit/glass/mod.rs` | Translucent surfaces: decides which floating layers get the backdrop blur (the setting, the theme, the driver, at most four a frame), plans each in validated window pixels, queries the system's reduce-transparency answer off the UI thread, and falls back to the opaque overlay. |
@@ -130,12 +131,12 @@ thread.
 | `ui/kit/menu.rs` | Menus and context menus: items with icon, shortcut, check, danger, disabled-with-reason and second line, headings, separators and delayed submenus. |
 | `ui/kit/overlay.rs` | The floating surface every layer shares (shadow, glass backdrop, fill, ring) and the ground its content sits on, scrolling bodies with edge fades, the room a modal card may take, `Tooltip`, `Popover`, `Dialog` and its scrim, entrances and exit fades. |
 | `ui/kit/toast.rs` | `ToastCard`, the toast's painting; the queue, its pausing timers and the cards' slide into place stay in `ui/toast.rs`. |
-| `ui/kit/row.rs` | `ListRow`, `TreeRow`, `Disclosure`, `SectionHeader` and the Shift/Ctrl `Selection`. |
+| `ui/kit/row.rs` | `ListRow`, `TreeRow`, `Disclosure`, `SectionHeader`, the Shift/Ctrl `Selection` and `Roving` (a list as one Tab stop, the arrows moving inside it). |
 | `ui/kit/chip.rs` | `Badge`, `CountBadge`, `ChangeBadge`, `RefPill`, `RefOverflow`, `Keycap`, `KeyChord`, `StatusDot`, `DiffStat` and the status `Chip`. |
 | `ui/kit/avatar.rs` | `Avatar` and `AvatarStack` with the picture crossfade. |
 | `ui/kit/surface.rs` | `PaneFrame`, `PaneHeader`, `Deck` (the top bars), `Card`, `Banner` and `Callout` with their `NoticeAction`s, `EmptyState` and `InsetBox`. |
 | `ui/kit/graph.rs` | The history row painter: circle nodes, hollow merges, the HEAD halo, a dashed WIP node and lane spacing by density. |
-| `ui/kit/split.rs` | Placeholder for `SplitHandle` (custom split handles), not built yet. |
+| `ui/kit/split.rs` | `SplitHandle`, the handle between two panes of a custom split: pointer drag, double-click reset, arrow keys with keyboard focus, and a named splitter for screen readers. |
 | `ui/kit/testkit.rs` | Test-only helpers for the kit's tests: a themed context, frames with input events and the AccessKit nodes a frame produced. |
 | `ui/fonts.rs` | Registers the bundled Inter, JetBrains Mono and Phosphor fonts. |
 | `ui/art.rs` | The illustrations (logo mark, welcome canopy, empty-state spots) drawn with the painter in the active theme's colours; each grows in once when it appears. |
