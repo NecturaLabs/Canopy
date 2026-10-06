@@ -360,7 +360,10 @@ in the density's metrics:
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
 - When there is no remote, the toolbar says "Local only" as dim status text with an explanatory
-  tooltip, rather than styling it as an active control.
+  tooltip, rather than styling it as an active control. The sidebar's Remotes section shows a small
+  card instead of rows: an `elevated` surface in an `edge` hairline with a cloud-off glyph, "Local
+  only", one line on what that means, and two full-width Sm buttons, a Primary Publish… over a
+  Secondary Add remote….
 - On the welcome screen, the status bar says "No repository open" so it remains informative even
   before the first tab is opened.
 - Welcome action cards explain Open, Clone and Init in two short lines without requiring hover;

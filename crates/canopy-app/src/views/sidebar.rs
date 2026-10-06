@@ -7,12 +7,11 @@ use egui_phosphor::regular as icon;
 use crate::action::Action;
 use crate::keymap::Command;
 use crate::tab::{RepoTab, SidebarItem};
-use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Skeleton;
 use crate::ui::kit::row::{ListRow, Roving, RowKind, SectionHeader, TreeNav, TreeRow};
-use crate::ui::kit::{KitResponse, Tone, a11y, menu};
+use crate::ui::kit::{Button, KitResponse, Size, Tone, a11y, menu};
 use crate::ui::theme::{self, palette};
 use crate::ui::widgets::forge_icon;
 use crate::views::commit_detail::virtual_rows;
@@ -70,49 +69,72 @@ fn section_with_action(
     (open, shown)
 }
 
-/// The Remotes section of a repository with none: says so, and offers to publish it or add one.
+/// The Remotes section of a repository with none: a small card that says so, with Publish as the
+/// main way on and Add remote for a repository that already exists elsewhere.
 fn no_remotes(ui: &mut Ui, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let s = p.s();
     let m = theme::metrics();
     ui.add_space(theme::XS);
-    ui.horizontal(|ui| {
-        ui.add_space(theme::MD);
-        ui.label(
-            RichText::new(format!("{}  Local only — no remote", icon::HARD_DRIVES))
-                .size(m.meta_size)
-                .color(p.text_faint),
-        )
-        .kit_tooltip("Everything stays on this computer until you publish it or add a remote")
-        .extra(true)
-        .show();
-    });
-    ui.add_space(theme::XS);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = theme::SM;
-        ui.add_space(theme::MD);
-        if LinkButton::new("Publish…")
-            .text_size(m.meta_size)
-            .show(ui)
-            .kit_tooltip("Create a repository on GitHub or GitLab and push this one to it")
-            .extra(true)
-            .show()
-            .clicked()
-        {
-            actions.push(Action::Publish);
-        }
-        ui.label(RichText::new("·").size(m.meta_size).color(p.text_faint));
-        if LinkButton::new("Add remote…")
-            .text_size(m.meta_size)
-            .show(ui)
-            .kit_tooltip("Connect a repository that already exists elsewhere")
-            .extra(true)
-            .show()
-            .clicked()
-        {
-            actions.push(Action::AddRemoteDialog);
-        }
-    });
-    ui.add_space(theme::XS);
+    egui::Frame::new()
+        .fill(s.elevated)
+        .stroke(egui::Stroke::new(crate::ui::kit::paint::SEAM, s.edge))
+        .corner_radius(egui::CornerRadius::same(m.radius))
+        .inner_margin(egui::Margin::same(crate::ui::points_i8(theme::MD)))
+        .outer_margin(egui::Margin::symmetric(crate::ui::points_i8(theme::SM), 0))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = theme::SM;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = theme::SM;
+                crate::views::commit_detail::without_icons(
+                    ui.label(
+                        RichText::new(icon::CLOUD_SLASH)
+                            .size(m.icon_md)
+                            .color(p.text_dim),
+                    ),
+                );
+                ui.label(
+                    RichText::new("Local only")
+                        .size(m.body_size)
+                        .family(theme::medium())
+                        .color(p.text),
+                );
+            });
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "Nothing leaves this computer until you publish it or connect a remote.",
+                    )
+                    .size(m.meta_size)
+                    .color(p.text_dim),
+                )
+                .wrap(),
+            );
+            ui.add_space(theme::XS);
+            if Button::new("Publish…")
+                .primary()
+                .size(Size::Sm)
+                .icon(icon::CLOUD_ARROW_UP)
+                .full_width()
+                .tooltip("Create a repository on GitHub or GitLab and push this one to it")
+                .show(ui)
+                .clicked()
+            {
+                actions.push(Action::Publish);
+            }
+            if Button::new("Add remote…")
+                .secondary()
+                .size(Size::Sm)
+                .icon(icon::PLUS)
+                .full_width()
+                .tooltip("Connect a repository that already exists elsewhere")
+                .show(ui)
+                .clicked()
+            {
+                actions.push(Action::AddRemoteDialog);
+            }
+        });
+    ui.add_space(theme::SM);
 }
 
 struct Row<'a> {
@@ -748,10 +770,10 @@ mod tests {
         nodes.iter().find(|n| n.label() == Some(label))
     }
 
-    /// O9: a repository with no remote offers Publish and Add remote as quiet links, not
-    /// full-width buttons.
+    /// A repository with no remote says so in a card offering Publish and Add remote as buttons
+    /// (the owner overruled O9's quiet links as low effort).
     #[test]
-    fn a_repository_without_remotes_offers_publish_and_add_remote_links() {
+    fn a_repository_without_remotes_offers_publish_and_add_remote() {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         crate::ui::fonts::install(&ctx);
@@ -761,7 +783,7 @@ mod tests {
         let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
         for label in ["Publish…", "Add remote…"] {
             let n = named(&nodes, label).unwrap_or_else(|| panic!("{label}"));
-            assert_eq!(n.role(), Role::Link, "{label}");
+            assert_eq!(n.role(), Role::Button, "{label}");
         }
         let at = center(named(&nodes, "Publish…").expect("publish"));
         let _ = sidebar_frame(&ctx, &mut tab, click(at), &mut actions);
