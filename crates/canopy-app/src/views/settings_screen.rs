@@ -142,6 +142,9 @@ pub struct SettingsScreen {
     file_task: Option<crate::settings_file::FileTask>,
     /// What the last export, import or reset did: `(failed, message)`.
     file_status: Option<(bool, String)>,
+    /// Stay on This repository until a repository is open (the screenshot overlay opens
+    /// Settings before its repository's tab); cleared once one is.
+    awaiting_repository: bool,
 }
 
 /// Why the active repository's authors show initials instead of pictures
@@ -285,14 +288,17 @@ impl SettingsScreen {
         }
     }
 
+    /// The screen opened at This repository, staying there until the repository's tab opens
+    /// (the settings-repository screenshot).
+    pub fn awaiting_repository() -> Self {
+        Self {
+            section: Section::Repository,
+            awaiting_repository: true,
+            ..Self::default()
+        }
+    }
+
     /// The screen showing what `query` finds (screenshots and tests).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "for the settings-search screenshot overlay the integrator adds (contracts/settings.md)"
-        )
-    )]
     pub fn searching(query: &str) -> Self {
         let mut screen = Self::default();
         query.clone_into(&mut screen.search.query);
@@ -377,7 +383,10 @@ pub fn show(
     let (width, height) = shell_size(ctx);
     let sidebar = width >= NAV_MIN_WIDTH;
     let repo = data.identity.repo;
-    if screen.section == Section::Repository && repo.is_none() {
+    if repo.is_some() {
+        screen.awaiting_repository = false;
+    }
+    if screen.section == Section::Repository && repo.is_none() && !screen.awaiting_repository {
         // The repository's tab was closed while its page was open.
         screen.section = Section::Appearance;
     }
