@@ -340,7 +340,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     hint.push_str(" · open here");
                 }
                 let spoken = format!("{name}, worktree on {on}");
-                let glyph = if w.current { icon::FOLDER_OPEN } else { icon::FOLDER_SIMPLE };
+                let glyph = if w.current { icon::CHECK_CIRCLE } else { icon::FOLDER_SIMPLE };
                 let selected = tab.sidebar_shows(|p| matches!(p, SidebarItem::Worktree(path) if *path == w.path), w.head);
                 let resp = row(ui, &Row { id: ui.id().with(("worktree", &w.path)), glyph, label: &name, selected, current: w.current, ahead: 0, behind: 0, hint: Some(&hint), detail: Some(&on), spoken: Some(&spoken) }, Some((list, i)));
                 if resp.clicked()
