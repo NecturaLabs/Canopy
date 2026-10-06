@@ -12,8 +12,9 @@ use std::process::Command;
 use canopy_core::identity::{self, Scope, Source};
 use canopy_core::ops::{HunkAction, MergeMode, ResetMode};
 use canopy_core::{
-    ChangeKind, Choice, ConfigScope, ConflictFile, ConflictKind, ConflictRegion, DiffSource,
-    LineKind, MissingObjects, PullStrategy, RefKind, Repo, RepoState, Side, Whitespace,
+    ChangeKind, Choice, ConfigScope, ConflictFile, ConflictKind, ConflictRegion, ConflictStyle,
+    DiffSource, GitOptions, LineKind, MissingObjects, PullStrategy, RefKind, Repo, RepoState, Side,
+    Whitespace,
 };
 
 #[expect(
@@ -2725,4 +2726,262 @@ fn worktrees_list_every_working_folder_main_first() {
     // A plain repository has only its own folder.
     let (_plain_dir, plain) = fixture();
     assert_eq!(plain.snapshot(1).expect("snapshot").worktrees.len(), 1);
+}
+
+/// F1: with `fetch.pruneTags` in the user's configuration, `fetch --tags --prune` deletes every
+/// local tag the remote lacks, including ones not pushed yet. Canopy's fetch never does.
+#[test]
+fn fetch_keeps_local_tags_whatever_fetch_prune_tags_says() {
+    let (_up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy.workdir().to_path_buf();
+    git(&p, &["config", "fetch.pruneTags", "true"]);
+    git(&p, &["tag", "local-only"]);
+    copy.fetch(Some("origin"), true, |_| {})
+        .expect("fetch origin");
+    copy.fetch(None, true, |_| {}).expect("fetch all");
+    assert_eq!(git(&p, &["tag", "--list"]).trim(), "local-only");
+}
+
+/// F2: Canopy's message box has no comment template, so a line starting with `#` is part of the
+/// message (an issue number, a Markdown heading) and must survive the commit.
+#[test]
+fn commit_keeps_lines_that_start_with_a_hash() {
+    let (dir, repo) = fixture();
+    fs::write(dir.path().join("a.txt"), "hash\n").expect("write");
+    repo.stage_all().expect("stage");
+    repo.commit(
+        "\nfix: close the stale tab   \n\n#42 was the report.\n# Notes\n\n\n",
+        false,
+        false,
+    )
+    .expect("commit");
+    assert_eq!(
+        repo.head_message().expect("message"),
+        "fix: close the stale tab\n\n#42 was the report.\n# Notes\n",
+        "only surrounding blank lines and trailing spaces go"
+    );
+}
+
+/// Two branches that change the same line of `a.txt`: `main` (checked out) and `other`.
+fn conflicting_branches(p: &Path) {
+    git(p, &["switch", "-q", "-c", "other"]);
+    fs::write(p.join("a.txt"), "theirs\n").expect("write");
+    git(p, &["commit", "-q", "-am", "theirs"]);
+    git(p, &["switch", "-q", "main"]);
+    fs::write(p.join("a.txt"), "ours\n").expect("write");
+    git(p, &["commit", "-q", "-am", "ours"]);
+}
+
+/// Canopy's conflict style is the one written into files, whatever `merge.conflictStyle` says.
+#[test]
+fn conflicts_are_written_in_canopys_style() {
+    for (style, base_shown) in [
+        (ConflictStyle::Zdiff3, true),
+        (ConflictStyle::Diff3, true),
+        (ConflictStyle::Merge, false),
+    ] {
+        let (dir, repo) = fixture();
+        let p = dir.path();
+        let configured = if base_shown { "merge" } else { "zdiff3" };
+        git(p, &["config", "merge.conflictStyle", configured]);
+        conflicting_branches(p);
+        repo.set_options(GitOptions {
+            conflict_style: style,
+            ..GitOptions::default()
+        });
+        repo.merge("other", MergeMode::Default).unwrap_err();
+        let file = fs::read_to_string(p.join("a.txt")).expect("read");
+        assert_eq!(file.contains("|||||||"), base_shown, "{style:?}:\n{file}");
+    }
+}
+
+/// With autostash on (the default) a rebase and a pull work over uncommitted changes, which come
+/// back afterwards; with it off git refuses, as without Canopy.
+#[test]
+fn autostash_lets_rebase_and_pull_run_over_local_changes() {
+    for autostash in [true, false] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        let p = copy.workdir().to_path_buf();
+        git(
+            &p,
+            &[
+                "config",
+                "rebase.autoStash",
+                if autostash { "false" } else { "true" },
+            ],
+        );
+        diverge(up_dir.path(), &copy);
+        copy.set_options(GitOptions {
+            autostash,
+            ..GitOptions::default()
+        });
+        fs::write(p.join("a.txt"), "dirty\n").expect("write");
+        let pulled = copy.pull(PullStrategy::Rebase, |_| {});
+        assert_eq!(
+            pulled.is_ok(),
+            autostash,
+            "pull, autostash {autostash}: {pulled:?}"
+        );
+        if autostash {
+            assert_eq!(
+                fs::read_to_string(p.join("a.txt")).expect("read"),
+                "dirty\n"
+            );
+            assert!(p.join("up.txt").exists(), "the upstream commit arrived");
+            git(&p, &["reset", "-q", "--hard", "HEAD~1"]);
+            fs::write(p.join("a.txt"), "dirty again\n").expect("write");
+            copy.rebase("origin/main").expect("rebase");
+            assert_eq!(
+                fs::read_to_string(p.join("a.txt")).expect("read"),
+                "dirty again\n"
+            );
+        } else {
+            copy.rebase("origin/main").unwrap_err();
+        }
+    }
+}
+
+/// A push sends the annotated tags on the commits it pushes when follow-tags is on (the default),
+/// and works whatever `push.default` says.
+#[test]
+fn push_follows_tags_and_ignores_push_default() {
+    for follow_tags in [true, false] {
+        let (dir, repo) = fixture();
+        let p = dir.path();
+        let remote = tempfile::tempdir().expect("tempdir");
+        git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
+        repo.add_remote("origin", &remote.path().to_string_lossy())
+            .expect("remote");
+        repo.push(false, |_| {}).expect("first push");
+        git(p, &["config", "push.default", "nothing"]);
+        git(
+            p,
+            &[
+                "config",
+                "push.followTags",
+                if follow_tags { "false" } else { "true" },
+            ],
+        );
+        repo.set_options(GitOptions {
+            follow_tags,
+            ..GitOptions::default()
+        });
+        fs::write(p.join("a.txt"), "tagged\n").expect("write");
+        git(p, &["commit", "-q", "-am", "feat: tagged"]);
+        git(p, &["tag", "-a", "v1.0.0", "-m", "First release"]);
+        repo.push(false, |_| {})
+            .expect("push with push.default=nothing");
+        let tags = git(remote.path(), &["tag", "--list"]);
+        assert_eq!(
+            tags.trim() == "v1.0.0",
+            follow_tags,
+            "follow_tags {follow_tags}: {tags:?}"
+        );
+        assert_eq!(
+            git(remote.path(), &["rev-parse", "main"]),
+            git(p, &["rev-parse", "main"])
+        );
+    }
+}
+
+/// A new repository starts on the branch Canopy names, whatever `init.defaultBranch` says.
+#[test]
+fn init_starts_on_the_branch_canopy_names() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("new");
+    let repo = Repo::init(&path, "trunk").expect("init");
+    assert_eq!(
+        git(repo.workdir(), &["symbolic-ref", "HEAD"]).trim(),
+        "refs/heads/trunk"
+    );
+}
+
+/// When the changes set aside for a pull conflict with what came in, git still succeeds and
+/// leaves conflicted files with nothing in progress; a merge stopped on conflicts is not that.
+#[test]
+fn an_autostash_that_conflicts_is_recognised() {
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let up = up_dir.path();
+    fs::write(up.join("a.txt"), "upstream\n").expect("write");
+    git(up, &["commit", "-q", "-am", "feat: upstream"]);
+    fs::write(copy.workdir().join("a.txt"), "dirty\n").expect("write");
+    assert!(!copy.autostash_conflicted().expect("check"));
+    copy.pull(PullStrategy::Rebase, |_| {})
+        .expect("pull succeeds");
+    assert!(copy.autostash_conflicted().expect("check"));
+    assert!(git(copy.workdir(), &["stash", "list"]).contains("autostash"));
+
+    let (dir, repo) = fixture();
+    conflicting_branches(dir.path());
+    repo.merge("other", MergeMode::Default).unwrap_err();
+    assert!(
+        !repo.autostash_conflicted().expect("check"),
+        "a merge in progress"
+    );
+}
+
+/// The preview fetches first, then says what a pull would bring and where it would conflict,
+/// without changing the branch or any file.
+#[test]
+fn a_pull_preview_finds_conflicts_before_the_pull() {
+    // Up to date: nothing to bring.
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let p = copy
+        .pull_preview(false, |_| {})
+        .expect("preview")
+        .expect("upstream");
+    assert_eq!((p.ahead, p.behind, p.risky()), (0, 0, false));
+    assert_eq!(p.upstream, "origin/main");
+
+    // Behind, with an uncommitted change to a file the incoming commit changes too.
+    let up = up_dir.path();
+    fs::write(up.join("a.txt"), "upstream\n").expect("write");
+    git(up, &["commit", "-q", "-am", "feat: upstream"]);
+    fs::write(copy.workdir().join("a.txt"), "dirty\n").expect("write");
+    fs::write(copy.workdir().join("b.txt"), "unrelated\n").expect("write");
+    let head = git(copy.workdir(), &["rev-parse", "HEAD"]);
+    let p = copy
+        .pull_preview(false, |_| {})
+        .expect("preview")
+        .expect("upstream");
+    assert_eq!((p.ahead, p.behind), (0, 1), "the fetch ran first");
+    assert_eq!(p.overlap, ["a.txt"]);
+    assert_eq!(
+        p.conflicts, None,
+        "a fast-forward cannot conflict by itself"
+    );
+    assert!(p.risky() && !p.diverged());
+    assert_eq!(
+        git(copy.workdir(), &["rev-parse", "HEAD"]),
+        head,
+        "nothing moved"
+    );
+    assert_eq!(
+        fs::read_to_string(copy.workdir().join("a.txt")).expect("read"),
+        "dirty\n"
+    );
+
+    // Diverged, both changing the same line: a conflict, named before the pull.
+    git(copy.workdir(), &["commit", "-q", "-am", "feat: local"]);
+    let p = copy
+        .pull_preview(false, |_| {})
+        .expect("preview")
+        .expect("upstream");
+    assert!(p.diverged());
+    assert!(p.overlap.is_empty(), "b.txt is untouched upstream");
+    assert_eq!(p.conflicts, Some(vec!["a.txt".to_owned()]));
+
+    // Diverged without touching the same lines: no conflict.
+    let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    diverge(up_dir.path(), &copy);
+    let p = copy
+        .pull_preview(false, |_| {})
+        .expect("preview")
+        .expect("upstream");
+    assert!(p.diverged() && !p.risky(), "{p:?}");
+    assert_eq!(p.conflicts, Some(Vec::new()));
+
+    // No upstream: nothing to preview.
+    let (_dir, repo) = fixture();
+    assert_eq!(repo.pull_preview(false, |_| {}).expect("preview"), None);
 }

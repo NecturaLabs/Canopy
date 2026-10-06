@@ -109,10 +109,15 @@ pub enum Op {
     },
     /// Pull. The strategy is always passed to git explicitly; with `follow_config` it is only the
     /// fallback for a repository whose git configuration (`branch.<name>.rebase`, `pull.rebase`,
-    /// `pull.ff`) asks for none, and the configured one is used otherwise.
+    /// `pull.ff`) asks for none, and the configured one is used otherwise. Unless `checked`, the
+    /// upstream is fetched (pruning as `prune` says) and the pull waits for the user's decision
+    /// ([`Event::PullDecision`]) when the branches diverged under a fast-forward-only strategy or
+    /// it would likely conflict.
     Pull {
         strategy: PullStrategy,
         follow_config: bool,
+        prune: bool,
+        checked: bool,
     },
     Push {
         force: bool,
@@ -287,6 +292,8 @@ pub enum Job {
     Conflict(String),
     /// What the configuration asks a pull to do on the current branch (`Repo::pull_config`).
     PullConfig,
+    /// How the operations that follow have git behave (Settings → Git).
+    Options(canopy_core::GitOptions),
     /// A mutation.
     Op(Op),
 }
@@ -351,6 +358,58 @@ pub enum Event {
         result: Result<String, String>,
     },
     Failed(String),
+    /// A pull or rebase finished, but putting the uncommitted changes back (autostash) left
+    /// conflicts to resolve.
+    AutostashConflict,
+    /// A pull waits for the user: the branches diverged, or it would likely conflict.
+    PullDecision(Box<PullDecision>),
+    /// The operation `label` (a pull) stopped on conflicts for the user to resolve.
+    Conflicted(String),
+}
+
+/// What a pull asks before it runs ([`Op::Pull`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullDecision {
+    pub preview: canopy_core::PullPreview,
+    /// The strategy the pull would use.
+    pub strategy: PullStrategy,
+    /// The branches diverged and the strategy only fast-forwards: ask how to combine them.
+    pub diverged: bool,
+}
+
+/// The strategy a pull uses: what the git configuration asks for when `follow_config` and it
+/// asks for one, else `strategy`. A configuration that cannot be read asks for nothing.
+fn pull_strategy(repo: &Repo, strategy: PullStrategy, follow_config: bool) -> PullStrategy {
+    if !follow_config {
+        return strategy;
+    }
+    match repo.pull_config() {
+        Ok(config) => config.strategy.unwrap_or(strategy),
+        Err(e) => {
+            tracing::warn!(error = %redacted(&e), "could not read the pull configuration");
+            strategy
+        }
+    }
+}
+
+/// Fetches and previews a pull; `Some` when the user has to decide before it runs.
+fn decide_pull(
+    repo: &Repo,
+    strategy: PullStrategy,
+    follow_config: bool,
+    prune: bool,
+    progress: impl FnMut(&str),
+) -> canopy_core::Result<Option<PullDecision>> {
+    let Some(preview) = repo.pull_preview(prune, progress)? else {
+        return Ok(None);
+    };
+    let strategy = pull_strategy(repo, strategy, follow_config);
+    let diverged = preview.diverged() && strategy == PullStrategy::FastForwardOnly;
+    Ok((diverged || preview.risky()).then_some(PullDecision {
+        preview,
+        strategy,
+        diverged,
+    }))
 }
 
 /// What a finished operation means for the tab, independent of its label's wording.
@@ -450,6 +509,7 @@ impl Job {
             Self::SquashMessage(_) => "squash-message",
             Self::Conflict(_) => "conflict",
             Self::PullConfig => "pull-config",
+            Self::Options(_) => "options",
             Self::Op(_) => "operation",
         }
     }
@@ -474,6 +534,8 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     // The last diff sent. A refresh that finds the same content sends the same `Arc` again, so
     // the view keeps its layout and highlighting instead of rebuilding them on the UI thread.
     let mut last_diff: Option<(DiffKey, Arc<FileDiff>)> = None;
+    // The repository is opened again for every batch; the options outlive it.
+    let mut options = canopy_core::GitOptions::default();
     while let Ok(first) = jobs.recv() {
         // Coalesce queued refreshes: only the latest matters.
         let mut batch = vec![first];
@@ -497,6 +559,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 continue;
             }
         };
+        repo.set_options(options);
 
         // Whether a partial clone may download on its own here; asked only when one needs to.
         let allowed = || trusted_now(&repo);
@@ -636,6 +699,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         body.trim()
                     )));
                 }
+                Job::Options(o) => {
+                    options = o;
+                    repo.set_options(o);
+                }
                 Job::PullConfig => {
                     emit(Event::PullConfig(
                         repo.pull_config().map_err(|e| e.to_string()),
@@ -653,10 +720,37 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     let label = op.label();
                     let kind = op.kind();
                     let announce = op.announce();
+                    let autostashes = matches!(op, Op::Pull { .. } | Op::Rebase(_));
                     tracing::info!(operation = %label, "operation started");
                     emit(Event::OpStarted(label.clone()));
                     let progress = |line: &str| emit(Event::Progress(line.to_owned()));
-                    let result = perform(&repo, op, progress).map_err(|e| e.to_string());
+                    let decided = match &op {
+                        Op::Pull {
+                            strategy,
+                            follow_config,
+                            prune,
+                            checked: false,
+                        } => Some(decide_pull(
+                            &repo,
+                            *strategy,
+                            *follow_config,
+                            *prune,
+                            progress,
+                        )),
+                        _ => None,
+                    };
+                    let result = match decided {
+                        Some(Ok(Some(decision))) => {
+                            tracing::info!(operation = %label, "waiting for the user's decision");
+                            emit(Event::PullDecision(Box::new(decision)));
+                            mutated = true;
+                            continue;
+                        }
+                        Some(Err(e)) => Err(e.to_string()),
+                        Some(Ok(None)) | None => {
+                            perform(&repo, op, progress).map_err(|e| e.to_string())
+                        }
+                    };
                     let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                     match &result {
                         Ok(_) => tracing::info!(operation = %label, ms, "operation succeeded"),
@@ -664,12 +758,30 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             tracing::warn!(operation = %label, ms, error = %canopy_core::cli::redact_url(e), "operation failed");
                         }
                     }
-                    emit(Event::OpFinished {
-                        label,
-                        kind,
-                        announce,
-                        result,
-                    });
+                    let stash_conflict = autostashes
+                        && result.is_ok()
+                        && repo.autostash_conflicted().unwrap_or_else(|e| {
+                            tracing::warn!(error = %redacted(&e), "conflicts not checked");
+                            false
+                        });
+                    let stopped = kind == OpKind::Pull
+                        && result.is_err()
+                        && repo.stopped_on_conflicts().unwrap_or(false);
+                    if stopped {
+                        // Not a failure: the conflicts are the user's to resolve.
+                        emit(Event::Conflicted(label));
+                    } else {
+                        emit(Event::OpFinished {
+                            label,
+                            kind,
+                            announce,
+                            result,
+                        });
+                    }
+                    if stash_conflict {
+                        tracing::info!("putting the autostashed changes back left conflicts");
+                        emit(Event::AutostashConflict);
+                    }
                     mutated = true;
                 }
                 Job::Refresh(_) | Job::RefreshStatus => {}
@@ -947,12 +1059,9 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
         Op::Fetch { prune, .. } => repo.fetch(None, prune, progress),
         Op::Pull {
             strategy,
-            follow_config: true,
-        } => repo.pull_default(strategy, progress),
-        Op::Pull {
-            strategy,
-            follow_config: false,
-        } => repo.pull(strategy, progress),
+            follow_config,
+            ..
+        } => repo.pull(pull_strategy(repo, strategy, follow_config), progress),
         Op::Push { force } => repo.push(force, progress),
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
@@ -1290,6 +1399,44 @@ mod read_tests {
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     }
 
+    /// A pull asks first when only a fast-forward is allowed and the branches diverged, or when
+    /// it would conflict; a clean one runs without asking.
+    #[test]
+    fn a_pull_asks_before_it_diverges_or_conflicts() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let up = root.path().join("up");
+        std::fs::create_dir(&up).expect("up");
+        git(&up, &["init", "-q", "-b", "main"]);
+        std::fs::write(up.join("a.txt"), "base\n").expect("write");
+        git(&up, &["add", "."]);
+        git(&up, &["commit", "-q", "-m", "base"]);
+        let copy = root.path().join("copy");
+        git(root.path(), &["clone", "-q", "up", "copy"]);
+        std::fs::write(up.join("up.txt"), "upstream\n").expect("write");
+        git(&up, &["add", "."]);
+        git(&up, &["commit", "-q", "-m", "upstream"]);
+        std::fs::write(copy.join("local.txt"), "local\n").expect("write");
+        git(&copy, &["add", "."]);
+        git(&copy, &["commit", "-q", "-m", "local"]);
+        let repo = Repo::open(&copy).expect("open");
+        let decide =
+            |strategy| decide_pull(&repo, strategy, false, false, |_| {}).expect("checked");
+        let d = decide(PullStrategy::FastForwardOnly).expect("asks");
+        assert!(d.diverged && !d.preview.risky(), "{d:?}");
+        assert_eq!(decide(PullStrategy::Rebase), None, "clean: no question");
+        // Both sides change the same line now.
+        std::fs::write(up.join("a.txt"), "theirs\n").expect("write");
+        git(&up, &["commit", "-q", "-am", "theirs"]);
+        std::fs::write(copy.join("a.txt"), "ours\n").expect("write");
+        git(&copy, &["commit", "-q", "-am", "ours"]);
+        let d = decide(PullStrategy::Rebase).expect("asks");
+        assert!(!d.diverged, "a rebase knows how to combine them");
+        assert_eq!(d.preview.conflicts, Some(vec!["a.txt".to_owned()]));
+        assert_eq!(d.strategy, PullStrategy::Rebase);
+    }
+
     /// A source repository with three commits, and a partial clone of it made with `filter`.
     /// Returns the root, the source, the clone and the oldest and middle commits.
     fn partial_clone(filter: &str) -> (tempfile::TempDir, PathBuf, PathBuf, Oid, Oid) {
@@ -1503,7 +1650,7 @@ mod read_tests {
     fn a_refusal_names_the_version_of_the_trusted_list_that_made_it()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        let repo = Repo::init(dir.path())?;
+        let repo = Repo::init(dir.path(), "main")?;
         let before = crate::trust::changes();
         assert!(!trusted_now(&repo), "nothing is trusted here");
         let after = crate::trust::changes();

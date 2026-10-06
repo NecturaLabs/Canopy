@@ -94,6 +94,8 @@ pub const OVERLAYS: &[&str] = &[
     "confirm-danger",
     "confirm-host",
     "confirm-merge-risky",
+    "diverged",
+    "pull-conflicts",
     "whats-new",
     "crash",
     "update-available",
@@ -329,7 +331,7 @@ impl CanopyApp {
         for (i, path) in restore.into_iter().enumerate() {
             let request = open::OpenRequest {
                 path,
-                create: false,
+                create: None,
                 focus: i == 0,
             };
             app.request_open(&cc.egui_ctx, request);

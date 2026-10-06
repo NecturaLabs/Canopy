@@ -445,6 +445,8 @@ pub struct RepoTab {
     pub finished: Option<Finished>,
     /// How this repository pulls by Canopy's settings (kept current by the app every frame).
     pub pull: PullChoice,
+    /// The git options last sent to the worker (`None`: none yet).
+    pub git_options: Option<canopy_core::GitOptions>,
     /// What the repository's configuration asks a pull to do on the current branch; `None` until
     /// it is read, or when it cannot be.
     pub pull_config: Option<PullConfig>,
@@ -453,6 +455,8 @@ pub struct RepoTab {
     pull_config_branch: Option<String>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
+    /// A pull waits for the user's decision (diverged branches, or likely conflicts).
+    pub pull_decision: Option<crate::worker::PullDecision>,
     pub progress: Option<String>,
     pub commit_limit: usize,
     /// Centre the selected commit next frame.
@@ -539,10 +543,12 @@ impl RepoTab {
             running: None,
             finished: None,
             pull: PullChoice::default(),
+            git_options: None,
             pull_config: None,
             pull_config_asked: false,
             pull_config_branch: None,
             force_delete_offer: None,
+            pull_decision: None,
             progress: None,
             commit_limit,
             scroll_to_selected: false,
@@ -1342,6 +1348,15 @@ impl RepoTab {
                             OpKind::SafeDelete(name) if e.contains("not fully merged") => {
                                 self.force_delete_offer = Some(name.clone());
                             }
+                            // Only a fast-forward was allowed: a choice to make, not a failure.
+                            // (A pull checked beforehand asks first; this covers the rest.)
+                            OpKind::Pull if e.contains("Not possible to fast-forward") => {
+                                self.pull_decision = Some(crate::worker::PullDecision {
+                                    preview: canopy_core::PullPreview::default(),
+                                    strategy: canopy_core::PullStrategy::FastForwardOnly,
+                                    diverged: true,
+                                });
+                            }
                             _ => {
                                 self.finished = Some(Finished {
                                     label: label.clone(),
@@ -1356,6 +1371,31 @@ impl RepoTab {
                             }
                         },
                     }
+                }
+                Event::PullDecision(decision) => {
+                    self.running = None;
+                    self.progress = None;
+                    self.pull_decision = Some(*decision);
+                }
+                Event::Conflicted(label) => {
+                    self.running = None;
+                    self.progress = None;
+                    // The resolver lives in Changes: take the user to the conflicted files.
+                    self.view = View::Changes;
+                    notices.push(Notice {
+                        ok: false,
+                        title: format!("{label} stopped on conflicts"),
+                        body: "Resolve each conflicted file in Changes, then continue, or abort to go back to where you were.".into(),
+                    });
+                }
+                Event::AutostashConflict => {
+                    // The resolver lives in Changes: take the user to the conflicted files.
+                    self.view = View::Changes;
+                    notices.push(Notice {
+                        ok: false,
+                        title: "Your changes conflict with what came in".into(),
+                        body: "Canopy set your uncommitted changes aside for this, and putting them back conflicts with the new commits. Resolve the conflicted files in Changes. Your changes also stay in the stash list until you drop that stash.".into(),
+                    });
                 }
                 Event::Failed(e) => {
                     if self.snap.is_none() {
@@ -2218,6 +2258,82 @@ mod tests {
         let notices = tab.poll(&[]);
         assert!(notices.iter().any(|n| !n.ok));
         assert!(tab.force_delete_offer.is_none());
+        Ok(())
+    }
+
+    /// A fast-forward-only pull that git refuses because the branches diverged asks how to
+    /// combine them; any other pull failure is an error.
+    #[test]
+    fn a_diverged_pull_asks_how_to_combine_the_branches() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        let finished = |result| Event::OpFinished {
+            label: "Pulling".into(),
+            kind: OpKind::Pull,
+            announce: true,
+            result,
+        };
+        events.send(finished(Err("hint: Diverging branches can't be fast-forwarded, you need to either:\nhint:\nhint: \tgit merge --no-ff\nfatal: Not possible to fast-forward, aborting.".into())))?;
+        let notices = tab.poll(&[]);
+        assert!(notices.is_empty(), "a choice to make, not a failure");
+        assert!(tab.pull_decision.take().is_some_and(|d| d.diverged));
+        events.send(finished(Err(
+            "fatal: unable to access 'https://example.com/r.git/'".into(),
+        )))?;
+        let notices = tab.poll(&[]);
+        assert!(notices.iter().any(|n| !n.ok));
+        assert!(tab.pull_decision.is_none());
+        Ok(())
+    }
+
+    /// A pull that waits for a decision stops showing as running; one that stopped on conflicts
+    /// takes the user to Changes instead of reporting a failure.
+    #[test]
+    fn a_pull_decision_or_its_conflicts_end_the_running_pull()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.running = Some("Pulling".into());
+        let decision = crate::worker::PullDecision {
+            preview: canopy_core::PullPreview::default(),
+            strategy: canopy_core::PullStrategy::Rebase,
+            diverged: false,
+        };
+        events.send(Event::PullDecision(Box::new(decision.clone())))?;
+        assert!(tab.poll(&[]).is_empty());
+        assert_eq!(tab.running, None);
+        assert_eq!(tab.pull_decision, Some(decision));
+        tab.running = Some("Pulling".into());
+        tab.view = View::History;
+        events.send(Event::Conflicted("Pulling".into()))?;
+        let notices = tab.poll(&[]);
+        assert_eq!((tab.running.as_deref(), tab.view), (None, View::Changes));
+        assert_eq!(notices.len(), 1);
+        Ok(())
+    }
+
+    /// Changes put aside for a pull that conflict when they come back are said plainly, and the
+    /// user lands in Changes, where the conflicted files and the resolver are.
+    #[test]
+    fn an_autostash_conflict_takes_the_user_to_changes() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let dir = tempfile::tempdir()?;
+        let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 100, DiffPrefs::default());
+        let (worker, events, _jobs) = Worker::detached();
+        tab.worker = worker;
+        tab.view = View::History;
+        events.send(Event::AutostashConflict)?;
+        let notices = tab.poll(&[]);
+        assert_eq!(tab.view, View::Changes);
+        assert_eq!(notices.len(), 1);
+        assert!(!notices[0].ok, "it needs the user");
         Ok(())
     }
 

@@ -118,6 +118,19 @@ pub enum Dialog {
         danger: bool,
         op: Op,
     },
+    /// A fast-forward pull found that the branch and its upstream both moved on: how to bring
+    /// them together, and whether to pull this repository that way from now on.
+    Diverged {
+        mode: crate::settings::PullMode,
+        remember: bool,
+        /// What the check before the pull found (empty when git refused without one).
+        preview: canopy_core::PullPreview,
+    },
+    /// A pull would likely stop on conflicts: pull anyway (and resolve them) or not.
+    PullConflicts {
+        strategy: canopy_core::PullStrategy,
+        preview: canopy_core::PullPreview,
+    },
     About,
     Identity {
         name: String,
@@ -907,6 +920,75 @@ pub fn show(
                 confirmation(salt, title, body, confirm, *danger, icon::QUESTION, |_| {}).show(ctx);
             answer(result, || Outcome::Run(vec![Action::Op(op.clone())]))
         }
+        Dialog::Diverged {
+            mode,
+            remember,
+            preview,
+        } => {
+            use crate::settings::PullMode;
+            let options = [
+                (
+                    PullMode::Rebase,
+                    "Rebase",
+                    Some(
+                        "Put your commits on top of the remote's, in one straight line. Your commits get new IDs, so do this only with commits nobody else has.",
+                    ),
+                ),
+                (
+                    PullMode::Merge,
+                    "Merge",
+                    Some("Keep every commit as it is and add one that joins the two lines."),
+                ),
+            ];
+            let confirm = match mode {
+                PullMode::Rebase => "Pull with rebase",
+                _ => "Pull with merge",
+            };
+            let result = KitDialog::new(salt)
+                .title("Your branch and the remote have diverged")
+                .icon(icon::GIT_FORK)
+                .width(DialogWidth::Form)
+                .description("Both have commits the other does not, so a fast-forward cannot bring them together. Choose how to combine them.")
+                .body(|ui| {
+                    RadioGroup::new(mode, &options)
+                        .label("How to combine them")
+                        .id_salt("diverged-mode")
+                        .show(ui);
+                    ui.add_space(theme::SM);
+                    Checkbox::new(remember, "Remember for this repository").show(ui);
+                    predicted_conflicts(ui, preview);
+                })
+                .footer(|f| {
+                    f.cancel().confirm(confirm);
+                })
+                .show(ctx);
+            answer(result, || {
+                Outcome::Run(vec![Action::PullAs {
+                    mode: *mode,
+                    remember: *remember,
+                }])
+            })
+        }
+        Dialog::PullConflicts { strategy, preview } => {
+            let incoming = match preview.behind {
+                1 => "1 new commit".to_owned(),
+                n => format!("{n} new commits"),
+            };
+            let result = KitDialog::new(salt)
+                .title("This pull will likely conflict")
+                .icon(icon::WARNING)
+                .width(DialogWidth::Form)
+                .description(format!(
+                    "{} has {incoming} that touch what you are working on. If you pull anyway, Canopy takes you to Changes to resolve the conflicts.",
+                    preview.upstream
+                ))
+                .body(|ui| predicted_conflicts(ui, preview))
+                .footer(|f| {
+                    f.cancel().confirm("Pull anyway");
+                })
+                .show(ctx);
+            answer(result, || Outcome::Run(vec![Action::PullAnyway(*strategy)]))
+        }
         Dialog::ConfirmClearIdentity { repo, scope } => {
             let target = match scope {
                 canopy_core::identity::Scope::Local => "this repository's configuration",
@@ -1146,6 +1228,46 @@ fn clone_target(builder: &UrlBuilder, parent: &str) -> Option<(String, std::path
 
 /// A yes-or-no question: destructive ones get the danger disc and button and keep Enter from
 /// confirming.
+/// How many predicted files a pull's dialog lists before "and N more".
+const PREDICTED_SHOWN: usize = 8;
+
+/// The files a pull is predicted to conflict in, and the uncommitted ones it also changes.
+fn predicted_conflicts(ui: &mut Ui, preview: &canopy_core::PullPreview) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    let conflicts = preview.conflicts.as_deref().unwrap_or_default();
+    for (files, says) in [
+        (conflicts, "Combining the branches conflicts in these files"),
+        (
+            preview.overlap.as_slice(),
+            "The new commits also change these files you are editing",
+        ),
+    ] {
+        if files.is_empty() {
+            continue;
+        }
+        ui.add_space(theme::SM);
+        note(ui, says, p.text_dim);
+        InsetBox::new().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for file in files.iter().take(PREDICTED_SHOWN) {
+                ui.label(
+                    RichText::new(file)
+                        .font(FontId::monospace(m.mono_size))
+                        .color(p.text),
+                );
+            }
+            if files.len() > PREDICTED_SHOWN {
+                note(
+                    ui,
+                    format!("and {} more", files.len() - PREDICTED_SHOWN),
+                    p.text_faint,
+                );
+            }
+        });
+    }
+}
+
 fn confirmation<'a>(
     salt: impl std::hash::Hash + std::fmt::Debug,
     title: &str,

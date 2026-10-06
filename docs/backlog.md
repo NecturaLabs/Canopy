@@ -126,12 +126,10 @@ yet true, then correctness and the features people meet first, then polish. Take
       default selection, marked as coming from their git config; a pull that goes against it is
       reported in the notification center with the setting, its value and where it is set. Today
       `pull` checks only `pull.rebase`, so it overrides a `branch.<name>.rebase`.
-- [ ] Git settings: Canopy is the authority (AGENTS.md, Git settings). List every action whose
-      result git configuration can change (`pull.rebase`/`pull.ff`, `merge.ff`, `push.default`,
-      `fetch.prune`, `rebase.autoStash`, ...), pass Canopy's choice explicitly for each, and
-      report every difference from their configuration in the notification center. Whether
-      Canopy may override `commit.gpgsign` or `core.hooksPath` (signing, hooks) is the owner's
-      call: ask before changing either.
+- [ ] Git settings: Canopy is the authority (AGENTS.md, Git settings; ADR 0012 lists what is
+      passed). Left: report differences from the user's configuration in the notification
+      center too (Settings shows them). Whether Canopy may override `commit.gpgsign` or
+      `core.hooksPath` (signing, hooks) is the owner's call: ask before changing either.
 - [ ] Wire canopy-2's core into the app: publish any branch, mode and type changes, collapsed
       untracked folders, ask before Stage all adds a nested repository; drop the compatibility
       wrappers.

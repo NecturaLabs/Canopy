@@ -118,12 +118,35 @@ impl CanopyApp {
                         t.op(Op::Pull {
                             strategy: choice.mode.strategy(),
                             follow_config: choice.follow_config,
+                            prune: settings.prune_for(&t.path),
+                            checked: false,
                         });
                     }
                 }
-                Action::ReadPullConfig => {
+                Action::PullAs { mode, remember } => {
+                    if let Some(t) = self.tabs.get_mut(self.active) {
+                        if remember {
+                            let own = self.settings.repo_mut(&t.path);
+                            own.pull_mode = Some(mode);
+                            // Chosen for this repository: its git configuration no longer decides.
+                            own.pull_follow_config = Some(false);
+                        }
+                        t.op(Op::Pull {
+                            strategy: mode.strategy(),
+                            follow_config: false,
+                            prune: self.settings.prune_for(&t.path),
+                            checked: true,
+                        });
+                    }
+                }
+                Action::PullAnyway(strategy) => {
                     if let Some(t) = self.tabs.get(self.active) {
-                        t.worker.send(Job::PullConfig);
+                        t.op(Op::Pull {
+                            strategy,
+                            follow_config: false,
+                            prune: self.settings.prune_for(&t.path),
+                            checked: true,
+                        });
                     }
                 }
                 Action::Push => {
@@ -473,8 +496,8 @@ impl CanopyApp {
         self.launcher(Kind::FileManager)
     }
 
-    /// Each tab's name, icon and pull choice as its repository's settings say (cheap: runs every
-    /// frame).
+    /// Each tab's name, icon, pull choice and git options as the settings say (cheap: runs every
+    /// frame; the worker hears of the options only when they change).
     pub(super) fn apply_repo_looks(&mut self) {
         for t in &mut self.tabs {
             let own = self.settings.repos.get(&t.path);
@@ -483,6 +506,11 @@ impl CanopyApp {
                 t.icon = icon;
             }
             t.pull = self.settings.pull_for(&t.path);
+            let options = self.settings.git_options();
+            if t.git_options != Some(options) {
+                t.git_options = Some(options);
+                t.worker.send(Job::Options(options));
+            }
             match own.and_then(|r| r.display_name.as_deref()) {
                 Some(name) if t.name != name => name.clone_into(&mut t.name),
                 Some(_) => {}

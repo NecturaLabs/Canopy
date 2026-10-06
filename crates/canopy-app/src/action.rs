@@ -53,9 +53,14 @@ pub enum Action {
     LoadMore,
     Fetch,
     Pull,
-    /// Read again what the active repository's configuration asks a pull to do (the toolbar's
-    /// Pull menu opened).
-    ReadPullConfig,
+    /// Pull the active repository with `mode`, chosen when a fast-forward was not possible;
+    /// `remember` makes it that repository's own pull strategy.
+    PullAs {
+        mode: crate::settings::PullMode,
+        remember: bool,
+    },
+    /// Pull the active repository with `strategy` although it will likely conflict.
+    PullAnyway(canopy_core::ops::PullStrategy),
     Push,
     Commit,
     PrefillAmend,

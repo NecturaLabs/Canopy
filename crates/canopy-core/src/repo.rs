@@ -12,6 +12,7 @@ use crate::model::{
     RemoteBranchInfo, RemoteInfo, RepoSnapshot, RepoState, Signature, StashInfo, StatusUnavailable,
     TagInfo, UntrackedListing, WorkingStatus, WorktreeInfo,
 };
+use crate::options::GitOptions;
 use crate::partial::{self, MissingObjects};
 use crate::{Error, Result, status};
 
@@ -23,6 +24,8 @@ pub const MAX_STAT_FILES: usize = 200;
 pub struct Repo {
     git: Repository,
     workdir: PathBuf,
+    /// How operations have git behave ([`Repo::set_options`]).
+    options: std::cell::Cell<GitOptions>,
 }
 
 impl std::fmt::Debug for Repo {
@@ -53,14 +56,30 @@ impl Repo {
             },
         })?;
         let workdir = git.workdir().ok_or(Error::Bare)?.to_path_buf();
-        Ok(Self { git, workdir })
+        Ok(Self {
+            git,
+            workdir,
+            options: std::cell::Cell::default(),
+        })
     }
 
-    /// Creates a new repository in `path` (creating the directory) and opens it.
-    pub fn init(path: &Path) -> Result<Self> {
+    /// Creates a new repository in `path` (creating the directory) whose first branch is
+    /// `initial_branch`, whatever `init.defaultBranch` says, and opens it.
+    pub fn init(path: &Path, initial_branch: &str) -> Result<Self> {
         std::fs::create_dir_all(path)?;
-        crate::cli::run(path, &["init", "-q"])?;
+        let branch = format!("--initial-branch={initial_branch}");
+        crate::cli::run(path, &["init", "-q", &branch])?;
         Self::open(path)
+    }
+
+    /// Sets how the operations that follow have git behave.
+    pub fn set_options(&self, options: GitOptions) {
+        self.options.set(options);
+    }
+
+    /// How operations have git behave.
+    pub fn options(&self) -> GitOptions {
+        self.options.get()
     }
 
     /// The working directory.
@@ -105,6 +124,26 @@ impl Repo {
             }
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// Whether putting back the changes stashed around a pull or rebase (`--autostash`) ran into
+    /// conflicts: files are conflicted while no merge, rebase or other operation is in progress.
+    /// Git keeps those changes in the stash list as well until the stash is dropped.
+    pub fn autostash_conflicted(&self) -> Result<bool> {
+        Ok(self.state() == RepoState::Clean && self.index_conflicted()?)
+    }
+
+    /// Whether a merge or rebase (a pull's, say) stopped with conflicts to resolve.
+    pub fn stopped_on_conflicts(&self) -> Result<bool> {
+        Ok(matches!(self.state(), RepoState::Merge | RepoState::Rebase)
+            && self.index_conflicted()?)
+    }
+
+    fn index_conflicted(&self) -> Result<bool> {
+        // git, not libgit2, wrote the index: read it from disk again.
+        let mut index = self.git.index()?;
+        index.read(true)?;
+        Ok(index.has_conflicts())
     }
 
     fn state(&self) -> RepoState {

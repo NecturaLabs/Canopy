@@ -285,6 +285,20 @@ impl CanopyApp {
                     .push_for(ctx, kind, topic, n.title, n.body, Some(&tab.path));
             }
             // Taken after the poll that set it, so the dialog shows in this frame.
+            if let Some(d) = tab.pull_decision.take() {
+                self.dialogs.open(if d.diverged {
+                    Dialog::Diverged {
+                        mode: settings::PullMode::Rebase,
+                        remember: false,
+                        preview: d.preview,
+                    }
+                } else {
+                    Dialog::PullConflicts {
+                        strategy: d.strategy,
+                        preview: d.preview,
+                    }
+                });
+            }
             if let Some(name) = tab.force_delete_offer.take() {
                 self.dialogs.open(Dialog::Confirm {
                     title: "Force delete branch".into(),

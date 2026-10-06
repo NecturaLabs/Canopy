@@ -39,12 +39,14 @@ These come from the owner and override anything else in the repository.
   URLs through `canopy_core::cli::redact_url`, git arguments through `cli::loggable`.
 - **Git settings**: Canopy is the authority on what it does to a repository. Every action runs
   with the option chosen in Canopy, passed to git explicitly, even where the user's git
-  configuration says otherwise; that configuration is the default Canopy's choices start from.
-  Whenever Canopy's choice differs from the user's git configuration, the UI says so: which
-  setting, its value and where it is set. True so far for pull and fetch only: the pull strategy
-  and `--prune`/`--no-prune` are always passed, and Settings says where they differ from the
-  configuration. Other settings (`push.default`, `rebase.autoStash`, ...) are not passed yet,
-  and no notification reports differences (`docs/backlog.md`, "Git settings").
+  configuration says otherwise. Canopy's defaults are today's recommended practice, not git's own
+  defaults (ADR 0012; pull: fast-forward only, asking Rebase or Merge when branches diverged).
+  Pull configuration lives in Settings only. Whenever Canopy's choice differs from the user's git
+  configuration, Settings says so: which setting, its value and where it is set. Passed so far:
+  pull strategy, prune, no tag pruning, autostash, follow-tags, `push.default=simple`, conflict
+  style, the first branch of `init`, commit cleanup; no notification outside Settings reports
+  differences yet (`docs/backlog.md`, "Git settings"). A pull checks first and asks before it
+  would diverge or conflict.
 - **Toolkit**: egui stays (the owner chose it over React).
 - **Art**: in-app illustrations are drawn in code from the active theme (`ui/art.rs`,
   `docs/art-prompts.md`), never shipped as SVG; the app icon is PNG only (`assets/icon-*.png`).

@@ -211,6 +211,8 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "confirm-danger",
     "confirm-host",
     "confirm-merge-risky",
+    "diverged",
+    "pull-conflicts",
     "whats-new",
     "crash",
     "update-available",
@@ -343,6 +345,27 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             confirm: "Check out commit".into(),
             danger: false,
             op: Op::Checkout("38b14e7".into()),
+        },
+        "diverged" => Dialog::Diverged {
+            mode: settings::PullMode::Rebase,
+            remember: false,
+            preview: canopy_core::PullPreview {
+                upstream: "origin/main".into(),
+                ahead: 2,
+                behind: 3,
+                conflicts: Some(vec!["src/api/routes.rs".into()]),
+                overlap: Vec::new(),
+            },
+        },
+        "pull-conflicts" => Dialog::PullConflicts {
+            strategy: canopy_core::PullStrategy::FastForwardOnly,
+            preview: canopy_core::PullPreview {
+                upstream: "origin/main".into(),
+                ahead: 0,
+                behind: 2,
+                conflicts: None,
+                overlap: vec!["README.md".into(), "src/api/routes.rs".into()],
+            },
         },
         "confirm-danger" => Dialog::Confirm {
             title: "Delete branch feature/dark-mode?".into(),

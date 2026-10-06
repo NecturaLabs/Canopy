@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use canopy_core::Whitespace;
 use canopy_core::ops::PullStrategy;
+use canopy_core::{ConflictStyle, GitOptions};
 
 use crate::ui::kit::overlay::{TooltipDelay, TooltipLevel};
 use crate::ui::motion::MotionPref;
@@ -25,9 +26,11 @@ pub const KEY: &str = "canopy-settings-v1";
 /// [`PullStrategy`]). Variants are only ever added, so saved settings keep loading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PullMode {
-    #[default]
     Merge,
     Rebase,
+    /// The recommended default: a pull never makes a merge commit or rewrites commits by
+    /// itself; when the branches diverged, Canopy asks how to bring them together.
+    #[default]
     FastForwardOnly,
     MergeNoFastForward,
     RebaseMerges,
@@ -86,6 +89,35 @@ impl Default for PullChoice {
         }
     }
 }
+
+/// How conflicts are written into files: a serialisable mirror of
+/// [`canopy_core::ConflictStyle`]. Variants are only ever added, so saved settings keep loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ConflictMode {
+    #[default]
+    Zdiff3,
+    Diff3,
+    Merge,
+}
+
+impl ConflictMode {
+    pub const ALL: [Self; 3] = [Self::Zdiff3, Self::Diff3, Self::Merge];
+
+    pub fn style(self) -> ConflictStyle {
+        match self {
+            Self::Zdiff3 => ConflictStyle::Zdiff3,
+            Self::Diff3 => ConflictStyle::Diff3,
+            Self::Merge => ConflictStyle::Merge,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        self.style().label()
+    }
+}
+
+/// The first branch of a repository Canopy creates when the setting is left empty.
+pub const INITIAL_BRANCH: &str = "main";
 
 /// Protocol of clone URLs built from `owner/repo`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -320,6 +352,15 @@ pub struct Settings {
     pub auto_fetch_minutes: u32,
     /// `git commit --signoff`.
     pub signoff: bool,
+    /// Pull and rebase over uncommitted changes, stashing them around it (`--autostash`).
+    pub autostash: bool,
+    /// A push also sends the annotated tags on the commits it pushes (`--follow-tags`).
+    pub follow_tags: bool,
+    /// How conflicts are written into files (`merge.conflictStyle`).
+    #[serde(deserialize_with = "known")]
+    pub conflict_style: ConflictMode,
+    /// The first branch of a repository Canopy creates (`git init --initial-branch`).
+    pub initial_branch: String,
     /// The one-time Git identity question has been shown.
     pub identity_asked: bool,
     /// Commits loaded per page in the history.
@@ -417,11 +458,15 @@ impl Default for Settings {
             graph_curve: Curve::Smooth,
             motion: MotionPref::System,
             reduce_motion: None,
-            pull_mode: PullMode::Merge,
+            pull_mode: PullMode::FastForwardOnly,
             pull_follow_config: true,
             prune_on_fetch: true,
             auto_fetch_minutes: 0,
             signoff: false,
+            autostash: true,
+            follow_tags: true,
+            conflict_style: ConflictMode::Zdiff3,
+            initial_branch: INITIAL_BRANCH.to_owned(),
             identity_asked: false,
             commit_page: 2000,
             diff: DiffPrefs::default(),
@@ -537,6 +582,22 @@ impl Settings {
                 .own(path, |r| r.pull_follow_config)
                 .unwrap_or(self.pull_follow_config),
         }
+    }
+
+    /// How Canopy has git pull, push, rebase and write conflicts.
+    pub fn git_options(&self) -> GitOptions {
+        GitOptions {
+            autostash: self.autostash,
+            follow_tags: self.follow_tags,
+            conflict_style: self.conflict_style.style(),
+        }
+    }
+
+    /// The first branch of a repository Canopy creates.
+    pub fn initial_branch(&self) -> &str {
+        Some(self.initial_branch.trim())
+            .filter(|b| !b.is_empty())
+            .unwrap_or(INITIAL_BRANCH)
     }
 
     /// Whether fetching in the repository at `path` prunes.
@@ -879,6 +940,53 @@ mod tests {
     /// Override O3: following the git configuration is the default, for new and old settings
     /// files; a repository can follow it or not on its own, and Canopy's strategy applies only
     /// where the configuration sets none or is not followed.
+    /// Canopy's git choices start from today's recommended practice, not git's own defaults.
+    #[test]
+    fn git_choices_default_to_recommended_practice() {
+        let s = Settings::default();
+        assert_eq!(s.pull_mode, PullMode::FastForwardOnly);
+        assert_eq!(
+            s.git_options(),
+            GitOptions {
+                autostash: true,
+                follow_tags: true,
+                conflict_style: ConflictStyle::Zdiff3,
+            }
+        );
+        assert_eq!(s.git_options(), GitOptions::default());
+        assert_eq!(s.initial_branch(), "main");
+    }
+
+    #[test]
+    fn the_git_options_follow_the_settings() {
+        let s = Settings {
+            autostash: false,
+            follow_tags: false,
+            conflict_style: ConflictMode::Merge,
+            initial_branch: "  trunk ".into(),
+            ..Settings::default()
+        };
+        assert_eq!(
+            s.git_options(),
+            GitOptions {
+                autostash: false,
+                follow_tags: false,
+                conflict_style: ConflictStyle::Merge,
+            }
+        );
+        assert_eq!(s.initial_branch(), "trunk");
+        let blank = Settings {
+            initial_branch: " ".into(),
+            ..Settings::default()
+        };
+        assert_eq!(blank.initial_branch(), INITIAL_BRANCH, "empty falls back");
+        assert_eq!(
+            ConflictMode::ALL.map(ConflictMode::style),
+            ConflictStyle::ALL,
+            "one ConflictMode per ConflictStyle"
+        );
+    }
+
     #[test]
     fn pulls_follow_the_git_config_by_default_and_per_repository() {
         let repo = PathBuf::from("/home/ada/src/canopy");
@@ -911,7 +1019,11 @@ mod tests {
             followed.resolve(Some(PullStrategy::Rebase)),
             PullStrategy::Rebase
         );
-        assert_eq!(followed.resolve(None), PullStrategy::Merge, "the fallback");
+        assert_eq!(
+            followed.resolve(None),
+            PullStrategy::FastForwardOnly,
+            "the fallback"
+        );
         // Every strategy git can be asked for is offered, in the core's order.
         assert_eq!(
             PullMode::ALL.map(PullMode::strategy),

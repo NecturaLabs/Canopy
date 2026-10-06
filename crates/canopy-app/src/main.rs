@@ -56,9 +56,9 @@ OPTIONS:
                               clone-running, clone-error, init, new-branch, rename, new-tag,
                               stash, add-remote, add-remote-refused, publish, new-request,
                               confirm, confirm-danger, confirm-host, confirm-merge-risky,
-                              whats-new, crash, update-available, update-failed, terms,
-                              consent-reading, crash-reading, username, password, approve or
-                              notice
+                              diverged, pull-conflicts, whats-new, crash, update-available,
+                              update-failed, terms, consent-reading, crash-reading, username,
+                              password, approve or notice
         --size <WxH>          Initial window size [default: 1440x900]
         --zoom <FACTOR>       Initial interface zoom, from 0.8 to 1.6
         --style <STYLE>       Start with a style: standard or deeper

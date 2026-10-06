@@ -1,5 +1,6 @@
 //! What the user's git configuration says about the choices Canopy makes for a repository (how
-//! a pull integrates, whether a fetch prunes, whether commits are signed) and where each value is
+//! a pull integrates, whether a fetch prunes, whether commits are signed, autostash, tags on
+//! push, the conflict style and a new repository's first branch) and where each value is
 //! set, so Settings can show them beside Canopy's own choice and say where they differ (AGENTS.md,
 //! "Git settings"). Read through the same `git` that runs the operations, on a thread of its own:
 //! the UI thread never runs git.
@@ -64,6 +65,14 @@ pub struct GitFacts {
     pub remote_prune: Vec<ConfigValue>,
     pub gpg_sign: Option<ConfigValue>,
     pub gpg_format: Option<ConfigValue>,
+    /// `rebase.autoStash`, which Canopy's `--autostash` / `--no-autostash` overrides.
+    pub autostash: Option<ConfigValue>,
+    /// `push.followTags`, which Canopy's `--follow-tags` / `--no-follow-tags` overrides.
+    pub follow_tags: Option<ConfigValue>,
+    /// `merge.conflictStyle`, which Canopy's own `-c merge.conflictStyle=…` overrides.
+    pub conflict_style: Option<ConfigValue>,
+    /// `init.defaultBranch`, which Canopy's `--initial-branch` overrides.
+    pub initial_branch: Option<ConfigValue>,
     pub remotes: Vec<Remote>,
     /// Why the configuration could not be read (git missing, not a repository).
     pub error: Option<String>,
@@ -145,6 +154,10 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
         .ok();
     facts.gpg_sign = get_bool(dir, scope, "commit.gpgsign").ok().flatten();
     facts.gpg_format = get("gpg.format").ok().flatten();
+    facts.autostash = get_bool(dir, scope, "rebase.autoStash").ok().flatten();
+    facts.follow_tags = get_bool(dir, scope, "push.followTags").ok().flatten();
+    facts.conflict_style = get("merge.conflictStyle").ok().flatten();
+    facts.initial_branch = get("init.defaultBranch").ok().flatten();
     facts
 }
 

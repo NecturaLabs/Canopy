@@ -277,6 +277,15 @@ impl Repo {
         cli::run(self.workdir(), args)
     }
 
+    /// Runs `git args…` with the conflict style chosen in Canopy ([`crate::GitOptions`]), for anything
+    /// that can write conflicts into files.
+    fn conflicting_cmd(&self, args: &[&str]) -> Result<String> {
+        let o = self.options().conflict_override();
+        let mut all: Vec<&str> = o.iter().map(String::as_str).collect();
+        all.extend_from_slice(args);
+        self.git_cmd(&all)
+    }
+
     fn is_unborn(&self) -> bool {
         self.git().head().is_err()
     }
@@ -414,12 +423,14 @@ impl Repo {
 
     /// Commits the index with `message`, running hooks and signing as configured. `amend`
     /// replaces `HEAD`; `signoff` adds a `Signed-off-by:` trailer for the committer
-    /// (`git commit --signoff`). Returns the new `HEAD`.
+    /// (`git commit --signoff`). Only surrounding blank lines and trailing spaces are cleaned up
+    /// (`--cleanup=whitespace`): a line starting with `#` is the user's, not a comment. Returns
+    /// the new `HEAD`.
     pub fn commit(&self, message: &str, amend: bool, signoff: bool) -> Result<Oid> {
         if message.trim().is_empty() {
             return Err(Error::invalid("Write a commit message first."));
         }
-        let mut args = vec!["commit", "-q", "--cleanup=strip", "-F", "-"];
+        let mut args = vec!["commit", "-q", "--cleanup=whitespace", "-F", "-"];
         if amend {
             args.push("--amend");
         }
@@ -518,12 +529,13 @@ impl Repo {
     /// Merges `target` into the current branch as `mode` says and returns git's standard output.
     /// [`MergeMode::Squash`] stages the changes and stops before committing; the caller commits.
     pub fn merge(&self, target: &str, mode: MergeMode) -> Result<String> {
-        self.git_cmd(&["merge", "--no-edit", mode.flag(), target])
+        self.conflicting_cmd(&["merge", "--no-edit", mode.flag(), target])
     }
 
-    /// Rebases the current branch onto `onto`.
+    /// Rebases the current branch onto `onto`, stashing uncommitted changes around it when
+    /// [`crate::GitOptions::autostash`] says so.
     pub fn rebase(&self, onto: &str) -> Result<String> {
-        self.git_cmd(&["rebase", onto])
+        self.conflicting_cmd(&["rebase", self.options().autostash_flag(), onto])
     }
 
     /// Continues or aborts the operation in progress.
@@ -531,7 +543,7 @@ impl Repo {
         let Some(cmd) = state.command() else {
             return Err(Error::invalid("Nothing to continue or abort."));
         };
-        self.git_cmd(&[cmd, if abort { "--abort" } else { "--continue" }])
+        self.conflicting_cmd(&[cmd, if abort { "--abort" } else { "--continue" }])
     }
 
     fn mainline_args(&self, oid: Oid) -> Result<Vec<String>> {
@@ -550,7 +562,7 @@ impl Repo {
         let tail = self.mainline_args(oid)?;
         let mut args = vec!["cherry-pick"];
         args.extend(tail.iter().map(String::as_str));
-        self.git_cmd(&args)
+        self.conflicting_cmd(&args)
     }
 
     /// Commits the inverse of `oid`.
@@ -558,7 +570,7 @@ impl Repo {
         let tail = self.mainline_args(oid)?;
         let mut args = vec!["revert", "--no-edit"];
         args.extend(tail.iter().map(String::as_str));
-        self.git_cmd(&args)
+        self.conflicting_cmd(&args)
     }
 
     /// Moves the current branch to `oid`.
@@ -599,7 +611,7 @@ impl Repo {
     /// Applies a stash; `pop` also drops it when it applied cleanly.
     pub fn stash_apply(&self, index: usize, pop: bool) -> Result<()> {
         let r = format!("stash@{{{index}}}");
-        self.git_cmd(&["stash", if pop { "pop" } else { "apply" }, "-q", &r])
+        self.conflicting_cmd(&["stash", if pop { "pop" } else { "apply" }, "-q", &r])
             .map(drop)
     }
 
@@ -614,7 +626,7 @@ impl Repo {
     /// shift the choice onto another.
     pub fn stash_apply_commit(&self, oid: Oid, pop: bool) -> Result<()> {
         let r = self.stash_ref(oid)?;
-        self.git_cmd(&["stash", if pop { "pop" } else { "apply" }, "-q", &r])
+        self.conflicting_cmd(&["stash", if pop { "pop" } else { "apply" }, "-q", &r])
             .map(drop)
     }
 
@@ -662,14 +674,15 @@ impl Repo {
     /// Fetches `remote`, or every remote when `None`, with tags. `prune` also deletes
     /// remote-tracking branches whose branch no longer exists on the remote (`--prune`); without
     /// it `--no-prune` is passed, so `fetch.prune` / `remote.<name>.prune` in the configuration
-    /// do not prune either.
+    /// do not prune either. Local tags are never pruned (`--no-prune-tags`), whatever
+    /// `fetch.pruneTags` says: that would delete tags not pushed yet.
     pub fn fetch(
         &self,
         remote: Option<&str>,
         prune: bool,
         progress: impl FnMut(&str),
     ) -> Result<String> {
-        let mut args = vec!["fetch", "--progress", "--tags"];
+        let mut args = vec!["fetch", "--progress", "--tags", "--no-prune-tags"];
         args.push(if prune { "--prune" } else { "--no-prune" });
         match remote {
             Some(r) => args.extend(["--", r]),
@@ -684,7 +697,10 @@ impl Repo {
     /// first three is set). [`Repo::pull_config`] reads those settings for a caller that wants
     /// them as the default.
     pub fn pull(&self, strategy: PullStrategy, progress: impl FnMut(&str)) -> Result<String> {
-        let mut args = vec!["pull", "--progress"];
+        let options = self.options();
+        let conflicts = options.conflict_override();
+        let mut args: Vec<&str> = conflicts.iter().map(String::as_str).collect();
+        args.extend(["pull", "--progress", options.autostash_flag()]);
         args.extend(strategy.git_args());
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }
@@ -709,7 +725,8 @@ impl Repo {
     }
 
     /// Pushes the current branch. Without an upstream, pushes to `origin` (or the only remote)
-    /// and sets it as upstream. `force` uses `--force-with-lease`.
+    /// and sets it as upstream. `force` uses `--force-with-lease`; annotated tags on the pushed
+    /// commits go along when [`crate::GitOptions::follow_tags`] says so.
     pub fn push(&self, force: bool, progress: impl FnMut(&str)) -> Result<String> {
         let head = self.head()?;
         let Some(branch) = head.branch else {
@@ -720,7 +737,15 @@ impl Repo {
             .find_branch(&branch, git2::BranchType::Local)
             .and_then(|b| b.upstream())
             .is_ok();
-        let mut args = vec!["push".to_owned(), "--progress".to_owned()];
+        // With an upstream this is a bare push: `simple` pushes the current branch to its
+        // same-named upstream whatever `push.default` says.
+        let mut args = vec![
+            "-c".to_owned(),
+            "push.default=simple".to_owned(),
+            "push".to_owned(),
+            "--progress".to_owned(),
+            self.options().follow_tags_flag().to_owned(),
+        ];
         if force {
             args.push("--force-with-lease".to_owned());
         }
@@ -768,7 +793,14 @@ impl Repo {
         let refspec = format!("refs/heads/{name}:refs/heads/{name}");
         cli::run_streaming(
             Some(self.workdir()),
-            &["push", "--progress", "--set-upstream", remote, &refspec],
+            &[
+                "push",
+                "--progress",
+                self.options().follow_tags_flag(),
+                "--set-upstream",
+                remote,
+                &refspec,
+            ],
             progress,
         )
     }

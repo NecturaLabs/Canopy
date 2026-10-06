@@ -9,7 +9,8 @@ use super::*;
 #[derive(Debug)]
 pub(super) struct OpenRequest {
     pub(super) path: PathBuf,
-    pub(super) create: bool,
+    /// Create the repository first, with this first branch.
+    pub(super) create: Option<String>,
     /// Switch to the tab when it opens (a session restore focuses only its first tab).
     pub(super) focus: bool,
 }
@@ -32,11 +33,12 @@ pub(super) fn start(ctx: &egui::Context) -> Option<(Sender<OpenRequest>, Receive
         .name("opener".into())
         .spawn(move || {
             for request in req_rx {
-                let result =
-                    open(&request.path, request.create).map_err(|e| dialogs::OpenFailure {
+                let result = open(&request.path, request.create.as_deref()).map_err(|e| {
+                    dialogs::OpenFailure {
                         not_a_repository: matches!(e, canopy_core::Error::NotARepository(_)),
                         message: e.to_string(),
-                    });
+                    }
+                });
                 if done_tx.send(Opened { request, result }).is_err() {
                     break;
                 }
@@ -52,13 +54,13 @@ pub(super) fn start(ctx: &egui::Context) -> Option<(Sender<OpenRequest>, Receive
     }
 }
 
-fn open(path: &std::path::Path, create: bool) -> canopy_core::Result<PathBuf> {
+fn open(path: &std::path::Path, create: Option<&str>) -> canopy_core::Result<PathBuf> {
     let path = match path.to_str() {
         Some(typed) if typed.trim_start().starts_with('~') => settings::expand_home(typed),
         _ => path.to_path_buf(),
     };
-    if create {
-        Repo::init(&path)?;
+    if let Some(branch) = create {
+        Repo::init(&path, branch)?;
     }
     let root = Repo::open(&path)?.workdir().to_path_buf();
     Ok(root.canonicalize().unwrap_or(root))
@@ -99,7 +101,7 @@ impl CanopyApp {
             ctx,
             OpenRequest {
                 path,
-                create: false,
+                create: None,
                 focus: true,
             },
         );
@@ -111,14 +113,14 @@ impl CanopyApp {
             ctx,
             OpenRequest {
                 path,
-                create: true,
+                create: Some(self.settings.initial_branch().to_owned()),
                 focus: true,
             },
         );
     }
 
     pub(super) fn request_open(&mut self, ctx: &egui::Context, request: OpenRequest) {
-        let (path, create) = (request.path.clone(), request.create);
+        let (path, create) = (request.path.clone(), request.create.is_some());
         let sent = self
             .opener
             .as_ref()
@@ -159,12 +161,12 @@ impl CanopyApp {
             // The dialog that asked closes on success and shows a failure itself.
             let asked = self.dialogs.finish_open(
                 &request.path,
-                request.create,
+                request.create.is_some(),
                 result.as_ref().map(|_| ()),
             );
             match result {
                 Ok(root) => {
-                    if request.create {
+                    if request.create.is_some() {
                         self.toasts.push(
                             ctx,
                             ToastKind::Success,
@@ -180,7 +182,7 @@ impl CanopyApp {
                     ctx,
                     ToastKind::Error,
                     Topic::Error,
-                    if request.create {
+                    if request.create.is_some() {
                         "Could not create repository"
                     } else {
                         "Could not open repository"

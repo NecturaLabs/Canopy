@@ -22,7 +22,9 @@ use crate::action::Action;
 use crate::hosting::{self, TokenStore};
 use crate::keymap::{Command, Section as KeySection};
 use crate::repo_config::{ConfigValue, GitFacts};
-use crate::settings::{CloneProtocol, DiffPrefs, PullChoice, PullMode, Settings, WhitespaceMode};
+use crate::settings::{
+    CloneProtocol, ConflictMode, DiffPrefs, PullChoice, PullMode, Settings, WhitespaceMode,
+};
 use crate::system_apps::Kind;
 use crate::ui::custom_theme::{self, CustomTheme};
 use crate::ui::kit::button::LinkButton;
@@ -1180,6 +1182,24 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
     row_end(ui);
 }
 
+/// [`row`] with a note under its help about what git's own configuration says.
+fn row_with_note(
+    ui: &mut Ui,
+    title: &str,
+    help: &str,
+    note: Option<&Note>,
+    control: impl FnOnce(&mut Ui),
+) {
+    let help_text = |ui: &mut Ui| {
+        help_label(ui, help);
+        if let Some(note) = note {
+            note.show(ui);
+        }
+    };
+    row_layout(ui, title, None, help, &help_text, "", control);
+    row_end(ui);
+}
+
 /// Every setting's default, for the buttons that go back to it.
 static DEFAULTS: LazyLock<Settings> = LazyLock::new(Settings::default);
 
@@ -1365,6 +1385,33 @@ fn prune_note(facts: &GitFacts, prune: bool) -> Option<Note> {
                 if prune { "--prune" } else { "--no-prune" },
                 phrases(&differ),
                 if differ.len() == 1 { "does" } else { "do" }
+            ),
+            warn: true,
+        }
+    })
+}
+
+/// What git's configuration says about a setting Canopy always passes as `passes`: that it
+/// matches, or that it does not apply to Canopy's `what`. `None` when the configuration sets
+/// nothing.
+fn override_note(
+    value: Option<&ConfigValue>,
+    same: impl FnOnce(&ConfigValue) -> bool,
+    passes: &str,
+    what: &str,
+) -> Option<Note> {
+    let value = value?;
+    Some(if same(value) {
+        Note {
+            text: format!("Matches your git configuration: {}.", config_phrase(value)),
+            warn: false,
+        }
+    } else {
+        Note {
+            text: format!(
+                "Canopy passes {passes}, so your git configuration's {} does not apply to \
+                 {what} from Canopy.",
+                config_phrase(value)
             ),
             warn: true,
         }
@@ -2585,7 +2632,7 @@ fn git(
     default_row(
         ui,
         "Pull strategy",
-        "How a pull brings in the remote's commits: a merge commit, a rebase of yours on top, or only a fast-forward. While Follow my git config is on, only where your git configuration sets none.",
+        "How a pull brings in the remote's commits: a merge commit, a rebase of yours on top, or only a fast-forward. While Follow my git config is on, only where your git configuration sets none. Recommended: fast-forward only; when the branches diverged, Canopy asks how to combine them.",
         None,
         |ui| {
             let options = PullMode::ALL.map(|m| (m, m.label()));
@@ -2615,6 +2662,59 @@ fn git(
             );
         },
     );
+    row_with_note(
+        ui,
+        "Autostash",
+        "Pull and rebase even with uncommitted changes: git puts them aside first and back afterwards (--autostash). Recommended: on.",
+        facts
+            .as_ref()
+            .and_then(|f| {
+                override_note(
+                    f.autostash.as_ref(),
+                    |v| v.as_bool() == Some(s.autostash),
+                    if s.autostash {
+                        "--autostash"
+                    } else {
+                        "--no-autostash"
+                    },
+                    "pulls and rebases",
+                )
+            })
+            .as_ref(),
+        |ui| {
+            switch(ui, &mut s.autostash, "Autostash");
+            revert(ui, &mut s.autostash, &DEFAULTS.autostash, "Autostash");
+        },
+    );
+    row_with_note(
+        ui,
+        "Push tags with their commits",
+        "A push also sends the annotated tags on the commits it pushes (--follow-tags), so a release tag is never left behind. Recommended: on.",
+        facts
+            .as_ref()
+            .and_then(|f| {
+                override_note(
+                    f.follow_tags.as_ref(),
+                    |v| v.as_bool() == Some(s.follow_tags),
+                    if s.follow_tags {
+                        "--follow-tags"
+                    } else {
+                        "--no-follow-tags"
+                    },
+                    "pushes",
+                )
+            })
+            .as_ref(),
+        |ui| {
+            switch(ui, &mut s.follow_tags, "Push tags with their commits");
+            revert(
+                ui,
+                &mut s.follow_tags,
+                &DEFAULTS.follow_tags,
+                "Push tags with their commits",
+            );
+        },
+    );
     default_row(
         ui,
         "Fetch in the background",
@@ -2639,7 +2739,72 @@ fn git(
             );
         },
     );
+    heading(ui, "Conflicts");
+    row_with_note(
+        ui,
+        "Conflict style",
+        "How a conflicted file shows the two sides. With the original text too you can tell what each side changed; trimmed leaves out the lines both sides agree on (zdiff3, or diff3 before git 2.35). Recommended: both sides and the original, trimmed.",
+        facts
+            .as_ref()
+            .and_then(|f| {
+                let ours = s.conflict_style.style();
+                override_note(
+                    f.conflict_style.as_ref(),
+                    |v| canopy_core::ConflictStyle::from_value(&v.value) == Some(ours),
+                    &format!("merge.conflictStyle={}", ours.value(Some((2, 35)))),
+                    "merges, rebases, cherry-picks, reverts and stashes",
+                )
+            })
+            .as_ref(),
+        |ui| {
+            let options = ConflictMode::ALL.map(|m| (m, m.label()));
+            Select::new(&mut s.conflict_style, &options)
+                .width(select_width(ui, options.iter().map(|(_, l)| *l)))
+                .name("Conflict style")
+                .id_salt("conflict-style")
+                .show(ui);
+            revert(
+                ui,
+                &mut s.conflict_style,
+                &DEFAULTS.conflict_style,
+                "Conflict style",
+            );
+        },
+    );
     heading(ui, "Commits");
+    row_with_note(
+        ui,
+        "First branch of a new repository",
+        "The branch a repository created in Canopy starts on (git init --initial-branch). Recommended: main.",
+        facts
+            .as_ref()
+            .and_then(|f| {
+                let ours = s.initial_branch().to_owned();
+                override_note(
+                    f.initial_branch.as_ref(),
+                    |v| v.value.trim() == ours,
+                    &format!("--initial-branch={ours}"),
+                    "new repositories",
+                )
+            })
+            .as_ref(),
+        |ui| {
+            fixed_width(ui, FIELD_WIDTH, |ui| {
+                TextField::new(&mut s.initial_branch)
+                    .placeholder(crate::settings::INITIAL_BRANCH)
+                    .width(FIELD_WIDTH)
+                    .name("First branch of a new repository")
+                    .id_salt("initial-branch")
+                    .show(ui)
+            });
+            revert(
+                ui,
+                &mut s.initial_branch,
+                &DEFAULTS.initial_branch,
+                "First branch of a new repository",
+            );
+        },
+    );
     default_row(
         ui,
         "Add Signed-off-by",
