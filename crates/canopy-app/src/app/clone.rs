@@ -29,15 +29,30 @@ impl CanopyApp {
             Ok(_) => self.clone = Some((url, rx, "Starting…".into())),
             // The status bar never shows a clone that is not running.
             Err(e) => {
-                self.dialogs.finish_clone(false);
                 tracing::error!("could not start the clone thread: {e}");
+                self.clone_finished(ctx, Err(format!("Could not start the clone: {e}")));
+            }
+        }
+    }
+
+    /// Reports a finished clone: a success closes its form and opens the repository; a failure
+    /// is shown in the form that started it, or as a toast once that form is gone.
+    pub(super) fn clone_finished(&mut self, ctx: &egui::Context, result: Result<PathBuf, String>) {
+        let shown = self
+            .dialogs
+            .finish_clone_with(result.as_ref().map(|_| ()).map_err(String::as_str));
+        match result {
+            Ok(path) => {
                 self.toasts.push(
                     ctx,
-                    ToastKind::Error,
-                    "Clone failed",
-                    format!("Could not start the clone: {e}"),
+                    ToastKind::Success,
+                    "Clone complete",
+                    path.display().to_string(),
                 );
+                self.open_repo(ctx, path);
             }
+            Err(e) if !shown => self.toasts.push(ctx, ToastKind::Error, "Clone failed", e),
+            Err(_) => {}
         }
     }
 }
