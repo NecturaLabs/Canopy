@@ -158,6 +158,12 @@ impl CanopyApp {
             shot.ready_frames > 30 && shot.ready_since.is_some_and(|since| now - since > 0.3);
         if !shot.requested && (settled || now - shot.started > 12.0) {
             shot.requested = true;
+            if let Some(menu) = shot.menu.as_ref().filter(|m| m.click.is_none()) {
+                tracing::warn!(
+                    name = menu.name,
+                    "no widget has this name: the picture shows no menu"
+                );
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
         }
         ctx.request_repaint();
