@@ -119,6 +119,8 @@ commits since the previous build.
 
 - Submenus in context menus (Reset current branch here in History, and others) no longer close
   as soon as the pointer leaves their item on the way to them.
+- The pull and merge request list refreshes by itself after a fetch, pull or push, and when you
+  open it after a minute away, instead of only when you press Refresh.
 - A saved theme or option this build no longer has, such as a removed theme, now reads as its
   default instead of resetting every setting. Settings the build no longer has are dropped at the
   first save after launch (Canopy saves every 30 seconds).
