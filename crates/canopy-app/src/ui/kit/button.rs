@@ -1224,28 +1224,28 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                 on,
             );
         }
+        // The options as a kit menu under the whole button, at least as wide, the chosen one
+        // checked. Forced open (the gallery) it opens to the right, clear of what follows.
+        let forced_open = force.is_some_and(|f| f.open) && ui.is_rect_visible(rect);
         let popup = egui::Popup::menu(&caret)
             .id(id.with("menu"))
             .width(rect.width())
             .anchor(rect)
-            .align(egui::RectAlign::BOTTOM_START);
-        let popup = if force.is_some_and(|f| f.open) && ui.is_rect_visible(rect) {
-            popup.open(true)
-        } else {
-            popup
-        };
+            .align(if forced_open {
+                egui::RectAlign::RIGHT_START
+            } else {
+                egui::RectAlign::BOTTOM_START
+            })
+            .align_alternatives(&[egui::RectAlign::TOP_START]);
+        let popup = if forced_open { popup.open(true) } else { popup };
         let value = self.value;
         let options = self.options;
-        popup.show(|ui| {
+        super::menu::menu_in(&caret, popup, |m| {
             for (v, l) in options {
                 let chosen = *v == *value;
-                let mut row = Button::new(*l).ghost().full_width();
-                if chosen {
-                    row = row.icon(icon::CHECK);
-                }
-                if row.show(ui).clicked() {
+                if m.item("", *l).checked(chosen).show(m.ui).clicked() {
                     *value = v.clone();
-                    ui.close();
+                    m.ui.close();
                 }
             }
         });

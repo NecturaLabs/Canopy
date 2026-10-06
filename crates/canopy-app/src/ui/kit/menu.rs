@@ -363,6 +363,16 @@ pub fn menu<R>(button: &Response, add: impl FnOnce(&mut Menu<'_>) -> R) -> Optio
     show_popup(button, popup, Kind::Button, keyboard, add)
 }
 
+/// [`menu`] in a `popup` the caller placed (a split button's menu spans the whole button).
+pub(crate) fn menu_in<R>(
+    button: &Response,
+    popup: Popup<'_>,
+    add: impl FnOnce(&mut Menu<'_>) -> R,
+) -> Option<R> {
+    let keyboard = button.clicked() && !button.clicked_by(egui::PointerButton::Primary);
+    show_popup(button, popup, Kind::Button, keyboard, add)
+}
+
 /// A menu painted in place, `width` wide (the gallery shows menus without opening them).
 pub(crate) fn inline<R>(
     ui: &mut Ui,
