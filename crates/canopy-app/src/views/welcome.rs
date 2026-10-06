@@ -114,9 +114,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                         )
                         .clicked()
                         {
-                            actions.push(Action::OpenDialog(Dialog::Init {
-                                path: String::new(),
-                            }));
+                            actions.push(Action::OpenDialog(Dialog::new_repository(String::new())));
                         }
                     },
                 );

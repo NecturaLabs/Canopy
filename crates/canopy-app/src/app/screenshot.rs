@@ -205,9 +205,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             }
             d
         }
-        "init" => Dialog::Init {
-            path: "~/src/tidepool".into(),
-        },
+        "init" => Dialog::new_repository("~/src/tidepool".into()),
         "new-branch" => Dialog::new_branch_at(Start::Head),
         "rename" => Dialog::Rename {
             old: "feature/search".into(),

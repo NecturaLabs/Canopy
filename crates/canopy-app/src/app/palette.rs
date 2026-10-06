@@ -127,9 +127,7 @@ impl CanopyApp {
                     "Repository",
                     Some(C::Init),
                 ),
-                Action::OpenDialog(Dialog::Init {
-                    path: String::new(),
-                }),
+                Action::OpenDialog(Dialog::new_repository(String::new())),
             ),
             (
                 e(icon::PALETTE, "Next theme", "Appearance", None),

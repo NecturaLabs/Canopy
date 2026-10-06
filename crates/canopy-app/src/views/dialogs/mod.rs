@@ -66,11 +66,6 @@ pub enum Dialog {
         /// Why the last clone from this form failed, in git's words.
         error: Option<String>,
     },
-    /// How callers ask for the new-repository dialog: [`show`] turns it into
-    /// [`Dialog::NewRepository`], which keeps the dialog's state.
-    Init {
-        path: String,
-    },
     NewRepository {
         path: String,
         /// The folder asked for, while it is created and opened.
@@ -286,9 +281,6 @@ pub fn show(
 ) -> Outcome {
     let p = palette(ctx);
     let m = theme::metrics();
-    if let Dialog::Init { path } = dialog {
-        *dialog = Dialog::new_repository(std::mem::take(path));
-    }
     let salt = salt(dialog);
     // What a control inside the body asked for (a link, a secondary action); it wins over the
     // footer.
@@ -503,8 +495,6 @@ pub fn show(
                 _ => Outcome::Keep,
             })
         }
-        // Turned into `NewRepository` before this match.
-        Dialog::Init { .. } => Outcome::Keep,
         Dialog::NewRepository {
             path,
             pending,
