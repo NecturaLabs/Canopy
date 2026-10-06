@@ -12,9 +12,9 @@
 use egui::accesskit::{Invalid, Role};
 use egui::epaint::TextShape;
 use egui::{
-    Align2, Color32, CornerRadius, Event, FontFamily, FontId, Id, Key, Modifiers, PointerButton,
-    Popup, PopupCloseBehavior, RectAlign, Response, Sense, Ui, UiBuilder, Widget, WidgetInfo,
-    WidgetType, pos2, vec2,
+    Align, Align2, Color32, CornerRadius, Event, FontFamily, FontId, Id, Key, Layout, Modifiers,
+    PointerButton, Popup, PopupCloseBehavior, RectAlign, Response, Sense, Ui, UiBuilder, Widget,
+    WidgetInfo, WidgetType, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -182,29 +182,36 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             None => ui.available_width(),
         };
         self.width = Some(width);
-        // Label, trigger and message stack like a text field's, in a slot the parent's layout
-        // places as it would the trigger alone (at the right of a right-to-left row).
-        ui.allocate_ui_with_layout(
-            vec2(width, self.size.height()),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
+        let id = self
+            .id
+            .unwrap_or_else(|| component_id(ui, "kit-select", self.id_salt));
+        // Label, trigger and message stack like a text field's, in a slot of their own size that
+        // the parent's layout places (at the right of a right-to-left row, centred in a centred
+        // one). The stack's height is last frame's; a change is measured and redrawn at once.
+        let height_id = id.with("kit-select-height");
+        let height = ui
+            .data(|d| d.get_temp::<f32>(height_id))
+            .unwrap_or_else(|| self.size.height());
+        let shown =
+            ui.allocate_ui_with_layout(vec2(width, height), Layout::top_down(Align::Min), |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                self.show_inner(ui)
-            },
-        )
-        .inner
+                self.show_inner(ui, id)
+            });
+        let used = shown.response.rect.height();
+        if (used - height).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(height_id, used));
+            ui.ctx().request_discard("select measured");
+        }
+        shown.inner
     }
 
-    fn show_inner(self, ui: &mut Ui) -> Response {
+    fn show_inner(self, ui: &mut Ui, id: Id) -> Response {
         let ctx = ui.ctx().clone();
         let p = theme::palette(&ctx);
         let style = theme::style();
         let s = p.surfaces(style);
         let m = theme::metrics();
         let enabled = self.enabled && ui.is_enabled();
-        let id = self
-            .id
-            .unwrap_or_else(|| component_id(ui, "kit-select", self.id_salt));
         let popup_id = id.with("kit-select-list");
         let state_id = id.with("kit-select-state");
         let width = self.width.unwrap_or_else(|| ui.available_width());
@@ -739,36 +746,58 @@ const STRATEGIES: [(u8, &str); 3] = [
     (2, "Fast-forward only"),
 ];
 
-/// The gallery's selects: live, hover, focus, disabled, loading, placeholder, and one open.
+/// The gallery's selects: live with a helper and with an error, one open, then hover, focus,
+/// disabled, loading, placeholder and small.
 pub(crate) fn gallery(ui: &mut Ui) {
     gallery_caption(
         ui,
         "Live (pointer or keyboard) with a label and a helper; an error; beside a text field",
     );
-    gallery_row(ui, |ui| {
-        remembered(ui, "select-live", 1_u8, |ui, v| {
-            Select::new(v, &STRATEGIES)
-                .label("Pull strategy")
-                .helper("Canopy passes it to git on every pull.")
-                .width(280.0)
-                .tooltip("How Pull combines your work with the remote's")
-                .id_salt("g-sel0")
+    // Top-aligned, as a form lines up labelled controls of different heights.
+    ui.with_layout(
+        Layout::left_to_right(Align::Min).with_main_wrap(true),
+        |ui| {
+            ui.spacing_mut().item_spacing = vec2(theme::LG, theme::SM);
+            remembered(ui, "select-live", 1_u8, |ui, v| {
+                Select::new(v, &STRATEGIES)
+                    .label("Pull strategy")
+                    .helper("Canopy passes it to git on every pull.")
+                    .width(280.0)
+                    .tooltip("How Pull combines your work with the remote's")
+                    .id_salt("g-sel0")
+                    .show(ui);
+            });
+            Select::new(&mut 9_u8, &STRATEGIES)
+                .label("Required")
+                .placeholder("Choose a strategy…")
+                .error(Some("Choose how to combine the branches."))
+                .width(240.0)
+                .id_salt("g-sel6")
                 .show(ui);
-        });
-        Select::new(&mut 9_u8, &STRATEGIES)
-            .label("Required")
-            .placeholder("Choose a strategy…")
-            .error(Some("Choose how to combine the branches."))
-            .width(240.0)
-            .id_salt("g-sel6")
-            .show(ui);
-        field::TextField::new(&mut "origin".to_owned())
-            .label("Text field, for comparison")
-            .width(200.0)
-            .id_salt("g-sel-field")
-            .show(ui);
-    });
+            field::TextField::new(&mut "origin".to_owned())
+                .label("Text field, for comparison")
+                .width(200.0)
+                .id_salt("g-sel-field")
+                .show(ui);
+        },
+    );
     ui.add_space(theme::SM);
+    gallery_caption(ui, "Open, with the pointer on another option");
+    Select::new(&mut 1_u8, &STRATEGIES)
+        .width(280.0)
+        .id_salt("g-sel7")
+        .show_forced(
+            ui,
+            ForceState {
+                open: true,
+                hover: true,
+                ..ForceState::default()
+            },
+        );
+    // Room for the open list.
+    ui.add_space(
+        3.0 * theme::metrics().menu_item_height + 2.0 * theme::metrics().menu_pad + theme::MD,
+    );
     let w = 160.0;
     gallery_caption(ui, "Hover, focus, disabled");
     gallery_row(ui, |ui| {
@@ -810,23 +839,6 @@ pub(crate) fn gallery(ui: &mut Ui) {
             .id(Id::new("gallery-select-small"))
             .show(ui);
     });
-    ui.add_space(theme::SM);
-    gallery_caption(ui, "Open, with the pointer on another option");
-    Select::new(&mut 1_u8, &STRATEGIES)
-        .width(280.0)
-        .id_salt("g-sel7")
-        .show_forced(
-            ui,
-            ForceState {
-                open: true,
-                hover: true,
-                ..ForceState::default()
-            },
-        );
-    // Room for the open list.
-    ui.add_space(
-        3.0 * theme::metrics().menu_item_height + 2.0 * theme::metrics().menu_pad + theme::MD,
-    );
 }
 
 #[cfg(test)]
@@ -1121,7 +1133,7 @@ mod tests {
         let (mut trigger, mut row) = (egui::Rect::NOTHING, egui::Rect::NOTHING);
         frame(&ctx, Vec::new(), |ui| {
             ui.set_width(600.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 row = ui.max_rect();
                 trigger = Select::new(&mut v, &STRATEGIES)
                     .width(200.0)
