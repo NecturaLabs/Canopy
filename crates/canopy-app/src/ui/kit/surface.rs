@@ -357,18 +357,39 @@ pub fn column_label(ui: &mut Ui, text: &str) -> Response {
 // --------------------------------------------------------------------------------------- Deck
 
 /// The top bars: the repository tab strip and, with a repository open, the action bar.
-/// Standard paints each as flat chrome over its own seam. Deeper paints both as one lifted deck
-/// (its gradient, highlight and shadow onto the ground) with no seam between them, edged below by
-/// `deck_edge`, so the bars read as one instrument panel over the floating panes.
+/// Standard paints each as flat chrome over its own seam. Deeper leaves the tab strip on the
+/// window's ground and floats the action bar as a card: the deck's lifted gradient, highlight and
+/// shadow with the panes' edge and radius, inset by the pane gutter so the tools sit in line with
+/// the cards below.
 #[derive(Debug, Clone, Copy)]
 #[must_use = "call .paint(painter, rect)"]
 pub struct Deck {
     action_bar: bool,
+    style: Option<Style>,
 }
 
 impl Deck {
     pub fn new(action_bar: bool) -> Self {
-        Self { action_bar }
+        Self {
+            action_bar,
+            style: None,
+        }
+    }
+
+    /// Paints in `style` instead of the active one (the gallery's side-by-side strip).
+    pub fn style(mut self, style: Style) -> Self {
+        self.style = Some(style);
+        self
+    }
+
+    /// Deeper's action bar card for a window whose content spans `screen`.
+    pub fn action_card(screen: Rect) -> Rect {
+        let m = theme::metrics();
+        let top = screen.top() + m.tab_strip_height;
+        Rect::from_min_max(
+            pos2(screen.left() + m.pane_gutter, top),
+            pos2(screen.right() - m.pane_gutter, top + m.action_bar_height),
+        )
     }
 
     /// The deck's height in the active metrics.
@@ -382,23 +403,36 @@ impl Deck {
             }
     }
 
-    /// Paints the deck across the top of `screen`; returns its rect.
+    /// Paints the deck across the top of `screen` (over the window's ground, which the caller has
+    /// painted); returns the rect the bars take.
     pub fn paint(self, painter: &Painter, screen: Rect) -> Rect {
         let p = theme::palette(painter.ctx());
-        let s = theme::surfaces(painter.ctx());
+        let style = self.style.unwrap_or_else(theme::style);
+        let s = p.surfaces(style);
         let m = theme::metrics();
         let deck = Rect::from_min_size(screen.min, vec2(screen.width(), self.height()));
-        if theme::style() == Style::Deeper {
-            paint::deck(painter, deck, p, s);
+        if style == Style::Deeper {
+            if self.action_bar {
+                paint::surface(
+                    painter,
+                    Self::action_card(screen),
+                    CornerRadius::same(m.pane_radius),
+                    p,
+                    style,
+                    Elevation::Deck,
+                    s.deck,
+                    s.pane_edge,
+                );
+            }
         } else {
             let strip = Rect::from_min_size(screen.min, vec2(screen.width(), m.tab_strip_height));
-            paint::deck(painter, strip, p, s);
+            paint::deck_in(painter, strip, p, s, style);
             if self.action_bar {
                 let bar = Rect::from_min_size(
                     pos2(screen.left(), strip.bottom()),
                     vec2(screen.width(), m.action_bar_height),
                 );
-                paint::deck(painter, bar, p, s);
+                paint::deck_in(painter, bar, p, s, style);
             }
         }
         deck
@@ -874,6 +908,15 @@ impl Banner {
 
 // ------------------------------------------------------------------------------------ Callout
 
+/// What [`Callout::show_with`] draws between the text and the actions.
+type CalloutContent<'a> = Box<dyn FnOnce(&mut Ui) + 'a>;
+
+/// Padding inside a callout (spec 4.20: 10 x 12) and an inset box (8 x 10).
+const CALLOUT_PAD: Margin = Margin::symmetric(12, 10);
+const INSET_PAD: Margin = Margin::symmetric(10, 8);
+/// Gap between an empty state's keys and what they do (as between two chords of a sequence).
+const HINT_GAP: f32 = 6.0;
+
 /// An inline note in a pane or dialog: the tone's tint, an icon, optional title, wrapped text and
 /// up to two ghost actions under it, their labels in line with the text. No side bar.
 #[derive(Debug, Clone)]
@@ -924,6 +967,20 @@ impl Callout {
 
     /// Shows the callout; the value is the index of the action clicked.
     pub fn show_actions(self, ui: &mut Ui) -> KitResponse<Option<usize>> {
+        self.show_inner(ui, None)
+    }
+
+    /// Shows the callout with `add`'s content between its text and its actions (a short list,
+    /// keys and what they do); the value is the index of the action clicked.
+    pub fn show_with(self, ui: &mut Ui, add: impl FnOnce(&mut Ui)) -> KitResponse<Option<usize>> {
+        self.show_inner(ui, Some(Box::new(add)))
+    }
+
+    fn show_inner(
+        self,
+        ui: &mut Ui,
+        content: Option<CalloutContent<'_>>,
+    ) -> KitResponse<Option<usize>> {
         let p = theme::palette(ui.ctx());
         let m = theme::metrics();
         let tone_c = self.tone.color(p);
@@ -938,7 +995,7 @@ impl Callout {
         let response = egui::Frame::new()
             .fill(self.tone.tint(p))
             .corner_radius(CornerRadius::same(m.radius))
-            .inner_margin(Margin::symmetric(12, 10))
+            .inner_margin(CALLOUT_PAD)
             .show(ui, |ui| {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = theme::SM;
@@ -960,6 +1017,10 @@ impl Callout {
                             )
                             .wrap(),
                         );
+                        if let Some(add) = content {
+                            ui.add_space(theme::XS);
+                            add(ui);
+                        }
                         if !self.actions.is_empty() {
                             ui.add_space(theme::XS);
                             // Ghost buttons pulled left so their labels line up with the text.
@@ -1026,7 +1087,7 @@ impl InsetBox {
             .fill(s.field)
             .stroke(Stroke::new(paint::SEAM, s.border))
             .corner_radius(CornerRadius::same(m.radius_sm))
-            .inner_margin(Margin::symmetric(10, 8))
+            .inner_margin(INSET_PAD)
             .show(ui, add);
         KitResponse {
             response: r.response,
@@ -1204,7 +1265,7 @@ impl EmptyState {
         }
         for (command, what) in &self.hints {
             child.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.spacing_mut().item_spacing.x = HINT_GAP;
                 KeyChord::command(*command).show(ui);
                 ui.label(
                     egui::RichText::new(what)
@@ -1539,7 +1600,7 @@ fn deck_sample(ui: &mut Ui, style: Style) {
     let p = theme::palette(ui.ctx());
     let s = p.surfaces(style);
     let m = theme::metrics();
-    let deck = Deck::new(true);
+    let deck = Deck::new(true).style(style);
     let width = ui.available_width();
     let (outer, _) = ui.allocate_exact_size(vec2(width, deck.height() + 24.0), Sense::hover());
     let painter = ui.painter().with_clip_rect(outer.intersect(ui.clip_rect()));
@@ -1726,6 +1787,48 @@ mod tests {
                     Deck::new(true).height(),
                     m.tab_strip_height + m.action_bar_height
                 );
+            }
+        }
+    }
+
+    /// Standard paints both bars across the window; Deeper leaves the tab strip on the ground and
+    /// floats only the action bar, as a card inset by the pane gutter (as the window does).
+    #[test]
+    fn deeper_floats_only_the_action_bar_as_a_card() {
+        let ctx = ctx();
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+        for style in Style::ALL {
+            apply(&ctx, style, Density::Comfortable);
+            let m = theme::metrics();
+            let out = run(&ctx, Vec::new(), |ui| {
+                let _ = Deck::new(true).paint(ui.painter(), screen);
+            });
+            let rects: Vec<Rect> = out
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Rect(r) if r.fill.a() > 0 => Some(r.rect),
+                    _ => None,
+                })
+                .collect();
+            let across = |y: f32| {
+                rects.iter().any(|r| {
+                    r.left() <= screen.left()
+                        && r.right() >= screen.right()
+                        && r.y_range().contains(y)
+                })
+            };
+            let strip_y = m.tab_strip_height / 2.0;
+            let bar_y = m.tab_strip_height + m.action_bar_height / 2.0;
+            match style {
+                Style::Standard => {
+                    assert!(across(strip_y) && across(bar_y), "{rects:?}");
+                }
+                Style::Deeper => {
+                    assert!(!across(strip_y) && !across(bar_y), "{rects:?}");
+                    assert!(rects.contains(&Deck::action_card(screen)), "{rects:?}");
+                    assert_eq!(Deck::action_card(screen).left(), m.pane_gutter);
+                }
             }
         }
     }

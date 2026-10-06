@@ -16,8 +16,8 @@ use std::fmt::Write as _;
 use egui::accesskit::Role;
 use egui::text::{LayoutJob, TextWrapping};
 use egui::{
-    Color32, CornerRadius, FontFamily, FontId, Id, Mesh, Rect, Response, Sense, Ui, UiBuilder,
-    Vec2, WidgetInfo, WidgetType, pos2, vec2,
+    Color32, CornerRadius, FontFamily, FontId, Id, Rect, Response, Sense, Ui, UiBuilder, Vec2,
+    WidgetInfo, WidgetType, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -25,7 +25,7 @@ use super::overlay::TooltipExt;
 use super::progress::Spinner;
 use super::{ForceState, IconButton, Interact, KitResponse, Size, anim, paint};
 use crate::ui::motion;
-use crate::ui::theme::{self, Elevation};
+use crate::ui::theme::{self, Elevation, Fill, Style};
 
 /// Padding inside a tab: left of the icon, right of the close button.
 const PAD_LEFT: f32 = 10.0;
@@ -38,9 +38,6 @@ const MAX_WIDTH: f32 = 220.0;
 const BETWEEN: f32 = 4.0;
 /// The ahead/behind counts (mono, `accent`).
 const COUNT_SIZE: f32 = 11.5;
-/// How far the strip's edges fade where more tabs are scrolled out of sight, and how strongly.
-const EDGE_FADE: f32 = 16.0;
-const EDGE_FADE_ALPHA: f32 = 0.85;
 
 /// One tab: a stable key (it keeps the tab's identity when others open or close), a name, and
 /// what it shows besides.
@@ -283,22 +280,7 @@ impl<'a> DocTabs<'a> {
         });
 
         // Fade the edges that hide more tabs.
-        let rect = scroll.inner_rect;
-        let hidden_left = scroll.state.offset.x;
-        let hidden_right = scroll.content_size.x - rect.width() - scroll.state.offset.x;
-        let ground = theme::surfaces(&ctx).deck;
-        let painter = ui.painter_at(rect);
-        let band = EDGE_FADE.min(rect.width() / 4.0);
-        let ground_at = |y: f32| {
-            let t = ((y - rect.top()) / rect.height().max(1.0)).clamp(0.0, 1.0);
-            theme::mix(ground.top, ground.bottom, t).gamma_multiply(EDGE_FADE_ALPHA)
-        };
-        if hidden_left > 0.5 {
-            painter.add(edge_fade(rect, rect.left(), band, true, ground_at));
-        }
-        if hidden_right > 0.5 {
-            painter.add(edge_fade(rect, rect.right() - band, band, false, ground_at));
-        }
+        paint::scroll_fade_x(ui, &scroll, strip_ground(&ctx));
 
         state.drawn = drawn;
         ctx.data_mut(|d| d.insert_temp(state_id, state));
@@ -309,29 +291,14 @@ impl<'a> DocTabs<'a> {
     }
 }
 
-/// A sideways fade `band` wide starting at `x`: opaque at the strip's edge (`from_edge_left`:
-/// the left edge), clear towards the middle; `color_at` gives the ground at a height.
-fn edge_fade(
-    rect: Rect,
-    x: f32,
-    band: f32,
-    from_edge_left: bool,
-    color_at: impl Fn(f32) -> Color32,
-) -> Mesh {
-    let mut mesh = Mesh::default();
-    let (top, bottom) = (color_at(rect.top()), color_at(rect.bottom()));
-    let (left, right) = if from_edge_left {
-        ((top, bottom), (Color32::TRANSPARENT, Color32::TRANSPARENT))
-    } else {
-        ((Color32::TRANSPARENT, Color32::TRANSPARENT), (top, bottom))
-    };
-    mesh.colored_vertex(pos2(x, rect.top()), left.0);
-    mesh.colored_vertex(pos2(x + band, rect.top()), right.0);
-    mesh.colored_vertex(pos2(x + band, rect.bottom()), right.1);
-    mesh.colored_vertex(pos2(x, rect.bottom()), left.1);
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    mesh
+/// What the tab strip sits on: the deck's chrome in Standard, the window's ground in Deeper (whose
+/// tab strip is not a bar of its own).
+pub fn strip_ground(ctx: &egui::Context) -> Fill {
+    let s = theme::surfaces(ctx);
+    match theme::style() {
+        Style::Standard => s.deck,
+        Style::Deeper => Fill::flat(s.bg),
+    }
 }
 
 enum TabEvent {
@@ -612,7 +579,7 @@ fn on_deck(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     ui.painter().set(
         slot,
         egui::Shape::Vec(vec![
-            paint::fill_shape(ui.ctx(), rect, radius, s.deck),
+            paint::fill_shape(ui.ctx(), rect, radius, strip_ground(ui.ctx())),
             egui::epaint::RectShape::stroke(
                 rect,
                 radius,
@@ -825,5 +792,47 @@ mod tests {
             alpha.right() + MIN_WIDTH / 2.0 < beta.left(),
             "the busy tab overlaps the next: {alpha:?} {beta:?}"
         );
+    }
+
+    /// The overflow fades melt into what the strip stands on: the deck in Standard, the bare
+    /// ground in Deeper (whose tab strip is not a bar).
+    #[test]
+    fn overflow_fades_use_the_ground_the_strip_stands_on() {
+        let tabs: Vec<DocTab<'_>> = (0..12).map(|i| DocTab::new(i, "repository")).collect();
+        for style in [Style::Standard, Style::Deeper] {
+            let ctx = context();
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                theme::Appearance {
+                    style,
+                    ..theme::Appearance::STILL
+                },
+            );
+            let s = theme::surfaces(&ctx);
+            let ground = match style {
+                Style::Standard => s.deck.top,
+                Style::Deeper => s.bg,
+            };
+            let edge = ground.gamma_multiply(paint::SCROLL_FADE_ALPHA);
+            let out = frame(&ctx, 0.0, Vec::new(), |ui| {
+                let _ = DocTabs::new(&tabs, 0)
+                    .max_width(400.0)
+                    .offset(300.0)
+                    .show(ui);
+            });
+            let fades = out
+                .shapes
+                .iter()
+                .filter(|c| match &c.shape {
+                    egui::Shape::Mesh(m) => m.vertices.iter().any(|v| v.color == edge),
+                    _ => false,
+                })
+                .count();
+            assert_eq!(
+                fades, 2,
+                "{style:?}: both edges hide tabs and fade into the ground"
+            );
+        }
     }
 }

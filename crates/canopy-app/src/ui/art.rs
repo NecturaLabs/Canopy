@@ -62,45 +62,6 @@ pub fn empty_error() -> Art {
     Art::Error
 }
 
-/// A soft radial halo: `color` at the centre fading to nothing at `radius` along a Gaussian-like
-/// curve, laid out in rings so the falloff has no hard rim and no linear ramp to band.
-fn radial_halo(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32) {
-    const SEGMENTS: u16 = 96;
-    const RINGS: u16 = 12;
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(center, color);
-    for ring in 1..=RINGS {
-        let t = f32::from(ring) / f32::from(RINGS);
-        let c = color.gamma_multiply(halo_falloff(t));
-        for i in 0..SEGMENTS {
-            let a = f32::from(i) / f32::from(SEGMENTS) * std::f32::consts::TAU;
-            mesh.colored_vertex(center + vec2(a.cos(), a.sin()) * radius * t, c);
-        }
-    }
-    let segments = u32::from(SEGMENTS);
-    let at = |ring: u32, i: u32| 1 + (ring - 1) * segments + i % segments;
-    for i in 0..segments {
-        mesh.add_triangle(0, at(1, i), at(1, i + 1));
-    }
-    for ring in 1..u32::from(RINGS) {
-        for i in 0..segments {
-            let (a, b) = (at(ring, i), at(ring, i + 1));
-            let (c, d) = (at(ring + 1, i), at(ring + 1, i + 1));
-            mesh.add_triangle(a, b, d);
-            mesh.add_triangle(a, d, c);
-        }
-    }
-    painter.add(mesh);
-}
-
-/// A halo's strength at `t` (0 at the centre, 1 at the rim): a Gaussian shifted to reach exactly
-/// 0 at the rim with a flat tail, so the edge never reads as a ring.
-fn halo_falloff(t: f32) -> f32 {
-    const K: f32 = 3.2;
-    let g = |x: f32| (-K * x * x).exp();
-    ((g(t) - g(1.0)) / (1.0 - g(1.0))).clamp(0.0, 1.0)
-}
-
 /// Draws `art` at `size` points (its aspect ratio is kept, centred in `size`).
 pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
@@ -114,7 +75,6 @@ pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
     let p = palette(ui.ctx());
     let painter = ui.painter_at(rect.expand(4.0));
     let to_screen = |v: Pos2| origin + v.to_vec2() * scale;
-    let breathe = breathing(ui, art);
     for item in &scene.items {
         let local = ((progress - item.at) / item.span.max(0.001)).clamp(0.0, 1.0);
         if local <= 0.0 {
@@ -123,9 +83,9 @@ pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
         match &item.shape {
             Geometry::Halo { center, radius } => {
                 let c = to_screen(*center);
-                let r = radius * scale * (0.6 + 0.4 * ease_out(local)) * breathe;
+                let r = radius * scale * (0.6 + 0.4 * ease_out(local));
                 let color = item.ink.resolve(p, c.y, origin.y, scene.size.y * scale);
-                radial_halo(
+                super::kit::paint::glow(
                     &painter,
                     c,
                     r,
@@ -222,14 +182,6 @@ fn growth(ui: &Ui, art: Art, id: egui::Id) -> f32 {
     });
     let duration = if art == Art::Welcome { 1.6 } else { 1.0 };
     crate::ui::to_f32(((now - start) / duration).clamp(0.0, 1.0))
-}
-
-/// The welcome canopy's halos breathe slowly; the screen already repaints for its drifting glow.
-fn breathing(ui: &Ui, art: Art) -> f32 {
-    if art != Art::Welcome || motion::reduced() {
-        return 1.0;
-    }
-    1.0 + 0.08 * (crate::ui::to_f32(ui.input(|i| i.time)) * 0.9).sin()
 }
 
 fn ease_out(t: f32) -> f32 {
