@@ -173,7 +173,7 @@ pub(crate) fn lookup(
     Ok(url.and_then(|u| validate(&u, forge, http.base())))
 }
 
-/// The status of [`unknown_commit`]'s error, as GitHub's own `commits/<sha>` endpoint answers.
+/// The status [`is_unknown_commit`] recognises, as GitHub's own `commits/<sha>` endpoint answers.
 const UNKNOWN_COMMIT: u16 = 422;
 
 /// Whether a lookup failed only because the host does not have that commit (it was never pushed
