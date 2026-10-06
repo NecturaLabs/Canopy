@@ -835,17 +835,23 @@ fn composer(
         )
     };
     let branch = snap.head.label();
-    let label = if merging {
-        format!("Conclude merge on {branch}")
+    // The full label first, then shorter ones for a column too narrow for it.
+    let labels = if merging {
+        vec![
+            format!("Conclude merge on {branch}"),
+            "Conclude merge".to_owned(),
+        ]
     } else if tab.amend {
-        format!("Amend {branch}")
+        vec![format!("Amend {branch}"), "Amend".to_owned()]
     } else if staged > 0 {
-        format!(
-            "Commit {staged} file{} to {branch}",
-            if staged == 1 { "" } else { "s" }
-        )
+        let files = format!("{staged} file{}", if staged == 1 { "" } else { "s" });
+        vec![
+            format!("Commit {files} to {branch}"),
+            format!("Commit {files}"),
+            "Commit".to_owned(),
+        ]
     } else {
-        "Stage files to commit".to_owned()
+        vec!["Stage files to commit".to_owned(), "Stage files".to_owned()]
     };
     let warning = identity_notice(tab.identity.as_ref(), tab.identity_error.is_some());
     let tip = warning.map_or_else(
@@ -879,18 +885,24 @@ fn composer(
             ui.label(RichText::new(reason).size(m.small_size).color(p.text_dim));
             ui.add_space(theme::XS);
         }
-        let mut commit = Button::new(&label)
+        let (label, keys) = fitting_label(ui, &labels, ui.available_width());
+        let mut commit = Button::new(label)
             .primary()
             .icon(icon::CHECK)
             .full_width()
             .enabled(can)
             .tooltip(tip.as_str())
             .shortcut(Command::Commit)
-            .show_shortcut(true);
+            .show_shortcut(keys);
         if let Some(reason) = blocker {
             commit = commit.disabled_reason(reason);
         }
         let commit = commit.show(ui);
+        if let Some(full) = labels.first().filter(|full| full.as_str() != label) {
+            commit
+                .ctx
+                .accesskit_node_builder(commit.id, |node| node.set_label(full.as_str()));
+        }
         if commit_detail::say_unavailable(commit, blocker.unwrap_or_default()).clicked() && can {
             actions.push(Action::Commit);
         }
@@ -918,6 +930,32 @@ fn composer(
             );
             composer_fields(ui, tab, actions);
         });
+}
+
+/// The commit button's label for a column `room` points wide, and whether its keys fit beside
+/// it: the first of `labels` with its keys, else the first label that fits alone (the keys stay
+/// in the tooltip), else the last, so the button never cuts its text at a large zoom.
+fn fitting_label<'a>(ui: &Ui, labels: &'a [String], room: f32) -> (&'a str, bool) {
+    let m = theme::metrics();
+    let width = |text: &str, font: FontId| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)
+            .size()
+            .x
+    };
+    let font = FontId::new(m.body_size, theme::medium());
+    let frame =
+        2.0 * m.button_pad_x + width(icon::CHECK, FontId::proportional(m.icon_md)) + m.button_gap;
+    let keys = theme::SM + width(&crate::keymap::hint(Command::Commit), font.clone());
+    let fits = |label: &String, extra: f32| frame + width(label, font.clone()) + extra <= room;
+    if let Some(full) = labels.first().filter(|l| fits(l, keys)) {
+        return (full, true);
+    }
+    let label = labels
+        .iter()
+        .find(|l| fits(l, 0.0))
+        .or_else(|| labels.last());
+    (label.map_or("", String::as_str), false)
 }
 
 /// A clean tree with nothing typed: the composer shrinks to a line and the Amend choice, so an
@@ -1549,6 +1587,98 @@ mod tests {
                 !summary.is_positive() || !warning_rect.intersects(summary),
                 "identity notice {warning_rect:?} overlaps painted summary {summary:?}",
             );
+        }
+    }
+
+    /// QVIS-5: in a narrow column (a small window at a large zoom) the commit button never
+    /// clips its label or keys: it drops the keys, then the branch, then the count, and the
+    /// screen reader still hears the whole label.
+    #[test]
+    fn the_commit_button_fits_its_label_in_a_narrow_column() {
+        let keys = crate::keymap::hint(Command::Commit);
+        for width in [180.0, 240.0, 300.0, 420.0] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+            ctx.enable_accesskit();
+            let (worker, _, _) = crate::worker::Worker::detached();
+            let mut tab = RepoTab::with_worker(
+                std::path::PathBuf::from("fixture"),
+                100,
+                crate::settings::DiffPrefs::default(),
+                worker,
+            );
+            tab.commit_summary = "Add metrics".into();
+            let mut snap = unstaged_snapshot();
+            snap.status.staged = vec![entry("src/lib.rs"), entry("src/main.rs")];
+            snap.head.branch = Some("feature/dark-mode".into());
+            tab.snap = Some(std::sync::Arc::new(snap.clone()));
+            let mut texts = Vec::new();
+            let mut spoken = None;
+            for _ in 0..3 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(width, 700.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            composer(ui, &mut tab, &snap, &mut Vec::new(), true);
+                        });
+                    },
+                );
+                out.textures_delta.clear();
+                texts = out
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text)
+                            if text.galley.text().starts_with("Commit")
+                                || text.galley.text() == keys =>
+                        {
+                            Some((
+                                text.galley.text().to_owned(),
+                                shape.clip_rect,
+                                text.visual_bounding_rect(),
+                            ))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                spoken = out.platform_output.accesskit_update.and_then(|u| {
+                    u.nodes
+                        .into_iter()
+                        .map(|(_, n)| n)
+                        .find(|n| {
+                            n.role() == egui::accesskit::Role::Button
+                                && n.label().is_some_and(|l| l.starts_with("Commit"))
+                        })
+                        .and_then(|n| n.label().map(str::to_owned))
+                });
+            }
+            let label = texts
+                .iter()
+                .find(|(t, _, _)| t.starts_with("Commit"))
+                .unwrap_or_else(|| panic!("no commit label at {width}: {texts:?}"));
+            for (text, clip, bounds) in &texts {
+                assert!(
+                    bounds.right() <= clip.right().min(width) + 0.5,
+                    "{text:?} at {bounds:?} is cut by {clip:?} in a {width}-point column"
+                );
+            }
+            assert_eq!(
+                spoken.as_deref(),
+                Some("Commit 2 files to feature/dark-mode"),
+                "at {width}, painted {:?}",
+                label.0
+            );
+            if width >= 420.0 {
+                assert_eq!(label.0, "Commit 2 files to feature/dark-mode");
+                assert!(texts.iter().any(|(t, _, _)| *t == keys), "{texts:?}");
+            }
         }
     }
 
