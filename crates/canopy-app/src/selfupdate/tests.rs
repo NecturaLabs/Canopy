@@ -827,7 +827,7 @@ fn sums(script: &str) -> Vec<u8> {
 }
 
 // The in-app update runs only for a Linux install folder: its desktop entry and `sh` checks.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn an_update_replaces_the_install_and_everything_registered_with_it() {
     let old = installed();
@@ -971,7 +971,7 @@ fn an_archive_without_a_binary_is_refused_before_anything_changes() {
     assert_eq!(tree(&old.root), before);
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn an_installer_script_that_cannot_be_trusted_keeps_the_old_uninstaller() {
     for (what, sums_body, script) in [

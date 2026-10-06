@@ -801,8 +801,10 @@ fn only_a_crates_own_target_directory_is_skipped() -> std::io::Result<()> {
         .map(|f| {
             f.strip_prefix(&crates)
                 .expect("under the scratch directory")
-                .to_string_lossy()
-                .into_owned()
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/")
         })
         .collect();
     names.sort();

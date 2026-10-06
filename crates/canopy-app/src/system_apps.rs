@@ -1161,6 +1161,7 @@ mod tests {
         assert_eq!(command_for("  zed  ", Kind::Editor), "zed");
     }
 
+    #[cfg(unix)]
     fn names(apps: &Apps, kind: Kind) -> Vec<(String, String)> {
         apps.installed(kind)
             .map(|a| (a.name.clone(), a.command.clone()))
