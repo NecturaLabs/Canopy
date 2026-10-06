@@ -254,14 +254,21 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
             "Not available here"
         }
     };
-    ui.style_mut().spacing.scroll.floating = false;
+    // Too narrow for every tool at full size: only the active view keeps its name and the Local
+    // only badge goes; past that the bar scrolls sideways (wheel or drag), with no scroll bar.
+    let full_id = Id::new(("toolbar-full-width", &tab.path));
+    let full_w: f32 = ui.data(|d| d.get_temp(full_id)).unwrap_or(0.0);
+    let narrow_window = ui.ctx().content_rect().width() < theme::COMPACT_WIDTH;
+    let squeezed = full_w > width + 0.5;
     egui::ScrollArea::horizontal()
         .id_salt("toolbar-actions")
         .auto_shrink([false, false])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .show(ui, |ui| {
             ui.set_min_width(width);
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = m.toolbar_gap;
+                let bar_start = ui.cursor().min.x;
                 ui.add_space(left_pad);
                 let changes = snap.map_or(0, |s| s.status.len());
                 let open_requests = open_requests(ui.ctx(), tab);
@@ -270,6 +277,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     tab.view,
                     changes,
                     forge.map(|(_, f)| (f.kind, open_requests)),
+                    narrow_window || squeezed,
                     actions,
                 );
                 ui.add_space(theme::SM);
@@ -406,9 +414,17 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 // The last group sits at the right end, on its width from the frame before.
                 let right_id = ui.id().with("toolbar-right-group");
                 let right_w: f32 = ui.data(|d| d.get_temp(right_id)).unwrap_or(0.0);
-                ui.add_space(
-                    (width - (ui.cursor().min.x - ui.max_rect().min.x) - right_w).max(theme::SM),
-                );
+                let left_w = ui.cursor().min.x - bar_start;
+                if !squeezed {
+                    // What the bar needs at full size; measured only then, so it is known
+                    // while squeezed too and the bar opens up again once the window has room.
+                    let needed = left_w + theme::SM + right_w;
+                    if (needed - full_w).abs() > 0.5 {
+                        ui.data_mut(|d| d.insert_temp(full_id, needed));
+                        ui.ctx().request_repaint();
+                    }
+                }
+                ui.add_space((width - left_w - right_w).max(theme::SM));
                 let start = ui.cursor().min.x;
                 if ToolButton::new(icon::TERMINAL_WINDOW, "Terminal")
                     .tooltip("Open a terminal here")
@@ -432,7 +448,7 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                 {
                     actions.push(Action::OpenUrl(f.web_url()));
                 }
-                if local_only && ui.ctx().content_rect().width() >= theme::COMPACT_WIDTH {
+                if local_only && !narrow_window && !squeezed {
                     Badge::new(format!("{}  Local only", icon::HARD_DRIVES))
                         .tooltip("No remote: everything stays on this computer until you publish")
                         .show(ui);
@@ -449,15 +465,15 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
 
 /// The History / Changes / Requests switcher (design spec 4.8 ViewTabs): the kit's view tabs with
 /// counts on the strong badge, each view's shortcut in its tooltip, Requests off (saying why)
-/// without a GitHub or GitLab remote, and in a narrow window only the active view named.
+/// without a GitHub or GitLab remote, and when `compact` only the active view named.
 fn view_tabs(
     ui: &mut Ui,
     view: View,
     changes: usize,
     requests: Option<(ForgeKind, usize)>,
+    compact: bool,
     actions: &mut Vec<Action>,
 ) {
-    let compact = ui.ctx().content_rect().width() < theme::COMPACT_WIDTH;
     let (kind, n) = requests.unwrap_or((ForgeKind::GitHub, 0));
     let requests_label = match (compact, kind) {
         (true, _) => "Requests",
@@ -781,6 +797,7 @@ mod tests {
                 View::Requests,
                 123,
                 Some((ForgeKind::GitLab, 123)),
+                false,
                 &mut Vec::new(),
             );
         });
@@ -798,7 +815,7 @@ mod tests {
         let mut nodes = Vec::new();
         for _ in 0..2 {
             nodes = frame(&ctx, Vec::new(), |ui| {
-                view_tabs(ui, View::History, 0, None, &mut actions);
+                view_tabs(ui, View::History, 0, None, false, &mut actions);
             })
             .1;
         }
@@ -806,7 +823,7 @@ mod tests {
         assert!(requests.is_disabled(), "Requests is spoken as unavailable");
         let at = node_rect(requests).center();
         let _ = frame(&ctx, click(at), |ui| {
-            view_tabs(ui, View::History, 0, None, &mut actions);
+            view_tabs(ui, View::History, 0, None, false, &mut actions);
         });
         assert!(actions.is_empty(), "{actions:?}");
     }
@@ -818,13 +835,13 @@ mod tests {
         let mut nodes = Vec::new();
         for _ in 0..2 {
             nodes = frame(&ctx, Vec::new(), |ui| {
-                view_tabs(ui, View::History, 4, None, &mut actions);
+                view_tabs(ui, View::History, 4, None, false, &mut actions);
             })
             .1;
         }
         let at = node_rect(node(&nodes, Role::RadioButton, "Changes")).center();
         let _ = frame(&ctx, click(at), |ui| {
-            view_tabs(ui, View::History, 4, None, &mut actions);
+            view_tabs(ui, View::History, 4, None, false, &mut actions);
         });
         assert!(
             matches!(actions.as_slice(), [Action::SetView(View::Changes)]),
@@ -1120,5 +1137,52 @@ mod tests {
             .expect("finished");
         quiet.poll(&[]);
         assert!(Running::of(&ctx, &quiet).outcome.is_none());
+    }
+
+    /// Override O2: an action bar too narrow for every tool names only the active view and drops
+    /// the Local only badge (instead of overflowing under a scroll bar), and opens up again when
+    /// the room comes back.
+    #[test]
+    fn a_narrow_action_bar_gives_up_view_names_and_the_badge() {
+        let ctx = context();
+        let mut tab = repo_tab("alpha");
+        tab.snap = Some(Arc::new(canopy_core::RepoSnapshot::default()));
+        let bar = |width: f32| {
+            let mut shapes = Vec::new();
+            for _ in 0..3 {
+                shapes = frame(&ctx, Vec::new(), |ui| {
+                    let slot = Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 60.0));
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                        actions_bar(ui, &tab, &mut Vec::new());
+                    });
+                })
+                .0;
+            }
+            shapes
+        };
+        let painted = |shapes: &[egui::epaint::ClippedShape], text: &str| {
+            fn find(shape: &egui::Shape, text: &str) -> bool {
+                match shape {
+                    egui::Shape::Text(t) => t.galley.text().contains(text),
+                    egui::Shape::Vec(v) => v.iter().any(|s| find(s, text)),
+                    _ => false,
+                }
+            }
+            shapes.iter().any(|c| find(&c.shape, text))
+        };
+        let wide = bar(1150.0);
+        assert!(painted(&wide, "Changes") && painted(&wide, "Local only"));
+        let narrow = bar(560.0);
+        assert!(
+            painted(&narrow, "History"),
+            "the active view keeps its name"
+        );
+        assert!(
+            !painted(&narrow, "Changes"),
+            "the other views give up theirs"
+        );
+        assert!(!painted(&narrow, "Local only"), "the badge goes");
+        let wide = bar(1150.0);
+        assert!(painted(&wide, "Changes") && painted(&wide, "Local only"));
     }
 }
