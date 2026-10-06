@@ -12,6 +12,7 @@ use crate::action::Action;
 use crate::keymap::Command;
 use crate::settings::Settings;
 use crate::tab::RepoTab;
+use crate::ui::kit::anim::Flip;
 use crate::ui::kit::avatar::{self, Person};
 use crate::ui::kit::chip::RefPill;
 use crate::ui::kit::choice::Segmented;
@@ -411,29 +412,37 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         .id_salt("history-rows")
         .vertical_scroll_offset(offset);
     let mut wanted_pictures = Vec::new();
+    let motion = egui::Id::new(("history-motion", &tab.path));
+    let generation = tab.generation;
     let list = area.show_rows(ui, row_h, total_rows, |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
+        // Rows keep their place on screen as commits arrive or go (a fetch, a commit, a branch
+        // switch): they slide to their new rows instead of jumping.
+        let origin = ui.max_rect().min - vec2(0.0, crate::ui::count_f32(range.start) * row_h);
+        let mut flip = Flip::begin(ui, motion, generation, origin).ground(s.pane);
         for ri in range {
             let Some(ci) = commit_at(ri).filter(|_| ri < row_count) else {
-                let (rect, _) =
-                    ui.allocate_exact_size(vec2(full.width(), row_h), egui::Sense::hover());
-                let mut slot = ui.new_child(
-                    UiBuilder::new()
+                flip.item(ui, load_more_key(), None, |ui| {
+                    let (rect, _) =
+                        ui.allocate_exact_size(vec2(full.width(), row_h), egui::Sense::hover());
+                    let mut slot = ui.new_child(
+                        UiBuilder::new()
+                            .id_salt("history-load-more")
+                            .max_rect(rect)
+                            .layout(
+                                Layout::left_to_right(Align::Center).with_main_align(Align::Center),
+                            ),
+                    );
+                    if Button::new("Load more commits")
+                        .secondary()
+                        .icon(icon::ARROW_DOWN)
                         .id_salt("history-load-more")
-                        .max_rect(rect)
-                        .layout(
-                            Layout::left_to_right(Align::Center).with_main_align(Align::Center),
-                        ),
-                );
-                if Button::new("Load more commits")
-                    .secondary()
-                    .icon(icon::ARROW_DOWN)
-                    .id_salt("history-load-more")
-                    .show(&mut slot)
-                    .clicked()
-                {
-                    actions.push(Action::LoadMore);
-                }
+                        .show(&mut slot)
+                        .clicked()
+                    {
+                        actions.push(Action::LoadMore);
+                    }
+                });
                 continue;
             };
             let Some(c) = snap.commits.get(ci) else {
@@ -469,113 +478,128 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             }
             let summary_x = x;
             let date = date_text(c.author.time);
-            let response = ListRow::new(("history-row", c.oid))
-                .kind(RowKind::History)
-                .index(ri)
-                .selected(selected)
-                .show_with(ui, |rc, painter| {
-                    let cy = rc.rect.center().y;
-                    if show_graph && let Some(g) = g {
-                        let column =
-                            Rect::from_min_size(rc.rect.min, vec2(graph_w, rc.rect.height()));
-                        let mut marks = Marks::new(rc.ground);
-                        marks.head = is_head;
-                        graph::paint_row(painter, column, geometry, g, marks);
-                    }
-                    let font = if selected || is_head {
-                        FontId::new(m.body_size, theme::medium())
-                    } else {
-                        FontId::proportional(m.body_size)
-                    };
-                    paint_line(
-                        painter, summary_x, desc_right, cy, &c.summary, font, rc.text,
-                    );
-                    if show_author {
-                        let mut name_x = author_x + CELL_PAD;
-                        if let Some(picture) = picture {
-                            let d = m.avatar_row;
-                            let person =
-                                Person::new(&c.author.name, &c.author.email).picture(picture);
-                            avatar::paint(
-                                painter,
-                                pos2(name_x + d / 2.0, cy),
-                                d,
-                                &person,
-                                None,
-                                Some(egui::Id::new(("history-avatar", &c.author.email))),
-                            );
-                            name_x += d + AVATAR_GAP;
+            flip.item(ui, row_key(c.oid), None, |ui| {
+                let response = ListRow::new(("history-row", c.oid))
+                    .kind(RowKind::History)
+                    .index(ri)
+                    .selected(selected)
+                    .show_with(ui, |rc, painter| {
+                        let cy = rc.rect.center().y;
+                        if show_graph && let Some(g) = g {
+                            let column =
+                                Rect::from_min_size(rc.rect.min, vec2(graph_w, rc.rect.height()));
+                            let mut marks = Marks::new(rc.ground);
+                            marks.head = is_head;
+                            graph::paint_row(painter, column, geometry, g, marks);
                         }
+                        let font = if selected || is_head {
+                            FontId::new(m.body_size, theme::medium())
+                        } else {
+                            FontId::proportional(m.body_size)
+                        };
                         paint_line(
-                            painter,
-                            name_x,
-                            date_x - CELL_PAD,
-                            cy,
-                            &c.author.name,
-                            FontId::proportional(m.body_size),
-                            rc.dim,
+                            painter, summary_x, desc_right, cy, &c.summary, font, rc.text,
                         );
+                        if show_author {
+                            let mut name_x = author_x + CELL_PAD;
+                            if let Some(picture) = picture {
+                                let d = m.avatar_row;
+                                let person =
+                                    Person::new(&c.author.name, &c.author.email).picture(picture);
+                                avatar::paint(
+                                    painter,
+                                    pos2(name_x + d / 2.0, cy),
+                                    d,
+                                    &person,
+                                    None,
+                                    Some(egui::Id::new(("history-avatar", &c.author.email))),
+                                );
+                                name_x += d + AVATAR_GAP;
+                            }
+                            paint_line(
+                                painter,
+                                name_x,
+                                date_x - CELL_PAD,
+                                cy,
+                                &c.author.name,
+                                FontId::proportional(m.body_size),
+                                rc.dim,
+                            );
+                        }
+                        if show_date {
+                            paint_line(
+                                painter,
+                                date_x + CELL_PAD,
+                                sha_x - CELL_PAD,
+                                cy,
+                                &date,
+                                FontId::proportional(m.body_size),
+                                rc.dim,
+                            );
+                        }
+                        if show_sha {
+                            paint_line(
+                                painter,
+                                sha_x + CELL_PAD,
+                                full.max.x,
+                                cy,
+                                &short_id(c.oid),
+                                FontId::monospace(m.sha_size),
+                                rc.accent,
+                            );
+                        }
+                    });
+                if !pills.is_empty() {
+                    let clip = Rect::from_min_max(
+                        pos2(desc_x, response.rect.top()),
+                        pos2(desc_right, response.rect.bottom()),
+                    )
+                    .intersect(ui.clip_rect());
+                    let painter = ui.painter().with_clip_rect(clip);
+                    for (pill, left) in &pills {
+                        pill.paint(ui, &painter, *left, response.rect.center().y);
                     }
-                    if show_date {
-                        paint_line(
-                            painter,
-                            date_x + CELL_PAD,
-                            sha_x - CELL_PAD,
-                            cy,
-                            &date,
-                            FontId::proportional(m.body_size),
-                            rc.dim,
-                        );
-                    }
-                    if show_sha {
-                        paint_line(
-                            painter,
-                            sha_x + CELL_PAD,
-                            full.max.x,
-                            cy,
-                            &short_id(c.oid),
-                            FontId::monospace(m.sha_size),
-                            rc.accent,
-                        );
-                    }
-                });
-            if !pills.is_empty() {
-                let clip = Rect::from_min_max(
-                    pos2(desc_x, response.rect.top()),
-                    pos2(desc_right, response.rect.bottom()),
-                )
-                .intersect(ui.clip_rect());
-                let painter = ui.painter().with_clip_rect(clip);
-                for (pill, left) in &pills {
-                    pill.paint(ui, &painter, *left, response.rect.center().y);
                 }
-            }
-            // The row paints its own columns; screen readers get the commit in one sentence.
-            let info = format!(
-                "Commit {}, {}, by {}, {}",
-                short_id(c.oid),
-                c.summary,
-                c.author.name,
-                widgets::relative_time_format(c.author.time, now, settings.iso_dates)
-            );
-            ui.ctx()
-                .accesskit_node_builder(response.id, |n| n.set_label(info));
-            let response = response.on_hover_text_at_pointer(format!(
-                "{}\n{} <{}>\n{}",
-                c.summary,
-                c.author.name,
-                c.author.email,
-                widgets::full_date(c.author.time, c.author.offset_minutes)
-            ));
-            if response.clicked() {
-                clicked = Some(c.oid);
-            }
-            let oid = c.oid;
-            let summary = c.summary.clone();
-            menu::context(&response, |m| {
-                commit_menu(m, oid, &summary, forge.as_ref(), actions);
+                // The row paints its own columns; screen readers get the commit in one sentence.
+                let info = format!(
+                    "Commit {}, {}, by {}, {}",
+                    short_id(c.oid),
+                    c.summary,
+                    c.author.name,
+                    widgets::relative_time_format(c.author.time, now, settings.iso_dates)
+                );
+                ui.ctx()
+                    .accesskit_node_builder(response.id, |n| n.set_label(info));
+                let response = response.on_hover_text_at_pointer(format!(
+                    "{}\n{} <{}>\n{}",
+                    c.summary,
+                    c.author.name,
+                    c.author.email,
+                    widgets::full_date(c.author.time, c.author.offset_minutes)
+                ));
+                if response.clicked() {
+                    clicked = Some(c.oid);
+                }
+                let oid = c.oid;
+                let summary = c.summary.clone();
+                menu::context(&response, |m| {
+                    commit_menu(m, oid, &summary, forge.as_ref(), actions);
+                });
             });
         }
+        // Rows that were on screen and are not now fade out only when they left the history.
+        let listed = std::cell::OnceCell::new();
+        flip.end(ui, |key| {
+            key == load_more_key()
+                || listed
+                    .get_or_init(|| {
+                        (0..row_count)
+                            .filter_map(|ri| commit_at(ri).and_then(|ci| snap.commits.get(ci)))
+                            .map(|c| row_key(c.oid))
+                            .collect::<std::collections::HashSet<_>>()
+                    })
+                    .contains(&key)
+        });
     });
     ui.spacing_mut().item_spacing.y = row_spacing;
 
@@ -589,6 +613,14 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         return true;
     }
     false
+}
+
+/// The [`Flip`] key of a commit's row, and of the "Load more commits" row.
+fn row_key(oid: Oid) -> egui::Id {
+    egui::Id::new(("history-row-motion", oid))
+}
+fn load_more_key() -> egui::Id {
+    egui::Id::new("history-load-more-motion")
 }
 
 /// The context menu of a commit row.
@@ -1594,6 +1626,132 @@ mod tests {
             "the long summary may paint over Expand: summary clip {:?}, Expand {expand:?}",
             summary.clip_rect
         );
+    }
+
+    /// A snapshot of commits with these summaries, newest first, each its own commit.
+    fn history_of(summaries: &[&str]) -> canopy_core::RepoSnapshot {
+        canopy_core::RepoSnapshot {
+            commits: summaries
+                .iter()
+                .map(|s| canopy_core::CommitSummary {
+                    oid: Oid::from_bytes(&[s.bytes().fold(7u8, |h, b| h.wrapping_mul(31) ^ b); 20])
+                        .expect("fixture oid"),
+                    summary: (*s).to_owned(),
+                    author: canopy_core::Signature {
+                        name: "Author".into(),
+                        email: "author@example.com".into(),
+                        time: 0,
+                        offset_minutes: 0,
+                    },
+                    parents: Vec::new(),
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// One frame of the table at time `t`: each summary painted and the top of its galley.
+    fn table_at(ctx: &egui::Context, tab: &mut RepoTab, t: f64) -> Vec<(String, f32)> {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 700.0))),
+                time: Some(t),
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    table(ui, tab, &Settings::default(), &mut Vec::new());
+                });
+            },
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text)
+                    if shape.clip_rect.intersects(text.visual_bounding_rect()) =>
+                {
+                    Some((text.galley.text().to_owned(), text.pos.y))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// O1 (owner): new commits arriving at the top (a fetch, a commit) push the rows below down
+    /// by sliding them from where they were, and the new row fades in where it lands; with
+    /// reduced motion they land at once.
+    #[test]
+    fn new_commits_slide_the_history_down_instead_of_jumping() {
+        for reduced in [false, true] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                theme::Appearance {
+                    reduce_motion: reduced,
+                    ..theme::Appearance::STILL
+                },
+            );
+            let dir = tempfile::tempdir().expect("temporary tab");
+            let mut tab = RepoTab::new(
+                dir.path().into(),
+                &ctx,
+                100,
+                crate::settings::DiffPrefs::default(),
+            );
+            tab.snap = Some(std::sync::Arc::new(history_of(&["second", "first"])));
+            let mut before = Vec::new();
+            for i in 0..3 {
+                before = table_at(&ctx, &mut tab, f64::from(i) * 0.1);
+            }
+            let y = |texts: &[(String, f32)], s: &str| {
+                texts.iter().find(|(t, _)| t == s).map(|(_, y)| *y)
+            };
+            let second0 = y(&before, "second").expect("second before");
+            tab.snap = Some(std::sync::Arc::new(history_of(&[
+                "third", "second", "first",
+            ])));
+            tab.generation += 1;
+            let change = table_at(&ctx, &mut tab, 1.0);
+            let mid = table_at(&ctx, &mut tab, 1.08);
+            let mut rest = Vec::new();
+            for i in 0..3 {
+                rest = table_at(&ctx, &mut tab, 2.0 + f64::from(i) * 0.1);
+            }
+            let second1 = y(&rest, "second").expect("second after");
+            assert!(
+                (second1 - second0 - RowKind::History.height()).abs() < 0.5,
+                "one row down: {second0} -> {second1}"
+            );
+            assert_eq!(
+                y(&rest, "third"),
+                Some(second0),
+                "the new commit rests at the top"
+            );
+            if reduced {
+                assert_eq!(
+                    y(&change, "second"),
+                    Some(second1),
+                    "reduced: lands at once"
+                );
+                continue;
+            }
+            assert_eq!(y(&change, "second"), Some(second0), "starts where it was");
+            assert_eq!(y(&change, "third"), None, "the new row starts transparent");
+            let m = y(&mid, "second").expect("second sliding");
+            assert!(
+                m > second0 && m < second1,
+                "slides: {second0} -> {m} -> {second1}"
+            );
+            assert_eq!(
+                y(&mid, "third"),
+                Some(second0),
+                "the new row fades in in place"
+            );
+        }
     }
 
     /// The history's ref pills keep their labels readable on every surface a row can have, in
