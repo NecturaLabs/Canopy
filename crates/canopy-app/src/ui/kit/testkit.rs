@@ -157,6 +157,7 @@ pub struct Spoken {
     pub value: Option<String>,
     pub numeric: Option<f64>,
     pub disabled: bool,
+    pub description: Option<String>,
 }
 
 impl Spoken {
@@ -170,6 +171,7 @@ impl Spoken {
             value: n.value().map(str::to_owned),
             numeric: n.numeric_value(),
             disabled: n.is_disabled(),
+            description: n.description().map(str::to_owned),
         }
     }
 }
@@ -205,7 +207,13 @@ pub fn parts(ctx: &Context, group: &str, mut f: impl FnMut(&mut Ui)) -> Vec<Stri
         .unwrap_or_default();
     while let Some(id) = todo.pop() {
         let Some(n) = nodes.get(&id) else { continue };
-        match n.label() {
+        // A text label's words are its value (egui), what a screen reader reads for it.
+        let name = if n.role() == Role::Label {
+            n.value()
+        } else {
+            n.label()
+        };
+        match name {
             Some(l) => names.push(l.to_owned()),
             None => todo.extend(n.children().iter().rev().copied()),
         }

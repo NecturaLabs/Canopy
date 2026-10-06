@@ -507,6 +507,16 @@ fn tone_glyph(tone: Tone) -> &'static str {
     }
 }
 
+/// What a callout in `tone` is called to screen readers, which do not see its icon.
+fn tone_name(tone: Tone) -> &'static str {
+    match tone {
+        Tone::Neutral | Tone::Accent => "Note",
+        Tone::Success => "Success",
+        Tone::Warning => "Warning",
+        Tone::Danger => "Error",
+    }
+}
+
 /// One action of a [`Banner`] or a [`Callout`]: a ghost button with an optional glyph, which may
 /// be unavailable for a reason its tooltip gives ("Resolve the 2 conflicts first").
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -805,9 +815,16 @@ impl Callout {
             .corner_radius(CornerRadius::same(m.radius))
             .inner_margin(CALLOUT_PAD)
             .show(ui, |ui| {
+                // A group named for the tone, holding the title, text and actions: the icon is
+                // painted, not spoken (a private-use glyph screen readers would spell out).
+                super::a11y::group(ui, egui::accesskit::Role::Group, tone_name(self.tone));
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = theme::SM;
-                    ui.label(egui::RichText::new(glyph).size(m.icon_lg).color(tone_c));
+                    let icon =
+                        ui.painter()
+                            .layout_no_wrap(glyph, FontId::proportional(m.icon_lg), tone_c);
+                    let (at, _) = ui.allocate_exact_size(icon.size(), Sense::hover());
+                    ui.painter().galley(at.min, icon, tone_c);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         if let Some(t) = &self.title {
@@ -853,11 +870,6 @@ impl Callout {
                 });
             })
             .response;
-        let spoken = match &self.title {
-            Some(t) => format!("{t}: {}", self.text),
-            None => self.text.clone(),
-        };
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &spoken));
         KitResponse {
             response,
             value: clicked,
@@ -1576,6 +1588,39 @@ mod tests {
                 ..theme::Appearance::STILL
             },
         );
+    }
+
+    /// A callout is a group named for its tone that holds its title, text and actions, each
+    /// spoken once, and never its icon glyph (a private-use character screen readers spell out).
+    #[test]
+    fn a_callout_speaks_its_title_and_text_once() {
+        let ctx = ctx();
+        let show = |ui: &mut Ui| {
+            Callout::new(Tone::Warning, "Pushing rewrites the remote branch.")
+                .title("Force push")
+                .action("Learn more")
+                .show(ui);
+        };
+        assert_eq!(
+            super::super::testkit::parts(&ctx, "Warning", show),
+            [
+                "Force push",
+                "Pushing rewrites the remote branch.",
+                "Learn more"
+            ]
+        );
+        for n in super::super::testkit::spoken(&ctx, show) {
+            let Some(label) = n.label.or(n.value) else {
+                continue;
+            };
+            assert!(
+                !label
+                    .chars()
+                    .any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c)),
+                "a glyph is spoken: {label:?}"
+            );
+            assert!(!label.starts_with("Force push:"), "spoken twice: {label:?}");
+        }
     }
 
     #[test]
