@@ -45,6 +45,7 @@ const COUNT_SIZE: f32 = 11.5;
 pub struct DocTab<'a> {
     key: Id,
     name: &'a str,
+    icon: &'a str,
     tooltip: Option<String>,
     detail: Option<String>,
     ahead: usize,
@@ -58,12 +59,18 @@ impl<'a> DocTab<'a> {
         Self {
             key: Id::new(("kit-doc-tab", key)),
             name,
+            icon: icon::FOLDER_SIMPLE,
             tooltip: None,
             detail: None,
             ahead: 0,
             behind: 0,
             busy: false,
         }
+    }
+    /// The Phosphor glyph before the name (default: a folder), such as the repository's own icon.
+    pub fn icon(mut self, glyph: &'a str) -> Self {
+        self.icon = glyph;
+        self
     }
     /// The tooltip's first line (default: the name).
     pub fn tooltip(mut self, text: impl Into<String>) -> Self {
@@ -391,7 +398,7 @@ fn doc_tab(
                 p.text_faint.lerp_to_gamma(p.text_dim, hover)
             };
             let g = painter.layout_no_wrap(
-                icon::FOLDER_SIMPLE.to_owned(),
+                tab.icon.to_owned(),
                 theme::icon_font(m.icon_sm, selected),
                 color,
             );
@@ -589,6 +596,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
             .busy(true)
             .detail("~/src/canopy · Ctrl+2"),
         DocTab::new("website", "website")
+            .icon(icon::GLOBE)
             .sync(0, 3)
             .detail("~/src/website · Ctrl+3"),
         DocTab::new("long", "a-repository-with-a-very-long-name")
@@ -721,6 +729,26 @@ mod tests {
             }
         }
         assert_eq!(got, vec![DocTabsEvent::Select(1), DocTabsEvent::Close(1)]);
+    }
+
+    #[test]
+    fn a_tab_paints_its_own_icon() {
+        let ctx = context();
+        let tabs = [
+            DocTab::new(1, "alpha").icon(icon::ROCKET_LAUNCH),
+            DocTab::new(2, "beta"),
+        ];
+        let out = frame(&ctx, 0.0, Vec::new(), |ui| {
+            let _ = DocTabs::new(&tabs, 0).show(ui);
+        });
+        assert!(
+            text_rect(&out, icon::ROCKET_LAUNCH).is_some(),
+            "chosen icon"
+        );
+        assert!(
+            text_rect(&out, icon::FOLDER_SIMPLE).is_some(),
+            "default folder"
+        );
     }
 
     #[test]
