@@ -326,16 +326,39 @@ impl<'t> Core<'t> {
     fn show(self, ui: &mut Ui) -> Shown {
         let enabled = self.enabled && ui.is_enabled();
         let id = self.id(ui);
-        ui.scope(|ui| {
-            // A disabled field is not `Ui::disable`d (that fades its text past reading): it
-            // paints in the theme's disabled tokens, and the edit stops taking input.
-            ui.spacing_mut().item_spacing.y = 0.0;
-            ui.with_layout(Layout::top_down(Align::Min), |ui| {
+        // Label, field and message stack in a slot of their own size that the parent's layout
+        // places (at the right of a right-to-left row, as a select's). The stack's height is last
+        // frame's; a change is measured and redrawn at once.
+        let m = theme::metrics();
+        let width = self
+            .width
+            .unwrap_or_else(|| ui.available_width())
+            .max(m.control * 2.0);
+        let height_id = id.with("kit-field-height");
+        let height = ui.data(|d| d.get_temp::<f32>(height_id)).unwrap_or(
+            if self.borderless && self.kind == Kind::Search {
+                m.palette_input_height
+            } else {
+                self.size.height()
+            },
+        );
+        let shown =
+            ui.allocate_ui_with_layout(vec2(width, height), Layout::top_down(Align::Min), |ui| {
+                // A disabled field is not `Ui::disable`d (that fades its text past reading): it
+                // paints in the theme's disabled tokens, and the edit stops taking input.
+                ui.spacing_mut().item_spacing.y = 0.0;
                 self.show_inner(ui, id, enabled)
-            })
-            .inner
-        })
-        .inner
+            });
+        let used = shown.response.rect.height();
+        if (used - height).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(height_id, used));
+            // A top-down parent places the slot at its cursor whatever its height (the usual
+            // case, and a growing text area's every frame), so only other layouts redraw.
+            if ui.layout().main_dir() != egui::Direction::TopDown {
+                ui.ctx().request_discard("field measured");
+            }
+        }
+        shown.inner
     }
 
     fn show_inner(self, ui: &mut Ui, id: Id, enabled: bool) -> Shown {
@@ -2108,6 +2131,36 @@ mod tests {
             });
         }
         assert!(focused);
+    }
+
+    /// KF-F9: a field placed straight into a right-to-left row (a settings row's control) sits
+    /// at the row's right at its own width, as a select does, with its label and message.
+    #[test]
+    fn a_field_in_a_right_to_left_row_sits_at_the_right() {
+        let ctx = testkit::ctx();
+        for labelled in [false, true] {
+            let mut text = "main".to_owned();
+            let (mut field, mut row) = (Rect::NOTHING, Rect::NOTHING);
+            for _ in 0..2 {
+                frame(&ctx, Vec::new(), |ui| {
+                    ui.set_width(600.0);
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        row = ui.max_rect();
+                        let mut f = TextField::new(&mut text).width(200.0).id_salt("rtl");
+                        if labelled {
+                            f = f.label("Branch").helper("The default branch");
+                        }
+                        field = f.show(ui).rect;
+                    });
+                });
+            }
+            assert!(
+                (field.right() - row.right()).abs() < 0.5,
+                "labelled {labelled}: the field ends at {} in a row ending at {}",
+                field.right(),
+                row.right()
+            );
+        }
     }
 
     #[test]
