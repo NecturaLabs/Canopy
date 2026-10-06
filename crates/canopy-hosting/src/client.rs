@@ -164,9 +164,9 @@ impl Client {
 
     /// Where the checks and reviews of requests `numbers` stand, as `(number, rollup)` pairs for
     /// the requests the project has, in one GraphQL query to the GraphQL endpoint on the API's
-    /// own host (`api.github.com/graphql`, `<host>/api/graphql`). It sends the project's path and
-    /// the numbers (the first 100), with the token like every other request, and follows no
-    /// redirect.
+    /// own host (`api.github.com/graphql`, `<host>[:port]/api/graphql`). It sends the project's
+    /// path and the numbers (the first 100), with the token like every other request, and follows
+    /// no redirect.
     ///
     /// GitHub: each pull request's status check rollup state, review decision and reviewers'
     /// latest verdicts. GitLab: each merge request's head pipeline status and whether it has an
