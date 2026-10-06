@@ -7,13 +7,15 @@
 //! reaches them. After that nothing moves, so an idle screen does not repaint; with reduce motion
 //! the finished picture shows at once.
 
+use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::OnceLock;
 
 use egui::epaint::{ColorMode, PathShape, PathStroke};
 use egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2};
 
 use super::motion;
-use super::theme::{Palette, palette};
+use super::theme::{self, ArtMotif, Palette, palette};
 
 /// An illustration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -68,7 +70,7 @@ pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
     if !ui.is_rect_visible(rect) {
         return resp;
     }
-    let scene = scene(art);
+    let scene = scene(art, theme::design(ui.ctx()).art);
     let scale = (size.x / scene.size.x).min(size.y / scene.size.y);
     let origin = rect.center() - scene.size * scale / 2.0;
     let progress = progress(ui, art, resp.id);
@@ -116,6 +118,19 @@ pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
                 let r = radius * scale * pop(local);
                 painter.circle_filled(c, r, fade(color, item.alpha));
             }
+            Geometry::Sparkle { center, radius } => {
+                let c = to_screen(*center);
+                let color = item.ink.resolve(p, c.y, origin.y, scene.size.y * scale);
+                let r = radius * scale * pop(local);
+                let points: Vec<Pos2> = (0..8)
+                    .map(|i| {
+                        let a = crate::ui::int_f32(i) * std::f32::consts::FRAC_PI_4;
+                        let k = if i % 2 == 0 { r } else { r * 0.2 };
+                        c + vec2(a.cos(), a.sin()) * k
+                    })
+                    .collect();
+                fill_star(&painter, &points, fade(color, item.alpha));
+            }
             Geometry::Path { subpaths, closed } => {
                 let height = scene.size.y * scale;
                 let fill_alpha = item.fill * ease_out(local);
@@ -147,6 +162,131 @@ pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
         ui.ctx().request_repaint();
     }
     resp
+}
+
+/// The welcome screen's backdrop over `rect`, in the active theme: its ground treatment
+/// (`Design::ground`) and its motif spread faintly across the screen — a star field, drafting
+/// paper's grid, aurora light, drifting sparks, a neon floor grid, light through leaves, paper
+/// fibres, or nothing at all for Signal. It fades in when the screen appears (at once with reduced
+/// motion) and then stays still.
+pub fn backdrop(ui: &Ui, rect: Rect) {
+    let ctx = ui.ctx();
+    let id = egui::Id::new("art-backdrop");
+    let frame = ctx.cumulative_frame_nr();
+    let last: Option<u64> = ctx.data(|d| d.get_temp(id.with("frame")));
+    ctx.data_mut(|d| d.insert_temp(id.with("frame"), frame));
+    let fresh = last.is_none_or(|l| l + 1 < frame);
+    let t = if motion::reduced() {
+        1.0
+    } else if fresh {
+        super::kit::anim::ease_bool(ctx, id, false, 0.0, 0.0)
+    } else {
+        super::kit::anim::ease_bool(ctx, id, true, motion::SLOW * 2.0, 0.0)
+    };
+    if t <= 0.0 {
+        return;
+    }
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    super::kit::paint::ground(&painter, rect, t);
+    let p = palette(ctx);
+    let mut rng = Seeded(0x5EED_CAFE);
+    let at = |fx: f32, fy: f32| rect.min + vec2(fx * rect.width(), fy * rect.height());
+    let faint = |c: Color32, a: f32| c.gamma_multiply(a * t);
+    match theme::design(ctx).art {
+        ArtMotif::Constellation => {
+            for _ in 0..70 {
+                let c = at(rng.next(), rng.next() * 0.75);
+                let r = 0.6 + rng.next() * 0.9;
+                let ink = if rng.next() > 0.6 {
+                    p.accent2
+                } else {
+                    p.text_faint
+                };
+                painter.circle_filled(c, r, faint(ink, 0.12 + 0.3 * rng.next()));
+            }
+        }
+        ArtMotif::Drafting => {
+            let line = Stroke::new(1.0, faint(p.text_faint, 0.07));
+            let step = 32.0;
+            let mut x = rect.left() + step;
+            #[expect(clippy::while_float, reason = "a fixed step across a finite rect")]
+            while x < rect.right() {
+                painter.vline(x, rect.y_range(), line);
+                x += step;
+            }
+            let mut y = rect.top() + step;
+            #[expect(clippy::while_float, reason = "a fixed step down a finite rect")]
+            while y < rect.bottom() {
+                painter.hline(rect.x_range(), y, line);
+                y += step;
+            }
+        }
+        ArtMotif::Aurora => {
+            super::kit::paint::glow(
+                &painter,
+                at(0.78, -0.05),
+                rect.width() * 0.45,
+                Palette::tint(p.accent2, crate::ui::saturate_u8(16.0 * t)),
+            );
+        }
+        ArtMotif::Embers => {
+            for _ in 0..46 {
+                let up = rng.next();
+                let c = at(rng.next(), 1.0 - up * 0.85);
+                let ink = if rng.next() > 0.5 {
+                    p.warning
+                } else {
+                    p.accent
+                };
+                painter.circle_filled(c, 0.7 + rng.next() * 1.1, faint(ink, 0.32 - 0.26 * up));
+            }
+        }
+        ArtMotif::NeonGrid => {
+            let horizon = rect.top() + rect.height() * 0.74;
+            let cx = rect.center().x;
+            let floor = rect.bottom() - horizon;
+            let line = Stroke::new(1.0, faint(p.accent2, 0.1));
+            for k in -12_i8..=12 {
+                let k = f32::from(k);
+                painter.line_segment(
+                    [
+                        pos2(cx + k * rect.width() * 0.04, horizon),
+                        pos2(cx + k * rect.width() * 0.16, rect.bottom()),
+                    ],
+                    line,
+                );
+            }
+            for d in [0.0_f32, 0.08, 0.2, 0.38, 0.62, 1.0] {
+                let y = horizon + floor * d;
+                painter.hline(
+                    rect.x_range(),
+                    y,
+                    Stroke::new(1.0, faint(p.accent, 0.08 + 0.1 * (1.0 - d))),
+                );
+            }
+        }
+        ArtMotif::Canopy => {
+            for (fx, fy, fr) in [(0.0, 0.0, 0.32), (1.0, 0.02, 0.28), (0.5, -0.12, 0.24)] {
+                super::kit::paint::glow(
+                    &painter,
+                    at(fx, fy),
+                    rect.width() * fr,
+                    Palette::tint(p.success, crate::ui::saturate_u8(14.0 * t)),
+                );
+            }
+        }
+        ArtMotif::Ink => {
+            let ink = faint(p.text_faint, 0.1);
+            for _ in 0..140 {
+                let c = at(rng.next(), rng.next());
+                let a = rng.next() * std::f32::consts::PI;
+                let len = 4.0 + rng.next() * 10.0;
+                let d = vec2(a.cos(), a.sin() * 0.5) * len;
+                painter.line_segment([c, c + d], Stroke::new(0.6, ink));
+            }
+        }
+        ArtMotif::Signal => {}
+    }
 }
 
 fn growing_id() -> egui::Id {
@@ -417,6 +557,11 @@ enum Geometry {
         center: Pos2,
         radius: Vec2,
     },
+    /// A four-pointed star (a glint): long points of `radius`, waist a fifth of it.
+    Sparkle {
+        center: Pos2,
+        radius: f32,
+    },
 }
 
 struct Polyline {
@@ -444,27 +589,437 @@ struct Scene {
     items: Vec<Item>,
 }
 
-/// Builds the scenes once.
-fn scene(art: Art) -> &'static Scene {
-    static SCENES: OnceLock<[Scene; 6]> = OnceLock::new();
+const ARTS: [Art; 6] = [
+    Art::Logo,
+    Art::Welcome,
+    Art::Clean,
+    Art::History,
+    Art::LocalOnly,
+    Art::Error,
+];
+
+const MOTIFS: [ArtMotif; 8] = [
+    ArtMotif::Constellation,
+    ArtMotif::Drafting,
+    ArtMotif::Aurora,
+    ArtMotif::Embers,
+    ArtMotif::NeonGrid,
+    ArtMotif::Canopy,
+    ArtMotif::Ink,
+    ArtMotif::Signal,
+];
+
+/// Builds the scenes once: every illustration in every theme's motif.
+fn scene(art: Art, motif: ArtMotif) -> &'static Scene {
+    static SCENES: OnceLock<HashMap<(Art, ArtMotif), Scene>> = OnceLock::new();
     let all = SCENES.get_or_init(|| {
-        [
-            logo_scene(),
-            welcome_scene(),
-            clean_scene(),
-            history_scene(),
-            local_only_scene(),
-            error_scene(),
-        ]
+        let mut out = HashMap::new();
+        for art in ARTS {
+            for motif in MOTIFS {
+                out.insert((art, motif), build(art, motif));
+            }
+        }
+        out
     });
-    match art {
-        Art::Logo => &all[0],
-        Art::Welcome => &all[1],
-        Art::Clean => &all[2],
-        Art::History => &all[3],
-        Art::LocalOnly => &all[4],
-        Art::Error => &all[5],
+    all.get(&(art, motif))
+        .or_else(|| all.get(&(art, ArtMotif::Constellation)))
+        .unwrap_or_else(|| &all[&(Art::Logo, ArtMotif::Constellation)])
+}
+
+/// `art` in `motif`: the same picture (the logo tree keeps its shape in every theme), drawn in the
+/// motif's hand ([`adapt`]) over the motif's own marks ([`motif_marks`]). The logo is chrome and
+/// never changes.
+fn build(art: Art, motif: ArtMotif) -> Scene {
+    let base = match art {
+        Art::Logo => return logo_scene(),
+        Art::Welcome => welcome_scene(),
+        Art::Clean => clean_scene(),
+        Art::History => history_scene(),
+        Art::LocalOnly => local_only_scene(),
+        Art::Error => error_scene(),
+    };
+    let mut items = motif_marks(motif, art == Art::Welcome, base.size);
+    items.extend(adapt(base.items, motif));
+    Scene {
+        size: base.size,
+        items,
     }
+}
+
+/// The picture's own parts in `motif`'s hand: Signal draws bold solid lines with no glow or
+/// gradient, Constellation thin lines with sparkling stars, Drafting and Ink crisp lines without
+/// glows (paper does not glow), Neon and Aurora brighter glows.
+fn adapt(items: Vec<Item>, motif: ArtMotif) -> Vec<Item> {
+    let mut out = Vec::with_capacity(items.len());
+    for mut item in items {
+        let glow = matches!(item.shape, Geometry::Halo { .. });
+        match motif {
+            ArtMotif::Signal => {
+                if glow {
+                    continue;
+                }
+                if let Ink::Gradient(..) | Ink::Mid = item.ink {
+                    item.ink = Ink::Accent;
+                }
+                item.width *= 1.3;
+                item.alpha = item.alpha.max(0.9);
+                if let Geometry::Ellipse { .. } = item.shape {
+                    continue;
+                }
+            }
+            ArtMotif::Drafting | ArtMotif::Ink if glow => continue,
+            ArtMotif::Constellation => {
+                if glow {
+                    item.alpha *= 0.6;
+                }
+                item.width *= 0.6;
+                if let Geometry::Node { center, radius } = item.shape
+                    && radius >= 4.0
+                {
+                    out.push(
+                        sparkle(center.x, center.y, radius * 2.6, item.ink, item.at).alpha(0.7),
+                    );
+                }
+            }
+            ArtMotif::NeonGrid | ArtMotif::Aurora if glow => item.alpha *= 1.6,
+            _ => {}
+        }
+        out.push(item);
+    }
+    out
+}
+
+/// A small deterministic sequence of numbers in 0..1 (the same picture every run).
+struct Seeded(u32);
+
+impl Seeded {
+    fn next(&mut self) -> f32 {
+        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        f32::from(u16::try_from(self.0 >> 16).unwrap_or(0)) / 65_535.0
+    }
+}
+
+/// The marks a motif adds behind a picture of `size`: stars and constellation lines, drafting
+/// circles and a baseline with a low sun, aurora curtains, rising sparks over a hearth glow, a
+/// neon floor grid to a lit horizon, leaf masses, an ink swash with paper fibres, or (Signal)
+/// a bold ground line. `wide`: the welcome picture (a wide scene), else an empty-state spot.
+fn motif_marks(motif: ArtMotif, wide: bool, size: Vec2) -> Vec<Item> {
+    let (w, h) = (size.x, size.y);
+    let mut rng = Seeded(0x00C0_FFEE ^ u32::from(wide));
+    let mut out = Vec::new();
+    match motif {
+        ArtMotif::Constellation => {
+            let n = if wide { 28 } else { 7 };
+            let mut stars = Vec::new();
+            for _ in 0..n {
+                let (x, y) = (
+                    w * (0.04 + 0.92 * rng.next()),
+                    h * (0.04 + 0.6 * rng.next()),
+                );
+                let r = if wide { 0.9 } else { 0.7 } + rng.next() * 0.9;
+                let ink = if rng.next() > 0.5 {
+                    Ink::Accent2
+                } else {
+                    Ink::Neutral
+                };
+                out.push(
+                    node(x, y, r, ink, 0.5 + 0.25 * rng.next()).alpha(0.35 + 0.45 * rng.next()),
+                );
+                stars.push((x, y));
+            }
+            for (x, y) in stars.iter().step_by(if wide { 5 } else { 3 }).take(4) {
+                out.push(
+                    sparkle(*x, *y, if wide { 6.0 } else { 4.5 }, Ink::Accent2, 0.7).alpha(0.6),
+                );
+            }
+            if wide {
+                for group in [&stars[0..5], &stars[10..14]] {
+                    let mut d = String::new();
+                    for (i, (x, y)) in group.iter().enumerate() {
+                        let _ = write!(d, "{}{x:.1} {y:.1}", if i == 0 { "M" } else { "L" });
+                    }
+                    out.push(path(&d, Ink::Accent2, 0.8, 0.6, 0.3).alpha(0.28));
+                }
+            }
+        }
+        ArtMotif::Drafting => {
+            let (cx, cy, r) = if wide {
+                (320.0, 118.0, 104.0)
+            } else {
+                (80.0, 58.0, 44.0)
+            };
+            out.push(
+                path(&circle_d(cx, cy, r), Ink::Neutral, 1.0, 0.0, 0.5)
+                    .alpha(0.45)
+                    .dashed(4.0, 5.0),
+            );
+            let base = if wide { 233.0 } else { 100.0 };
+            let (x0, x1) = if wide { (40.0, 600.0) } else { (20.0, 140.0) };
+            out.push(path(&format!("M{x0} {base}H{x1}"), Ink::Neutral, 1.2, 0.0, 0.4).alpha(0.55));
+            let step = if wide { 40.0 } else { 20.0 };
+            let mut x = x0;
+            let mut ticks = String::new();
+            #[expect(clippy::while_float, reason = "a fixed step along a finite baseline")]
+            while x <= x1 + 0.1 {
+                let _ = write!(ticks, "M{x} {base}V{}", base + if wide { 5.0 } else { 3.0 });
+                x += step;
+            }
+            out.push(path(&ticks, Ink::Neutral, 1.0, 0.1, 0.3).alpha(0.4));
+            if wide {
+                out.push(
+                    path(
+                        "M506 233C506 214 521 199 540 199C559 199 574 214 574 233",
+                        Ink::Accent2,
+                        1.6,
+                        0.3,
+                        0.3,
+                    )
+                    .alpha(0.75),
+                );
+                out.push(
+                    path(
+                        "M540 191V183M512 203L506 197M568 203L574 197M500 220H492M580 220H588",
+                        Ink::Accent2,
+                        1.4,
+                        0.45,
+                        0.2,
+                    )
+                    .alpha(0.6),
+                );
+                out.push(
+                    path("M120 233L320 43L520 233", Ink::Neutral, 0.9, 0.05, 0.4)
+                        .alpha(0.3)
+                        .dashed(3.0, 6.0),
+                );
+            }
+        }
+        ArtMotif::Aurora => {
+            let curtains: &[(&str, Ink, f32, f32)] = if wide {
+                &[
+                    (
+                        "M0 64C110 22 210 96 330 52C450 10 540 72 640 38",
+                        Ink::Accent,
+                        20.0,
+                        0.13,
+                    ),
+                    (
+                        "M0 98C140 58 240 120 360 84C470 52 560 100 640 76",
+                        Ink::Accent2,
+                        16.0,
+                        0.11,
+                    ),
+                    (
+                        "M0 36C120 8 260 52 380 24C480 4 560 30 640 14",
+                        Ink::Mid,
+                        10.0,
+                        0.09,
+                    ),
+                ]
+            } else {
+                &[
+                    (
+                        "M0 26C40 8 80 38 120 20C138 12 150 16 160 12",
+                        Ink::Accent,
+                        9.0,
+                        0.14,
+                    ),
+                    (
+                        "M0 42C44 26 84 50 124 36C140 30 152 34 160 30",
+                        Ink::Accent2,
+                        7.0,
+                        0.11,
+                    ),
+                ]
+            };
+            for (i, (d, ink, width, alpha)) in curtains.iter().enumerate() {
+                out.push(path(d, *ink, *width, 0.05 * crate::ui::count_f32(i), 0.6).alpha(*alpha));
+            }
+        }
+        ArtMotif::Embers => {
+            out.push(halo(
+                w * 0.5,
+                h,
+                w * if wide { 0.3 } else { 0.45 },
+                Ink::Warning,
+                0.16,
+                0.0,
+            ));
+            let n = if wide { 24 } else { 7 };
+            for _ in 0..n {
+                let up = rng.next();
+                let (x, y) = (w * (0.15 + 0.7 * rng.next()), h * (0.9 - 0.8 * up));
+                let ink = if rng.next() > 0.45 {
+                    Ink::Warning
+                } else {
+                    Ink::Accent
+                };
+                let r = (if wide { 1.0 } else { 0.8 }) + rng.next() * 1.1;
+                out.push(node(x, y, r, ink, 0.3 + 0.45 * up).alpha(0.85 - 0.6 * up));
+            }
+        }
+        ArtMotif::NeonGrid => {
+            let (horizon, cx, step, reach) = if wide {
+                (214.0, 320.0, 30.0, 60.0)
+            } else {
+                (104.0, 80.0, 6.0, 14.0)
+            };
+            out.push(halo(cx, horizon, w * 0.42, Ink::Accent, 0.22, 0.0));
+            let mut d = String::new();
+            for k in -5_i8..=5 {
+                let k = f32::from(k);
+                let _ = write!(d, "M{} {horizon}L{} {h}", cx + k * step, cx + k * reach);
+            }
+            out.push(path(&d, Ink::Accent2, 1.0, 0.05, 0.4).alpha(0.45));
+            let mut rows = String::new();
+            let depth = h - horizon;
+            for t in [0.0_f32, 0.12, 0.3, 0.56, 1.0] {
+                let y = horizon + depth * t;
+                let half = step * 5.0 + (reach - step) * 5.0 * t;
+                let _ = write!(rows, "M{} {y}H{}", cx - half, cx + half);
+            }
+            out.push(path(&rows, Ink::Accent, 1.0, 0.1, 0.4).alpha(0.55));
+        }
+        ArtMotif::Canopy => {
+            let leaves: &[(f32, f32, f32, f32)] = if wide {
+                &[
+                    (200.0, 70.0, 46.0, 26.0),
+                    (440.0, 70.0, 46.0, 26.0),
+                    (320.0, 40.0, 52.0, 28.0),
+                    (130.0, 60.0, 40.0, 22.0),
+                    (510.0, 60.0, 40.0, 22.0),
+                    (260.0, 50.0, 34.0, 20.0),
+                    (380.0, 50.0, 34.0, 20.0),
+                ]
+            } else {
+                &[
+                    (36.0, 34.0, 20.0, 12.0),
+                    (128.0, 28.0, 18.0, 11.0),
+                    (110.0, 46.0, 14.0, 9.0),
+                ]
+            };
+            for (i, (x, y, rx, ry)) in leaves.iter().enumerate() {
+                out.push(Item {
+                    shape: Geometry::Ellipse {
+                        center: pos2(*x, *y),
+                        radius: vec2(*rx, *ry),
+                    },
+                    ink: if i % 2 == 0 {
+                        Ink::Success
+                    } else {
+                        Ink::Accent
+                    },
+                    width: 0.0,
+                    alpha: 0.12,
+                    fill: 0.0,
+                    dash: None,
+                    at: 0.3 + 0.04 * crate::ui::count_f32(i),
+                    span: 0.4,
+                });
+            }
+        }
+        ArtMotif::Ink => {
+            let swash = if wide {
+                "M170 242C250 228 390 250 476 234C500 230 516 232 528 236"
+            } else {
+                "M34 110C64 102 102 114 128 104C134 102 140 103 144 105"
+            };
+            out.push(
+                path(
+                    swash,
+                    Ink::Accent2,
+                    if wide { 2.6 } else { 1.8 },
+                    0.55,
+                    0.35,
+                )
+                .alpha(0.6),
+            );
+            let n = if wide { 34 } else { 10 };
+            let mut fibres = String::new();
+            for _ in 0..n {
+                let (x, y) = (
+                    w * (0.03 + 0.94 * rng.next()),
+                    h * (0.05 + 0.9 * rng.next()),
+                );
+                let a = rng.next() * std::f32::consts::PI;
+                let len = if wide { 6.0 } else { 4.0 } + rng.next() * 8.0;
+                let (dx, dy) = (a.cos() * len, a.sin() * len * 0.5);
+                let _ = write!(
+                    fibres,
+                    "M{x:.1} {y:.1}L{:.1} {:.1}",
+                    (x + dx).clamp(0.0, w),
+                    (y + dy).clamp(0.0, h)
+                );
+            }
+            out.push(path(&fibres, Ink::Neutral, 0.6, 0.0, 0.3).alpha(0.3));
+            if wide {
+                for (x, y, r) in [
+                    (548.0, 228.0, 3.2),
+                    (560.0, 224.0, 1.6),
+                    (156.0, 240.0, 2.0),
+                ] {
+                    out.push(node(x, y, r, Ink::Accent2, 0.7).alpha(0.55));
+                }
+            }
+        }
+        ArtMotif::Signal => {
+            let (base, x0, x1, bracket) = if wide {
+                (233.0, 60.0, 580.0, 18.0)
+            } else {
+                (104.0, 30.0, 130.0, 10.0)
+            };
+            out.push(path(
+                &format!("M{x0} {base}H{x1}"),
+                Ink::Neutral,
+                3.0,
+                0.0,
+                0.35,
+            ));
+            let (l, r, t) = (x0 - bracket, x1 + bracket, bracket);
+            out.push(path(
+                &format!(
+                    "M{l} {}V{t}H{}M{r} {}V{t}H{}",
+                    t + bracket,
+                    l + bracket,
+                    t + bracket,
+                    r - bracket
+                ),
+                Ink::Accent2,
+                2.5,
+                0.4,
+                0.3,
+            ));
+        }
+    }
+    out
+}
+
+/// Path data for a circle of radius `r` around (`cx`, `cy`), as four cubic quarters.
+fn circle_d(cx: f32, cy: f32, r: f32) -> String {
+    let k = r * 0.552_284_8;
+    format!(
+        "M{} {cy}C{} {} {} {} {cx} {}C{} {} {} {} {} {cy}C{} {} {} {} {cx} {}C{} {} {} {} {} {cy}",
+        cx + r,
+        cx + r,
+        cy + k,
+        cx + k,
+        cy + r,
+        cy + r,
+        cx - k,
+        cy + r,
+        cx - r,
+        cy + k,
+        cx - r,
+        cx - r,
+        cy - k,
+        cx - k,
+        cy - r,
+        cy - r,
+        cx + k,
+        cy - r,
+        cx + r,
+        cy - k,
+        cx + r,
+    )
 }
 
 /// A stroked path. `d` is absolute path syntax (`M L H V C Z`).
@@ -511,6 +1066,22 @@ fn halo(x: f32, y: f32, r: f32, ink: Ink, alpha: f32, at: f32) -> Item {
         dash: None,
         at,
         span: 0.4,
+    }
+}
+
+fn sparkle(x: f32, y: f32, r: f32, ink: Ink, at: f32) -> Item {
+    Item {
+        shape: Geometry::Sparkle {
+            center: pos2(x, y),
+            radius: r,
+        },
+        ink,
+        width: 0.0,
+        alpha: 1.0,
+        fill: 0.0,
+        dash: None,
+        at,
+        span: 0.25,
     }
 }
 
@@ -865,28 +1436,74 @@ mod tests {
 
     #[test]
     fn every_scene_has_drawable_parts_inside_its_box() {
-        for art in [
-            Art::Logo,
-            Art::Welcome,
-            Art::Clean,
-            Art::History,
-            Art::LocalOnly,
-            Art::Error,
-        ] {
-            let s = scene(art);
-            assert!(!s.items.is_empty(), "{art:?}");
-            let bounds = Rect::from_min_size(Pos2::ZERO, s.size);
-            for item in &s.items {
-                assert!(
-                    (0.0..=1.0).contains(&(item.at + item.span)),
-                    "{art:?} timing"
-                );
-                if let Geometry::Path { subpaths, .. } = &item.shape {
-                    assert!(!subpaths.is_empty(), "{art:?} path parsed");
-                    for p in subpaths.iter().flat_map(|s| &s.points) {
-                        assert!(bounds.contains(*p), "{art:?} point {p:?} outside");
+        for art in ARTS {
+            for motif in MOTIFS {
+                let s = scene(art, motif);
+                assert!(!s.items.is_empty(), "{art:?}");
+                let bounds = Rect::from_min_size(Pos2::ZERO, s.size);
+                for item in &s.items {
+                    assert!(
+                        (0.0..=1.0 + 1e-4).contains(&(item.at + item.span)),
+                        "{art:?}/{motif:?} timing {} + {}",
+                        item.at,
+                        item.span
+                    );
+                    if let Geometry::Path { subpaths, .. } = &item.shape {
+                        assert!(!subpaths.is_empty(), "{art:?}/{motif:?} path parsed");
+                        for p in subpaths.iter().flat_map(|s| &s.points) {
+                            assert!(
+                                bounds.expand(0.01).contains(*p),
+                                "{art:?}/{motif:?} point {p:?} outside"
+                            );
+                        }
                     }
                 }
+            }
+        }
+    }
+
+    /// Each theme draws its illustrations in its own motif: no two motifs give the same welcome
+    /// picture, the logo stays the same everywhere, and Signal (Contrast) has no glows at all.
+    #[test]
+    fn each_motif_draws_its_own_picture() {
+        let parts = |motif| scene(Art::Welcome, motif).items.len();
+        let mut counts: Vec<(ArtMotif, usize)> = MOTIFS.iter().map(|m| (*m, parts(*m))).collect();
+        counts.sort_by_key(|(_, n)| *n);
+        for motif in MOTIFS {
+            assert_eq!(
+                scene(Art::Logo, motif).items.len(),
+                scene(Art::Logo, ArtMotif::Constellation).items.len()
+            );
+            assert!(
+                parts(motif) > logo_scene().items.len(),
+                "{motif:?} adds nothing"
+            );
+        }
+        for art in ARTS {
+            assert!(
+                scene(art, ArtMotif::Signal)
+                    .items
+                    .iter()
+                    .all(|i| !matches!(i.shape, Geometry::Halo { .. })),
+                "{art:?}: Signal draws line art without glows"
+            );
+        }
+        let signature = |motif| {
+            scene(Art::Welcome, motif)
+                .items
+                .iter()
+                .map(|i| match i.shape {
+                    Geometry::Path { .. } => 'p',
+                    Geometry::Node { .. } => 'n',
+                    Geometry::Halo { .. } => 'h',
+                    Geometry::Ellipse { .. } => 'e',
+                    Geometry::Sparkle { .. } => 's',
+                })
+                .collect::<String>()
+        };
+        for (i, a) in MOTIFS.iter().enumerate() {
+            for b in &MOTIFS[i + 1..] {
+                assert_ne!(signature(*a), signature(*b), "{a:?} and {b:?} draw alike");
             }
         }
     }
@@ -902,16 +1519,10 @@ mod tests {
                 ..Default::default()
             };
             let mut output = ctx.run_ui(input, |ui| {
-                for art in [
-                    Art::Logo,
-                    Art::Welcome,
-                    Art::Clean,
-                    Art::History,
-                    Art::LocalOnly,
-                    Art::Error,
-                ] {
+                for art in ARTS {
                     show(ui, art, vec2(160.0, 120.0));
                 }
+                backdrop(ui, ui.max_rect());
             });
             output.textures_delta.clear();
             assert!(!output.shapes.is_empty(), "the art painted nothing");

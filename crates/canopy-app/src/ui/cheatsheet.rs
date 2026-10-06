@@ -74,7 +74,7 @@ impl Cheatsheet {
                                 );
                                 ui.label(
                                     RichText::new("Keyboard shortcuts")
-                                        .font(FontId::new(m.title_size, theme::semibold()))
+                                        .font(theme::heading(m.title_size))
                                         .color(p.text),
                                 );
                                 ui.with_layout(

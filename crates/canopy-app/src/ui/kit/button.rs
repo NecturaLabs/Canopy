@@ -20,7 +20,7 @@ use egui_phosphor::regular as icon;
 use super::overlay::TooltipExt;
 use super::{ForceState, Interact, Size, Tone, anim, paint};
 use crate::keymap::{self, Command};
-use crate::ui::motion;
+use crate::ui::motion::{self, OUTCOME_HOLD, SHAKE, SHAKE_REACH, SHAKE_SWINGS};
 use crate::ui::theme::{self, Elevation, Fill, Palette, Style, ToolLayout};
 
 /// What a [`Button`] is for. One primary per surface; danger confirms destruction.
@@ -152,12 +152,6 @@ pub(super) fn spinner_due(ctx: &egui::Context, id: Id, loading: bool) -> bool {
 
 // ---------------------------------------------------------------------------------- Operation
 
-/// How long a finished operation's outcome shows on its button, in seconds (reduced motion too).
-pub const OUTCOME_HOLD: f32 = 1.6;
-/// A failed operation's shake: how long it lasts, how far it swings and how many times.
-const SHAKE: f32 = 0.32;
-const SHAKE_REACH: f32 = 2.5;
-const SHAKE_SWINGS: f32 = 3.0;
 /// The outcome mark's size as it pops in, against its full size.
 const POP_FROM: f32 = 0.6;
 
@@ -286,7 +280,7 @@ fn paint_mark(
     };
     match mark {
         Mark::Icon => icon_at(shapes, 1.0),
-        Mark::Spinner => paint::spinner(painter, center, spin, 1.6, color),
+        Mark::Spinner => paint::spinner(painter, center, spin, paint::SPINNER_WIDTH, color),
         Mark::Outcome { ok, show, dx } => {
             if show < 1.0 {
                 icon_at(shapes, 1.0 - show);
@@ -627,6 +621,13 @@ impl Button {
                 }
                 _ => {}
             }
+            if enabled && self.kind == ButtonKind::Primary && paint::lit() {
+                // Neon: the primary button glows in its own colour, like a lit sign.
+                paint::lit_edge(&painter, rect, radius, s.primary.top, 0.7 + 0.3 * st.hover);
+            }
+            if enabled && self.kind == ButtonKind::Ghost {
+                paint::hover_mark(&painter, rect, radius, p, s, st.hover);
+            }
             if st.focus > 0.0 {
                 paint::focus_ring(
                     &painter,
@@ -822,6 +823,9 @@ impl IconButton {
             if ground.a() > 0 {
                 painter.rect_filled(rect, radius, ground);
             }
+            if enabled {
+                paint::hover_mark(&painter, rect, radius, p, p.s(), st.hover);
+            }
             if st.focus > 0.0 {
                 paint::focus_ring(
                     &painter,
@@ -844,7 +848,11 @@ impl IconButton {
                 rest.lerp_to_gamma(p.text, st.hover.max(st.press))
             };
             let scale = anim::press_scale(&ctx, response.id, st.held, 0.94);
-            let g = painter.layout_no_wrap(self.glyph, FontId::proportional(glyph_size), color);
+            let g = painter.layout_no_wrap(
+                self.glyph,
+                theme::icon_font(glyph_size, self.active && enabled),
+                color,
+            );
             let mut shapes = Vec::new();
             paint_mark(
                 &painter,
@@ -991,7 +999,7 @@ impl ToolButton {
                 .layout_no_wrap(self.label.clone(), caption_font, Color32::PLACEHOLDER);
         let glyph = ui.painter().layout_no_wrap(
             self.glyph.clone(),
-            FontId::proportional(icon_size),
+            theme::icon_font(icon_size, self.toggled && enabled),
             Color32::PLACEHOLDER,
         );
         let badge = self.badge.as_ref().map(|b| {
@@ -1051,6 +1059,9 @@ impl ToolButton {
                         .lerp_to_gamma(p.hover_strong(), st.hover)
                         .lerp_to_gamma(p.pressed(), st.press);
                     painter.rect_filled(rect, radius, ground);
+                    if enabled {
+                        paint::hover_mark(&painter, rect, radius, p, s, st.hover);
+                    }
                 }
             }
             if st.focus > 0.0 {
@@ -1422,7 +1433,7 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                         main_rect.center().y,
                     ),
                     m.icon_md * 0.33,
-                    1.6,
+                    paint::SPINNER_WIDTH,
                     on,
                 );
             }

@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use super::theme::MotionCharacter;
+
 /// Hover-in, press release, focus ring in, icon opacity, colour crossfades.
 pub const FAST: f32 = 0.08;
 /// Hover-out.
@@ -52,11 +54,12 @@ pub const ROW_MOVE: f32 = 0.2;
 pub const ROW_IN: f32 = 0.18;
 pub const ROW_OUT: f32 = 0.14;
 /// Seconds a tool shows how its operation ended before it fades; not scaled by reduced motion.
-#[expect(
-    dead_code,
-    reason = "views/toolbar.rs switches to it when the shell work merges"
-)]
 pub const OUTCOME_HOLD: f32 = 1.6;
+/// A failed operation's shake on its button: how long it lasts, how far it swings (points) and
+/// how many times.
+pub const SHAKE: f32 = 0.32;
+pub const SHAKE_REACH: f32 = 2.5;
+pub const SHAKE_SWINGS: f32 = 3.0;
 /// Loops (they run while visible and stop with reduced motion): one indeterminate sweep, one sweep
 /// of the line under search inputs and its wait before the first, one spinner turn, one skeleton
 /// pulse, and the reduced-motion spinner's pulse.
@@ -268,14 +271,60 @@ pub fn query_system(ctx: &egui::Context) {
     }
 }
 
-/// `seconds`, or zero when motion is reduced.
+/// `seconds` at the active theme's pace (`Design::motion`: crisp themes quicker, soft ones
+/// slower), or zero when motion is reduced.
 pub fn time(seconds: f32) -> f32 {
-    if reduced() { 0.0 } else { seconds }
+    if reduced() {
+        0.0
+    } else {
+        seconds * character().duration_scale()
+    }
+}
+
+/// The active theme's motion character.
+fn character() -> MotionCharacter {
+    super::theme::active().design().motion
+}
+
+/// The easing things enter (and hovers rise) along: `EASE_OUT`, or `EASE_IN_OUT` in a theme whose
+/// motion is soft.
+pub fn enter_curve() -> fn(f32) -> f32 {
+    if character() == MotionCharacter::Soft {
+        |t| EASE_IN_OUT.at(t)
+    } else {
+        |t| EASE_OUT.at(t)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Durations and the entrance curve follow the theme's motion character; reduced motion still
+    /// turns every duration off.
+    #[test]
+    fn the_theme_sets_the_pace() {
+        use crate::ui::theme::{self, Appearance, ThemeId};
+        let ctx = egui::Context::default();
+        let full = Appearance {
+            reduce_motion: false,
+            ..Appearance::STILL
+        };
+        for (id, scale) in [
+            (ThemeId::Midnight, 1.0),
+            (ThemeId::Neon, 0.8),
+            (ThemeId::Ember, 1.2),
+        ] {
+            theme::apply(&ctx, id, full);
+            assert!((time(0.5) - 0.5 * scale).abs() < 1e-6, "{id:?}");
+        }
+        theme::apply(&ctx, ThemeId::Ember, full);
+        assert!((enter_curve()(0.25) - EASE_IN_OUT.at(0.25)).abs() < 1e-6);
+        theme::apply(&ctx, ThemeId::Daylight, full);
+        assert!((enter_curve()(0.25) - EASE_OUT.at(0.25)).abs() < 1e-6);
+        theme::apply(&ctx, ThemeId::Ember, Appearance::STILL);
+        assert!(time(0.5).abs() < f32::EPSILON);
+    }
 
     #[test]
     fn preference_overrides_the_system() {

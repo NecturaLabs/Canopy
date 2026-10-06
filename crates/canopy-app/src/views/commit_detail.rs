@@ -129,7 +129,7 @@ pub fn show(
             // the rest of the message.
             let summary = !headed;
             let first_line = if summary {
-                FontId::new(m.headline_size, theme::semibold())
+                theme::heading(m.headline_size)
             } else {
                 FontId::proportional(m.meta_size)
             };
@@ -317,11 +317,13 @@ pub(super) fn paint_header_strip(ui: &Ui, rect: Rect) {
         s.panel
     };
     ui.painter().rect_filled(rect, CornerRadius::ZERO, fill);
-    paint::seam_h(
+    // The header's own fill parts it from the pane in Standard: a tonal theme drops the line.
+    let seam = paint::edge_seam(p, s.border, fill != s.pane);
+    paint::seam_line_h(
         ui.painter(),
         rect.x_range(),
-        rect.bottom() - paint::SEAM * 0.5,
-        s.border,
+        rect.bottom() - seam.map_or(0.0, |st| st.width) * 0.5,
+        seam,
     );
 }
 
@@ -389,7 +391,7 @@ fn message(ui: &mut Ui, d: &CommitDetails, summary: bool) -> bool {
         ui.add(
             egui::Label::new(
                 RichText::new(head)
-                    .font(FontId::new(m.headline_size, theme::semibold()))
+                    .font(theme::heading(m.headline_size))
                     .color(p.text),
             )
             .wrap(),
@@ -641,7 +643,7 @@ fn failed(ui: &mut Ui, tab: &mut RepoTab, error: &DetailsError) {
                 art::show(ui, art::empty_error(), vec2(120.0, 90.0));
                 ui.label(
                     RichText::new(format!("Could not load commit {}", short_id(error.oid)))
-                        .font(FontId::new(m.subtitle_size, theme::semibold())),
+                        .font(theme::heading(m.subtitle_size)),
                 );
                 ui.label(
                     RichText::new(&error.message)

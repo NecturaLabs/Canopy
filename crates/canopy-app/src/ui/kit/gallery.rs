@@ -139,19 +139,14 @@ fn title(ui: &mut Ui, text: &str) {
     let p = theme::palette(ui.ctx());
     ui.label(
         RichText::new(text)
-            .font(FontId::new(m.title_size, theme::semibold()))
+            .font(theme::heading(m.title_size))
             .color(p.text),
     );
 }
 
 fn caption(ui: &mut Ui, text: &str) {
-    let m = theme::metrics();
     let p = theme::palette(ui.ctx());
-    ui.label(
-        RichText::new(text)
-            .font(FontId::new(m.micro_size, theme::semibold()))
-            .color(p.text_faint),
-    );
+    ui.label(theme::section_label(text, p.text_faint));
 }
 
 /// A titled band: `draw` on the content ground (left) and on the chrome (right).
@@ -176,7 +171,7 @@ pub fn band(ui: &mut Ui, name: &str, draw: fn(&mut Ui)) {
                             .inner_margin(egui::Margin::same(crate::ui::points_i8(theme::LG)))
                             .show(ui, |ui| {
                                 ui.set_width(half - 2.0 * theme::LG - 2.0);
-                                caption(ui, if i == 0 { "ON CONTENT" } else { "ON CHROME" });
+                                caption(ui, if i == 0 { "On content" } else { "On chrome" });
                                 ui.add_space(theme::SM);
                                 draw(ui);
                             });
@@ -289,13 +284,13 @@ fn header(ui: &mut Ui, p: &Palette) {
     if let Some(ring) = s.knob_edge {
         surfaces.push(("knob_edge", Fill::flat(ring)));
     }
-    caption(ui, "THEME COLOURS");
+    caption(ui, "Theme colours");
     swatches(ui, shared.iter().map(|(n, c)| (*n, Fill::flat(*c))));
     ui.add_space(theme::SM);
-    caption(ui, "SURFACES");
+    caption(ui, "Surfaces");
     swatches(ui, surfaces.into_iter());
     ui.add_space(theme::SM);
-    caption(ui, "LANES");
+    caption(ui, "Lanes");
     swatches(
         ui,
         p.lanes.iter().enumerate().map(|(i, c)| {
@@ -306,7 +301,7 @@ fn header(ui: &mut Ui, p: &Palette) {
         }),
     );
     ui.add_space(theme::SM);
-    caption(ui, "TONES");
+    caption(ui, "Tones");
     swatches(
         ui,
         super::Tone::ALL
@@ -314,7 +309,7 @@ fn header(ui: &mut Ui, p: &Palette) {
             .map(|t| (t.label(), Fill::flat(theme::over(t.tint(p), s.pane)))),
     );
     ui.add_space(theme::SM);
-    caption(ui, "METRICS");
+    caption(ui, "Metrics");
     let rows = m.rows();
     let cols = 3;
     ui.spacing_mut().interact_size.y = m.small_size + theme::XS;
@@ -437,7 +432,7 @@ fn slice(ui: &mut Ui, style: Style) {
     let s = p.surfaces(style);
     let m = theme::metrics();
     ui.vertical(|ui| {
-        caption(ui, &style.label().to_uppercase());
+        caption(ui, style.label());
         let (rect, _) = ui.allocate_exact_size(vec2(260.0, 150.0), Sense::hover());
         let painter = ui.painter();
         painter.rect_filled(rect, CornerRadius::ZERO, s.bg);

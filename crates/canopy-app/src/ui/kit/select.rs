@@ -421,7 +421,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                     &painter,
                     pos2(caret_x, rect.center().y),
                     m.icon_md * 0.33,
-                    1.6,
+                    paint::SPINNER_WIDTH,
                     faint,
                 );
             } else {

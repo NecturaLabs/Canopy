@@ -78,7 +78,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
         .show(ui, |ui| {
             // The seam to the diff; the pane's other edges are the card's or the window's.
             let edge = ui.max_rect();
-            paint::seam_v(ui.painter(), edge.right() - 0.5, edge.y_range(), s.border);
+            let seam = paint::pane_seam(palette(ui.ctx()), s.border, false);
+            let w = seam.map_or(0.0, |st| st.width);
+            paint::seam_line_v(ui.painter(), edge.right() - w * 0.5, edge.y_range(), seam);
             let list_frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 8));
             // The composer follows the lists while both fit; once the lists would crowd it, it
             // pins to the bottom and the lists scroll above it.
@@ -254,10 +256,7 @@ fn lists(
             ui.add_space(40.0);
             art::show(ui, art::empty_error(), vec2(160.0, 120.0));
             ui.add_space(6.0);
-            ui.label(
-                RichText::new("Changes not available")
-                    .font(FontId::new(m.subtitle_size, theme::semibold())),
-            );
+            ui.label(RichText::new("Changes not available").font(theme::heading(m.subtitle_size)));
             ui.label(
                 RichText::new(&u.message)
                     .color(p.text_dim)
@@ -328,10 +327,7 @@ fn clean_home(
                 ui.add_space(top);
                 art::show(ui, art::empty_clean(), vec2(200.0, 150.0));
                 ui.add_space(theme::SM);
-                ui.label(
-                    RichText::new("Working tree clean")
-                        .font(FontId::new(m.display_size, theme::semibold())),
-                );
+                ui.label(RichText::new("Working tree clean").font(theme::heading(m.display_size)));
                 ui.add_space(2.0);
                 ui.label(
                     RichText::new(format!(

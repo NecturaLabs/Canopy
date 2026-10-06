@@ -425,14 +425,16 @@ impl Deck {
                 );
             }
         } else {
+            // The bar that meets the content loses its seam in a theme that parts regions by
+            // tone; the tab strip above the action bar keeps it (both are the deck's fill).
             let strip = Rect::from_min_size(screen.min, vec2(screen.width(), m.tab_strip_height));
-            paint::deck_in(painter, strip, p, s, style);
+            paint::deck_bar(painter, strip, p, s, style, !self.action_bar);
             if self.action_bar {
                 let bar = Rect::from_min_size(
                     pos2(screen.left(), strip.bottom()),
                     vec2(screen.width(), m.action_bar_height),
                 );
-                paint::deck_in(painter, bar, p, s, style);
+                paint::deck_bar(painter, bar, p, s, style, true);
             }
         }
         deck
@@ -1232,7 +1234,7 @@ impl EmptyState {
         child.add_space(theme::XS);
         child.label(
             egui::RichText::new(&self.title)
-                .font(FontId::new(m.subtitle_size, theme::semibold()))
+                .font(theme::heading(m.subtitle_size))
                 .color(p.text),
         );
         if let Some(body) = &self.body {
@@ -1321,7 +1323,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
     let card_body = |ui: &mut Ui, title: &str| {
         ui.label(
             egui::RichText::new(title)
-                .font(FontId::new(m.subtitle_size, theme::semibold()))
+                .font(theme::heading(m.subtitle_size))
                 .color(p.text),
         );
         ui.label(

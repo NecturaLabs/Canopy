@@ -195,12 +195,14 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
             .show(ui, |ui| {
                 let top = ui.max_rect();
                 commit_detail::show(ui, tab, settings, actions);
-                // The seam between the table and the details (concept 1's `.h-det` top border).
-                paint::seam_h(
+                // The seam between the table and the details (concept 1's `.h-det` top border), in
+                // the theme's pane separation.
+                let seam = paint::pane_seam(p, s.border, false);
+                paint::seam_line_h(
                     ui.painter(),
                     top.x_range(),
-                    top.top() + paint::SEAM * 0.5,
-                    s.border,
+                    top.top() + seam.map_or(0.0, |st| st.width) * 0.5,
+                    seam,
                 );
             });
         egui::CentralPanel::default()

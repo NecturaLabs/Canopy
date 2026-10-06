@@ -47,8 +47,6 @@ const TRAILING_GAP: f32 = 24.0;
 pub(crate) const HEADING_HEIGHT: f32 = 24.0;
 /// Room above and below a separator.
 const SEPARATOR_SPACE: f32 = 4.0;
-/// Letter spacing of headings, in em.
-const HEADING_TRACKING: f32 = 0.07;
 
 /// Where a menu shows: decides whether disabled items hide and how the menu is laid out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -412,22 +410,13 @@ pub fn separator(ui: &mut Ui) {
     );
 }
 
-/// A group heading: `micro_size` semibold uppercase, tracked out, `text_faint`.
+/// A group heading: a section label in the theme's label style ([`theme::section_label`]),
+/// `text_faint`.
 pub fn heading(ui: &mut Ui, text: &str) {
-    let m = theme::metrics();
     let p = theme::palette(ui.ctx());
-    let mut job = egui::text::LayoutJob::default();
-    job.append(
-        &text.to_uppercase(),
-        0.0,
-        egui::TextFormat {
-            font_id: FontId::new(m.micro_size, theme::semibold()),
-            color: p.text_faint,
-            extra_letter_spacing: HEADING_TRACKING * m.micro_size,
-            ..Default::default()
-        },
-    );
-    let galley = ui.painter().layout_job(job);
+    let galley = ui
+        .painter()
+        .layout_job(theme::section_label(text, p.text_faint));
     let (rect, _) = ui.allocate_exact_size(
         vec2(galley.size().x + 2.0 * ITEM_PAD, HEADING_HEIGHT),
         Sense::hover(),

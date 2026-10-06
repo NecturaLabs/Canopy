@@ -437,10 +437,7 @@ fn a_glass_layer_blurs_its_backdrop_under_a_translucent_fill() {
                 CornerRadius::ZERO,
             );
             let p = theme::palette(ui.ctx());
-            assert_eq!(
-                fill,
-                Palette::tint(theme::surfaces(ui.ctx()).overlay, p.glass_alpha)
-            );
+            assert_eq!(fill, p.glass(theme::surfaces(ui.ctx())));
             assert!(fill.a() < 255 && fill.a() >= 128, "{fill:?}");
         });
         assert_eq!(glass_layers(&shapes), 1, "{}", theme.name());
@@ -843,10 +840,7 @@ fn the_shader_clamp_keeps_the_backdrop_in_the_band_the_contrast_test_assumes() {
                     }
                 }
             }
-            let darkest = theme::over(
-                Palette::tint(p.surfaces(Style::Standard).overlay, p.glass_alpha),
-                floor,
-            );
+            let darkest = theme::over(p.glass(p.surfaces(Style::Standard)), floor);
             for ink in [
                 p.text,
                 p.text_dim,

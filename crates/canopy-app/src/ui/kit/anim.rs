@@ -8,11 +8,11 @@ use egui::{Context, Id, IdMap, Pos2, Rect, Shape, Ui, Vec2, pos2};
 
 use crate::ui::motion::{self, Spring};
 
-/// Eases towards `on` over `in_s` when turning on and `out_s` when turning off, along
-/// `motion::EASE_OUT`; 0 to 1. Zero durations (and reduced motion) switch at once.
+/// Eases towards `on` over `in_s` when turning on and `out_s` when turning off, along the theme's
+/// curve (`motion::enter_curve`); 0 to 1. Zero durations (and reduced motion) switch at once.
 pub fn ease_bool(ctx: &Context, id: Id, on: bool, in_s: f32, out_s: f32) -> f32 {
     let seconds = motion::time(if on { in_s } else { out_s });
-    ctx.animate_bool_with_time_and_easing(id, on, seconds, |t| motion::EASE_OUT.at(t))
+    ctx.animate_bool_with_time_and_easing(id, on, seconds, motion::enter_curve())
 }
 
 /// [`ease_bool`] with one duration both ways.

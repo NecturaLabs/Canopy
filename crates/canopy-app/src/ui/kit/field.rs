@@ -758,7 +758,13 @@ impl<'t> Core<'t> {
         }
         if spinner_due(&ctx, id, self.loading) {
             let r = m.icon_md / 2.0;
-            paint::spinner(&painter, pos2(x - r, cy), r * 0.66, 1.6, p.text_faint);
+            paint::spinner(
+                &painter,
+                pos2(x - r, cy),
+                r * 0.66,
+                paint::SPINNER_WIDTH,
+                p.text_faint,
+            );
             x -= m.icon_md + theme::SM;
         }
         if let Some((g, color)) = counter {

@@ -30,7 +30,7 @@ use egui_phosphor::regular as icon;
 use super::{Button, ForceState, IconButton, Size, paint};
 use crate::keymap::{self, Command};
 use crate::ui::motion;
-use crate::ui::theme::{self, Elevation, Fill, Palette};
+use crate::ui::theme::{self, Elevation, Fill};
 
 /// Room kept between a dialog card and the window edges (both sides together).
 const DIALOG_MARGIN: f32 = 28.0;
@@ -110,7 +110,7 @@ pub fn ground(ctx: &Context, layer: Layer) -> Color32 {
     if layer == Layer::Tooltip {
         s.tooltip.top
     } else if theme::appearance().glass && super::glass::available() && p.glass_alpha > 0 {
-        Palette::tint(s.overlay, p.glass_alpha)
+        p.glass(s)
     } else {
         s.overlay
     }
@@ -183,7 +183,7 @@ pub(crate) fn surface_shapes(painter: &Painter, rect: Rect, layer: Layer) -> Vec
                 // blurs what is behind the layer, not its shadow (G3), and drawn over the shadow.
                 shapes.insert(0, b.capture);
                 shapes.push(b.composite);
-                Fill::flat(Palette::tint(s.overlay, p.glass_alpha))
+                Fill::flat(p.glass(s))
             }
             None => Fill::flat(s.overlay),
         }
@@ -1336,7 +1336,7 @@ impl<'a> Dialog<'a> {
                                 ui.add(
                                     egui::Label::new(
                                         RichText::new(&title)
-                                            .font(FontId::new(m.title_size, theme::semibold()))
+                                            .font(theme::heading(m.title_size))
                                             .color(p.text),
                                     )
                                     .wrap(),

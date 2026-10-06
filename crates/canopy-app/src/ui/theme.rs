@@ -15,6 +15,8 @@
     reason = "colours are written 0xRRGGBB, as design tools show them"
 )]
 
+use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use egui::{
@@ -1843,13 +1845,6 @@ impl ThemeId {
     }
 
     /// The theme's structure.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the kit and views read it once they honour the record"
-        )
-    )]
     pub fn design(self) -> &'static Design {
         match self {
             Self::Midnight => &MIDNIGHT_DESIGN,
@@ -2244,9 +2239,14 @@ impl Palette {
         Color32::from_rgba_unmultiplied_const(c.r(), c.g(), c.b(), alpha)
     }
 
-    /// The material of `level` in `style` for this theme: Contrast has no highlights.
+    /// The material of `level` in `style` for this theme: its shadow layers in the theme's
+    /// [`ShadowCharacter`] (`Design::shadows`); Contrast has no highlights.
     pub fn material(&self, style: Style, level: Elevation) -> Material {
         let m = *material(style, self.dark, level);
+        let m = Material {
+            layers: shaped_layers(self.design().shadows, style, self.dark, level, m.layers),
+            ..m
+        };
         if self.strict {
             Material {
                 highlight: 0,
@@ -2256,6 +2256,15 @@ impl Palette {
         } else {
             m
         }
+    }
+
+    /// The structure of the theme this palette belongs to (Midnight's for a palette no theme
+    /// owns).
+    pub fn design(&self) -> &'static Design {
+        ThemeId::ALL
+            .into_iter()
+            .find(|t| t.palette().name == self.name)
+            .map_or(&MIDNIGHT_DESIGN, ThemeId::design)
     }
 
     /// The colour a shadow layer's tint resolves to in `style`.
@@ -2268,6 +2277,12 @@ impl Palette {
             ShadowTint::PrimaryGlow => self.standard.primary.top,
             ShadowTint::DangerGlow => self.standard.danger_solid.top,
         }
+    }
+
+    /// The fill of a translucent floating layer over `s`: the overlay leaning to the theme's light
+    /// (`Design::glass_tint` over `overlay`) at `glass_alpha`.
+    pub fn glass(&self, s: &Surfaces) -> Color32 {
+        Self::tint(over(self.design().glass_tint, s.overlay), self.glass_alpha)
     }
 
     /// Ring of floating layers: `overlay_edge`, or `control_border` in Contrast.
@@ -2380,8 +2395,8 @@ type InkKey = (&'static str, Style, Color32, Color32);
 thread_local! {
     /// Inks already worked out, per theme, style, colour and fill: views ask for the same few
     /// every frame.
-    static INKS: std::cell::RefCell<std::collections::HashMap<InkKey, Color32>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
+    static INKS: std::cell::RefCell<HashMap<InkKey, Color32>> =
+        std::cell::RefCell::new(HashMap::new());
 }
 
 /// The palette of the active theme.
@@ -2396,13 +2411,6 @@ pub fn surfaces(_ctx: &egui::Context) -> &'static Surfaces {
 
 /// The structure of the active theme: how it draws corners, edges, shadows, selection, focus,
 /// labels, headings, the graph and its art.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the kit and views read it once they honour the record"
-    )
-)]
 pub fn design(_ctx: &egui::Context) -> &'static Design {
     active().design()
 }
@@ -2413,13 +2421,6 @@ pub use design::*;
 
 /// The per-theme design record (wave 3): the structure half of each theme.
 mod design {
-    #![cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the record is read by its tests until the kit and views honour it"
-        )
-    )]
     use egui::{Color32, FontFamily};
 
     use super::{Elevation, FULL, Palette, ShadowLayer, hex, medium, semibold};
@@ -2477,8 +2478,9 @@ mod design {
         Lit,
     }
 
-    /// Character of shadows, applied to every [`Material`] layer through [`Design::shadow`].
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    /// Character of shadows, applied to every [`Material`] layer by [`Palette::material`]
+    /// ([`ShadowCharacter::shape`]).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub enum ShadowCharacter {
         /// The material tables as they are: long, soft, low-alpha layers.
         Soft,
@@ -2591,7 +2593,6 @@ mod design {
     /// A weight of the UI face.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum Weight {
-        Regular,
         Medium,
         Semibold,
     }
@@ -2600,7 +2601,6 @@ mod design {
         /// The bundled face of this weight.
         pub fn family(self) -> FontFamily {
             match self {
-                Self::Regular => FontFamily::Proportional,
                 Self::Medium => medium(),
                 Self::Semibold => semibold(),
             }
@@ -2756,26 +2756,29 @@ mod design {
             }
             crate::ui::saturate_u8((f32::from(r) * self.radius_scale).round()).max(1)
         }
+    }
 
-        /// Shadow `layer` of `level` in this theme's character, or `None` when the theme draws no
-        /// shadow there.
-        pub fn shadow(&self, level: Elevation, layer: ShadowLayer) -> Option<ShadowLayer> {
+    impl ShadowCharacter {
+        pub const ALL: [Self; 4] = [Self::Soft, Self::Crisp, Self::Flat, Self::Glow];
+
+        /// Shadow `layer` of `level` in this character, or `None` when it draws no shadow there.
+        pub fn shape(self, level: Elevation, layer: ShadowLayer) -> Option<ShadowLayer> {
             let scale = |v: u8, f: f32| crate::ui::saturate_u8((f32::from(v) * f).round());
-            match self.shadows {
-                ShadowCharacter::Soft => Some(layer),
-                ShadowCharacter::Crisp => Some(ShadowLayer {
+            match self {
+                Self::Soft => Some(layer),
+                Self::Crisp => Some(ShadowLayer {
                     dy: layer.dy.signum() * (layer.dy.abs() / 2).max(1),
                     blur: scale(layer.blur, 0.45).max(1),
                     alpha: scale(layer.alpha, 1.1),
                     ..layer
                 }),
-                ShadowCharacter::Flat => (level == Elevation::Floating).then_some(ShadowLayer {
+                Self::Flat => (level == Elevation::Floating).then_some(ShadowLayer {
                     dy: layer.dy.min(4),
                     blur: scale(layer.blur, 0.4),
                     alpha: scale(layer.alpha, 0.6),
                     ..layer
                 }),
-                ShadowCharacter::Glow => Some(ShadowLayer {
+                Self::Glow => Some(ShadowLayer {
                     dy: 0,
                     blur: scale(layer.blur, 1.2),
                     spread: layer.spread.max(0),
@@ -3250,6 +3253,42 @@ pub fn material(style: Style, dark: bool, level: Elevation) -> &'static Material
     &table[i]
 }
 
+/// `layers` (the material of `level` in `style`, dark or light) in shadow character `shadows`,
+/// worked out once for every combination: `Soft` is the tables as they are.
+fn shaped_layers(
+    shadows: ShadowCharacter,
+    style: Style,
+    dark: bool,
+    level: Elevation,
+    layers: &'static [ShadowLayer],
+) -> &'static [ShadowLayer] {
+    type Key = (ShadowCharacter, Style, bool, Elevation);
+    static SHAPED: LazyLock<HashMap<Key, Vec<ShadowLayer>>> = LazyLock::new(|| {
+        let mut out = HashMap::new();
+        for shadows in ShadowCharacter::ALL {
+            for style in [Style::Standard, Style::Deeper] {
+                for dark in [true, false] {
+                    for level in Elevation::ALL {
+                        let shaped = material(style, dark, level)
+                            .layers
+                            .iter()
+                            .filter_map(|l| shadows.shape(level, *l))
+                            .collect();
+                        out.insert((shadows, style, dark, level), shaped);
+                    }
+                }
+            }
+        }
+        out
+    });
+    if shadows == ShadowCharacter::Soft {
+        return layers;
+    }
+    SHAPED
+        .get(&(shadows, style, dark, level))
+        .map_or(layers, Vec::as_slice)
+}
+
 /// Deeper's focused-pane edge: `focus` at these alphas at the top, at 38% of the height, and gone
 /// from 70% (concept 4's `.c-diff::before`).
 pub const FOCUS_EDGE: [(f32, u8); 3] = [(0.0, 191), (0.38, 46), (0.70, 0)];
@@ -3660,12 +3699,52 @@ pub fn metrics_for(density: Density, style: Style) -> &'static Metrics {
     }
 }
 
-/// The active metrics.
+/// The metrics of a (density, style) pair in `theme`: every corner through the theme's radius
+/// scale ([`Design::radius`]), so the kit and the views draw the theme's corners by reading
+/// [`metrics`] as they always have.
+pub fn metrics_in(theme: ThemeId, density: Density, style: Style) -> &'static Metrics {
+    const PAIRS: [(Density, Style); 4] = [
+        (Density::Comfortable, Style::Standard),
+        (Density::Dense, Style::Standard),
+        (Density::Comfortable, Style::Deeper),
+        (Density::Dense, Style::Deeper),
+    ];
+    static SHAPED: LazyLock<Vec<Metrics>> = LazyLock::new(|| {
+        ThemeId::ALL
+            .into_iter()
+            .flat_map(|t| PAIRS.map(|(d, s)| metrics_for(d, s).shaped(t.design())))
+            .collect()
+    });
+    let pair = PAIRS
+        .iter()
+        .position(|&pair| pair == (density, style))
+        .unwrap_or(0);
+    SHAPED
+        .get(usize::from(theme.index()) * PAIRS.len() + pair)
+        .unwrap_or_else(|| metrics_for(density, style))
+}
+
+/// The active metrics, in the active theme's corners.
 pub fn metrics() -> &'static Metrics {
-    metrics_for(density(), style())
+    metrics_in(active(), density(), style())
 }
 
 impl Metrics {
+    /// These metrics with every radius in `design`'s scale.
+    pub fn shaped(&self, design: &Design) -> Self {
+        Self {
+            radius_sm: design.radius(self.radius_sm),
+            radius: design.radius(self.radius),
+            radius_lg: design.radius(self.radius_lg),
+            pill_radius: design.radius(self.pill_radius),
+            doc_tab_radius: design.radius(self.doc_tab_radius),
+            card_radius: design.radius(self.card_radius),
+            pane_radius: design.radius(self.pane_radius),
+            keycap_radius: design.radius(self.keycap_radius),
+            ..*self
+        }
+    }
+
     /// Every token as (name, value), for the gallery's token sheet.
     pub fn rows(&self) -> Vec<(&'static str, String)> {
         let f = |v: f32| format!("{v}");
@@ -3945,6 +4024,48 @@ pub fn medium() -> FontFamily {
     FontFamily::Name("medium".into())
 }
 
+/// A section label (sidebar sections, settings groups, table column headers, menu headings) in
+/// the active theme's [`LabelStyle`]: its case, size (`micro_size` in capitals, `small_size` in
+/// title case), weight and tracking.
+pub fn section_label(text: &str, color: Color32) -> egui::text::LayoutJob {
+    let style = active().design().labels;
+    let m = metrics();
+    let size = match style.case {
+        LabelCase::Upper => m.micro_size,
+        LabelCase::Title => m.small_size,
+    };
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &style.cased(text),
+        0.0,
+        egui::TextFormat {
+            font_id: FontId::new(size, style.weight.family()),
+            color,
+            extra_letter_spacing: style.tracking * size,
+            ..Default::default()
+        },
+    );
+    job
+}
+
+/// A title or headline at `size` (`Metrics::title_size`, `headline_size`, `subtitle_size` for card
+/// titles, `display_size`, `hero_size`) in the active theme's heading face ([`HeadingFace`]).
+pub fn heading(size: f32) -> FontId {
+    let face = active().design().heading;
+    FontId::new(size * face.size_scale(), face.family())
+}
+
+/// An icon glyph's font at `size`: the filled Phosphor glyph when `lit` (active, selected or
+/// toggled) and the theme fills its active icons ([`IconWeight::FillAccents`]), else the regular
+/// one.
+pub fn icon_font(size: f32, lit: bool) -> FontId {
+    if lit && active().design().icons == IconWeight::FillAccents {
+        FontId::new(size, FontFamily::Name(super::fonts::FILL.into()))
+    } else {
+        FontId::proportional(size)
+    }
+}
+
 // ------------------------------------------------------------------------------- egui mapping
 
 /// The largest `Floating` layer of `style` as one egui shadow (egui's own windows and popups).
@@ -4103,12 +4224,16 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, look: Appearance) {
     look_set(id, look.style, look.density, look.glass);
     super::motion::set_reduced(look.reduce_motion);
     let p = id.palette();
-    let m = metrics_for(look.density, look.style);
+    let m = metrics_in(id, look.density, look.style);
     let theme = if p.dark { Theme::Dark } else { Theme::Light };
     let mut style = (*ctx.style_of(theme)).clone();
     style.visuals = visuals(p, look.style, m);
+    let face = id.design().heading;
     style.text_styles = [
-        (TextStyle::Heading, FontId::new(m.title_size, semibold())),
+        (
+            TextStyle::Heading,
+            FontId::new(m.title_size * face.size_scale(), face.family()),
+        ),
         (
             TextStyle::Body,
             FontId::new(m.body_size, FontFamily::Proportional),
@@ -5166,6 +5291,7 @@ mod tests {
     /// lift, Glow centres every layer.
     #[test]
     fn shadow_characters_reshape_the_layers() {
+        use ShadowCharacter as C;
         let drop = ShadowLayer {
             dy: 10,
             blur: 28,
@@ -5173,28 +5299,45 @@ mod tests {
             alpha: 166,
             tint: ShadowTint::Shadow,
         };
-        let with = |shadows| Design {
-            shadows,
-            ..MIDNIGHT_DESIGN
-        };
-        assert_eq!(
-            with(ShadowCharacter::Soft).shadow(Elevation::Pane, drop),
-            Some(drop)
-        );
-        let crisp = with(ShadowCharacter::Crisp)
-            .shadow(Elevation::Floating, drop)
-            .unwrap();
+        assert_eq!(C::Soft.shape(Elevation::Pane, drop), Some(drop));
+        let crisp = C::Crisp.shape(Elevation::Floating, drop).unwrap();
         assert!(crisp.blur < drop.blur / 2 && crisp.dy < drop.dy && crisp.dy > 0);
-        let flat = with(ShadowCharacter::Flat);
-        assert_eq!(flat.shadow(Elevation::Control, drop), None);
-        assert_eq!(flat.shadow(Elevation::Pane, drop), None);
-        let lift = flat.shadow(Elevation::Floating, drop).unwrap();
+        assert_eq!(C::Flat.shape(Elevation::Control, drop), None);
+        assert_eq!(C::Flat.shape(Elevation::Pane, drop), None);
+        let lift = C::Flat.shape(Elevation::Floating, drop).unwrap();
         assert!(lift.alpha < drop.alpha && lift.blur < drop.blur);
-        let glow = with(ShadowCharacter::Glow)
-            .shadow(Elevation::Primary, drop)
-            .unwrap();
+        let glow = C::Glow.shape(Elevation::Primary, drop).unwrap();
         assert_eq!(glow.dy, 0);
         assert!(glow.spread >= 0 && glow.blur > drop.blur);
+    }
+
+    /// Every material a theme hands the kit is already in its shadow character: Contrast's
+    /// controls cast nothing, Neon's layers glow around their surface, Daylight's are short.
+    #[test]
+    fn materials_come_in_the_themes_shadow_character() {
+        for style in [Style::Standard, Style::Deeper] {
+            for level in Elevation::ALL {
+                let contrast = ThemeId::Contrast.palette().material(style, level);
+                if level != Elevation::Floating {
+                    assert!(contrast.layers.is_empty(), "Contrast {style:?} {level:?}");
+                }
+                let neon = ThemeId::Neon.palette().material(style, level);
+                assert!(
+                    neon.layers.iter().all(|l| l.dy == 0),
+                    "Neon {style:?} {level:?}"
+                );
+                let soft = material(style, false, level);
+                let crisp = ThemeId::Daylight.palette().material(style, level);
+                assert_eq!(crisp.layers.len(), soft.layers.len());
+                for (c, s) in crisp.layers.iter().zip(soft.layers) {
+                    assert!(c.blur <= s.blur.max(1), "Daylight {style:?} {level:?}");
+                }
+                assert_eq!(
+                    ThemeId::Midnight.palette().material(style, level).layers,
+                    material(style, true, level).layers
+                );
+            }
+        }
     }
 
     /// Heading faces and label weights resolve to the families `ui/fonts.rs` registers, and label
@@ -5208,7 +5351,6 @@ mod tests {
         );
         assert_eq!(Weight::Semibold.family(), semibold());
         assert_eq!(Weight::Medium.family(), medium());
-        assert_eq!(Weight::Regular.family(), FontFamily::Proportional);
         let upper = LabelStyle {
             case: LabelCase::Upper,
             tracking: 0.1,
@@ -5230,5 +5372,102 @@ mod tests {
             ThemeId::Contrast.design().icons,
             "Contrast's active icons are filled"
         );
+    }
+
+    /// The active metrics carry the active theme's corners: every radius through its scale,
+    /// everything else (sizes, gutters, type) as the density and style set it.
+    #[test]
+    fn metrics_come_in_the_themes_corners() {
+        for id in ThemeId::ALL {
+            for density in Density::ALL {
+                for style in [Style::Standard, Style::Deeper] {
+                    let raw = metrics_for(density, style);
+                    let m = metrics_in(id, density, style);
+                    let d = id.design();
+                    assert_eq!(m.radius, d.radius(raw.radius), "{id:?}");
+                    assert_eq!(m.radius_sm, d.radius(raw.radius_sm));
+                    assert_eq!(m.pane_radius, d.radius(raw.pane_radius));
+                    assert_eq!(m.keycap_radius, d.radius(raw.keycap_radius));
+                    assert_eq!(m.pill_radius, d.radius(raw.pill_radius));
+                    assert_eq!(
+                        (m.control, m.pane_gutter, m.body_size),
+                        (raw.control, raw.pane_gutter, raw.body_size)
+                    );
+                }
+            }
+        }
+        look_set(ThemeId::Neon, Style::Deeper, Density::Comfortable, false);
+        assert_eq!(
+            metrics().radius,
+            ThemeId::Neon.design().radius(DEEPER_COMFORTABLE.radius)
+        );
+        assert!(
+            metrics().radius < DEEPER_COMFORTABLE.radius,
+            "Neon is sharper"
+        );
+        look_set(ThemeId::Ember, Style::Deeper, Density::Comfortable, false);
+        assert!(
+            metrics().radius > DEEPER_COMFORTABLE.radius,
+            "Ember is softer"
+        );
+    }
+
+    /// Section labels take the theme's case, size, weight and tracking; titles its heading face;
+    /// active icons its icon weight.
+    #[test]
+    fn labels_titles_and_icons_follow_the_theme() {
+        let job_of = |id: ThemeId| {
+            look_set(id, Style::Standard, Density::Comfortable, false);
+            section_label("Branches", Color32::WHITE)
+        };
+        let paper = job_of(ThemeId::Paper);
+        assert_eq!(paper.text, "BRANCHES");
+        let format = &paper.sections[0].format;
+        assert_eq!(format.font_id.size, COMFORTABLE.micro_size);
+        assert!((format.extra_letter_spacing - 0.11 * COMFORTABLE.micro_size).abs() < 1e-4);
+        let daylight = job_of(ThemeId::Daylight);
+        assert_eq!(daylight.text, "Branches");
+        assert_eq!(
+            daylight.sections[0].format.font_id,
+            FontId::new(COMFORTABLE.small_size, semibold())
+        );
+        look_set(ThemeId::Paper, Style::Standard, Density::Comfortable, false);
+        assert_eq!(
+            heading(20.0),
+            FontId::new(20.0 * 1.06, HeadingFace::Serif.family())
+        );
+        assert_eq!(icon_font(14.0, true), FontId::proportional(14.0));
+        look_set(
+            ThemeId::Contrast,
+            Style::Standard,
+            Density::Comfortable,
+            false,
+        );
+        assert_eq!(heading(20.0).family, HeadingFace::Hyperlegible.family());
+        assert_ne!(icon_font(14.0, true), FontId::proportional(14.0));
+        assert_eq!(icon_font(14.0, false), FontId::proportional(14.0));
+        look_set(
+            ThemeId::Midnight,
+            Style::Standard,
+            Density::Comfortable,
+            false,
+        );
+        assert_eq!(heading(20.0), FontId::new(20.0, semibold()));
+    }
+
+    /// The glass fill leans to the theme's light; Contrast has none.
+    #[test]
+    fn glass_leans_to_the_theme() {
+        for id in ThemeId::ALL {
+            let p = id.palette();
+            let s = p.surfaces(Style::Standard);
+            let glass = p.glass(s);
+            assert_eq!(glass.a(), p.glass_alpha, "{id:?}");
+            if id.design().glass_tint == Color32::TRANSPARENT {
+                assert_eq!(glass, Palette::tint(s.overlay, p.glass_alpha));
+            } else {
+                assert_ne!(glass, Palette::tint(s.overlay, p.glass_alpha), "{id:?}");
+            }
+        }
     }
 }
