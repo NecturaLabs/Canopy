@@ -14,7 +14,8 @@ use egui_phosphor::regular as icon;
 use canopy_core::RefKind;
 use canopy_core::forge::ForgeKind;
 use canopy_hosting::{
-    CheckState, MergeMethod, RequestDetails, RequestState, RequestSummary, StateFilter,
+    CheckState, MergeMethod, RequestDetails, RequestState, RequestSummary, ReviewDecision, Rollup,
+    StateFilter,
 };
 
 use crate::action::Action;
@@ -291,9 +292,20 @@ fn state_style(r: &RequestSummary) -> (&'static str, Tone, &'static str) {
 /// Where a request's checks stand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ci {
-    Passing { total: usize },
-    Failing { failed: usize, total: usize },
-    Running { pending: usize, total: usize },
+    Passing {
+        total: usize,
+    },
+    Failing {
+        failed: usize,
+        total: usize,
+    },
+    Running {
+        pending: usize,
+        total: usize,
+    },
+    /// The provider's combined state from the list's rollup, which carries no counts: success,
+    /// failure or pending (a neutral state says nothing and shows nothing).
+    Overall(CheckState),
 }
 
 /// The standing of a request's reviews.
@@ -302,11 +314,13 @@ enum Verdict {
     Approved,
     ChangesRequested,
     Commented,
+    /// The branch rules want a review nobody has given yet (GitHub, from the list's rollup).
+    Required,
 }
 
-/// What a reviewer scans a list for: the checks and the reviews of a request. The list API sends
-/// neither, so a row has them once the request's details have been loaded in this session (they
-/// stay until the app closes).
+/// What a reviewer scans a list for: the checks and the reviews of a request. With a token the
+/// list comes with them (the rollup, [`RequestSummary::rollup`]); otherwise a row has them once
+/// the request's details have been loaded in this session (they stay until the app closes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Signals {
     ci: Option<Ci>,
@@ -314,6 +328,20 @@ struct Signals {
 }
 
 impl Signals {
+    fn of_rollup(r: Rollup) -> Self {
+        Self {
+            ci: r
+                .checks
+                .filter(|&s| s != CheckState::Neutral)
+                .map(Ci::Overall),
+            review: r.review.map(|d| match d {
+                ReviewDecision::Approved => Verdict::Approved,
+                ReviewDecision::ChangesRequested => Verdict::ChangesRequested,
+                ReviewDecision::Required => Verdict::Required,
+            }),
+        }
+    }
+
     fn of(d: &RequestDetails) -> Self {
         let total = d.checks.len();
         let count = |state| d.checks.iter().filter(|c| c.state == state).count();
@@ -355,7 +383,24 @@ impl Signals {
                 Tone::Warning,
                 format!("{pending} of {total} checks running"),
             )),
-            None => {}
+            Some(Ci::Overall(CheckState::Success)) => {
+                out.push((
+                    icon::CHECK_CIRCLE,
+                    Tone::Success,
+                    "Checks passed".to_owned(),
+                ));
+            }
+            Some(Ci::Overall(CheckState::Failure)) => {
+                out.push((icon::X_CIRCLE, Tone::Danger, "Checks failed".to_owned()));
+            }
+            Some(Ci::Overall(CheckState::Pending)) => {
+                out.push((
+                    icon::CIRCLE_DASHED,
+                    Tone::Warning,
+                    "Checks running".to_owned(),
+                ));
+            }
+            Some(Ci::Overall(CheckState::Neutral)) | None => {}
         }
         match self.review {
             Some(Verdict::Approved) => {
@@ -369,6 +414,11 @@ impl Signals {
             Some(Verdict::Commented) => {
                 out.push((icon::CHAT_CIRCLE, Tone::Neutral, "Reviewed".to_owned()));
             }
+            Some(Verdict::Required) => out.push((
+                icon::USER_CIRCLE_DASHED,
+                Tone::Neutral,
+                "Review required".to_owned(),
+            )),
             None => {}
         }
         out
@@ -390,6 +440,21 @@ pub(crate) fn remember_signals(ctx: &egui::Context, tab: &RepoTab, d: &RequestDe
 
 fn known_signals(ctx: &egui::Context, tab: &RepoTab, number: u64) -> Option<Signals> {
     ctx.data(|data| data.get_temp(signals_id(tab, number)))
+}
+
+/// What row `r` shows: the rollup the list came with, part by part, and where it says nothing
+/// (no token, or a part it does not know), what the request's details said when they were last
+/// opened. The rollup is as fresh as the list, and the details can lack a part the token may not
+/// read (check runs, for one), so the list's word stands.
+fn row_signals(ctx: &egui::Context, tab: &RepoTab, r: &RequestSummary) -> Option<Signals> {
+    let remembered = known_signals(ctx, tab, r.number);
+    let Some(listed) = r.rollup.map(Signals::of_rollup) else {
+        return remembered;
+    };
+    Some(Signals {
+        ci: listed.ci.or_else(|| remembered.and_then(|s| s.ci)),
+        review: listed.review.or_else(|| remembered.and_then(|s| s.review)),
+    })
 }
 
 // ------------------------------------------------------------------------------------- the list
@@ -510,7 +575,7 @@ fn list(
                                 |ui, i| {
                                     let r = &items[i];
                                     let selected = tab.requests.selected == Some(r.number);
-                                    let signals = known_signals(ui.ctx(), tab, r.number);
+                                    let signals = row_signals(ui.ctx(), tab, r);
                                     if row(ui, r, kind, signals, selected, now, ground).clicked() {
                                         tab.select_request(r.number);
                                     }
@@ -1629,6 +1694,7 @@ mod tests {
             updated_at: 0,
             web_url: "https://github.com/example/project/pull/7".into(),
             labels: vec![],
+            rollup: None,
         }
     }
 
@@ -2079,6 +2145,93 @@ mod tests {
                 review: Some(Verdict::ChangesRequested)
             }
         );
+    }
+
+    #[test]
+    fn a_rollup_becomes_row_signals() {
+        let signals = |checks, review| Signals::of_rollup(Rollup { checks, review });
+        assert_eq!(
+            signals(Some(CheckState::Failure), Some(ReviewDecision::Required)),
+            Signals {
+                ci: Some(Ci::Overall(CheckState::Failure)),
+                review: Some(Verdict::Required)
+            }
+        );
+        // A neutral state (a skipped or manual pipeline) claims nothing.
+        assert_eq!(
+            signals(Some(CheckState::Neutral), None),
+            Signals {
+                ci: None,
+                review: None
+            }
+        );
+        let said = |s: Signals| -> Vec<String> { s.glyphs().into_iter().map(|g| g.2).collect() };
+        assert_eq!(
+            said(signals(
+                Some(CheckState::Success),
+                Some(ReviewDecision::ChangesRequested)
+            )),
+            ["Checks passed", CHANGES_REQUESTED]
+        );
+        assert_eq!(
+            said(signals(
+                Some(CheckState::Pending),
+                Some(ReviewDecision::Approved)
+            )),
+            ["Checks running", "Approved"]
+        );
+        assert_eq!(
+            said(signals(None, Some(ReviewDecision::Required))),
+            ["Review required"]
+        );
+    }
+
+    /// Rollup (requests F2): with a token every row shows its checks and review straight from
+    /// the list, opened or not; where the list says nothing, what the details said fills in.
+    #[test]
+    fn rows_show_the_lists_rollup_and_details_fill_its_gaps() {
+        let mut tab = loaded_tab(RequestState::Open);
+        let mut open = details(RequestState::Open);
+        open.checks = vec![check(CheckState::Success)];
+        open.reviews = vec![review("maya", "Approved")];
+        let mut seven = open.summary.clone();
+        seven.rollup = Some(Rollup {
+            checks: Some(CheckState::Failure),
+            review: None,
+        });
+        let mut eight = summary(RequestState::Open);
+        eight.number = 8;
+        eight.title = "Second".into();
+        eight.rollup = Some(Rollup {
+            checks: Some(CheckState::Pending),
+            review: Some(ReviewDecision::Required),
+        });
+        let mut draw = |rows: Vec<RequestSummary>| {
+            tab.requests.list = Some(Ok(Arc::from(rows)));
+            render(theme::ThemeId::Midnight, SCREEN, |ui| {
+                remember_signals(ui.ctx(), &tab, &open);
+                list(
+                    ui,
+                    &mut tab,
+                    ForgeKind::GitHub,
+                    Color32::BLACK,
+                    &mut Vec::new(),
+                );
+            })
+        };
+        let frame = draw(vec![seven, eight]);
+        // #8 was never opened: its glyphs come from the list.
+        assert!(frame.has(icon::CIRCLE_DASHED), "{:?}", frame.texts);
+        assert!(frame.has(icon::USER_CIRCLE_DASHED), "{:?}", frame.texts);
+        // #7: the list's failed checks stand over older details; its review comes from them.
+        assert!(frame.has(icon::X_CIRCLE), "{:?}", frame.texts);
+        assert!(!frame.has(icon::CHECK_CIRCLE), "{:?}", frame.texts);
+        assert!(frame.has(icon::THUMBS_UP), "{:?}", frame.texts);
+        // Without a rollup (no token) the row shows what its details said, as before.
+        let frame = draw(vec![open.summary.clone()]);
+        assert!(frame.has(icon::CHECK_CIRCLE), "{:?}", frame.texts);
+        assert!(frame.has(icon::THUMBS_UP), "{:?}", frame.texts);
+        assert!(!frame.has(icon::X_CIRCLE), "{:?}", frame.texts);
     }
 
     /// F6: with the list failed, the list pane stays short and leaves the way out to the details

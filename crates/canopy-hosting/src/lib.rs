@@ -1,11 +1,13 @@
-//! Pull requests (GitHub) and merge requests (GitLab) for Canopy, over the providers' REST APIs.
+//! Pull requests (GitHub) and merge requests (GitLab) for Canopy, over the providers' REST APIs
+//! (plus one GraphQL query for a list's checks and reviews, [`Client::rollup`]).
 //!
 //! This crate is Canopy's only network client besides the `git` executable. Its scope is
 //! deliberately narrow:
 //!
-//! - It talks only to the REST API of the host the repository's own remote points at:
+//! - It talks only to the API of the host the repository's own remote points at:
 //!   `api.github.com` for github.com, `https://<host>/api/v4` for gitlab.com and self-hosted
-//!   GitLab. The host comes from a [`canopy_core::forge::Forge`] recognised from a remote URL;
+//!   GitLab, and the GraphQL endpoint on that same host (`api.github.com/graphql`,
+//!   `https://<host>/api/graphql`). The host comes from a [`canopy_core::forge::Forge`] recognised from a remote URL;
 //!   author pictures also use validated image hosts ([`avatars`]), without credentials.
 //!   Canopy's own update manifest ([`updates`]) is fetched anonymously from the public
 //!   `NecturaLabs/app-updates` repository.
@@ -36,7 +38,7 @@ pub use error::{Error, Result};
 pub use http::{is_loopback_base, set_build};
 pub use model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
-    RequestSummary, Review, StateFilter, checkout_ref,
+    RequestSummary, Review, ReviewDecision, Rollup, StateFilter, checkout_ref,
 };
 #[expect(
     deprecated,

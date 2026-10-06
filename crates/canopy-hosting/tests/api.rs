@@ -8,7 +8,8 @@
 
 use canopy_core::forge::{Forge, ForgeKind};
 use canopy_hosting::{
-    CheckState, Client, Error, MergeMethod, NewRequest, RequestState, StateFilter,
+    CheckState, Client, Error, MergeMethod, NewRequest, RequestState, ReviewDecision, Rollup,
+    StateFilter,
 };
 use serde_json::{Value, json};
 
@@ -1209,6 +1210,388 @@ fn gitlab_viewer_and_debug() {
     assert_no_token_leak(&client);
     let dbg = format!("{client:?}");
     assert!(dbg.contains("group%2Fsub%2Fproj"), "{dbg}");
+}
+
+// ----------------------------------------------------------------------------------------------
+// List rollup (checks and reviews for a page of requests, one GraphQL query)
+// ----------------------------------------------------------------------------------------------
+
+/// The one request a rollup sent: a POST of JSON to `target` carrying the token as a bearer
+/// header (when there is one) and nowhere else.
+fn rollup_request(server: &Server, target: &str, token: Option<&str>) -> Value {
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1, "one query per rollup: {requests:?}");
+    let req = &requests[0];
+    assert_eq!((req.method.as_str(), req.target.as_str()), ("POST", target));
+    assert_eq!(
+        req.header("authorization"),
+        token.map(|t| format!("Bearer {t}")).as_deref()
+    );
+    assert_eq!(req.header("content-type"), Some("application/json"));
+    assert!(
+        req.header("user-agent")
+            .is_some_and(|ua| ua.starts_with("Canopy/"))
+    );
+    assert!(!req.body.contains(TOKEN) && !req.target.contains(TOKEN));
+    req.json()
+}
+
+#[test]
+fn github_rollup_maps_a_page_in_one_query() {
+    let server = Server::start();
+    server.route(
+        "POST",
+        "/graphql",
+        200,
+        &json!({
+            "data": { "repository": {
+                "p7": {
+                    "number": 7,
+                    "reviewDecision": "APPROVED",
+                    "statusCheckRollup": { "state": "SUCCESS", "unknown": 1 },
+                    "latestOpinionatedReviews": { "nodes": [{ "state": "APPROVED" }] },
+                    "unknown_field": true,
+                },
+                "p8": {
+                    "number": 8,
+                    "reviewDecision": null,
+                    "statusCheckRollup": { "state": "FAILURE" },
+                    "latestOpinionatedReviews": { "nodes": [
+                        { "state": "APPROVED" }, { "state": "CHANGES_REQUESTED" }
+                    ] },
+                },
+                "p9": {
+                    "number": 9,
+                    "reviewDecision": "REVIEW_REQUIRED",
+                    "statusCheckRollup": null,
+                    "latestOpinionatedReviews": { "nodes": [] },
+                },
+                "p404": null,
+            } },
+            "errors": [{
+                "type": "NOT_FOUND",
+                "path": ["repository", "p404"],
+                "message": "Could not resolve to a PullRequest with the number of 404."
+            }],
+        })
+        .to_string(),
+    );
+    let client = github(&server, Some(TOKEN));
+    let rollup = client.rollup(&[7, 8, 9, 404, 7]).expect("rollup");
+    assert_eq!(
+        rollup,
+        [
+            (
+                7,
+                Rollup {
+                    checks: Some(CheckState::Success),
+                    review: Some(ReviewDecision::Approved)
+                }
+            ),
+            (
+                8,
+                Rollup {
+                    checks: Some(CheckState::Failure),
+                    review: Some(ReviewDecision::ChangesRequested)
+                }
+            ),
+            (
+                9,
+                Rollup {
+                    checks: None,
+                    review: Some(ReviewDecision::Required)
+                }
+            ),
+        ],
+        "a missing pull request is left out; the rest of the data stands"
+    );
+
+    let body = rollup_request(&server, "/graphql", Some(TOKEN));
+    assert_eq!(
+        body["variables"],
+        json!({ "owner": "octo", "name": "hello" })
+    );
+    let query = body["query"].as_str().expect("query");
+    assert_eq!(
+        query.matches("pullRequest(").count(),
+        4,
+        "each number once: {query}"
+    );
+    for n in [7, 8, 9, 404] {
+        assert!(
+            query.contains(&format!("p{n}: pullRequest(number: {n})")),
+            "{query}"
+        );
+    }
+    for field in [
+        "reviewDecision",
+        "statusCheckRollup",
+        "latestOpinionatedReviews",
+    ] {
+        assert!(query.contains(field), "{field} in {query}");
+    }
+    assert_no_token_leak(&client);
+
+    // Nothing to ask about: nothing is sent.
+    let quiet = Server::start();
+    assert_eq!(github(&quiet, Some(TOKEN)).rollup(&[]), Ok(Vec::new()));
+    assert!(quiet.requests().is_empty());
+}
+
+#[test]
+fn github_rollup_errors_and_empty_data() {
+    let server = Server::start();
+    let client = github(&server, Some(TOKEN));
+    let rollup = |status: u16, headers: &[(&str, &str)], body: &str| {
+        server.route_with_headers("POST", "/graphql", status, headers, body);
+        client.rollup(&[1])
+    };
+    assert_eq!(
+        rollup(401, &[], r#"{"message":"Bad credentials"}"#),
+        Err(Error::Unauthorized("Bad credentials".into()))
+    );
+    assert_eq!(
+        rollup(
+            403,
+            &[
+                ("x-ratelimit-remaining", "0"),
+                ("x-ratelimit-reset", "1800000000")
+            ],
+            r#"{"message":"API rate limit exceeded"}"#
+        ),
+        Err(Error::RateLimited {
+            reset: Some(1_800_000_000)
+        })
+    );
+    // GitHub can also answer an exhausted GraphQL quota with 200 and a typed error.
+    assert_eq!(
+        rollup(
+            200,
+            &[("x-ratelimit-reset", "1800000005")],
+            r#"{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded for user ID 1."}]}"#
+        ),
+        Err(Error::RateLimited {
+            reset: Some(1_800_000_005)
+        })
+    );
+    assert_eq!(
+        rollup(
+            200,
+            &[],
+            r#"{"data":null,"errors":[{"message":"Field 'statusCheckRollup' doesn't exist on type 'PullRequest'"}]}"#
+        ),
+        Err(Error::Api {
+            status: 200,
+            message: "Field 'statusCheckRollup' doesn't exist on type 'PullRequest'".into()
+        })
+    );
+    assert_eq!(
+        rollup(502, &[], "<html>bad gateway</html>"),
+        Err(Error::Api {
+            status: 502,
+            message: "Bad Gateway".into()
+        })
+    );
+    assert!(matches!(rollup(200, &[], "not json"), Err(Error::Parse(_))));
+    // A repository the token cannot see: no data, no rows, no error.
+    assert_eq!(
+        rollup(200, &[], r#"{"data":{"repository":null}}"#),
+        Ok(Vec::new())
+    );
+    assert_eq!(rollup(200, &[], r#"{"data":{}}"#), Ok(Vec::new()));
+
+    // Without a token the query goes out without an authorization header (GitHub then refuses).
+    let anonymous = Server::start();
+    anonymous.route(
+        "POST",
+        "/graphql",
+        401,
+        r#"{"message":"This endpoint requires you to be authenticated."}"#,
+    );
+    assert!(matches!(
+        github(&anonymous, None).rollup(&[1]),
+        Err(Error::Unauthorized(_))
+    ));
+    rollup_request(&anonymous, "/graphql", None);
+}
+
+#[test]
+fn rollup_redirects_are_never_followed() {
+    let server = Server::start();
+    let other = Server::start();
+    let elsewhere = format!("{}/graphql", other.base);
+    server.route_with_headers("POST", "/graphql", 307, &[("Location", &elsewhere)], "");
+    github(&server, Some(TOKEN))
+        .rollup(&[1])
+        .expect_err("a redirect is an error");
+    server.route_with_headers("POST", "/api/graphql", 308, &[("Location", &elsewhere)], "");
+    gitlab(&server, Some(TOKEN))
+        .rollup(&[1])
+        .expect_err("a redirect is an error");
+    assert!(other.requests().is_empty(), "{:?}", other.requests());
+}
+
+/// The rollup reads no more of a response than any other request does (under 10 MiB).
+#[test]
+fn rollup_bodies_are_bounded() {
+    const LIMIT: usize = 10 * 1024 * 1024;
+    let server = Server::start();
+    let client = github(&server, Some(TOKEN));
+    let padded = |len: usize| {
+        let head = r#"{"data":{"repository":{}},"pad":""#;
+        let tail = r#""}"#;
+        format!("{head}{}{tail}", " ".repeat(len - head.len() - tail.len()))
+    };
+    server.route("POST", "/graphql", 200, &padded(LIMIT - 1));
+    assert_eq!(
+        client.rollup(&[1]),
+        Ok(Vec::new()),
+        "a body under the limit is read"
+    );
+    server.route("POST", "/graphql", 200, &padded(LIMIT));
+    assert!(
+        matches!(client.rollup(&[1]), Err(Error::Network(_))),
+        "a body of the limit or more is refused"
+    );
+}
+
+#[test]
+fn gitlab_rollup_maps_a_page_in_one_query() {
+    let server = Server::start();
+    server.route(
+        "POST",
+        "/api/graphql",
+        200,
+        &json!({ "data": { "project": { "mergeRequests": { "nodes": [
+            {
+                "iid": "2",
+                "headPipeline": { "status": "FAILED", "id": "gid://gitlab/Ci::Pipeline/1" },
+                "approvedBy": { "nodes": [] },
+            },
+            {
+                "iid": "1",
+                "headPipeline": null,
+                "approvedBy": { "nodes": [{ "username": "amy" }] },
+                "unknown_field": [1, 2],
+            },
+            {
+                "iid": "3",
+                "headPipeline": { "status": "RUNNING" },
+                "approvedBy": null,
+            },
+        ] } } } })
+        .to_string(),
+    );
+    let client = gitlab(&server, Some(TOKEN));
+    let rollup = client.rollup(&[1, 2, 3, 5]).expect("rollup");
+    assert_eq!(
+        rollup,
+        [
+            (
+                1,
+                Rollup {
+                    checks: None,
+                    review: Some(ReviewDecision::Approved)
+                }
+            ),
+            (
+                2,
+                Rollup {
+                    checks: Some(CheckState::Failure),
+                    review: None
+                }
+            ),
+            (
+                3,
+                Rollup {
+                    checks: Some(CheckState::Pending),
+                    review: None
+                }
+            ),
+        ],
+        "in the order asked; an iid the project lacks is left out"
+    );
+    // The REST root is /api/v4; GraphQL is /api/graphql on the same host.
+    let body = rollup_request(&server, "/api/graphql", Some(TOKEN));
+    assert_eq!(
+        body["variables"],
+        json!({ "path": "group/sub/proj", "iids": ["1", "2", "3", "5"] })
+    );
+    let query = body["query"].as_str().expect("query");
+    for field in ["mergeRequests(iids: $iids", "headPipeline", "approvedBy"] {
+        assert!(query.contains(field), "{field} in {query}");
+    }
+    assert_no_token_leak(&client);
+
+    // A public project read without a token: the same query, no authorization header.
+    let anonymous = Server::start();
+    anonymous.route(
+        "POST",
+        "/api/graphql",
+        200,
+        r#"{"data":{"project":{"mergeRequests":{"nodes":[]}}}}"#,
+    );
+    assert_eq!(gitlab(&anonymous, None).rollup(&[4]), Ok(Vec::new()));
+    rollup_request(&anonymous, "/api/graphql", None);
+}
+
+#[test]
+fn gitlab_rollup_errors_and_empty_data() {
+    let server = Server::start();
+    let client = gitlab(&server, Some(TOKEN));
+    let rollup = |status: u16, headers: &[(&str, &str)], body: &str| {
+        server.route_with_headers("POST", "/api/graphql", status, headers, body);
+        client.rollup(&[1])
+    };
+    assert_eq!(
+        rollup(401, &[], r#"{"message":"401 Unauthorized"}"#),
+        Err(Error::Unauthorized("401 Unauthorized".into()))
+    );
+    assert_eq!(
+        rollup(429, &[("ratelimit-reset", "1800000001")], "Retry later"),
+        Err(Error::RateLimited {
+            reset: Some(1_800_000_001)
+        })
+    );
+    assert_eq!(
+        rollup(
+            200,
+            &[],
+            r#"{"errors":[{"message":"Query has complexity of 300, which exceeds max complexity of 250"}]}"#
+        ),
+        Err(Error::Api {
+            status: 200,
+            message: "Query has complexity of 300, which exceeds max complexity of 250".into()
+        })
+    );
+    assert_eq!(
+        rollup(200, &[], r#"{"errors":[]}"#),
+        Err(Error::Api {
+            status: 200,
+            message: "The GraphQL response carried no data".into()
+        })
+    );
+    assert_eq!(
+        rollup(500, &[], r#"{"message":"500 Internal Server Error"}"#),
+        Err(Error::Api {
+            status: 500,
+            message: "500 Internal Server Error".into()
+        })
+    );
+    assert!(matches!(rollup(200, &[], "{"), Err(Error::Parse(_))));
+    // A project the token cannot see reads as null.
+    assert_eq!(
+        rollup(200, &[], r#"{"data":{"project":null}}"#),
+        Ok(Vec::new())
+    );
+    assert_eq!(
+        rollup(
+            200,
+            &[],
+            r#"{"data":{"project":{"mergeRequests":{"nodes":[{"iid":"not a number"}]}}}}"#
+        ),
+        Ok(Vec::new())
+    );
 }
 
 #[test]
