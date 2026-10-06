@@ -1318,16 +1318,40 @@ fn pull_scenario(config: &[&str], diverged: bool) -> (tempfile::TempDir, tempfil
     (up_dir, clone_dir, copy)
 }
 
-/// A copy of the clone at `clone_dir/clone` from a [`pull_scenario`], with each `key=value` of
-/// `config` set in its own configuration. A pull leaves the upstream as it was, so the copies of
-/// one scenario share its upstream, and a matrix of pulls builds two repositories, not hundreds:
-/// starting git processes is slow on Windows.
+/// The diverged and the behind [`pull_scenario`] a pull matrix copies, each with its upstream's
+/// HEAD. A pull leaves the upstream as it was, so the copies of one scenario share its upstream,
+/// and a matrix of pulls builds two repositories, not hundreds: starting git processes is slow
+/// on Windows. The template clone is closed, so nothing holds its files while they are copied.
+fn pull_templates() -> [(bool, tempfile::TempDir, tempfile::TempDir, String); 2] {
+    [true, false].map(|diverged| {
+        let (up_dir, clone_dir, _template) = pull_scenario(&[], diverged);
+        let head = git(up_dir.path(), &["rev-parse", "HEAD"]);
+        (diverged, up_dir, clone_dir, head)
+    })
+}
+
+/// That no pull of a matrix changed the upstream its copies share.
+fn assert_upstreams_unchanged(templates: &[(bool, tempfile::TempDir, tempfile::TempDir, String)]) {
+    for (_, up_dir, _, head) in templates {
+        assert_eq!(
+            &git(up_dir.path(), &["rev-parse", "HEAD"]),
+            head,
+            "a pull changed its upstream"
+        );
+    }
+}
+
+/// A copy of the clone at `clone_dir/clone` from [`pull_templates`], without its sample hooks,
+/// with each `key=value` of `config` set in its own configuration.
 fn pull_copy(clone_dir: &Path, config: &[&str]) -> (tempfile::TempDir, Repo) {
     fn copy_dir(from: &Path, to: &Path) {
         fs::create_dir_all(to).expect("mkdir");
         for entry in fs::read_dir(from).expect("read dir") {
             let entry = entry.expect("entry");
             let target = to.join(entry.file_name());
+            if entry.path().ends_with(Path::new(".git").join("hooks")) {
+                continue;
+            }
             if entry.file_type().expect("file type").is_dir() {
                 copy_dir(&entry.path(), &target);
             } else {
@@ -1423,12 +1447,9 @@ fn pull_config_matches_what_git_pull_does() {
     if !in_isolated_git_env("pull_config_matches_what_git_pull_does") {
         return;
     }
-    let diverged_scenario = pull_scenario(&[], true);
-    let behind_scenario = pull_scenario(&[], false);
+    let templates = pull_templates();
     for settings in PULL_SETTINGS {
-        for (diverged, (up_dir, clone_dir, _)) in
-            [(true, &diverged_scenario), (false, &behind_scenario)]
-        {
+        for &(diverged, ref up_dir, ref clone_dir, _) in &templates {
             let (_copy_dir, copy) = pull_copy(clone_dir.path(), settings);
             let before = copy.head().expect("head").oid;
             let config = copy.pull_config().expect("pull_config");
@@ -1460,6 +1481,7 @@ fn pull_config_matches_what_git_pull_does() {
             }
         }
     }
+    assert_upstreams_unchanged(&templates);
 }
 
 #[test]
@@ -1492,14 +1514,11 @@ fn pull_passes_every_strategy_whatever_the_configuration_says() {
         ),
     ];
     assert_eq!(expected.len(), PullStrategy::ALL.len());
-    let diverged_scenario = pull_scenario(&[], true);
-    let behind_scenario = pull_scenario(&[], false);
+    let templates = pull_templates();
     for settings in PULL_SETTINGS {
         for (strategy, on_diverged, on_behind) in expected {
-            for (diverged, want, (up_dir, clone_dir, _)) in [
-                (true, on_diverged, &diverged_scenario),
-                (false, on_behind, &behind_scenario),
-            ] {
+            for &(diverged, ref up_dir, ref clone_dir, _) in &templates {
+                let want = if diverged { on_diverged } else { on_behind };
                 let (_copy_dir, copy) = pull_copy(clone_dir.path(), settings);
                 let before = copy.head().expect("head").oid;
                 let got = pulled(
@@ -1515,6 +1534,7 @@ fn pull_passes_every_strategy_whatever_the_configuration_says() {
             }
         }
     }
+    assert_upstreams_unchanged(&templates);
 }
 
 #[test]
