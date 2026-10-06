@@ -531,6 +531,24 @@ fn status_marks_lfs_entries() {
     );
 }
 
+/// That `actual` is `folder` joined with `rest`, where `folder` exists. On Windows the work folder
+/// comes back from libgit2 with `/` and long names, the temporary folder in its 8.3 short form.
+#[track_caller]
+fn assert_inside(actual: &Path, folder: &Path, rest: &Path) {
+    let base = actual
+        .ancestors()
+        .nth(rest.components().count())
+        .expect("deep enough");
+    assert!(
+        actual.ends_with(rest)
+            && fs::canonicalize(base).expect("canonical")
+                == fs::canonicalize(folder).expect("canonical"),
+        "{} is not {}",
+        actual.display(),
+        folder.join(rest).display()
+    );
+}
+
 #[test]
 fn lfs_files_report_whether_objects_are_downloaded() {
     let (dir, repo) = lfs_fixture();
@@ -554,15 +572,8 @@ fn lfs_files_report_whether_objects_are_downloaded() {
     assert!(!files[0].downloaded);
 
     let object = repo.lfs_object_path(POINTER_OID).expect("object path");
-    assert_eq!(
-        object,
-        p.join(".git")
-            .join("lfs")
-            .join("objects")
-            .join("4d")
-            .join("7a")
-            .join(POINTER_OID)
-    );
+    let in_store = Path::new("objects").join("4d").join("7a").join(POINTER_OID);
+    assert_inside(&object, &p.join(".git"), &Path::new("lfs").join(&in_store));
     fs::create_dir_all(object.parent().expect("parent")).expect("mkdir");
     fs::write(&object, "content").expect("write");
     assert!(repo.lfs_files().expect("lfs files")[0].downloaded);
@@ -570,10 +581,10 @@ fn lfs_files_report_whether_objects_are_downloaded() {
     // A relative `lfs.storage` moves the store, relative to the git directory.
     git(p, &["config", "lfs.storage", "elsewhere"]);
     assert!(!repo.lfs_files().expect("lfs files")[0].downloaded);
-    assert!(
-        repo.lfs_object_path(POINTER_OID)
-            .expect("path")
-            .starts_with(p.join(".git").join("elsewhere"))
+    assert_inside(
+        &repo.lfs_object_path(POINTER_OID).expect("path"),
+        &p.join(".git"),
+        &Path::new("elsewhere").join(&in_store),
     );
     assert_eq!(repo.lfs_object_path("../../../../etc/passwd"), None);
     assert_eq!(repo.lfs_object_path(&POINTER_OID.to_uppercase()), None);
