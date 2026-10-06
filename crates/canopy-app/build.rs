@@ -16,6 +16,10 @@ const SHORT: usize = 7;
 /// Longest release notes kept, in bytes.
 const MAX_NOTES: usize = 64 * 1024;
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the build script asks git about the commit it builds"
+)]
 fn git(args: &[&str]) -> Option<String> {
     let out = Command::new("git")
         .args(args)

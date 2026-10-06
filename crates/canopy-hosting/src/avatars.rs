@@ -1,5 +1,6 @@
 //! Author account pictures, restricted to the repository's forge and GitHub's avatar CDN.
 
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use canopy_core::forge::{Forge, ForgeKind};
@@ -17,10 +18,10 @@ pub fn cache_key(forge: &Forge, email: &str) -> String {
     hash.update(forge.authority().as_bytes());
     hash.update([0]);
     hash.update(email.as_bytes());
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hash.finalize().iter().fold(String::new(), |mut out, byte| {
+        let _ = write!(out, "{byte:02x}");
+        out
+    })
 }
 
 /// Maximum compressed picture size; the application also bounds decoded dimensions.
@@ -41,6 +42,10 @@ impl std::fmt::Debug for Avatar {
 
 impl Avatar {
     /// Downloads this picture without credentials or redirects, on a background thread.
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "kept as it was; docs/backlog.md has the entry to carry the transport's message"
+    )]
     pub fn download(&self) -> Result<Vec<u8>> {
         let mut config = ureq::Agent::config_builder()
             .http_status_as_error(false)
@@ -64,6 +69,11 @@ impl Avatar {
             .call()
             .map_err(|_| Error::Network("Could not download the profile picture".into()))?;
         let status = response.status().as_u16();
+        if status == 429 {
+            return Err(Error::RateLimited {
+                reset: crate::http::rate_limit_reset(response.headers()),
+            });
+        }
         if !(200..300).contains(&status) {
             return Err(Error::Api {
                 status,
@@ -90,6 +100,19 @@ fn validate(url: &str, forge: &Forge, api_base: &str) -> Option<Avatar> {
     }
     // Tests and screenshots may fetch only from the exact loopback API server, never the web.
     let loopback = is_loopback_base(api_base);
+    let picture_service = !loopback
+        && forge.kind == ForgeKind::GitLab
+        && uri.path().starts_with("/avatar/")
+        && matches!(
+            authority,
+            "gravatar.com"
+                | "www.gravatar.com"
+                | "secure.gravatar.com"
+                | "0.gravatar.com"
+                | "1.gravatar.com"
+                | "2.gravatar.com"
+                | "seccdn.libravatar.org"
+        );
     let allowed = if loopback {
         let base: Uri = api_base.parse().ok()?;
         uri.scheme_str() == Some("http") && uri.authority() == base.authority()
@@ -99,23 +122,33 @@ fn validate(url: &str, forge: &Forge, api_base: &str) -> Option<Avatar> {
                 || (forge.kind == ForgeKind::GitHub
                     && forge.host == "github.com"
                     && authority == "avatars.githubusercontent.com")
-                || (forge.kind == ForgeKind::GitLab
-                    && uri.path().starts_with("/avatar/")
-                    && matches!(
-                        authority,
-                        "gravatar.com"
-                            | "www.gravatar.com"
-                            | "secure.gravatar.com"
-                            | "0.gravatar.com"
-                            | "1.gravatar.com"
-                            | "2.gravatar.com"
-                            | "seccdn.libravatar.org"
-                    )))
+                || picture_service)
     };
     allowed.then(|| Avatar {
-        url: url.to_owned(),
+        url: if picture_service {
+            without_stand_in(authority, &uri)
+        } else {
+            url.to_owned()
+        },
         loopback,
     })
+}
+
+/// Gravatar and Libravatar draw a stand-in for an email without a picture (GitLab asks for a
+/// generated pattern, `d=identicon`; without `d`, their logo) unless asked for a 404. With the 404
+/// the author keeps Canopy's initials and is remembered as having no picture.
+fn without_stand_in(authority: &str, uri: &Uri) -> String {
+    let mut query: Vec<&str> = uri
+        .query()
+        .unwrap_or_default()
+        .split('&')
+        .filter(|pair| {
+            let key = pair.split_once('=').map_or(*pair, |(key, _)| key);
+            !pair.is_empty() && !matches!(key, "d" | "default")
+        })
+        .collect();
+    query.push("d=404");
+    format!("https://{authority}{}?{}", uri.path(), query.join("&"))
 }
 
 #[derive(Deserialize)]
@@ -162,6 +195,32 @@ pub(crate) fn lookup(
         }
     };
     Ok(url.and_then(|u| validate(&u, forge, http.base())))
+}
+
+/// The status [`is_unknown_commit`] recognises, as GitHub's own `commits/<sha>` endpoint answers.
+const UNKNOWN_COMMIT: u16 = 422;
+
+/// Whether a lookup failed only because the host does not have that commit (it was never pushed
+/// there): the author may still be found through another of their commits.
+///
+/// A 404 says the same only once [`crate::Client::author_repository`] finds the repository.
+pub fn is_unknown_commit(error: &Error) -> bool {
+    matches!(error, Error::Api { status, .. } if *status == UNKNOWN_COMMIT)
+}
+
+/// Asks for the repository itself, the way [`lookup`] asks for a commit. GitHub answers 404 both
+/// for a commit it does not have and for a repository it will not show (private, without a token
+/// that can see it); `Ok` here means the repository is visible, so the commit is the unknown one.
+/// GitLab's lookup names no repository: there nothing is sent, and the lookup's 404 stands.
+pub(crate) fn repository(http: &Http, kind: ForgeKind, project: &str) -> Result<()> {
+    match kind {
+        ForgeKind::GitHub => http
+            .avatar_json::<serde::de::IgnoredAny>(project)
+            .map(|_| ()),
+        ForgeKind::GitLab => Err(Error::NotFound(
+            "GitLab picture lookups name no repository".into(),
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -248,6 +307,41 @@ mod tests {
                 "http://127.0.0.1:1234"
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn gitlab_picture_links_ask_for_no_generated_stand_in() {
+        let gitlab = Forge::parse("https://gitlab.com/group/repo", &[]).unwrap();
+        let link = |url: &str| validate(url, &gitlab, "https://gitlab.com/api/v4").map(|a| a.url);
+        // GitLab links Gravatar with `d=identicon`: an author without a picture would get a
+        // generated pattern instead of Canopy's initials. Asking for 404 keeps the initials.
+        assert_eq!(
+            link("https://secure.gravatar.com/avatar/0a1b?s=128&d=identicon").as_deref(),
+            Some("https://secure.gravatar.com/avatar/0a1b?s=128&d=404")
+        );
+        assert_eq!(
+            link("https://seccdn.libravatar.org/avatar/0a1b?default=retro&s=80").as_deref(),
+            Some("https://seccdn.libravatar.org/avatar/0a1b?s=80&d=404")
+        );
+        assert_eq!(
+            link("https://www.gravatar.com/avatar/0a1b?d=https%3A%2F%2Fexample.com%2Fa.png")
+                .as_deref(),
+            Some("https://www.gravatar.com/avatar/0a1b?d=404")
+        );
+        assert_eq!(
+            link("https://gravatar.com/avatar/0a1b").as_deref(),
+            Some("https://gravatar.com/avatar/0a1b?d=404"),
+            "without a default Gravatar draws its own logo"
+        );
+        assert_eq!(
+            link("https://0.gravatar.com/avatar/0a1b?d=404&s=64").as_deref(),
+            Some("https://0.gravatar.com/avatar/0a1b?s=64&d=404")
+        );
+        // The same host and path; pictures on GitLab itself are left as they are.
+        assert_eq!(
+            link("https://gitlab.com/uploads/-/system/user/avatar/1/a.png?width=64").as_deref(),
+            Some("https://gitlab.com/uploads/-/system/user/avatar/1/a.png?width=64")
         );
     }
 }

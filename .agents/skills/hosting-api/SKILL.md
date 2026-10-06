@@ -62,25 +62,34 @@ token only as `Authorization: Bearer` to the API base of the repository's own ho
   headers; pass any user-supplied URL through `canopy_core::cli::redact_url`.
 - **Redirects**: authorization headers are forwarded to the same host only
   (`RedirectAuthHeaders::SameHost`); do not change that.
+- **GraphQL** goes only through `Http::graphql` (same host as the API base, no redirects, same
+  headers and limits), only with a token. A new GraphQL field must exist in every edition the
+  provider ships (GitLab CE has no `approvalsLeft`: an unknown field fails the whole query).
 - **Rate limits**: `map_status` turns a 429, or a GitHub 403 with an exhausted quota or a
   `Retry-After`, into `Error::RateLimited { reset }`, from `x-ratelimit-reset`, `ratelimit-reset`
   or `retry-after`. Show the reset time (the error's text does); never retry in
   a loop, and never poll faster than a user action.
-- **Errors**: `Error` carries the server's own message (`server_message`); a new variant's
-  `Display` must not echo a header or token. The app shows `e.to_string()` in a toast.
+- **Errors**: `Error` carries the server's own message (`server_message`), made plain text
+  (`plain_text`); any other server-derived text an error carries (a transport message, a JSON
+  shape error, GitLab's `merge_error`) goes through `http::shorten` where the error is built. A
+  new variant's `Display` must not echo a header or token. The app shows `e.to_string()` in a
+  toast.
 - A link in an API response is data. Open it only through `platform::open_url`, which accepts web
   addresses only.
 
 ## 5. The app side (`crates/canopy-app/src/hosting.rs`, `tab.rs`, `app/`, `views/requests.rs`)
 
 - Add a `HostJob` variant (and, for a result the UI shows, a `HostEvent` variant), handle it in
-  `hosting::run` on the per-forge hosting thread, and apply the event in `tab.rs`. Views and
+  `hosting::serve_jobs` (the job loop `hosting::serve` runs beside the request-checks lane) on
+  the per-forge hosting thread, and apply the event in `tab.rs`. Views and
   `app/` only send jobs and render tab state; they never call `Client`.
 - The consent and settings gates are structural: `app/mod.rs` starts the hosting thread
   (`RepoTab::ensure_host` in `tab.rs`) only after `ui::legal::pending(&settings)` is `None`
   (Terms and Privacy Policy accepted, crash-report question answered) and only while
   `settings.hosting_api` is on. A call outside the `HostWorker` thread would bypass both: do not
-  add one. A change that keeps a request alive after the setting is turned off is a defect.
+  add one. A change that keeps a request alive after the setting is turned off is a defect:
+  the thread's `Client` carries the worker's switch (`Client::with_switch`), which every request
+  checks right before it is sent.
 - Tokens come from `hosting::resolve_token` (saved in `tokens.json`, then the host-matched
   environment variable, then git's credential helper); the requests view shows an "Add a token…"
   prompt when the server refuses without one. Do not read tokens anywhere else, and do not hand
@@ -103,8 +112,9 @@ token only as `Authorization: Bearer` to the API base of the repository's own ho
   `cargo test -p canopy-app` for the app side.
 - To see the UI without a network or token, run `python3 tools/mock-hosting.py <port>` and start
   Canopy with `CANOPY_HOSTING_API_BASE=http://127.0.0.1:<port>` (only a plain loopback address is
-  honoured). The mock speaks GitHub's shape; a new endpoint needs a route there too. Screenshot
-  the result with `--view requests` (`screenshot` skill).
+  honoured). The mock speaks GitHub's shape, including `POST /graphql` for the list's checks and
+  reviews; a new endpoint or GraphQL field needs a route or canned data there too. Screenshot the
+  result with `--view requests` (`screenshot` skill).
 
 ## 7. Privacy, docs and release
 

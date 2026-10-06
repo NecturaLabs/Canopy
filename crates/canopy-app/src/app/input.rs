@@ -8,6 +8,11 @@ impl CanopyApp {
         let modal =
             self.dialogs.current().is_some() || self.settings_screen.is_some() || self.palette.open;
         let overlay = modal || self.cheatsheet.open;
+        // Settings on top of everything: its search takes the find shortcut.
+        let settings_on_top = self.settings_screen.is_some()
+            && self.dialogs.current().is_none()
+            && !self.palette.open
+            && !self.cheatsheet.open;
         let search_open = self
             .tabs
             .get(self.active)
@@ -20,7 +25,9 @@ impl CanopyApp {
                 return overlay || search_open;
             }
             if modal {
-                return false;
+                return settings_on_top
+                    && b.command == Command::Filter
+                    && (!b.section.is_bare() || !typing);
             }
             if b.command == Command::CloseTab {
                 // Ctrl+W while typing a commit message must not throw the draft away.
@@ -29,7 +36,7 @@ impl CanopyApp {
             if !b.section.is_bare() {
                 return true;
             }
-            !typing && !(widget_focused && keymap::widget_key(chord.key))
+            !(typing || (widget_focused && keymap::widget_key(chord.key)))
         });
         for f in fired {
             self.command(ctx, f.command, f.chord, actions);
@@ -58,20 +65,22 @@ impl CanopyApp {
                 } else if self.dialogs.current().is_some() {
                     // The consent stays (it must be answered); a credential prompt is declined.
                     self.dialogs.dismiss();
+                } else if let Some(screen) = self.settings_screen.as_mut() {
+                    // Settings covers the history search: a search in Settings is cleared
+                    // first, and the next Escape closes Settings.
+                    if !screen.dismiss_search() {
+                        self.settings_screen = None;
+                    }
                 } else if let Some(tab) = self.tab()
                     && tab.view == View::History
                     && tab.history_filter_open
                 {
                     tab.close_history_filter(ctx);
-                } else {
-                    self.settings_screen = None;
                 }
             }
             C::Open => actions.push(Action::OpenDialog(Dialog::open())),
             C::Clone => actions.push(Action::OpenDialog(Dialog::clone_default(&self.settings))),
-            C::Init => actions.push(Action::OpenDialog(Dialog::Init {
-                path: String::new(),
-            })),
+            C::Init => actions.push(Action::OpenDialog(Dialog::new_repository(String::new()))),
             C::Settings => actions.push(Action::Settings),
             C::ZoomIn | C::ZoomOut | C::ZoomReset => {
                 self.settings.zoom = match command {
@@ -79,9 +88,15 @@ impl CanopyApp {
                     C::ZoomOut => (self.settings.zoom - 0.1).max(0.8),
                     _ => 1.0,
                 };
-                super::apply_zoom(ctx, self.settings.zoom);
+                apply_zoom(ctx, self.settings.zoom);
             }
             C::Quit => actions.push(Action::Quit),
+            // Settings' own search, with or without a repository open.
+            C::Filter if self.settings_screen.is_some() => {
+                if let Some(screen) = self.settings_screen.as_mut() {
+                    screen.focus_search();
+                }
+            }
             _ if !has_tab => {}
             C::CloseTab => actions.push(Action::CloseTab(self.active)),
             C::NextTab => actions.push(Action::SwitchTab((self.active + 1) % self.tabs.len())),
@@ -102,10 +117,11 @@ impl CanopyApp {
                 message: String::new(),
                 untracked: true,
             })),
-            C::PopStash => actions.push(Action::Op(Op::StashApply {
-                index: 0,
-                pop: true,
-            })),
+            C::PopStash => {
+                if let Some(op) = self.tabs.get(self.active).and_then(toolbar::pop_latest) {
+                    actions.push(Action::Op(op));
+                }
+            }
             C::MergeDialog => actions.push(Action::OpenDialog(Dialog::Merge {
                 target: String::new(),
                 rebase: false,
@@ -130,10 +146,10 @@ impl CanopyApp {
                     && self.settings.hosting_api
                     && let Some(tab) = self.tabs.get(self.active)
                     && let Some((_, forge)) = tab.forge()
-                    && let Some(request) = crate::views::requests::selected_summary(tab)
+                    && let Some(request) = requests::selected_summary(tab)
                 {
                     if command == C::ApproveRequest {
-                        if let Some(action) = crate::views::requests::approve_action(tab, request) {
+                        if let Some(action) = requests::approve_action(tab, request) {
                             actions.push(action);
                         }
                     } else {
@@ -143,9 +159,9 @@ impl CanopyApp {
                             .as_ref()
                             .and_then(|details| details.as_ref().ok())
                             .map(std::sync::Arc::as_ref);
-                        if let Some(dialog) = crate::views::requests::merge_confirmation(
-                            tab, forge.kind, request, details,
-                        ) {
+                        if let Some(dialog) =
+                            requests::merge_confirmation(tab, forge.kind, request, details)
+                        {
                             actions.push(Action::OpenDialog(dialog));
                         }
                     }
@@ -191,8 +207,7 @@ impl CanopyApp {
                             .requests
                             .selected
                             .and_then(|n| list.iter().find(|r| r.number == n))
-                            .map(|r| r.web_url.clone())
-                            .unwrap_or_else(|| forge.web_url()),
+                            .map_or_else(|| forge.web_url(), |r| r.web_url.clone()),
                         (View::History, Some(oid), _) => forge.commit_url(&oid.to_string()),
                         _ => forge.web_url(),
                     };
@@ -216,11 +231,10 @@ impl CanopyApp {
                 if command == C::Discard {
                     if sel.source == canopy_core::DiffSource::Unstaged && !sel.conflicted {
                         actions.push(Action::Confirm {
-                            title: "Discard changes".into(),
-                            body: format!(
-                                "Throw away the unstaged changes to {path}? This cannot be undone."
-                            ),
-                            confirm: "Discard".into(),
+                            title: format!("Discard changes to {path}?"),
+                            body: "Its unstaged changes are thrown away. This cannot be undone."
+                                .into(),
+                            confirm: "Discard changes".into(),
                             danger: true,
                             op: Op::Discard(vec![sel.entry]),
                         });
@@ -270,5 +284,93 @@ impl CanopyApp {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(app: &mut CanopyApp, command: Command) -> Vec<Action> {
+        let ctx = egui::Context::default();
+        let mut actions = Vec::new();
+        app.command(&ctx, command, 0, &mut actions);
+        actions
+    }
+
+    /// review-views-1: the find shortcut reaches Settings' search on the welcome screen too.
+    #[test]
+    fn settings_search_takes_the_find_shortcut_with_no_repository_open() {
+        let mut app = test_app();
+        app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Appearance));
+        let actions = run(&mut app, Command::Filter);
+        assert!(actions.is_empty(), "{actions:?}");
+        assert!(
+            app.settings_screen
+                .as_ref()
+                .is_some_and(SettingsScreen::search_focus_pending),
+            "the search field takes the caret"
+        );
+    }
+
+    /// Escape closes the topmost thing first: the cheatsheet, the palette, a dialog, then a
+    /// search in Settings, then Settings itself.
+    #[test]
+    fn escape_closes_the_topmost_overlay_first() {
+        let mut app = test_app();
+        app.settings_screen = Some(SettingsScreen::searching("theme"));
+        app.dialogs.open(Dialog::open());
+        app.palette.open = true;
+        app.cheatsheet.open = true;
+        run(&mut app, Command::Dismiss);
+        assert!(!app.cheatsheet.open && app.palette.open);
+        run(&mut app, Command::Dismiss);
+        assert!(!app.palette.open && app.dialogs.current().is_some());
+        run(&mut app, Command::Dismiss);
+        assert!(app.dialogs.current().is_none() && app.settings_screen.is_some());
+        run(&mut app, Command::Dismiss);
+        assert!(
+            app.settings_screen.is_some(),
+            "the first Escape in Settings clears its search"
+        );
+        run(&mut app, Command::Dismiss);
+        assert!(app.settings_screen.is_none());
+    }
+
+    /// secfix2 F5: the Pop shortcut pops the stash the snapshot shows as latest, by its commit.
+    #[test]
+    fn the_pop_shortcut_pops_the_latest_stash_by_its_commit() {
+        let oid = canopy_core::Oid::from_str("0123456789abcdef0123456789abcdef01234567")
+            .expect("an object id");
+        let mut app = test_app();
+        app.tabs.push(test_tab(canopy_core::RepoSnapshot {
+            stashes: vec![canopy_core::StashInfo {
+                index: 0,
+                message: "On main: wip".into(),
+                oid,
+            }],
+            ..Default::default()
+        }));
+        let actions = run(&mut app, Command::PopStash);
+        assert!(
+            matches!(
+                actions.as_slice(),
+                [Action::Op(Op::StashApplyCommit { oid: o, pop: true })] if *o == oid
+            ),
+            "{actions:?}"
+        );
+        // With no stash known, git's own `stash pop` says why nothing happened.
+        app.tabs[0] = test_tab(canopy_core::RepoSnapshot::default());
+        let actions = run(&mut app, Command::PopStash);
+        assert!(
+            matches!(
+                actions.as_slice(),
+                [Action::Op(Op::StashApply {
+                    index: 0,
+                    pop: true
+                })]
+            ),
+            "{actions:?}"
+        );
     }
 }

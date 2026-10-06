@@ -36,7 +36,7 @@ without touching anything of the user's, and without ever leaving a half-install
 ## Decision outcome
 
 Option 3. Where the running executable is `<root>/bin/canopy` of a folder whose `.canopy-install`
-receipt names that root (Linux), the update is done in process (`selfupdate.rs`): download over
+receipt names that root (Linux), the update is done in process (`selfupdate/mod.rs`): download over
 HTTPS from `releases/download/canopy-build-<n>/` of NecturaLabs/app-updates (the URL the manifest
 names must equal that path exactly, redirects only to HTTPS, five at most, size capped), compare
 the SHA-256 with the manifest's, unpack into `<root>/.staging.*` accepting only regular files and

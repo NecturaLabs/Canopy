@@ -10,10 +10,12 @@ has the template and the test for what earns one.
 |---|---|---|
 | [0001](0001-git-cli-for-mutations-libgit2-for-reads.md) | libgit2 reads; the `git` executable runs every mutation and all Git network traffic | accepted |
 | [0002](0002-egui-as-the-ui-toolkit.md) | egui/eframe is the UI toolkit | accepted |
-| [0003](0003-network-services-and-consent.md) | The closed list of services Canopy contacts (GitHub/GitLab APIs, update manifest, opt-in Sentry crash reports) and the consent that gates them | partially superseded by 0008 |
+| [0003](0003-network-services-and-consent.md) | The closed list of services Canopy contacts (GitHub/GitLab APIs, update manifest, opt-in Sentry crash reports) and the consent that gates them | partially superseded by 0008; amended by 0011 |
 | [0004](0004-hosting-api-tokens.md) | Where hosting API tokens come from, how a saved one is stored and which hosts may receive it | accepted |
 | [0005](0005-credential-prompts-through-canopys-askpass.md) | git and ssh ask for credentials through Canopy's own askpass | accepted |
 | [0006](0006-canopy-updates-itself-in-place.md) | Canopy installs an update itself where its installer put it, and runs the installer elsewhere | accepted |
 | [0007](0007-vendored-eframe-with-frame-callback-patch.md) | Canopy builds a patched copy of eframe so a window the compositor does not draw never blocks and triggers "Application Not Responding" | accepted |
-| [0008](0008-author-profile-pictures.md) | Author profile pictures on approved image hosts, after consent, cached locally for twelve hours including failures | accepted |
+| [0008](0008-author-profile-pictures.md) | Author profile pictures on approved image hosts, after consent, cached locally for twelve hours, including authors without one | accepted |
 | [0009](0009-partial-clone-downloads-only-in-trusted-folders.md) | A partial clone downloads missing objects on its own only inside a folder the user trusted, because git then runs the repository's own configuration | accepted |
+| [0010](0010-unsafe-code-only-for-the-backdrop-blur.md) | Unsafe code only in the backdrop blur's OpenGL module (`ui/kit/glass/gl.rs`), held there by lints and a policy test | accepted |
+| [0011](0011-request-list-rollup-through-graphql.md) | With a token, one GraphQL query per request-list refresh, on the same host, fetches the rows' checks and reviews | accepted |

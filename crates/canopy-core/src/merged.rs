@@ -58,6 +58,10 @@ impl Repo {
             return Err(Error::invalid(format!("'{base}' is not a valid base.")));
         }
         let git = self.git();
+        #[expect(
+            clippy::map_err_ignore,
+            reason = "kept as it was; docs/backlog.md has the entry to carry libgit2's message"
+        )]
         let base_commit = git
             .revparse_single(base)
             .and_then(|o| o.peel_to_commit())

@@ -39,6 +39,10 @@ pub fn available() -> bool {
 }
 
 /// Turns reporting on or off immediately.
+#[expect(
+    clippy::significant_drop_tightening,
+    reason = "the lock is held until the client is started or stopped, so two calls cannot race"
+)]
 pub fn set_enabled(on: bool) {
     let mut guard = GUARD
         .lock()
@@ -96,6 +100,10 @@ fn init() -> sentry::ClientInitGuard {
 }
 
 /// The event for a panic: its message followed by where it happened, `src/x.rs:12:5`.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "sentry's panic extractor returns an Option"
+)]
 fn panic_event(info: &std::panic::PanicHookInfo<'_>) -> Option<Event<'static>> {
     let message = integrations::panic::message_from_panic_info(info);
     let value = match info.location() {
@@ -143,6 +151,10 @@ fn name_char(c: char) -> bool {
 
 /// Whether `text[at..at + len]` is a whole path: not inside a longer path before it, and
 /// followed by a separator or a character that cannot be part of a name.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn whole_path(text: &str, at: usize, len: usize) -> bool {
     let before = text[..at].chars().next_back();
     let after = text[at + len..].chars().next();
@@ -152,6 +164,10 @@ fn whole_path(text: &str, at: usize, len: usize) -> bool {
 }
 
 /// Replaces each whole-path occurrence of `path` in `text` with `with`.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn replace_path(text: &str, path: &str, with: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
@@ -177,11 +193,17 @@ fn replace_home(text: &str, home: &str) -> String {
 }
 
 /// Replaces `scheme://user:password@` with `scheme://<redacted>@` in every URL in `text`.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn redact_url_credentials(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(i) = rest.find("://") {
-        let (head, tail) = rest.split_at(i + 3);
+        // Git and libcurl accept extra slashes before the authority (`https:///user:pw@host`).
+        let slashes = rest[i + 3..].len() - rest[i + 3..].trim_start_matches('/').len();
+        let (head, tail) = rest.split_at(i + 3 + slashes);
         out.push_str(head);
         let authority_end = tail
             .find(|c: char| {
@@ -230,6 +252,10 @@ fn token_char(c: char) -> bool {
 }
 
 /// Replaces access tokens and secret values in `text` with `<token>`.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn redact_tokens(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
@@ -270,6 +296,10 @@ fn redact_tokens(text: &str) -> String {
 }
 
 /// Hides the user-name part of home folders other than the user's own.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn hide_user_folders(text: &str) -> String {
     let mut out = replace_path(text, "/root", "~root");
     for prefix in ["/home/", "/Users/", "\\Users\\", "/var/home/"] {
@@ -298,7 +328,7 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
     event.server_name = None;
     event.user = None;
     event.request = None;
-    event.breadcrumbs = Default::default();
+    event.breadcrumbs = sentry::protocol::Values::default();
     event.extra.clear();
     event.tags.retain(|k, _| k == "os" || k == "release");
     event
@@ -313,7 +343,7 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
     }
     if let Some(Context::Device(device)) = event.contexts.get_mut("device") {
         let arch = device.arch.take();
-        **device = Default::default();
+        **device = sentry::protocol::DeviceContext::default();
         device.arch = arch;
     }
     let s = |t: &mut String| *t = scrub_text(t, home);
@@ -323,7 +353,7 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
     if let Some(l) = event.logentry.as_mut() {
         s(&mut l.message);
     }
-    for exc in event.exception.values.iter_mut() {
+    for exc in &mut event.exception.values {
         if let Some(v) = exc.value.as_mut() {
             s(v);
         }
@@ -337,7 +367,7 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
             }
         }
     }
-    for thread in event.threads.values.iter_mut() {
+    for thread in &mut event.threads.values {
         if let Some(st) = thread.stacktrace.as_mut() {
             for f in &mut st.frames {
                 for field in [&mut f.abs_path, &mut f.filename] {
@@ -354,7 +384,7 @@ fn scrub(mut event: Event<'static>, home: &str) -> Event<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sentry::protocol::{DeviceContext, Exception, User};
+    use sentry::protocol::{DeviceContext, User};
 
     #[test]
     fn hides_user_folders() {
@@ -428,6 +458,14 @@ mod tests {
             "https://host/a@b and ssh://<redacted>@host/x"
         );
         assert_eq!(scrub_text("no url: a@b", ""), "no url: a@b");
+        // Spellings git and libcurl accept: extra slashes before the authority.
+        assert_eq!(
+            scrub_text(
+                "fatal: 'https:///ada:s3cret@github.com/o/r' and http:////x:y@h/",
+                ""
+            ),
+            "fatal: 'https:///<redacted>@github.com/o/r' and http:////<redacted>@h/"
+        );
     }
 
     #[test]
@@ -504,9 +542,10 @@ mod tests {
                 ..Default::default()
             })),
         );
-        event
-            .contexts
-            .insert("app".into(), Context::Other(Default::default()));
+        event.contexts.insert(
+            "app".into(),
+            Context::Other(std::collections::BTreeMap::default()),
+        );
         event.extra.insert("x".into(), "y".into());
         let e = scrub(event, "/home/ada");
         assert_eq!(e.server_name, None);

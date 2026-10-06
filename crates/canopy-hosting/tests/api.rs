@@ -1,18 +1,25 @@
 //! End-to-end tests of the GitHub and GitLab clients against a canned local HTTP server.
 //! Nothing here touches the network: the server listens on 127.0.0.1 and answers from a table.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)] // Test helpers may panic: that is a failed test.
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside #[test] functions may panic too: that is a failed test"
+)]
 
 use canopy_core::forge::{Forge, ForgeKind};
 use canopy_hosting::{
-    CheckState, Client, Error, MergeMethod, NewRequest, RequestState, StateFilter,
+    CheckState, Client, Error, MergeMethod, NewRequest, RequestState, ReviewDecision, Rollup,
+    StateFilter,
 };
 use serde_json::{Value, json};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 mod server {
     //! A tiny HTTP/1.1 server: one request per connection, responses keyed by method and target.
 
     use std::collections::HashMap;
+    use std::fmt::Write as _;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::sync::{Arc, Mutex};
@@ -48,28 +55,51 @@ mod server {
     }
 
     type Routes = Arc<Mutex<HashMap<(String, String), Canned>>>;
+    type Hooks = Arc<Mutex<HashMap<(String, String), Box<dyn Fn() + Send>>>>;
 
-    #[derive(Debug)]
     pub struct Server {
         pub base: String,
         routes: Routes,
+        hooks: Hooks,
         log: Arc<Mutex<Vec<Recorded>>>,
     }
 
+    impl std::fmt::Debug for Server {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("Server")
+                .field("base", &self.base)
+                .finish_non_exhaustive()
+        }
+    }
+
     impl Server {
-        pub fn start() -> Server {
+        pub fn start() -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
             let base = format!("http://{}", listener.local_addr().expect("addr"));
             let routes: Routes = Arc::default();
+            let hooks: Hooks = Arc::default();
             let log: Arc<Mutex<Vec<Recorded>>> = Arc::default();
-            let (r, l) = (routes.clone(), log.clone());
+            let (r, h, l) = (Arc::clone(&routes), Arc::clone(&hooks), Arc::clone(&log));
             std::thread::spawn(move || {
                 for stream in listener.incoming() {
                     let Ok(stream) = stream else { continue };
-                    handle(stream, &r, &l);
+                    handle(stream, &r, &h, &l);
                 }
             });
-            Server { base, routes, log }
+            Self {
+                base,
+                routes,
+                hooks,
+                log,
+            }
+        }
+
+        /// Runs `hook` whenever `method path` (query ignored) arrives, before it is answered.
+        pub fn on(&self, method: &str, path: &str, hook: impl Fn() + Send + 'static) {
+            self.hooks
+                .lock()
+                .expect("hooks")
+                .insert((method.to_owned(), path.to_owned()), Box::new(hook));
         }
 
         /// Answers `method target` with `status` and a JSON body. A target without `?` matches
@@ -112,7 +142,7 @@ mod server {
         }
     }
 
-    fn handle(stream: TcpStream, routes: &Routes, log: &Arc<Mutex<Vec<Recorded>>>) {
+    fn handle(stream: TcpStream, routes: &Routes, hooks: &Hooks, log: &Arc<Mutex<Vec<Recorded>>>) {
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
         let mut line = String::new();
         if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -150,10 +180,17 @@ mod server {
         });
 
         let path = target.split('?').next().unwrap_or_default().to_owned();
+        if let Some(hook) = hooks
+            .lock()
+            .expect("hooks")
+            .get(&(method.clone(), path.clone()))
+        {
+            hook();
+        }
         let canned = {
             let routes = routes.lock().expect("routes");
             routes
-                .get(&(method.clone(), target.clone()))
+                .get(&(method.clone(), target))
                 .or_else(|| routes.get(&(method, path)))
                 .cloned()
         }
@@ -168,7 +205,7 @@ mod server {
             canned.body.len()
         );
         for (k, v) in &canned.headers {
-            out.push_str(&format!("{k}: {v}\r\n"));
+            let _ = write!(out, "{k}: {v}\r\n");
         }
         out.push_str("\r\n");
         out.push_str(&canned.body);
@@ -244,6 +281,13 @@ fn gl_mr(iid: u64, state: &str, updated: &str) -> Value {
         "web_url": format!("https://gitlab.example.com/group/sub/proj/-/merge_requests/{iid}"),
         "labels": ["backend"],
     })
+}
+
+/// A rate limit's reset ten minutes and `offset` seconds from now, as unix seconds and as its
+/// header text (a reset is kept within a day of now).
+fn reset_soon(offset: i64) -> (i64, String) {
+    let at = chrono::Utc::now().timestamp() + 600 + offset;
+    (at, at.to_string())
 }
 
 fn assert_no_token_leak(client: &Client) {
@@ -476,6 +520,29 @@ fn github_details_main_request_failure_is_an_error() {
 }
 
 #[test]
+fn a_switched_off_client_sends_nothing_more() {
+    // The tab drops its hosting thread (pull and merge requests turned off, the token changed)
+    // while a request's details load: the parts still to come are not asked for, nor anything
+    // after them.
+    let server = Server::start();
+    let pull = gh_pull(5, "open", false, "2024-01-05T00:00:00Z").to_string();
+    server.route("GET", "/repos/octo/hello/pulls/5", 200, &pull);
+    let on = Arc::new(AtomicBool::new(true));
+    let off = Arc::clone(&on);
+    server.on("GET", "/repos/octo/hello/pulls/5", move || {
+        off.store(false, Ordering::SeqCst);
+    });
+    let client = github(&server, Some(TOKEN)).with_switch(on);
+    let _ = client.details(5);
+    let sent: Vec<String> = server.requests().into_iter().map(|r| r.target).collect();
+    assert_eq!(sent, ["/repos/octo/hello/pulls/5"]);
+    assert_eq!(client.rollup(&[5]), Err(Error::Stopped));
+    assert_eq!(client.list(StateFilter::Open, 10), Err(Error::Stopped));
+    assert_eq!(client.comment(5, "late"), Err(Error::Stopped));
+    assert_eq!(server.requests().len(), 1, "nothing more was sent");
+}
+
+#[test]
 fn github_writes() {
     let server = Server::start();
     server.route(
@@ -551,6 +618,7 @@ fn github_writes() {
 #[test]
 fn github_error_mapping() {
     let server = Server::start();
+    let r0 = reset_soon(0);
     server.route(
         "GET",
         "/user",
@@ -563,7 +631,7 @@ fn github_error_mapping() {
         403,
         &[
             ("x-ratelimit-remaining", "0"),
-            ("x-ratelimit-reset", "1800000000"),
+            ("x-ratelimit-reset", r0.1.as_str()),
         ],
         r#"{"message":"API rate limit exceeded for user ID 1."}"#,
     );
@@ -596,9 +664,7 @@ fn github_error_mapping() {
         client
             .list(StateFilter::Open, 10)
             .expect_err("rate limited"),
-        Error::RateLimited {
-            reset: Some(1_800_000_000)
-        }
+        Error::RateLimited { reset: Some(r0.0) }
     );
     let err = client.merge(3, MergeMethod::Merge, None).expect_err("405");
     assert_eq!(
@@ -842,7 +908,7 @@ fn gitlab_details_collects_parts_and_tolerates_failures() {
         r#"{"message":"500 Internal Server Error"}"#,
     );
     let d = gitlab(&server, Some(TOKEN)).details(4).expect("details");
-    assert!(d.reviews.is_empty());
+    assert!(d.reviews.is_empty(), "{:?}", d.reviews);
     let checks: Vec<(&str, CheckState)> = d
         .checks
         .iter()
@@ -924,7 +990,7 @@ fn gitlab_writes() {
     assert_eq!(writes[3].json(), json!({ "state_event": "close" }));
     assert_eq!(writes[4].json(), json!({ "state_event": "reopen" }));
     assert_eq!(writes[5].json(), json!({ "body": "Thanks!" }));
-    assert!(writes[6].body.is_empty());
+    assert!(writes[6].body.is_empty(), "{:?}", writes[6].body);
     for w in &writes {
         assert_eq!(w.header("authorization"), Some(&*format!("Bearer {TOKEN}")));
     }
@@ -1121,6 +1187,7 @@ fn gitlab_rebase_merge_checks_the_head_before_rebasing() {
 #[test]
 fn gitlab_error_mapping() {
     let server = Server::start();
+    let r123 = reset_soon(123);
     server.route(
         "GET",
         "/api/v4/user",
@@ -1131,7 +1198,7 @@ fn gitlab_error_mapping() {
         "GET",
         &format!("{GL}/merge_requests"),
         429,
-        &[("ratelimit-reset", "1800000123")],
+        &[("ratelimit-reset", r123.1.as_str())],
         "Retry later",
     );
     server.route(
@@ -1160,7 +1227,7 @@ fn gitlab_error_mapping() {
     assert_eq!(
         client.list(StateFilter::All, 5).expect_err("429"),
         Error::RateLimited {
-            reset: Some(1_800_000_123)
+            reset: Some(r123.0)
         }
     );
     let err = client
@@ -1205,6 +1272,550 @@ fn gitlab_viewer_and_debug() {
     assert_no_token_leak(&client);
     let dbg = format!("{client:?}");
     assert!(dbg.contains("group%2Fsub%2Fproj"), "{dbg}");
+}
+
+// ----------------------------------------------------------------------------------------------
+// List rollup (checks and reviews for a page of requests, one GraphQL query)
+// ----------------------------------------------------------------------------------------------
+
+/// The one request a rollup sent: a POST of JSON to `target` carrying the token as a bearer
+/// header (when there is one) and nowhere else.
+fn rollup_request(server: &Server, target: &str, token: Option<&str>) -> Value {
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1, "one query per rollup: {requests:?}");
+    let req = &requests[0];
+    assert_eq!((req.method.as_str(), req.target.as_str()), ("POST", target));
+    assert_eq!(
+        req.header("authorization"),
+        token.map(|t| format!("Bearer {t}")).as_deref()
+    );
+    assert_eq!(req.header("content-type"), Some("application/json"));
+    assert!(
+        req.header("user-agent")
+            .is_some_and(|ua| ua.starts_with("Canopy/"))
+    );
+    assert!(!req.body.contains(TOKEN) && !req.target.contains(TOKEN));
+    req.json()
+}
+
+#[test]
+fn github_rollup_maps_a_page_in_one_query() {
+    let server = Server::start();
+    server.route(
+        "POST",
+        "/graphql",
+        200,
+        &json!({
+            "data": { "repository": {
+                "p7": {
+                    "number": 7,
+                    "reviewDecision": "APPROVED",
+                    "statusCheckRollup": { "state": "SUCCESS", "unknown": 1 },
+                    "latestOpinionatedReviews": { "nodes": [{ "state": "APPROVED" }] },
+                    "unknown_field": true,
+                },
+                "p8": {
+                    "number": 8,
+                    "reviewDecision": null,
+                    "statusCheckRollup": { "state": "FAILURE" },
+                    "latestOpinionatedReviews": { "nodes": [
+                        { "state": "APPROVED" }, { "state": "CHANGES_REQUESTED" }
+                    ] },
+                },
+                "p9": {
+                    "number": 9,
+                    "reviewDecision": "REVIEW_REQUIRED",
+                    "statusCheckRollup": null,
+                    "latestOpinionatedReviews": { "nodes": [] },
+                },
+                "p404": null,
+            } },
+            "errors": [{
+                "type": "NOT_FOUND",
+                "path": ["repository", "p404"],
+                "message": "Could not resolve to a PullRequest with the number of 404."
+            }],
+        })
+        .to_string(),
+    );
+    let client = github(&server, Some(TOKEN));
+    let rollup = client.rollup(&[7, 8, 9, 404, 7]).expect("rollup");
+    assert_eq!(
+        rollup,
+        [
+            (
+                7,
+                Rollup {
+                    checks: Some(CheckState::Success),
+                    review: Some(ReviewDecision::Approved)
+                }
+            ),
+            (
+                8,
+                Rollup {
+                    checks: Some(CheckState::Failure),
+                    review: Some(ReviewDecision::ChangesRequested)
+                }
+            ),
+            (
+                9,
+                Rollup {
+                    checks: None,
+                    review: Some(ReviewDecision::Required)
+                }
+            ),
+        ],
+        "a missing pull request is left out; the rest of the data stands"
+    );
+
+    let body = rollup_request(&server, "/graphql", Some(TOKEN));
+    assert_eq!(
+        body["variables"],
+        json!({ "owner": "octo", "name": "hello" })
+    );
+    let query = body["query"].as_str().expect("query");
+    assert_eq!(
+        query.matches("pullRequest(").count(),
+        4,
+        "each number once: {query}"
+    );
+    for n in [7, 8, 9, 404] {
+        assert!(
+            query.contains(&format!("p{n}: pullRequest(number: {n})")),
+            "{query}"
+        );
+    }
+    for field in [
+        "reviewDecision",
+        "statusCheckRollup",
+        "latestOpinionatedReviews",
+    ] {
+        assert!(query.contains(field), "{field} in {query}");
+    }
+    assert_no_token_leak(&client);
+
+    // Nothing to ask about: nothing is sent.
+    let quiet = Server::start();
+    assert_eq!(github(&quiet, Some(TOKEN)).rollup(&[]), Ok(Vec::new()));
+    assert!(quiet.requests().is_empty());
+}
+
+#[test]
+fn github_rollup_errors_and_empty_data() {
+    let server = Server::start();
+    let (r0, r5, r6) = (reset_soon(0), reset_soon(5), reset_soon(6));
+    let client = github(&server, Some(TOKEN));
+    let rollup = |status: u16, headers: &[(&str, &str)], body: &str| {
+        server.route_with_headers("POST", "/graphql", status, headers, body);
+        client.rollup(&[1])
+    };
+    assert_eq!(
+        rollup(401, &[], r#"{"message":"Bad credentials"}"#),
+        Err(Error::Unauthorized("Bad credentials".into()))
+    );
+    assert_eq!(
+        rollup(
+            403,
+            &[
+                ("x-ratelimit-remaining", "0"),
+                ("x-ratelimit-reset", r0.1.as_str())
+            ],
+            r#"{"message":"API rate limit exceeded"}"#
+        ),
+        Err(Error::RateLimited { reset: Some(r0.0) })
+    );
+    // GitHub can also answer an exhausted GraphQL quota with 200 and a typed error.
+    assert_eq!(
+        rollup(
+            200,
+            &[("x-ratelimit-reset", r5.1.as_str())],
+            r#"{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded for user ID 1."}]}"#
+        ),
+        Err(Error::RateLimited { reset: Some(r5.0) })
+    );
+    // …or with any error and no requests left (GitHub's documented primary-limit answer).
+    assert_eq!(
+        rollup(
+            200,
+            &[
+                ("x-ratelimit-remaining", "0"),
+                ("x-ratelimit-reset", r6.1.as_str())
+            ],
+            r#"{"data":null,"errors":[{"message":"Something went wrong."}]}"#
+        ),
+        Err(Error::RateLimited { reset: Some(r6.0) })
+    );
+    // The answer that took the last request still counts when it carries data beside an error
+    // that is not about the limit (GitHub's NOT_FOUND for a missing pull request).
+    assert_eq!(
+        rollup(
+            200,
+            &[
+                ("x-ratelimit-remaining", "0"),
+                ("x-ratelimit-reset", r6.1.as_str())
+            ],
+            r#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a PullRequest with the number of 1."}]}"#
+        ),
+        Ok(Vec::new())
+    );
+    // A secondary limit: 200, a message saying so, and how long to wait.
+    let before = chrono::Utc::now().timestamp();
+    let secondary = rollup(
+        200,
+        &[("retry-after", "60")],
+        r#"{"errors":[{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}]}"#,
+    );
+    let Err(Error::RateLimited { reset: Some(reset) }) = secondary else {
+        panic!("a secondary limit is a rate limit: {secondary:?}");
+    };
+    assert!((before + 59..=before + 62).contains(&reset), "{reset}");
+    assert_eq!(
+        rollup(
+            200,
+            &[],
+            r#"{"data":null,"errors":[{"message":"Field 'statusCheckRollup' doesn't exist on type 'PullRequest'"}]}"#
+        ),
+        Err(Error::Api {
+            status: 200,
+            message: "Field 'statusCheckRollup' doesn't exist on type 'PullRequest'".into()
+        })
+    );
+    assert_eq!(
+        rollup(502, &[], "<html>bad gateway</html>"),
+        Err(Error::Api {
+            status: 502,
+            message: "Bad Gateway".into()
+        })
+    );
+    assert!(matches!(rollup(200, &[], "not json"), Err(Error::Parse(_))));
+    // A repository the token cannot see: no data, no rows, no error.
+    assert_eq!(
+        rollup(200, &[], r#"{"data":{"repository":null}}"#),
+        Ok(Vec::new())
+    );
+    assert_eq!(rollup(200, &[], r#"{"data":{}}"#), Ok(Vec::new()));
+
+    // Without a token nothing is sent at all.
+    let anonymous = Server::start();
+    anonymous.route(
+        "POST",
+        "/graphql",
+        401,
+        r#"{"message":"This endpoint requires you to be authenticated."}"#,
+    );
+    assert_eq!(github(&anonymous, None).rollup(&[1]), Ok(Vec::new()));
+    assert!(
+        anonymous.requests().is_empty(),
+        "{:?}",
+        anonymous.requests()
+    );
+}
+
+#[test]
+fn server_words_are_made_plain_before_they_are_shown_or_logged() {
+    // A message that hides or reorders text, spans lines and runs long.
+    let dirty = format!(
+        "Bad\u{202E}gnirts\u{202C} query\u{200B}\nline two\u{1b}[31m red\u{2066} {}",
+        "x".repeat(1_000)
+    );
+    let is_plain = |m: &str| {
+        m.chars().count() <= 300
+            && m.ends_with('…')
+            && m.starts_with("Badgnirts query line two [31m red x")
+            && !m.chars().any(|c| {
+                c.is_control() || matches!(c, '\u{200B}' | '\u{202C}' | '\u{202E}' | '\u{2066}')
+            })
+    };
+    let server = Server::start();
+    // A GraphQL answer with errors and no data…
+    let errors = json!({ "data": null, "errors": [{ "message": dirty }] }).to_string();
+    server.route("POST", "/graphql", 200, &errors);
+    match github(&server, Some(TOKEN)).rollup(&[1]) {
+        Err(Error::Api {
+            status: 200,
+            message,
+        }) => assert!(is_plain(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+    // …a refused GraphQL query, and a refused REST call.
+    server.route(
+        "POST",
+        "/graphql",
+        502,
+        &json!({ "message": dirty }).to_string(),
+    );
+    match github(&server, Some(TOKEN)).rollup(&[1]) {
+        Err(Error::Api {
+            status: 502,
+            message,
+        }) => assert!(is_plain(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+    server.route("POST", "/repos/octo/hello/issues/1/comments", 422, &dirty);
+    match github(&server, Some(TOKEN)).comment(1, "hi") {
+        Err(Error::Api {
+            status: 422,
+            message,
+        }) => assert!(is_plain(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn rollup_redirects_are_never_followed() {
+    let server = Server::start();
+    let other = Server::start();
+    let elsewhere = format!("{}/graphql", other.base);
+    server.route_with_headers("POST", "/graphql", 307, &[("Location", &elsewhere)], "");
+    github(&server, Some(TOKEN))
+        .rollup(&[1])
+        .expect_err("a redirect is an error");
+    server.route_with_headers("POST", "/api/graphql", 308, &[("Location", &elsewhere)], "");
+    gitlab(&server, Some(TOKEN))
+        .rollup(&[1])
+        .expect_err("a redirect is an error");
+    assert!(other.requests().is_empty(), "{:?}", other.requests());
+}
+
+/// Whether an error's server-derived text is fit to show and log: at most 300 characters, with no
+/// control character and nothing that hides or reorders text.
+fn is_plain_server_text(text: &str) -> bool {
+    text.chars().count() <= 300
+        && !text.chars().any(|c| {
+            c.is_control() || matches!(c, '\u{200B}' | '\u{202A}'..='\u{202E}' | '\u{3164}')
+        })
+}
+
+#[test]
+fn a_gitlab_rebase_failure_shows_its_reason_as_plain_text() {
+    let server = Server::start();
+    let mut mr = gl_mr(8, "opened", "2024-02-03T00:00:00Z");
+    mr["sha"] = json!("unchanged");
+    mr["rebase_in_progress"] = json!(false);
+    mr["merge_error"] = json!(format!("x\u{202E}y\n{}", "z".repeat(1_000)));
+    server.route(
+        "GET",
+        &format!("{GL}/merge_requests/8"),
+        200,
+        &mr.to_string(),
+    );
+    server.route(
+        "PUT",
+        &format!("{GL}/merge_requests/8/rebase"),
+        202,
+        r#"{"rebase_in_progress":true}"#,
+    );
+    match gitlab(&server, Some(TOKEN)).merge(8, MergeMethod::Rebase, None) {
+        Err(Error::Api {
+            status: 409,
+            message,
+        }) => {
+            assert!(is_plain_server_text(&message), "{message:?}");
+            assert!(message.contains("xy z"), "{message:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_malformed_redirect_is_reported_as_plain_text() {
+    // The server's redirect target, quoted by the transport's error, hides and reorders text.
+    let server = Server::start();
+    let location = format!("/a\u{202E}b{}", "c".repeat(2_000));
+    server.route_with_headers(
+        "GET",
+        "/repos/octo/hello/pulls",
+        301,
+        &[("Location", &location)],
+        "",
+    );
+    match github(&server, Some(TOKEN)).list(StateFilter::Open, 10) {
+        Err(Error::Network(message)) => assert!(is_plain_server_text(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn an_unexpected_answer_quotes_the_server_as_plain_text() {
+    // A field of the wrong type: the parser quotes the server's whole string.
+    let server = Server::start();
+    let filler = "\u{3164}".repeat(100_000);
+    server.route(
+        "GET",
+        "/repos/octo/hello/pulls",
+        200,
+        &json!([{ "number": filler }]).to_string(),
+    );
+    match github(&server, Some(TOKEN)).list(StateFilter::Open, 10) {
+        Err(Error::Parse(message)) => assert!(is_plain_server_text(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The rollup reads no more of a response than any other request does (under 10 MiB).
+#[test]
+fn rollup_bodies_are_bounded() {
+    const LIMIT: usize = 10 * 1024 * 1024;
+    let server = Server::start();
+    let client = github(&server, Some(TOKEN));
+    let padded = |len: usize| {
+        let head = r#"{"data":{"repository":{}},"pad":""#;
+        let tail = r#""}"#;
+        format!("{head}{}{tail}", " ".repeat(len - head.len() - tail.len()))
+    };
+    server.route("POST", "/graphql", 200, &padded(LIMIT - 1));
+    assert_eq!(
+        client.rollup(&[1]),
+        Ok(Vec::new()),
+        "a body under the limit is read"
+    );
+    server.route("POST", "/graphql", 200, &padded(LIMIT));
+    assert!(
+        matches!(client.rollup(&[1]), Err(Error::Network(_))),
+        "a body of the limit or more is refused"
+    );
+}
+
+#[test]
+fn gitlab_rollup_maps_a_page_in_one_query() {
+    let server = Server::start();
+    server.route(
+        "POST",
+        "/api/graphql",
+        200,
+        &json!({ "data": { "project": { "mergeRequests": { "nodes": [
+            {
+                "iid": "2",
+                "headPipeline": { "status": "FAILED", "id": "gid://gitlab/Ci::Pipeline/1" },
+                "approvedBy": { "nodes": [] },
+            },
+            {
+                "iid": "1",
+                "headPipeline": null,
+                "approvedBy": { "nodes": [{ "username": "amy" }] },
+                "unknown_field": [1, 2],
+            },
+            {
+                "iid": "3",
+                "headPipeline": { "status": "RUNNING" },
+                "approvedBy": null,
+            },
+        ] } } } })
+        .to_string(),
+    );
+    let client = gitlab(&server, Some(TOKEN));
+    let rollup = client.rollup(&[1, 2, 3, 5]).expect("rollup");
+    assert_eq!(
+        rollup,
+        [
+            (
+                1,
+                Rollup {
+                    checks: None,
+                    review: Some(ReviewDecision::Approved)
+                }
+            ),
+            (
+                2,
+                Rollup {
+                    checks: Some(CheckState::Failure),
+                    review: None
+                }
+            ),
+            (
+                3,
+                Rollup {
+                    checks: Some(CheckState::Pending),
+                    review: None
+                }
+            ),
+        ],
+        "in the order asked; an iid the project lacks is left out"
+    );
+    // The REST root is /api/v4; GraphQL is /api/graphql on the same host.
+    let body = rollup_request(&server, "/api/graphql", Some(TOKEN));
+    assert_eq!(
+        body["variables"],
+        json!({ "path": "group/sub/proj", "iids": ["1", "2", "3", "5"] })
+    );
+    let query = body["query"].as_str().expect("query");
+    for field in ["mergeRequests(iids: $iids", "headPipeline", "approvedBy"] {
+        assert!(query.contains(field), "{field} in {query}");
+    }
+    assert_no_token_leak(&client);
+
+    // Without a token nothing is sent, even for a project anyone can read.
+    let anonymous = Server::start();
+    anonymous.route(
+        "POST",
+        "/api/graphql",
+        200,
+        r#"{"data":{"project":{"mergeRequests":{"nodes":[]}}}}"#,
+    );
+    assert_eq!(gitlab(&anonymous, None).rollup(&[4]), Ok(Vec::new()));
+    assert!(
+        anonymous.requests().is_empty(),
+        "{:?}",
+        anonymous.requests()
+    );
+}
+
+#[test]
+fn gitlab_rollup_errors_and_empty_data() {
+    let server = Server::start();
+    let r1 = reset_soon(1);
+    let client = gitlab(&server, Some(TOKEN));
+    let rollup = |status: u16, headers: &[(&str, &str)], body: &str| {
+        server.route_with_headers("POST", "/api/graphql", status, headers, body);
+        client.rollup(&[1])
+    };
+    assert_eq!(
+        rollup(401, &[], r#"{"message":"401 Unauthorized"}"#),
+        Err(Error::Unauthorized("401 Unauthorized".into()))
+    );
+    assert_eq!(
+        rollup(429, &[("ratelimit-reset", r1.1.as_str())], "Retry later"),
+        Err(Error::RateLimited { reset: Some(r1.0) })
+    );
+    assert_eq!(
+        rollup(
+            200,
+            &[],
+            r#"{"errors":[{"message":"Query has complexity of 300, which exceeds max complexity of 250"}]}"#
+        ),
+        Err(Error::Api {
+            status: 200,
+            message: "Query has complexity of 300, which exceeds max complexity of 250".into()
+        })
+    );
+    assert_eq!(
+        rollup(200, &[], r#"{"errors":[]}"#),
+        Err(Error::Api {
+            status: 200,
+            message: "The GraphQL response carried no data".into()
+        })
+    );
+    assert_eq!(
+        rollup(500, &[], r#"{"message":"500 Internal Server Error"}"#),
+        Err(Error::Api {
+            status: 500,
+            message: "500 Internal Server Error".into()
+        })
+    );
+    assert!(matches!(rollup(200, &[], "{"), Err(Error::Parse(_))));
+    // A project the token cannot see reads as null.
+    assert_eq!(
+        rollup(200, &[], r#"{"data":{"project":null}}"#),
+        Ok(Vec::new())
+    );
+    assert_eq!(
+        rollup(
+            200,
+            &[],
+            r#"{"data":{"project":{"mergeRequests":{"nodes":[{"iid":"not a number"}]}}}}"#
+        ),
+        Ok(Vec::new())
+    );
 }
 
 #[test]
@@ -1255,17 +1866,60 @@ fn author_pictures_resolve_both_providers_and_download_without_tokens() {
     );
     assert_eq!(
         requests[0].header("authorization"),
-        Some(&format!("Bearer {TOKEN}")[..])
+        Some(&*format!("Bearer {TOKEN}"))
     );
     assert_eq!(
         requests[2].header("authorization"),
-        Some(&format!("Bearer {TOKEN}")[..])
+        Some(&*format!("Bearer {TOKEN}"))
     );
     for request in [&requests[1], &requests[3]] {
         assert!(request.header("authorization").is_none());
         assert!(request.header("cookie").is_none());
         assert_eq!(request.target, "/picture.png");
     }
+}
+
+#[test]
+fn a_switched_off_client_looks_up_no_author() {
+    let server = Server::start();
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let picture = format!("{}/picture.png", server.base);
+    server.route(
+        "GET",
+        "/repos/octo/hello/commits",
+        200,
+        &json!([{"sha": sha, "author": {"avatar_url": picture}}]).to_string(),
+    );
+    server.route("GET", "/repos/octo/hello", 200, r#"{"id":1}"#);
+    server.route(
+        "GET",
+        "/api/v4/avatar",
+        200,
+        &json!({"avatar_url": picture}).to_string(),
+    );
+    let on = Arc::new(AtomicBool::new(true));
+    let client = github(&server, Some(TOKEN)).with_switch(Arc::clone(&on));
+    client
+        .author_avatar(sha, "a@example.com")
+        .expect("lookup")
+        .expect("a picture");
+    // The tab lets the thread go: profile lookups stop like every other request.
+    on.store(false, Ordering::SeqCst);
+    assert!(matches!(
+        client.author_avatar(sha, "a@example.com"),
+        Err(Error::Stopped)
+    ));
+    assert_eq!(client.author_repository(), Err(Error::Stopped));
+    let gitlab = gitlab(&server, Some(TOKEN)).with_switch(Arc::clone(&on));
+    assert!(matches!(
+        gitlab.author_avatar(sha, "a@example.com"),
+        Err(Error::Stopped)
+    ));
+    let sent: Vec<String> = server.requests().into_iter().map(|r| r.target).collect();
+    assert_eq!(
+        sent,
+        [format!("/repos/octo/hello/commits?sha={sha}&per_page=1")]
+    );
 }
 
 #[test]
@@ -1277,7 +1931,7 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
     let external = format!("{}/stolen", other.base);
     let client = github(&server, Some(TOKEN));
     server.route_with_headers("GET", &path, 302, &[("Location", &external)], "");
-    assert!(client.author_avatar(sha, "a@example.com").is_err());
+    client.author_avatar(sha, "a@example.com").unwrap_err();
     assert!(other.requests().is_empty());
     server.route(
         "GET",
@@ -1299,14 +1953,12 @@ fn author_picture_redirects_and_off_host_urls_are_never_followed() {
         &json!([{"sha":sha,"author":{"avatar_url":own}}]).to_string(),
     );
     server.route_with_headers("GET", "/picture", 302, &[("Location", &external)], "");
-    assert!(
-        client
-            .author_avatar(sha, "a@example.com")
-            .unwrap()
-            .unwrap()
-            .download()
-            .is_err()
-    );
+    client
+        .author_avatar(sha, "a@example.com")
+        .unwrap()
+        .unwrap()
+        .download()
+        .unwrap_err();
     assert!(other.requests().is_empty());
 }
 
@@ -1330,26 +1982,22 @@ fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
     );
     assert!(server.requests()[0].header("authorization").is_none());
     let count = server.requests().len();
-    assert!(
-        client
-            .author_avatar("../../users", "a@example.com")
-            .is_err()
-    );
+    client
+        .author_avatar("../../users", "a@example.com")
+        .unwrap_err();
     assert_eq!(server.requests().len(), count);
     for status in [401, 403, 404, 429, 500] {
         server.route("GET", &path, status, r#"{"message":"Unavailable"}"#);
-        assert!(client.author_avatar(sha, "a@example.com").is_err());
+        client.author_avatar(sha, "a@example.com").unwrap_err();
         server.route(
             "GET",
             "/api/v4/avatar",
             status,
             r#"{"message":"Unavailable"}"#,
         );
-        assert!(
-            gitlab(&server, None)
-                .author_avatar(sha, "a@example.com")
-                .is_err()
-        );
+        gitlab(&server, None)
+            .author_avatar(sha, "a@example.com")
+            .unwrap_err();
     }
     // No commit, or a different one than asked for, never yields someone else's picture.
     server.route("GET", &path, 200, "[]");
@@ -1390,12 +2038,195 @@ fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
             .to_string(),
     );
     server.route("GET", "/oversized", 200, &"x".repeat(2 * 1024 * 1024 + 1));
-    assert!(
-        client
-            .author_avatar(sha, "a@example.com")
-            .unwrap()
-            .unwrap()
-            .download()
-            .is_err()
+    client
+        .author_avatar(sha, "a@example.com")
+        .unwrap()
+        .unwrap()
+        .download()
+        .unwrap_err();
+}
+
+#[test]
+fn author_picture_lookups_tell_an_unpushed_commit_from_a_hidden_repository() {
+    use canopy_hosting::avatars::is_unknown_commit;
+    let server = Server::start();
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let list = format!("/repos/octo/hello/commits?sha={sha}&per_page=1");
+    let client = github(&server, None);
+    // GitHub answers 404 on the list both for a commit it does not have and for a repository it
+    // will not show. The lookup reports the 404 as it came; the caller asks about the repository
+    // separately, once it has checked its off switch and budget.
+    let miss = client.author_avatar(sha, "a@example.com").unwrap_err();
+    assert!(matches!(miss, Error::NotFound(_)), "{miss:?}");
+    assert!(!is_unknown_commit(&miss));
+    let targets = |server: &Server| -> Vec<String> {
+        server.requests().into_iter().map(|r| r.target).collect()
+    };
+    assert_eq!(targets(&server), [list.as_str()]);
+    let hidden = client.author_repository().unwrap_err();
+    assert!(matches!(hidden, Error::NotFound(_)), "{hidden:?}");
+    server.route("GET", "/repos/octo/hello", 200, r#"{"id":1}"#);
+    client
+        .author_repository()
+        .expect("a visible repository: the commit is the unknown one");
+    assert_eq!(
+        targets(&server),
+        [list.as_str(), "/repos/octo/hello", "/repos/octo/hello"]
     );
+    // The repository check carries the token only to its own host and follows no redirect.
+    let signed_in = github(&server, Some(TOKEN));
+    signed_in.author_repository().unwrap();
+    assert_eq!(
+        server.requests()[3].header("authorization"),
+        Some(&*format!("Bearer {TOKEN}"))
+    );
+    server.route_with_headers(
+        "GET",
+        "/repos/octo/hello",
+        301,
+        &[("Location", "https://example.invalid/moved")],
+        "",
+    );
+    assert!(matches!(
+        signed_in.author_repository(),
+        Err(Error::Api { status: 301, .. })
+    ));
+    // GitLab looks authors up by email, with no repository to ask about.
+    let gitlab_miss = gitlab(&server, None)
+        .author_avatar(sha, "a@example.com")
+        .unwrap_err();
+    assert!(matches!(gitlab_miss, Error::NotFound(_)));
+    let count = server.requests().len();
+    assert!(matches!(
+        gitlab(&server, None).author_repository(),
+        Err(Error::NotFound(_))
+    ));
+    assert_eq!(server.requests().len(), count, "GitLab sends nothing");
+}
+
+mod capture {
+    //! Records every log event's fields, so a test can check what reached the log.
+
+    use std::fmt::Write as _;
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Metadata, Subscriber};
+
+    #[derive(Clone, Default)]
+    pub struct Logs(Arc<Mutex<Vec<String>>>);
+
+    impl Logs {
+        pub fn lines(&self) -> Vec<String> {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+    }
+
+    struct Line(String);
+
+    impl Visit for Line {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            let _ = write!(self.0, " {}={value:?}", field.name());
+        }
+    }
+
+    impl Subscriber for Logs {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+        fn record(&self, _: &Id, _: &Record<'_>) {}
+        fn record_follows_from(&self, _: &Id, _: &Id) {}
+        fn event(&self, event: &Event<'_>) {
+            let mut line = Line(String::new());
+            event.record(&mut line);
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(line.0);
+        }
+        fn enter(&self, _: &Id) {}
+        fn exit(&self, _: &Id) {}
+    }
+}
+
+/// A server that echoes the client's own token (of any form) or another token back: neither
+/// reaches an error, which the app shows and logs, nor this crate's own log lines, even where
+/// the message is cut short.
+#[test]
+fn tokens_in_server_words_never_reach_an_error_or_the_log() {
+    // No known prefix: only the client's knowing its own token can find it.
+    const OWN: &str = "plainsecretvalue0123456789";
+    let logs = capture::Logs::default();
+    let server = Server::start();
+    let mut shown = Vec::new();
+    // With one subscriber alive, tracing decides whether a log line is wanted by asking the
+    // subscriber of the thread that first reaches it, and other tests' threads have none. A
+    // second one makes it ask every live subscriber, this test's among them.
+    let _second = tracing::Dispatch::new(capture::Logs::default());
+    tracing::subscriber::with_default(logs.clone(), || {
+        tracing::callsite::rebuild_interest_cache();
+        let echo = format!("invalid token: {OWN}, also glpat-review-sentinel and ghp_abcdef123456");
+        server.route(
+            "POST",
+            "/graphql",
+            200,
+            &json!({ "data": null, "errors": [{ "message": echo }] }).to_string(),
+        );
+        shown.push(github(&server, Some(OWN)).rollup(&[1]).map(drop));
+        // The token straddles where a long message is cut.
+        let long = format!("{} {OWN}", "x".repeat(290));
+        server.route(
+            "POST",
+            "/graphql",
+            401,
+            &json!({ "message": long }).to_string(),
+        );
+        shown.push(github(&server, Some(OWN)).rollup(&[1]).map(drop));
+        server.route(
+            "POST",
+            "/repos/octo/hello/issues/1/comments",
+            422,
+            &format!("bad credentials {OWN}"),
+        );
+        shown.push(github(&server, Some(OWN)).comment(1, "hi").map(drop));
+        // A response of the wrong shape: the parser quotes the string it met.
+        server.route(
+            "GET",
+            "/repos/octo/hello/pulls?state=all&sort=updated&direction=desc&per_page=3&page=1",
+            200,
+            &json!([OWN]).to_string(),
+        );
+        shown.push(
+            github(&server, Some(OWN))
+                .list(StateFilter::All, 3)
+                .map(drop),
+        );
+    });
+    let lines = logs.lines();
+    assert!(
+        lines.iter().any(|l| l.contains("hosting request")),
+        "the log was captured: {lines:?}"
+    );
+    for result in &shown {
+        let Err(e) = result else {
+            panic!("every call fails: {shown:?}");
+        };
+        let text = e.to_string();
+        assert!(text.contains("<redact"), "the token was replaced: {text}");
+        for secret in ["plainsec", "glpat-review", "ghp_abc"] {
+            assert!(!text.contains(secret), "{secret} in {text}");
+        }
+    }
+    for line in &lines {
+        for secret in ["plainsec", "glpat-review", "ghp_abc"] {
+            assert!(!line.contains(secret), "{secret} in the log: {line}");
+        }
+    }
 }

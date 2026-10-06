@@ -5,8 +5,10 @@ agent; [AGENTS.md](AGENTS.md) has the full conventions.
 
 ## Setup
 
-1. Install Rust with [rustup](https://rustup.rs); `rust-toolchain.toml` selects stable with
-   rustfmt and clippy. The minimum supported Rust version is 1.91.
+1. Install Rust with [rustup](https://rustup.rs); `rust-toolchain.toml` pins the exact release
+   the lints are fitted to, with rustfmt and clippy, and rustup installs it on first use. The
+   minimum supported Rust version is 1.91. To move to a newer release, change the channel there
+   and fix what the new clippy reports in the same commit.
 2. Install `git` 2.30 or newer and, on Linux, the runtime libraries listed in the
    [README](README.md#install-from-source).
 3. Optional: `cargo install cargo-deny` to run the licence and advisory checks locally, and
@@ -29,6 +31,19 @@ stall check (Linux, with a C compiler and `libwayland-server`), plus `shellcheck
 macOS. It must pass before
 you merge; a failure already listed in `docs/backlog.md` is reported, not hidden. Keep `TMPDIR` on
 a filesystem that accepts non-UTF-8 file names (the default `/tmp` does; NTFS does not).
+
+## Lints
+
+The workspace `Cargo.toml` sets the lint levels for every crate: clippy's `all`, `pedantic` and
+`cargo` groups, the nursery and restriction lints that fit this code, and extra rustc lints, with
+the reason for each lint turned on or left out beside it. `clippy.toml` refuses the calls that
+break three project rules: starting a program other than through `canopy_core::cli`, writing
+with libgit2, and making a colour outside `ui/theme.rs`. It lists the usual calls, not every way
+round a rule, so review still applies the rules themselves. When a finding is deliberate, put
+`#[expect(lint, reason = "...")]` on the narrowest item or statement that covers it; `allow` is
+itself a warning, and an `expect` fails once its finding is gone. Views convert between egui's
+integer and float types through the helpers in `ui/mod.rs` (`points_i8`, `count_f32`,
+`saturate_u8` and the rest) rather than casting by hand.
 
 ## Commit messages
 

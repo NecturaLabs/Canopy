@@ -1,5 +1,3 @@
-use std::io::{Read, Write};
-
 use super::*;
 
 fn write(path: &Path, text: &str) {
@@ -195,9 +193,37 @@ fn a_plan_accepts_canopys_own_release_and_nothing_else() {
         );
     }
     let no_platform = UpdateManifest::parse(br#"{"version":"412"}"#).expect("manifest");
-    assert!(Plan::from_manifest(&no_platform, base).is_err());
+    Plan::from_manifest(&no_platform, base).unwrap_err();
     let semver = UpdateManifest::parse(br#"{"version":"0.2.1-beta.1"}"#).expect("manifest");
-    assert!(Plan::from_manifest(&semver, base).is_err());
+    Plan::from_manifest(&semver, base).unwrap_err();
+}
+
+/// A refused download address reaches the update screen and the log as plain, short text: the
+/// feed cannot reorder or hide what the error says, or fill the screen with it.
+#[test]
+fn a_refused_download_address_is_shown_as_plain_short_text() {
+    let key = updates::platform_key();
+    let sha = "a".repeat(64);
+    let url = format!("https://evil.test/\u{202E}{}\u{3164}", "a".repeat(5000));
+    let manifest = UpdateManifest::parse(
+        format!(
+            r#"{{"version":"412","platforms":{{"{key}":{{"url":"{url}","sha256":"{sha}"}}}}}}"#
+        )
+        .as_bytes(),
+    )
+    .expect("manifest");
+    let Err(error) = Plan::from_manifest(&manifest, "https://example.test/dl") else {
+        panic!("a foreign address was accepted");
+    };
+    assert!(
+        !error.contains('\u{202E}') && !error.contains('\u{3164}'),
+        "{error:?}"
+    );
+    assert!(
+        error.chars().count() <= 400,
+        "{} chars",
+        error.chars().count()
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -468,6 +494,21 @@ fn the_lock_is_exclusive_and_released() {
 }
 
 #[test]
+fn a_lock_that_cannot_be_made_says_why() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let missing = tmp.path().join("not-installed");
+    let err = Lock::take(&missing).map(|_| ()).expect_err("no folder");
+    assert!(
+        !err.contains("another Canopy install or update is running"),
+        "{err}"
+    );
+    assert!(
+        err.contains(&missing.join(".lock").display().to_string()),
+        "{err}"
+    );
+}
+
+#[test]
 fn the_receipt_is_read_and_registered_copies_follow_the_new_files() {
     let tmp = tempfile::tempdir().expect("tmp");
     let root = tmp.path().join("root");
@@ -544,7 +585,7 @@ fn the_receipt_is_read_and_registered_copies_follow_the_new_files() {
         assert!(is_symlink(&svg), "a symlink is never removed");
     }
     let receipt = parse_receipt(&read(&root.join(RECEIPT)));
-    assert_eq!(receipt.desktops, vec![entry.clone()]);
+    assert_eq!(receipt.desktops, vec![entry]);
     assert_eq!(receipt.icons.len(), 1);
     assert_eq!(receipt.icons[0].0, png);
     #[cfg(unix)]
@@ -703,7 +744,7 @@ fn release_archive() -> Vec<u8> {
 
 /// An installed Canopy (build 412) the way the installer leaves it, with its registered copies.
 struct Installed412 {
-    _tmp: tempfile::TempDir,
+    tmp: tempfile::TempDir,
     root: PathBuf,
     entry: PathBuf,
     png: PathBuf,
@@ -751,7 +792,7 @@ fn installed() -> Installed412 {
         ),
     );
     Installed412 {
-        _tmp: tmp,
+        tmp,
         root,
         entry,
         png,
@@ -793,7 +834,7 @@ fn an_update_replaces_the_install_and_everything_registered_with_it() {
     );
     let mut phases = Vec::new();
     let done = install_managed(&old.root, &plan_for(&base, &bytes, None), &mut |p| {
-        phases.push(p)
+        phases.push(p);
     })
     .expect("update");
     let root = fs::canonicalize(&old.root).expect("root");
@@ -1007,11 +1048,11 @@ fn a_binary_in_an_install_folder_with_its_receipt_is_managed() {
         }
     );
     // No receipt, a receipt for another folder, a binary outside bin/: all "other".
-    let elsewhere = old._tmp.path().join("other/bin/canopy");
+    let elsewhere = old.tmp.path().join("other/bin/canopy");
     write(&elsewhere, "x");
     assert_eq!(detect_from(&elsewhere), Install::Other);
     write(
-        &old._tmp.path().join("other").join(RECEIPT),
+        &old.tmp.path().join("other").join(RECEIPT),
         &format!("root={}\n", old.root.display()),
     );
     assert_eq!(
@@ -1019,7 +1060,7 @@ fn a_binary_in_an_install_folder_with_its_receipt_is_managed() {
         Install::Other,
         "the receipt names another folder"
     );
-    let loose = old._tmp.path().join("loose/canopy");
+    let loose = old.tmp.path().join("loose/canopy");
     write(&loose, "x");
     assert_eq!(detect_from(&loose), Install::Other);
     assert_eq!(
@@ -1071,29 +1112,54 @@ fn the_installer_fallback_reports_a_failure_and_refuses_a_foreign_script() {
     assert!(err.contains("is not Canopy's installer"), "{err}");
 
     let missing = serve(vec![], 1);
-    assert!(install_with_installer(&missing, 413, &mut |_| {}).is_err());
+    install_with_installer(&missing, 413, &mut |_| {}).unwrap_err();
+}
+
+/// Writes `script` to a new executable at `path` from a child process. Written from this process,
+/// the file would be open for writing in any process another test thread forks meanwhile, until
+/// that process runs its own program; starting the script in that window fails with "Text file
+/// busy" (ETXTBSY).
+#[cfg(unix)]
+#[expect(clippy::disallowed_methods, reason = "writes a test program")]
+fn executable(path: &Path, script: &str) {
+    let mut sh = Command::new("sh")
+        .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("sh");
+    sh.stdin
+        .take()
+        .expect("stdin")
+        .write_all(script.as_bytes())
+        .expect("script");
+    assert!(
+        sh.wait().expect("sh").success(),
+        "{} written",
+        path.display()
+    );
 }
 
 #[test]
 fn a_restart_runs_what_was_asked_after_the_window_closed() {
     // Nothing requested: nothing happens (and nothing panics).
     run_requested_restart();
-    let tmp = tempfile::tempdir().expect("tmp");
-    let marker = tmp.path().join("started");
+    assert!(start_requested_restart().is_none());
     #[cfg(unix)]
     {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let marker = tmp.path().join("started");
         let exe = tmp.path().join("canopy");
-        write(&exe, &format!("#!/bin/sh\ntouch '{}'\n", marker.display()));
-        set_mode(&exe, 0o755).expect("mode");
-        request_restart(exe);
-        run_requested_restart();
-        for _ in 0..100 {
-            if marker.exists() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert!(marker.exists(), "the program was started");
-        run_requested_restart();
+        executable(&exe, &format!("#!/bin/sh\ntouch '{}'\n", marker.display()));
+        request_restart(exe.clone());
+        let (started, child) = start_requested_restart().expect("a restart was asked for");
+        assert_eq!(started, exe);
+        let status = child
+            .expect("the program was started")
+            .wait()
+            .expect("wait");
+        assert!(status.success(), "{status}");
+        assert!(marker.exists(), "the program ran");
+        assert!(start_requested_restart().is_none(), "a restart runs once");
     }
 }

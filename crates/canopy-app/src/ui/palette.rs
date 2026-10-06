@@ -1,10 +1,18 @@
 //! The command palette (Ctrl+K): fuzzy search over every command, branch and recent repository.
 
-use egui::{Align2, CornerRadius, FontId, Id, Key, Order, RichText, Sense, Stroke, vec2};
-use egui_phosphor::regular as icon;
+use egui::accesskit::Role;
+use egui::{Align2, FontId, Id, Key, LayerId, Order, RichText, Sense};
 
-use super::theme::{self, Palette, palette};
-use super::widgets;
+use super::kit::a11y::{self, FocusReturn};
+use super::kit::chip::Keycap;
+use super::kit::field::SearchField;
+use super::kit::overlay::{self, Layer};
+use super::kit::row::{ListRow, RowKind};
+use super::kit::{menu, paint};
+use super::theme::{self, palette};
+
+/// Space between two shortcut keycaps (alternatives).
+pub(crate) const KEY_GAP: f32 = 6.0;
 
 /// One entry the palette can run.
 #[derive(Debug, Clone)]
@@ -103,6 +111,8 @@ pub struct CommandPalette<T> {
     /// Best matches (score, entry index) for `ranked_for`.
     ranked: Vec<(i32, usize)>,
     ranked_for: Option<String>,
+    /// The control focus goes back to when the palette closes.
+    back: FocusReturn,
 }
 
 impl<T> Default for CommandPalette<T> {
@@ -117,8 +127,17 @@ impl<T> Default for CommandPalette<T> {
             built_for: None,
             ranked: Vec::new(),
             ranked_for: None,
+            back: FocusReturn::default(),
         }
     }
+}
+
+/// The palette's own layers: the scrim (which traps focus above it) and the card.
+fn scrim_layer() -> LayerId {
+    LayerId::new(Order::Foreground, Id::new("palette-scrim"))
+}
+fn card_layer() -> LayerId {
+    LayerId::new(Order::Tooltip, Id::new("palette"))
 }
 
 /// The best `MAX_SHOWN` matches of `query` among `haystacks`, best first (ties in entry order).
@@ -171,11 +190,16 @@ impl<T: Clone> CommandPalette<T> {
         self.ranked_for = None;
     }
 
-    /// Draws the palette; returns what the entry the user ran runs.
+    /// Draws the palette; returns what the entry the user ran runs. Call it every frame, open or
+    /// not: the frame after it closes (by itself or by `open = false`) it gives keyboard focus back
+    /// to what had it.
     pub fn show(&mut self, ctx: &egui::Context) -> Option<T> {
         if !self.open {
+            self.back.restore(ctx, card_layer());
             return None;
         }
+        // Nothing behind the palette takes a key or a click while it is open.
+        a11y::trap_focus(ctx, scrim_layer());
         let p = palette(ctx);
         if self.ranked_for.as_deref() != Some(self.query.as_str()) {
             self.ranked = rank(&self.query, &self.haystacks);
@@ -226,85 +250,82 @@ impl<T: Clone> CommandPalette<T> {
 
         // Dim the window behind.
         let screen = ctx.content_rect();
-        egui::Area::new(Id::new("palette-scrim"))
+        egui::Area::new(scrim_layer().id)
             .order(Order::Foreground)
             .fixed_pos(screen.min)
             .show(ctx, |ui| {
-                let resp = ui.allocate_rect(screen, Sense::click());
-                ui.painter()
-                    .rect_filled(screen, CornerRadius::ZERO, p.backdrop());
+                // A click target only: no Tab stop, no unnamed node.
+                let resp = ui.allocate_rect(screen, Sense::CLICK);
+                overlay::scrim(ui.painter(), screen, 1.0);
                 if resp.clicked() {
                     self.open = false;
                 }
             });
 
+        let m = theme::metrics();
         let width = 620.0_f32.min(screen.width() - theme::XL * 2.0).max(0.0);
         let top = theme::XL.min(screen.height() * 0.08);
-        egui::Area::new(Id::new("palette"))
+        egui::Area::new(card_layer().id)
             .order(Order::Tooltip)
             .pivot(Align2::CENTER_TOP)
             .fixed_pos(egui::pos2(screen.center().x, screen.min.y + top))
             .show(ctx, |ui| {
-                egui::Frame::new()
-                    .fill(p.elevated)
-                    .stroke(Stroke::new(1.0, Palette::tint(p.accent, 120)))
-                    .corner_radius(CornerRadius::same(theme::RADIUS_LG))
-                    .shadow(ctx.global_style().visuals.window_shadow)
-                    .inner_margin(egui::Margin::same(10))
-                    .show(ui, |ui| {
-                        ui.set_width(width);
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(icon::MAGNIFYING_GLASS)
-                                    .size(theme::ICON_MD)
-                                    .color(p.accent),
-                            );
-                            let edit = ui.add(
-                                egui::TextEdit::singleline(&mut self.query)
-                                    .hint_text("Type a command, branch or repository…")
-                                    .font(FontId::proportional(theme::TITLE_SIZE))
-                                    .frame(egui::Frame::NONE)
-                                    .desired_width(f32::INFINITY),
-                            );
-                            if self.just_opened {
-                                edit.request_focus();
-                                self.just_opened = false;
-                            }
-                            if edit.changed() {
-                                self.selected = 0;
-                            }
-                        });
-                        ui.add_space(6.0);
-                        ui.painter().hline(
-                            ui.min_rect().x_range(),
-                            ui.cursor().min.y,
-                            Stroke::new(1.0, p.border),
+                // The overlay surface (glass with Translucent surfaces on) under the card.
+                overlay::floating(ui, Layer::Popover, egui::Margin::ZERO, |ui| {
+                    a11y::dialog(ui, "Command palette", false);
+                    ui.set_width(width);
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let edit = surface_search(
+                        ui,
+                        &mut self.query,
+                        "Type a command, branch or repository…",
+                        "Search commands, branches and repositories",
+                    );
+                    if self.just_opened {
+                        self.back.remember(ctx);
+                        edit.request_focus();
+                        self.just_opened = false;
+                    }
+                    // The search is the palette's one Tab stop (the arrows move through the
+                    // results): Tab keeps focus on it, rather than dropping focus for a frame and
+                    // having a screen reader announce the search again.
+                    ui.memory_mut(|m| {
+                        m.set_focus_lock_filter(
+                            edit.id,
+                            egui::EventFilter {
+                                tab: true,
+                                horizontal_arrows: true,
+                                vertical_arrows: true,
+                                escape: false,
+                            },
                         );
-                        ui.add_space(6.0);
-                        if ranked.is_empty() {
-                            ui.add_space(10.0);
-                            ui.vertical_centered(|ui| {
-                                ui.label(RichText::new("No matches").color(p.text_faint))
-                            });
-                            ui.add_space(10.0);
-                            return;
-                        }
-                        // Whole rows only, so the list never ends in a half-cut entry.
-                        let pitch = 34.0 + ui.spacing().item_spacing.y;
-                        let room =
-                            (screen.height() - top - theme::XL * 2.0 - 60.0).clamp(0.0, 380.0);
-                        let list_h = ((room + ui.spacing().item_spacing.y) / pitch)
-                            .floor()
-                            .max(1.0)
-                            * pitch
-                            - ui.spacing().item_spacing.y;
-                        // Both bounds: the area's own size comes from its last frame and would
-                        // otherwise cap the list part-way through a row.
-                        let list = egui::ScrollArea::vertical()
-                            .max_height(list_h)
-                            .min_scrolled_height(list_h)
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
+                    });
+                    if edit.changed() {
+                        self.selected = 0;
+                    }
+                    if ranked.is_empty() {
+                        ui.add_space(theme::MD);
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new("No matches").color(p.text_faint))
+                        });
+                        ui.add_space(theme::MD);
+                        return;
+                    }
+                    let list_margin = m.menu_pad;
+                    let room = (screen.height() - top - theme::XL * 2.0 - m.palette_input_height)
+                        .clamp(0.0, 400.0);
+                    let list_h =
+                        whole_rows_height(&ranked, &self.items, self.query.is_empty(), room);
+                    let ground = overlay::ground(ctx, Layer::Popover);
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::same(crate::ui::points_i8(list_margin)))
+                        .show(ui, |ui| {
+                            overlay::scroll_body(ui, "palette-list", list_h, ground, |ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                // The results are a list box the search field drives: focus
+                                // stays in the field, and the selected result is its active
+                                // descendant, which screen readers announce as it moves.
+                                a11y::group(ui, Role::ListBox, "Results");
                                 let mut previous_group = None;
                                 for (row, (_, i)) in ranked.iter().enumerate() {
                                     let Some((e, _)) = self.items.get(*i) else {
@@ -313,99 +334,31 @@ impl<T: Clone> CommandPalette<T> {
                                     if self.query.is_empty() {
                                         let group = category(e).unwrap_or("Recent repositories");
                                         if previous_group != Some(group) {
-                                            ui.add_space(theme::SM);
-                                            widgets::section_label(ui, group);
+                                            menu::heading(ui, group);
                                             previous_group = Some(group);
                                         }
                                     }
                                     let selected = row == self.selected;
-                                    let (rect, resp) = ui.allocate_exact_size(
-                                        vec2(ui.available_width(), 34.0),
-                                        Sense::click(),
-                                    );
-                                    resp.widget_info(|| {
-                                        egui::WidgetInfo::selected(
-                                            egui::WidgetType::SelectableLabel,
-                                            true,
-                                            selected,
-                                            &e.label,
-                                        )
-                                    });
+                                    let resp = entry_row(ui, row, e, selected, ground);
                                     if resp.hovered()
                                         && ui.input(|inp| inp.pointer.delta() != egui::Vec2::ZERO)
                                     {
                                         self.selected = row;
                                     }
                                     if selected {
-                                        ui.painter().rect_filled(
-                                            rect,
-                                            CornerRadius::same(theme::RADIUS),
-                                            Palette::tint(p.accent, if p.dark { 55 } else { 35 }),
-                                        );
-                                        ui.painter().rect_filled(
-                                            egui::Rect::from_min_size(
-                                                rect.min + vec2(0.0, 8.0),
-                                                vec2(3.0, 18.0),
-                                            ),
-                                            CornerRadius::same(2),
-                                            p.accent,
-                                        );
-                                        ui.scroll_to_rect(rect, None);
-                                    }
-                                    let c = rect.left_center();
-                                    ui.painter().text(
-                                        c + vec2(16.0, 0.0),
-                                        Align2::CENTER_CENTER,
-                                        e.icon,
-                                        FontId::proportional(theme::ICON_MD),
-                                        if selected { p.accent } else { p.text_dim },
-                                    );
-                                    let shortcut_width = ui
-                                        .painter()
-                                        .layout_no_wrap(
-                                            e.shortcut.clone(),
-                                            FontId::monospace(theme::MONO_SMALL_SIZE),
-                                            p.text_faint,
-                                        )
-                                        .size()
-                                        .x;
-                                    let label_clip = egui::Rect::from_min_max(
-                                        rect.min + vec2(30.0, 0.0),
-                                        rect.max - vec2(shortcut_width + theme::XL, 0.0),
-                                    );
-                                    let painter = ui.painter().with_clip_rect(label_clip);
-                                    let label = painter.text(
-                                        c + vec2(34.0, 0.0),
-                                        Align2::LEFT_CENTER,
-                                        &e.label,
-                                        FontId::new(theme::LEAD_SIZE, theme::medium()),
-                                        p.text,
-                                    );
-                                    if !e.detail.is_empty() && category(e).is_none() {
-                                        painter.text(
-                                            egui::pos2(label.max.x + 10.0, c.y),
-                                            Align2::LEFT_CENTER,
-                                            &e.detail,
-                                            FontId::proportional(theme::META_SIZE),
-                                            p.text_faint,
-                                        );
-                                    }
-                                    if !e.shortcut.is_empty() {
-                                        ui.painter().text(
-                                            rect.right_center() - vec2(10.0, 0.0),
-                                            Align2::RIGHT_CENTER,
-                                            &e.shortcut,
-                                            FontId::monospace(theme::MONO_SMALL_SIZE),
-                                            p.text_faint,
-                                        );
+                                        ui.scroll_to_rect(resp.rect, None);
+                                        let option = resp.id.accesskit_id();
+                                        ctx.accesskit_node_builder(edit.id, |n| {
+                                            n.set_active_descendant(option);
+                                        });
                                     }
                                     if resp.clicked() {
                                         chosen = Some(*i);
                                     }
                                 }
                             });
-                        widgets::scroll_fade(ui, &list, p.elevated);
-                    });
+                        });
+                });
             });
 
         if chosen.is_some() {
@@ -415,9 +368,142 @@ impl<T: Clone> CommandPalette<T> {
     }
 }
 
+/// The tallest list of whole entries (and their group headings, when grouped) that fits in
+/// `room`, so the list never opens on a half-cut entry.
+fn whole_rows_height<T>(
+    ranked: &[(i32, usize)],
+    items: &[(Entry, T)],
+    grouped: bool,
+    room: f32,
+) -> f32 {
+    let row = theme::metrics().palette_row_height;
+    let mut height = 0.0;
+    let mut previous_group = None;
+    for (_, i) in ranked {
+        let mut next = row;
+        if grouped && let Some((e, _)) = items.get(*i) {
+            let group = category(e).unwrap_or("Recent repositories");
+            if previous_group != Some(group) {
+                next += menu::HEADING_HEIGHT;
+                previous_group = Some(group);
+            }
+        }
+        if height + next > room {
+            break;
+        }
+        height += next;
+    }
+    height.max(row.min(room))
+}
+
+/// Gap between a palette row's icon, label and detail, and before its keys.
+const ROW_GAP: f32 = 10.0;
+
+/// "The field that is the surface": the palette's and cheatsheet's search, the kit's borderless
+/// [`SearchField`] with only a seam under it, full width.
+pub(crate) fn surface_search(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    placeholder: &str,
+    name: &str,
+) -> egui::Response {
+    let s = theme::surfaces(ui.ctx());
+    let m = theme::metrics();
+    let at = ui.available_rect_before_wrap();
+    let edit = SearchField::new(text)
+        .placeholder(placeholder)
+        .name(name)
+        .borderless(true)
+        .show(ui);
+    let bottom = at.top() + m.palette_input_height;
+    paint::seam_h(ui.painter(), at.x_range(), bottom - 0.5, s.border);
+    edit
+}
+
+/// One palette entry as a list row: icon, label, detail, and its shortcut as keycaps. The
+/// selection is the row's wash; the pointer moving over a row selects it.
+fn entry_row(
+    ui: &mut egui::Ui,
+    row: usize,
+    e: &Entry,
+    selected: bool,
+    ground: egui::Color32,
+) -> egui::Response {
+    let m = theme::metrics();
+    let keys: Vec<Keycap> = e
+        .shortcut
+        .split('·')
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .map(Keycap::new)
+        .collect();
+    let sizes: Vec<egui::Vec2> = keys.iter().map(|k| k.measure(ui)).collect();
+    let keys_w: f32 = sizes.iter().map(|s| s.x + KEY_GAP).sum();
+    let detail = (!e.detail.is_empty() && category(e).is_none()).then_some(e.detail.as_str());
+    // The arrows reach the results from the search field, which keeps focus: no Tab stops.
+    let r = ListRow::new(("palette-row", row))
+        .kind(RowKind::Palette)
+        .selected(selected)
+        .focusable(false)
+        .ground(ground)
+        .show_with(ui, |rc, painter| {
+            let cy = rc.rect.center().y;
+            let right = rc.content.right() - keys_w - ROW_GAP;
+            let glyph =
+                painter.layout_no_wrap(e.icon.to_owned(), FontId::proportional(m.icon_md), rc.icon);
+            let mut x = rc.content.left();
+            painter.galley(egui::pos2(x, cy - glyph.size().y / 2.0), glyph, rc.icon);
+            x += m.icon_md + ROW_GAP;
+            let clip = painter.with_clip_rect(egui::Rect::from_min_max(
+                egui::pos2(x, rc.rect.top()),
+                egui::pos2(right.max(x), rc.rect.bottom()),
+            ));
+            let label = clip.layout_no_wrap(
+                e.label.clone(),
+                FontId::new(m.body_size, theme::medium()),
+                rc.text,
+            );
+            let label_w = label.size().x;
+            clip.galley(egui::pos2(x, cy - label.size().y / 2.0), label, rc.text);
+            if let Some(d) = detail {
+                let g =
+                    clip.layout_no_wrap(d.to_owned(), FontId::proportional(m.meta_size), rc.dim);
+                clip.galley(
+                    egui::pos2(x + label_w + ROW_GAP, cy - g.size().y / 2.0),
+                    g,
+                    rc.dim,
+                );
+            }
+        });
+    // The row paints its label itself; it is still the row's accessible name.
+    r.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &e.label)
+    });
+    let shortcut = e.shortcut.replace('·', "or");
+    ui.ctx().accesskit_node_builder(r.id, |n| {
+        n.set_role(Role::ListBoxOption);
+        n.clear_toggled();
+        n.set_selected(selected);
+        if !shortcut.trim().is_empty() {
+            n.set_keyboard_shortcut(shortcut.trim());
+        }
+    });
+    if ui.is_rect_visible(r.rect) {
+        let mut x = r.rect.right() - theme::SM - keys_w + KEY_GAP;
+        for (k, size) in keys.iter().zip(&sizes) {
+            let at =
+                egui::Rect::from_min_size(egui::pos2(x, r.rect.center().y - size.y / 2.0), *size);
+            k.paint(ui, at);
+            x += size.x + KEY_GAP;
+        }
+    }
+    r
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::vec2;
 
     fn entry(label: &str, detail: &str) -> Entry {
         Entry {
@@ -502,6 +588,36 @@ mod tests {
         assert!(!p.open);
     }
 
+    /// KF-F7: the palette's and cheatsheet's input is the kit's borderless `SearchField`, and it
+    /// still takes focus on opening, so typing filters at once.
+    #[test]
+    fn typing_on_opening_fills_the_kit_search_field() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut p = CommandPalette::default();
+        p.open();
+        p.set_entries(1, items());
+        for events in [Vec::new(), vec![egui::Event::Text("psh".into())]] {
+            ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = p.show(ui.ctx());
+                },
+            )
+            .drop_without_applying_deltas();
+        }
+        assert_eq!(p.query, "psh");
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        for file in ["palette.rs", "cheatsheet.rs"] {
+            let text = std::fs::read_to_string(src.join(file)).expect("source");
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            assert!(!code.contains("TextEdit::"), "{file} builds its own input");
+        }
+    }
+
     #[test]
     fn fuzzy_prefers_word_starts_and_runs() {
         assert!(fuzzy_score("psh", "Push").is_some());
@@ -510,5 +626,195 @@ mod tests {
         let b = fuzzy_score("nb", "Unbind").expect("match");
         assert!(a > b, "{a} <= {b}");
         assert_eq!(fuzzy_score("", "anything"), Some(0));
+    }
+
+    #[test]
+    fn the_list_opens_on_whole_entries_and_their_headings() {
+        let row = theme::metrics().palette_row_height;
+        let heading = menu::HEADING_HEIGHT;
+        let items = items();
+        let ranked: Vec<(i32, usize)> = (0..items.len()).map(|i| (0, i)).collect();
+        // Grouped: Remote heading, Push, Pull, Branch heading, New branch, ...
+        let room = heading + 2.0 * row + heading + row + row / 2.0;
+        assert_eq!(
+            whole_rows_height(&ranked, &items, true, room),
+            heading + 2.0 * row + heading + row
+        );
+        // Ungrouped (a query): rows only.
+        assert_eq!(
+            whole_rows_height(&ranked, &items, false, 2.5 * row),
+            2.0 * row
+        );
+    }
+
+    #[test]
+    fn a_long_list_fades_into_the_card_at_its_bottom() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut p = CommandPalette::default();
+        p.open();
+        let many: Vec<(Entry, u32)> = (0..40)
+            .map(|i| (entry(&format!("Entry {i}"), "Branch"), i))
+            .collect();
+        p.set_entries(1, many);
+        let mut meshes = 0;
+        for _ in 0..4 {
+            let out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(1440.0, 900.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = p.show(ui.ctx());
+                },
+            );
+            meshes = out
+                .shapes
+                .iter()
+                .filter(|c| matches!(c.shape, egui::Shape::Mesh(_)))
+                .count();
+            out.drop_without_applying_deltas();
+        }
+        assert!(meshes > 0, "no fade");
+    }
+
+    /// One frame of the window: a "Behind" button under the palette, and AccessKit's update.
+    fn window_frame(
+        ctx: &egui::Context,
+        p: &mut CommandPalette<u32>,
+        events: Vec<egui::Event>,
+    ) -> egui::accesskit::TreeUpdate {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                crate::ui::kit::Button::new("Behind").show(ui);
+                let _ = p.show(ui.ctx());
+            },
+        );
+        out.textures_delta.clear();
+        out.platform_output.accesskit_update.expect("accesskit")
+    }
+
+    fn key(key: Key) -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]
+    }
+
+    /// A11Y-7, A11Y-9, A11Y-21: the palette is a modal dialog named "Command palette" holding a
+    /// named search and a list box of results, whose selected entry is the search's active
+    /// descendant (what a screen reader reads as the arrows move); Tab stays inside it, and focus
+    /// goes back to what had it when it closes.
+    #[test]
+    fn the_palette_is_a_modal_dialog_that_gives_focus_back() {
+        use egui::accesskit::Role;
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let mut p = CommandPalette::default();
+        window_frame(&ctx, &mut p, Vec::new());
+        window_frame(&ctx, &mut p, key(Key::Tab));
+        let behind = ctx
+            .memory(egui::Memory::focused)
+            .expect("the button behind has focus");
+        p.open();
+        p.set_entries(1, items());
+        window_frame(&ctx, &mut p, Vec::new());
+        let update = window_frame(&ctx, &mut p, key(Key::ArrowDown));
+        let node = |role: Role| {
+            update
+                .nodes
+                .iter()
+                .find(|(_, n)| n.role() == role)
+                .map(|(_, n)| n.clone())
+        };
+        let dialog = node(Role::Dialog).expect("a dialog");
+        assert_eq!(dialog.label(), Some("Command palette"));
+        assert!(dialog.is_modal(), "modal");
+        let (search_id, search) = update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.label() == Some("Search commands, branches and repositories"))
+            .map(|(id, n)| (*id, n.clone()))
+            .expect("a named search");
+        assert_eq!(update.focus, search_id, "the search has focus");
+        let results = node(Role::ListBox).expect("a list box of results");
+        assert_eq!(results.label(), Some("Results"));
+        let options: Vec<_> = update
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.role() == Role::ListBoxOption)
+            .collect();
+        assert_eq!(options.len(), items().len(), "one option per entry");
+        let active = search.active_descendant().expect("an active descendant");
+        let (_, chosen) = options
+            .iter()
+            .find(|(id, _)| *id == active)
+            .expect("the active descendant is an option");
+        assert_eq!(
+            chosen.is_selected(),
+            Some(true),
+            "it is the selected option"
+        );
+        for _ in 0..4 {
+            window_frame(&ctx, &mut p, key(Key::Tab));
+            let focused = ctx
+                .memory(egui::Memory::focused)
+                .and_then(|f| ctx.read_response(f));
+            assert!(
+                focused.is_some_and(|r| r.layer_id == card_layer()),
+                "Tab stays in the palette"
+            );
+        }
+        window_frame(&ctx, &mut p, key(Key::Escape));
+        assert!(!p.open, "Escape closes");
+        window_frame(&ctx, &mut p, Vec::new());
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            Some(behind),
+            "focus is back on what had it"
+        );
+    }
+
+    /// The window closes the palette itself on Escape (its Dismiss command), before the palette
+    /// draws that frame, while the palette's modal layer from the frame before still holds: focus
+    /// still goes back to what had it.
+    #[test]
+    fn focus_returns_when_the_window_closes_the_palette() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let mut p = CommandPalette::default();
+        window_frame(&ctx, &mut p, Vec::new());
+        window_frame(&ctx, &mut p, key(Key::Tab));
+        let behind = ctx
+            .memory(egui::Memory::focused)
+            .expect("the button behind has focus");
+        p.open();
+        p.set_entries(1, items());
+        window_frame(&ctx, &mut p, Vec::new());
+        window_frame(&ctx, &mut p, Vec::new());
+        p.open = false;
+        window_frame(&ctx, &mut p, key(Key::Escape));
+        window_frame(&ctx, &mut p, Vec::new());
+        window_frame(&ctx, &mut p, Vec::new());
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            Some(behind),
+            "focus is back on what had it"
+        );
     }
 }

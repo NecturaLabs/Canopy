@@ -14,8 +14,11 @@ mod identity_worker;
 mod keymap;
 mod logging;
 mod platform;
+mod repo_config;
 mod selfupdate;
 mod settings;
+mod settings_file;
+mod system_apps;
 mod tab;
 mod trust;
 mod ui;
@@ -43,14 +46,32 @@ OPTIONS:
         --view <VIEW>         Initial view: history, changes or requests
         --split               Show diffs side by side
         --overlay <NAME>      Open an overlay for screenshots: settings, privacy, cheatsheet,
-                              palette, consent, crash-consent, legal,
-                              credential, host-key, merge, identity, settings-git or
-                              clear-identity, update-installed, update-running,
-                              trust-folder, diff-options, settings-integrations,
-                              settings-accounts, settings-updates, settings-keyboard, about or toasts
+                              palette, consent, crash-consent, legal, credential, host-key,
+                              merge, identity, settings-git, clear-identity, update-installed,
+                              update-running, trust-folder, diff-options,
+                              settings-integrations, settings-accounts, settings-updates,
+                              settings-keyboard, settings-backup, settings-repository,
+                              settings-search, about, toasts, gallery, menu-remotes,
+                              menu-branch, menu-commit, menu-file, open, open-error, clone,
+                              clone-running, clone-error, init, new-branch, rename, new-tag,
+                              stash, add-remote, add-remote-refused, publish, new-request,
+                              confirm, confirm-danger, confirm-host, confirm-merge-risky,
+                              whats-new, crash, update-available, update-failed, terms,
+                              consent-reading, crash-reading, username, password, approve or
+                              notice
         --size <WxH>          Initial window size [default: 1440x900]
         --zoom <FACTOR>       Initial interface zoom, from 0.8 to 1.6
+        --style <STYLE>       Start with a style: standard or deeper
+        --density <DENSITY>   Start with a density: comfortable or dense
+        --translucent <ON>    Translucent surfaces: on or off
+        --motion <MOTION>     Motion: system, reduced or full
+        --gallery-page <N>    With --overlay gallery, scroll down N window heights
         --screenshot <FILE>   Render once the repository has loaded, save a PNG and exit
+        --demo-requests <V>   With --screenshot, show invented pull requests (no network) in a
+                              repository without a GitHub or GitLab remote: list, list-all,
+                              list-closed, a request number such as 428, busy, loading,
+                              details-loading, details-error, error, no-token or empty;
+                              prefix gitlab: for merge requests. Implies --view requests
     -h, --help                Print help
     -V, --version             Print version
 
@@ -62,9 +83,15 @@ FILES:
     Logs (one JSON-lines file per run) and crash reports are kept in Canopy's data folder
     (~/.local/share/canopy on Linux) and never leave your computer.";
 
+#[expect(
+    clippy::print_stdout,
+    clippy::exit,
+    reason = "--help and --version print to the terminal and quit before any window opens"
+)]
 fn parse_args() -> Result<(Launch, [f32; 2]), String> {
     let mut launch = Launch::default();
     let mut size = [1440.0, 900.0];
+    let mut demo_requests = None;
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
         let text = arg.to_string_lossy().into_owned();
@@ -84,13 +111,60 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                     .next()
                     .ok_or("--theme needs a name")?
                     .to_string_lossy()
-                    .to_lowercase();
+                    .into_owned();
                 launch.theme = Some(
-                    ui::theme::ThemeId::ALL
-                        .into_iter()
-                        .find(|t| t.name().to_lowercase() == name)
+                    ui::theme::ThemeId::from_name(&name)
                         .ok_or_else(|| format!("unknown theme {name}; see --help"))?,
                 );
+            }
+            "--style" => {
+                let name = next_text(&mut args, "--style needs standard or deeper")?;
+                launch.style = Some(
+                    ui::theme::Style::from_name(&name).ok_or("--style takes standard or deeper")?,
+                );
+            }
+            "--density" => {
+                let name = next_text(&mut args, "--density needs comfortable or dense")?;
+                launch.density = Some(
+                    ui::theme::Density::from_name(&name)
+                        .ok_or("--density takes comfortable or dense")?,
+                );
+            }
+            "--translucent" => {
+                launch.translucent = Some(
+                    match next_text(&mut args, "--translucent needs on or off")?.as_str() {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err("--translucent takes on or off".into()),
+                    },
+                );
+            }
+            "--motion" => {
+                let name = next_text(&mut args, "--motion needs system, reduced or full")?;
+                launch.motion = Some(
+                    ui::motion::MotionPref::from_name(&name)
+                        .ok_or("--motion takes system, reduced or full")?,
+                );
+            }
+            "--glass-soak" if cfg!(debug_assertions) => {
+                #[expect(
+                    clippy::map_err_ignore,
+                    reason = "the option's own message says what a valid value is"
+                )]
+                let frames = next_text(&mut args, "--glass-soak needs a number of frames")?
+                    .parse()
+                    .map_err(|_| "--glass-soak takes a whole number of frames")?;
+                launch.glass_soak = Some(frames);
+            }
+            "--gallery-page" => {
+                #[expect(
+                    clippy::map_err_ignore,
+                    reason = "the option's own message says what a valid value is"
+                )]
+                let page = next_text(&mut args, "--gallery-page needs a number")?
+                    .parse()
+                    .map_err(|_| "--gallery-page takes a whole number")?;
+                launch.gallery_page = page;
             }
             "--overlay" => {
                 let names = app::OVERLAYS.join(", ");
@@ -108,8 +182,15 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 let value = args.next().ok_or("--zoom needs a factor from 0.8 to 1.6")?;
                 launch.zoom = Some(parse_zoom(&value.to_string_lossy())?);
             }
+            "--demo-requests" => {
+                let spec = next_text(&mut args, "--demo-requests needs a scenario, see --help")?;
+                if demo_requests.is_some() {
+                    return Err("--demo-requests was given twice".into());
+                }
+                demo_requests = Some(app::demo_requests::Scenario::parse(&spec)?);
+            }
             "--screenshot" => {
-                launch.screenshot = Some(args.next().ok_or("--screenshot needs a file")?.into())
+                launch.screenshot = Some(args.next().ok_or("--screenshot needs a file")?.into());
             }
             "--view" => {
                 launch.view = Some(
@@ -134,16 +215,35 @@ fn parse_args() -> Result<(Launch, [f32; 2]), String> {
                 let (w, h) = v
                     .split_once('x')
                     .ok_or("--size takes WxH, e.g. 1600x1000")?;
-                size = [
+                #[expect(
+                    clippy::map_err_ignore,
+                    reason = "the option's own message says what a valid value is"
+                )]
+                let parsed = [
                     w.parse().map_err(|_| "bad width")?,
                     h.parse().map_err(|_| "bad height")?,
                 ];
+                size = parsed;
             }
             s if s.starts_with('-') => return Err(format!("unknown option {s}; see --help")),
             _ => launch.paths.push(PathBuf::from(arg)),
         }
     }
+    if let Some(scenario) = demo_requests {
+        app::demo_requests::enable(scenario, launch.screenshot.is_some())?;
+        launch.view.get_or_insert(tab::View::Requests);
+    }
     Ok((launch, size))
+}
+
+/// The next argument as text, or `missing` when there is none.
+fn next_text(
+    args: &mut impl Iterator<Item = std::ffi::OsString>,
+    missing: &str,
+) -> Result<String, String> {
+    args.next()
+        .map(|a| a.to_string_lossy().into_owned())
+        .ok_or_else(|| missing.to_owned())
 }
 
 fn parse_zoom(value: &str) -> Result<f32, String> {
@@ -182,6 +282,10 @@ fn main() -> anyhow::Result<()> {
     logging::init(logging::LogLevel::Normal);
     canopy_hosting::set_build(build_info::NUMBER);
 
+    #[expect(
+        clippy::print_stderr,
+        reason = "a bad command line is reported on the terminal that gave it, before any window"
+    )]
     let (launch, size) = match parse_args() {
         Ok(v) => v,
         Err(e) => {
@@ -189,6 +293,9 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(2);
         }
     };
+
+    // The editor, terminal and file manager the open actions use when Settings names none.
+    system_apps::refresh(None);
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Canopy")
@@ -199,7 +306,10 @@ fn main() -> anyhow::Result<()> {
     }
     let options = eframe::NativeOptions {
         viewport,
-        persist_window: launch.screenshot.is_none(),
+        persist_window: launch.screenshot.is_none() && launch.glass_soak.is_none(),
+        // Gradients and glows band without it; spelled out so a changed default cannot bring
+        // the bands back.
+        dithering: true,
         ..Default::default()
     };
     let result = eframe::run_native(

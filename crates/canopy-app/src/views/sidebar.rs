@@ -1,19 +1,29 @@
 //! The left sidebar: branches, remotes, tags and stashes.
 
-use egui::{Align2, CornerRadius, FontId, RichText, Sense, Ui, vec2};
+use egui::accesskit::Role;
+use egui::{FontId, RichText, Ui};
 use egui_phosphor::regular as icon;
 
 use crate::action::Action;
+use crate::keymap::Command;
 use crate::tab::RepoTab;
-use crate::ui::theme::{self, Palette, palette};
-use crate::ui::widgets::{self, forge_icon};
+use crate::ui::kit::button::LinkButton;
+use crate::ui::kit::chip::Badge;
+use crate::ui::kit::overlay::TooltipExt;
+use crate::ui::kit::progress::Skeleton;
+use crate::ui::kit::row::{ListRow, Roving, RowKind, SectionHeader, TreeNav, TreeRow};
+use crate::ui::kit::{KitResponse, Tone, a11y, menu};
+use crate::ui::theme::{self, palette};
+use crate::ui::widgets::forge_icon;
 use crate::views::commit_detail::virtual_rows;
 use crate::views::dialogs::Dialog;
 use crate::worker::Op;
 use canopy_core::MergeMode;
 
-const ROW_H: f32 = 26.0;
+/// Gap between a row's label and its badges, and between two badges.
+const BADGE_GAP: f32 = theme::XS;
 
+/// A collapsible section header bound to `tab.collapsed[key]`; returns whether it is open.
 fn section(
     ui: &mut Ui,
     tab: &mut RepoTab,
@@ -21,64 +31,85 @@ fn section(
     title: &str,
     glyph: &str,
     count: usize,
+    first: bool,
 ) -> bool {
-    let p = palette(ui.ctx());
-    let open = !tab.collapsed.contains(key);
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
-    resp.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::WidgetType::CollapsingHeader,
-            true,
-            open,
-            format!("{title}, {count}"),
-        )
-    });
-    let chevron = if open {
-        icon::CARET_DOWN
-    } else {
-        icon::CARET_RIGHT
-    };
-    let color = if resp.hovered() {
-        p.text_dim
-    } else {
-        p.text_faint
-    };
-    ui.painter().text(
-        rect.left_center() + vec2(8.0, 0.0),
-        Align2::CENTER_CENTER,
-        chevron,
-        FontId::proportional(theme::ICON_XS),
-        color,
-    );
-    ui.painter().text(
-        rect.left_center() + vec2(22.0, 0.0),
-        Align2::CENTER_CENTER,
-        glyph,
-        FontId::proportional(theme::ICON_SM),
-        color,
-    );
-    ui.painter().text(
-        rect.left_center() + vec2(34.0, 0.0),
-        Align2::LEFT_CENTER,
-        title.to_uppercase(),
-        FontId::new(theme::MICRO_SIZE, theme::semibold()),
-        color,
-    );
-    ui.painter().text(
-        rect.right_center() - vec2(8.0, 0.0),
-        Align2::RIGHT_CENTER,
-        count.to_string(),
-        FontId::new(theme::SMALL_SIZE, theme::medium()),
-        p.text_faint,
-    );
-    if resp.clicked() {
-        if open {
-            tab.collapsed.insert(key.to_owned());
-        } else {
-            tab.collapsed.remove(key);
-        }
+    section_with_action(ui, tab, key, title, glyph, count, first, None).0
+}
+
+/// [`section`] with an icon button (glyph, tooltip) that shows on hover and focus; also returns
+/// the header's response (for its context menu) and whether the button was clicked.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a section header needs its tab, key, title, glyph, count, place and action"
+)]
+fn section_with_action(
+    ui: &mut Ui,
+    tab: &mut RepoTab,
+    key: &str,
+    title: &str,
+    glyph: &str,
+    count: usize,
+    first: bool,
+    action: Option<(&str, &str)>,
+) -> (bool, KitResponse<bool>) {
+    let mut open = !tab.collapsed.contains(key);
+    let mut header = SectionHeader::new(title)
+        .icon(glyph)
+        .count(count)
+        .open(&mut open)
+        .first(first);
+    if let Some((glyph, label)) = action {
+        header = header.action(glyph, label);
     }
-    open
+    let shown = header.show(ui);
+    if open {
+        tab.collapsed.remove(key);
+    } else {
+        tab.collapsed.insert(key.to_owned());
+    }
+    (open, shown)
+}
+
+/// The Remotes section of a repository with none: says so, and offers to publish it or add one.
+fn no_remotes(ui: &mut Ui, actions: &mut Vec<Action>) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    ui.add_space(theme::XS);
+    ui.horizontal(|ui| {
+        ui.add_space(theme::MD);
+        ui.label(
+            RichText::new(format!("{}  Local only — no remote", icon::HARD_DRIVES))
+                .size(m.meta_size)
+                .color(p.text_faint),
+        )
+        .kit_tooltip("Everything stays on this computer until you publish it or add a remote")
+        .show();
+    });
+    ui.add_space(theme::XS);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = theme::SM;
+        ui.add_space(theme::MD);
+        if LinkButton::new("Publish…")
+            .text_size(m.meta_size)
+            .show(ui)
+            .kit_tooltip("Create a repository on GitHub or GitLab and push this one to it")
+            .show()
+            .clicked()
+        {
+            actions.push(Action::Publish);
+        }
+        ui.label(RichText::new("·").size(m.meta_size).color(p.text_faint));
+        if LinkButton::new("Add remote…")
+            .text_size(m.meta_size)
+            .show(ui)
+            .kit_tooltip("Connect a repository that already exists elsewhere")
+            .show()
+            .clicked()
+        {
+            actions.push(Action::AddRemoteDialog);
+        }
+    });
+    ui.add_space(theme::XS);
 }
 
 struct Row<'a> {
@@ -86,107 +117,82 @@ struct Row<'a> {
     id: egui::Id,
     glyph: &'a str,
     label: &'a str,
-    indent: f32,
-    strong: bool,
-    color: egui::Color32,
+    /// The checked-out branch: shown selected, its icon in the accent.
+    current: bool,
     ahead: usize,
     behind: usize,
     hint: Option<&'a str>,
 }
 
-fn row(ui: &mut Ui, r: Row<'_>) -> egui::Response {
-    let p = palette(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
-    let resp = ui.interact(rect, r.id, Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, r.label));
-    let hover = ui
-        .ctx()
-        .animate_bool_with_time(resp.id, resp.hovered(), 0.1);
-    if r.strong {
-        ui.painter().rect_filled(
-            rect.shrink2(vec2(4.0, 1.0)),
-            CornerRadius::same(theme::RADIUS_SM),
-            Palette::tint(p.accent, if p.dark { 40 } else { 28 }),
-        );
-    } else if hover > 0.0 {
-        ui.painter().rect_filled(
-            rect.shrink2(vec2(4.0, 1.0)),
-            CornerRadius::same(theme::RADIUS_SM),
-            Palette::tint(p.text, (hover * 12.0) as u8),
-        );
+/// A sidebar item: icon and label, the checked-out branch selected, ahead and behind counts as
+/// badges at the right; row `index` of `list` when its section is one Tab stop.
+fn row(ui: &mut Ui, r: &Row<'_>, list: Option<(Roving, usize)>) -> egui::Response {
+    let m = theme::metrics();
+    let badges: Vec<Badge> = [(r.ahead, "↑", Tone::Accent), (r.behind, "↓", Tone::Neutral)]
+        .into_iter()
+        .filter(|(n, _, _)| *n > 0)
+        .map(|(n, arrow, tone)| Badge::new(format!("{arrow}{n}")).tone(tone).mono())
+        .collect();
+    let badges_w = badges
+        .iter()
+        .map(|b| b.measure(ui).x + BADGE_GAP)
+        .sum::<f32>();
+    // A shortened name is shown in full on hover.
+    let label_w = ui
+        .painter()
+        .layout_no_wrap(
+            r.label.to_owned(),
+            FontId::new(m.body_size, theme::semibold()),
+            egui::Color32::PLACEHOLDER,
+        )
+        .size()
+        .x;
+    let room = ui.available_width() - 2.0 * theme::MD - m.icon_md - theme::SM;
+    let tip = r
+        .hint
+        .map(str::to_owned)
+        .or_else(|| (label_w > room - badges_w).then(|| r.label.to_owned()));
+    let mut row = ListRow::new(r.id)
+        .kind(RowKind::Sidebar)
+        .selected(r.current)
+        .icon(r.glyph)
+        .label(r.label);
+    if let Some(t) = tip {
+        row = row.tooltip(t);
     }
-    let x = rect.min.x + 14.0 + r.indent;
-    ui.painter().text(
-        egui::pos2(x + 6.0, rect.center().y),
-        Align2::CENTER_CENTER,
-        r.glyph,
-        FontId::proportional(theme::ICON_SM),
-        r.color,
-    );
-    let mut right = rect.max.x - 10.0;
-    for (n, arrow, c) in [(r.behind, "↓", p.accent2), (r.ahead, "↑", p.success)] {
-        if n > 0 {
-            let t = format!("{arrow}{n}");
-            let g = ui.painter().layout_no_wrap(
-                t,
-                FontId::new(theme::MICRO_SIZE, theme::semibold()),
-                c,
-            );
-            let br = egui::Rect::from_min_max(
-                egui::pos2(right - g.size().x - 10.0, rect.center().y - 8.0),
-                egui::pos2(right, rect.center().y + 8.0),
-            );
-            ui.painter()
-                .rect_filled(br, CornerRadius::same(8), Palette::tint(c, 36));
-            ui.painter().galley(br.center() - g.size() / 2.0, g, c);
-            right = br.min.x - 4.0;
-        }
+    if let Some((list, index)) = list {
+        row = row.roving(list, index);
     }
-    let text_rect = egui::Rect::from_min_max(
-        egui::pos2(x + 18.0, rect.min.y),
-        egui::pos2(right, rect.max.y),
-    );
-    let font = if r.strong {
-        FontId::new(theme::BODY_SIZE, theme::semibold())
-    } else {
-        FontId::proportional(theme::BODY_SIZE)
-    };
-    let g = widgets::single_line_galley(
-        ui,
-        r.label.to_owned(),
-        font,
-        if r.strong {
-            p.text
-        } else {
-            p.text_dim.lerp_to_gamma(p.text, 0.45 + hover * 0.4)
-        },
-        text_rect.width(),
-    );
-    let elided = g.elided;
-    ui.painter().with_clip_rect(text_rect).galley(
-        egui::pos2(text_rect.min.x, rect.center().y - g.size().y / 2.0),
-        g,
-        p.text,
-    );
-    match r.hint {
-        Some(h) => resp.on_hover_text(h),
-        // A shortened name is shown in full on hover.
-        None if elided => resp.on_hover_text(r.label),
-        None => resp,
+    if !badges.is_empty() {
+        // Right to left: the behind count at the edge, the ahead count before it.
+        row = row.trailing_ui(badges_w, move |ui| {
+            ui.spacing_mut().item_spacing.x = BADGE_GAP;
+            for b in badges.into_iter().rev() {
+                b.show(ui);
+            }
+        });
     }
+    row.show(ui)
 }
 
 /// Draws the sidebar.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
-    let p = palette(ui.ctx());
+    let row_h = RowKind::Sidebar.height();
     let Some(snap) = tab.snap.clone() else {
-        ui.add_space(20.0);
-        ui.vertical_centered(|ui| ui.spinner());
+        // The first load: placeholder rows, after a moment so a quick load never flashes them.
+        ui.add_space(theme::XS);
+        Skeleton::rows(8)
+            .row_height(row_h)
+            .id_salt("sidebar-loading")
+            .show(ui)
+            .widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Loading the repository")
+            });
         return;
     };
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        ui.add_space(8.0);
+        ui.add_space(theme::XS);
 
         // Branches.
         let unborn = snap.head.branch.as_ref().filter(|name| {
@@ -199,17 +205,23 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             "Branches",
             icon::GIT_BRANCH,
             snap.branches.len() + usize::from(unborn.is_some()),
+            true,
         ) {
+            // One Tab stop for the branches: the checked-out one until the user moves.
+            let first = usize::from(unborn.is_some());
+            let head = snap.branches.iter().position(|b| b.is_head).map(|i| i + first);
+            let list = Roving::new(ui.ctx(), ("sidebar-branches", &tab.path), snap.branches.len() + first, head.or(Some(0)));
+            ui.scope(|ui| {
+            if snap.branches.len() + first > 0 { a11y::group(ui, Role::List, "Branches"); }
             if let Some(name) = unborn {
                 let label = format!("{name} (no commits yet)");
-                let _ = row(ui, Row { id: ui.id().with("unborn-branch"), glyph: icon::CHECK_CIRCLE, label: &label, indent: 6.0, strong: true, color: p.accent, ahead: 0, behind: 0, hint: Some("Current branch; make the first commit to create it") });
+                let _ = row(ui, &Row { id: ui.id().with("unborn-branch"), glyph: icon::CHECK_CIRCLE, label: &label, current: true, ahead: 0, behind: 0, hint: Some("Current branch; make the first commit to create it") }, Some((list, 0)));
             }
-            virtual_rows(ui, snap.branches.len(), ROW_H, |ui, i| {
+            virtual_rows(ui, snap.branches.len(), row_h, |ui, i| {
                 let b = &snap.branches[i];
-                let color = if b.is_head { p.accent } else { p.text_dim };
                 let glyph = if b.is_head { icon::CHECK_CIRCLE } else { icon::GIT_BRANCH };
-                let hint = b.upstream.as_ref().map(|u| format!("Tracks {u}")).unwrap_or_else(|| "No upstream".to_owned());
-                let resp = row(ui, Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, indent: 6.0, strong: b.is_head, color, ahead: b.ahead, behind: b.behind, hint: Some(&hint) });
+                let hint = b.upstream.as_ref().map_or_else(|| "No upstream".to_owned(), |u| format!("Tracks {u}"));
+                let resp = row(ui, &Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, current: b.is_head, ahead: b.ahead, behind: b.behind, hint: Some(&hint) }, Some((list, i + first)));
                 if resp.clicked()
                     && let Some(t) = b.target {
                         actions.push(Action::Reveal(t));
@@ -224,102 +236,151 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     let (remote, rest) = u.split_once('/')?;
                     Some((tab.forge_of(remote)?.clone(), rest.to_owned()))
                 });
-                widgets::context_menu(&resp, |ui| {
+                menu::context(&resp, |m| {
                     if let Some((f, remote_branch)) = &upstream_forge {
-                        if ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
+                        if m.item(forge_icon(f.kind), format!("Open on {}", f.kind.name())).show(m.ui).clicked() {
                             actions.push(Action::OpenUrl(f.branch_url(remote_branch)));
                         }
-                        if ui.button(format!("{}  Create {}…", icon::GIT_PULL_REQUEST, f.kind.request_noun())).clicked() {
+                        if m.item(icon::GIT_PULL_REQUEST, format!("Create {}…", f.kind.request_noun())).show(m.ui).clicked() {
                             actions.push(Action::CreateRequest { source: name.clone() });
                         }
-                        ui.separator();
-                    }
-                    if !is_head && ui.button(format!("{}  Check out", icon::CHECK)).clicked() {
-                        actions.push(Action::Op(Op::Checkout(name.clone())));
-                    }
-                    if !is_head && ui.button(format!("{}  Merge into current branch", icon::GIT_MERGE)).clicked() {
-                        actions.push(Action::Op(Op::Merge(name.clone(), MergeMode::Default)));
-                    }
-                    if !is_head && ui.button(format!("{}  Rebase current branch onto this", icon::GIT_PULL_REQUEST)).clicked() {
-                        actions.push(Action::Confirm { title: "Rebase".into(), body: format!("Rebase the current branch onto {name}? This rewrites the current branch's commits."), confirm: "Rebase".into(), danger: false, op: Op::Rebase(name.clone()) });
-                    }
-                    ui.separator();
-                    if ui.button(format!("{}  New branch from here…", icon::GIT_BRANCH)).clicked() {
-                        actions.push(Action::OpenDialog(Dialog::new_branch_at(crate::views::dialogs::Start::Branch(name.clone()))));
-                    }
-                    if ui.button(format!("{}  Rename…", icon::PENCIL_SIMPLE)).clicked() {
-                        actions.push(Action::OpenDialog(Dialog::Rename { old: name.clone(), new: name.clone() }));
-                    }
-                    if is_head && ui.button(format!("{}  Push", icon::ARROW_FAT_LINE_UP)).clicked() {
-                        actions.push(Action::Op(Op::Push { force: false }));
-                    }
-                    if is_head && ui.button(format!("{}  Force push (with lease)…", icon::WARNING)).clicked() {
-                        actions.push(Action::Confirm { title: "Force push".into(), body: format!("Overwrite the remote copy of {name} with your local branch? --force-with-lease refuses if someone else pushed in the meantime."), confirm: "Force push".into(), danger: true, op: Op::Push { force: true } });
-                    }
-                    if ui.button(format!("{}  Copy name", icon::COPY)).clicked() {
-                        actions.push(Action::Copy(name.clone()));
+                        m.separator();
                     }
                     if !is_head {
-                        ui.separator();
-                        if ui.button(RichText::new(format!("{}  Delete…", icon::TRASH)).color(p.danger)).clicked() {
-                            actions.push(Action::Confirm { title: "Delete branch".into(), body: format!("Delete the local branch {name}? If it has commits that are not merged, Git refuses and Canopy asks before forcing it."), confirm: "Delete".into(), danger: true, op: Op::DeleteBranch { name: name.clone(), force: false } });
+                        if m.item(icon::CHECK, "Check out").show(m.ui).clicked() {
+                            actions.push(Action::Op(Op::Checkout(name.clone())));
                         }
+                        if m.item(icon::GIT_MERGE, "Merge into current branch").show(m.ui).clicked() {
+                            actions.push(Action::Op(Op::Merge(name.clone(), MergeMode::Default)));
+                        }
+                        if m.item(icon::GIT_PULL_REQUEST, "Rebase current branch onto this").show(m.ui).clicked() {
+                            actions.push(Action::Confirm { title: format!("Rebase onto {name}?"), body: format!("The current branch's commits are rewritten on top of {name}."), confirm: "Rebase branch".into(), danger: false, op: Op::Rebase(name.clone()) });
+                        }
+                        m.separator();
+                    }
+                    if m.item(icon::GIT_BRANCH, "New branch from here…").show(m.ui).clicked() {
+                        actions.push(Action::OpenDialog(Dialog::new_branch_at(crate::views::dialogs::Start::Branch(name.clone()))));
+                    }
+                    if m.item(icon::PENCIL_SIMPLE, "Rename…").show(m.ui).clicked() {
+                        actions.push(Action::OpenDialog(Dialog::Rename { old: name.clone(), new: name.clone() }));
+                    }
+                    if is_head && m.item(icon::ARROW_FAT_LINE_UP, "Push").shortcut(Command::Push).show(m.ui).clicked() {
+                        actions.push(Action::Op(Op::Push { force: false }));
+                    }
+                    if m.item(icon::COPY, "Copy name").show(m.ui).clicked() {
+                        actions.push(Action::Copy(name.clone()));
+                    }
+                    m.separator();
+                    if is_head {
+                        if m.item(icon::WARNING, "Force push (with lease)…").danger().show(m.ui).clicked() {
+                            actions.push(Action::Confirm { title: format!("Force push {name}?"), body: format!("The remote copy of {name} is overwritten with your local branch. --force-with-lease refuses if someone else pushed in the meantime."), confirm: "Force push branch".into(), danger: true, op: Op::Push { force: true } });
+                        }
+                    } else if m.item(icon::TRASH, "Delete…").danger().show(m.ui).clicked() {
+                        actions.push(Action::Confirm { title: format!("Delete branch {name}?"), body: "Only the local branch is deleted. If it has commits that are not merged, Git refuses and Canopy asks before forcing it.".into(), confirm: "Delete branch".into(), danger: true, op: Op::DeleteBranch { name: name.clone(), force: false } });
                     }
                 });
             });
-            ui.add_space(8.0);
+            });
         }
 
-        // Remotes.
-        if section(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len()) {
-            if snap.remotes.is_empty() {
-                ui.label(RichText::new(format!("{}  Local only — no remote", icon::HARD_DRIVES)).size(theme::META_SIZE).color(p.text_faint))
-                    .on_hover_text("Everything stays on this computer. Publish to GitHub or GitLab to share it.");
-                if widgets::compact_button(ui, RichText::new(format!("{}  Publish…", icon::CLOUD_ARROW_UP)).color(p.accent)).clicked() {
+        // Remotes: "+" on the header (hover or focus) and its context menu add one; a
+        // repository with none says so and offers Publish and Add remote as links instead, so
+        // the header has no second "Add remote…".
+        let local_only = snap.remotes.is_empty();
+        let (open, header) = section_with_action(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len(), false, (!local_only).then_some((icon::PLUS, "Add remote…")));
+        if header.value {
+            actions.push(Action::AddRemoteDialog);
+        }
+        menu::context(&header.response, |m| {
+            if m.item(icon::PLUS, "Add remote…").show(m.ui).clicked() {
+                actions.push(Action::AddRemoteDialog);
+            }
+            if local_only {
+                if m.item(icon::CLOUD_ARROW_UP, "Publish…").show(m.ui).clicked() {
                     actions.push(Action::Publish);
                 }
+            } else if m.item(icon::ARROWS_CLOCKWISE, "Fetch all remotes").shortcut(Command::Fetch).show(m.ui).clicked() {
+                actions.push(Action::Fetch);
             }
+        });
+        if open {
+            if local_only {
+                no_remotes(ui, actions);
+            }
+            // The remotes and their branches are one tree and one Tab stop; the rows are
+            // numbered in display order.
+            let shown_rows: usize = snap.remotes.iter().enumerate().map(|(ri, r)| {
+                1 + if tab.collapsed.contains(&format!("remote:{}", r.name)) { 0 } else { tab.snap_index.remote_branches.get(ri).map_or(0, Vec::len) }
+            }).sum();
+            let list = Roving::new(ui.ctx(), ("sidebar-remotes", &tab.path), shown_rows, Some(0));
+            let mut at = 0;
+            ui.scope(|ui| {
+            if !local_only { a11y::group(ui, Role::Tree, "Remotes"); }
             for (ri, r) in snap.remotes.iter().enumerate() {
                 let key = format!("remote:{}", r.name);
-                let open = !tab.collapsed.contains(&key);
+                let mut open = !tab.collapsed.contains(&key);
                 let forge = tab.forge_of(&r.name).cloned();
-                let label = match &forge {
-                    Some(f) => format!("{}  {}", r.name, forge_icon(f.kind)),
-                    None => r.name.clone(),
+                let (label, spoken) = match &forge {
+                    Some(f) => (format!("{}  {}", r.name, forge_icon(f.kind)), format!("{}, {}", r.name, f.kind.name())),
+                    None => (r.name.clone(), r.name.clone()),
                 };
-                let resp = row(ui, Row { id: ui.id().with(("remote", &r.name)), glyph: if open { icon::CARET_DOWN } else { icon::CARET_RIGHT }, label: &label, indent: 6.0, strong: false, color: p.accent2, ahead: 0, behind: 0, hint: r.url.as_deref() });
-                if resp.clicked() {
-                    if open {
-                        tab.collapsed.insert(key.clone());
-                    } else {
-                        tab.collapsed.remove(&key);
-                    }
+                let remote_at = at;
+                let shown = TreeRow::new(("remote", &r.name), 0)
+                    .open(&mut open)
+                    .toggle_on_click(true)
+                    .label(label)
+                    .accessible_name(spoken)
+                    .roving(list, remote_at)
+                    .show(ui);
+                at += 1;
+                if shown.value == Some(TreeNav::FirstChild) {
+                    list.focus(ui.ctx(), remote_at + 1);
                 }
+                if open {
+                    tab.collapsed.remove(&key);
+                } else {
+                    tab.collapsed.insert(key.clone());
+                }
+                let resp = match r.url.as_deref() {
+                    Some(url) => shown.response.kit_tooltip(url).show(),
+                    None => shown.response,
+                };
                 let rname = r.name.clone();
                 let url = r.url.clone().unwrap_or_default();
-                widgets::context_menu(&resp, |ui| {
+                menu::context(&resp, |m| {
                     if let Some(f) = &forge
-                        && ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
+                        && m.item(forge_icon(f.kind), format!("Open on {}", f.kind.name())).show(m.ui).clicked() {
                             actions.push(Action::OpenUrl(f.web_url()));
                         }
-                    if ui.button(format!("{}  Fetch", icon::ARROWS_CLOCKWISE)).clicked() {
+                    if m.item(icon::ARROWS_CLOCKWISE, "Fetch").shortcut(Command::Fetch).show(m.ui).clicked() {
                         actions.push(Action::Fetch);
                     }
-                    if ui.button(format!("{}  Copy URL", icon::COPY)).clicked() {
+                    if m.item(icon::COPY, "Copy URL").show(m.ui).clicked() {
                         actions.push(Action::Copy(url.clone()));
                     }
-                    ui.separator();
-                    if ui.button(RichText::new(format!("{}  Remove remote…", icon::TRASH)).color(p.danger)).clicked() {
-                        actions.push(Action::Confirm { title: "Remove remote".into(), body: format!("Remove the remote {rname} and its remote-tracking branches?"), confirm: "Remove".into(), danger: true, op: Op::RemoveRemote(rname.clone()) });
+                    m.separator();
+                    if m.item(icon::TRASH, "Remove remote…").danger().show(m.ui).clicked() {
+                        actions.push(Action::Confirm { title: format!("Remove remote {rname}?"), body: "Its remote-tracking branches go too. The repository on the server is not touched.".into(), confirm: "Remove remote".into(), danger: true, op: Op::RemoveRemote(rname.clone()) });
                     }
                 });
                 if !open {
                     continue;
                 }
                 let branches: &[usize] = tab.snap_index.remote_branches.get(ri).map_or(&[], Vec::as_slice);
-                virtual_rows(ui, branches.len(), ROW_H, |ui, i| {
+                let base = at;
+                at += branches.len();
+                virtual_rows(ui, branches.len(), row_h, |ui, i| {
                     let b = &snap.remote_branches[branches[i]];
-                    let resp = row(ui, Row { id: ui.id().with(("remote-branch", &b.remote, &b.branch)), glyph: icon::GIT_BRANCH, label: &b.branch, indent: 22.0, strong: false, color: p.text_faint, ahead: 0, behind: 0, hint: Some("Double-click to check out") });
+                    let shown = TreeRow::new(("remote-branch", &b.remote, &b.branch), 1)
+                        .icon(icon::GIT_BRANCH)
+                        .label(b.branch.clone())
+                        .roving(list, base + i)
+                        .show(ui);
+                    // Left goes back up to the remote.
+                    if shown.value == Some(TreeNav::Parent) {
+                        list.focus(ui.ctx(), remote_at);
+                    }
+                    let resp = shown.response.kit_tooltip("Double-click to check out").show();
                     if resp.clicked()
                         && let Some(t) = b.target {
                             actions.push(Action::Reveal(t));
@@ -329,99 +390,123 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         actions.push(Action::Op(Op::CheckoutRemote { remote: remote.clone(), branch: branch.clone() }));
                     }
                     let rb_forge = forge.clone();
-                    widgets::context_menu(&resp, |ui| {
+                    menu::context(&resp, |m| {
                         if let Some(f) = &rb_forge
-                            && ui.button(format!("{}  Open on {}", forge_icon(f.kind), f.kind.name())).clicked() {
+                            && m.item(forge_icon(f.kind), format!("Open on {}", f.kind.name())).show(m.ui).clicked() {
                                 actions.push(Action::OpenUrl(f.branch_url(&branch)));
                             }
-                        if ui.button(format!("{}  Check out as local branch", icon::CHECK)).clicked() {
+                        if m.item(icon::CHECK, "Check out as local branch").show(m.ui).clicked() {
                             actions.push(Action::Op(Op::CheckoutRemote { remote: remote.clone(), branch: branch.clone() }));
                         }
-                        if ui.button(format!("{}  Merge into current branch", icon::GIT_MERGE)).clicked() {
+                        if m.item(icon::GIT_MERGE, "Merge into current branch").show(m.ui).clicked() {
                             actions.push(Action::Op(Op::Merge(format!("{remote}/{branch}"), MergeMode::Default)));
                         }
-                        if ui.button(format!("{}  Copy name", icon::COPY)).clicked() {
+                        if m.item(icon::COPY, "Copy name").show(m.ui).clicked() {
                             actions.push(Action::Copy(format!("{remote}/{branch}")));
                         }
-                        ui.separator();
-                        if ui.button(RichText::new(format!("{}  Delete on remote…", icon::TRASH)).color(p.danger)).clicked() {
-                            actions.push(Action::Confirm { title: "Delete remote branch".into(), body: format!("Delete {branch} on {remote}? Everyone loses access to it."), confirm: "Delete".into(), danger: true, op: Op::DeleteRemoteBranch { remote: remote.clone(), branch: branch.clone() } });
+                        m.separator();
+                        if m.item(icon::TRASH, "Delete on remote…").danger().show(m.ui).clicked() {
+                            actions.push(Action::Confirm { title: format!("Delete {branch} on {remote}?"), body: "The branch is deleted on the server, and everyone loses access to it.".into(), confirm: "Delete remote branch".into(), danger: true, op: Op::DeleteRemoteBranch { remote: remote.clone(), branch: branch.clone() } });
                         }
                     });
                 });
             }
-            if widgets::compact_button(ui, format!("{}  Add remote…", icon::PLUS)).clicked() {
-                actions.push(Action::AddRemoteDialog);
-            }
-            ui.add_space(8.0);
+            });
         }
 
         // Tags.
-        if section(ui, tab, "tags", "Tags", icon::TAG, snap.tags.len()) {
+        if section(ui, tab, "tags", "Tags", icon::TAG, snap.tags.len(), false) {
             let remote = snap.remotes.first().map(|r| r.name.clone());
             let tag_forge = tab.forge().map(|(_, f)| f.clone());
-            virtual_rows(ui, snap.tags.len(), ROW_H, |ui, i| {
+            let list = Roving::new(ui.ctx(), ("sidebar-tags", &tab.path), snap.tags.len(), Some(0));
+            ui.scope(|ui| {
+            if !snap.tags.is_empty() { a11y::group(ui, Role::List, "Tags"); }
+            virtual_rows(ui, snap.tags.len(), row_h, |ui, i| {
                 let t = &snap.tags[i];
-                let resp = row(ui, Row { id: ui.id().with(("tag", &t.name)), glyph: icon::TAG, label: &t.name, indent: 6.0, strong: false, color: p.warning, ahead: 0, behind: 0, hint: t.message.as_deref() });
+                let resp = row(ui, &Row { id: ui.id().with(("tag", &t.name)), glyph: icon::TAG, label: &t.name, current: false, ahead: 0, behind: 0, hint: t.message.as_deref() }, Some((list, i)));
                 if resp.clicked()
                     && let Some(target) = t.target {
                         actions.push(Action::Reveal(target));
                     }
                 let name = t.name.clone();
                 let target = t.target;
-                widgets::context_menu(&resp, |ui| {
+                menu::context(&resp, |m| {
                     if let Some(f) = &tag_forge {
                         let what = if f.kind == canopy_core::forge::ForgeKind::GitHub { "release" } else { "tag" };
-                        if ui.button(format!("{}  Open {what} on {}", forge_icon(f.kind), f.kind.name())).clicked() {
+                        if m.item(forge_icon(f.kind), format!("Open {what} on {}", f.kind.name())).show(m.ui).clicked() {
                             actions.push(Action::OpenUrl(f.tag_url(&name)));
                         }
                     }
                     if let Some(oid) = target
-                        && ui.button(format!("{}  Check out (detached)", icon::CHECK)).clicked() {
+                        && m.item(icon::CHECK, "Check out (detached)").show(m.ui).clicked() {
                             actions.push(Action::Op(Op::CheckoutDetached(oid)));
                         }
                     if let Some(r) = &remote
-                        && ui.button(format!("{}  Push to {r}", icon::ARROW_FAT_LINE_UP)).clicked() {
+                        && m.item(icon::ARROW_FAT_LINE_UP, format!("Push to {r}")).show(m.ui).clicked() {
                             actions.push(Action::Op(Op::PushTag { remote: r.clone(), tag: name.clone() }));
                         }
-                    if ui.button(format!("{}  Copy name", icon::COPY)).clicked() {
+                    if m.item(icon::COPY, "Copy name").show(m.ui).clicked() {
                         actions.push(Action::Copy(name.clone()));
                     }
-                    ui.separator();
-                    if ui.button(RichText::new(format!("{}  Delete…", icon::TRASH)).color(p.danger)).clicked() {
-                        actions.push(Action::Confirm { title: "Delete tag".into(), body: format!("Delete the local tag {name}?"), confirm: "Delete".into(), danger: true, op: Op::DeleteTag(name.clone()) });
+                    m.separator();
+                    if m.item(icon::TRASH, "Delete…").danger().show(m.ui).clicked() {
+                        actions.push(Action::Confirm { title: format!("Delete tag {name}?"), body: "Only the local tag is deleted; a copy already pushed stays on the remote.".into(), confirm: "Delete tag".into(), danger: true, op: Op::DeleteTag(name.clone()) });
                     }
                 });
             });
-            ui.add_space(8.0);
+            });
         }
 
         // Stashes.
-        if section(ui, tab, "stashes", "Stashes", icon::ARCHIVE, snap.stashes.len()) {
-            virtual_rows(ui, snap.stashes.len(), ROW_H, |ui, i| {
+        if section(ui, tab, "stashes", "Stashes", icon::ARCHIVE, snap.stashes.len(), false) {
+            let list = Roving::new(ui.ctx(), ("sidebar-stashes", &tab.path), snap.stashes.len(), Some(0));
+            ui.scope(|ui| {
+            if !snap.stashes.is_empty() { a11y::group(ui, Role::List, "Stashes"); }
+            virtual_rows(ui, snap.stashes.len(), row_h, |ui, i| {
                 let s = &snap.stashes[i];
                 let label = s.message.trim_start_matches("On ").to_owned();
-                let resp = row(ui, Row { id: ui.id().with(("stash", s.oid)), glyph: icon::ARCHIVE, label: &label, indent: 6.0, strong: false, color: p.text_dim, ahead: 0, behind: 0, hint: Some(&s.message) });
-                let index = s.index;
+                let resp = row(ui, &Row { id: ui.id().with(("stash", s.oid)), glyph: icon::ARCHIVE, label: &label, current: false, ahead: 0, behind: 0, hint: Some(&s.message) }, Some((list, i)));
+                let oid = s.oid;
                 if resp.clicked() {
-                    actions.push(Action::Reveal(s.oid));
+                    actions.push(Action::Reveal(oid));
                 }
-                widgets::context_menu(&resp, |ui| {
-                    if ui.button(format!("{}  Apply", icon::TRAY_ARROW_DOWN)).clicked() {
-                        actions.push(Action::Op(Op::StashApply { index, pop: false }));
+                // By the stash's commit, never its place in the list, which can change before
+                // the operation runs.
+                menu::context(&resp, |m| {
+                    if m.item(icon::TRAY_ARROW_DOWN, "Apply").show(m.ui).clicked() {
+                        actions.push(Action::Op(Op::StashApplyCommit { oid, pop: false }));
                     }
-                    if ui.button(format!("{}  Pop", icon::TRAY_ARROW_UP)).clicked() {
-                        actions.push(Action::Op(Op::StashApply { index, pop: true }));
+                    if m.item(icon::TRAY_ARROW_UP, "Pop").show(m.ui).clicked() {
+                        actions.push(Action::Op(Op::StashApplyCommit { oid, pop: true }));
                     }
-                    ui.separator();
-                    if ui.button(RichText::new(format!("{}  Drop…", icon::TRASH)).color(p.danger)).clicked() {
-                        actions.push(Action::Confirm { title: "Drop stash".into(), body: format!("Drop stash@{{{index}}}? Its changes are lost."), confirm: "Drop".into(), danger: true, op: Op::StashDrop(index) });
+                    m.separator();
+                    if m.item(icon::TRASH, "Drop…").danger().show(m.ui).clicked() {
+                        actions.push(drop_stash(s));
                     }
                 });
             });
+            });
         }
-        ui.add_space(16.0);
+        ui.add_space(theme::LG);
     });
+}
+
+/// The confirmation for dropping `stash`: it names the stash by its message and drops it by its
+/// commit.
+fn drop_stash(stash: &canopy_core::StashInfo) -> Action {
+    Action::Confirm {
+        title: format!(
+            "Drop stash \u{201c}{}\u{201d}?",
+            stash.message.trim_start_matches("On ")
+        ),
+        body: format!(
+            "Its changes are lost. The stash is commit {}.",
+            canopy_core::short_id(stash.oid)
+        ),
+        confirm: "Drop stash".into(),
+        danger: true,
+        op: Op::StashDrop(stash.oid),
+    }
 }
 
 #[cfg(test)]
@@ -434,7 +519,7 @@ mod tests {
         ctx.enable_accesskit();
         crate::ui::fonts::install(&ctx);
         let mut add = add;
-        let mut out = ctx.run_ui(Default::default(), |ui| add(ui));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| add(ui));
         out.textures_delta.clear();
         out.platform_output
             .accesskit_update
@@ -452,19 +537,328 @@ mod tests {
         let labels = spoken(|ui| {
             row(
                 ui,
-                Row {
+                &Row {
                     id: egui::Id::new("row"),
                     glyph: icon::GIT_BRANCH,
                     label: "feature/auth",
-                    indent: 0.0,
-                    strong: false,
-                    color: egui::Color32::WHITE,
-                    ahead: 0,
-                    behind: 0,
+                    current: false,
+                    ahead: 2,
+                    behind: 1,
                     hint: None,
                 },
+                None,
             );
         });
         assert!(labels.iter().any(|l| l == "feature/auth"), "{labels:?}");
+    }
+
+    fn tab_with(remotes: Vec<canopy_core::RemoteInfo>) -> RepoTab {
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
+            remotes,
+            ..Default::default()
+        }));
+        tab
+    }
+
+    fn origin() -> canopy_core::RemoteInfo {
+        canopy_core::RemoteInfo {
+            name: "origin".into(),
+            url: Some("https://example.com/r.git".into()),
+            default_branch: None,
+        }
+    }
+
+    /// One frame of the sidebar with `events`: the AccessKit nodes it reported.
+    fn sidebar_frame(
+        ctx: &egui::Context,
+        tab: &mut RepoTab,
+        events: Vec<egui::Event>,
+        actions: &mut Vec<Action>,
+    ) -> Vec<egui::accesskit::Node> {
+        sidebar_frame_focus(ctx, tab, events, actions).0
+    }
+
+    /// [`sidebar_frame`], and the label of the node that has keyboard focus.
+    fn sidebar_frame_focus(
+        ctx: &egui::Context,
+        tab: &mut RepoTab,
+        events: Vec<egui::Event>,
+        actions: &mut Vec<Action>,
+    ) -> (Vec<egui::accesskit::Node>, Option<String>) {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(260.0, 700.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| show(ui, tab, actions),
+        );
+        out.textures_delta.clear();
+        out.platform_output
+            .accesskit_update
+            .map(|u| {
+                let focused = u
+                    .nodes
+                    .iter()
+                    .find(|(id, _)| *id == u.focus)
+                    .and_then(|(_, n)| n.label().map(str::to_owned));
+                (u.nodes.into_iter().map(|(_, n)| n).collect(), focused)
+            })
+            .unwrap_or_default()
+    }
+
+    fn center(n: &egui::accesskit::Node) -> egui::Pos2 {
+        let b = n.bounds().expect("bounds");
+        egui::pos2(
+            crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+            crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+        )
+    }
+
+    fn click(at: egui::Pos2) -> Vec<egui::Event> {
+        let mut events = vec![egui::Event::PointerMoved(at)];
+        for pressed in [true, false] {
+            events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            });
+        }
+        events
+    }
+
+    fn named<'a>(
+        nodes: &'a [egui::accesskit::Node],
+        label: &str,
+    ) -> Option<&'a egui::accesskit::Node> {
+        nodes.iter().find(|n| n.label() == Some(label))
+    }
+
+    /// O9: a repository with no remote offers Publish and Add remote as quiet links, not
+    /// full-width buttons.
+    #[test]
+    fn a_repository_without_remotes_offers_publish_and_add_remote_links() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        let mut tab = tab_with(Vec::new());
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        for label in ["Publish…", "Add remote…"] {
+            let n = named(&nodes, label).unwrap_or_else(|| panic!("{label}"));
+            assert_eq!(n.role(), Role::Link, "{label}");
+        }
+        let at = center(named(&nodes, "Publish…").expect("publish"));
+        let _ = sidebar_frame(&ctx, &mut tab, click(at), &mut actions);
+        assert!(
+            matches!(actions.as_slice(), [Action::Publish]),
+            "{actions:?}"
+        );
+    }
+
+    /// O9: with remotes the Remotes header's "+" is reachable at rest (keyboard and screen
+    /// readers, kit-polish Override O2), shows on hover, and a click on it opens the dialog.
+    #[test]
+    fn the_remotes_header_adds_a_remote_from_its_hover_button() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = tab_with(vec![origin()]);
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        assert_eq!(
+            named(&nodes, "Add remote…").map(egui::accesskit::Node::role),
+            Some(Role::Button),
+            "the header's + is in the tree at rest"
+        );
+        let header =
+            center(named(&nodes, &a11y::disclosure_name("Remotes", true)).expect("remotes header"));
+        let hover = vec![egui::Event::PointerMoved(header)];
+        let _ = sidebar_frame(&ctx, &mut tab, hover.clone(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, hover, &mut actions);
+        let add = center(named(&nodes, "Add remote…").expect("the header's + on hover"));
+        let _ = sidebar_frame(&ctx, &mut tab, click(add), &mut actions);
+        crate::ui::motion::set_reduced(false);
+        assert!(
+            matches!(actions.as_slice(), [Action::AddRemoteDialog]),
+            "{actions:?}"
+        );
+    }
+
+    /// O9, KPL-F13: the Remotes header's "+" is reachable from the keyboard: Tab from the header
+    /// lands on it, and Shift+Tab goes back to the header.
+    #[test]
+    fn the_remotes_header_button_is_reachable_by_tab_and_shift_tab() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = tab_with(vec![origin()]);
+        tab.collapsed.insert("branches".into());
+        let mut actions = Vec::new();
+        let key = |shift: bool| egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: if shift {
+                egui::Modifiers::SHIFT
+            } else {
+                egui::Modifiers::default()
+            },
+        };
+        let mut focused = Vec::new();
+        for _ in 0..6 {
+            let _ = sidebar_frame(&ctx, &mut tab, vec![key(false)], &mut actions);
+            let now = sidebar_frame_focus(&ctx, &mut tab, Vec::new(), &mut actions).1;
+            let reached = now.as_deref() == Some("Add remote…");
+            focused.push(now);
+            if reached {
+                break;
+            }
+        }
+        assert_eq!(
+            focused.last().cloned().flatten().as_deref(),
+            Some("Add remote…"),
+            "Tab never reached the header's +: {focused:?}"
+        );
+        assert!(
+            focused
+                .iter()
+                .rev()
+                .nth(1)
+                .is_some_and(|l| l.as_deref().is_some_and(|l| l.starts_with("Remotes"))),
+            "the + comes right after its header: {focused:?}"
+        );
+        let _ = sidebar_frame(&ctx, &mut tab, vec![key(true)], &mut actions);
+        let back = sidebar_frame_focus(&ctx, &mut tab, Vec::new(), &mut actions).1;
+        crate::ui::motion::set_reduced(false);
+        assert!(
+            back.as_deref().is_some_and(|l| l.starts_with("Remotes")),
+            "Shift+Tab goes back to the header: {back:?}"
+        );
+        assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    /// A11Y-3: each section's rows are one Tab stop (the checked-out branch for Branches), the
+    /// arrows move between them, and the rows are announced inside a list named after the section.
+    #[test]
+    fn each_section_is_one_tab_stop_with_arrows_inside() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = tab_with(Vec::new());
+        let branch = |name: &str, is_head: bool| canopy_core::BranchInfo {
+            name: name.into(),
+            target: None,
+            is_head,
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+        };
+        let tag = |name: &str| canopy_core::TagInfo {
+            name: name.into(),
+            target: None,
+            message: None,
+        };
+        tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
+            branches: vec![
+                branch("feature/a", false),
+                branch("main", true),
+                branch("zeta", false),
+            ],
+            tags: vec![tag("v2"), tag("v1")],
+            ..Default::default()
+        }));
+        let mut actions = Vec::new();
+        let press = |key: egui::Key| {
+            vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }]
+        };
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let mut path = Vec::new();
+        for key in [
+            egui::Key::Tab,
+            egui::Key::Tab,
+            egui::Key::ArrowDown,
+            egui::Key::Tab,
+            egui::Key::Tab,
+            egui::Key::Tab,
+            egui::Key::Tab,
+            egui::Key::Tab,
+            egui::Key::ArrowDown,
+            egui::Key::Tab,
+        ] {
+            let _ = sidebar_frame(&ctx, &mut tab, press(key), &mut actions);
+            let (nodes, focused) = sidebar_frame_focus(&ctx, &mut tab, Vec::new(), &mut actions);
+            path.push(focused.unwrap_or_default());
+            if key == egui::Key::Tab && path.len() == 2 {
+                let list = nodes
+                    .iter()
+                    .find(|n| n.role() == Role::List && n.label() == Some("Branches"))
+                    .expect("the branches list");
+                assert_eq!(list.label(), Some("Branches"));
+                assert_eq!(list.children().len(), 3, "the branch rows are its parts");
+            }
+        }
+        crate::ui::motion::set_reduced(false);
+        let open = |s: &str| a11y::disclosure_name(s, true);
+        assert_eq!(
+            path,
+            [
+                open("Branches"),
+                "main".to_owned(),
+                "zeta".to_owned(),
+                open("Remotes"),
+                "Publish…".to_owned(),
+                "Add remote…".to_owned(),
+                open("Tags"),
+                "v2".to_owned(),
+                "v1".to_owned(),
+                open("Stashes"),
+            ],
+            "{path:?}"
+        );
+        assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    /// review-views-3: Drop names the stash and acts on its commit, not its place in the list.
+    #[test]
+    fn dropping_a_stash_names_it_and_acts_on_its_commit() {
+        let oid = canopy_core::Oid::from_bytes(&[7; 20]).expect("oid");
+        let stash = canopy_core::StashInfo {
+            index: 0,
+            message: "On main: wip login".into(),
+            oid,
+        };
+        let Action::Confirm {
+            title, body, op, ..
+        } = drop_stash(&stash)
+        else {
+            panic!("a confirmation");
+        };
+        assert!(title.contains("main: wip login"), "{title}");
+        assert!(body.contains(&canopy_core::short_id(oid)), "{body}");
+        assert!(matches!(op, Op::StashDrop(o) if o == oid), "{op:?}");
     }
 }

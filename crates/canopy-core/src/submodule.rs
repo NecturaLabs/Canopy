@@ -310,6 +310,10 @@ impl Repo {
         let Ok(meta) = std::fs::symlink_metadata(&dir) else {
             return Ok(None);
         };
+        #[expect(
+            clippy::suspicious_operation_groupings,
+            reason = "the last test is that the folder is not `modules` itself, not a third prefix check"
+        )]
         let inside = match (modules.canonicalize(), dir.canonicalize()) {
             (Ok(canonical), Ok(resolved)) => {
                 dir.starts_with(&modules)

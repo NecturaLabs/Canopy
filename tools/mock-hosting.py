@@ -4,9 +4,12 @@
 A stand-in for the GitHub REST API with a few canned pull requests, so the pull request view can
 be developed and screenshotted without a network or a token. Point Canopy at it with
 CANOPY_HOSTING_API_BASE=http://127.0.0.1:<port> (development builds and --screenshot honour it).
-Every repository gets the same pull requests. POST/PUT/PATCH requests succeed and are logged.
+Every repository gets the same pull requests. POST /graphql answers the request list's checks and
+reviews (the rollup query) in GitHub's GraphQL shape; other POST/PUT/PATCH requests succeed and
+are logged.
 """
 import json
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,6 +45,20 @@ PULLS = [
     pull(39, "Draft: graph layout for octopus merges", "priya-raman", "feature/graph", draft=True, hours=26),
     pull(37, "Fix typo in README", "sam-okafor", "fix/typo", hours=50),
 ]
+# The list's checks and reviews per pull request, as GitHub's GraphQL API answers them: the check
+# rollup's state, the branch rules' review decision (null without required reviews) and the
+# reviewers' latest verdicts. #42, the row Canopy selects first, agrees with the details this mock
+# serves for every pull request (one check still running, approved).
+ROLLUP = {
+    42: {"statusCheckRollup": {"state": "PENDING"}, "reviewDecision": "APPROVED",
+         "latestOpinionatedReviews": {"nodes": [{"state": "APPROVED"}]}},
+    41: {"statusCheckRollup": {"state": "SUCCESS"}, "reviewDecision": "REVIEW_REQUIRED",
+         "latestOpinionatedReviews": {"nodes": []}},
+    39: {"statusCheckRollup": None, "reviewDecision": None,
+         "latestOpinionatedReviews": {"nodes": []}},
+    37: {"statusCheckRollup": {"state": "FAILURE"}, "reviewDecision": None,
+         "latestOpinionatedReviews": {"nodes": [{"state": "APPROVED"}, {"state": "CHANGES_REQUESTED"}]}},
+}
 BODY = """Adds a theme toggle to the header and remembers the choice.
 
 ### Changes
@@ -106,8 +123,27 @@ class Handler(BaseHTTPRequestHandler):
         return self.reply({"message": "Not Found"}, 404)
 
     def do_POST(self):
-        self.log_message("%s", self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode())
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+        self.log_message("%s", body)
+        if self.path.split("?")[0] == "/graphql":
+            return self.graphql(json.loads(body or "{}"))
         self.reply(dict(PULLS[0], number=43, title="Created from Canopy"), 201)
+
+    def graphql(self, request):
+        """The request list's rollup: `pN: pullRequest(number: N)` per listed pull request."""
+        found, errors = {}, []
+        for alias, number in re.findall(r"(p\d+): pullRequest\(number: (\d+)\)", request.get("query", "")):
+            number = int(number)
+            if number in ROLLUP:
+                found[alias] = dict(ROLLUP[number], number=number)
+            else:
+                found[alias] = None
+                errors.append({"type": "NOT_FOUND", "path": ["repository", alias],
+                               "message": f"Could not resolve to a PullRequest with the number of {number}."})
+        answer = {"data": {"repository": found}}
+        if errors:
+            answer["errors"] = errors
+        self.reply(answer)
 
     do_PUT = do_PATCH = do_POST
 

@@ -10,33 +10,75 @@ use serde::{Deserialize, Serialize};
 use canopy_core::Whitespace;
 use canopy_core::ops::PullStrategy;
 
-use crate::ui::theme::ThemeId;
+use crate::ui::motion::MotionPref;
+use crate::ui::theme::{Density, Style, ThemeId};
 
 /// Storage key.
 pub const KEY: &str = "canopy-settings-v1";
 
-/// How `git pull` integrates when `pull.rebase` is not configured.
+/// How a pull integrates: Canopy's own choice, passed to git explicitly (a serialisable mirror of
+/// [`PullStrategy`]). Variants are only ever added, so saved settings keep loading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PullMode {
     #[default]
     Merge,
     Rebase,
     FastForwardOnly,
+    MergeNoFastForward,
+    RebaseMerges,
 }
 
 impl PullMode {
-    pub const ALL: [PullMode; 3] = [PullMode::Merge, PullMode::Rebase, PullMode::FastForwardOnly];
+    /// In the order of [`PullStrategy::ALL`].
+    pub const ALL: [Self; 5] = [
+        Self::Merge,
+        Self::MergeNoFastForward,
+        Self::Rebase,
+        Self::RebaseMerges,
+        Self::FastForwardOnly,
+    ];
 
     pub fn strategy(self) -> PullStrategy {
         match self {
-            PullMode::Merge => PullStrategy::Merge,
-            PullMode::Rebase => PullStrategy::Rebase,
-            PullMode::FastForwardOnly => PullStrategy::FastForwardOnly,
+            Self::Merge => PullStrategy::Merge,
+            Self::MergeNoFastForward => PullStrategy::MergeNoFastForward,
+            Self::Rebase => PullStrategy::Rebase,
+            Self::RebaseMerges => PullStrategy::RebaseMerges,
+            Self::FastForwardOnly => PullStrategy::FastForwardOnly,
         }
     }
 
     pub fn label(self) -> &'static str {
         self.strategy().label()
+    }
+}
+
+/// How a repository pulls: Canopy's strategy, and whether a strategy the user's git configuration
+/// sets wins over it (the default: Canopy starts from the user's git configuration).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PullChoice {
+    pub mode: PullMode,
+    /// Follow my git config: pull with what `branch.<name>.rebase`, `pull.rebase` or `pull.ff`
+    /// ask for, and with `mode` only when they ask for nothing.
+    pub follow_config: bool,
+}
+
+impl PullChoice {
+    /// The strategy a pull uses, given what the git configuration asks for (`None`: nothing).
+    pub fn resolve(self, configured: Option<PullStrategy>) -> PullStrategy {
+        match configured {
+            Some(s) if self.follow_config => s,
+            _ => self.mode.strategy(),
+        }
+    }
+}
+
+impl Default for PullChoice {
+    fn default() -> Self {
+        Self {
+            mode: PullMode::default(),
+            follow_config: true,
+        }
     }
 }
 
@@ -46,6 +88,46 @@ pub enum CloneProtocol {
     #[default]
     Https,
     Ssh,
+}
+
+impl CloneProtocol {
+    pub const ALL: [Self; 2] = [Self::Https, Self::Ssh];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Https => "HTTPS",
+            Self::Ssh => "SSH",
+        }
+    }
+}
+
+/// The longest name a repository's tab can be given, in characters.
+pub const MAX_TAB_NAME: usize = 60;
+
+/// One repository's own choices. Each is `None` while the repository follows the default in
+/// [`Settings`] (its "Default for repositories" value).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RepoSettings {
+    pub pull_mode: Option<PullMode>,
+    pub pull_follow_config: Option<bool>,
+    pub prune_on_fetch: Option<bool>,
+    /// Minutes between background fetches; `Some(0)` turns them off for this repository.
+    pub auto_fetch_minutes: Option<u32>,
+    pub signoff: Option<bool>,
+    /// Protocol of remote URLs built from `owner/repo` (Add remote, Publish).
+    pub protocol: Option<CloneProtocol>,
+    /// The name its tab shows instead of the folder's.
+    pub display_name: Option<String>,
+    /// The icon its tab shows: a key of `tab::TAB_ICONS`.
+    pub icon: Option<String>,
+}
+
+impl RepoSettings {
+    /// Whether the repository follows every default.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Whitespace handling in diffs (a serialisable mirror of [`Whitespace`]).
@@ -58,17 +140,13 @@ pub enum WhitespaceMode {
 }
 
 impl WhitespaceMode {
-    pub const ALL: [WhitespaceMode; 3] = [
-        WhitespaceMode::Show,
-        WhitespaceMode::IgnoreEol,
-        WhitespaceMode::IgnoreAll,
-    ];
+    pub const ALL: [Self; 3] = [Self::Show, Self::IgnoreEol, Self::IgnoreAll];
 
     pub fn core(self) -> Whitespace {
         match self {
-            WhitespaceMode::Show => Whitespace::Show,
-            WhitespaceMode::IgnoreEol => Whitespace::IgnoreEol,
-            WhitespaceMode::IgnoreAll => Whitespace::IgnoreAll,
+            Self::Show => Whitespace::Show,
+            Self::IgnoreEol => Whitespace::IgnoreEol,
+            Self::IgnoreAll => Whitespace::IgnoreAll,
         }
     }
 
@@ -111,11 +189,26 @@ pub struct Settings {
     pub show_avatars: bool,
     /// Fetch account pictures after consent; initials remain when disabled.
     pub download_avatars: bool,
-    /// Turn off animations (hover fades, the welcome screen's drifting glow).
-    pub reduce_motion: bool,
+    /// Standard (concept 1) or Deeper (concept 4) surfaces and geometry.
+    pub style: Style,
+    /// Blurred translucent floating layers.
+    pub translucent: bool,
+    /// Row heights, radii, toolbar layout and type size.
+    pub density: Density,
+    /// Match the system, always reduce, or always animate.
+    pub motion: MotionPref,
+    /// Pre-0.3 switch, read once by `migrate` and never written again.
+    #[serde(skip_serializing)]
+    pub reduce_motion: Option<bool>,
 
     // Git.
+    /// Canopy's pull strategy; while `pull_follow_config` is on, only where the git
+    /// configuration sets none.
     pub pull_mode: PullMode,
+    /// Follow my git config: a pull strategy the git configuration sets wins over `pull_mode`.
+    /// On by default, and for settings saved before it existed (pulls then already followed
+    /// `pull.rebase`).
+    pub pull_follow_config: bool,
     /// `--prune` on fetch: drop remote-tracking branches deleted on the remote.
     pub prune_on_fetch: bool,
     /// Fetch in the background every N minutes (0 = off).
@@ -130,6 +223,8 @@ pub struct Settings {
     pub diff: DiffPrefs,
     /// Per-repository diff options, keyed by working directory.
     pub repo_diff: HashMap<PathBuf, DiffPrefs>,
+    /// Per-repository choices that differ from the defaults above, keyed by working directory.
+    pub repos: HashMap<PathBuf, RepoSettings>,
     /// Show diffs side by side (old left, new right) instead of unified.
     pub split_diff: bool,
     /// Colour code in diffs by language.
@@ -141,11 +236,15 @@ pub struct Settings {
     pub clone_protocol: CloneProtocol,
     /// Self-hosted GitLab hosts, comma-separated.
     pub gitlab_hosts: String,
-    /// Terminal command for "Open terminal here", run in the repository folder.
+    /// Terminal command for "Open terminal here", run in the repository folder (`%d` stands for
+    /// it). Empty uses the system's terminal (`system_apps`).
     pub terminal: String,
-    /// Editor command for "Open in editor"; the file is added as the last argument. Empty uses
-    /// the platform's text editor.
+    /// Editor command for "Open in editor"; `%f` stands for the file, which is added as the last
+    /// argument otherwise. Empty uses the system's editor.
     pub editor: String,
+    /// File manager command for showing a folder; `%d` stands for the folder, which is added as
+    /// the last argument otherwise. Empty uses the system's file manager.
+    pub file_manager: String,
     /// Load pull/merge requests from GitHub and GitLab.
     pub hosting_api: bool,
     /// Folders whose repositories may download missing objects in a partial clone without being
@@ -199,8 +298,13 @@ impl Default for Settings {
             iso_dates: false,
             show_avatars: true,
             download_avatars: true,
-            reduce_motion: false,
+            style: Style::Standard,
+            translucent: false,
+            density: Density::Comfortable,
+            motion: MotionPref::System,
+            reduce_motion: None,
             pull_mode: PullMode::Merge,
+            pull_follow_config: true,
             prune_on_fetch: true,
             auto_fetch_minutes: 0,
             signoff: false,
@@ -208,6 +312,7 @@ impl Default for Settings {
             commit_page: 2000,
             diff: DiffPrefs::default(),
             repo_diff: HashMap::new(),
+            repos: HashMap::new(),
             split_diff: false,
             syntax_highlight: true,
             clone_dir: String::new(),
@@ -215,6 +320,7 @@ impl Default for Settings {
             gitlab_hosts: String::new(),
             terminal: String::new(),
             editor: String::new(),
+            file_manager: String::new(),
             hosting_api: true,
             trusted_folders: Vec::new(),
             check_updates: true,
@@ -242,12 +348,118 @@ impl Settings {
         if self.dark.take() == Some(false) && self.theme == ThemeId::Midnight {
             self.theme = ThemeId::Daylight;
         }
+        // A file with `reduce_motion` predates `motion`, so this overwrites nothing chosen.
+        if self.reduce_motion.take() == Some(true) {
+            self.motion = MotionPref::Reduced;
+        }
+        // Earlier builds saved a build skipped from the status bar as "build 412"; Skip this
+        // version stores the number.
+        if let Some(v) = self.skipped_version.as_mut() {
+            let lower = v.trim().to_ascii_lowercase();
+            if let Some(number) = lower
+                .strip_prefix("build")
+                .map(str::trim)
+                .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            {
+                number.clone_into(v);
+            }
+        }
         self.zoom = self.zoom.clamp(0.8, 1.6);
         self.commit_page = self.commit_page.clamp(200, 50_000);
         self.diff.context = self.diff.context.min(25);
         let mut seen = Vec::new();
         self.trusted_folders
-            .retain(|f| f.is_absolute() && crate::trust::add(&mut seen, f.clone()));
+            .retain(|f| f.is_absolute() && crate::trust::add(&mut seen, f));
+        for repo in self.repos.values_mut() {
+            repo.display_name = repo
+                .display_name
+                .take()
+                .map(|n| n.trim().chars().take(MAX_TAB_NAME).collect::<String>())
+                .filter(|n| !n.is_empty());
+            repo.icon = repo
+                .icon
+                .take()
+                .filter(|k| crate::tab::TAB_ICONS.iter().any(|(key, _, _)| key == k));
+        }
+        // Only real choices are kept; a repository following every default needs no entry.
+        self.repos
+            .retain(|path, repo| path.is_absolute() && !repo.is_default());
+    }
+
+    /// The repository's own choices, or the defaults when it has none.
+    pub fn repo(&self, path: &Path) -> RepoSettings {
+        self.repos.get(path).cloned().unwrap_or_default()
+    }
+
+    /// One of the repository's own choices, without copying the rest.
+    fn own<T>(&self, path: &Path, pick: impl FnOnce(&RepoSettings) -> Option<T>) -> Option<T> {
+        self.repos.get(path).and_then(pick)
+    }
+
+    /// The repository's own choices, to change them.
+    pub fn repo_mut(&mut self, path: &Path) -> &mut RepoSettings {
+        self.repos.entry(path.to_path_buf()).or_default()
+    }
+
+    /// How a pull integrates in the repository at `path`.
+    pub fn pull_mode_for(&self, path: &Path) -> PullMode {
+        self.own(path, |r| r.pull_mode).unwrap_or(self.pull_mode)
+    }
+
+    /// The default for repositories: [`Settings::pull_mode`] and whether the git configuration's
+    /// own strategy wins.
+    pub fn pull_default(&self) -> PullChoice {
+        PullChoice {
+            mode: self.pull_mode,
+            follow_config: self.pull_follow_config,
+        }
+    }
+
+    /// How the repository at `path` pulls: its own choices, else the default for repositories.
+    pub fn pull_for(&self, path: &Path) -> PullChoice {
+        PullChoice {
+            mode: self.pull_mode_for(path),
+            follow_config: self
+                .own(path, |r| r.pull_follow_config)
+                .unwrap_or(self.pull_follow_config),
+        }
+    }
+
+    /// Whether fetching in the repository at `path` prunes.
+    pub fn prune_for(&self, path: &Path) -> bool {
+        self.own(path, |r| r.prune_on_fetch)
+            .unwrap_or(self.prune_on_fetch)
+    }
+
+    /// Minutes between background fetches of the repository at `path` (0 = off).
+    pub fn auto_fetch_for(&self, path: &Path) -> u32 {
+        self.own(path, |r| r.auto_fetch_minutes)
+            .unwrap_or(self.auto_fetch_minutes)
+    }
+
+    /// Whether commits in the repository at `path` get a Signed-off-by trailer.
+    pub fn signoff_for(&self, path: &Path) -> bool {
+        self.own(path, |r| r.signoff).unwrap_or(self.signoff)
+    }
+
+    /// The protocol of URLs built from `owner/repo` for the repository at `path`.
+    pub fn protocol_for(&self, path: &Path) -> CloneProtocol {
+        self.own(path, |r| r.protocol)
+            .unwrap_or(self.clone_protocol)
+    }
+
+    /// Repositories with a choice of their own (settings or diff options).
+    pub fn repos_with_overrides(&self) -> usize {
+        let mut paths: Vec<&PathBuf> = self
+            .repos
+            .iter()
+            .filter(|(_, r)| !r.is_default())
+            .map(|(p, _)| p)
+            .chain(self.repo_diff.keys())
+            .collect();
+        paths.sort();
+        paths.dedup();
+        paths.len()
     }
 
     /// Moves `path` to the front of the recent list.
@@ -353,6 +565,230 @@ mod tests {
         assert_eq!(s.theme, ThemeId::Daylight);
         assert!((s.zoom - 1.2).abs() < f32::EPSILON);
         assert!(s.check_updates, "new fields take their defaults");
+    }
+
+    #[test]
+    fn old_reduce_motion_true_maps_to_reduced() {
+        let mut s: Settings = serde_json::from_str(r#"{"reduce_motion": true}"#).expect("parse");
+        s.migrate();
+        assert_eq!(s.motion, MotionPref::Reduced);
+        assert_eq!(s.reduce_motion, None);
+    }
+
+    #[test]
+    fn old_reduce_motion_false_keeps_system() {
+        let mut s: Settings = serde_json::from_str(r#"{"reduce_motion": false}"#).expect("parse");
+        s.migrate();
+        assert_eq!(s.motion, MotionPref::System);
+    }
+
+    #[test]
+    fn new_fields_default() {
+        let mut s: Settings = serde_json::from_str("{}").expect("parse");
+        s.migrate();
+        assert_eq!(s.style, Style::Standard);
+        assert!(!s.translucent);
+        assert_eq!(s.density, Density::Comfortable);
+        assert_eq!(s.motion, MotionPref::System);
+        let d = Settings::default();
+        assert_eq!(
+            (d.style, d.translucent, d.density, d.motion),
+            (
+                Style::Standard,
+                false,
+                Density::Comfortable,
+                MotionPref::System
+            )
+        );
+    }
+
+    #[test]
+    fn reduce_motion_is_never_written() {
+        let s = Settings {
+            reduce_motion: Some(true),
+            style: Style::Deeper,
+            density: Density::Dense,
+            translucent: true,
+            motion: MotionPref::Full,
+            ..Settings::default()
+        };
+        let json = serde_json::to_value(&s).expect("serialise");
+        assert!(json.get("reduce_motion").is_none(), "{json}");
+        let back: Settings = serde_json::from_value(json).expect("parse");
+        assert_eq!(
+            (back.style, back.density, back.translucent, back.motion),
+            (Style::Deeper, Density::Dense, true, MotionPref::Full)
+        );
+    }
+
+    /// secfix2 F6: a build skipped from the status bar by an earlier build was saved as
+    /// "build 412"; it reads as the build number Skip this version stores now.
+    #[test]
+    fn an_old_skipped_build_reads_as_its_number() {
+        for (saved, migrated) in [("build 412", "412"), ("412", "412"), ("Build  7", "7")] {
+            let mut s = Settings {
+                skipped_version: Some(saved.to_owned()),
+                ..Settings::default()
+            };
+            s.migrate();
+            assert_eq!(s.skipped_version.as_deref(), Some(migrated), "{saved}");
+        }
+    }
+
+    #[test]
+    fn a_repository_follows_the_defaults_until_it_chooses() {
+        let repo = PathBuf::from("/home/ada/src/canopy");
+        let other = PathBuf::from("/home/ada/src/other");
+        let mut s = Settings {
+            pull_mode: PullMode::Rebase,
+            prune_on_fetch: false,
+            auto_fetch_minutes: 15,
+            signoff: true,
+            clone_protocol: CloneProtocol::Ssh,
+            ..Settings::default()
+        };
+        // Nothing chosen: every value is the default.
+        assert_eq!(s.pull_mode_for(&repo), PullMode::Rebase);
+        assert!(!s.prune_for(&repo));
+        assert_eq!(s.auto_fetch_for(&repo), 15);
+        assert!(s.signoff_for(&repo));
+        assert_eq!(s.protocol_for(&repo), CloneProtocol::Ssh);
+        // A repository's choice wins for it alone.
+        *s.repo_mut(&repo) = RepoSettings {
+            pull_mode: Some(PullMode::FastForwardOnly),
+            prune_on_fetch: Some(true),
+            auto_fetch_minutes: Some(0),
+            signoff: Some(false),
+            protocol: Some(CloneProtocol::Https),
+            ..RepoSettings::default()
+        };
+        assert_eq!(s.pull_mode_for(&repo), PullMode::FastForwardOnly);
+        assert!(s.prune_for(&repo));
+        assert_eq!(
+            s.auto_fetch_for(&repo),
+            0,
+            "Some(0) turns background fetch off"
+        );
+        assert!(!s.signoff_for(&repo));
+        assert_eq!(s.protocol_for(&repo), CloneProtocol::Https);
+        assert_eq!(s.pull_mode_for(&other), PullMode::Rebase);
+        assert_eq!(s.protocol_for(&other), CloneProtocol::Ssh);
+        // A changed default reaches the repositories that follow it, not the others.
+        s.pull_mode = PullMode::Merge;
+        assert_eq!(s.pull_mode_for(&other), PullMode::Merge);
+        assert_eq!(s.pull_mode_for(&repo), PullMode::FastForwardOnly);
+    }
+
+    /// Override O3: following the git configuration is the default, for new and old settings
+    /// files; a repository can follow it or not on its own, and Canopy's strategy applies only
+    /// where the configuration sets none or is not followed.
+    #[test]
+    fn pulls_follow_the_git_config_by_default_and_per_repository() {
+        let repo = PathBuf::from("/home/ada/src/canopy");
+        let other = PathBuf::from("/home/ada/src/other");
+        let mut s = Settings::default();
+        assert_eq!(s.pull_for(&repo), PullChoice::default());
+        assert!(s.pull_for(&repo).follow_config);
+        let old: Settings =
+            serde_json::from_str(r#"{"pull_mode": "Rebase"}"#).expect("an old settings file");
+        assert_eq!(
+            old.pull_for(&repo),
+            PullChoice {
+                mode: PullMode::Rebase,
+                follow_config: true
+            },
+            "pulls kept following pull.rebase before the switch existed"
+        );
+
+        s.repo_mut(&repo).pull_follow_config = Some(false);
+        s.repo_mut(&repo).pull_mode = Some(PullMode::RebaseMerges);
+        let own = s.pull_for(&repo);
+        assert!(!own.follow_config);
+        assert_eq!(
+            own.resolve(Some(PullStrategy::Merge)),
+            PullStrategy::RebaseMerges,
+            "an explicit choice beats the git config"
+        );
+        let followed = s.pull_for(&other);
+        assert_eq!(
+            followed.resolve(Some(PullStrategy::Rebase)),
+            PullStrategy::Rebase
+        );
+        assert_eq!(followed.resolve(None), PullStrategy::Merge, "the fallback");
+        // Every strategy git can be asked for is offered, in the core's order.
+        assert_eq!(
+            PullMode::ALL.map(PullMode::strategy),
+            PullStrategy::ALL,
+            "one PullMode per PullStrategy"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_choices_survive_a_round_trip_and_old_files_load() {
+        let repo = PathBuf::from("/srv/git/app");
+        let mut s = Settings::default();
+        s.repo_mut(&repo).protocol = Some(CloneProtocol::Ssh);
+        s.repo_mut(&repo).pull_mode = Some(PullMode::Rebase);
+        let json = serde_json::to_string(&s).expect("serialise");
+        let mut back: Settings = serde_json::from_str(&json).expect("parse");
+        back.migrate();
+        assert_eq!(back.repo(&repo), s.repo(&repo));
+        // A file from before per-repository settings: every repository follows the defaults.
+        let mut old: Settings =
+            serde_json::from_str(r#"{"clone_protocol": "Ssh", "pull_mode": "Rebase"}"#)
+                .expect("parse");
+        old.migrate();
+        assert!(old.repos.is_empty());
+        assert_eq!(old.protocol_for(&repo), CloneProtocol::Ssh);
+        assert_eq!(old.pull_mode_for(&repo), PullMode::Rebase);
+        // An entry with a field this version does not know still loads.
+        let mut newer: Settings = serde_json::from_str(
+            r#"{"repos": {"/srv/git/app": {"signoff": true, "from_the_future": 1}}}"#,
+        )
+        .expect("parse");
+        newer.migrate();
+        assert!(newer.signoff_for(&repo));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tab_names_and_icons_are_checked_when_loaded() {
+        let mut s: Settings = serde_json::from_str(
+            r#"{"repos": {
+                "/srv/a": {"display_name": "  Website  ", "icon": "globe"},
+                "/srv/b": {"display_name": "   ", "icon": "no-such-icon"}
+            }}"#,
+        )
+        .expect("parse");
+        s.repo_mut(Path::new("/srv/c")).display_name = Some("x".repeat(500));
+        s.migrate();
+        let a = s.repo(Path::new("/srv/a"));
+        assert_eq!(a.display_name.as_deref(), Some("Website"));
+        assert_eq!(a.icon.as_deref(), Some("globe"));
+        assert!(
+            !s.repos.contains_key(Path::new("/srv/b")),
+            "a blank name and an unknown icon are no choice"
+        );
+        let long = s.repo(Path::new("/srv/c")).display_name.unwrap_or_default();
+        assert_eq!(long.chars().count(), MAX_TAB_NAME);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn empty_and_relative_repository_entries_are_dropped() {
+        let mut s = Settings::default();
+        s.repo_mut(Path::new("/srv/git/kept")).signoff = Some(true);
+        s.repo_mut(Path::new("/srv/git/reset"));
+        s.repo_mut(Path::new("relative/repo")).signoff = Some(true);
+        s.migrate();
+        let kept: Vec<&PathBuf> = s.repos.keys().collect();
+        assert_eq!(kept, [&PathBuf::from("/srv/git/kept")]);
+        s.repo_diff
+            .insert(PathBuf::from("/srv/git/kept"), DiffPrefs::default());
+        s.repo_diff
+            .insert(PathBuf::from("/srv/git/diff"), DiffPrefs::default());
+        assert_eq!(s.repos_with_overrides(), 2);
     }
 
     #[test]

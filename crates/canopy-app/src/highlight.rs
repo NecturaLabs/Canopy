@@ -199,8 +199,7 @@ fn highlight_until(diff: &FileDiff, cancelled: &dyn Fn() -> bool) -> Option<High
         .hunks
         .first()
         .and_then(|h| h.lines.first())
-        .map(|l| l.text.as_str())
-        .unwrap_or("");
+        .map_or("", |l| l.text.as_str());
     let syntax = syntax_for(set, &diff.path, first)?;
     let mut lines = Vec::with_capacity(diff.hunks.len());
     for hunk in &diff.hunks {
@@ -321,24 +320,23 @@ fn run(req: Request, cache: &Mutex<Cache>) {
     }
     let key = fingerprint(&req.diff);
     let cached = cache.lock().ok().and_then(|c| c.lookup(key));
-    let h = match cached {
-        Some(h) => h,
-        None => {
-            let started = std::time::Instant::now();
-            let Some(h) = highlight_until(&req.diff, &*req.stale) else {
-                return;
-            };
-            tracing::debug!(
-                lines = req.diff.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
-                ms = started.elapsed().as_millis() as u64,
-                "highlighted"
-            );
-            let h = Arc::new(h);
-            if let Ok(mut c) = cache.lock() {
-                c.insert(key, Arc::clone(&h));
-            }
-            h
+    let h = if let Some(h) = cached {
+        h
+    } else {
+        let started = std::time::Instant::now();
+        let Some(h) = highlight_until(&req.diff, &*req.stale) else {
+            return;
+        };
+        tracing::debug!(
+            lines = req.diff.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
+            ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            "highlighted"
+        );
+        let h = Arc::new(h);
+        if let Ok(mut c) = cache.lock() {
+            c.insert(key, Arc::clone(&h));
         }
+        h
     };
     if !(req.stale)() {
         (req.deliver)(h);
@@ -386,6 +384,10 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::string_slice,
+        reason = "syntect's spans fall between characters"
+    )]
     fn tokens(h: &Highlights, line: usize, text: &str) -> Vec<(String, Token)> {
         h.lines[0][line]
             .iter()
@@ -444,7 +446,7 @@ mod tests {
         assert!(highlight(&diff("notes.unknownext", &[(LineKind::Added, "hello")])).is_none());
         let long = "x".repeat(MAX_LINE_BYTES + 1);
         let h = highlight(&diff("a.rs", &[(LineKind::Added, &long)])).expect("rust");
-        assert!(h.lines[0][0].is_empty());
+        assert!(h.lines[0][0].is_empty(), "{:?}", h.lines[0][0]);
     }
 
     #[test]
@@ -461,6 +463,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::string_slice,
+        reason = "syntect's spans fall between characters"
+    )]
     fn every_hunk_starts_with_a_fresh_parser() {
         // The first hunk opens a block comment whose end lies outside the diff; the second hunk
         // is ordinary code and must not be coloured as a comment.
@@ -489,7 +495,7 @@ mod tests {
             ],
         );
         let h = highlight(&d).expect("rust");
-        assert!(!h.lines[0][1].is_empty());
+        assert!(!h.lines[0][1].is_empty(), "the comment has no spans");
         assert!(h.lines[0][1].iter().all(|s| s.token == Token::Comment));
     }
 

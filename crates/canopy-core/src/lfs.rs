@@ -172,6 +172,7 @@ impl Repo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
 
     const OID: &str = "4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393";
 
@@ -207,7 +208,7 @@ mod tests {
         assert_eq!(LfsPointer::parse(upper.as_bytes()), None);
         let mut big =
             format!("version https://git-lfs.github.com/spec/v1\noid sha256:{OID}\nsize 1\n");
-        big.push_str(&format!("x-padding {}\n", "y".repeat(MAX_POINTER_SIZE)));
+        let _ = writeln!(big, "x-padding {}", "y".repeat(MAX_POINTER_SIZE));
         assert_eq!(LfsPointer::parse(big.as_bytes()), None);
     }
 }

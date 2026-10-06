@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Usage: tools/check.sh
 #
-# The local part of CI: formatting check, clippy with warnings denied, the full test suite, the
+# The local part of CI: formatting check, clippy with warnings denied, the unsafe-code policy
+# (only crates/canopy-app/src/ui/kit/glass/gl.rs may contain unsafe code), the full test suite, the
 # release tooling's self-test, the licence notices check, the documentation check, the
 # vendored-crate check, the hidden-window stall check (Linux, when its tools are installed), the
 # installer test (Linux and macOS), and ShellCheck and cargo-deny when they are installed. CI also
@@ -18,6 +19,12 @@ cargo fmt --all --check
 
 step "cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets --locked -- -D warnings
+
+# Unsafe code only in the backdrop blur's OpenGL module: clippy denies it elsewhere, and this
+# also fails on unsafe code or an allow for it in any other file (comments and strings aside), on
+# `include!` or a `#[path]` that hides code from that scan, and on unreadable directories.
+step "unsafe policy (only crates/canopy-app/src/ui/kit/glass/gl.rs)"
+cargo test -p canopy-app --locked --test unsafe_policy
 
 step "cargo test --workspace"
 # The tests run git. Give them the identity CI uses and nothing else, so the user's own git

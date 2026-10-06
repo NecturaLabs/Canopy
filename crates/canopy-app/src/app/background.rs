@@ -19,6 +19,10 @@ enum IdentityStep {
     Ask,
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "the step is decided from independent facts about the app's state"
+)]
 fn identity_step(
     asked: bool,
     consent_pending: bool,
@@ -265,7 +269,7 @@ impl CanopyApp {
                     },
                     n.title,
                     n.body,
-                    Some(tab.path.clone()),
+                    Some(&tab.path),
                 );
             }
             // Taken after the poll that set it, so the dialog shows in this frame.
@@ -313,19 +317,7 @@ impl CanopyApp {
         }
         if let Some(r) = finished {
             self.clone = None;
-            self.dialogs.finish_clone(r.is_ok());
-            match r {
-                Ok(p) => {
-                    self.toasts.push(
-                        ctx,
-                        ToastKind::Success,
-                        "Clone complete",
-                        p.display().to_string(),
-                    );
-                    self.open_repo(ctx, p);
-                }
-                Err(e) => self.toasts.push(ctx, ToastKind::Error, "Clone failed", e),
-            }
+            self.clone_finished(ctx, r);
         }
         self.poll_prompts(ctx);
         if self.updater.poll_install() {
@@ -355,8 +347,7 @@ impl CanopyApp {
             match &self.updater.state {
                 UpdateState::Available(a) => {
                     let v = a.label();
-                    let skipped = self.settings.skipped_version.as_deref()
-                        == Some(a.build.to_string().as_str());
+                    let skipped = a.is_skipped(self.settings.skipped_version.as_deref());
                     if manual {
                         self.dialogs.open(Dialog::Update(a.clone()));
                     } else if !skipped {
@@ -389,27 +380,34 @@ impl CanopyApp {
 
     /// Queues background fetches for tabs whose auto-fetch interval has passed.
     pub(super) fn auto_fetch(&mut self, ctx: &egui::Context) {
-        let minutes = self.settings.auto_fetch_minutes;
-        if minutes == 0 || self.screenshot.is_some() {
+        if self.screenshot.is_some() {
             return;
         }
-        let every = Duration::from_secs(u64::from(minutes) * 60);
-        let prune = self.settings.prune_on_fetch;
+        let mut any = false;
         for t in &mut self.tabs {
+            let minutes = self.settings.auto_fetch_for(&t.path);
+            if minutes == 0 {
+                continue;
+            }
+            any = true;
+            let every = Duration::from_secs(u64::from(minutes) * 60);
             let idle = t.running.is_none();
             let has_remote = t.snap.as_ref().is_some_and(|s| !s.remotes.is_empty());
             if idle && has_remote && t.last_fetch.elapsed() >= every {
                 t.last_fetch = Instant::now();
+                let prune = self.settings.prune_for(&t.path);
                 t.op(Op::Fetch { prune, quiet: true });
             }
         }
-        ctx.request_repaint_after(Duration::from_secs(30));
+        if any {
+            ctx.request_repaint_after(Duration::from_secs(30));
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use canopy_core::identity::{Field, Person, Source};
+    use canopy_core::identity::{Field, Person};
 
     use super::*;
 

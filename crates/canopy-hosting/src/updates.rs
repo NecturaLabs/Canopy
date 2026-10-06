@@ -1,6 +1,8 @@
-//! Canopy's own update feed: a small JSON manifest in the public `NecturaLabs/app-updates`
-//! repository, fetched anonymously over HTTPS. Nothing about the user is sent (no identifiers,
-//! no query string); the request carries only `User-Agent: Canopy/<version>`.
+//! Canopy's own update feed.
+//!
+//! A small JSON manifest in the public `NecturaLabs/app-updates` repository, fetched anonymously
+//! over HTTPS. Nothing about the user is sent (no identifiers, no query string); the request
+//! carries only `User-Agent: Canopy/<version>`.
 //!
 //! Manifest format (`canopy/latest.json` for stable builds, `canopy/beta.json` for beta builds).
 //! `version` is the build number, `git rev-list --count` of the build's commit on `main`:
@@ -19,6 +21,7 @@
 //! ```
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
@@ -28,6 +31,7 @@ use sha2::{Digest, Sha256};
 use ureq::tls::{RootCerts, TlsConfig};
 
 use crate::error::{Error, Result};
+use crate::http::{plain_text, shorten};
 
 /// One downloadable build.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -56,7 +60,8 @@ pub struct UpdateManifest {
 impl UpdateManifest {
     /// Parses a manifest.
     pub fn parse(json: &[u8]) -> Result<Self> {
-        serde_json::from_slice(json).map_err(|e| Error::Parse(format!("update manifest: {e}")))
+        serde_json::from_slice(json)
+            .map_err(|e| Error::Parse(shorten(&format!("update manifest: {e}"))))
     }
 
     /// The build number, when `version` is one.
@@ -104,20 +109,20 @@ pub fn fetch_manifest(url: &str) -> Result<UpdateManifest> {
         .get(url)
         .header("Accept", "application/json")
         .call()
-        .map_err(|e| Error::Network(e.to_string()))?;
+        .map_err(|e| Error::Network(shorten(&e.to_string())))?;
     let status = response.status().as_u16();
     let bytes = response
         .body_mut()
         .with_config()
         .limit(1024 * 1024)
         .read_to_vec()
-        .map_err(|e| Error::Network(e.to_string()))?;
+        .map_err(|e| Error::Network(shorten(&e.to_string())))?;
     match status {
         200..=299 => UpdateManifest::parse(&bytes),
         404 => Err(Error::NotFound(format!("no update manifest at {url}"))),
         _ => Err(Error::Api {
             status,
-            message: String::from_utf8_lossy(&bytes).chars().take(200).collect(),
+            message: plain_text(&String::from_utf8_lossy(&bytes), 200),
         }),
     }
 }
@@ -141,7 +146,10 @@ fn is_loopback_url(url: &str) -> bool {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 /// Lower-case hex SHA-256 of `bytes`.
@@ -151,6 +159,10 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// A redirect's target: an absolute URL as it is, an absolute path on the same host. Anything
 /// else (a relative path, a protocol-relative `//host`) is refused rather than guessed.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
+)]
 fn resolve_location(from: &str, location: &str) -> Result<String> {
     if location.contains("://") {
         return Ok(location.to_owned());
@@ -186,7 +198,7 @@ fn get(
         .max_redirects(0)
         .max_redirects_will_error(false)
         .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_secs(30 * 60)))
+        .timeout_global(Some(Duration::from_mins(30)))
         .user_agent(crate::http::user_agent())
         .tls_config(tls);
     if is_loopback_url(url) {
@@ -196,15 +208,16 @@ fn get(
     let mut current = url.to_owned();
     for _ in 0..=MAX_REDIRECTS {
         if !current.starts_with("https://") && !is_loopback_url(&current) {
-            return Err(Error::Network(format!(
+            // After a redirect, the address is the server's choice.
+            return Err(Error::Network(shorten(&format!(
                 "refusing a download that is not over HTTPS: {}",
                 canopy_core::cli::redact_url(&current)
-            )));
+            ))));
         }
         let mut response = agent
             .get(&current)
             .call()
-            .map_err(|e| Error::Network(e.to_string()))?;
+            .map_err(|e| Error::Network(shorten(&e.to_string())))?;
         let status = response.status().as_u16();
         if matches!(status, 301 | 302 | 303 | 307 | 308) {
             let location = response
@@ -228,7 +241,7 @@ fn get(
                     .unwrap_or_default();
                 return Err(Error::Api {
                     status,
-                    message: String::from_utf8_lossy(&body).chars().take(200).collect(),
+                    message: plain_text(&String::from_utf8_lossy(&body), 200),
                 });
             }
         }
@@ -249,7 +262,7 @@ fn get(
         loop {
             let n = reader
                 .read(&mut buf)
-                .map_err(|e| Error::Network(e.to_string()))?;
+                .map_err(|e| Error::Network(shorten(&e.to_string())))?;
             if n == 0 {
                 break;
             }
@@ -323,7 +336,6 @@ pub fn download_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
 
     const SAMPLE: &str = r#"{
         "version": "412",
@@ -343,8 +355,8 @@ mod tests {
         assert_eq!(m.build(), Some(412));
         assert_eq!(m.platforms.len(), 2);
         assert_eq!(m.platforms["windows-x86_64"].sha256, None);
-        assert!(UpdateManifest::parse(b"not json").is_err());
-        assert!(UpdateManifest::parse(br#"{"notes":"no version"}"#).is_err());
+        UpdateManifest::parse(b"not json").unwrap_err();
+        UpdateManifest::parse(br#"{"notes":"no version"}"#).unwrap_err();
         let minimal = UpdateManifest::parse(br#"{"version":"1"}"#).expect("minimal");
         assert!(minimal.platforms.is_empty() && minimal.notes.is_empty());
     }
@@ -500,8 +512,8 @@ mod tests {
             resolve_location("http://127.0.0.1:9", "/z").expect("no path in base"),
             "http://127.0.0.1:9/z"
         );
-        assert!(resolve_location("https://a.example/x", "z").is_err());
-        assert!(resolve_location("https://a.example/x", "//evil.example/z").is_err());
+        resolve_location("https://a.example/x", "z").unwrap_err();
+        resolve_location("https://a.example/x", "//evil.example/z").unwrap_err();
     }
 
     #[test]
@@ -509,6 +521,43 @@ mod tests {
         let base = serve_routes(vec![("/loop", redirect("/loop"))], 6);
         let err = download_bytes(&format!("{base}/loop"), 5).expect_err("loop");
         assert!(err.to_string().contains("redirects"), "{err}");
+    }
+
+    #[test]
+    fn the_feed_servers_words_are_reported_as_plain_text() {
+        let plain = |e: &Error| {
+            let text = e.to_string();
+            text.chars().count() <= 400
+                && !text
+                    .chars()
+                    .any(|c| c.is_control() || matches!(c, '\u{202E}' | '\u{3164}'))
+        };
+        let dirty = format!("x\u{202E}y\n{}", "z".repeat(1_000));
+        // A refusal's body, a malformed redirect target, and a manifest field of the wrong type.
+        let failed = format!(
+            "HTTP/1.1 500 Oops\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{dirty}",
+            dirty.len()
+        );
+        let moved = format!(
+            "HTTP/1.1 301 Moved\r\nLocation: /a\u{202E}b{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            "c".repeat(1_000)
+        );
+        let base = serve_routes(vec![("/failed", failed), ("/moved", moved)], 2);
+        for path in ["/failed", "/moved"] {
+            let err = fetch_manifest(&format!("{base}{path}")).expect_err(path);
+            assert!(plain(&err), "{path}: {err:?}");
+        }
+        let wrong = format!(
+            r#"{{"version":"1","platforms":"{}"}}"#,
+            "\u{3164}".repeat(10_000)
+        );
+        let err = UpdateManifest::parse(wrong.as_bytes()).expect_err("wrong type");
+        assert!(plain(&err), "{err:?}");
+        // A redirect to plain HTTP names its target, which the server chose.
+        let far = format!("http://example.invalid/{}", "a".repeat(5_000));
+        let base = serve_routes(vec![("/a", redirect(&far))], 1);
+        let err = download_bytes(&format!("{base}/a"), 5).expect_err("downgrade");
+        assert!(plain(&err), "{err:?}");
     }
 
     #[test]

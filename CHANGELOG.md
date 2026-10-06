@@ -10,6 +10,22 @@ commits since the previous build.
 
 ### Added
 
+- Pull and merge request lists show each request's checks and review without opening it, when
+  Canopy has a token for the server: passed, failed or running checks, and approved, changes
+  requested or (GitHub) review required. Loading the list sends one more request to the same
+  server.
+- Redesigned themes and appearance options. All eight themes take the new look, each with its
+  own character: quiet two-tone chrome in the theme's own tint, signature and status colours in
+  its own temperature, clean coloured banners, graph lines that never look alike, and soft
+  shadows only under menus and dialogs. Settings → Appearance adds Style (Standard, or Deeper,
+  where the action bar and panes float as cards, History splits into a commit card and a details
+  card, and the focused pane is lit along its top), Density (Comfortable, or Dense with 24-point rows and a one-row toolbar) and
+  Motion (match the system, reduced or full; reduced also makes scrolling jump instead of glide),
+  which replaces the Reduce motion switch; an earlier
+  "reduce motion" choice carries over as Reduced.
+- Translucent surfaces in Settings → Appearance: the command palette blurs what is behind it.
+  Off by default; unavailable with the Contrast theme, when the system asks for reduced
+  transparency, or when the graphics driver cannot do it.
 - Git identity in Settings shows the effective author and its source for the open repository, and
   lets you save or clear repository or global Git configuration. A warning in Changes links to it
   when Git cannot use the identity, guessed it, or it looks like a placeholder. First launch asks
@@ -77,6 +93,26 @@ commits since the previous build.
 
 ### Fixed
 
+- Keyboard use: each list (History's commits, every sidebar section) is one Tab stop and the
+  arrows move inside it, History's commit list comes before the details, and a row's buttons stay
+  visible while one of them has focus. Shift+F10 opens the focused row's context menu; in a menu
+  the arrows stay inside it and wrap, and Escape returns to the row. The command palette and the
+  cheatsheet keep Tab inside them and give focus back when they close, and dragging a divider no
+  longer takes the arrows away from the lists.
+- Screen readers hear lists, trees, menus, choices, tabs and a select's open list as groups of
+  their items, a commit by its refs, author and date, whether a section is open (Linux), why a
+  control is unavailable, and an error notification's message, and no longer hear callouts twice
+  or icons as symbols.
+- An error notification without a known explanation shows git's message instead of only its
+  title, and a new notification never pushes out an unread error.
+- A typed number setting is stored exactly as shown, a revealed password is hidden again at the
+  next prompt, a select listing every branch opens quickly, and the sliding segment and tab
+  indicators stretch the right way when moving left.
+- Author pictures appear after adding a token for a private repository, for your own unpushed
+  commits, and after a lost connection, instead of staying initials for 12 hours. GitLab authors
+  without a picture show initials instead of a generated pattern.
+- Scroll bars in the commit details, toasts and code boxes are a thin, quiet handle beside the
+  text instead of a thick full-colour bar. The soft glow inside the illustrations fades smoothly instead of in rings.
 - Pull uses the chosen strategy (merge, rebase or fast-forward only) whenever `git` itself has
   no `pull.rebase` setting. Canopy read the setting through libgit2, which ignores
   `GIT_CONFIG_GLOBAL`, so it could skip the strategy, and recent versions of Git refuse to
@@ -131,6 +167,38 @@ commits since the previous build.
   least 4.5:1 on their own fill, which they were not in the light themes.
 - Syntax highlighting restarts at every hunk, so a hunk that begins inside a block comment or
   string no longer colours the hunks after it.
+- Screen readers: the window is named after the open repository ("tidepool — Canopy"); diff
+  lines are read with their kind and number ("Added line 12: …") and hunk headers by number;
+  conflict code blocks are named (Current version, Incoming version, Result) and read; the status
+  bar, commit details and Changes no longer read icon glyphs, and ahead/behind reads "2 ahead,
+  1 behind origin/main"; Commit, Continue, Abort and the resolver's Save buttons say when they are
+  unavailable and why; each welcome action is read once, with its help and its keys; and Tab in
+  Settings scrolls the page to the control it reaches.
+- A file both sides deleted offers one "Delete it" instead of two. Conflict side previews drop the
+  indentation their lines share and never cut a number in two.
+- Ctrl+F opens Settings search when no repository is open.
+- Pop, on the toolbar, its shortcut and the palette, pops the stash the toolbar names, even when
+  the stash list changed since.
+- The Open and New repository forms show an error and stay usable when Canopy cannot start
+  opening the folder, instead of waiting forever.
+- Each password or passphrase prompt starts with its answer hidden, even after you showed the
+  previous one's.
+- Closing a tab keeps its unsent commit message until you open the repository again in the same
+  session.
+- A build skipped in the update dialog by an earlier version stays skipped.
+- The Accounts link in a toast opens Settings the same way the Settings button does, and Open logs
+  folder says when the folder cannot be created.
+- The diff's "Click lines to pick part of a hunk" hint no longer covers a long hunk title.
+- In a small window or at a large zoom, the commit button drops its keys, then the branch, then the
+  file count instead of cutting its label; the action bar fades out a tool it cuts at its edge;
+  and a Settings page fades into its card where it continues instead of cutting a line in half.
+- The commit composer's scroll bar is a thin handle like the others, not a black bar in light
+  themes.
+- The request list can be resized from the keyboard and reset with a double-click, like the other
+  panes.
+- The Terms and the Privacy Policy open at the top, also on first start after a restart.
+- The help for a custom editor, terminal or file manager command says that `%f` or `%d` must be a
+  word of its own.
 
 ### Changed
 

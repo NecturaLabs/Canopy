@@ -1,17 +1,33 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
-#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|about|toasts]
-#                            [--size WxH] [--zoom 0.8..1.6]
+#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-search|about|toasts|gallery|menu-remotes|menu-branch|menu-commit|menu-file|<dialog>]
+#                            [--style standard|deeper] [--density comfortable|dense] [--translucent on|off]
+#                            [--motion system|reduced|full] [--gallery-page N]
+#                            [--demo-requests SCENARIO] [--size WxH] [--zoom 0.8..1.6]
+#
+# <dialog> is any dialog overlay the app lists in its own --help (open, clone-error, confirm, terms,
+# approve, ...).
+#
+# menu-* opens a context menu by a right click once the window has settled: the Remotes header's,
+# the feature/auth branch row's, the top commit row's or the src/main.rs changed file row's (the
+# showcase fixture's names).
 #
 # <repo> may be "-" to render the welcome screen with no repository open.
+#
+# --demo-requests fills the pull/merge requests view with invented requests, with no network:
+# list, list-all, list-closed, a request number (428, 427, 425, 422, 420, ...), busy, loading,
+# details-loading, details-error, error, no-token or empty; prefix gitlab: for merge requests.
+# It implies --view requests and needs a repository without a GitHub or GitLab remote (the
+# fixtures have none).
 #
 # Renders Canopy headlessly on a virtual X server (Xvfb, software OpenGL via Mesa llvmpipe) with
 # <repo> open, saves one frame to <out.png> once the repository has loaded, and prints the output
 # path. Builds the release binary first (a no-op when it is up to date); set CANOPY_BIN to use a
 # different binary and skip the build. Uses Xvfb when available, else a native Hyprland window
 # on CANOPY_WORKSPACE (default 3). Output and native-run temporary files stay beside <out.png>.
-# On Xvfb the app gets private data, config and cache folders and a fixed Git identity, so the
-# image never depends on your own Canopy state or Git configuration.
+# On Xvfb the app gets private home, data, config and cache folders, a fixed Git identity and no
+# TERMINAL, EDITOR or VISUAL, so the image never depends on your own Canopy state, Git
+# configuration or programs; a screenshot also ignores the pointer (no hover, no tooltip).
 set -euo pipefail
 
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; }
@@ -31,6 +47,12 @@ while [[ $# -gt 0 ]]; do
     --view) extra+=(--view "${2:?--view needs history, changes or requests}"); shift 2 ;;
     --overlay) extra+=(--overlay "${2:?--overlay needs a name, see --help}"); shift 2 ;;
     --zoom) extra+=(--zoom "${2:?--zoom needs a factor}"); shift 2 ;;
+    --style) extra+=(--style "${2:?--style needs standard or deeper}"); shift 2 ;;
+    --density) extra+=(--density "${2:?--density needs comfortable or dense}"); shift 2 ;;
+    --translucent) extra+=(--translucent "${2:?--translucent needs on or off}"); shift 2 ;;
+    --motion) extra+=(--motion "${2:?--motion needs system, reduced or full}"); shift 2 ;;
+    --gallery-page) extra+=(--gallery-page "${2:?--gallery-page needs a number}"); shift 2 ;;
+    --demo-requests) extra+=(--demo-requests "${2:?--demo-requests needs a scenario, see --help}"); shift 2 ;;
     --size) size=${2:?--size needs WxH}; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage; exit 2 ;;
@@ -58,13 +80,16 @@ out_abs="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
 rm -f "$out_abs"
 
 if command -v xvfb-run >/dev/null; then
-  # Private data, config and cache folders and a fixed Git identity: the image must not depend on
-  # (or write to) your own Canopy state, such as its saved window size, or your Git configuration.
+  # Private home, data, config and cache folders, a fixed Git identity and no TERMINAL, EDITOR or
+  # VISUAL: the image must not depend on (or write to) your own Canopy state, such as its saved
+  # window size, your Git configuration or your programs (Settings > Integrations names them),
+  # and a path under "~" must not show your own home folder.
   isolated=$(mktemp -d)
   trap 'rm -rf "$isolated"' EXIT
+  mkdir -p "$isolated/home"
   printf '[user]\n\tname = Showcase Author\n\temail = author@example.com\n' > "$isolated/gitconfig"
   # Force X11 inside Xvfb even when called from a Wayland session.
-  env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 \
+  env -u WAYLAND_DISPLAY -u TERMINAL -u EDITOR -u VISUAL LIBGL_ALWAYS_SOFTWARE=1 HOME="$isolated/home" \
     XDG_DATA_HOME="$isolated/data" XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache" \
     GIT_CONFIG_GLOBAL="$isolated/gitconfig" GIT_CONFIG_NOSYSTEM=1 \
     timeout 60 xvfb-run -a -s "-screen 0 ${size}x24" \

@@ -6,6 +6,85 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Now
 
+- [ ] Crash reports: `crash_reports.rs` `redact_url_credentials` ends the user part at `?`/`#`,
+      so `https://u:secret?x@host/r` keeps `secret` in a report; use `canopy_core::cli::userinfo`
+      (git splits at the first `/` only). Its `TOKEN_PREFIXES` (11) lacks the six GitLab prefixes
+      `http.rs` has (`glcbt-`, `glft-`, `glimt-`, `glagent-`, `glsoat-`, `glffct-`): share one list.
+- [ ] Hosting errors: `http.rs` hides the client's own token in raw response bytes before JSON
+      decoding and before `plain_text` strips hidden characters, so a server echo that is escaped
+      or split by a zero-width character reaches the toast and the log; replace it on the decoded,
+      cleaned text (`map_status`, GraphQL `errors[].message`).
+- [ ] Argv rule: `ops.rs` `delete_remote_branch` runs `git push --progress <remote> --delete
+      <branch>` without `--` (a server refname may start with `-`); add `--` there and in
+      `push_tag`, `rename_branch`, `checkout_remote_branch`.
+- [ ] Installed apps: `system_apps.rs` `Entry::command` keeps `--file=%f` as a literal word that
+      `platform::with_path` then refuses, so such editors cannot launch; and `%%f` becomes the
+      file placeholder. Settings help (`settings_screen.rs:3286,3298,3310`) should say `%f` must
+      be a word of its own.
+- [ ] Small fixes from the component library review: `repo_config.rs:136` drops a failed read of
+      `remote.<name>.prune`; `views/history.rs:796` stacked doc comments; `valid_ref_name`
+      (`dialogs/common.rs:17`) accepts `HEAD`; `dialogs/url.rs:104` shows the credentialed-host
+      message under Project; the legal reader's scroll offset survives restarts (consent opens
+      part-way down); toolbar/palette "Pop latest stash" still pops index 0, not the commit the
+      tooltip named.
+- [ ] Settings import: `settings_file.rs` NETWORK_SWITCHES lets a file raise `auto_fetch_minutes`
+      (timed `git fetch`, no lower clamp) and `include_prereleases`, while the UI says an import
+      "never turns a network feature on": guard both or narrow the wording (owner decision).
+- [ ] `ops.rs:206` `url_has_credentials` needs `://`; check with a real git whether a one-slash
+      helper URL (`http::https:/user:pw@host/r`) prints the password unredacted.
+- [ ] Component library: triage the rest of its working record (kept outside the repository with
+      the session's orchestration notes: the follow-up ledger, about 90 open lines, and the
+      workers' deferred items and Docs notes) into lines here; the security pass, the last
+      review and the UI round's leftovers are already the lines above.
+- [ ] Component library docs pass: apply every worker's Docs notes and the docs review (RD-1 to
+      RD-8, in the working record): `design.md` rewritten from the shipped kit
+      and the Design record, features, CHANGELOG Unreleased, architecture, README and
+      `tools/README.md` options, the `add-theme` and `screenshot` skills, ADR 0003/0004 wording.
+- [ ] Component library final QA: re-render the full matrix (8 themes, both styles and densities,
+      960x600 to 4K) and read every image; frame-capture the commit and branch clicks (O2); Motion
+      Match system / Reduced / Full live; owner before | after page per theme.
+- [ ] Accessibility: `accesskit_unix` 0.21.1 unwraps a failed AT-SPI registry call in a thread,
+      so a missing accessibility bus writes a crash report; report upstream or guard it.
+- [ ] Themes, structure: Midnight, Aurora and Forest in Standard still read as recolours at
+      thumbnail size, and Midnight and Forest share one interaction grammar (bar selection,
+      lifted tab, dot nodes); give each its own selection, tab and node treatment, then an
+      8-theme before | after sheet.
+- [ ] Themes, details: Paper's conflict card is a cold grey slab with faint text at 4.41:1 (warm
+      it, faint text >= 4.5:1, with a test); Aurora's welcome art lacks the curtains of light, and
+      Forest's canopy and ground are faint in Deeper; Daylight's Changes scroll thumb is
+      near-black against the light composer; `docs/design.md` theme table rows other than Paper
+      and Contrast still describe the wave-2 colours.
+- [ ] Legal reader links: a link that starts at a line wrap gets the previous row's end as its
+      rect (`legal.rs:348` `pos_from_cursor`), so hover, focus underline and click land wrong.
+- [ ] Accessibility, kit: kit `Callout` speaks title and body twice and its icon as a
+      private-use glyph; kit `Button` could name every disabled button's reason the way
+      `commit_detail::say_unavailable` does.
+- [ ] Toolbar maps a running or finished operation to its tool by `Op::label()` text
+      (`toolbar.rs` `tool_of`) because `RepoTab::running` stores only the label; store the op kind.
+- [ ] Keyboard focus: the palette never gives focus back after it closes (`app/mod.rs:964`
+      calls `palette.show` only while open, so its close frame never runs); opening Settings
+      does not move focus into it; the title bar's Tab order runs right to left and its search
+      shows no focus ring; three panels' resize handles have no accessible name; Settings
+      navigation and theme cards should use the kit `Roving` focus; `app/input.rs:20-22` blocks
+      every bare key whenever any widget has focus, and list rows now hold focus.
+- [ ] Shift+F10 (row context menu) is not in the `keymap.rs` table, so the cheatsheet does not
+      list it; `app/mod.rs` should use `paint::pane_focus` instead of its own copy;
+      `theme.rs` `clamp_backdrop` comment is stale.
+- [ ] Toasts: with five unread errors, a new Success or Info toast evicts itself at once
+      (`ui/toast.rs:205-211`), so "Pushed" or "Fetched" never shows; evict the oldest older
+      non-error, or replace the oldest error. Smaller: the conflict indent cache keys on a
+      pointer and never drops entries (`views/resolve.rs` `code_lines_at`); an arrow onto a
+      disabled roving row sticks (`kit/row.rs`); `apply_repo_looks` reassigns the folder name
+      every frame for a root path (`app/dispatch.rs:432`); `gl.rs:1` uses `allow`, not `expect`.
+- [ ] Flaky test: canopy-core `checkout_request_leaves_a_real_remote_branch_of_the_same_name_alone`
+      failed once, then passed three reruns; find the race.
+- [ ] Repository config can run code: Canopy's git calls (`canopy_core::cli`, `cli.rs:52-100`)
+      set no `core.fsmonitor` override, so a cloned repository's `.git/config` could name a
+      command that git runs on `git status` (the GitSpawn class, September 2026). Pass
+      `-c core.fsmonitor=false` on every call, add a poisoned-repository regression test, and
+      review `core.sshCommand`, `diff.external` and `core.pager` in the same pass, then
+      `/security-review`. Found by the AI and monetization research (5 Oct 2026); exploitability
+      not yet demonstrated.
 - [ ] Request content updates: thoroughly investigate stale pull/merge request content in the
       app across GitHub and GitLab; trace refreshes, caching, selection/tab changes, responses
       arriving out of order, and edits/actions; compare displayed content with host API data.
@@ -25,7 +104,7 @@ yet true, then correctness and the features people meet first, then polish. Take
       refusal that ends in `Event::Failed` (`tab.rs`, `clear_obsolete_refusal`).
 - [ ] App icon: an update made by build 192 or older drops the scalable SVG it registered from the
       receipt but leaves the copy in `~/.local/share/icons/hicolor/scalable/apps`; nothing removes
-      it now (`selfupdate.rs` `integrate` and `install.sh` remove only a copy the receipt lists).
+      it now (`selfupdate/mod.rs` `integrate` and `install.sh` remove only a copy the receipt lists).
       Both check that the copy is a plain file and then remove it: a process of the same user
       could swap in a symlink between the two, which would then be removed (never its target).
 - [ ] Installer follow-ups from the security review (`install.sh` is fixed; `install.ps1` could not
@@ -74,6 +153,9 @@ yet true, then correctness and the features people meet first, then polish. Take
       when `git-lfs` is missing (the status fix needs `sha2`: owner's call).
 - [ ] Feature-branch workflows UI: git-flow dialogs, branch folders by prefix, merged and
       squash-merged indicators, delete merged, "Update from base".
+      The core (`flow.rs`) always finishes with `--no-ff` (AVH fast-forwards a single-commit
+      feature), offers no rebase-before-finish or hotfix into an open release, and refuses on git
+      older than 2.38.
 - [ ] .gitignore UI: ignore file/extension/folder/pattern, local exclude, stop tracking, show
       ignored, "why ignored", templates on init.
 - [ ] Submodules UI: sidebar list, open in a tab, init/update/sync/add/remove, pointer diffs,
@@ -98,9 +180,25 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] `tests/safety.rs` non-UTF-8 folder test: when the filesystem refuses the name (NTFS under
       `TMPDIR`), fail with a message naming that cause instead of an `unwrap` panic.
 - [ ] Verify the one-line installers on real machines after the first stable release.
+- [ ] Log redaction: `canopy_core::cli::redact_url` removes credentials from the first URL in a
+      text only, and it also runs on git's stderr and error text (`cli.rs` `record`, `worker.rs`),
+      so `user:token@` in a second URL reaches the log; redact every URL, as
+      `crash_reports::redact_url_credentials` does, with a test.
 
 ## Next
 
+- [ ] `canopy --screenshot` run directly (not through `tools/screenshot.sh`) opens a real window on
+      the desktop session and writes logs into the user's own data folder; isolation lives only in
+      the script. Make the binary refuse `--screenshot` unless the isolated environment is set, or
+      move the isolation into the binary.
+- [ ] A project check for what clippy cannot enforce from the quality standard: numeric literals
+      without a named constant or comment, and a header comment on every source file.
+- [ ] Errors that drop their cause (found by `clippy::map_err_ignore`): the merged-branches base
+      lookup (`merged.rs`) says "does not exist" for any libgit2 failure, and the hosting picture
+      and profile lookups (`canopy-hosting` `avatars.rs`, `http.rs` `avatar_json`) replace the
+      transport's error with a fixed message; carry the libgit2 or ureq message where it helps.
+- [ ] `canopy_hosting::token_from_env` is deprecated (it ignores the host and can hand a token to
+      the wrong server) and nothing calls it; remove it and its re-export.
 - [ ] Crate package metadata: reconcile the legacy `0.2.1-beta.1` workspace version inherited
       by all three crates with numbered-build releases; document an internal version convention
       and align local lockfile entries and tool/doc assumptions without per-release version bumps.
@@ -167,13 +265,21 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] Diff settings, syntax highlighting, side-by-side diffs.
 - [ ] Three-way conflict resolver.
 - [ ] GitHub and GitLab pull and merge requests.
-- [ ] Seven themes.
+- [ ] Eight themes (Midnight, Daylight, Aurora, Ember, Neon, Forest, Paper, Contrast).
 - [ ] Partial clones on real `--filter=blob:none` and `--filter=tree:0` clones.
+- [ ] Checks the development machine cannot make, left open by the visual polish review (PR #5,
+      merged 4 Oct 2026): real hosting credentials and account persistence, external links and
+      update downloads, hardware HiDPI, Wayland, screen readers, macOS and Windows. Do not report
+      any of them as verified until someone has run them.
 
 ## Owner to-dos
 
 Things only the owner can do; agents remind, never act.
 
+- [ ] Decide D1-D7 of the AI, agent access and pricing research (5 Oct 2026): the private
+      artifact "Canopy AI & Pricing" on claude.ai saves the choices with the page; the reports
+      are kept outside the repository. Nothing there is built until decided; two of its findings
+      also touch the Terms (lines 11 and 19 conflict with a paid tier).
 - [ ] Sentry: turn off IP address storage, set 90-day retention.
 - [ ] Legal: add the legal name and postal address to `docs/legal/privacy-policy.md`; confirm the
       Terms assumptions (the app is free; the governing law is the registered office's).

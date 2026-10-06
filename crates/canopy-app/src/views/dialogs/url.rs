@@ -32,8 +32,20 @@ impl UrlBuilder {
         }
     }
 
-    /// The URL to use, if complete.
+    /// The URL to use, if complete and acceptable ([`UrlBuilder::problem`]).
     pub fn resolve(&self) -> Option<String> {
+        self.built()
+            .filter(|u| canopy_core::ops::remote_url_problem(u).is_none())
+    }
+
+    /// Why the URL typed or built cannot be used, such as credentials in it.
+    pub fn problem(&self) -> Option<&'static str> {
+        self.built()
+            .and_then(|u| canopy_core::ops::remote_url_problem(&u))
+    }
+
+    /// The URL as typed or built, before it is checked.
+    fn built(&self) -> Option<String> {
         let kind = match self.source {
             UrlSource::Url => {
                 let u = self.url.trim();
@@ -50,28 +62,29 @@ impl UrlBuilder {
 
     pub(super) fn ui(&mut self, ui: &mut Ui, focus: bool) {
         let p = palette(ui.ctx());
-        let github = format!("{}  GitHub", icon::GITHUB_LOGO);
-        let gitlab = format!("{}  GitLab", icon::GITLAB_LOGO_SIMPLE);
-        let url = format!("{}  URL", icon::LINK);
-        widgets::segmented(
-            ui,
+        let m = theme::metrics();
+        Segmented::with_icons(
             &mut self.source,
             &[
-                (UrlSource::GitHub, github.as_str()),
-                (UrlSource::GitLab, gitlab.as_str()),
-                (UrlSource::Url, url.as_str()),
+                (UrlSource::GitHub, icon::GITHUB_LOGO, "GitHub"),
+                (UrlSource::GitLab, icon::GITLAB_LOGO_SIMPLE, "GitLab"),
+                (UrlSource::Url, icon::LINK, "URL"),
             ],
-        );
-        ui.add_space(8.0);
+        )
+        .label("Where the repository is")
+        .id_salt("url-source")
+        .show(ui);
         match self.source {
             UrlSource::Url => {
-                field(
-                    ui,
-                    "Repository URL",
-                    &mut self.url,
-                    "https://host/owner/repo.git or git@host:owner/repo.git",
-                    focus,
-                );
+                let problem = self.problem();
+                let r = TextField::new(&mut self.url)
+                    .label("Repository URL")
+                    .placeholder("https://host/owner/repo.git or git@host:owner/repo.git")
+                    .helper("Copy it from the repository's Clone button on its host.")
+                    .error(problem)
+                    .id_salt(("dialog-field", "Repository URL"))
+                    .show(ui);
+                take_focus(ui, &r, focus);
             }
             UrlSource::GitHub | UrlSource::GitLab => {
                 if self.source == UrlSource::GitLab {
@@ -83,30 +96,72 @@ impl UrlBuilder {
                         false,
                     );
                 }
-                let hint = if self.source == UrlSource::GitHub {
+                let form = if self.source == UrlSource::GitHub {
                     "owner/repository"
                 } else {
                     "group/subgroup/project"
                 };
-                field(ui, "Project", &mut self.project, hint, focus);
-                widgets::segmented(ui, &mut self.ssh, &[(false, "HTTPS"), (true, "SSH")]);
-                ui.add_space(4.0);
-                match self.resolve() {
-                    Some(u) => ui.label(
-                        RichText::new(u)
-                            .monospace()
-                            .size(theme::SMALL_SIZE)
-                            .color(p.text_faint),
-                    ),
-                    None if !self.project.trim().is_empty() => ui.label(
-                        RichText::new("Use the form owner/repository")
-                            .size(theme::META_SIZE)
-                            .color(p.danger),
-                    ),
-                    None => ui.label(""),
+                let error = self.problem().map(str::to_owned).or_else(|| {
+                    (self.built().is_none() && !self.project.trim().is_empty())
+                        .then(|| format!("Use the form {form}"))
+                });
+                let helper = if self.ssh {
+                    "SSH: your SSH key signs you in."
+                } else {
+                    "HTTPS: a token or your Git credential helper signs you in."
                 };
-                ui.add_space(4.0);
+                let project = &mut self.project;
+                let ssh = &mut self.ssh;
+                let (r, ()) = beside(
+                    ui,
+                    "url-project",
+                    |ui, width| {
+                        TextField::new(project)
+                            .label("Project")
+                            .placeholder(form)
+                            .helper(helper)
+                            .error(error.as_deref())
+                            .width(width)
+                            .id_salt(("dialog-field", "Project"))
+                            .show(ui)
+                    },
+                    |ui| {
+                        Segmented::new(ssh, &[(false, "HTTPS"), (true, "SSH")])
+                            .label("Protocol")
+                            .option_tooltip(0, "Clone over HTTPS")
+                            .option_tooltip(1, "Clone over SSH")
+                            .id_salt("url-protocol")
+                            .show(ui);
+                    },
+                );
+                take_focus(ui, &r, focus);
             }
         }
+        if let Some(u) = self.resolve() {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = theme::SM;
+                ui.label(
+                    RichText::new(icon::LINK)
+                        .size(m.icon_sm)
+                        .color(p.text_faint),
+                );
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(u)
+                            .font(FontId::monospace(m.small_size))
+                            .color(p.text_dim),
+                    )
+                    .truncate(),
+                );
+            });
+        }
+    }
+}
+
+/// Gives `r` the keyboard when `focus` asks and nothing else has it (not in the frame Enter let
+/// go of it, so Enter reaches the dialog).
+fn take_focus(ui: &Ui, r: &egui::Response, focus: bool) {
+    if focus && !r.lost_focus() && ui.memory(|m| m.focused().is_none()) {
+        r.request_focus();
     }
 }

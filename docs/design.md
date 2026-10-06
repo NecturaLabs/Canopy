@@ -20,148 +20,117 @@ defined. When a token or component changes, update this document in the same cha
 
 ## Colour tokens
 
-### Midnight (dark, default)
+Every colour is defined in `ui/theme.rs` and nowhere else. A theme is a `Palette`: the colours
+both styles share (text, accents, status, lanes, syntax, focus, selection, shadows, scrim, glass)
+plus two `Surfaces` sets, one per Style. Views read the active set with `theme::surfaces(ctx)` and
+the shared colours with `theme::palette(ctx)`.
 
-| Token | Hex | Use |
+- **Standard** (the default) is round-2 concept 1: flat fills, two-tone chrome (`panel` one step
+  lighter than the `bg` ground in dark themes, darker in light), flush panes divided by 1 pt
+  `border` seams, raised `raised` secondary buttons with a 1 pt `raised_edge`, a solid `primary`,
+  and soft shadows only under floating layers. Content is painted on `pane`, which equals `bg`.
+- **Deeper** is concept 4, "a floating instrument": the ground recedes and what you work on floats
+  over it. The tab strip sits on the ground and the action bar is a lifted card (`deck`, with the
+  deck's gradient, highlight and shadow and a `pane_edge` ring). Content panes are cards (`pane`,
+  `pane_edge`) with the gutter on every side, gradient fills (`Fill { top, bottom }`), stronger
+  highlights and layered shadows. History splits into two cards, the commit table and the commit
+  details, at the details panel's resize handle; a hovered or dragged split shows a thin
+  `focus`-tinted line. The focused card carries the `focus` gradient edge and a lit `focus` line
+  along its top, over the `pane_header` strip with its `focus`-tinted seam; a theme with lit edges
+  (Neon) outlines the whole card in a glowing `focus` line instead (`kit::paint::pane_focus`, which
+  the gallery's pane samples use too).
+
+Each theme builds both styles from one surface ladder in its own neutral hue: Standard's chrome is
+at least 2.5 L* off the ground and Deeper's cards at least 4 L* (`surface_steps_are_visible`), so
+the steps read on any display without becoming boxes.
+
+Interaction states are translucent overlays of `hover_ink`: `hover()`, `hover_strong()`,
+`pressed()` and Dense's `zebra()`; selection is the `selected()` wash with no side bar. Status
+tints (`success_tint()` and so on) are 16% washes of `Palette::tones`: in dark themes the status
+colours themselves, in light themes a brighter, more chromatic hue of each, so a wash reads clean
+rather than beige, khaki or lilac; text and the status colour stay readable on every wash
+(`status_washes_keep_text_readable`). `danger` is the text-grade red; `danger_base` is concept 1's
+`#e5484d` red for error rings, the danger button's focus ring and danger fills; `danger_solid`
+fills the danger button. Light themes ring the switch knob in `knob_edge`. Disabled controls use
+`Palette::disabled_text` on `Surfaces::disabled_fill` with a `disabled_edge` ring, flat in both
+styles and never dimmed again with `DISABLED_ALPHA` (`disabled_tokens_are_readable`: at least
+3:1, 4.5:1 in Contrast). A banner's or callout's action can be disabled too, so disabled text
+also keeps 3:1 on every status wash and 3.5:1 on the washes of the grounds banners sit on
+(`disabled_actions_read_on_banners`; Contrast 4.5:1 throughout).
+
+Each theme has one idea, carried by its ladder, signature, selection and status colours:
+
+| Theme | Idea | Ground and signature |
 |---|---|---|
-| `bg` | `#0D1016` | Window background, history table |
-| `panel` | `#12161E` | Sidebar, detail pane, toolbar, status bar |
-| `elevated` | `#171C26` | Popups, dialogs, palette, menus, cards |
-| `hover` | `#1E2431` | Hovered rows and buttons |
-| `border` | `#262D3B` | 1px hairlines between regions (decorative) |
-| `control-border` | `#696F7A` | Outlines that identify a control: text fields, checkboxes, switch tracks (3:1) |
-| `text` | `#E6E9EF` | Primary text |
-| `text-dim` | `#A5ADBD` | Secondary text: authors, dates, paths |
-| `text-faint` | `#979EAD` | Placeholders, disabled text, line numbers |
-| `accent` | `#9C71F8` | Focus rings, selection, primary buttons, HEAD |
-| `accent-2` | `#22D3EE` | Gradient end, links, progress |
-| `success` | `#34D399` | Added lines, ahead counts, success toasts |
-| `warning` | `#FBBF24` | Conflicts, in-progress banners |
-| `danger` | `#F87171` | Removed lines, destructive buttons, error toasts |
-| `added-bg` | `#0F2A21` | Added line background in diffs |
-| `removed-bg` | `#2E1518` | Removed line background in diffs |
-| `button`, `button2` | `#7C3AED`, `#0E7490` | Primary fill and companion accent, labelled `on-button` (`#FFFFFF`) |
+| Midnight (default) | Observatory | blue-black graphite with a cool cast, an indigo signature, starlight-blue links |
+| Daylight | Studio morning | white canvas in cool slate chrome, indigo ink, clean mint, apricot, rose and periwinkle washes |
+| Aurora | Polar night | deep marine, a polar-sky blue signature, aurora violet and teal lanes, amber caution |
+| Ember | Forge at dusk | warm charcoal and cream type, a copper signature, steel-blue links, an apricot selection glow |
+| Neon | Night city | black-violet, electric cyan with a hot magenta second voice, a true green for success |
+| Forest | Evergreen at dusk | deep green shade, a sunlit-gold signature, a lake-blue selection |
+| Paper | Letterpress | warm cream stock on a kraft desk, whiter fields and sheets, Prussian ink, sepia links underlined like print, a yellow highlighter selection |
+| Contrast | Signal | pure black, white type, strong outlines, a yellow focus ring, links underlined at rest, a neutral white selection |
 
-### Daylight (light)
+Link buttons are `accent2` and underlined on hover and focus; where the link colour alone does
+not set a link apart from body text, the theme's `Design::link_underline` underlines them at rest
+too (Paper, whose sepia shares the ink's hue family, and Contrast, for low vision;
+`links_are_underlined_at_rest_in_paper_and_contrast`). Inline links in the legal texts still
+underline only on hover and focus.
 
-| Token | Hex | Use |
-|---|---|---|
-| `bg` | `#F7F8FA` | Window background, history table |
-| `panel` | `#FFFFFF` | Sidebar, detail pane, toolbar, status bar |
-| `elevated` | `#FFFFFF` | Popups, dialogs, palette (separated by border and shadow) |
-| `hover` | `#EEF1F6` | Hovered rows and buttons |
-| `border` | `#DDE2EA` | 1px hairlines between regions (decorative) |
-| `control-border` | `#858A92` | Outlines that identify a control: text fields, checkboxes, switch tracks (3:1) |
-| `text` | `#161A22` | Primary text |
-| `text-dim` | `#4B5466` | Secondary text |
-| `text-faint` | `#586071` | Placeholders, disabled text, line numbers |
-| `accent` | `#7C3AED` | Focus rings, selection, primary buttons, HEAD |
-| `accent-2` | `#0D6F8A` | Gradient end, links, progress |
-| `success` | `#047555` | Added lines, ahead counts, success toasts |
-| `warning` | `#A04A08` | Conflicts, in-progress banners |
-| `danger` | `#C72222` | Removed lines, destructive buttons, error toasts |
-| `added-bg` | `#E3F7EC` | Added line background in diffs |
-| `removed-bg` | `#FDE7E7` | Removed line background in diffs |
-| `button`, `button2` | `#7C3AED`, `#0E7490` | Primary fill and companion accent, labelled `on-button` (`#FFFFFF`) |
-
-Every theme passes the contrast test in `theme.rs` for every pairing the views draw: `text` 7:1
-and `text-dim` and `text-faint` 4.5:1 on every surface (`bg`, `panel`, `elevated`, `hover`, a
-selected row over each, `added-bg`, `removed-bg` and the warning tint); links and SHAs
-(`accent-2`) and status colours 4.5:1 on plain surfaces and selected rows, `success` on added
-lines, `danger` on removed lines and `warning` on its tint; `accent` 4.5:1 on plain surfaces;
-`control-border`, the focus ring and lane colours 3:1. The six other themes define the same tokens
-(their lanes and syntax colours are in `theme.rs`):
-
-- **Aurora** (dark): cool arctic blues after the Nord palette.
-- **Ember** (dark): warm charcoal with orange and gold.
-- **Neon** (dark): deep violet night; electric cyan carries selection and focus and hot pink the
-  links, so selection never reads as the orange-red of removed lines and destructive actions.
-- **Forest** (dark): deep greens lit with sunlit gold; gold carries selection and focus and sky
-  blue the links, so neither is mistaken for the green of added lines.
-- **Paper** (light): warm off-white with rust and teal.
-- **Contrast** (dark): black and white with saturated signal colours, a blue accent, yellow
-  links and strong outlines, for low vision and bright rooms.
-
-| Token | Aurora | Ember | Neon | Forest | Paper | Contrast |
-|---|---|---|---|---|---|---|
-| `bg` | `#1E222A` | `#16110F` | `#0B0716` | `#0E1411` | `#F4EFE6` | `#000000` |
-| `panel` | `#242933` | `#1D1714` | `#110B20` | `#131B17` | `#FBF8F2` | `#0A0A0A` |
-| `elevated` | `#2B303B` | `#241C18` | `#170F2B` | `#18221D` | `#FFFDF8` | `#121212` |
-| `hover` | `#333A47` | `#2E241F` | `#211638` | `#1F2B25` | `#EDE6DA` | `#242424` |
-| `border` | `#3B4252` | `#3A2E27` | `#2D1F4A` | `#2A3830` | `#DCD3C4` | `#6B6B6B` |
-| `control-border` | `#7E8490` | `#796E67` | `#6F6386` | `#67746D` | `#8B8379` | `#B3B3B3` |
-| `text` | `#ECEFF4` | `#F3E9E2` | `#F5EEFF` | `#E4EEE8` | `#2B2620` | `#FFFFFF` |
-| `text-dim` | `#C2C8D3` | `#BCAB9F` | `#CDBFE6` | `#B3C5BB` | `#585044` | `#E6E6E6` |
-| `text-faint` | `#B1B8C4` | `#AC9D93` | `#BBAEDC` | `#A7B4AD` | `#655B50` | `#CCCCCC` |
-| `accent` | `#88C0D0` | `#F97316` | `#00E5FF` | `#E2B84F` | `#A14A08` | `#4CC2FF` |
-| `accent-2` | `#CAAFC5` | `#FACC15` | `#FF7ABD` | `#7DD3FC` | `#0E6E67` | `#FFE14D` |
-| `success` | `#A5C08F` | `#4ADE80` | `#3DF5A0` | `#4ADE80` | `#166534` | `#3DFF8A` |
-| `warning` | `#EBCB8B` | `#FBBF24` | `#FFD60A` | `#FB923C` | `#825500` | `#FFA62B` |
-| `danger` | `#EAA5AB` | `#F87171` | `#FF6B4A` | `#F98282` | `#B91C1C` | `#FF6B6B` |
-| `added-bg` | `#253229` | `#15281B` | `#0B2A22` | `#12301F` | `#E3F0DC` | `#002B14` |
-| `removed-bg` | `#3A262C` | `#331816` | `#2E0B1E` | `#2E1618` | `#F8E1DC` | `#3B0009` |
-| `button` | `#88C0D0` | `#C2410C` | `#0E7490` | `#8A5A00` | `#B45309` | `#005FB8` |
-| `button2` | `#B48EAD` | `#A16207` | `#7C3AED` | `#166534` | `#0F766E` | `#005FB8` |
-| `on-button` | `#1E222A` | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` | `#FFFFFF` |
-
-In every theme the accent's hue stays clear of `success` and `danger`, so a selected row is never
-confused with an added or removed line.
-
-The accent gradient runs from `accent` to `accent-2` (violet to cyan in Midnight). It is used
-sparingly: the active tab indicator, the welcome screen mark and progress bars. The primary
-button uses a solid `button` fill, chosen so its `on-button` label stays readable.
-
-Keep all eight themes. Each earns its place by carrying the graph, selection and status colours
-through the full interface, rather than borrowing Midnight's lanes or changing only the chrome.
-
-Selected rows will all use `Palette::selected()`: `accent` at low opacity over the row background,
-set by `selection_alpha` (18% in most dark themes, 12% in light themes and Ember to keep its orange
-calm). An `accent` bar marks the left edge (3px in the history list, 4px on diff lines). egui's
-selected values use the same fill. Views still carrying their
-own tint move to it in the controls pass.
+Every pairing (text on every surface and state, labels on every fill end, focus, outlines, lanes,
+syntax, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme
+in both styles; `Palette::ink` keeps coloured text readable on its own tint.
 
 ### Lane colours
 
 Ten colours, assigned to lines of history in order and reused cyclically. Each theme has its own
-set, each at least 3:1 against the background, a hovered row and a selected row; Midnight uses the set below, Daylight uses deeper variants, and the other themes define
-their own in `theme.rs`. Ember leads with orange and gold, Forest with sunlit gold, sky blue and
-mint, and Aurora with arctic blue and muted lilac. In light themes, edges are drawn at full opacity and
-the node fill uses the panel colour.
+set in `theme.rs`, led by the theme's own voices and spread round the hue wheel at one balanced
+lightness: any two lanes of a theme are at least CIELAB ΔE 25 apart (`graph_lanes_are_distinct`),
+and each is at least 3:1 against the background, a hovered row and a selected row. Light themes
+use deeper lanes. In light themes, edges are drawn at full opacity and the node fill uses the
+panel colour. Midnight's set:
 
 | Index | Hex | | Index | Hex |
 |---|---|---|---|---|
-| 0 | `#8B5CF6` violet | | 5 | `#60A5FA` blue |
-| 1 | `#22D3EE` cyan | | 6 | `#F87171` red |
-| 2 | `#F472B6` pink | | 7 | `#A3E635` lime |
-| 3 | `#34D399` green | | 8 | `#FB923C` orange |
-| 4 | `#FBBF24` amber | | 9 | `#C084FC` purple |
+| 0 | `#A5B1FF` periwinkle | | 5 | `#F59BF0` orchid |
+| 1 | `#4CD494` green | | 6 | `#01DEDF` cyan |
+| 2 | `#ED9234` orange | | 7 | `#8EBE4F` leaf |
+| 3 | `#00BFF7` sky blue | | 8 | `#F980A0` rose |
+| 4 | `#DFC43D` gold | | 9 | `#FFAD8E` peach |
 
 Avatar backgrounds are picked from the same ten colours by a stable hash of the author's email.
 
 ## Typography
 
 Inter for interface text, JetBrains Mono for SHAs, diffs, paths in diffs and anything that must
-align. Both are bundled (SIL OFL 1.1), so metrics are consistent on Linux, macOS and Windows.
+align. Both are bundled (SIL OFL 1.1), so metrics are consistent on Linux, macOS and Windows. The
+mono face is JetBrains Mono NL, the build without programming ligatures: a version-control client
+shows exact text, so `->`, `!=` or `::` draw as the characters typed and look like what copying
+them gives (`fonts::tests::code_text_has_no_ligatures`). Every family ends in Canopy CJK, a
+subset of Noto Sans CJK (everyday Han, kana and Hangul, 5.7 MB), so CJK file names, branches and
+messages draw in a matching sans instead of missing-glyph boxes.
 Inter Regular, Medium and SemiBold distinguish body text, controls and headings; monospace is
 reserved for code and identifiers. Sizes scale with the interface zoom and display density.
 
-One scale, as tokens in `theme.rs` (`*_SIZE`); views never write a size of their own. Icon glyphs
-are sized for their optical weight and are not part of the scale.
+One scale, as fields of the density's metrics (`theme::metrics()`); views never write a size of
+their own. Dense shrinks the scale where noted. Icon glyphs are sized for their optical weight and
+are not part of the scale.
 
-| Token | Font | Size (pt) | Use |
+| Token | Font | Size (pt), Comfortable / Dense | Use |
 |---|---|---|---|
-| `HERO_SIZE` | Inter SemiBold | 38 | Welcome screen title |
-| `DISPLAY_SIZE` | Inter SemiBold | 24 | The About dialog's name |
-| `HEADLINE_SIZE` | Inter SemiBold | 20 | Pull request title in details, first-run dialog headings |
-| `TITLE_SIZE` | Inter SemiBold | 16 | View and dialog titles, the palette query |
-| `SUBTITLE_SIZE` | Inter SemiBold | 14 | Card and group titles, the repository name, commit summary |
-| `LEAD_SIZE` | Inter Medium or SemiBold | 13.5 | The text that leads a row, field labels, toasts, primary buttons |
-| `BODY_SIZE` | Inter Regular or Medium | 13 | Default text, table rows, branch names |
-| `META_SIZE` | Inter Regular | 12 | Metadata beside a row's main text, setting descriptions |
-| `SMALL_SIZE` | Inter Regular or Medium | 11.5 | Hints, counts, badges, status bar |
-| `MICRO_SIZE` | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Pills, sidebar sections and table headers |
-| `MONO_SIZE` | JetBrains Mono Regular | 12.5 | Diffs, commit message editor, error output |
-| `MONO_SMALL_SIZE` | JetBrains Mono Regular | 11.5 | Short SHAs, key chords, History dates and line counts |
+| `hero_size` | Inter SemiBold | 38 | Welcome screen title |
+| `display_size` | Inter SemiBold | 24 | The About dialog's name |
+| `headline_size` | Inter SemiBold | 15.5 / 14 | The detail pane's commit subject, first-run dialog headings |
+| `title_size` | Inter SemiBold | 15 | View and dialog titles, the palette query |
+| `subtitle_size` | Inter SemiBold | 14 / 13.5 | Card and group titles, the repository name |
+| `lead_size` | Inter Medium or SemiBold | 13 / 12 | The text that leads a row, field labels, primary buttons |
+| `body_size` | Inter Regular or Medium | 13 / 12 | Default text, table rows, buttons |
+| `meta_size` | Inter Regular | 12.5 / 12 | Metadata beside a row's main text, toast bodies, setting descriptions |
+| `small_size` | Inter Regular or Medium | 11.5 / 11 | Hints, counts, ref pills, status bar |
+| `micro_size` | Inter SemiBold | 10.5, uppercase, +0.8 tracking | Uppercase section labels and table headers |
+| `mono_size` | JetBrains Mono Regular | 12.5 / 12 | Diffs, commit message editor, error output |
+| `sha_size` | JetBrains Mono Regular | 12 | Short SHAs and History dates |
+| `chord_size` | JetBrains Mono Regular | 11 / 10.5 | Keycaps |
 
 Settings → Keyboard reuses the shortcuts sheet rows and keycaps. Palette entries lead with
 repository and current-view actions before app commands; staging buttons include their keys
@@ -180,60 +149,90 @@ margin and a compact section picker when its navigation sidebar would crowd the 
 
 ## Spacing
 
-Standard controls use `CONTROL_HEIGHT` (30 points); compact list actions use
-`COMPACT_CONTROL_HEIGHT` (28), primary actions `PRIMARY_CONTROL_HEIGHT` (36), and toolbar
-tools `TOOL_HEIGHT` (40). Text fields use `FIELD_MARGIN` (8 by 7). Passive headings and metadata
-stay dense rather than inheriting button-sized rows; compact commit details retain room for two
-changed files. A 4px base grid. Tokens: `xs` 4, `sm` 8, `md` 12, `lg` 16, `xl` 24. Panels use `md` inner
-padding; dialogs `xl`; rows `sm` horizontally. Related controls are `sm` apart, groups `lg`.
+A 4 pt base grid: `XS` 4, `SM` 8, `MD` 12, `LG` 16, `XL` 24, `XXL` 32. Everything else that has a
+size (type scale, icons, radii, control and row heights, toolbar anatomy, graph geometry) is a
+`Metrics` field, one table per (Density, Style) pair, read with `theme::metrics()`.
+
+| | Comfortable (default, concept 1) | Dense (concept 5) |
+|---|---|---|
+| Body text | 13 | 12 |
+| Controls (sm / md / lg) | 24 / 28 / 32 | 20 / 24 / 28 |
+| History row / file row | 28 / 30 | 24 / 24 |
+| Tab strip / action bar / status bar | 42 / 58 / 28 | 34 / 36 / 24 |
+| Tool buttons | 46 tall, icon over caption | 26 tall, icon beside label |
+| Zebra rows | off | on |
+
+Deeper overrides the geometry only: controls 30 (26 Dense), panes as cards with a 6 pt gutter
+(4 Dense).
 
 ## Radii
 
-| Token | Value | Use |
-|---|---|---|
-| `radius-sm` | 6px | Buttons, inputs, ref pills, badges |
-| `radius` | 8px | Menus, list selection, toasts |
-| `radius-lg` | 12px | Dialogs, command palette, cards on the welcome screen |
+| Field | Comfortable | Dense | Deeper (Comfortable / Dense) |
+|---|---|---|---|
+| `radius_sm` | 5 | 3 | 6 / 4 |
+| `radius` | 7 | 5 | 10 / 7 |
+| `radius_lg` | 12 | 6 | 14 / 8 |
+| `pill_radius` | full | 3 | 6 / 4 |
 
 ## Elevation
 
-Three levels, by background token plus shadow:
+`theme::material(style, dark, level)` gives each `Elevation` level its top highlight, bottom line,
+recess and shadow layers; `kit::paint::surface` paints them. In Standard only buttons, the
+segmented thumb and the switch knob carry a 1 to 2 px contact shadow, and floating layers (menus,
+popovers, tooltips, toasts, dialogs, palette, cheatsheet) a two-layer soft shadow with a 1 pt
+`overlay_edge` ring. Deeper adds two-layer shadows to controls, coloured glows under primary and
+danger buttons, the `Pane` shadow under cards, the field recess and the deck. Shadows take each
+theme's own tinted `shadow` colour (cool slate in Daylight, warm umber in Paper, the ground's hue
+in dark themes), and Deeper's light-theme cards add a tight contact layer under a wide soft one,
+so they lift off a light ground as clearly as off a dark one. Contrast has no
+highlights and rings floating layers in `control_border`. The top highlight line is white at the
+level's alpha, from `theme::highlight_line`.
 
-- **Base** (`bg`, `panel`): no shadow; panels are separated by 1px `border` hairlines.
-- **Controls**: primary buttons and selected segments use `Palette::control_shadow()` for a
-  one-point lift, with a restrained inner highlight. Neutral action edges use `control_edge()`;
-  fields and unchecked controls keep the stronger `control-border`. Keyboard focus stays opaque
-  accent, and inherited disabled state suppresses primary fills and active decoration.
-- **Raised** (`elevated`): menus, tooltips, toasts. Shadow offset (0, 4), blur 16, black at 35%
-  (Midnight) or 10% (Daylight).
-- **Overlay** (`elevated` over a scrim): dialogs and the palette. Shadow offset (0, 12), blur 32,
-  black at 45% / 14%; the scrim is black at 69% in dark themes or 24% in light themes, so the
-  dialog leads over a busy graph without hiding the repository beneath it.
+Translucent surfaces (off by default) blur what is behind floating layers: a layer asks
+`kit::glass::layer_fill` for its fill, which adds two paint callbacks and returns `overlay` at
+`glass_alpha`. The capture copies and blurs what is behind the layer (dual Kawase, about 12 pt)
+and stays before the layer's shadow, so the shadow never shows through the glass;
+`kit::paint::surface` moves the composite between the shadow and the fill. The composite raises
+saturation x1.15, keeps the backdrop's luminance in the band the contrast checks assume
+(`glass_luminance`: in dark themes anything brighter is scaled down to it; in light themes every
+colour is lifted that share of the way to white, so the floor holds and what lies behind keeps
+its shapes), dithers and masks to the layer's rounded rectangle. A caller that places shapes
+itself takes both from `kit::glass::backdrop_shapes`: the capture before its shadow, the
+composite after it (`backdrop_shape` gives them as one shape, which blurs a shadow placed before
+it into the glass). The command palette and menus still place the one shape after their shadow
+(`kit::overlay::surface_shapes`), so their shadow darkens the glass until they take the two; the
+other floating layers get glass as they move to the kit. At most four layers a frame are glass; tooltips, the settings
+screen and panes stay opaque. Dark themes leave glass little room: the dimmest text on it must
+keep 4.5:1, so the backdrop shows as soft light and dark shapes rather than colour. The
+setting is unavailable with the Contrast theme, when the system asks for reduced transparency
+(macOS, Windows) and when the graphics driver cannot run the blur; any failure at run time turns
+it off for the session and every layer is opaque again.
 
 ## Motion
 
-Motion is feedback, never decoration. The tokens live in `ui/motion.rs`.
+Motion is feedback, never decoration. Durations, curves and springs live in `ui/motion.rs`; the
+kit's helpers in `ui/kit/anim.rs`.
 
 | Token | Duration | Use |
 |---|---|---|
-| instant | 0 | Anything driven by the keyboard or repeated often: row hover, selection, the focus ring, tab switches, palette filtering, scrolling to the selection, lists updated by a background refresh |
-| `FAST` | 100ms | Pointer hover and press feedback on controls, switch thumbs, checkboxes |
-| `BASE` | 150ms | Popovers, menus and tooltips appearing; expand and collapse; toasts leaving |
-| `SLOW` | 200ms | Dialogs arriving (fade and 0.98 to 1.0 scale); toasts arriving (8px slide and fade) |
+| (none) | 0 | Rows, selection, menu-item highlight, palette filtering, keyboard-opened menus change at once |
+| `FAST` / `FAST_OUT` | 80 / 120ms | Hover in and out, press release, focus ring in |
+| `BASE` | 150ms | Chevrons, label crossfades, tooltips, field halo |
+| `SLOW` | 220ms | Dialog and popover entrance |
+| `TOAST_IN` | 280ms | Toast slide-in |
+| `TOAST_SHIFT` | 200ms | Toasts sliding into the place of one that left |
+| `TAB_CLOSE` | 250ms | A closed repository tab collapsing |
+| `EXIT_POPUP` / `EXIT_DIALOG` / `EXIT_TOAST` | 100 / 120 / 160ms | Exits |
+| `TOOLTIP_DELAY` / `TOOLTIP_SKIP` | 450 / 300ms | First tooltip delay; no delay right after one closed |
+| `LOADING_DELAY` / `LOADING_MIN` | 150 / 400ms | Spinners appear late and stay a minimum time |
 
-Enter and hover transitions ease out (cubic). Exits take about three quarters of the enter time
-and only fade; closing a menu, tooltip or the palette is instant. Spinners turn once per second,
-linearly.
-
-Running jobs show a spinner in the status bar and on the triggering toolbar button. Outside the
-welcome screen, whose glow drifts and whose canopy's halos breathe, no animation loops while
-idle, so an idle repository view does not repaint. Reduce motion makes every duration zero and
-stills the welcome screen. Today it is an on/off switch in Settings → Appearance; `FAST` times
-the segmented controls and switches, while the three-way preference (match the system, reduced
-or full) and the `SLOW` token are not wired up yet (the backlog's "Motion" entry). The system setting it will follow is read by
-`platform::prefers_reduced_motion` from the desktop portal or GNOME settings on Linux,
-`com.apple.universalaccess` on macOS and the client-area animation setting on Windows, off the UI
-thread.
+Curves are cubic Béziers (`EASE_OUT` by default); springs (`SWITCH`, `PRESS`, the indicator
+pair) use the exact damped solution and repaint only while moving. Buttons scale their content
+to 0.97 while pressed. Settings → Appearance → Motion offers Match system (the default), Reduced
+and Full; the system answer comes from `platform::prefers_reduced_motion` on a background thread.
+Reduced makes every duration zero, lands every spring at once, turns the press scale off,
+stops egui's scroll glide (`motion::scroll_animation`: a wheel step or a scroll-to jumps) and
+stills the welcome screen. Only spinners and skeletons repaint continuously, and only while shown.
 
 ## Iconography
 
@@ -243,17 +242,18 @@ hover and `accent` when active. Toolbar buttons pair an icon with a short label;
 always have a tooltip naming the action and its shortcut.
 
 A glyph beside text takes the text's size. A glyph drawn on its own takes one of the icon sizes
-in `theme.rs`:
+in the density's metrics:
 
-| Token | Size | Use |
+| Token | Size (px), Comfortable / Dense | Use |
 |---|---|---|
-| `ICON_XS` | 11.5px | Disclosure chevrons, close crosses on tabs and recent repositories |
-| `ICON_SM` | 14px | Sidebar row glyphs, tab and segmented-control icons |
-| `ICON_MD` | 16px | Buttons, palette rows, settings navigation, request status |
-| `ICON_LG` | 18px | Toasts, account cards, the welcome tip |
-| `ICON_TITLE` | 20px | Beside a dialog's title |
-| `ICON_XL` | 24px | The welcome screen's action cards |
-| `ICON_HERO` | 32px | The centre of an empty or finished state |
+| `icon_xs` | 12 | Disclosure chevrons, close crosses on tabs and recent repositories |
+| `icon_sm` | 13 | Sidebar row glyphs, tab and segmented-control icons |
+| `icon_md` | 15 | Buttons, palette rows, settings navigation, request status |
+| `icon_lg` | 16 / 15 | Beside a dialog's title |
+| `icon_tool` | 17 / 15 | Toolbar tools |
+| `icon_toast` | 18 | A notification's leading glyph |
+| `icon_xl` | 24 / 22 | The welcome screen's action cards |
+| `icon_hero` | 32 / 28 | The centre of an empty or finished state |
 
 ## Layout
 
@@ -286,17 +286,27 @@ in `theme.rs`:
   available while files load or no file is selected. When that readable split cannot fit, History and Commit details
   share the area through two explicit mode controls; a selected commit initially shows its details.
 - Commit details use a compact author, SHA and date above the changed files. Commit information
-  starts open, opens independently of pane expansion and retains its state; its body scrolls while
-  the files
-  stay reachable. The open metadata body reserves room for up to two changed files and their
-  controls. History prefers six visible rows and can retain the split with two rows in a short
+  starts open, opens independently of pane expansion and retains its state, by one rule in every
+  density: its body shows whenever its first whole line fits under room reserved for up to two
+  changed files and the "N files changed" line; otherwise the block waits shut, with a tooltip
+  saying how to make room. The body sits flush with the author row, takes its natural height up
+  to that room and scrolls past it behind a faded edge, never cutting a line through its glyphs.
+  It repeats the commit summary only when the pane header cannot show it whole (or, in a compact
+  window, has no header). History prefers six visible rows and can retain the split with two rows in a short
   window. Automatic inspector height adapts when the diff arrives; a manual resize takes precedence.
 - Commit metadata, the Changes file list, and the request list take at most 40% of their
-  available width, leaving the rest for the diff or request details. Pane limits follow the
+  available width, leaving the rest for the diff or request details. The Changes file list and the
+  request list are resized with `kit::split::SplitHandle` (drag, the arrow keys while it has focus,
+  a double-click resets it) and keep their width across restarts. Pane limits follow the
   current viewport. Read-only diff headers share a wrapping row at short heights to keep more
   changed lines visible without reducing text size.
 - Draft requests use a dim pencil icon in the list, distinct from the green open request icon;
   the full state and branch pair remain available on hover.
+- The right-aligned glyphs on a request row's title line come from the list's rollup when there
+  is one (texts "Checks passed", "Checks failed", "Checks running"; a neutral state such as a
+  skipped pipeline shows nothing), otherwise from the request's remembered details ("All N checks
+  passed", "N of M checks failed"…). "Review required" (GitHub only) is `USER_CIRCLE_DASHED` in
+  `Tone::Neutral`: a to-do, not a warning.
 - The request conversation ends with a primary Comment action. It stays visibly placed below the
   editor when empty, with a short explanation of why it is disabled.
 - Review summaries name each reviewer's state in text as well as showing its icon and colour.
@@ -306,8 +316,8 @@ in `theme.rs`:
   shortcut, Esc or the close button hides it and clears the query. The commit count does not
   occupy the table header; an in-progress operation banner remains visible without search.
 - The action toolbar uses `ACTION_BAR_HEIGHT` (52 points), with 40-point tools, body-size captions
-  and room for its horizontal scrollbar. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has a visible
-  scrollbar. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
+  and room for its horizontal scrollbar. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has no
+  scroll bar and fades out at the edge it hides behind (Scroll edges). The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
 - When there is no remote, the toolbar says "Local only" as dim status text with an explanatory
@@ -335,24 +345,47 @@ in `theme.rs`:
 - Diff hunks: the action buttons are 26 px tall. Stage (success tint) is the one filled button;
   Discard is a ghost that turns `danger` under the pointer and sits apart on the right, and on
   very wide panes the actions stay within 960 px of the left edge. A new or deleted file is always
-  one column without the empty line-number column (the layout switch shows dimmed on Unified), and
+  one column without the empty line-number column (the layout switch shows disabled on Unified,
+  its tooltip saying why), and
   its lines keep the full added/removed tint only in the gutter, with a quiet wash over the code.
-  A line wider than the pane fades out at the edge.
-- The shared operation banner (merge, rebase, cherry-pick) leads History, Changes and Requests.
+  A line wider than the pane fades out at the edge. The hint "Click lines to pick part of a hunk"
+  shows on a hunk header only when it fits beside the whole hunk title; otherwise the title shows
+  alone, so the two never overlap.
+- Conflict side previews (no line numbers) drop the indentation their lines share, and a line
+  too long for the card is cut back to a word or number boundary before its ellipsis, so a number
+  is never cut in two, unless that would lose more than a quarter of what fits. A file both sides
+  deleted offers one "Delete it", not one per side.
+- The shared operation banner (merge, rebase, cherry-pick) leads History, Changes and Requests,
+  drawn the same way in all three (`views/state_banner.rs`): the kit warning `Banner` with
+  Continue and Abort as ghost buttons at its right end.
   State and conflict count precede Continue; unresolved conflicts or active work disable it.
   Abort is separated and confirmed. The merge composer says Conclude merge and starts with
   Git's pending message when no draft exists.
-- Changes list headers: "Stage all" and "Unstage all" are 28 px tall (`widgets::COMPACT_H`). Discard
+- Changes list headers: "Stage all" and "Unstage all" are small kit buttons (`Size::Sm`). Discard
   all lives in a ⋯ menu (danger-coloured item, then a confirmation) a gap away from Stage. A zero
   count is neutral, not warning amber, and an empty section is left out while another has content
   (a conflict hides Unstaged and Staged when they are empty).
 - The disabled primary button is flat with a hairline outline and faint text in every theme, never
   the primary fill. When the commit button is disabled for a reason its label does not give, a line
   above it says so ("Write a summary to commit", "Resolve the conflicts to commit").
+- The commit button never cuts its label in a narrow column (a small window at a large zoom): it
+  drops its keys first (they stay in its tooltip), then the branch, then the file count ("Commit
+  2 files to main", "Commit 2 files", "Commit"); screen readers still hear the whole label.
 - The commit composer follows the file lists while both fit the column, under a hairline, and
   pins to the bottom with the lists scrolling above it only when they would crowd it (about
   260 points of composer). Row actions (stage, unstage, mark resolved) show on the selected row
-  and under the pointer on any row.
+  and under the pointer on any row. Changes and commit details draw file rows the same way
+  (`commit_detail::file_list_row_with`); a conflicted file's action is a labelled ghost
+  "Resolve conflicts…".
+- What the composer ships: its commit button is one Primary action (`kit::Button`), not the
+  design spec's Commit / Commit and push `SplitButton`, and Amend last commit is a plain
+  `Checkbox` with no indeterminate state. Both kit components exist; the composer does not use
+  them yet.
+- Conflict cards: the two "Keep this version" buttons are the card's main choices (Secondary);
+  "Both: current first", "Both: incoming first", "Ancestor" and "Edit" are Ghost until chosen. A
+  chosen option shows a check. The resolver footer's "Save resolved file" is the one Primary.
+- Without a GitHub or GitLab remote, Requests offers Publish… (no remote at all) or Add remote…
+  (remotes elsewhere) under its empty-state illustration.
 - A clean working tree gives the main pane its own state: the illustration, "Working tree
   clean", where the branch stands (up to date, N to push or pull with that button, or local only
   with Publish…) and the last commit. The file column then shows only "Changes 0" and a quiet
@@ -371,6 +404,32 @@ in `theme.rs`:
 
 ## Components
 
+### Component library
+
+`ui/kit/` holds the components. Each is a builder: `new(..)` with the required inputs, chained
+setters (`size`, `icon`, `enabled`, `tooltip`, `disabled_reason`, `shortcut`, `id_salt`,
+`full_width`, `min_width`), and `show(ui)`; each also implements `egui::Widget`. Components read
+colours, metrics and options themselves and report their AccessKit role and label. Buttons come in
+Primary, Secondary, Ghost and Danger at Sm, Md and Lg, plus icon, tool, link and split buttons;
+disabled controls are the whole control at 42% and stay hoverable for their reason. Keyboard focus
+draws a 2 pt ring 2 pt outside the control (`danger_base` on danger buttons), only after keyboard
+use. `tools/screenshot.sh <repo> out.png --overlay gallery [--style deeper] [--density dense]
+[--gallery-page N]` renders every component in every state; a page past the end shows the last,
+and a strip under the content numbers each page from 1 ("Page 4 of 19" for `--gallery-page 3`).
+
+Keyboard and screen readers (`kit::a11y`): a list is one Tab stop (`kit::row::Roving`, used by
+History's commits, each sidebar section and card grids): Tab lands on the row last visited (else the
+selected or checked-out one), the arrows move inside (Left and Right too in a grid), and the next
+Tab leaves the list. A row's actions stay revealed while one of them has focus; a tree row's chevron
+is no Tab stop. Containers are named groups holding their parts in the order shown: a list, a tree,
+a menu, a radio group, a segmented control, a tab list, a select's open list, a callout, a dialog.
+Linux's adapter drops two states, so there the name carries them: a disclosure's ", expanded" or
+", collapsed", and a disabled control's ", unavailable" (roles it reports as read-only excepted);
+a disabled control's reason is its description everywhere. Overlays (the palette, the cheatsheet,
+dialogs) are modal: Tab stays inside, and closing gives focus back to what had it. Dragging a split
+never takes focus; Tab does.
+
+
 ### Ref pill
 
 Rounded rectangle (10-point radius, height 19px, horizontal padding 7px) with a Small Medium label and a
@@ -381,27 +440,69 @@ both icons. Pills that do not fit collapse to a `+N` badge with a tooltip.
 
 ### Segmented control
 
-`widgets::segmented` (text) and `widgets::icon_segmented` (icons with tooltips) for a choice
+`kit::choice::Segmented` (text, icons with tooltips, or both) for a choice
 between a few exclusive options: settings choices, the merge dialog's merge or rebase, the clone
 source and protocol, the request state filter and the diff layout. A recessed `bg` track with a
 hairline `border`; the chosen segment is raised (`elevated`, restrained edge and micro-shadow),
 with an accent baseline and `text`,
-the others `text-dim` brightening on hover. Each segment is a radio button for assistive
-technology and shows the focus ring.
+the others `text-dim` brightening on hover. Each segment is a radio button inside the control's
+radio group for assistive technology and shows the focus ring.
 
 ### Switch and checkbox
 
-On/off settings use `widgets::switch`: a 40×24 track, `bg` with a `control-border` outline when off
+On/off settings use `kit::toggle::Switch`: a 40×24 track, `bg` with a `control-border` outline when off
 and the `button` colour when on, with an 18-point thumb that slides (`FAST`). Checkboxes in forms
-use `widgets::checkbox`: an 18-point square, radius 4, filled with `button` and an `on-button` tick
+use `kit::toggle::Checkbox`: an 18-point square, radius 4, filled with `button` and an `on-button` tick
 when checked. Both carry their name for assistive technology and show the focus ring.
 
 ### Scroll edges
 
-Lists that scroll inside a fixed area (the command palette, the cheatsheet) fade their top and
-bottom 12 points into the surface, at 85% strength, where more content lies beyond, so a cut row reads
-as "more" (`widgets::scroll_fade`). The palette's list also shows whole rows only. A scrollbar's handle
-is never shorter than 32 points, so a long document's stays easy to see and grab.
+Bodies that scroll inside a card (the command palette, the cheatsheet, dialog bodies) are
+`kit::overlay::scroll_body`: they fade their top and bottom 12 points into the card's ground, at 85%
+strength, where more content lies beyond, so a cut row reads as "more" (`kit::paint::scroll_fade`);
+their scrollbar stands 2 points in from the card's edge; and once they overflow, 8 points of room
+follow the last line so it scrolls clear of the edge. The ground is `kit::overlay::ground`, the fill
+the layer really has (the translucent overlay over glass, else the opaque overlay), so the fades and
+row washes match the card in both. The palette opens on whole entries, its group headings counted.
+A scrollbar's handle is never shorter than 32 points, so a long document's stays easy to see and
+grab. Scroll bars are a 4-point handle in the text colour: floating ones appear at 45% while the
+area is hovered; code, diff and detail boxes (`theme::solid_scroll`) keep theirs visible at 45%,
+with its own 8-point lane beside the content, and every handle goes to 75% while hovered or dragged.
+The commit composer's fields use the solid bars too, never egui's full-colour slab.
+
+Two edges fade further, at full strength, because what they cut is larger than a list row: a
+Settings page fades into its card over 28 points (`XL + XS`, a line of row text) where more of the
+page lies beyond, so the line the card's edge cuts through never reads half drawn; and the action
+bar, which scrolls sideways with no scroll bar, fades tools hidden past an edge over 48 points
+(`XXL + LG`, about a tool), opaque at the edge, so a cut tool dissolves instead of reading as a
+clipped word ("Mer").
+
+### Banner and callout
+
+`kit::surface::Banner` is the one repository-state notice at the top of a view (a merge, rebase or
+cherry-pick in progress): the tone's tint over the chrome, a seam in the tone, icon, title and body
+left, and up to two `Sm` ghost actions right. Each action is a `NoticeAction`: a label, an optional
+glyph and its tone (Abort's `danger` circle), and, when unavailable, disabled with the reason on
+hover ("Resolve the 2 conflicts first"), so History, Changes and Requests share one layout.
+`Callout` is the inline note: tint, icon, optional title, wrapped text and up to two actions under
+it, their labels in line with the text (`Callout::show_actions` reports a click). Screen readers
+hear it as a group named for its tone (Note, Success, Warning, Error) holding the title, text and
+actions once each; the icon is painted, never spoken. `Card::compact`
+gives picture-led cards (the settings theme cards) `SM` padding instead of `card_pad`.
+
+### Document tabs
+
+`kit::tabs::DocTabs` are the repository tabs in the title bar (spec 4.8): 30 / 24 points tall,
+100 to 220 wide, padding 10 left and 6 right, 7 between icon, name, counts and close. The active
+tab is the `tab` fill with its 1 pt `tab_edge` ring (and `Elevation::Tab` in Deeper); the others
+are transparent until hovered (`hover`, label to `text`). A folder icon (a spinner while the
+repository works), the name ellipsised, ahead/behind `↑n ↓n` in mono `accent`, and a close button
+on hover and on the active tab; a middle click closes too, and the tooltip gives the path and the
+switching shortcut. Tabs that need more room than they have scroll sideways (the wheel scrolls
+them) and fade 16 points into the deck at an edge that hides more; the active tab scrolls into view
+when it changes. A closed tab collapses to nothing over `TAB_CLOSE` while its neighbours slide in.
+AccessKit: a `TabList` named "Repositories", a `Tab` per tab with its selected state, and the close
+button named "Close <name>".
 
 ### Illustrations
 
@@ -411,6 +512,10 @@ still; reduce motion shows it finished.
 
 ### Context menu
 
+A secondary click opens a context menu at the pointer; Shift+F10 opens the focused row's below it
+with its first available item focused (`kit::menu::context`). In an open menu Up, Down, Home and
+End move between the items and wrap, nothing behind it moves, and Escape gives focus back to the
+row (the Menu key is not reported by the windowing layer). Screen readers hear a menu of its items.
 An opened submenu item uses the same neutral surface as a hovered menu item.
 Reset choices put the mode name in semibold type above a dim description, with destructive
 Hard reset marked in danger colour and confirmed before it runs.
@@ -423,24 +528,32 @@ handle therefore get the same colour without needing an account lookup. At these
 one larger initial for legibility; larger circles can show two. Account pictures fill the same
 circle, with initials while unavailable or downloads are
 disabled. History and commit details share a twelve-hour local cache; a failed refresh retains
-the last picture.
+the last picture, and an author without a picture keeps initials (never a generated pattern).
 
 ### Toast
 
-`elevated` cards share a bounded bottom-right scroll stack, at most 408 points wide, so five
-errors remain reachable even in a compact zoomed window. Newest notices lead the stack. Titles
-truncate without displacing Close. Errors stay until dismissed, offer Close and
-Copy, and keep raw output in a scrollable monospace Details disclosure. Known failures lead
-with a plain explanation. A rejected push offers Pull for its originating repository; account
-failures offer Accounts. Other toasts dismiss on a card click or expire after four seconds.
-The stack retains five notices; arrivals and exits fade without shifting card geometry.
+Overlay cards (glass with Translucent surfaces on) share a bounded bottom-right scroll stack, at
+most 408 points wide, so five errors remain reachable even in a compact zoomed window. Newest
+notices lead the stack. Titles truncate without displacing Close. Errors stay until dismissed,
+offer Close and Copy, and keep raw output in a scrollable monospace Details disclosure. Known
+failures lead with a plain explanation; any other error shows git's first line under its title,
+and Details only when git said more. Screen readers hear an error as an alert with its message. A
+rejected push offers Pull for its originating repository;
+account failures offer Accounts. Other toasts dismiss on a card click or after four seconds, which
+run only while the pointer is off the stack and the window has focus. The stack retains five
+notices, and a sixth pushes out the oldest one that is not an error; a card enters from the right and leaves to the right as it fades, and the cards above one
+that left slide into its place (`TOAST_SHIFT`, instant with reduced motion).
 
 ### Command palette
 
 Placed near the top of the window, up to 620 points wide, `radius-lg`, overlay elevation. Its
 height stays inside the viewport. A search field at the top, then scrollable results: icon, command name with matched characters in `accent`, and
-the shortcut right-aligned in `text-faint`. Up/Down move, Enter runs, Esc closes. Branch names
-appear as "Checkout <branch>" entries.
+the shortcut right-aligned in `text-faint`. Up/Down move, Enter runs, Esc closes. It is a modal
+dialog named "Command palette" (the cheatsheet: "Keyboard shortcuts"): Tab stays in its search,
+the results are a list box whose highlighted entry the search reports as active, and closing gives
+focus back to what had it. Branch names
+appear as "Checkout <branch>" entries. Under Appearance, besides the themes, it sets Style,
+Density, Translucent surfaces (On only where it can work) and Motion, as Settings does.
 
 Field placeholders end in an ellipsis when they ask the user to act (for example, "Search
 shortcuts…"); example values and field names do not.
@@ -452,16 +565,24 @@ while their labels and shortcuts remain discoverable in tooltips and the palette
 
 ### Dialog
 
-Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, bounded by the viewport. Title, body, then right-aligned
-buttons: secondary (outlined) then primary (the solid `button` fill, the same widget everywhere,
-with a focus ring). Destructive confirmations use a
-solid `danger` primary button (`widgets::danger_primary_button`, its text white or black by contrast
+Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, centred and no taller than
+fits between the tab strip and the status bar (`kit::overlay::modal_room`, which the settings
+screen may take too). Title, body (a `scroll_body` when it overflows), then right-aligned `Md`
+buttons as in the approved preview: secondary (outlined) then primary (the solid `button` fill,
+the same widget everywhere, with a focus ring). Tab reaches the footer's buttons in reading order,
+left to right; a choice between two equal answers (crash reports) is two Secondary buttons with no
+Enter default and no initial focus. Destructive confirmations use a
+solid `danger` primary button (`kit::Button::danger`, its text white or black by contrast
 with the theme's `danger`) whose label names the action ("Delete branch", "Discard 3 files"), never
 "OK"; Cancel has the initial focus, so Enter does not confirm a destructive dialog unless the button
 has focus. A choice that is riskier than the main one (trusting a whole folder) is a quiet link in
 `warning` with a line saying what it covers, never a second full-width button. Informational
 destinations (About: What's new, Releases, the legal texts) are text links in `accent`, with one
 primary button for the real action.
+
+The legal reader (`views/dialogs/reader.rs`) opens each document at the top every time it opens,
+the first-start consent included; while it stays open, each document keeps its place as you
+switch between the Terms and the Privacy Policy.
 
 The merge dialog explains every merge mode beside its radio choice so they can be compared before
 selection. The sentence below the choices still names the exact branches affected by the selected
@@ -535,3 +656,19 @@ Update progress and completion dialogs keep their action buttons in a content-he
 
 Narrow Settings controls occupy a content-height row below their help. Notification dismiss
 controls also use bounded rows so successive frames cannot grow the notification beyond the viewport.
+
+### Screen readers
+
+What AccessKit reports is part of each component, checked by tests that read a frame's nodes.
+A control is named by what it does, once: a card or row names itself and hides the text drawn
+inside it (the welcome quick actions give their help as the description and their keys as the
+keyboard shortcut). Icon glyphs are never spoken (`commit_detail::without_icons` strips the
+private-use characters and hides a label that is only a glyph); counts read as words ("2 ahead,
+1 behind origin/main"). A disabled button adds ", unavailable" to its name and its reason as the
+description (`commit_detail::say_unavailable`), because the Linux AT-SPI adapter reports every
+button as enabled. Diff lines read as "Added line 12: …", "Removed line 4: …" or "Line 7: …"
+(pickable ones as selectable, with their picked state), hunk headers as "Hunk 2: @@ … @@", and
+the resolver's code blocks by name (Current version, Incoming version, Ancestor, Result,
+Unchanged lines 4 to 9) with their first 100 lines as the value. The window is named
+"<repository> — Canopy". Keyboard focus is never out of sight: a Settings page scrolls to the
+control Tab moves onto.

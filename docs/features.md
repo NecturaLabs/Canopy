@@ -106,6 +106,7 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Image diff | Planned | Yes | Yes | ? |
 | Ignore whitespace, context lines setting | Unreleased | Yes | Yes | Yes |
 | Commit composer with summary counter; follows the file lists, says why Commit is disabled | Done | Yes | Yes | Partial |
+| Unsent commit message kept when its tab closes, until the repository opens again (same session) | Unreleased | ? | ? | ? |
 | Amend | Done | Yes | Yes | Yes |
 | Commit signing (GPG/SSH) | Planned | Yes | Yes | Yes |
 | Commit message templates and linting | Planned | ? | Yes | ? |
@@ -152,14 +153,20 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Copy SHA or message | Done | Yes | Yes | Yes |
 | Tags: lightweight and annotated, delete, push | Done | Yes | Yes | Yes |
 | Stash: save (message, untracked), apply, pop, drop | Done | Yes | Yes | Yes |
+| Pop and drop act on the stash you picked, by its commit, even if the list changed | Unreleased | ? | ? | ? |
 | Patches: create and apply | Planned | Yes | ? | Yes |
 
 Requests supports Ctrl+Shift+A to approve and Ctrl+Shift+M to open the merge confirmation,
 with the same state and busy guards as the buttons.
 
+Without a GitHub or GitLab remote, the requests view offers Publish… for a repository with no
+remote and Add remote… for one whose remotes are elsewhere.
+
 Request list icons show lifecycle and draft state. Branches have a separate line with room
-reserved for the target. Check and review verdicts are loaded for the selected request's details;
-list summaries do not carry those verdicts. Bulk or bounded cached list badges remain planned.
+reserved for the target. The request list shows each request's checks (passed, failed, running)
+and review (approved, changes requested, and on GitHub review required) without opening it when
+Canopy has a token for the host; without a token a row shows them once the request was opened in
+the session.
 
 ## Interface
 
@@ -171,18 +178,22 @@ list summaries do not carry those verdicts. Bulk or bounded cached list badges r
 | Settings screen (appearance, Git, integrations, accounts, updates, privacy, keyboard; relative/calendar History dates with English or ISO calendar format) | Unreleased | ? | ? | ? |
 | Compact layouts and 80–160% interface zoom | Unreleased | ? | ? | ? |
 | Shared raised controls, larger input targets and visible keyboard focus | Unreleased | ? | ? | ? |
+| Keyboard-only use: one Tab stop per list with the arrows inside, Shift+F10 context menus, modal palette, cheatsheet and dialogs that give focus back | Unreleased | ? | ? | ? |
 | Native folder chooser without blocking the app | Unreleased | ? | ? | ? |
 | Configurable keybindings | Planned | ? | ? | ? |
 | Dark and light themes (two in v0.1, eight in `main`, one high-contrast) | Done | Yes | Yes | ? |
+| Appearance options: Style (Standard, Deeper), Density (Comfortable, Dense), Motion (match system, reduced, full); Translucent surfaces (off by default; menus, select lists, popovers, dialogs, toasts, the command palette and the cheatsheet) | Unreleased | ? | ? | ? |
+| Command palette entries for Style, Density, Translucent surfaces and Motion | Unreleased | ? | ? | ? |
 | Custom themes | Planned | No | Yes | No |
 | Confirmation for destructive operations | Done | Yes | Yes | Yes |
 | Toast notifications with git's error output and a viewport-bounded overflow stack | Done | ? | ? | ? |
 | Localisation | Planned | ? | ? | Yes |
 | Update check, which can be turned off (nothing is sent before you accept the Terms) | Unreleased | ? | ? | ? |
 | Opt-in, scrubbed crash reports | Unreleased | ? | ? | ? |
-| Screen reader support (AccessKit) | Planned | ? | ? | ? |
+| Screen reader basics (AccessKit): window named for the repository, diff lines and conflict code read, unavailable buttons say why, no icon glyphs read, Settings scrolls to the focused control | Unreleased | ? | ? | ? |
+| Full screen reader support (AccessKit) | Planned | ? | ? | ? |
 
-Author pictures are fetched after consent when enabled in Privacy, through the repository hosting worker. GitLab-provided Gravatar and Libravatar image URLs need no API keys. Pictures and failures are cached locally for 12 hours across restarts; failed refreshes retain the previous picture. Lookups take at most half of GitHub's anonymous request limit, and cache files unused for 30 days are deleted.
+Author pictures are fetched after consent when enabled in Privacy, through the repository hosting worker. GitLab-provided Gravatar and Libravatar image URLs need no API keys. Pictures, and authors without one, are cached locally for 12 hours across restarts; failed refreshes retain the previous picture. A private repository without a token, an unpushed commit or a lost connection no longer hides pictures, and GitLab authors without a picture keep their initials instead of a generated pattern. Lookups take at most half of GitHub's anonymous request limit, and cache files unused for 30 days are deleted.
 
 Request review and merge shortcuts use the selected request's refreshed details when available,
 matching the state displayed by the action buttons. Merge controls wrap within narrow panes.

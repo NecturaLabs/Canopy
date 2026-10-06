@@ -172,7 +172,7 @@ impl Plan {
         if artifact.url != archive_url {
             return Err(format!(
                 "the manifest points outside Canopy's releases: {}",
-                canopy_core::cli::redact_url(&artifact.url)
+                canopy_hosting::plain_text(&canopy_core::cli::redact_url(&artifact.url), 200)
             ));
         }
         let sha256 = artifact.sha256.clone().unwrap_or_default();
@@ -515,7 +515,7 @@ fn swap_in(
                 previous,
                 &[],
                 &moved_aside,
-                format!("could not move {} aside: {e}", entry.display()),
+                &format!("could not move {} aside: {e}", entry.display()),
             ));
         }
         moved_aside.push(name.to_owned());
@@ -532,7 +532,7 @@ fn swap_in(
                 previous,
                 &moved_in,
                 &moved_aside,
-                format!("could not move {} into place: {e}", entry.display()),
+                &format!("could not move {} into place: {e}", entry.display()),
             ));
         }
         moved_in.push(name.to_owned());
@@ -547,7 +547,7 @@ fn rollback(
     previous: &Path,
     moved_in: &[std::ffi::OsString],
     moved_aside: &[std::ffi::OsString],
-    why: String,
+    why: &str,
 ) -> String {
     let mut ok = true;
     for name in moved_in {
@@ -697,6 +697,10 @@ fn integrate(root: &Path, build: u64, old: &Receipt, notes: &mut Vec<String>) {
 
 /// Refreshes the desktop and icon caches that already exist, the way the installer does; the
 /// entry declares no MIME types, and running either tool where there is no cache would create one.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "runs the desktop's cache tools, as the installer does"
+)]
 fn refresh_desktop_caches(receipt: &Receipt) {
     let run = |program: &str, args: &[&std::ffi::OsStr]| {
         let _ = Command::new(program)
@@ -756,11 +760,15 @@ struct Lock(PathBuf);
 impl Lock {
     fn take(root: &Path) -> Result<Self, String> {
         let path = root.join(".lock");
-        fs::create_dir(&path).map_err(|_| {
-            format!(
-                "another Canopy install or update is running (remove {} if it is not)",
-                path.display()
-            )
+        fs::create_dir(&path).map_err(|e| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                format!(
+                    "another Canopy install or update is running (remove {} if it is not)",
+                    path.display()
+                )
+            } else {
+                io_err("could not create", &path, &e)
+            }
         })?;
         Ok(Self(path))
     }
@@ -807,6 +815,10 @@ fn unique_name(prefix: &str) -> String {
 
 /// The installer script of `plan`'s release, when it can be trusted: listed in the release's
 /// SHA256SUMS with the digest it has, headed `# canopy-installer` and passing `sh -n`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "checks the installer script with `sh -n`"
+)]
 fn fetch_uninstaller(plan: &Plan, work: &Path) -> Result<PathBuf, String> {
     let sums = updates::download_bytes(&format!("{}/SHA256SUMS", plan.release_url), MAX_SCRIPT)
         .map_err(|e| format!("could not read the release's checksums: {e}"))?;
@@ -942,6 +954,7 @@ fn tail(output: &[u8]) -> String {
 }
 
 /// Runs the one-line installer from `feed` pinned to `build`.
+#[expect(clippy::disallowed_methods, reason = "runs the release's installer")]
 pub fn install_with_installer(
     feed: &str,
     build: u64,
@@ -1038,16 +1051,22 @@ pub fn request_restart(exe: PathBuf) {
 /// Starts the program a restart was requested for, with the arguments this run had. Called after
 /// the window closed, so the new Canopy reads the settings this one saved.
 pub fn run_requested_restart() {
+    if let Some((exe, Err(e))) = start_requested_restart() {
+        tracing::warn!("could not restart into {}: {e}", exe.display());
+    }
+}
+
+/// [`run_requested_restart`]'s work: the program asked for and its process, or why it did not
+/// start; `None` when no restart was asked for.
+#[expect(clippy::disallowed_methods, reason = "starts the new Canopy")]
+fn start_requested_restart() -> Option<(PathBuf, io::Result<std::process::Child>)> {
     let exe = RESTART
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take();
-    if let Some(exe) = exe {
-        let args: Vec<_> = std::env::args_os().skip(1).collect();
-        if let Err(e) = Command::new(&exe).args(args).spawn() {
-            tracing::warn!("could not restart into {}: {e}", exe.display());
-        }
-    }
+        .take()?;
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let child = Command::new(&exe).args(args).spawn();
+    Some((exe, child))
 }
 
 /// Names of `dir`'s entries, for tests and diagnostics.

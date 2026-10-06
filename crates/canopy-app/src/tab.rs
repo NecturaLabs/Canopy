@@ -6,12 +6,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use canopy_core::forge::Forge;
-use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, RepoSnapshot};
+use canopy_core::{CommitDetails, DiffSource, FileDiff, FileEntry, Oid, PullConfig, RepoSnapshot};
 use canopy_hosting::{MergeMethod, RequestDetails, RequestSummary, StateFilter};
 
 use crate::highlight::Highlights;
 use crate::hosting::{HostAction, HostEvent, HostJob, HostWorker, TokenSource};
-use crate::settings::DiffPrefs;
+use crate::settings::{DiffPrefs, PullChoice};
 use crate::worker::{DiffKey, Event, Job, Op, OpKind, Worker};
 
 /// The main views of a repository.
@@ -118,7 +118,7 @@ impl Resolver {
             editing: None,
             expanded: HashSet::new(),
             show_base: false,
-            layout: Default::default(),
+            layout: crate::views::resolve::Layout::default(),
         }
     }
 
@@ -143,7 +143,14 @@ impl Resolver {
             return;
         }
         let start = self.focus.min(n - 1);
-        let step = |i: usize| (i as isize + delta).rem_euclid(n as isize) as usize;
+        let shift = delta.unsigned_abs() % n;
+        let step = |i: usize| {
+            if delta < 0 {
+                (i + n - shift) % n
+            } else {
+                (i + shift) % n
+            }
+        };
         let mut i = step(start);
         for _ in 0..n {
             if self.choices.get(i).is_some_and(Option::is_none) {
@@ -191,7 +198,7 @@ impl Resolver {
         self.choices = choices;
         self.kind = kind;
         self.file = Some(file);
-        self.layout = Default::default();
+        self.layout = crate::views::resolve::Layout::default();
     }
 
     /// Clears the focused conflict's choice (and any hand edit of it).
@@ -241,12 +248,21 @@ pub struct Notice {
     pub body: String,
 }
 
+/// How the last announced operation ended, for the action bar to show on its tool for a moment.
+#[derive(Debug, Clone)]
+pub struct Finished {
+    /// The operation's label (`Op::label`).
+    pub label: String,
+    pub ok: bool,
+    pub at: Instant,
+}
+
 /// Pull or merge requests of the tab's forge.
 #[derive(Debug)]
 pub struct Requests {
     pub filter: StateFilter,
     /// Shared so a frame can hold the list while it mutates the tab, without copying it.
-    pub list: Option<Result<Arc<Vec<RequestSummary>>, String>>,
+    pub list: Option<Result<Arc<[RequestSummary]>, String>>,
     pub loading: bool,
     pub selected: Option<u64>,
     pub details: Option<Result<Arc<RequestDetails>, String>>,
@@ -256,6 +272,10 @@ pub struct Requests {
     pub comment: String,
     pub merge_method: MergeMethod,
     /// Where the token came from; `None` while unknown, `Some(None)` without a token.
+    #[expect(
+        clippy::option_option,
+        reason = "not yet known, known to be absent, or known, as the doc comment says"
+    )]
     pub token: Option<Option<TokenSource>>,
     /// When the list was last loaded.
     pub loaded_at: Option<Instant>,
@@ -309,6 +329,47 @@ impl SnapIndex {
     }
 }
 
+/// The icons a repository's tab can show (Settings → This repository): a stored key, the glyph
+/// and its name. The first is the default.
+pub const TAB_ICONS: &[(&str, &str, &str)] = &[
+    ("folder", egui_phosphor::regular::FOLDER_SIMPLE, "Folder"),
+    ("code", egui_phosphor::regular::CODE, "Code"),
+    (
+        "terminal",
+        egui_phosphor::regular::TERMINAL_WINDOW,
+        "Terminal",
+    ),
+    ("globe", egui_phosphor::regular::GLOBE, "Web"),
+    ("mobile", egui_phosphor::regular::DEVICE_MOBILE, "Mobile"),
+    ("database", egui_phosphor::regular::DATABASE, "Data"),
+    ("cube", egui_phosphor::regular::CUBE, "Package"),
+    ("book", egui_phosphor::regular::BOOK_OPEN, "Docs"),
+    ("palette", egui_phosphor::regular::PALETTE, "Design"),
+    ("game", egui_phosphor::regular::GAME_CONTROLLER, "Game"),
+    ("flask", egui_phosphor::regular::FLASK, "Experiment"),
+    ("rocket", egui_phosphor::regular::ROCKET_LAUNCH, "Launch"),
+    ("briefcase", egui_phosphor::regular::BRIEFCASE, "Work"),
+    ("house", egui_phosphor::regular::HOUSE, "Personal"),
+    ("star", egui_phosphor::regular::STAR, "Favourite"),
+    ("lightning", egui_phosphor::regular::LIGHTNING, "Fast"),
+];
+
+/// The glyph for an icon key; the folder for none or an unknown one.
+pub fn tab_icon(key: Option<&str>) -> &'static str {
+    TAB_ICONS
+        .iter()
+        .find(|(k, _, _)| Some(*k) == key)
+        .map_or(TAB_ICONS[0].1, |(_, glyph, _)| glyph)
+}
+
+/// The folder's name, which a tab shows unless the repository has a name of its own.
+pub fn folder_name(path: &std::path::Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
+}
+
 /// One repository tab.
 ///
 /// Large data from the worker (snapshot, commit details, diff, conflict file) is held in `Arc`s:
@@ -318,7 +379,10 @@ pub struct RepoTab {
     pub path: PathBuf,
     pub identity: Option<canopy_core::identity::Identity>,
     pub identity_error: Option<String>,
+    /// What the tab says: the repository's own name from Settings, else its folder's.
     pub name: String,
+    /// The tab's icon ([`TAB_ICONS`]).
+    pub icon: &'static str,
     pub worker: Worker,
     pub snap: Option<Arc<RepoSnapshot>>,
     /// Derived from `snap` when it arrives.
@@ -363,6 +427,15 @@ pub struct RepoTab {
     /// Move keyboard focus to the commit summary next frame.
     pub focus_summary: bool,
     pub running: Option<String>,
+    pub finished: Option<Finished>,
+    /// How this repository pulls by Canopy's settings (kept current by the app every frame).
+    pub pull: PullChoice,
+    /// What the repository's configuration asks a pull to do on the current branch; `None` until
+    /// it is read, or when it cannot be.
+    pub pull_config: Option<PullConfig>,
+    /// The branch `pull_config` was last asked for (`None`: detached or unborn), once asked.
+    pull_config_asked: bool,
+    pull_config_branch: Option<String>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
     pub progress: Option<String>,
@@ -398,7 +471,7 @@ impl RepoTab {
         commit_limit: usize,
         diff_prefs: DiffPrefs,
     ) -> Self {
-        let worker = Worker::spawn(path.clone(), ctx.clone());
+        let worker = Worker::spawn(path.clone(), ctx);
         worker.send(Job::Refresh(commit_limit));
         Self::with_worker(path, commit_limit, diff_prefs, worker)
     }
@@ -409,15 +482,13 @@ impl RepoTab {
         diff_prefs: DiffPrefs,
         worker: Worker,
     ) -> Self {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        let name = folder_name(&path);
         Self {
             path,
             identity: None,
             identity_error: None,
             name,
+            icon: tab_icon(None),
             worker,
             snap: None,
             snap_index: SnapIndex::default(),
@@ -449,6 +520,11 @@ impl RepoTab {
             amend: false,
             focus_summary: false,
             running: None,
+            finished: None,
+            pull: PullChoice::default(),
+            pull_config: None,
+            pull_config_asked: false,
+            pull_config_branch: None,
             force_delete_offer: None,
             progress: None,
             commit_limit,
@@ -461,7 +537,7 @@ impl RepoTab {
             requests: Requests::default(),
             downloads_refused: None,
             trust_version: 0,
-            avatars: Default::default(),
+            avatars: crate::avatars::Avatars::default(),
             last_fetch: Instant::now(),
         }
     }
@@ -487,6 +563,15 @@ impl RepoTab {
     /// Requests a full refresh.
     pub fn refresh(&self) {
         self.worker.send(Job::Refresh(self.commit_limit));
+    }
+
+    /// The strategy the Pull tool uses, and the configuration it came from when Canopy follows
+    /// a strategy the user's git configuration sets.
+    pub fn pull_default(&self) -> (canopy_core::PullStrategy, Option<&PullConfig>) {
+        let configured = self.pull_config.as_ref().filter(|c| c.strategy.is_some());
+        let strategy = self.pull.resolve(configured.and_then(|c| c.strategy));
+        let from_config = configured.filter(|_| self.pull.follow_config);
+        (strategy, from_config)
     }
 
     /// The repository has no remote at all.
@@ -558,7 +643,7 @@ impl RepoTab {
             return;
         }
         self.requests = Requests::default();
-        self.avatars = Default::default();
+        self.avatars = crate::avatars::Avatars::default();
         let trusted = self.trusted_gitlab_hosts.clone();
         self.host = want.map(|f| HostWorker::spawn(f, saved_token, trusted, ctx.clone()));
         self.load_requests();
@@ -608,7 +693,7 @@ impl RepoTab {
     }
 
     /// Runs an API action.
-    pub fn host_job(&mut self, job: HostJob) {
+    pub fn host_job(&self, job: HostJob) {
         if let Some(h) = &self.host {
             h.send(job);
         }
@@ -616,8 +701,8 @@ impl RepoTab {
 
     /// Toggles the on-demand history filter.
     pub fn filter_history(&mut self, ctx: &egui::Context) {
-        let list_visible = !self.history_layout.expanded
-            && !(self.history_layout.compact && self.history_layout.compact_details);
+        let list_visible = !(self.history_layout.expanded
+            || (self.history_layout.compact && self.history_layout.compact_details));
         if self.history_filter_open && self.view == View::History && list_visible {
             self.close_history_filter(ctx);
             return;
@@ -717,7 +802,7 @@ impl RepoTab {
 
     fn diff_key(&self, sel: &FileSelection) -> DiffKey {
         DiffKey {
-            source: sel.source.clone(),
+            source: sel.source,
             path: sel.entry.path.clone(),
             old_path: sel.entry.old_path.clone(),
             conflicted: sel.conflicted,
@@ -789,9 +874,8 @@ impl RepoTab {
             .and_then(|s| rows.iter().position(|&i| snap.commits[i].oid == s));
         let last = rows.len() - 1;
         let next = match (pos, delta) {
-            (_, isize::MIN) => 0,
             (_, isize::MAX) => last,
-            (None, _) => 0,
+            (_, isize::MIN) | (None, _) => 0,
             (Some(p), d) => p.saturating_add_signed(d).min(last),
         };
         let oid = snap.commits[rows[next]].oid;
@@ -923,7 +1007,14 @@ impl RepoTab {
                     {
                         self.worker.send(Job::MergeMessage);
                     }
-                    self.name = s.name.clone();
+                    // The pull settings depend on the current branch: read them again when it
+                    // changes (and for the first snapshot).
+                    if !self.pull_config_asked || self.pull_config_branch != s.head.branch {
+                        self.pull_config_asked = true;
+                        self.pull_config_branch.clone_from(&s.head.branch);
+                        self.worker.send(Job::PullConfig);
+                    }
+                    self.name.clone_from(&s.name);
                     let head = s.head.oid;
                     let had = self.snap.is_some();
                     self.snap_index = SnapIndex::new(&s);
@@ -1055,10 +1146,25 @@ impl RepoTab {
                         && self.commit_body.trim().is_empty()
                     {
                         let mut parts = message.splitn(2, '\n');
-                        self.commit_summary = parts.next().unwrap_or_default().trim().to_owned();
-                        self.commit_body = parts.next().unwrap_or_default().trim().to_owned();
+                        parts
+                            .next()
+                            .unwrap_or_default()
+                            .trim()
+                            .clone_into(&mut self.commit_summary);
+                        parts
+                            .next()
+                            .unwrap_or_default()
+                            .trim()
+                            .clone_into(&mut self.commit_body);
                     }
                 }
+                Event::PullConfig(result) => match result {
+                    Ok(config) => self.pull_config = Some(config),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "pull settings not read");
+                        self.pull_config = None;
+                    }
+                },
                 Event::HeadMessage(m) => {
                     if !self.amend
                         || self
@@ -1071,8 +1177,16 @@ impl RepoTab {
                         continue;
                     }
                     let mut parts = m.splitn(2, '\n');
-                    self.commit_summary = parts.next().unwrap_or("").trim().to_owned();
-                    self.commit_body = parts.next().unwrap_or("").trim().to_owned();
+                    parts
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .clone_into(&mut self.commit_summary);
+                    parts
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .clone_into(&mut self.commit_body);
                 }
                 Event::SquashMessage(message) => {
                     if !self.amend
@@ -1084,8 +1198,16 @@ impl RepoTab {
                         && self.commit_body.trim().is_empty()
                     {
                         let mut parts = message.splitn(2, '\n');
-                        self.commit_summary = parts.next().unwrap_or_default().trim().to_owned();
-                        self.commit_body = parts.next().unwrap_or_default().trim().to_owned();
+                        parts
+                            .next()
+                            .unwrap_or_default()
+                            .trim()
+                            .clone_into(&mut self.commit_summary);
+                        parts
+                            .next()
+                            .unwrap_or_default()
+                            .trim()
+                            .clone_into(&mut self.commit_body);
                     }
                 }
                 Event::OpStarted(label) => {
@@ -1127,6 +1249,11 @@ impl RepoTab {
                                 self.last_fetch = Instant::now();
                             }
                             if announce {
+                                self.finished = Some(Finished {
+                                    label: label.clone(),
+                                    ok: true,
+                                    at: Instant::now(),
+                                });
                                 notices.push(Notice {
                                     ok: true,
                                     title: format!("{label} — done"),
@@ -1139,11 +1266,18 @@ impl RepoTab {
                             OpKind::SafeDelete(name) if e.contains("not fully merged") => {
                                 self.force_delete_offer = Some(name.clone());
                             }
-                            _ => notices.push(Notice {
-                                ok: false,
-                                title: format!("{label} failed"),
-                                body: e,
-                            }),
+                            _ => {
+                                self.finished = Some(Finished {
+                                    label: label.clone(),
+                                    ok: false,
+                                    at: Instant::now(),
+                                });
+                                notices.push(Notice {
+                                    ok: false,
+                                    title: format!("{label} failed"),
+                                    body: e,
+                                });
+                            }
                         },
                     }
                 }
@@ -1189,7 +1323,7 @@ impl RepoTab {
                                 .as_ref()
                                 .is_ok_and(|l| l.iter().any(|r| r.number == n))
                         });
-                        self.requests.list = Some(result.map(Arc::new));
+                        self.requests.list = Some(result.map(Arc::from));
                         if !keep {
                             self.requests.selected = None;
                             self.requests.details = None;
@@ -1321,6 +1455,10 @@ mod tests {
     const TWO: &str = "a\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nb\n<<<<<<< ours\n1\n=======\n2\n>>>>>>> theirs\n";
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test builds its repository with libgit2"
+    )]
     fn squash_message_prefills_a_normal_commit() -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
         let dir = tempfile::tempdir()?;
@@ -1598,7 +1736,7 @@ mod tests {
         let (worker, events, _jobs) = Worker::detached();
         tab.worker = worker;
         let key = DiffKey {
-            source: canopy_core::DiffSource::Unstaged,
+            source: DiffSource::Unstaged,
             path: "a.rs".into(),
             old_path: None,
             conflicted: false,
@@ -1608,14 +1746,14 @@ mod tests {
         };
         tab.pending_diff = Some(key.clone());
         let diff = |additions| {
-            Arc::new(canopy_core::FileDiff {
+            Arc::new(FileDiff {
                 path: "a.rs".into(),
                 additions,
                 ..Default::default()
             })
         };
         let (old, new) = (diff(1), diff(2));
-        let highlights = Arc::new(crate::highlight::Highlights {
+        let highlights = Arc::new(Highlights {
             lines: Vec::new(),
             language: "Rust".into(),
         });
@@ -1905,7 +2043,7 @@ mod tests {
         tab.file = Some(open_unstaged_file());
         tab.downloads_refused = Some("origin".into());
         let key = DiffKey {
-            source: canopy_core::DiffSource::Unstaged,
+            source: DiffSource::Unstaged,
             path: "a.rs".into(),
             old_path: None,
             conflicted: false,
@@ -1924,7 +2062,7 @@ mod tests {
             tab.downloads_refused.is_some(),
             "the diff error still needs the chip"
         );
-        let diff = Arc::new(canopy_core::FileDiff {
+        let diff = Arc::new(FileDiff {
             path: "a.rs".into(),
             ..Default::default()
         });
@@ -1985,9 +2123,10 @@ mod perf {
     use super::*;
     use canopy_core::diff::{DiffLine, Hunk};
     use canopy_core::{
-        BranchInfo, ChangeKind, CommitDetails, ConflictFile, GraphRow, LineEnd, LineKind,
-        RemoteBranchInfo, RemoteInfo, Signature, TagInfo, WorkingStatus,
+        BranchInfo, ChangeKind, ConflictFile, GraphRow, LineEnd, LineKind, RemoteBranchInfo,
+        RemoteInfo, Signature, TagInfo, WorkingStatus,
     };
+    use std::fmt::Write as _;
 
     fn oid(i: usize) -> Oid {
         let mut b = [0u8; 20];
@@ -1999,7 +2138,7 @@ mod perf {
         Signature {
             name: format!("Author {}", i % 37),
             email: format!("a{}@example.com", i % 37),
-            time: 1_700_000_000 - i as i64 * 600,
+            time: 1_700_000_000 - i64::try_from(i).expect("a small index") * 600,
             offset_minutes: 0,
         }
     }
@@ -2138,15 +2277,15 @@ mod perf {
         let mut s = String::new();
         for c in 0..400 {
             for l in 0..20 {
-                s.push_str(&format!("common line {c}.{l}\n"));
+                let _ = writeln!(s, "common line {c}.{l}");
             }
             s.push_str("<<<<<<< HEAD\n");
             for l in 0..8 {
-                s.push_str(&format!("ours {c}.{l}\n"));
+                let _ = writeln!(s, "ours {c}.{l}");
             }
             s.push_str("=======\n");
             for l in 0..8 {
-                s.push_str(&format!("theirs {c}.{l}\n"));
+                let _ = writeln!(s, "theirs {c}.{l}");
             }
             s.push_str(">>>>>>> feature\n");
         }
@@ -2154,6 +2293,7 @@ mod perf {
     }
 
     /// Mean milliseconds per frame over `frames` frames, scrolling at `pointer`.
+    #[expect(clippy::cast_precision_loss, reason = "a frame count far below 2^52")]
     fn measure(
         ctx: &egui::Context,
         frames: usize,
@@ -2197,8 +2337,12 @@ mod perf {
             .default_size(250.0)
             .show(ui, |ui| crate::views::sidebar::show(ui, tab, &mut actions));
         egui::CentralPanel::default().show(ui, |ui| match tab.view {
-            View::History => crate::views::history::show(ui, tab, settings, &mut actions),
-            _ => crate::views::changes::show(ui, tab, &mut actions),
+            View::History => {
+                crate::views::history::show(ui, tab, settings, &mut actions);
+            }
+            _ => {
+                crate::views::changes::show(ui, tab, &mut actions);
+            }
         });
     }
 
@@ -2207,7 +2351,11 @@ mod perf {
     fn frame_cost() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        crate::ui::theme::apply(&ctx, crate::ui::theme::ThemeId::Midnight, true);
+        crate::ui::theme::apply(
+            &ctx,
+            crate::ui::theme::ThemeId::Midnight,
+            crate::ui::theme::Appearance::STILL,
+        );
         let settings = crate::settings::Settings::default();
         let dir = tempfile::tempdir().expect("tempdir");
         let mut tab = RepoTab::new(dir.path().to_path_buf(), &ctx, 2000, DiffPrefs::default());
@@ -2239,12 +2387,12 @@ mod perf {
             entry: file.clone(),
             conflicted: false,
         });
-        tab.diff = Some(diff.clone().into());
+        tab.diff = Some(diff.into());
         let history = measure(&ctx, frames, egui::pos2(900.0, 200.0), |ui| {
-            layout(ui, &mut tab, &settings)
+            layout(ui, &mut tab, &settings);
         });
         let history_diff = measure(&ctx, frames, egui::pos2(1100.0, 700.0), |ui| {
-            layout(ui, &mut tab, &settings)
+            layout(ui, &mut tab, &settings);
         });
 
         // Changes: 5000 unstaged files and the 50k-line diff, unified then side by side.
@@ -2255,11 +2403,11 @@ mod perf {
             conflicted: false,
         });
         let unified = measure(&ctx, frames, egui::pos2(1100.0, 500.0), |ui| {
-            layout(ui, &mut tab, &settings)
+            layout(ui, &mut tab, &settings);
         });
         tab.split_diff = true;
         let split = measure(&ctx, frames, egui::pos2(1100.0, 500.0), |ui| {
-            layout(ui, &mut tab, &settings)
+            layout(ui, &mut tab, &settings);
         });
         tab.split_diff = false;
 
@@ -2275,7 +2423,7 @@ mod perf {
             conflicted: true,
         });
         let resolver = measure(&ctx, frames, egui::pos2(1100.0, 500.0), |ui| {
-            layout(ui, &mut tab, &settings)
+            layout(ui, &mut tab, &settings);
         });
 
         println!(

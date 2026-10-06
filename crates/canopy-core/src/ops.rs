@@ -40,37 +40,57 @@ impl ResetMode {
     }
 }
 
-/// How `git pull` integrates the upstream branch when the repository does not configure
-/// `pull.rebase` itself.
+/// How `git pull` integrates the upstream branch.
+///
+/// Canopy always passes the chosen strategy to git (see [`PullStrategy::git_args`]), so `pull.rebase`, `branch.<name>.rebase`, `pull.ff` and
+/// `merge.ff` never decide what a pull does; [`Repo::pull_config`] reads them as the default a
+/// choice starts from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PullStrategy {
-    /// Merge the upstream branch (`--no-rebase`), fast-forwarding when possible.
+    /// Merge the upstream branch, fast-forwarding when possible (`--no-rebase --ff`).
     #[default]
     Merge,
+    /// Merge the upstream branch with a merge commit even when it could fast-forward
+    /// (`--no-rebase --no-ff`), as `pull.ff=false` does.
+    MergeNoFastForward,
     /// Rebase local commits onto the upstream branch (`--rebase`).
     Rebase,
-    /// Only fast-forward; fail when the branches have diverged (`--ff-only`).
+    /// Rebase local commits and keep the merge commits among them (`--rebase=merges`).
+    RebaseMerges,
+    /// Only fast-forward; fail when the branches have diverged (`--no-rebase --ff-only`).
     FastForwardOnly,
 }
 
 impl PullStrategy {
     /// Every strategy, in menu order.
-    pub const ALL: [PullStrategy; 3] = [Self::Merge, Self::Rebase, Self::FastForwardOnly];
+    pub const ALL: [Self; 5] = [
+        Self::Merge,
+        Self::MergeNoFastForward,
+        Self::Rebase,
+        Self::RebaseMerges,
+        Self::FastForwardOnly,
+    ];
 
     /// Display name.
     pub fn label(self) -> &'static str {
         match self {
             Self::Merge => "Merge",
+            Self::MergeNoFastForward => "Merge, always with a merge commit",
             Self::Rebase => "Rebase",
+            Self::RebaseMerges => "Rebase, keeping merges",
             Self::FastForwardOnly => "Fast-forward only",
         }
     }
 
-    fn flag(self) -> &'static str {
+    /// The options `git pull` gets for this strategy. Each leaves no configuration value to
+    /// decide how to integrate or whether to fast-forward.
+    pub fn git_args(self) -> &'static [&'static str] {
         match self {
-            Self::Merge => "--no-rebase",
-            Self::Rebase => "--rebase",
-            Self::FastForwardOnly => "--ff-only",
+            Self::Merge => &["--no-rebase", "--ff"],
+            Self::MergeNoFastForward => &["--no-rebase", "--no-ff"],
+            Self::Rebase => &["--rebase"],
+            Self::RebaseMerges => &["--rebase=merges"],
+            Self::FastForwardOnly => &["--no-rebase", "--ff-only"],
         }
     }
 }
@@ -97,7 +117,7 @@ pub enum MergeMode {
 
 impl MergeMode {
     /// Every mode, in the order a picker shows them.
-    pub const ALL: [MergeMode; 4] = [
+    pub const ALL: [Self; 4] = [
         Self::Default,
         Self::NoFastForward,
         Self::FastForwardOnly,
@@ -156,8 +176,13 @@ impl HunkAction {
     }
 }
 
-/// Clones `url` into `dest`, reporting progress lines.
+/// Clones `url` into `dest`, reporting progress lines. A URL with credentials is refused
+/// ([`remote_url_problem`]): the clone would keep it as its `origin`.
 pub fn clone(url: &str, dest: &Path, progress: impl FnMut(&str)) -> Result<()> {
+    let url = url.trim();
+    if let Some(problem) = remote_url_problem(url) {
+        return Err(Error::Invalid(problem.into()));
+    }
     let dest_str = dest.to_string_lossy();
     cli::run_streaming(
         None,
@@ -165,6 +190,72 @@ pub fn clone(url: &str, dest: &Path, progress: impl FnMut(&str)) -> Result<()> {
         progress,
     )?;
     Ok(())
+}
+
+/// Whether a remote URL carries credentials.
+///
+/// Any user name in an `http(s)://` URL counts (it is usually a token), and a password
+/// (`user:secret@`) in any other URL with a scheme. An ssh user such as `git@github.com:o/r.git`
+/// or `ssh://git@host/r` is not a credential. Every spelling git accepts counts: extra slashes
+/// after `://` (`https:///token@host`), a `?` or `#` in the password, and a remote helper prefix
+/// (`http::https://token@host`).
+#[expect(
+    clippy::string_slice,
+    reason = "the range comes from cli::userinfo over the same text"
+)]
+pub fn url_has_credentials(url: &str) -> bool {
+    let Some((scheme, rest)) = url.trim().split_once("://") else {
+        return false;
+    };
+    let Some(user) = cli::userinfo(rest, char::is_whitespace) else {
+        return false;
+    };
+    let scheme = scheme.rsplit("::").next().unwrap_or(scheme);
+    let web = matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "http" | "https" | "ftp" | "ftps"
+    );
+    web || rest[user].contains(':')
+}
+
+/// Why `url` (trimmed) cannot be a remote's URL, or `None`.
+///
+/// A URL carrying credentials
+/// ([`url_has_credentials`]) would be stored in `.git/config` and shown wherever the URL is,
+/// while git asks for credentials through the credential helper anyway; one starting with `-`
+/// could be read as an option.
+pub fn remote_url_problem(url: &str) -> Option<&'static str> {
+    let url = url.trim();
+    if url.is_empty() {
+        Some("Enter the remote's URL.")
+    } else if url.starts_with('-') {
+        Some("A remote's URL cannot start with \"-\".")
+    } else if url_has_credentials(url) {
+        Some(
+            "Remove the user name and password from the URL: git asks for them when it needs them.",
+        )
+    } else {
+        None
+    }
+}
+
+/// The name's or else the URL's problem as an error.
+fn check_remote(name: &str, url: &str) -> Result<()> {
+    match remote_name_problem(name).or_else(|| remote_url_problem(url)) {
+        Some(problem) => Err(Error::Invalid(problem.into())),
+        None => Ok(()),
+    }
+}
+
+/// Why `name` cannot name a remote, or `None`: empty, or starting with `-` like an option.
+pub fn remote_name_problem(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        Some("Enter a name for the remote.")
+    } else if name.starts_with('-') {
+        Some("A remote's name cannot start with \"-\".")
+    } else {
+        None
+    }
 }
 
 /// Where [`Repo::checkout_request`] keeps the head of `remote_ref` (a full ref such as
@@ -518,19 +609,60 @@ impl Repo {
         self.git_cmd(&["stash", "drop", "-q", &r]).map(drop)
     }
 
-    /// Adds a remote.
+    /// Applies the stash whose commit is `oid`, wherever it now is in the list; `pop` also drops
+    /// it when it applied cleanly. A stash pushed or dropped since the user chose it cannot
+    /// shift the choice onto another.
+    pub fn stash_apply_commit(&self, oid: Oid, pop: bool) -> Result<()> {
+        let r = self.stash_ref(oid)?;
+        self.git_cmd(&["stash", if pop { "pop" } else { "apply" }, "-q", &r])
+            .map(drop)
+    }
+
+    /// Deletes the stash whose commit is `oid`, wherever it now is in the list.
+    pub fn stash_drop_commit(&self, oid: Oid) -> Result<()> {
+        let r = self.stash_ref(oid)?;
+        self.git_cmd(&["stash", "drop", "-q", &r]).map(drop)
+    }
+
+    /// `stash@{n}` for the stash whose commit is `oid` now, or an error when it is gone.
+    fn stash_ref(&self, oid: Oid) -> Result<String> {
+        let wanted = oid.to_string();
+        self.git_cmd(&["stash", "list", "--format=%H"])?
+            .lines()
+            .position(|line| line.trim() == wanted)
+            .map(|index| format!("stash@{{{index}}}"))
+            .ok_or_else(|| {
+                Error::invalid("That stash is no longer in the stash list. Refresh and try again.")
+            })
+    }
+
+    /// Adds the remote `name` fetching from `url` (trimmed). A name or URL that
+    /// [`remote_name_problem`] or [`remote_url_problem`] refuses, such as a URL with credentials,
+    /// is refused before git runs.
     pub fn add_remote(&self, name: &str, url: &str) -> Result<()> {
-        self.git_cmd(&["remote", "add", name, url]).map(drop)
+        let url = url.trim();
+        check_remote(name, url)?;
+        self.git_cmd(&["remote", "add", "--", name, url]).map(drop)
     }
 
     /// Removes a remote and its remote-tracking branches.
     pub fn remove_remote(&self, name: &str) -> Result<()> {
-        self.git_cmd(&["remote", "remove", name]).map(drop)
+        self.git_cmd(&["remote", "remove", "--", name]).map(drop)
+    }
+
+    /// Points the remote `name` at `url` (`git remote set-url`), refused as for
+    /// [`Repo::add_remote`].
+    pub fn set_remote_url(&self, name: &str, url: &str) -> Result<()> {
+        let url = url.trim();
+        check_remote(name, url)?;
+        self.git_cmd(&["remote", "set-url", "--", name, url])
+            .map(drop)
     }
 
     /// Fetches `remote`, or every remote when `None`, with tags. `prune` also deletes
     /// remote-tracking branches whose branch no longer exists on the remote (`--prune`); without
-    /// it, `fetch.prune` / `remote.<name>.prune` from the configuration still apply.
+    /// it `--no-prune` is passed, so `fetch.prune` / `remote.<name>.prune` in the configuration
+    /// do not prune either.
     pub fn fetch(
         &self,
         remote: Option<&str>,
@@ -538,32 +670,42 @@ impl Repo {
         progress: impl FnMut(&str),
     ) -> Result<String> {
         let mut args = vec!["fetch", "--progress", "--tags"];
-        if prune {
-            args.push("--prune");
-        }
+        args.push(if prune { "--prune" } else { "--no-prune" });
         match remote {
-            Some(r) => args.push(r),
+            Some(r) => args.extend(["--", r]),
             None => args.push("--all"),
         }
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }
 
-    /// Pulls into the current branch. When the configuration sets `pull.rebase`, git follows it
-    /// and `strategy` is ignored; otherwise `strategy` picks `--no-rebase`, `--rebase` or
-    /// `--ff-only`. The setting is read through the same `git` that pulls, since libgit2 does not
-    /// honour `GIT_CONFIG_GLOBAL` and could see a value that git does not.
+    /// Pulls into the current branch with exactly `strategy`: its options are always passed to
+    /// git, so the user's `pull.rebase`, `branch.<name>.rebase`, `pull.ff` and `merge.ff` cannot
+    /// change what happens (a bare `git pull` also refuses diverged branches when none of the
+    /// first three is set). [`Repo::pull_config`] reads those settings for a caller that wants
+    /// them as the default.
     pub fn pull(&self, strategy: PullStrategy, progress: impl FnMut(&str)) -> Result<String> {
         let mut args = vec!["pull", "--progress"];
-        let (code, _) = cli::run_answer(
-            self.workdir(),
-            &["config", "--get", "pull.rebase"],
-            b"",
-            &[0, 1],
-        )?;
-        if code == 1 {
-            args.push(strategy.flag());
-        }
+        args.extend(strategy.git_args());
         cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
+    /// Pulls with the strategy the user's git configuration asks for ([`Repo::pull_config`]),
+    /// else with `fallback`; either way the strategy is passed to git explicitly. A configuration
+    /// that cannot be read (a git older than 2.26 has no `--show-scope`, or a broken config file)
+    /// counts as asking for nothing: the pull itself then reports git's own error if it has one.
+    pub fn pull_default(
+        &self,
+        fallback: PullStrategy,
+        progress: impl FnMut(&str),
+    ) -> Result<String> {
+        let strategy = match self.pull_config() {
+            Ok(config) => config.strategy.unwrap_or(fallback),
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read the pull configuration");
+                fallback
+            }
+        };
+        self.pull(strategy, progress)
     }
 
     /// Pushes the current branch. Without an upstream, pushes to `origin` (or the only remote)

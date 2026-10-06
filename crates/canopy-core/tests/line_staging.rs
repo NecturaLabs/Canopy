@@ -4,7 +4,11 @@
 //! (`git add -p`, `git reset -p`, `git checkout -p` with `e`, turning unselected lines into
 //! context or deleting them as git's instructions say) on git 2.43.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)] // Test helpers may panic: that is a failed test.
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "helpers outside #[test] functions may panic too: that is a failed test"
+)]
 
 use std::fs;
 use std::path::Path;
@@ -13,6 +17,10 @@ use std::process::Command;
 use canopy_core::ops::HunkAction;
 use canopy_core::{DiffSource, Error, Hunk, HunkKey, LineKind, MissingObjects, Repo, Whitespace};
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests drive git directly to build and check repositories"
+)]
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(dir)
@@ -29,6 +37,10 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 /// Raw bytes of a git command's output (index blobs may lack a final newline).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests drive git directly to build and check repositories"
+)]
 fn git_bytes(dir: &Path, args: &[&str]) -> Vec<u8> {
     let out = Command::new("git")
         .current_dir(dir)

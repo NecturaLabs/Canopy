@@ -1,6 +1,8 @@
 //! [`Client`]: the provider-neutral entry point.
 
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use canopy_core::forge::{Forge, ForgeKind};
 
@@ -59,7 +61,7 @@ impl fmt::Debug for Client {
             .field("api_base", &redact_userinfo(self.http.base()))
             .field("project", &self.project)
             .field("has_token", &self.http.has_token())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -78,23 +80,37 @@ fn default_api_base(forge: &Forge) -> String {
 impl Client {
     /// A client for `forge`'s project on its own host. `token` is the user's personal access
     /// token; without one only public projects can be read and nothing can be changed.
-    pub fn new(forge: &Forge, token: Option<String>) -> Client {
+    pub fn new(forge: &Forge, token: Option<String>) -> Self {
         Self::with_api_base(forge, token, &default_api_base(forge))
     }
 
     /// Like [`Client::new`] with an explicit API root such as `http://127.0.0.1:8080` (tests)
     /// or `https://gitlab.example.com/api/v4`.
-    pub fn with_api_base(forge: &Forge, token: Option<String>, api_base: &str) -> Client {
+    pub fn with_api_base(forge: &Forge, token: Option<String>, api_base: &str) -> Self {
         let project = match forge.kind {
             ForgeKind::GitHub => github::repo_path(&forge.path),
             ForgeKind::GitLab => gitlab::project_path(&forge.path),
         };
-        Client {
+        Self {
             http: Http::new(forge.kind, api_base, token),
             forge: forge.clone(),
             kind: forge.kind,
             project,
         }
+    }
+
+    /// Sends requests only while `on` holds `true`. Once it is `false`, every call fails with
+    /// [`crate::Error::Stopped`] before anything is sent, including the parts of a
+    /// [`Client::details`] still to come and the profile lookups of [`Client::author_avatar`] and
+    /// [`Client::author_repository`]. The hosting thread passes the switch its tab turns off when
+    /// it lets the thread go (pull and merge requests turned off, the token changed, another
+    /// remote) to its own client and to its author-picture thread's, so a job already under way
+    /// sends nothing more. A picture download ([`crate::avatars::Avatar::download`]) is not a
+    /// call on the client; the picture thread checks its own switch before it.
+    #[must_use]
+    pub fn with_switch(mut self, on: Arc<AtomicBool>) -> Self {
+        self.http.set_switch(on);
+        self
     }
 
     /// Which provider this client talks to.
@@ -117,6 +133,15 @@ impl Client {
         crate::avatars::lookup(&self.http, &self.forge, &self.project, commit, email)
     }
 
+    /// Whether the host shows this repository, to tell apart why [`Client::author_avatar`] failed
+    /// with [`crate::Error::NotFound`] on GitHub: `Ok` means the host lacks the commit, an error
+    /// says what is wrong with the repository or the token. A separate request, so the caller can
+    /// check its off switch and request budget first. GitLab sends nothing and answers
+    /// [`crate::Error::NotFound`].
+    pub fn author_repository(&self) -> Result<()> {
+        crate::avatars::repository(&self.http, self.kind, &self.project)
+    }
+
     /// The login (GitHub) or username (GitLab) the token belongs to. Fails with
     /// [`crate::Error::Unauthorized`] without a valid token.
     pub fn viewer(&self) -> Result<String> {
@@ -134,6 +159,28 @@ impl Client {
         match self.kind {
             ForgeKind::GitHub => github::list(&self.http, &self.project, filter, limit),
             ForgeKind::GitLab => gitlab::list(&self.http, &self.project, filter, limit),
+        }
+    }
+
+    /// Where the checks and reviews of requests `numbers` stand, as `(number, rollup)` pairs for
+    /// the requests the project has, in one GraphQL query to the GraphQL endpoint on the API's
+    /// own host (`api.github.com/graphql`, `<host>[:port]/api/graphql`). It sends the project's
+    /// path and the numbers (the first 100), with the token like every other request, and follows
+    /// no redirect.
+    ///
+    /// GitHub: each pull request's status check rollup state, review decision and reviewers'
+    /// latest verdicts. GitLab: each merge request's head pipeline status and whether it has an
+    /// approval.
+    ///
+    /// Only with a token: without one it sends nothing and answers no rollups, whatever the
+    /// caller checked (GitHub's GraphQL API refuses anonymous calls anyway).
+    pub fn rollup(&self, numbers: &[u64]) -> Result<Vec<(u64, crate::model::Rollup)>> {
+        if !self.has_token() {
+            return Ok(Vec::new());
+        }
+        match self.kind {
+            ForgeKind::GitHub => github::rollup(&self.http, &self.forge.path, numbers),
+            ForgeKind::GitLab => gitlab::rollup(&self.http, &self.forge.path, numbers),
         }
     }
 

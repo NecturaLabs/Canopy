@@ -30,9 +30,10 @@ fn is_git_dir(name: &std::ffi::OsStr) -> bool {
     false
 }
 
-/// Checks that `path` is a plain relative path below the working tree root: not empty, not the
-/// root itself (`.`), no NUL byte, not absolute, no `..` and no `.git` component. Looks at the text
-/// only, not the file system.
+/// Checks that `path` is a plain relative path below the working tree root.
+///
+/// Not empty, not the root itself (`.`), no NUL byte, not absolute, no `..` and no `.git`
+/// component. Looks at the text only, not the file system.
 pub fn check_relative(path: &str) -> Result<&Path> {
     let p = Path::new(path);
     if path.is_empty() {
@@ -79,10 +80,13 @@ fn is_link(meta: &std::fs::Metadata) -> bool {
     false
 }
 
-/// Joins `path` (as Git stores it, relative to the working tree) onto `root` after checking it
-/// with [`check_relative`] and checking that no existing component below `root` is a symbolic
-/// link (or, on Windows, a junction). Components that do not exist yet are allowed, so the result
-/// can name a file about to be created. `root` itself may lie under symbolic links.
+/// Joins `path` (as Git stores it, relative to the working tree) onto `root`, safely.
+///
+/// `path` must pass [`check_relative`], and no existing component below `root` may be a symbolic
+/// link (or, on Windows, a junction).
+///
+/// Components that do not exist yet are allowed, so the result can name a file about to be created.
+/// `root` itself may lie under symbolic links.
 ///
 /// The check and the caller's later access are not atomic: a link created in between is not
 /// caught.
@@ -187,7 +191,6 @@ pub(crate) fn write_atomic(dest: &Path, content: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
 
@@ -212,7 +215,7 @@ mod tests {
             );
         }
         #[cfg(unix)]
-        assert!(safe_join(root, "/etc/passwd").is_err());
+        safe_join(root, "/etc/passwd").unwrap_err();
         #[cfg(windows)]
         for bad in [
             "C:\\x",
@@ -259,7 +262,7 @@ mod tests {
             );
         }
         assert!(refuse_link(&dir.path().join("file-link")).is_err());
-        assert!(refuse_link(&dir.path().join("missing")).is_ok());
+        refuse_link(&dir.path().join("missing")).unwrap();
     }
 
     #[test]

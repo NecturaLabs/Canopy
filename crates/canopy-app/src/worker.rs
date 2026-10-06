@@ -90,18 +90,29 @@ pub enum Op {
         message: Option<String>,
         untracked: bool,
     },
+    /// Applies (or pops) the stash at `index` when the operation runs: the latest, `0`.
     StashApply {
         index: usize,
         pop: bool,
     },
-    StashDrop(usize),
+    /// Applies (or pops) the stash whose commit is `oid`, wherever it is by then.
+    StashApplyCommit {
+        oid: Oid,
+        pop: bool,
+    },
+    /// Drops the stash whose commit is `oid`, wherever it is by then.
+    StashDrop(Oid),
     /// Fetch every remote. `quiet` skips the success toast (auto-fetch).
     Fetch {
         prune: bool,
         quiet: bool,
     },
+    /// Pull. The strategy is always passed to git explicitly; with `follow_config` it is only the
+    /// fallback for a repository whose git configuration (`branch.<name>.rebase`, `pull.rebase`,
+    /// `pull.ff`) asks for none, and the configured one is used otherwise.
     Pull {
         strategy: PullStrategy,
+        follow_config: bool,
     },
     Push {
         force: bool,
@@ -111,6 +122,11 @@ pub enum Op {
         url: String,
     },
     RemoveRemote(String),
+    /// Point a remote at another URL (never one carrying credentials).
+    SetRemoteUrl {
+        name: String,
+        url: String,
+    },
     DeleteRemoteBranch {
         remote: String,
         branch: String,
@@ -141,10 +157,10 @@ impl Op {
     /// What finishing this operation means for the tab, whatever its label says.
     pub fn kind(&self) -> OpKind {
         match self {
-            Op::Commit { .. } => OpKind::Commit,
-            Op::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
-            Op::Fetch { .. } => OpKind::Fetch,
-            Op::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
+            Self::Commit { .. } => OpKind::Commit,
+            Self::Merge(target, canopy_core::MergeMode::Squash) => OpKind::Squash(target.clone()),
+            Self::Fetch { .. } => OpKind::Fetch,
+            Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
             _ => OpKind::Other,
         }
     }
@@ -152,72 +168,75 @@ impl Op {
     /// Present-tense label shown while the operation runs.
     pub fn label(&self) -> String {
         match self {
-            Op::Stage(_) | Op::StageAll => "Staging".into(),
-            Op::Unstage(_) | Op::UnstageAll => "Unstaging".into(),
-            Op::Discard(_) => "Discarding changes".into(),
-            Op::Hunk {
+            Self::Stage(_) | Self::StageAll => "Staging".into(),
+            Self::Unstage(_) | Self::UnstageAll => "Unstaging".into(),
+            Self::Discard(_) => "Discarding changes".into(),
+            Self::Hunk {
                 action: HunkAction::Stage,
                 ..
             } => "Staging hunk".into(),
-            Op::Hunk {
+            Self::Hunk {
                 action: HunkAction::Unstage,
                 ..
             } => "Unstaging hunk".into(),
-            Op::Hunk {
+            Self::Hunk {
                 action: HunkAction::Discard,
                 ..
             } => "Discarding hunk".into(),
-            Op::Lines {
+            Self::Lines {
                 action: HunkAction::Stage,
                 ..
             } => "Staging lines".into(),
-            Op::Lines {
+            Self::Lines {
                 action: HunkAction::Unstage,
                 ..
             } => "Unstaging lines".into(),
-            Op::Lines {
+            Self::Lines {
                 action: HunkAction::Discard,
                 ..
             } => "Discarding lines".into(),
-            Op::Commit { amend: true, .. } => "Amending commit".into(),
-            Op::Commit { .. } => "Committing".into(),
-            Op::CreateBranch { name, .. } => format!("Creating branch {name}"),
-            Op::Checkout(b) => format!("Checking out {b}"),
-            Op::CheckoutRemote { remote, branch } => format!("Checking out {remote}/{branch}"),
-            Op::CheckoutDetached(o) => format!("Checking out {}", canopy_core::short_id(*o)),
-            Op::RenameBranch { new, .. } => format!("Renaming to {new}"),
-            Op::DeleteBranch { name, .. } => format!("Deleting {name}"),
-            Op::Merge(t, canopy_core::MergeMode::Squash) => format!("Squashing {t}"),
-            Op::Merge(t, _) => format!("Merging {t}"),
-            Op::Rebase(t) => format!("Rebasing onto {t}"),
-            Op::ContinueOrAbort { state, abort } => format!(
+            Self::Commit { amend: true, .. } => "Amending commit".into(),
+            Self::Commit { .. } => "Committing".into(),
+            Self::CreateBranch { name, .. } => format!("Creating branch {name}"),
+            Self::Checkout(b) => format!("Checking out {b}"),
+            Self::CheckoutRemote { remote, branch } => format!("Checking out {remote}/{branch}"),
+            Self::CheckoutDetached(o) => format!("Checking out {}", canopy_core::short_id(*o)),
+            Self::RenameBranch { new, .. } => format!("Renaming to {new}"),
+            Self::DeleteBranch { name, .. } => format!("Deleting {name}"),
+            Self::Merge(t, canopy_core::MergeMode::Squash) => format!("Squashing {t}"),
+            Self::Merge(t, _) => format!("Merging {t}"),
+            Self::Rebase(t) => format!("Rebasing onto {t}"),
+            Self::ContinueOrAbort { state, abort } => format!(
                 "{} {}",
                 if *abort { "Aborting" } else { "Continuing" },
                 state.label().to_lowercase()
             ),
-            Op::CherryPick(o) => format!("Cherry-picking {}", canopy_core::short_id(*o)),
-            Op::Revert(o) => format!("Reverting {}", canopy_core::short_id(*o)),
-            Op::Reset { mode, .. } => format!("{} reset", mode.label()),
-            Op::CreateTag { name, .. } => format!("Tagging {name}"),
-            Op::DeleteTag(t) => format!("Deleting tag {t}"),
-            Op::PushTag { tag, .. } => format!("Pushing tag {tag}"),
-            Op::StashSave { .. } => "Stashing".into(),
-            Op::StashApply { pop: true, .. } => "Popping stash".into(),
-            Op::StashApply { .. } => "Applying stash".into(),
-            Op::StashDrop(_) => "Dropping stash".into(),
-            Op::Fetch { .. } => "Fetching".into(),
-            Op::Pull { .. } => "Pulling".into(),
-            Op::Push { force: true } => "Force pushing".into(),
-            Op::Push { .. } => "Pushing".into(),
-            Op::AddRemote { name, .. } => format!("Adding remote {name}"),
-            Op::RemoveRemote(r) => format!("Removing remote {r}"),
-            Op::DeleteRemoteBranch { remote, branch } => format!("Deleting {remote}/{branch}"),
-            Op::CheckoutRequest { branch, .. } => format!("Checking out {branch}"),
-            Op::Resolve {
+            Self::CherryPick(o) => format!("Cherry-picking {}", canopy_core::short_id(*o)),
+            Self::Revert(o) => format!("Reverting {}", canopy_core::short_id(*o)),
+            Self::Reset { mode, .. } => format!("{} reset", mode.label()),
+            Self::CreateTag { name, .. } => format!("Tagging {name}"),
+            Self::DeleteTag(t) => format!("Deleting tag {t}"),
+            Self::PushTag { tag, .. } => format!("Pushing tag {tag}"),
+            Self::StashSave { .. } => "Stashing".into(),
+            Self::StashApply { pop: true, .. } | Self::StashApplyCommit { pop: true, .. } => {
+                "Popping stash".into()
+            }
+            Self::StashApply { .. } | Self::StashApplyCommit { .. } => "Applying stash".into(),
+            Self::StashDrop(_) => "Dropping stash".into(),
+            Self::Fetch { .. } => "Fetching".into(),
+            Self::Pull { .. } => "Pulling".into(),
+            Self::Push { force: true } => "Force pushing".into(),
+            Self::Push { .. } => "Pushing".into(),
+            Self::AddRemote { name, .. } => format!("Adding remote {name}"),
+            Self::RemoveRemote(r) => format!("Removing remote {r}"),
+            Self::SetRemoteUrl { name, .. } => format!("Changing the URL of {name}"),
+            Self::DeleteRemoteBranch { remote, branch } => format!("Deleting {remote}/{branch}"),
+            Self::CheckoutRequest { branch, .. } => format!("Checking out {branch}"),
+            Self::Resolve {
                 path, mark: true, ..
             } => format!("Resolving {path}"),
-            Op::Resolve { path, .. } => format!("Saving {path}"),
-            Op::ResolveSide { path, side } => format!(
+            Self::Resolve { path, .. } => format!("Saving {path}"),
+            Self::ResolveSide { path, side } => format!(
                 "Taking {} for {path}",
                 match side {
                     canopy_core::Side::Ours => "ours",
@@ -231,15 +250,15 @@ impl Op {
     pub fn announce(&self) -> bool {
         !matches!(
             self,
-            Op::Stage(_)
-                | Op::StageAll
-                | Op::Unstage(_)
-                | Op::UnstageAll
-                | Op::Hunk { .. }
-                | Op::Lines { .. }
-                | Op::Resolve { .. }
-                | Op::ResolveSide { .. }
-                | Op::Fetch { quiet: true, .. }
+            Self::Stage(_)
+                | Self::StageAll
+                | Self::Unstage(_)
+                | Self::UnstageAll
+                | Self::Hunk { .. }
+                | Self::Lines { .. }
+                | Self::Resolve { .. }
+                | Self::ResolveSide { .. }
+                | Self::Fetch { quiet: true, .. }
         )
     }
 }
@@ -264,6 +283,8 @@ pub enum Job {
     SquashMessage(String),
     /// A conflicted file, parsed for the resolver.
     Conflict(String),
+    /// What the configuration asks a pull to do on the current branch (`Repo::pull_config`).
+    PullConfig,
     /// A mutation.
     Op(Op),
 }
@@ -308,6 +329,9 @@ pub enum Event {
     /// highlighter threads, so it may arrive after a newer diff; it applies only to this one.
     Highlight(DiffKey, Arc<FileDiff>, Arc<crate::highlight::Highlights>),
     HeadMessage(String),
+    /// The answer to [`Job::PullConfig`]: git's own message when the configuration cannot be
+    /// read.
+    PullConfig(Result<canopy_core::PullConfig, String>),
     MergeMessage(String),
     /// A new commit message after a squash, never an amend prefill.
     SquashMessage(String),
@@ -353,7 +377,7 @@ pub struct Worker {
 
 impl Worker {
     /// Starts the thread (and a file watcher) for the repository at `path`.
-    pub fn spawn(path: PathBuf, ctx: egui::Context) -> Self {
+    pub fn spawn(path: PathBuf, ctx: &egui::Context) -> Self {
         let (jobs, job_rx) = unbounded::<Job>();
         let (ev_tx, events) = unbounded::<Event>();
         let thread_ctx = ctx.clone();
@@ -403,19 +427,24 @@ impl Job {
     /// A short name for logs.
     fn kind(&self) -> &'static str {
         match self {
-            Job::Refresh(_) => "refresh",
-            Job::RefreshStatus => "status",
-            Job::Details(_) => "details",
-            Job::Diff(_) => "diff",
-            Job::HeadMessage => "head-message",
-            Job::MergeMessage => "merge-message",
-            Job::SquashMessage(_) => "squash-message",
-            Job::Conflict(_) => "conflict",
-            Job::Op(_) => "operation",
+            Self::Refresh(_) => "refresh",
+            Self::RefreshStatus => "status",
+            Self::Details(_) => "details",
+            Self::Diff(_) => "diff",
+            Self::HeadMessage => "head-message",
+            Self::MergeMessage => "merge-message",
+            Self::SquashMessage(_) => "squash-message",
+            Self::Conflict(_) => "conflict",
+            Self::PullConfig => "pull-config",
+            Self::Op(_) => "operation",
         }
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the thread owns its channels and context; dropping them on exit tells the other side"
+)]
 fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Context) {
     // Every event this thread logs carries the repository.
     let _repo = tracing::info_span!("repo", path = %path.display()).entered();
@@ -430,7 +459,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
     let diff_generation = Arc::new(AtomicU64::new(0));
     // The last diff sent. A refresh that finds the same content sends the same `Arc` again, so
     // the view keeps its layout and highlighting instead of rebuilding them on the UI thread.
-    let mut last_diff: Option<(DiffKey, Arc<canopy_core::FileDiff>)> = None;
+    let mut last_diff: Option<(DiffKey, Arc<FileDiff>)> = None;
     while let Ok(first) = jobs.recv() {
         // Coalesce queued refreshes: only the latest matters.
         let mut batch = vec![first];
@@ -474,9 +503,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             // Line counts need blobs: fetch them after the list is on screen,
                             // unless the user already moved on (a newer job is waiting).
                             if wants_counts && jobs.is_empty() {
-                                if !allowed() {
-                                    download_refused(&emit, repo.promisor_remote());
-                                } else {
+                                if allowed() {
                                     match with_progress(&emit, repo.promisor_remote(), || {
                                         if allowed() {
                                             let result =
@@ -495,9 +522,11 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                                         Ok(_) => {}
                                         // The list stays; only the counts are missing.
                                         Err(e) => {
-                                            tracing::warn!(error = %redacted(&e), "line counts not downloaded")
+                                            tracing::warn!(error = %redacted(&e), "line counts not downloaded");
                                         }
                                     }
+                                } else {
+                                    download_refused(&emit, repo.promisor_remote());
                                 }
                             }
                         }
@@ -593,6 +622,11 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         body.trim()
                     )));
                 }
+                Job::PullConfig => {
+                    emit(Event::PullConfig(
+                        repo.pull_config().map_err(|e| e.to_string()),
+                    ));
+                }
                 Job::Conflict(path) => {
                     let kind = repo.conflict_kind(&path).ok().flatten();
                     let file = repo
@@ -609,11 +643,11 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                     emit(Event::OpStarted(label.clone()));
                     let progress = |line: &str| emit(Event::Progress(line.to_owned()));
                     let result = perform(&repo, op, progress).map_err(|e| e.to_string());
-                    let ms = started.elapsed().as_millis() as u64;
+                    let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                     match &result {
                         Ok(_) => tracing::info!(operation = %label, ms, "operation succeeded"),
                         Err(e) => {
-                            tracing::warn!(operation = %label, ms, error = %canopy_core::cli::redact_url(e), "operation failed")
+                            tracing::warn!(operation = %label, ms, error = %canopy_core::cli::redact_url(e), "operation failed");
                         }
                     }
                     emit(Event::OpFinished {
@@ -628,7 +662,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
             }
             tracing::debug!(
                 job = kind,
-                ms = started.elapsed().as_millis() as u64,
+                ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 "job done"
             );
         }
@@ -642,7 +676,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 Ok(s) => {
                     tracing::debug!(
                         commits = s.commits.len(),
-                        ms = started.elapsed().as_millis() as u64,
+                        ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                         "snapshot"
                     );
                     emit(Event::Snapshot(Arc::new(s)));
@@ -894,12 +928,21 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
             done(repo.stash_save(message.as_deref(), untracked))
         }
         Op::StashApply { index, pop } => done(repo.stash_apply(index, pop)),
-        Op::StashDrop(i) => done(repo.stash_drop(i)),
+        Op::StashApplyCommit { oid, pop } => done(repo.stash_apply_commit(oid, pop)),
+        Op::StashDrop(oid) => done(repo.stash_drop_commit(oid)),
         Op::Fetch { prune, .. } => repo.fetch(None, prune, progress),
-        Op::Pull { strategy } => repo.pull(strategy, progress),
+        Op::Pull {
+            strategy,
+            follow_config: true,
+        } => repo.pull_default(strategy, progress),
+        Op::Pull {
+            strategy,
+            follow_config: false,
+        } => repo.pull(strategy, progress),
         Op::Push { force } => repo.push(force, progress),
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
+        Op::SetRemoteUrl { name, url } => done(repo.set_remote_url(&name, &url)),
         Op::DeleteRemoteBranch { remote, branch } => {
             repo.delete_remote_branch(&remote, &branch, progress)
         }
@@ -1025,6 +1068,10 @@ mod tests {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn git(dir: &Path, args: &[&str]) {
         let ok = Command::new("git")
             .current_dir(dir)
@@ -1200,6 +1247,10 @@ mod read_tests {
     /// Runs `git` in `dir` with a fixed identity and none of the developer's configuration. (The
     /// downloads the worker runs through `canopy_core::cli` inherit this process's environment,
     /// which cannot be changed per test without racing the others.)
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "tests drive git directly to build and check repositories"
+    )]
     fn git(dir: &Path, args: &[&str]) -> String {
         let root = dir
             .ancestors()
@@ -1304,11 +1355,32 @@ mod read_tests {
         made
     }
 
+    /// PS-F1: the Pull menu's default comes from the repository thread, never the UI thread.
+    #[test]
+    fn the_worker_reads_what_the_configuration_asks_a_pull_to_do() {
+        let (_root, _src, copy, _oldest, _middle) = partial_clone("--no-local");
+        // The repository's own values are read last, so the developer's configuration cannot
+        // change the answer.
+        git(&copy, &["config", "pull.ff", "true"]);
+        git(&copy, &["config", "branch.main.rebase", "true"]);
+        let worker = Worker::spawn(copy, &egui::Context::default());
+        worker.send(Job::PullConfig);
+        let events = events_until(&worker, |e| matches!(e, Event::PullConfig(_)));
+        let Some(Event::PullConfig(Ok(config))) = events.last() else {
+            panic!("expected the pull settings, got {events:?}");
+        };
+        assert_eq!(config.strategy, Some(PullStrategy::Rebase));
+        assert_eq!(
+            config.describe().as_deref(),
+            Some("branch.main.rebase=true (repository)")
+        );
+    }
+
     #[test]
     fn an_untrusted_partial_clone_downloads_nothing_and_says_why() {
         // Blobless: the file list is offline, the line counts would need a download.
         let (_root, _src, copy, _oldest, middle) = partial_clone("--filter=blob:none");
-        let worker = Worker::spawn(copy.clone(), egui::Context::default());
+        let worker = Worker::spawn(copy, &egui::Context::default());
         worker.send(Job::Details(middle));
         let events = events_until(&worker, |e| matches!(e, Event::DownloadsRefused { .. }));
         assert!(
@@ -1325,7 +1397,7 @@ mod read_tests {
 
         // Treeless: even the file list needs a download, so the read fails and explains.
         let (_root, _src, copy, oldest, _) = partial_clone("--filter=tree:0");
-        let worker = Worker::spawn(copy, egui::Context::default());
+        let worker = Worker::spawn(copy, &egui::Context::default());
         worker.send(Job::Details(oldest));
         let events = events_until(&worker, |e| matches!(e, Event::DetailsFailed { .. }));
         let Some(Event::DetailsFailed {
@@ -1353,7 +1425,7 @@ mod read_tests {
     #[test]
     fn details_in_a_blobless_clone_show_the_file_list_first_and_the_counts_after_downloading() {
         let (_root, _src, copy, _oldest, middle) = trusted_partial_clone("--filter=blob:none");
-        let worker = Worker::spawn(copy, egui::Context::default());
+        let worker = Worker::spawn(copy, &egui::Context::default());
 
         // The blobs of this commit are not local: the list comes first, offline, and the line
         // counts follow once downloaded, with a progress line around the download.
@@ -1386,7 +1458,7 @@ mod read_tests {
     #[test]
     fn a_failed_download_of_details_is_reported_with_its_oid_and_can_be_retried() {
         let (root, src, copy, oldest, _) = trusted_partial_clone("--filter=tree:0");
-        let worker = Worker::spawn(copy, egui::Context::default());
+        let worker = Worker::spawn(copy, &egui::Context::default());
         let moved = root.path().join("src-moved");
         std::fs::rename(&src, &moved).expect("hide the remote");
 
@@ -1524,7 +1596,7 @@ mod read_tests {
                 Err(not_downloaded(Some("origin")))
             },
         );
-        assert!(r.is_err());
+        r.unwrap_err();
         assert_eq!(*modes.borrow(), [MissingObjects::Fail]);
         assert_eq!(asked.get(), 2, "asked again right before the download");
 

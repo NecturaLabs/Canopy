@@ -8,10 +8,22 @@ use canopy_hosting::RequestSummary;
 
 use crate::hosting::HostJob;
 use crate::keymap::Command;
+use crate::settings::DiffPrefs;
 use crate::tab::View;
-use crate::ui::theme::ThemeId;
+use crate::ui::motion::MotionPref;
+use crate::ui::theme::{Density, Style, ThemeId};
 use crate::views::dialogs::Dialog;
+use crate::views::settings_screen::Section;
 use crate::worker::Op;
+
+/// An Appearance option the command palette can set, as Settings → Appearance sets it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppearanceChoice {
+    Style(Style),
+    Density(Density),
+    Translucent(bool),
+    Motion(MotionPref),
+}
 
 /// Something the user asked for, collected during a frame and applied after it.
 #[derive(Debug, Clone)]
@@ -40,14 +52,32 @@ pub enum Action {
     LoadMore,
     Fetch,
     Pull,
+    /// Read again what the active repository's configuration asks a pull to do (the toolbar's
+    /// Pull menu opened).
+    ReadPullConfig,
     Push,
     Commit,
     PrefillAmend,
     SetTheme(ThemeId),
     NextTheme,
+    /// One of Settings → Appearance's options, from the command palette.
+    SetAppearance(AppearanceChoice),
     Palette,
     Cheatsheet,
     Settings,
+    /// Settings, opened on one section.
+    SettingsAt(Section),
+    /// Settings → This repository for the open repository at this path (made the active tab).
+    RepositorySettings(PathBuf),
+    /// A repository's own diff options (`None`: follow the defaults in Settings again).
+    SetRepoDiff {
+        path: PathBuf,
+        prefs: Option<DiffPrefs>,
+    },
+    /// Every repository back to the defaults in Settings.
+    ResetRepoSettings,
+    /// Settings were replaced as a whole (imported, or reset): apply what is not read live.
+    SettingsReplaced,
     IdentitySettings,
     SaveIdentity {
         repo: Option<PathBuf>,

@@ -7,10 +7,10 @@ use serde_json::{Value, json};
 
 use crate::client::{PER_PAGE, optional, unix};
 use crate::error::{Error, Result, head_changed, map_head_conflict};
-use crate::http::{Http, Method, encode};
+use crate::http::{Http, Method, encode, shorten};
 use crate::model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
-    RequestSummary, Review, StateFilter,
+    RequestSummary, Review, ReviewDecision, Rollup, StateFilter,
 };
 
 /// How often a rebase is polled for completion, and how long Canopy waits for it.
@@ -103,6 +103,7 @@ impl Mr {
                     _ => None,
                 })
                 .collect(),
+            rollup: None,
         }
     }
 
@@ -214,6 +215,103 @@ pub(crate) fn list(
             Ok(out)
         }
     }
+}
+
+/// What [`rollup`] asks for: each merge request's head pipeline status and whether anyone
+/// approved it. Only fields every GitLab edition has (`approvalsLeft` is Premium only, and
+/// `approved` means "has an approval" without approval rules, so neither can say a review is
+/// still required).
+const ROLLUP_QUERY: &str = "query($path: ID!, $iids: [String!]) { project(fullPath: $path) { \
+     mergeRequests(iids: $iids, first: 100) { nodes { iid headPipeline { status } \
+     approvedBy(first: 1) { nodes { username } } } } } }";
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RollupData {
+    project: Option<RollupProject>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RollupProject {
+    merge_requests: Option<RollupNodes<MrRollup>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RollupNodes<T> {
+    #[serde(default = "Vec::new")]
+    nodes: Vec<Option<T>>,
+}
+
+impl<T> Default for RollupNodes<T> {
+    fn default() -> Self {
+        Self { nodes: Vec::new() }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct MrRollup {
+    /// A string in GitLab's GraphQL API.
+    iid: String,
+    head_pipeline: Option<PipelineStatus>,
+    approved_by: Option<RollupNodes<Value>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct PipelineStatus {
+    /// `SUCCESS`, `FAILED`, `RUNNING`, …: the REST status, upper-cased.
+    status: String,
+}
+
+impl MrRollup {
+    fn rollup(&self) -> Rollup {
+        let approved = self
+            .approved_by
+            .as_ref()
+            .is_some_and(|a| a.nodes.iter().any(Option::is_some));
+        Rollup {
+            checks: self
+                .head_pipeline
+                .as_ref()
+                .map(|p| pipeline_state(&p.status.to_ascii_lowercase(), false)),
+            review: approved.then_some(ReviewDecision::Approved),
+        }
+    }
+}
+
+/// The checks and review standing of merge requests `iids` (at most [`PER_PAGE`], the first
+/// ones taken), in one GraphQL query to the same host's `/api/graphql`: each head pipeline's
+/// status and whether it has an approval. An iid the project does not have is left out.
+pub(crate) fn rollup(http: &Http, path: &str, iids: &[u64]) -> Result<Vec<(u64, Rollup)>> {
+    let mut wanted: Vec<u64> = Vec::new();
+    for &n in iids {
+        if !wanted.contains(&n) && wanted.len() < PER_PAGE {
+            wanted.push(n);
+        }
+    }
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    let variables = json!({
+        "path": path,
+        "iids": wanted.iter().map(u64::to_string).collect::<Vec<_>>(),
+    });
+    let data: RollupData = http.graphql(ROLLUP_QUERY, &variables)?;
+    let found: Vec<(u64, Rollup)> = data
+        .project
+        .and_then(|p| p.merge_requests)
+        .unwrap_or_default()
+        .nodes
+        .into_iter()
+        .flatten()
+        .filter_map(|mr| Some((mr.iid.parse::<u64>().ok()?, mr.rollup())))
+        .collect();
+    Ok(wanted
+        .into_iter()
+        .filter_map(|n| found.iter().find(|(iid, _)| *iid == n).copied())
+        .collect())
 }
 
 pub(crate) fn details(http: &Http, project: &str, iid: u64) -> Result<RequestDetails> {
@@ -379,7 +477,9 @@ fn rebase(http: &Http, mr_path: &str, expected: Option<&str>) -> Result<Option<S
             if !error.is_empty() && now.sha == before.sha {
                 return Err(Error::Api {
                     status: 409,
-                    message: format!("GitLab could not rebase the merge request: {error}"),
+                    message: shorten(&format!(
+                        "GitLab could not rebase the merge request: {error}"
+                    )),
                 });
             }
             return Ok(now.sha.filter(|s| !s.is_empty()));
@@ -450,6 +550,37 @@ mod tests {
         assert_eq!(pipeline_state("failed", false), CheckState::Failure);
         assert_eq!(pipeline_state("manual", false), CheckState::Neutral);
         assert_eq!(pipeline_state("success", false), CheckState::Success);
+    }
+
+    #[test]
+    fn rollup_from_pipeline_and_approvals() {
+        let mr = |status: Option<&str>, approvers: usize| MrRollup {
+            iid: "4".into(),
+            head_pipeline: status.map(|s| PipelineStatus { status: s.into() }),
+            approved_by: Some(RollupNodes {
+                nodes: (0..approvers)
+                    .map(|_| Some(json!({"username": "x"})))
+                    .collect(),
+            }),
+        };
+        let checks = |status| mr(status, 0).rollup().checks;
+        assert_eq!(checks(Some("SUCCESS")), Some(CheckState::Success));
+        assert_eq!(checks(Some("FAILED")), Some(CheckState::Failure));
+        assert_eq!(checks(Some("CANCELED")), Some(CheckState::Failure));
+        assert_eq!(checks(Some("RUNNING")), Some(CheckState::Pending));
+        assert_eq!(
+            checks(Some("WAITING_FOR_CALLBACK")),
+            Some(CheckState::Pending)
+        );
+        assert_eq!(checks(Some("MANUAL")), Some(CheckState::Neutral));
+        assert_eq!(checks(None), None);
+        assert_eq!(mr(None, 0).rollup().review, None);
+        assert_eq!(mr(None, 1).rollup().review, Some(ReviewDecision::Approved));
+        let unseen = MrRollup {
+            approved_by: None,
+            ..mr(None, 0)
+        };
+        assert_eq!(unseen.rollup(), Rollup::default());
     }
 
     #[test]

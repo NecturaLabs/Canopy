@@ -17,7 +17,7 @@ pub enum Error {
     /// unix seconds, when the server said.
     #[error("{}", rate_limited(*reset))]
     RateLimited {
-        /// When the limit resets, in unix seconds.
+        /// When the limit resets, in unix seconds, at most a day ahead of when the answer came.
         reset: Option<i64>,
     },
     /// HTTP 404. GitHub and GitLab answer 404 rather than 403 for private projects the token
@@ -36,6 +36,9 @@ pub enum Error {
     /// The response was not the JSON Canopy expected.
     #[error("Unexpected response from the server: {0}")]
     Parse(String),
+    /// Not sent: the client's switch ([`crate::Client::with_switch`]) was off.
+    #[error("Not sent: pull and merge requests were turned off or reconnected")]
+    Stopped,
 }
 
 /// Result alias for hosting API calls.

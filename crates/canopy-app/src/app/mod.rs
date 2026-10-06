@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, unbounded};
-use egui::{RichText, Stroke};
+use egui::RichText;
 use egui_phosphor::regular as icon;
 
 use canopy_core::Repo;
@@ -29,6 +29,7 @@ use crate::worker::{Job, Op};
 
 mod background;
 mod clone;
+pub mod demo_requests;
 mod dispatch;
 mod input;
 mod open;
@@ -63,8 +64,45 @@ pub const OVERLAYS: &[&str] = &[
     "settings-accounts",
     "settings-updates",
     "settings-keyboard",
+    "settings-backup",
+    "settings-repository",
+    "settings-search",
     "about",
     "toasts",
+    "gallery",
+    "menu-remotes",
+    "menu-branch",
+    "menu-commit",
+    "menu-file",
+    "open",
+    "open-error",
+    "clone",
+    "clone-running",
+    "clone-error",
+    "init",
+    "new-branch",
+    "rename",
+    "new-tag",
+    "stash",
+    "add-remote",
+    "add-remote-refused",
+    "publish",
+    "new-request",
+    "confirm",
+    "confirm-danger",
+    "confirm-host",
+    "confirm-merge-risky",
+    "whats-new",
+    "crash",
+    "update-available",
+    "update-failed",
+    "terms",
+    "consent-reading",
+    "crash-reading",
+    "username",
+    "password",
+    "approve",
+    "notice",
 ];
 
 /// Options from the command line.
@@ -79,6 +117,15 @@ pub struct Launch {
     pub overlay: Option<String>,
     /// Side-by-side diffs.
     pub split: bool,
+    pub style: Option<theme::Style>,
+    pub density: Option<theme::Density>,
+    pub translucent: Option<bool>,
+    pub motion: Option<crate::ui::motion::MotionPref>,
+    /// The gallery page (window heights scrolled) for `--overlay gallery`.
+    pub gallery_page: usize,
+    /// `--glass-soak N` (debug builds): paint floating layers, glass when Translucent surfaces is
+    /// on, for a warm-up and then N measured frames, then report and exit.
+    pub glass_soak: Option<u64>,
 }
 
 /// Rows a Page Down / Ctrl+D moves in a list.
@@ -141,6 +188,12 @@ pub struct CanopyApp {
     askpass: Option<crate::askpass::Server>,
     /// `trust::changes()` as the tabs last saw it.
     trust_seen: u64,
+    /// The theme and appearance installed in egui, so they are re-applied only when they change.
+    applied: Option<(ThemeId, theme::Appearance)>,
+    /// The gallery overlay (`--overlay gallery`) and the page it shows.
+    gallery: Option<usize>,
+    /// The translucent-surfaces soak run (`--glass-soak`), if one was asked for.
+    glass_soak: Option<crate::ui::kit::glass::Soak>,
 }
 
 impl std::fmt::Debug for CanopyApp {
@@ -192,7 +245,26 @@ impl CanopyApp {
         crate::trust::install_gate();
         crate::ui::fonts::install(&cc.egui_ctx);
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
-        theme::apply(&cc.egui_ctx, settings.theme, settings.reduce_motion);
+        if let Some(style) = launch.style {
+            settings.style = style;
+        }
+        if let Some(density) = launch.density {
+            settings.density = density;
+        }
+        if let Some(translucent) = launch.translucent {
+            settings.translucent = translucent;
+        }
+        if let Some(motion) = launch.motion {
+            settings.motion = motion;
+        }
+        // Screenshots stay deterministic: no system answer (motion counts as not reduced).
+        if !shooting && settings.motion == crate::ui::motion::MotionPref::System {
+            crate::ui::motion::query_system(&cc.egui_ctx);
+        }
+        crate::ui::kit::glass::init(cc.gl.as_deref());
+        if !shooting {
+            crate::ui::kit::glass::query_system(&cc.egui_ctx);
+        }
         apply_zoom(&cc.egui_ctx, settings.zoom);
 
         let git_version = canopy_core::cli::version().unwrap_or_else(|_| "git not found".into());
@@ -204,19 +276,13 @@ impl CanopyApp {
             active: 0,
             dialogs: DialogStack::default(),
             settings_screen: None,
-            folder_picker: Default::default(),
+            folder_picker: crate::ui::folder_picker::FolderPicker::default(),
             palette: CommandPalette::default(),
             cheatsheet: Cheatsheet::default(),
             toasts: Toasts::default(),
-            screenshot: launch.screenshot.map(|path| Screenshot {
-                path,
-                ready_frames: 0,
-                ready_since: None,
-                requested: false,
-                started: 0.0,
-                popup: (launch.overlay.as_deref() == Some("diff-options"))
-                    .then(|| egui::Id::new(crate::views::diff::OPTIONS_POPUP)),
-            }),
+            screenshot: launch
+                .screenshot
+                .map(|path| Screenshot::new(path, launch.overlay.as_deref())),
             initial_view: launch.view,
             clone: None,
             opener: open::start(&cc.egui_ctx),
@@ -238,7 +304,13 @@ impl CanopyApp {
             } else {
                 start_askpass(&cc.egui_ctx)
             },
+            applied: None,
+            gallery: (launch.overlay.as_deref() == Some("gallery")).then_some(launch.gallery_page),
+            glass_soak: launch
+                .glass_soak
+                .map(|n| crate::ui::kit::glass::Soak::new(n, crate::ui::kit::glass::Soak::CYCLE)),
         };
+        app.apply_look(&cc.egui_ctx);
         let restore = if launch.paths.is_empty() && !shooting {
             app.settings.open_tabs.clone()
         } else {
@@ -255,75 +327,92 @@ impl CanopyApp {
         if !shooting && !app.settings.identity_asked {
             app.request_identity(IdentityJob::ReadGlobal);
         }
+        if let Some(menu) = app.screenshot.as_ref().and_then(|s| s.menu.as_ref()) {
+            // The menu's widget is found by what a screen reader hears.
+            cc.egui_ctx.enable_accesskit();
+            app.initial_view.get_or_insert(menu.view);
+        }
         match launch.overlay.as_deref() {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
             Some("settings-git") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Git));
             }
             Some("settings-integrations") => {
                 app.settings_screen =
-                    Some(SettingsScreen::at(settings_screen::Section::Integrations))
+                    Some(SettingsScreen::at(settings_screen::Section::Integrations));
             }
             Some("settings-accounts") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Accounts))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Accounts));
             }
             Some("settings-updates") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates));
             }
             Some("about") => app.dialogs.open(Dialog::About),
             Some("toasts") => {
                 app.toasts.push(
                     &cc.egui_ctx,
-                    crate::ui::toast::ToastKind::Error,
+                    ToastKind::Error,
                     "Push failed",
                     "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
                 );
                 app.toasts.push(
                     &cc.egui_ctx,
-                    crate::ui::toast::ToastKind::Success,
+                    ToastKind::Success,
                     "Committed",
                     "docs: add API reference",
                 );
             }
             Some("settings-keyboard") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Keyboard));
+            }
+            Some("settings-backup") => {
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Data));
+            }
+            Some("settings-repository") => {
+                app.settings_screen = Some(SettingsScreen::awaiting_repository());
+            }
+            Some("settings-search") => {
+                app.settings_screen = Some(SettingsScreen::searching("pull"));
             }
             Some("cheatsheet") => app.cheatsheet.open = true,
             Some("palette") => app.palette.open(),
             Some("privacy") => {
-                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Privacy))
+                app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Privacy));
             }
             Some("consent") => {
                 app.dialogs.open(Dialog::Consent {
                     step: crate::ui::legal::Pending::Terms,
                     updated: false,
                     reading: None,
-                })
+                });
             }
             Some("crash-consent") => {
                 app.dialogs.open(Dialog::Consent {
                     step: crate::ui::legal::Pending::CrashReports,
                     updated: false,
                     reading: None,
-                })
+                });
             }
-            Some("legal") => app.dialogs.open(Dialog::Legal(crate::ui::legal::Document::Privacy)),
+            Some("legal") => app
+                .dialogs
+                .open(Dialog::Legal(crate::ui::legal::Document::Privacy)),
             Some("credential") => {
-                app.dialogs.open(Dialog::credential(crate::askpass::Prompt::preview(
-                    "Enter passphrase for key '/home/ada/.ssh/id_ed25519': ",
-                )))
+                app.dialogs
+                    .open(Dialog::credential(crate::askpass::Prompt::preview(
+                        "Enter passphrase for key '/home/ada/.ssh/id_ed25519': ",
+                    )));
             }
             Some("host-key") => {
                 app.dialogs.open(Dialog::credential(crate::askpass::Prompt::preview(
                     "The authenticity of host 'github.com (140.82.121.4)' can't be established.\nED25519 key fingerprint is SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU.\nThis key is not known by any other names.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ",
-                )))
+                )));
             }
             Some("merge") => {
                 app.dialogs.open(Dialog::Merge {
                     target: "feature/search".into(),
                     rebase: false,
                     mode: canopy_core::MergeMode::Squash,
-                })
+                });
             }
             Some("identity") => app.dialogs.open(Dialog::Identity {
                 name: String::new(),
@@ -331,22 +420,28 @@ impl CanopyApp {
                 pending: false,
             }),
             Some("update-installed" | "update-running") => {
-                let available = crate::updater::Available {
+                let available = updater::Available {
                     build: 1001,
                     manifest: canopy_hosting::updates::UpdateManifest {
-                        version: "1001".into(), notes: String::new(), pub_date: None,
-                        release_page: None, platforms: Default::default(),
+                        version: "1001".into(),
+                        notes: String::new(),
+                        pub_date: None,
+                        release_page: None,
+                        platforms: std::collections::BTreeMap::default(),
                     },
                 };
                 app.updater.install = if launch.overlay.as_deref() == Some("update-installed") {
-                    crate::updater::InstallState::Done {
-                        build: 1001, installed: crate::selfupdate::Installed {
-                            exe: Some("canopy".into()), notes: Vec::new(),
+                    updater::InstallState::Done {
+                        build: 1001,
+                        installed: crate::selfupdate::Installed {
+                            exe: Some("canopy".into()),
+                            notes: Vec::new(),
                         },
                     }
                 } else {
-                    crate::updater::InstallState::Running {
-                        build: 1001, phase: crate::selfupdate::Phase::Installing,
+                    updater::InstallState::Running {
+                        build: 1001,
+                        phase: crate::selfupdate::Phase::Installing,
                     }
                 };
                 app.dialogs.open(Dialog::Update(Box::new(available)));
@@ -360,7 +455,9 @@ impl CanopyApp {
                 repo: None,
                 scope: canopy_core::identity::Scope::Global,
             }),
-            _ => {}
+            // A menu (screenshot::MenuShot) opens by a right click once the window has settled.
+            Some(other) if !other.starts_with("menu-") => app.open_dialog_overlay(other),
+            Some(_) | None => {}
         }
         if git_version_missing(&app.git_version) {
             app.toasts.push(&cc.egui_ctx, ToastKind::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
@@ -385,7 +482,7 @@ impl CanopyApp {
             {
                 notices.push(d);
             }
-            app.settings.last_seen_version = version.to_owned();
+            version.clone_into(&mut app.settings.last_seen_version);
         }
         let now = chrono::Utc::now().timestamp();
         app.update_check_due = app.settings.check_updates
@@ -421,7 +518,33 @@ impl CanopyApp {
 
     fn set_theme(&mut self, ctx: &egui::Context, id: ThemeId) {
         self.settings.theme = id;
-        theme::apply(ctx, id, self.settings.reduce_motion);
+        self.apply_look(ctx);
+    }
+
+    /// What the settings, the system's motion and transparency answers and the graphics backend
+    /// make render.
+    fn look(&self) -> theme::Appearance {
+        let s = &self.settings;
+        theme::Appearance::resolve(
+            s.theme,
+            s.style,
+            s.density,
+            s.translucent,
+            s.motion.reduces(crate::ui::motion::system()),
+            crate::ui::kit::glass::available(),
+            crate::ui::kit::glass::reduced_transparency(),
+        )
+    }
+
+    /// Installs the theme and appearance when either changed (a setting, or the system's motion
+    /// answer arriving).
+    fn apply_look(&mut self, ctx: &egui::Context) {
+        let look = self.look();
+        let wanted = (self.settings.theme, look);
+        if self.applied != Some(wanted) {
+            theme::apply(ctx, self.settings.theme, look);
+            self.applied = Some(wanted);
+        }
     }
 
     /// The text "Copy diagnostics" puts on the clipboard, with the home folder shown as `~`.
@@ -446,6 +569,16 @@ impl CanopyApp {
         );
         let _ = writeln!(t, "Log detail: {}", self.settings.log_level.label());
         let _ = writeln!(t, "Theme: {}", self.settings.theme.name());
+        let _ = writeln!(
+            t,
+            "Translucent surfaces: {}, blur {}",
+            if self.settings.translucent {
+                "on"
+            } else {
+                "off"
+            },
+            crate::ui::kit::glass::describe()
+        );
         let _ = writeln!(t, "Open repositories: {}", self.tabs.len());
         let _ = writeln!(
             t,
@@ -461,7 +594,7 @@ impl CanopyApp {
         for line in problems {
             let _ = writeln!(t, "{line}");
         }
-        let home = crate::settings::home_dir().display().to_string();
+        let home = settings::home_dir().display().to_string();
         crate::crash_reports::scrub_text(&t, &home)
     }
 
@@ -474,15 +607,19 @@ impl CanopyApp {
     }
 
     /// Applies settings that changed in the settings screen.
-    fn settings_changed(&mut self, ctx: &egui::Context, before: &Settings) {
+    fn settings_changed(&mut self, ctx: &egui::Context, before: Watched) {
         let s = &self.settings;
-        if s.theme != before.theme || s.reduce_motion != before.reduce_motion {
-            theme::apply(ctx, s.theme, s.reduce_motion);
+        if s.motion == crate::ui::motion::MotionPref::System
+            && before.motion != crate::ui::motion::MotionPref::System
+        {
+            crate::ui::motion::query_system(ctx);
         }
+        self.apply_look(ctx);
+        let s = &self.settings;
         if (ctx.zoom_factor() - s.zoom).abs() > f32::EPSILON {
             apply_zoom(ctx, s.zoom);
         }
-        if s.gitlab_hosts != before.gitlab_hosts {
+        if Watched::hash(&s.gitlab_hosts) != before.gitlab_hosts {
             self.gitlab_hosts = s.gitlab_host_list();
             for t in &mut self.tabs {
                 t.update_forges(&self.gitlab_hosts);
@@ -515,6 +652,46 @@ impl CanopyApp {
                 t.restart_host(ctx, saved, enabled);
             }
         }
+    }
+}
+
+/// Names the window for assistive technology: the active repository and the app, as a window
+/// title reads ("showcase — Canopy"), or just "Canopy" with none open.
+fn name_window(ctx: &egui::Context, repository: Option<&str>) {
+    let name = repository.map_or_else(|| "Canopy".to_owned(), |r| format!("{r} — Canopy"));
+    ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(name));
+}
+
+/// The settings whose change needs more than a repaint, as they were before Settings drew a
+/// frame: compared after it, without copying the whole settings every frame Settings is open.
+#[derive(Debug, Clone, Copy)]
+struct Watched {
+    motion: crate::ui::motion::MotionPref,
+    diff: settings::DiffPrefs,
+    split_diff: bool,
+    syntax_highlight: bool,
+    hosting_api: bool,
+    /// A hash of the GitLab hosts text.
+    gitlab_hosts: u64,
+}
+
+impl Watched {
+    fn of(s: &Settings) -> Self {
+        Self {
+            motion: s.motion,
+            diff: s.diff,
+            split_diff: s.split_diff,
+            syntax_highlight: s.syntax_highlight,
+            hosting_api: s.hosting_api,
+            gitlab_hosts: Self::hash(&s.gitlab_hosts),
+        }
+    }
+
+    fn hash(text: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        h.finish()
     }
 }
 
@@ -570,10 +747,13 @@ fn start_askpass(ctx: &egui::Context) -> Option<crate::askpass::Server> {
 impl eframe::App for CanopyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        name_window(&ctx, self.tabs.get(self.active).map(|t| t.name.as_str()));
         update_window_minimum(&ctx);
+        self.apply_look(&ctx);
         let p = palette(&ctx);
         let compact = ctx.content_rect().width() < theme::COMPACT_WIDTH;
         self.poll(&ctx);
+        self.apply_repo_looks();
         self.auto_fetch(&ctx);
         let mut actions = Vec::new();
         self.keyboard(&ctx, &mut actions);
@@ -594,9 +774,30 @@ impl eframe::App for CanopyApp {
             self.request_identity(IdentityJob::ReadRepo(t.path.clone()));
         }
 
+        let m = theme::metrics();
+        let s = theme::surfaces(&ctx);
+        let deeper = theme::style() == theme::Style::Deeper;
+        let screen = ctx.content_rect();
+        // The top deck: the tab strip and the action bar. Standard paints each as flat chrome over
+        // a seam. Deeper leaves the tab strip on the ground and floats the action bar as a lifted
+        // card in line with the panes below.
+        let deck_height = m.tab_strip_height
+            + if self.tabs.get(self.active).is_some() {
+                m.action_bar_height
+            } else {
+                0.0
+            };
+        let background = ctx.layer_painter(egui::LayerId::background());
+        background.rect_filled(screen, egui::CornerRadius::ZERO, s.bg);
+        if deeper {
+            // Deeper's gutter is open ground: the theme's ground treatment lies on it.
+            crate::ui::kit::paint::ground(&background, screen, 1.0);
+        }
+        crate::ui::kit::surface::Deck::new(deck_height > m.tab_strip_height)
+            .paint(&background, screen);
         egui::Panel::top("tabs")
-            .exact_size(40.0)
-            .frame(egui::Frame::new().fill(p.bg))
+            .exact_size(m.tab_strip_height)
+            .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 toolbar::tabs(
                     ui,
@@ -604,31 +805,20 @@ impl eframe::App for CanopyApp {
                     self.active,
                     self.settings.theme,
                     &mut actions,
-                )
+                );
             });
         if let Some(tab) = self.tabs.get_mut(self.active) {
             egui::Panel::top("actions")
-                .exact_size(theme::ACTION_BAR_HEIGHT)
-                .frame(
-                    egui::Frame::new()
-                        .fill(p.panel)
-                        .stroke(Stroke::new(1.0, p.border)),
-                )
+                .exact_size(m.action_bar_height)
+                .frame(egui::Frame::NONE)
                 .show(ui, |ui| {
                     if compact {
                         ui.horizontal_centered(|ui| {
-                            let menu = navigation_menu(ui, |ui| {
-                                ui.set_width(240.0);
+                            ui.add_space(theme::SM);
+                            navigation_menu(ui, |ui| {
+                                ui.set_width(m.sidebar_width);
                                 ui.set_max_height(ctx.content_rect().height() * 0.7);
                                 sidebar::show(ui, tab, &mut actions);
-                            })
-                            .on_hover_text("Branches, remotes, tags and stashes");
-                            menu.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::WidgetType::Button,
-                                    true,
-                                    "Branches, remotes, tags and stashes",
-                                )
                             });
                             toolbar::actions_bar(ui, tab, &mut actions);
                         });
@@ -642,18 +832,31 @@ impl eframe::App for CanopyApp {
             .as_ref()
             .map(|(url, _, s)| format!("Cloning {url}  ·  {s}"));
         egui::Panel::bottom("status")
-            .exact_size(26.0)
-            .frame(
-                egui::Frame::new()
-                    .fill(p.panel)
-                    .stroke(Stroke::new(1.0, p.border)),
-            )
+            .exact_size(m.status_bar_height)
+            .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                // Standard: chrome with a top seam. Deeper: on the ground, no seam.
+                let bar = ui.max_rect();
+                if !deeper {
+                    ui.painter()
+                        .rect_filled(bar, egui::CornerRadius::ZERO, s.panel);
+                    let seam = crate::ui::kit::paint::edge_seam(p, s.border, true);
+                    let w = seam.map_or(0.0, |st| st.width);
+                    crate::ui::kit::paint::seam_line_h(
+                        ui.painter(),
+                        bar.x_range(),
+                        bar.top() + w * 0.5,
+                        seam,
+                    );
+                }
                 if let Some(s) = &clone_status {
                     ui.horizontal_centered(|ui| {
-                        ui.add_space(10.0);
-                        ui.add(egui::Spinner::new().size(theme::META_SIZE).color(p.accent));
-                        ui.label(RichText::new(s).size(theme::META_SIZE).color(p.accent));
+                        ui.add_space(theme::SM);
+                        crate::ui::kit::progress::Spinner::new()
+                            .size(crate::ui::kit::Size::Xs)
+                            .label("the clone")
+                            .show(ui);
+                        ui.label(RichText::new(s).size(m.meta_size).color(p.accent));
                     });
                 } else {
                     statusbar::show(
@@ -669,32 +872,50 @@ impl eframe::App for CanopyApp {
 
         if let Some(tab) = self.tabs.get_mut(self.active) {
             if !compact {
+                let sidebar_margin =
+                    egui::Margin::symmetric(crate::ui::points_i8(m.sidebar_pad), 0);
                 egui::Panel::left("sidebar")
                     .resizable(true)
-                    .default_size(250.0)
+                    .default_size(m.sidebar_width)
                     .min_size(190.0)
                     .max_size(460.0)
                     .frame(
                         egui::Frame::new()
-                            .fill(p.panel)
-                            .stroke(Stroke::new(1.0, p.border))
-                            .inner_margin(egui::Margin::symmetric(6, 0)),
+                            .fill(s.panel)
+                            .inner_margin(sidebar_margin),
                     )
-                    .show(ui, |ui| sidebar::show(ui, tab, &mut actions));
+                    .show(ui, |ui| {
+                        if !deeper {
+                            let r = ui.max_rect().expand2(egui::vec2(m.sidebar_pad, 0.0));
+                            let seam = crate::ui::kit::paint::pane_seam(p, s.border, true);
+                            let w = seam.map_or(0.0, |st| st.width);
+                            crate::ui::kit::paint::seam_line_v(
+                                ui.painter(),
+                                r.right() - w * 0.5,
+                                r.y_range(),
+                                seam,
+                            );
+                        }
+                        sidebar::show(ui, tab, &mut actions);
+                    });
             }
-            egui::CentralPanel::default()
-                .frame(egui::Frame::new().fill(p.bg))
-                .show(ui, |ui| match tab.view {
-                    View::History => history::show(ui, tab, &self.settings, &mut actions),
-                    View::Changes => changes::show(ui, tab, &mut actions),
-                    View::Requests => {
-                        requests::show(ui, tab, self.settings.hosting_api, &mut actions)
-                    }
-                });
+            content_pane(ui, true, |ui| match tab.view {
+                View::History => {
+                    let handle = history::show(ui, tab, &self.settings, &mut actions);
+                    history_split(ui.ctx(), tab, handle)
+                }
+                View::Changes => changes::show(ui, tab, &mut actions)
+                    .and_then(|(list, handle)| PaneSplit::beside(list, handle)),
+                View::Requests => requests::show(ui, tab, self.settings.hosting_api, &mut actions)
+                    .and_then(|(list, handle)| PaneSplit::beside(list, handle)),
+            });
         } else {
-            egui::CentralPanel::default()
-                .frame(egui::Frame::new().fill(p.bg))
-                .show(ui, |ui| welcome::show(ui, &self.settings, &mut actions));
+            // Nothing on the welcome screen holds the keyboard as a pane: no focused-pane edge.
+            content_pane(ui, false, |ui| {
+                crate::ui::art::backdrop(ui, ui.max_rect());
+                welcome::show(ui, &self.settings, &mut actions);
+                None
+            });
         }
 
         // Overlays.
@@ -707,20 +928,19 @@ impl eframe::App for CanopyApp {
         }
         self.folder_picker.begin_frame();
         if let Some(screen) = &mut self.settings_screen {
-            let before = self.settings.clone();
+            let before = Watched::of(&self.settings);
             let active_tab = self.tabs.get(self.active);
-            let forges: Vec<canopy_core::forge::Forge> = self
-                .tabs
-                .iter()
-                .flat_map(|t| t.forges.iter().map(|(_, f)| f.clone()))
-                .collect();
+            screen.set_picture_note(active_tab.and_then(|tab| {
+                crate::avatars::explain_tab(&self.settings, tab)
+                    .map(settings_screen::PictureNote::from)
+            }));
             let result = settings_screen::show(
                 &ctx,
                 screen,
                 &mut self.settings,
                 &mut self.tokens,
-                settings_screen::SettingsData {
-                    forges: &forges,
+                &settings_screen::SettingsData {
+                    tabs: &self.tabs,
                     update: &self.updater.state,
                     identity: settings_screen::IdentityView {
                         repo: active_tab.map(|t| t.path.as_path()),
@@ -747,7 +967,7 @@ impl eframe::App for CanopyApp {
                 self.folder_picker.cancel();
                 self.settings_screen = None;
             }
-            self.settings_changed(&ctx, &before);
+            self.settings_changed(&ctx, before);
         }
         // Dialogs draw above the settings screen (the Privacy Policy opens from there).
         if let Some(d) = self.dialogs.current_mut() {
@@ -810,17 +1030,39 @@ impl eframe::App for CanopyApp {
                     }
                 }
                 crate::ui::toast::Recovery::Accounts => {
-                    self.settings_screen =
-                        Some(SettingsScreen::at(settings_screen::Section::Accounts));
+                    self.open_settings(SettingsScreen::at(settings_screen::Section::Accounts));
                 }
             }
+        }
+        if let Some(page) = self.gallery {
+            crate::ui::kit::gallery::show(&ctx, page);
+        }
+        if let Some(soak) = &mut self.glass_soak
+            && soak.frame(&ctx)
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         self.apply(&ctx, actions);
         self.handle_screenshot(&ctx);
     }
 
+    #[expect(
+        clippy::print_stdout,
+        reason = "tools/glass-check.py reads the glass soak report from standard output"
+    )]
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        crate::ui::kit::glass::destroy(gl);
+        if let Some(soak) = &self.glass_soak {
+            println!("{}", soak.report());
+        }
+    }
+
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.screenshot_input(raw_input);
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        if self.screenshot.is_some() {
+        if self.screenshot.is_some() || self.glass_soak.is_some() {
             return;
         }
         self.settings.open_tabs = self.tabs.iter().map(|t| t.path.clone()).collect();
@@ -828,20 +1070,278 @@ impl eframe::App for CanopyApp {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        egui::Rgba::from(self.settings.theme.palette().bg).to_array()
+        egui::Rgba::from(
+            self.settings
+                .theme
+                .palette()
+                .surfaces(self.settings.style)
+                .bg,
+        )
+        .to_array()
     }
 }
 
+/// Where Deeper splits the content pane into two cards.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Split {
+    /// One card above the other, meeting at this height (History's details below its table).
+    Horizontal(f32),
+    /// Side by side, meeting at this x (a list beside what it shows: Changes, requests).
+    Vertical(f32),
+}
+
+/// A view's answer to [`content_pane`]: where its two Deeper cards meet, and the resize handle
+/// of the panel between them (its line shows in the gutter while it is hovered or dragged).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PaneSplit {
+    pub split: Split,
+    pub handle: Option<egui::Id>,
+}
+
+impl PaneSplit {
+    /// Two cards side by side: `list` is the rectangle the list's panel had this frame
+    /// (`InnerResponse::response.rect`), and `handle` the id of the handle that resizes it; the
+    /// cards meet at its right edge. `None` in Standard, which paints one flush pane.
+    pub fn beside(list: egui::Rect, handle: egui::Id) -> Option<Self> {
+        (theme::style() == theme::Style::Deeper).then(|| Self {
+            split: Split::Vertical(list.right()),
+            handle: Some(handle),
+        })
+    }
+}
+
+/// The central content pane: flush on the pane ground in Standard. In Deeper a floating card over
+/// the ground's gutters, or two when the view splits (`content` returns where: History's details
+/// below the table, a list beside its detail); the first card (the table or list, which holds
+/// the keyboard), or the only one, carries the focused-pane edge when `focus_edge` (a repository's
+/// views; the welcome screen has no pane that holds the keyboard).
+fn content_pane(
+    ui: &mut egui::Ui,
+    focus_edge: bool,
+    content: impl FnOnce(&mut egui::Ui) -> Option<PaneSplit>,
+) {
+    let m = theme::metrics();
+    let p = palette(ui.ctx());
+    let s = theme::surfaces(ui.ctx());
+    // Concept 4's body padding: the gutter all round, below the action card too (Standard: none).
+    let margin = egui::Margin::same(crate::ui::points_i8(m.pane_gutter));
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE.inner_margin(margin))
+        .show(ui, |ui| {
+            let card = ui.max_rect();
+            if theme::style() == theme::Style::Standard {
+                crate::ui::kit::paint::pane(ui.painter(), card, p, s.pane, 1.0);
+                content(ui);
+                return;
+            }
+            // The cards' shadows and fills go under the content, once the split is known.
+            let wide = ui.painter().clone();
+            let below = wide.add(egui::Shape::Noop);
+            let radius = egui::CornerRadius::same(m.pane_radius);
+            // Content stays inside the rounded card.
+            let clip = card.shrink(f32::from(radius.nw) * 0.3);
+            ui.set_clip_rect(clip.intersect(ui.clip_rect()));
+            let gap = m.pane_gutter;
+            let split = content(ui).filter(|s| match s.split {
+                Split::Horizontal(y) => y - gap > card.top() + gap && y + gap < card.bottom() - gap,
+                Split::Vertical(x) => x - gap > card.left() + gap && x + gap < card.right() - gap,
+            });
+            let cards = match split.map(|s| s.split) {
+                Some(Split::Horizontal(y)) => vec![
+                    egui::Rect::from_min_max(card.min, egui::pos2(card.right(), y - gap / 2.0)),
+                    egui::Rect::from_min_max(egui::pos2(card.left(), y + gap / 2.0), card.max),
+                ],
+                Some(Split::Vertical(x)) => vec![
+                    egui::Rect::from_min_max(card.min, egui::pos2(x - gap / 2.0, card.bottom())),
+                    egui::Rect::from_min_max(egui::pos2(x + gap / 2.0, card.top()), card.max),
+                ],
+                None => vec![card],
+            };
+            let mut shapes = Vec::new();
+            for c in &cards {
+                shapes.extend(crate::ui::kit::paint::surface_shapes(
+                    &wide,
+                    *c,
+                    radius,
+                    p,
+                    theme::Style::Deeper,
+                    theme::Elevation::Pane,
+                    theme::Fill::flat(s.pane),
+                    s.pane_edge,
+                ));
+            }
+            wide.set(below, egui::Shape::Vec(shapes));
+            if let Some(split) = split {
+                split_gutter(ui, &wide, &cards, radius, split);
+            }
+            // The card that holds the keyboard (the table or list) gets the focus edge and a lit
+            // top.
+            if focus_edge {
+                focused_edge(&wide, cards[0], radius, p.focus);
+            }
+        });
+}
+
+/// Where History's details meet the table, when they sit below it as their own card (Deeper):
+/// at `handle`, the split handle `history::show` returned, which is centred on the details' top
+/// edge.
+fn history_split(
+    ctx: &egui::Context,
+    tab: &RepoTab,
+    handle: Option<egui::Id>,
+) -> Option<PaneSplit> {
+    let below = theme::style() == theme::Style::Deeper
+        && !tab.history_layout.compact
+        && !tab.history_layout.expanded
+        && tab.snap.as_ref().is_some_and(|s| !s.commits.is_empty());
+    let handle = handle.filter(|_| below)?;
+    ctx.read_response(handle).map(|r| PaneSplit {
+        split: Split::Horizontal(r.rect.center().y),
+        handle: Some(handle),
+    })
+}
+
+/// The gutter between two cards, painted over the content that runs under it: the ground, the
+/// first card's shadow falling into it (both cards' when side by side), the cards' inner corners
+/// and edges, the second card's top highlight, and the split handle's line while it is hovered or
+/// dragged.
+fn split_gutter(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    cards: &[egui::Rect],
+    radius: egui::CornerRadius,
+    split: PaneSplit,
+) {
+    let (Some(first), Some(second)) = (cards.first(), cards.get(1)) else {
+        return;
+    };
+    let p = palette(ui.ctx());
+    let s = theme::surfaces(ui.ctx());
+    let beside = matches!(split.split, Split::Vertical(_));
+    let band = if beside {
+        egui::Rect::from_x_y_ranges(first.right()..=second.left(), first.y_range())
+    } else {
+        egui::Rect::from_x_y_ranges(first.x_range(), first.bottom()..=second.top())
+    };
+    painter.rect_filled(band, egui::CornerRadius::ZERO, s.bg);
+    let material = p.material(theme::Style::Deeper, theme::Elevation::Pane);
+    let shadowed = if beside { cards } else { &cards[..1] };
+    for card in shadowed {
+        painter
+            .with_clip_rect(band)
+            .extend(crate::ui::kit::paint::shadow_shapes(
+                *card, radius, p, &material,
+            ));
+    }
+    let r = f32::from(radius.nw);
+    for (corner, centre, from) in inner_corners(*first, *second, r, beside) {
+        corner_mask(painter, corner, centre, r, from, s.bg);
+    }
+    if let Some(edge) = s.pane_edge {
+        crate::ui::kit::paint::rim(painter, *first, radius, edge);
+        crate::ui::kit::paint::rim(painter, *second, radius, edge);
+    }
+    crate::ui::kit::paint::top_highlight(painter, *second, radius, material.highlight);
+    if split.handle.is_some_and(|handle| {
+        ui.ctx()
+            .read_response(handle)
+            .is_some_and(|r| r.hovered() || r.dragged() || r.has_focus())
+    }) {
+        let stroke = egui::Stroke::new(2.0, theme::Palette::tint(p.focus, 150));
+        match split.split {
+            Split::Horizontal(y) => painter.hline(band.x_range().shrink(r), y, stroke),
+            Split::Vertical(x) => painter.vline(x, band.y_range().shrink(r), stroke),
+        };
+    }
+}
+
+/// The four rounded corners that face each other across the gutter between `first` and `second`
+/// (one above the other, or `beside`), as (square corner, arc centre, arc start angle) for
+/// [`corner_mask`]. Angles turn clockwise on screen from +x: a quarter turn points down.
+fn inner_corners(
+    first: egui::Rect,
+    second: egui::Rect,
+    r: f32,
+    beside: bool,
+) -> [(egui::Pos2, egui::Pos2, f32); 4] {
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let corner = |at: egui::Pos2, dx: f32, dy: f32, from: f32| (at, at + egui::vec2(dx, dy), from);
+    if beside {
+        [
+            corner(first.right_top(), -r, r, 3.0 * quarter),
+            corner(first.right_bottom(), -r, -r, 0.0),
+            corner(second.left_top(), r, r, 2.0 * quarter),
+            corner(second.left_bottom(), r, -r, quarter),
+        ]
+    } else {
+        [
+            corner(first.left_bottom(), r, -r, quarter),
+            corner(first.right_bottom(), -r, -r, 0.0),
+            corner(second.left_top(), r, r, 2.0 * quarter),
+            corner(second.right_top(), -r, r, 3.0 * quarter),
+        ]
+    }
+}
+
+/// Paints `color` over the part of a square corner outside its rounded arc: a fan from `corner`
+/// over the quarter arc of radius `r` around `centre` that starts at angle `from`.
+fn corner_mask(
+    painter: &egui::Painter,
+    corner: egui::Pos2,
+    centre: egui::Pos2,
+    r: f32,
+    from: f32,
+    color: egui::Color32,
+) {
+    const STEPS: u16 = 8;
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(corner, color);
+    for i in 0..=STEPS {
+        let a = from + std::f32::consts::FRAC_PI_2 * f32::from(i) / f32::from(STEPS);
+        mesh.colored_vertex(centre + r * egui::vec2(a.cos(), a.sin()), color);
+    }
+    for i in 1..=u32::from(STEPS) {
+        mesh.add_triangle(0, i, i + 1);
+    }
+    painter.add(mesh);
+}
+
+/// Deeper's focused-pane edge on `card`, its top edge lit at full strength so the pane that holds
+/// the keyboard (History's table) reads as the one in front. A theme with lit edges outlines the
+/// whole card in a glowing `focus` line instead.
+fn focused_edge(
+    painter: &egui::Painter,
+    card: egui::Rect,
+    radius: egui::CornerRadius,
+    focus: egui::Color32,
+) {
+    if crate::ui::kit::paint::lit() {
+        crate::ui::kit::paint::lit_edge(painter, card, radius, focus, 0.7);
+        return;
+    }
+    crate::ui::kit::paint::focus_edge(painter, card, radius, focus, 1.0);
+    let r = f32::from(radius.nw);
+    let width = 1.5;
+    painter.hline(
+        (card.left() + r)..=(card.right() - r),
+        card.top() + width / 2.0,
+        egui::Stroke::new(width, theme::Palette::tint(focus, 210)),
+    );
+}
+
+/// The compact window's navigation: a button opening the sidebar in a popover. Its open state is
+/// kept here, so a context menu opened from a row inside does not close it.
 fn navigation_menu(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> egui::Response {
-    let button = ui.button(RichText::new(icon::LIST).size(theme::TITLE_SIZE));
+    let button = crate::ui::kit::IconButton::new(icon::LIST, "Branches, remotes, tags and stashes")
+        .id_salt("navigation-menu")
+        .show(ui);
     let id = button.id.with("navigation-open");
     let mut open = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
     if button.clicked() {
         open = !open;
     }
-    let shown = egui::Popup::menu(&button)
-        .open_bool(&mut open)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+    let shown = crate::ui::kit::overlay::Popover::new("navigation", &button)
+        .open(&mut open)
         .show(content)
         .is_some();
     // Context menus use egui's single popup slot; the navigation must keep their rows alive.
@@ -852,9 +1352,187 @@ fn navigation_menu(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> eg
     button
 }
 
+/// An app with no window, threads or saved state, for tests of the app's own logic.
+#[cfg(test)]
+pub(super) fn test_app() -> CanopyApp {
+    CanopyApp {
+        settings: Settings::default(),
+        tabs: Vec::new(),
+        active: 0,
+        dialogs: DialogStack::default(),
+        settings_screen: None,
+        folder_picker: crate::ui::folder_picker::FolderPicker::default(),
+        palette: CommandPalette::default(),
+        cheatsheet: Cheatsheet::default(),
+        toasts: Toasts::default(),
+        screenshot: None,
+        initial_view: None,
+        clone: None,
+        opener: None,
+        pending_opens: 0,
+        git_version: String::new(),
+        tokens: TokenStore::default(),
+        updater: Updater::default(),
+        identity_worker: None,
+        global_identity: None,
+        global_identity_error: None,
+        gitlab_hosts: Vec::new(),
+        update_check_due: false,
+        askpass: None,
+        trust_seen: 0,
+        applied: None,
+        gallery: None,
+        glass_soak: None,
+    }
+}
+
+/// A tab on no real repository (its worker answers nothing) showing `snap`.
+#[cfg(test)]
+pub(super) fn test_tab(snap: canopy_core::RepoSnapshot) -> RepoTab {
+    let (worker, _, _) = crate::worker::Worker::detached();
+    let mut tab = RepoTab::with_worker(
+        PathBuf::from("fixture"),
+        100,
+        settings::DiffPrefs::default(),
+        worker,
+    );
+    tab.snap = Some(std::sync::Arc::new(snap));
+    tab
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A11Y-13: the window has an accessible name, with the repository it shows.
+    #[test]
+    fn the_window_is_named_for_screen_readers() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let root = |repository: Option<&str>| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                name_window(ui.ctx(), repository);
+            });
+            out.textures_delta.clear();
+            let update = out.platform_output.accesskit_update.expect("a tree");
+            let root = update.tree.expect("its root").root;
+            update
+                .nodes
+                .into_iter()
+                .find(|(id, _)| *id == root)
+                .and_then(|(_, n)| n.label().map(str::to_owned))
+        };
+        assert_eq!(root(None).as_deref(), Some("Canopy"));
+        assert_eq!(root(Some("showcase")).as_deref(), Some("showcase — Canopy"));
+    }
+
+    /// review-views-9: Settings is compared by the few values whose change needs work, not by a
+    /// copy of every setting each frame; a changed GitLab host list still reaches the tabs.
+    #[test]
+    fn a_settings_change_is_seen_without_copying_the_settings() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let before = Watched::of(&app.settings);
+        app.settings.split_diff = !app.settings.split_diff;
+        "git.example.com".clone_into(&mut app.settings.gitlab_hosts);
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        app.settings_changed(&ctx, before);
+        assert_eq!(app.gitlab_hosts, ["git.example.com"]);
+        assert_eq!(app.tabs[0].split_diff, app.settings.split_diff);
+    }
+
+    /// Each mask fans over the part of a card's square corner outside its rounded arc: the arc's
+    /// middle points from its centre straight at the corner, for cards above each other and side
+    /// by side.
+    #[test]
+    fn the_gutter_masks_face_the_corners_they_round() {
+        let first = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 200.0));
+        for (second, beside) in [
+            (
+                egui::Rect::from_min_max(egui::pos2(110.0, 0.0), egui::pos2(300.0, 200.0)),
+                true,
+            ),
+            (
+                egui::Rect::from_min_max(egui::pos2(0.0, 210.0), egui::pos2(100.0, 400.0)),
+                false,
+            ),
+        ] {
+            let r = 8.0;
+            for (corner, centre, from) in inner_corners(first, second, r, beside) {
+                let middle = from + std::f32::consts::FRAC_PI_4;
+                let towards = (corner - centre).normalized();
+                let arc = egui::vec2(middle.cos(), middle.sin());
+                assert!(
+                    (towards - arc).length() < 1e-4,
+                    "beside {beside}: corner {corner:?}, arc middle {arc:?}"
+                );
+                assert!((corner - centre).length() - r * std::f32::consts::SQRT_2 < 1e-3);
+                let card = if first.expand(0.5).contains(corner) {
+                    first
+                } else {
+                    second
+                };
+                assert!(card.contains(centre), "the arc centre lies inside its card");
+            }
+        }
+    }
+
+    /// Deeper splits the content pane into two cards side by side where a view's list ends: the
+    /// ground shows in a gutter of `pane_gutter` centred on the split, top to bottom.
+    #[test]
+    fn a_side_by_side_split_paints_a_full_height_gutter() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(
+            &ctx,
+            ThemeId::Midnight,
+            theme::Appearance {
+                style: theme::Style::Deeper,
+                ..theme::Appearance::STILL
+            },
+        );
+        let at = 500.0;
+        let mut card = egui::Rect::NOTHING;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 800.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                content_pane(ui, true, |ui| {
+                    card = ui.max_rect();
+                    Some(PaneSplit {
+                        split: Split::Vertical(at),
+                        handle: None,
+                    })
+                });
+            },
+        );
+        output.textures_delta.clear();
+        let ground = theme::surfaces(&ctx).bg;
+        let gap = theme::metrics().pane_gutter;
+        let gutter = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(r)
+                    if r.fill == ground && (r.rect.center().x - at).abs() < 0.5 =>
+                {
+                    Some(r.rect)
+                }
+                _ => None,
+            });
+        let gutter = gutter.expect("a gutter on the ground at the split");
+        assert!((gutter.width() - gap).abs() < 0.5, "{gutter:?}");
+        assert!(
+            gutter.top() <= card.top() + 1.0 && gutter.bottom() >= card.bottom() - 1.0,
+            "{gutter:?} spans the pane {card:?}"
+        );
+    }
 
     #[test]
     fn compact_navigation_stays_open_for_context_actions() {
@@ -878,10 +1556,11 @@ mod tests {
                         let response = ui.button("main");
                         branch = response.rect;
                         let navigation_layer = response.layer_id;
-                        if let Some(menu) = crate::ui::widgets::context_menu(&response, |ui| {
-                            ui.label("Rename branch");
+                        if let Some(Some(rect)) = crate::ui::kit::menu::context(&response, |m| {
+                            let item = m.item("", "Rename branch").show(m.ui);
+                            (item.rect.is_positive()).then_some((item.rect, item.layer_id))
                         }) {
-                            nested = Some((menu.response.rect.center(), menu.response.layer_id));
+                            nested = Some((rect.0.center(), rect.1));
                         }
                         ctx.move_to_top(navigation_layer);
                     })
@@ -896,7 +1575,7 @@ mod tests {
             pos,
             button,
             pressed,
-            modifiers: Default::default(),
+            modifiers: egui::Modifiers::default(),
         };
         draw(vec![
             egui::Event::PointerMoved(menu.center()),
@@ -964,7 +1643,7 @@ mod tests {
                 "zoom {from} -> {to}"
             );
             let mut next = ctx.run_ui(egui::RawInput::default(), |ui| {
-                update_window_minimum(ui.ctx())
+                update_window_minimum(ui.ctx());
             });
             next.textures_delta.clear();
             assert_eq!(ctx.zoom_factor(), to);
@@ -990,7 +1669,7 @@ mod tests {
             apply_zoom(&ctx, from);
             for _ in 0..2 {
                 let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                    update_window_minimum(ui.ctx())
+                    update_window_minimum(ui.ctx());
                 });
                 output.textures_delta.clear();
             }
@@ -1027,7 +1706,7 @@ mod tests {
         for zoom in [0.8, 1.0, 1.6] {
             apply_zoom(&ctx, zoom);
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                update_window_minimum(ui.ctx())
+                update_window_minimum(ui.ctx());
             });
             output.textures_delta.clear();
             let minimum = output.viewport_output[&egui::ViewportId::ROOT]

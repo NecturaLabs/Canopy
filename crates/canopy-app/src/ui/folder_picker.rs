@@ -3,10 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use crossbeam_channel::{Receiver, TryRecvError, bounded};
-use egui::{Id, Ui};
+use egui::{FontId, Id, RichText, Ui};
 use egui_phosphor::regular as icon;
 
-use super::theme::palette;
+use super::kit::Button;
+use super::theme::{self, palette};
 
 #[derive(Debug, Default)]
 pub struct FolderPicker {
@@ -64,8 +65,43 @@ impl FolderPicker {
         self.show_labelled(ui, salt, start, "Browse…")
     }
 
+    /// Browse without the error line under it: for a field beside the button that shows
+    /// [`FolderPicker::error`] itself.
+    pub fn show_button(&mut self, ui: &mut Ui, salt: &str, start: &Path) -> Option<PathBuf> {
+        self.button(ui, salt, start, "Browse…")
+    }
+
+    /// Why the chooser for `salt` failed, if it did.
+    pub fn error(&self, salt: &str) -> Option<&str> {
+        let id = Id::new(("folder-picker", salt));
+        self.error
+            .as_ref()
+            .filter(|(target, _)| *target == id)
+            .map(|(_, e)| e.as_str())
+    }
+
     /// [`Self::show`] with the button's own wording, for where the action is more than browsing.
     pub fn show_labelled(
+        &mut self,
+        ui: &mut Ui,
+        salt: &str,
+        start: &Path,
+        idle_label: &str,
+    ) -> Option<PathBuf> {
+        let selected = self.button(ui, salt, start, idle_label);
+        if let Some(error) = self.error(salt) {
+            let p = palette(ui.ctx());
+            let m = theme::metrics();
+            ui.label(
+                RichText::new(format!("{}  {error}", icon::WARNING_CIRCLE))
+                    .font(FontId::proportional(m.meta_size))
+                    .color(p.danger),
+            );
+        }
+        selected
+    }
+
+    fn button(
         &mut self,
         ui: &mut Ui,
         salt: &str,
@@ -95,27 +131,20 @@ impl FolderPicker {
                 Err(TryRecvError::Empty) => {}
             }
         }
-        let label = if self.pending.is_some() && active {
-            "Choosing…"
-        } else {
-            idle_label
-        };
-        if ui
-            .add_enabled(
-                self.pending.is_none(),
-                egui::Button::new(format!("{}  {label}", icon::FOLDER)),
-            )
+        let choosing = self.pending.is_some() && active;
+        let label = if choosing { "Choosing…" } else { idle_label };
+        if Button::new(label)
+            .secondary()
+            .icon(icon::FOLDER)
+            .enabled(self.pending.is_none())
+            .id_salt(id)
+            .show(ui)
             .clicked()
         {
             let start = start.to_path_buf();
             self.start(ui.ctx(), id, move || {
                 rfd::FileDialog::new().set_directory(start).pick_folder()
             });
-        }
-        if let Some((target, error)) = &self.error
-            && *target == id
-        {
-            ui.label(egui::RichText::new(error).color(palette(ui.ctx()).danger));
         }
         selected
     }
@@ -192,15 +221,13 @@ mod tests {
         started_rx
             .recv_timeout(std::time::Duration::from_secs(2))
             .expect("worker started without blocking caller");
-        assert!(
-            picker
-                .pending
-                .as_ref()
-                .expect("pending picker")
-                .1
-                .try_recv()
-                .is_err()
-        );
+        picker
+            .pending
+            .as_ref()
+            .expect("pending picker")
+            .1
+            .try_recv()
+            .unwrap_err();
         picker.begin_frame();
         picker.end_frame();
         assert!(

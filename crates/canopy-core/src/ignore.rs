@@ -28,7 +28,7 @@ pub enum IgnoreTarget {
 
 impl IgnoreTarget {
     /// Every target, in menu order.
-    pub const ALL: [IgnoreTarget; 4] = [
+    pub const ALL: [Self; 4] = [
         Self::Root,
         Self::Nearest,
         Self::RepositoryExclude,
@@ -578,14 +578,14 @@ mod tests {
         let file = IgnoreRule::File("dir/a b.txt".into());
         assert_eq!(pattern_for(&file, "").unwrap(), "/dir/a b.txt");
         assert_eq!(pattern_for(&file, "dir").unwrap(), "/a b.txt");
-        assert!(pattern_for(&file, "other").is_err());
+        pattern_for(&file, "other").unwrap_err();
         let folder = IgnoreRule::Folder("dir/sub/".into());
         assert_eq!(pattern_for(&folder, "").unwrap(), "/dir/sub/");
         assert_eq!(pattern_for(&folder, "dir").unwrap(), "/sub/");
         let ext = IgnoreRule::Extension("x/debug.log".into());
         assert_eq!(pattern_for(&ext, "").unwrap(), "*.log");
-        assert!(pattern_for(&IgnoreRule::Extension(".bashrc".into()), "").is_err());
-        assert!(pattern_for(&IgnoreRule::Extension("Makefile".into()), "").is_err());
+        pattern_for(&IgnoreRule::Extension(".bashrc".into()), "").unwrap_err();
+        pattern_for(&IgnoreRule::Extension("Makefile".into()), "").unwrap_err();
         let custom = |p: &str| IgnoreRule::Custom {
             pattern: p.into(),
             near: "a".into(),
@@ -594,7 +594,7 @@ mod tests {
         for bad in ["", "  ", "a\nb", "a\rb", "# comment"] {
             assert!(pattern_for(&custom(bad), "").is_err(), "{bad:?}");
         }
-        assert!(pattern_for(&IgnoreRule::File("../x".into()), "").is_err());
+        pattern_for(&IgnoreRule::File("../x".into()), "").unwrap_err();
         for name in ["a\n*", "a\r\n!b", "dir\n/"] {
             assert!(
                 pattern_for(&IgnoreRule::File(name.into()), "").is_err(),
@@ -605,7 +605,7 @@ mod tests {
                 "{name:?}"
             );
         }
-        assert!(pattern_for(&IgnoreRule::Extension("x.l\nog".into()), "").is_err());
+        pattern_for(&IgnoreRule::Extension("x.l\nog".into()), "").unwrap_err();
     }
 
     #[test]

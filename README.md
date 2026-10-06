@@ -62,8 +62,9 @@ Screenshots are rendered by Canopy itself from the deterministic fixture reposit
 - **In-progress operations**: a banner for merge, rebase and cherry-pick with continue and abort.
 - **GitHub and GitLab**: open a commit, branch or remote on its host, and list, read, create,
   check out, comment on, approve, merge and close pull and merge requests (self-hosted GitLab
-  included) through the host's REST API with a token you provide. Requests and the update check are
-  the only network use besides `git`, and each has an off switch; see the
+  included) through the host's API (REST, and one GraphQL query for the list's checks and
+  reviews) with a token you provide. Requests and the update check are the only network use
+  besides `git`, and each has an off switch; see the
   [privacy policy](docs/legal/privacy-policy.md).
 - **Credentials**: git and ssh ask for passwords, passphrases and host-key confirmation in Canopy's
   own dialog, never in a terminal.
@@ -141,8 +142,8 @@ macOS on Apple silicon and Windows x64; Linux arm64 and Intel Macs are being add
 
 Requirements:
 
-- A Rust toolchain (stable, 1.91 or newer) from [rustup](https://rustup.rs). `rust-toolchain.toml`
-  selects the stable channel with rustfmt and clippy.
+- A Rust toolchain (1.91 or newer) from [rustup](https://rustup.rs). `rust-toolchain.toml` pins
+  the exact release Canopy is checked with, and rustup installs it on first use.
 - `git` 2.30 or newer on `PATH` at runtime.
 - A C compiler (libgit2 is built from source by the `git2` crate). No OpenSSL or libssh2 is needed.
 - Linux: a Wayland or X11 session with OpenGL 3.3 or OpenGL ES 3.0, plus an XDG desktop portal for
@@ -226,10 +227,10 @@ Three crates:
   diffs, status and local reads through libgit2 (`git2`, built without network transports);
   every mutation and all Git network traffic through the `git` CLI. It also parses GitHub and
   GitLab remote URLs (`forge.rs`, offline).
-- **`canopy-hosting`**: the GitHub and GitLab REST client (pull and merge requests, `ureq` with
-  rustls) and the update-manifest fetch. It contacts only the host a repository's own remote
-  points at, with a token the user supplied; author images use the restricted picture hosts
-  listed in the Privacy Policy, without credentials.
+- **`canopy-hosting`**: the GitHub and GitLab API client (pull and merge requests through REST
+  and one GraphQL query, `ureq` with rustls) and the update-manifest fetch. It contacts only the
+  host a repository's own remote points at, with a token the user supplied; author images use the
+  restricted picture hosts listed in the Privacy Policy, without credentials.
 - **`canopy-app`**: the GUI, built on `eframe`/`egui` with the glow (OpenGL) renderer. Each open
   repository has a background worker thread; the UI thread sends it jobs and never calls git.
 
@@ -260,7 +261,7 @@ convention and pull request checklist, and [docs/backlog.md](docs/backlog.md) fo
 ├── crates/
 │   ├── canopy-core/        Git backend: snapshots, graph layout, diffs, status, operations,
 │   │                       git-flow, ignore rules, LFS, submodules, forge URLs, conflicts
-│   ├── canopy-hosting/     GitHub and GitLab REST client and the update-manifest fetch
+│   ├── canopy-hosting/     GitHub and GitLab API client and the update-manifest fetch
 │   └── canopy-app/         GUI binary `canopy`
 │       ├── assets/         bundled fonts (OFL) and window icon
 │       └── src/            main, app/, worker, tab, settings, keymap, hosting, askpass, ui/, views/

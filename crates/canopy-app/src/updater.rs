@@ -3,7 +3,7 @@
 //! `canopy/beta.json`), compares its build number with this build's and, when newer, offers the
 //! release notes and the download for this platform. It never downloads or installs anything by
 //! itself and sends nothing about the user. Installing is a separate step the user asks for in
-//! the update dialog (`Updater::install`, which runs `selfupdate.rs`).
+//! the update dialog (`Updater::install`, which runs `selfupdate/mod.rs`).
 
 use crossbeam_channel::{Receiver, unbounded};
 
@@ -46,6 +46,17 @@ impl Available {
         crate::build_info::name(self.build)
     }
 
+    /// What "Skip this version" stores in `skipped_version`: the build number, `412`.
+    pub fn skip_key(&self) -> String {
+        self.build.to_string()
+    }
+
+    /// Whether `skipped` (the saved `skipped_version`) skips this build. Also reads `build 412`,
+    /// which the status bar's menu once stored.
+    pub fn is_skipped(&self, skipped: Option<&str>) -> bool {
+        skipped.is_some_and(|s| s.trim().trim_start_matches("build ") == self.skip_key())
+    }
+
     /// The release page, else the list of releases.
     pub fn page(&self) -> String {
         self.manifest
@@ -58,8 +69,7 @@ impl Available {
     pub fn download(&self) -> String {
         self.manifest
             .artifact()
-            .map(|a| a.url.clone())
-            .unwrap_or_else(|| self.page())
+            .map_or_else(|| self.page(), |a| a.url.clone())
     }
 }
 
@@ -348,6 +358,22 @@ mod tests {
         assert_eq!(a.page(), RELEASES_PAGE);
         assert_eq!(a.download(), RELEASES_PAGE);
         assert_eq!(a.label(), "build 900");
+    }
+
+    /// review-views-4: the status bar stored "build 900" where the check compared "900".
+    #[test]
+    fn a_skipped_build_is_recognised_whichever_menu_skipped_it() {
+        let manifest = UpdateManifest::parse(br#"{"version":"900"}"#).expect("manifest");
+        let a = Available {
+            build: 900,
+            manifest,
+        };
+        assert_eq!(a.skip_key(), "900");
+        assert!(a.is_skipped(Some(&a.skip_key())));
+        assert!(a.is_skipped(Some("build 900")), "saved by an earlier build");
+        assert!(!a.is_skipped(Some("899")));
+        assert!(!a.is_skipped(Some("build 9000")));
+        assert!(!a.is_skipped(None));
     }
 
     #[test]

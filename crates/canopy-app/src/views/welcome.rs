@@ -1,220 +1,151 @@
-//! The start screen: brand, quick actions and recent repositories.
+//! The start screen: brand, quick actions, first-run keys and recent repositories.
 
-use egui::{Align2, CornerRadius, FontId, RichText, Sense, Stroke, Ui, vec2};
+use std::path::Path;
+
+use egui::{FontId, Id, RichText, Ui, vec2};
 use egui_phosphor::regular as icon;
 
 use crate::action::Action;
 use crate::keymap::{Command, hint};
-use crate::settings::Settings;
-use crate::ui::theme::{self, Palette, palette};
-use crate::ui::{art, widgets};
+use crate::settings::{self, Settings};
+use crate::ui::art;
+use crate::ui::kit::chip::KeyChord;
+use crate::ui::kit::row::{ListRow, SectionHeader};
+use crate::ui::kit::surface::{Callout, Card, NoticeAction};
+use crate::ui::kit::{IconButton, Size, Tone};
+use crate::ui::theme::{self, palette};
 use crate::views::dialogs::Dialog;
+
+/// Widest the action cards, the first-run keys and the recent list grow.
+const COLUMN_WIDTH: f32 = 660.0;
+/// Height of an action card.
+const CARD_HEIGHT: f32 = 128.0;
+/// Side of the tinted tile behind an action card's icon.
+const ICON_TILE: f32 = 40.0;
+/// Width of the keys column in the first-run list, so the descriptions line up.
+const KEYS_COLUMN: f32 = 104.0;
 
 /// Draws the welcome screen.
 pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let m = theme::metrics();
     let rect = ui.max_rect();
-    // Ambient glow.
-    let still = settings.reduce_motion;
-    let t = if still {
-        0.0
-    } else {
-        ui.input(|i| i.time) as f32
-    };
-    let drift = vec2((t * 0.25).sin() * 30.0, (t * 0.2).cos() * 20.0);
-    widgets::glow(
-        ui.painter(),
-        rect.center_top() + vec2(-260.0, 220.0) + drift,
-        520.0,
-        Palette::tint(p.accent, if p.dark { 46 } else { 30 }),
-    );
-    widgets::glow(
-        ui.painter(),
-        rect.center_top() + vec2(300.0, 360.0) - drift,
-        480.0,
-        Palette::tint(p.accent2, if p.dark { 30 } else { 22 }),
-    );
-    if !still {
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_millis(33));
-    }
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             // Sit the whole stack a little above the middle, from its height last frame; a tall
             // window otherwise leaves everything in its upper half.
-            let height_id = egui::Id::new("welcome-content-height");
+            let height_id = Id::new("welcome-content-height");
             let last: f32 = ui.ctx().data(|d| d.get_temp(height_id)).unwrap_or(0.0);
             let top = if rect.height() < 400.0 {
                 theme::XS
             } else {
-                ((rect.height() - last) * 0.55).max((rect.height() * 0.04).max(theme::LG))
+                ((rect.height() - last) * 0.5).max((rect.height() * 0.04).max(theme::LG))
             };
             let start = ui.cursor().top();
             ui.vertical_centered(|ui| {
                 ui.add_space(top);
+                // The first-run tips take room: the picture gives way so the actions stay in view.
+                let art_share = if settings.seen_intro { 0.46 } else { 0.34 };
                 let art_w = (rect.width() * 0.5)
-                    .min(rect.height() * if rect.height() < 400.0 { 0.30 } else { 0.50 })
+                    .min(
+                        rect.height()
+                            * if rect.height() < 400.0 {
+                                0.30
+                            } else {
+                                art_share
+                            },
+                    )
                     .clamp(120.0, 520.0);
                 art::show(ui, art::welcome(), vec2(art_w, art_w * 25.0 / 64.0));
-                ui.add_space(4.0);
+                ui.add_space(theme::XS);
                 ui.label(
                     RichText::new("Canopy")
-                        .font(FontId::new(theme::HERO_SIZE, theme::semibold()))
+                        .font(theme::heading(m.hero_size))
                         .color(p.text),
                 );
                 ui.label(
                     RichText::new("A fast, beautiful, Linux-first Git client")
-                        .size(theme::TITLE_SIZE)
+                        .size(m.title_size)
                         .color(p.text_dim),
                 );
-                ui.add_space(theme::LG);
+                ui.add_space(theme::XL);
 
-                let total = (ui.available_width() - theme::XL * 2.0).min(594.0);
+                let total = (ui.available_width() - theme::XL * 2.0).min(COLUMN_WIDTH);
                 let card_w = (total - theme::MD * 2.0) / 3.0;
                 ui.allocate_ui_with_layout(
-                    vec2(total, 122.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
+                    vec2(total, CARD_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Min),
                     |ui| {
-                        ui.spacing_mut().item_spacing.x = 12.0;
+                        ui.spacing_mut().item_spacing.x = theme::MD;
                         if card(
                             ui,
                             icon::FOLDER_OPEN,
                             "Open",
-                            "Choose a Git folder on this computer",
-                            &hint(Command::Open),
+                            "A repository on this computer",
+                            Command::Open,
                             card_w,
-                        ) {
+                        )
+                        .clicked()
+                        {
                             actions.push(Action::OpenDialog(Dialog::open()));
                         }
                         if card(
                             ui,
                             icon::CLOUD_ARROW_DOWN,
                             "Clone",
-                            "Copy a repository from a remote URL",
-                            &hint(Command::Clone),
+                            "From GitHub, GitLab or any URL",
+                            Command::Clone,
                             card_w,
-                        ) {
+                        )
+                        .clicked()
+                        {
                             actions.push(Action::OpenDialog(Dialog::clone_default(settings)));
                         }
                         if card(
                             ui,
                             icon::PLANT,
                             "Init",
-                            "Create a Git repository in a folder",
-                            &hint(Command::Init),
+                            "Start a new repository in a folder",
+                            Command::Init,
                             card_w,
-                        ) {
-                            actions.push(Action::OpenDialog(Dialog::Init {
-                                path: String::new(),
-                            }));
+                        )
+                        .clicked()
+                        {
+                            actions.push(Action::OpenDialog(Dialog::new_repository(String::new())));
                         }
                     },
                 );
-                ui.add_space(24.0);
 
                 if !settings.seen_intro {
+                    ui.add_space(theme::LG);
                     intro(ui, total, actions);
-                    ui.add_space(20.0);
                 }
 
                 if !settings.recent.is_empty() {
+                    ui.add_space(theme::XL);
                     ui.allocate_ui_with_layout(
-                        vec2(total, 20.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| widgets::section_label(ui, "Recent repositories"),
+                        vec2(total, 0.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(total);
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            SectionHeader::new("Recent repositories")
+                                .count(settings.recent.len())
+                                .first(true)
+                                .show(ui);
+                            let home = settings::home_dir();
+                            for path in &settings.recent {
+                                recent(ui, path, &home, actions);
+                            }
+                        },
                     );
-                    ui.add_space(6.0);
-                    for path in &settings.recent {
-                        let name = path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        let (r, resp) = ui.allocate_exact_size(vec2(total, 46.0), Sense::click());
-                        resp.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name)
-                        });
-                        let forget = format!("Forget {name}");
-                        let hover = ui
-                            .ctx()
-                            .animate_bool_with_time(resp.id, resp.hovered(), 0.12);
-                        ui.painter().rect(
-                            r,
-                            CornerRadius::same(theme::RADIUS),
-                            Palette::tint(p.elevated, 200 + (hover * 55.0) as u8),
-                            Stroke::new(1.0, p.border.lerp_to_gamma(p.accent, hover * 0.7)),
-                            egui::StrokeKind::Inside,
-                        );
-                        ui.painter().text(
-                            r.left_center() + vec2(22.0, 0.0),
-                            Align2::CENTER_CENTER,
-                            icon::GIT_BRANCH,
-                            FontId::proportional(theme::ICON_MD),
-                            p.accent.lerp_to_gamma(p.accent2, hover),
-                        );
-                        let text_width = (r.width() - theme::XL * 3.0).max(0.0);
-                        let painter = ui.painter().with_clip_rect(r.intersect(ui.clip_rect()));
-                        for (text, font, color, y) in [
-                            (
-                                name,
-                                FontId::new(theme::BODY_SIZE, theme::semibold()),
-                                p.text,
-                                -8.0,
-                            ),
-                            (
-                                path.display().to_string(),
-                                FontId::proportional(theme::SMALL_SIZE),
-                                p.text_faint,
-                                9.0,
-                            ),
-                        ] {
-                            let galley =
-                                widgets::single_line_galley(ui, text, font, color, text_width);
-                            painter.galley(
-                                r.left_center() + vec2(42.0, y - galley.size().y / 2.0),
-                                galley,
-                                color,
-                            );
-                        }
-                        let x = egui::Rect::from_center_size(
-                            r.right_center() - vec2(20.0, 0.0),
-                            vec2(22.0, 22.0),
-                        );
-                        let xr = ui.interact(x, resp.id.with("forget"), Sense::click());
-                        xr.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &forget)
-                        });
-                        if resp.hovered() || xr.hovered() {
-                            ui.painter().text(
-                                x.center(),
-                                Align2::CENTER_CENTER,
-                                icon::X,
-                                FontId::proportional(theme::ICON_XS),
-                                if xr.hovered() { p.danger } else { p.text_faint },
-                            );
-                        }
-                        if xr.on_hover_text("Remove from list").clicked() {
-                            actions.push(Action::ForgetRecent(path.clone()));
-                        } else if resp
-                            .clone()
-                            .on_hover_text(path.display().to_string())
-                            .clicked()
-                        {
-                            actions.push(Action::OpenRepo(path.clone()));
-                        }
-                        ui.add_space(6.0);
-                    }
                 }
-                ui.add_space(24.0);
-                ui.label(
-                    RichText::new(format!(
-                        "{} for the command palette   ·   ? for keyboard shortcuts",
-                        hint(Command::Palette)
-                    ))
-                    .size(theme::META_SIZE)
-                    .color(p.text_faint),
-                );
+                ui.add_space(theme::XL);
+                if settings.seen_intro {
+                    footer(ui);
+                }
             });
             let used = ui.cursor().top() - start - top;
             if (used - last).abs() > 0.5 {
@@ -224,104 +155,216 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
         });
 }
 
-/// First-run tips: how Canopy is meant to be driven.
+/// The single key of `command` where it has one (the keymap lists the chord first, then the bare
+/// key: `Ctrl+Shift+F · f` gives `f`), else its chord.
+fn key(command: Command) -> String {
+    let all = hint(command);
+    all.rsplit(" · ").next().unwrap_or_default().to_owned()
+}
+
+/// The two keys worth knowing first, as keycaps: the command palette and the shortcut sheet.
+fn footer(ui: &mut Ui) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    let hint_text = |ui: &mut Ui, text: &str| {
+        ui.label(RichText::new(text).size(m.small_size).color(p.text_faint));
+    };
+    // Centred: lay it out once at its width.
+    let width_id = Id::new("welcome-footer-width");
+    let width: f32 = ui.ctx().data(|d| d.get_temp(width_id)).unwrap_or(0.0);
+    let pad = ((ui.available_width() - width) / 2.0).max(0.0);
+    let row = ui.horizontal(|ui| {
+        ui.add_space(pad);
+        ui.spacing_mut().item_spacing.x = theme::SM;
+        let start = ui.cursor().left();
+        KeyChord::command(Command::Palette).show(ui);
+        hint_text(ui, "Command palette");
+        ui.add_space(theme::MD);
+        KeyChord::new(key(Command::Cheatsheet)).show(ui);
+        hint_text(ui, "Keyboard shortcuts");
+        ui.cursor().left() - start - theme::SM
+    });
+    if (row.inner - width).abs() > 0.5 {
+        ui.ctx().data_mut(|d| d.insert_temp(width_id, row.inner));
+        ui.ctx().request_repaint();
+    }
+}
+
+/// A recent repository: its name, the folder it is in (home as `~`), opening on click, with a
+/// button to forget it.
+fn recent(ui: &mut Ui, path: &Path, home: &Path, actions: &mut Vec<Action>) {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let shown = path.display().to_string();
+    let mut forget = false;
+    let mut row = ListRow::new(("recent", path))
+        .icon(icon::GIT_BRANCH)
+        .label(name.clone())
+        .tooltip(shown)
+        .actions(|ui| {
+            forget = IconButton::new(icon::X, format!("Forget {name}"))
+                .size(Size::Sm)
+                .id_salt(("forget", path))
+                .show(ui)
+                .clicked();
+        });
+    if let Some(folder) = folder_label(path, home) {
+        row = row.detail(folder);
+    }
+    let row = row.show(ui);
+    if forget {
+        actions.push(Action::ForgetRecent(path.to_path_buf()));
+    } else if row.clicked() {
+        actions.push(Action::OpenRepo(path.to_path_buf()));
+    }
+}
+
+/// The folder `path` is in, as people say it: the home folder as `~`. `None` at the top of the
+/// file system.
+fn folder_label(path: &Path, home: &Path) -> Option<String> {
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty())?;
+    Some(crate::views::dialogs::tilde_in(parent, home))
+}
+
+/// First-run tips: how Canopy is meant to be driven, as keys and what they do.
 fn intro(ui: &mut Ui, width: f32, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
+    let m = theme::metrics();
+    let keys: [(String, &str); 5] = [
+        (
+            hint(Command::Palette),
+            "Command palette: every action, branch and repository",
+        ),
+        (key(Command::Cheatsheet), "Every keyboard shortcut"),
+        (
+            format!(
+                "{} · {} · {}",
+                key(Command::History),
+                key(Command::Changes),
+                key(Command::Requests)
+            ),
+            "History, Changes and Pull requests",
+        ),
+        (
+            format!(
+                "{} · {} · {}",
+                key(Command::Fetch),
+                key(Command::Pull),
+                key(Command::Push)
+            ),
+            "Fetch, pull and push",
+        ),
+        (
+            hint(Command::Settings),
+            "Themes, Git defaults and your GitHub and GitLab accounts",
+        ),
+    ];
     ui.allocate_ui_with_layout(
-        vec2(width, 10.0),
+        vec2(width, 0.0),
         egui::Layout::top_down(egui::Align::Min),
         |ui| {
-            egui::Frame::new()
-                .fill(Palette::tint(p.accent, if p.dark { 26 } else { 18 }))
-                .stroke(Stroke::new(1.0, Palette::tint(p.accent, 90)))
-                .corner_radius(CornerRadius::same(theme::RADIUS_LG))
-                .inner_margin(egui::Margin::same(14))
-                .show(ui, |ui| {
-                    ui.set_width(width - 28.0);
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(icon::LIGHTBULB).size(theme::ICON_LG).color(p.accent));
-                        ui.label(
-                            RichText::new("Canopy is keyboard-first")
-                                .font(FontId::new(theme::SUBTITLE_SIZE, theme::semibold())),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("Got it").clicked() {
-                                actions.push(Action::DismissIntro);
-                            }
+            ui.set_width(width);
+            let shown = Callout::new(Tone::Accent, "Everything is a few keys away:")
+                .title("Canopy is keyboard-first")
+                .icon(icon::LIGHTBULB)
+                .id_salt("welcome-intro")
+                .action(NoticeAction::new("Got it"))
+                .show_with(ui, |ui| {
+                    // The tips span the column, like the cards above them.
+                    ui.set_min_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = theme::XS;
+                    for (chord, what) in &keys {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = theme::MD;
+                            ui.allocate_ui_with_layout(
+                                vec2(KEYS_COLUMN, Size::Sm.height()),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.set_width(KEYS_COLUMN);
+                                    KeyChord::new(chord.clone()).show(ui);
+                                },
+                            );
+                            ui.label(RichText::new(*what).size(m.body_size).color(p.text));
                         });
-                    });
-                    ui.add_space(4.0);
-                    for line in [
-                        format!("{}  opens the command palette: every action, branch and repository.", hint(Command::Palette)),
-                        "?  shows every shortcut. 1 / 2 / 3 switch views, j / k move, f / p / P fetch, pull, push.".to_owned(),
-                        format!("Settings ({}) has themes, Git defaults and your GitHub / GitLab tokens for pull requests.", hint(Command::Settings)),
-                    ] {
-                        ui.label(RichText::new(line).size(theme::META_SIZE).color(p.text_dim));
                     }
                 });
+            if shown.value == Some(0) {
+                actions.push(Action::DismissIntro);
+            }
         },
     );
 }
 
-fn card(ui: &mut Ui, glyph: &str, title: &str, sub: &str, keys: &str, w: f32) -> bool {
+/// A quick action: its icon on a tinted tile, the command's keys, a title and one line of help.
+/// Returns its response.
+fn card(
+    ui: &mut Ui,
+    glyph: &str,
+    title: &str,
+    sub: &str,
+    command: Command,
+    w: f32,
+) -> egui::Response {
     let p = palette(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(w, 122.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
-    let hover = ui
-        .ctx()
-        .animate_bool_with_time(resp.id, resp.hovered(), 0.15);
-    let lift = hover * 3.0;
-    let r = r.translate(vec2(0.0, -lift));
-    if hover > 0.0 {
-        ui.painter().rect_filled(
-            r.translate(vec2(0.0, 6.0)).shrink(4.0),
-            CornerRadius::same(theme::RADIUS_LG),
-            Palette::tint(p.accent, (hover * 40.0) as u8),
-        );
-    }
-    ui.painter().rect(
-        r,
-        CornerRadius::same(theme::RADIUS_LG),
-        p.elevated,
-        Stroke::new(1.0, p.border.lerp_to_gamma(p.accent, hover)),
-        egui::StrokeKind::Inside,
-    );
-    ui.painter().text(
-        r.left_top() + vec2(18.0, 28.0),
-        Align2::LEFT_CENTER,
-        glyph,
-        FontId::proportional(theme::ICON_XL),
-        p.accent.lerp_to_gamma(p.accent2, hover),
-    );
-    ui.painter().text(
-        r.left_top() + vec2(18.0, 62.0),
-        Align2::LEFT_CENTER,
-        title,
-        FontId::new(theme::TITLE_SIZE, theme::semibold()),
-        p.text,
-    );
-    let mut subtitle_job = egui::text::LayoutJob::simple(
-        sub.to_owned(),
-        FontId::proportional(theme::SMALL_SIZE),
-        p.text_dim,
-        (r.width() - theme::LG * 2.0).max(0.0),
-    );
-    subtitle_job.wrap.max_rows = 2;
-    let subtitle = ui.painter().layout_job(subtitle_job);
-    ui.painter()
-        .galley(r.left_top() + vec2(theme::LG, 82.0), subtitle, p.text_dim);
-    let name = title.to_owned();
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
-    if !keys.is_empty() {
-        ui.painter().text(
-            r.right_top() + vec2(-14.0, 28.0),
-            Align2::RIGHT_CENTER,
-            keys,
-            FontId::monospace(theme::MONO_SMALL_SIZE),
-            p.text_faint,
-        );
-    }
-    resp.clicked()
+    let m = theme::metrics();
+    // The card speaks once: its name, its help as the description and its keys as its shortcut;
+    // the text drawn inside it is not read a second time.
+    let hidden = |r: &egui::Response| {
+        r.ctx
+            .accesskit_node_builder(r.id, egui::accesskit::Node::set_hidden)
+    };
+    let response = Card::new()
+        .interactive(true)
+        .width(w)
+        .label(title)
+        .id_salt(("welcome-card", title))
+        .show(ui, |ui| {
+            ui.set_min_height(CARD_HEIGHT - 2.0 * m.card_pad);
+            ui.spacing_mut().item_spacing.y = theme::XS;
+            ui.horizontal(|ui| {
+                let (tile, _) =
+                    ui.allocate_exact_size(egui::Vec2::splat(ICON_TILE), egui::Sense::hover());
+                ui.painter().rect_filled(
+                    tile,
+                    egui::CornerRadius::same(m.radius),
+                    Tone::Accent.tint(p),
+                );
+                ui.painter().text(
+                    tile.center(),
+                    egui::Align2::CENTER_CENTER,
+                    glyph,
+                    FontId::proportional(m.icon_xl),
+                    p.accent,
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    hidden(&KeyChord::command(command).show(ui));
+                });
+            });
+            ui.add_space(theme::SM);
+            hidden(
+                &ui.label(
+                    RichText::new(title)
+                        .font(theme::heading(m.subtitle_size))
+                        .color(p.text),
+                ),
+            );
+            let mut job = egui::text::LayoutJob::simple(
+                sub.to_owned(),
+                FontId::proportional(m.small_size),
+                p.text_dim,
+                ui.available_width(),
+            );
+            job.wrap.max_rows = 2;
+            hidden(&ui.label(job));
+        })
+        .response;
+    response.ctx.accesskit_node_builder(response.id, |n| {
+        n.set_description(sub);
+        n.set_keyboard_shortcut(hint(command));
+    });
+    response
 }
 
 #[cfg(test)]
@@ -332,29 +375,21 @@ mod tests {
     fn quick_action_text_fits_a_minimum_zoomed_window() {
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, true);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut card_rect = egui::Rect::NOTHING;
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            card(
+            card_rect = card(
                 ui,
                 icon::CLOUD_ARROW_DOWN,
                 "Clone",
                 "GitHub, GitLab or any URL",
-                "Ctrl+Shift+O",
+                Command::Clone,
                 160.0,
-            );
+            )
+            .rect;
         });
         output.textures_delta.clear();
-        let card_rect = output
-            .shapes
-            .iter()
-            .find_map(|shape| {
-                if let egui::Shape::Rect(rect) = &shape.shape {
-                    Some(rect.rect)
-                } else {
-                    None
-                }
-            })
-            .expect("card surface");
+        assert!(card_rect.width() <= 160.5, "card grew to {card_rect:?}");
         for shape in &output.shapes {
             if let egui::Shape::Text(text) = &shape.shape {
                 assert!(
@@ -363,6 +398,136 @@ mod tests {
                     text.visual_bounding_rect()
                 );
             }
+        }
+    }
+
+    /// A11Y-20: a quick action is read once: "Clone", its help as the description and its keys
+    /// as the shortcut, with no second "Clone" or keys label inside it.
+    #[test]
+    fn a_quick_action_is_spoken_once() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            card(
+                ui,
+                icon::CLOUD_ARROW_DOWN,
+                "Clone",
+                "From GitHub, GitLab or any URL",
+                Command::Clone,
+                220.0,
+            );
+        });
+        output.textures_delta.clear();
+        let nodes: Vec<_> = output
+            .platform_output
+            .accesskit_update
+            .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect())
+            .unwrap_or_default();
+        let spoken: Vec<_> = nodes
+            .iter()
+            .filter(|n| !n.is_hidden())
+            .filter_map(|n| n.label().or_else(|| n.value()))
+            .collect();
+        assert_eq!(spoken, ["Clone"], "{spoken:?}");
+        let card = nodes
+            .iter()
+            .find(|n| n.label() == Some("Clone"))
+            .expect("the card");
+        assert_eq!(card.description(), Some("From GitHub, GitLab or any URL"));
+        assert_eq!(
+            card.keyboard_shortcut(),
+            Some(hint(Command::Clone).as_str())
+        );
+    }
+
+    #[test]
+    fn recent_repositories_name_their_folder_with_home_as_a_tilde() {
+        let home = Path::new("/home/ada");
+        let at = |p: &str| folder_label(Path::new(p), home);
+        assert_eq!(at("/home/ada/src/canopy").as_deref(), Some("~/src"));
+        assert_eq!(at("/home/ada/canopy").as_deref(), Some("~"));
+        assert_eq!(at("/srv/git/canopy").as_deref(), Some("/srv/git"));
+        // A folder merely starting with the home folder's name is not inside it.
+        assert_eq!(at("/home/adam/canopy").as_deref(), Some("/home/adam"));
+        assert_eq!(at("/canopy").as_deref(), Some("/"));
+        assert_eq!(folder_label(Path::new("canopy"), home), None);
+        assert_eq!(
+            folder_label(Path::new("/home/ada/src/x"), Path::new("")).as_deref(),
+            Some("/home/ada/src")
+        );
+    }
+
+    /// The tips teach the single keys where a command has one, not its long chord too.
+    #[test]
+    fn tips_show_the_single_key_of_a_command() {
+        assert_eq!(key(Command::Fetch), "f");
+        assert_eq!(key(Command::Cheatsheet), "?");
+        assert_eq!(key(Command::Palette), hint(Command::Palette));
+        for c in [
+            Command::Fetch,
+            Command::Pull,
+            Command::Push,
+            Command::History,
+        ] {
+            assert!(!key(c).contains('·'), "{c:?}: {}", key(c));
+        }
+    }
+
+    /// The first-run tips end in "Got it", which dismisses them.
+    #[test]
+    fn got_it_dismisses_the_first_run_tips() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut actions = Vec::new();
+        let run = |events: Vec<egui::Event>, actions: &mut Vec<Action>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| intro(ui, 600.0, actions),
+            );
+            out.textures_delta.clear();
+            out
+        };
+        let out = run(Vec::new(), &mut actions);
+        let got_it = out
+            .shapes
+            .iter()
+            .find_map(|c| find_text(&c.shape, "Got it"))
+            .expect("a Got it button");
+        let at = got_it.center();
+        let press = vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let release = vec![egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }];
+        let _ = run(press, &mut actions);
+        let _ = run(release, &mut actions);
+        assert!(
+            matches!(actions.as_slice(), [Action::DismissIntro]),
+            "{actions:?}"
+        );
+    }
+
+    fn find_text(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == text => Some(t.visual_bounding_rect()),
+            egui::Shape::Vec(v) => v.iter().find_map(|s| find_text(s, text)),
+            _ => None,
         }
     }
 }

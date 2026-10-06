@@ -12,8 +12,8 @@ impl Dialog {
     /// - 0: everything else; the newest shows first.
     pub(super) fn rank(&self) -> u8 {
         match self {
-            Dialog::Credential { .. } => 2,
-            Dialog::Consent { .. } | Dialog::Legal(_) => 1,
+            Self::Credential { .. } => 2,
+            Self::Consent { .. } | Self::Legal(_) => 1,
             _ => 0,
         }
     }
@@ -63,11 +63,13 @@ impl DialogStack {
         }
     }
 
-    /// Escape: closes the dialog on screen, except the consent, which must be answered. A
-    /// credential prompt is declined (`no` to an unknown host key).
+    /// Escape: closes the dialog on screen, except the consent, which must be answered (a
+    /// document read inside it goes back to the summary). A credential prompt is declined (`no`
+    /// to an unknown host key).
     pub fn dismiss(&mut self) {
-        match self.dialogs.last() {
-            Some(Dialog::Consent { .. }) | None => {}
+        match self.dialogs.last_mut() {
+            Some(Dialog::Consent { reading, .. }) => *reading = None,
+            None => {}
             Some(Dialog::Credential { prompt, .. }) => {
                 prompt.decline();
                 self.close();
@@ -87,17 +89,63 @@ impl DialogStack {
         });
     }
 
-    /// Keeps a failed clone's input, or closes its submitted form after success.
-    pub fn finish_clone(&mut self, success: bool) {
+    /// Keeps a failed clone's input and shows why it failed (git's message) in the form that
+    /// started it, or closes the submitted form after success. Whether such a form was waiting
+    /// (else the caller reports it).
+    pub fn finish_clone_with(&mut self, result: Result<(), &str>) -> bool {
+        let mut found = false;
         self.dialogs.retain_mut(|dialog| {
-            if let Dialog::Clone { pending, .. } = dialog
+            if let Dialog::Clone { pending, error, .. } = dialog
                 && *pending
             {
+                found = true;
                 *pending = false;
-                return !success;
+                if let Err(message) = result
+                    && !message.is_empty()
+                {
+                    *error = Some(message.to_owned());
+                }
+                return result.is_err();
             }
             true
         });
+        found
+    }
+
+    /// Hands the opener's answer for `path` to the open (or, when `create`, new-repository)
+    /// dialog that asked for it: it closes once the repository opened, and shows why otherwise.
+    /// Whether such a dialog was waiting (else the caller reports the failure itself).
+    pub fn finish_open(
+        &mut self,
+        path: &std::path::Path,
+        create: bool,
+        result: Result<(), &OpenFailure>,
+    ) -> bool {
+        let asked = |d: &Dialog| match d {
+            Dialog::Open { pending, .. } if !create => pending.as_deref() == Some(path),
+            Dialog::NewRepository { pending, .. } if create => pending.as_deref() == Some(path),
+            _ => false,
+        };
+        let Some(at) = self.dialogs.iter().position(asked) else {
+            return false;
+        };
+        match result {
+            Ok(()) => {
+                self.dialogs.remove(at);
+            }
+            Err(failure) => match &mut self.dialogs[at] {
+                Dialog::Open { pending, error, .. } => {
+                    *pending = None;
+                    *error = Some(failure.clone());
+                }
+                Dialog::NewRepository { pending, error, .. } => {
+                    *pending = None;
+                    *error = Some(failure.message.clone());
+                }
+                _ => {}
+            },
+        }
+        true
     }
 
     /// Closes the credential prompts git or ssh stopped waiting for.

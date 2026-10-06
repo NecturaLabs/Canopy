@@ -15,6 +15,7 @@
 //! [`REQUEST_DEADLINE`], and a prompt whose git process went away closes its dialog. Answers are
 //! never logged.
 
+use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
@@ -61,21 +62,21 @@ impl PromptKind {
     /// questions are plain text.
     pub fn of(prompt: &str, ssh_mode: &str) -> Self {
         match ssh_mode {
-            "confirm" => return PromptKind::Approve,
-            "none" => return PromptKind::Notice,
+            "confirm" => return Self::Approve,
+            "none" => return Self::Notice,
             _ => {}
         }
         let lower = prompt.trim_start().to_lowercase();
         if lower.contains("(yes/no") {
-            PromptKind::YesNo
+            Self::YesNo
         } else if lower.starts_with("username for ")
             || lower.starts_with("username:")
             || lower.starts_with("user name")
             || lower.starts_with("login:")
         {
-            PromptKind::Text
+            Self::Text
         } else {
-            PromptKind::Secret
+            Self::Secret
         }
     }
 }
@@ -183,8 +184,12 @@ impl Server {
                         continue;
                     }
                     open.fetch_add(1, Ordering::SeqCst);
-                    let (tx, expected, wake, slots) =
-                        (tx.clone(), expected.clone(), wake.clone(), open.clone());
+                    let (tx, expected, wake, slots) = (
+                        tx.clone(),
+                        expected.clone(),
+                        Arc::clone(&wake),
+                        Arc::clone(&open),
+                    );
                     let spawned = std::thread::Builder::new()
                         .name("askpass-prompt".into())
                         .spawn(move || {
@@ -217,7 +222,10 @@ impl Server {
 fn random_token() -> std::io::Result<String> {
     let mut bytes = [0u8; 24];
     getrandom::fill(&mut bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    Ok(bytes.iter().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    }))
 }
 
 /// Equal-time comparison, so the token cannot be guessed byte by byte from response times.
@@ -270,6 +278,10 @@ fn hung_up(stream: &TcpStream) -> bool {
 
 /// Handles one connection: checks the token, hands the prompt to the UI and waits for the
 /// answer, or until the asking process goes away.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "owning the stream closes the connection when the answer is sent"
+)]
 fn serve(
     stream: TcpStream,
     token: &str,
@@ -292,7 +304,7 @@ fn serve(
         text: request.prompt.trim().to_owned(),
         kind,
         reply,
-        waiting: waiting.clone(),
+        waiting: Arc::clone(&waiting),
     };
     tracing::info!(kind = ?kind, "credential prompt");
     if prompts.send(prompt).is_err() {
@@ -370,6 +382,11 @@ fn looks_like_client(port: Option<&str>, token: Option<&str>, arg: &std::ffi::Os
 
 /// Runs as the credential prompt: asks the app, prints the answer and returns the exit code
 /// (0 answered, 1 cancelled or failed).
+#[expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "git and ssh read the answer from standard output and show standard error"
+)]
 pub fn run_client() -> i32 {
     let prompt = std::env::args().nth(1).unwrap_or_default();
     let port = std::env::var(PORT_ENV).ok().and_then(|p| p.parse().ok());
@@ -506,8 +523,8 @@ mod tests {
     #[test]
     fn a_wrong_token_gets_no_prompt() -> std::io::Result<()> {
         let server = Server::start(|| {})?;
-        assert!(ask(server.port, "not-the-token", "Password: ", "").is_err());
-        assert!(server.prompts.try_recv().is_err());
+        ask(server.port, "not-the-token", "Password: ", "").unwrap_err();
+        server.prompts.try_recv().unwrap_err();
         Ok(())
     }
 
@@ -542,7 +559,7 @@ mod tests {
             (a, l.accept()?.0)
         };
         let err = read_request(&b, Instant::now() + Duration::from_millis(200));
-        assert!(err.is_err());
+        err.unwrap_err();
         drop(a);
         Ok(())
     }

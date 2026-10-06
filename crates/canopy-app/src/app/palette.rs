@@ -1,9 +1,84 @@
 //! The command palette's entries.
 
 use super::*;
+use crate::action::AppearanceChoice;
+use crate::ui::motion::MotionPref;
+use crate::ui::theme::{Density, Style};
 use crate::ui::widgets::forge_icon;
 
 impl CanopyApp {
+    /// Sets an Appearance option the way Settings → Appearance does: the setting changes and the
+    /// look follows on this frame (and is saved with the settings). Choosing "Match system" asks
+    /// the system again, as its answer may have changed.
+    pub(super) fn set_appearance(&mut self, ctx: &egui::Context, choice: AppearanceChoice) {
+        let s = &mut self.settings;
+        match choice {
+            AppearanceChoice::Style(v) => s.style = v,
+            AppearanceChoice::Density(v) => s.density = v,
+            AppearanceChoice::Translucent(on) => s.translucent = on,
+            AppearanceChoice::Motion(v) => {
+                s.motion = v;
+                if v == MotionPref::System {
+                    crate::ui::motion::query_system(ctx);
+                }
+            }
+        }
+        self.apply_look(ctx);
+    }
+
+    /// The palette's Appearance entries: Style, Density, Translucent surfaces and Motion (spec
+    /// 6.2). Turning translucency on is offered only where it can work.
+    fn appearance_entries(&self) -> Vec<(Entry, Action)> {
+        let e = |icon: &'static str, label: String, choice: AppearanceChoice| {
+            (
+                Entry {
+                    icon,
+                    label,
+                    detail: "Appearance".to_owned(),
+                    shortcut: String::new(),
+                },
+                Action::SetAppearance(choice),
+            )
+        };
+        let mut v = Vec::new();
+        for style in Style::ALL {
+            v.push(e(
+                icon::STACK,
+                format!("Style: {}", style.label()),
+                AppearanceChoice::Style(style),
+            ));
+        }
+        for density in Density::ALL {
+            v.push(e(
+                icon::ROWS,
+                format!("Density: {}", density.label()),
+                AppearanceChoice::Density(density),
+            ));
+        }
+        let blocked = theme::glass_blocked(
+            self.settings.theme,
+            crate::ui::kit::glass::available(),
+            crate::ui::kit::glass::reduced_transparency(),
+        );
+        for on in [true, false] {
+            if on && blocked.is_some() {
+                continue;
+            }
+            v.push(e(
+                icon::DROP_HALF,
+                format!("Translucent surfaces: {}", if on { "On" } else { "Off" }),
+                AppearanceChoice::Translucent(on),
+            ));
+        }
+        for motion in MotionPref::ALL {
+            v.push(e(
+                icon::WAVE_SINE,
+                format!("Motion: {}", motion.label()),
+                AppearanceChoice::Motion(motion),
+            ));
+        }
+        v
+    }
     /// A digest of what [`Self::palette_entries`] depends on that can change while the palette
     /// is open (it is rebuilt on every opening anyway).
     pub(super) fn palette_inputs(&self) -> u64 {
@@ -18,13 +93,14 @@ impl CanopyApp {
     }
 
     pub(super) fn palette_entries(&self) -> Vec<(Entry, Action)> {
+        use Command as C;
+
         let e = |icon: &'static str, label: &str, detail: &str, cmd: Option<Command>| Entry {
             icon,
             label: label.to_owned(),
             detail: detail.to_owned(),
             shortcut: cmd.map(keymap::hint).unwrap_or_default(),
         };
-        use Command as C;
         let mut v = vec![
             (
                 e(
@@ -51,9 +127,7 @@ impl CanopyApp {
                     "Repository",
                     Some(C::Init),
                 ),
-                Action::OpenDialog(Dialog::Init {
-                    path: String::new(),
-                }),
+                Action::OpenDialog(Dialog::new_repository(String::new())),
             ),
             (
                 e(icon::PALETTE, "Next theme", "Appearance", None),
@@ -122,6 +196,7 @@ impl CanopyApp {
                 Action::SetTheme(t),
             ));
         }
+        v.extend(self.appearance_entries());
         let app_entries = v;
         let mut v = Vec::new();
         if let Some(tab) = self.tabs.get(self.active) {
@@ -228,10 +303,8 @@ impl CanopyApp {
                         "Stash",
                         Some(C::PopStash),
                     ),
-                    Action::Op(Op::StashApply {
-                        index: 0,
-                        pop: true,
-                    }),
+                    // Resolved when it runs, by the latest stash's commit.
+                    Action::Command(C::PopStash),
                 ),
                 (
                     e(
@@ -253,7 +326,16 @@ impl CanopyApp {
                 ),
                 (
                     e(icon::CLOUD, "Add remote…", "Remote", None),
-                    Action::OpenDialog(Dialog::add_remote(&self.settings)),
+                    Action::AddRemoteDialog,
+                ),
+                (
+                    e(
+                        icon::SLIDERS_HORIZONTAL,
+                        "Repository settings…",
+                        "Repository",
+                        None,
+                    ),
+                    Action::RepositorySettings(tab.path.clone()),
                 ),
                 (
                     e(
@@ -288,7 +370,7 @@ impl CanopyApp {
                     (e(icon::ARROWS_CLOCKWISE, "Fetch all remotes", "Remote", Some(C::Fetch)), Action::Fetch),
                     (e(icon::ARROW_FAT_LINE_DOWN, "Pull", "Remote", Some(C::Pull)), Action::Pull),
                     (e(icon::ARROW_FAT_LINE_UP, "Push", "Remote", Some(C::Push)), Action::Push),
-                    (e(icon::WARNING, "Force push (with lease)…", "Remote", None), Action::Confirm { title: "Force push".into(), body: "Overwrite the remote branch with your local one? --force-with-lease refuses if someone else pushed in the meantime.".into(), confirm: "Force push".into(), danger: true, op: Op::Push { force: true } }),
+                    (e(icon::WARNING, "Force push (with lease)…", "Remote", None), Action::Confirm { title: "Force push the current branch?".into(), body: "The remote branch is overwritten with your local one. --force-with-lease refuses if someone else pushed in the meantime.".into(), confirm: "Force push branch".into(), danger: true, op: Op::Push { force: true } }),
                 ]);
             }
             if let Some((_, forge)) = tab.forge() {
@@ -435,5 +517,61 @@ impl CanopyApp {
         }
         v.extend(app_entries);
         v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(entries: &[(Entry, Action)]) -> Vec<&str> {
+        entries.iter().map(|(e, _)| e.label.as_str()).collect()
+    }
+
+    /// With no repository open the palette offers only what works without one.
+    #[test]
+    fn the_palette_offers_repository_commands_only_with_a_tab() {
+        let mut app = test_app();
+        let alone = app.palette_entries();
+        assert!(labels(&alone).contains(&"Open repository…"));
+        assert!(
+            !labels(&alone).contains(&"Pop latest stash"),
+            "{:?}",
+            labels(&alone)
+        );
+        let before = app.palette_inputs();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        assert_ne!(
+            app.palette_inputs(),
+            before,
+            "a new tab rebuilds the entries"
+        );
+        let with_tab = app.palette_entries();
+        let pop = with_tab
+            .iter()
+            .find(|(e, _)| e.label == "Pop latest stash")
+            .map(|(_, a)| a);
+        assert!(
+            matches!(pop, Some(Action::Command(Command::PopStash))),
+            "resolved by the latest stash's commit when chosen: {pop:?}"
+        );
+    }
+
+    /// Every Style and Density choice and the Motion choices are offered.
+    #[test]
+    fn every_appearance_choice_is_in_the_palette() {
+        let app = test_app();
+        let entries = app.appearance_entries();
+        let all = labels(&entries);
+        for style in Style::ALL {
+            let label = format!("Style: {}", style.label());
+            assert!(all.contains(&label.as_str()), "{all:?}");
+        }
+        for density in Density::ALL {
+            let label = format!("Density: {}", density.label());
+            assert!(all.contains(&label.as_str()), "{all:?}");
+        }
+        assert!(all.iter().any(|l| l.starts_with("Motion: ")), "{all:?}");
     }
 }

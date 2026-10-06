@@ -257,9 +257,11 @@ fn untracked_under(repo: &Repository, dirs: &[&[u8]]) -> Result<Inside> {
     Ok(inside)
 }
 
-/// Lists the untracked folder `dir` (relative to the working tree, with or without a trailing
-/// `/`) one level deep: the untracked files directly in it, and each subfolder as an
-/// [`UntrackedDir`] with its untracked file count. Ignored files are left out.
+/// Lists the untracked folder `dir` (relative to the working tree, with or without a trailing `/`)
+/// one level deep.
+///
+/// The untracked files directly in it, and each subfolder as an [`UntrackedDir`] with its untracked
+/// file count. Ignored files are left out.
 pub fn untracked_children(repo: &Repository, dir: &str) -> Result<UntrackedListing> {
     crate::paths::check_relative(dir)?;
     let base = format!("{}/", dir.trim_end_matches('/'));

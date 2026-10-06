@@ -3,9 +3,10 @@
 A fast, beautiful, Linux-first Git client for Linux, macOS and Windows, written in Rust (edition
 2024, MSRV 1.91). Three crates: `crates/canopy-core`, the UI-agnostic Git backend (libgit2 via
 `git2`, built without HTTPS/SSH, for reads; the `git` CLI for every mutation);
-`crates/canopy-hosting`, the GitHub/GitLab REST client (`ureq`, rustls); `crates/canopy-app`, the
-GUI (`eframe`/`egui` 0.36, glow), binary `canopy`. Docs: `docs/README.md` maps them (architecture,
-decisions in `docs/adr/`, design, features, playbook) and says which can lag.
+`crates/canopy-hosting`, the GitHub/GitLab API client (REST, plus one GraphQL query for the
+request list; `ureq`, rustls); `crates/canopy-app`, the GUI (`eframe`/`egui` 0.36, glow), binary
+`canopy`. Docs: `docs/README.md` maps them (architecture, decisions in `docs/adr/`, design,
+features, playbook) and says which can lag.
 
 ## Product rules
 
@@ -14,14 +15,18 @@ These come from the owner and override anything else in the repository.
 - **Hosting**: GitHub and GitLab only (including self-hosted GitLab), plus local-only repositories
   with no remote at all.
 - **Network**: Canopy contacts the local `git` executable for Git traffic; the repository's own
-  GitHub or GitLab REST API for pull/merge requests and author profile lookup; profile pictures
-  on that host, GitHub's `avatars.githubusercontent.com`, and exact Gravatar/Libravatar image
-  hosts returned by GitLab (`canopy-hosting::avatars`, ADR 0008); Canopy's update check and its
-  download only when the user chooses Update; opt-in, scrubbed crash reports to Sentry.
+  GitHub or GitLab API for pull/merge requests and author profile lookup: REST, plus, with a
+  token, one GraphQL query per request-list refresh on the same host (`api.github.com/graphql`,
+  `https://<host>[:port]/api/graphql`) for the rows' checks and reviews (ADR 0011); profile
+  pictures on that host, GitHub's `avatars.githubusercontent.com`, and exact Gravatar/Libravatar
+  image hosts returned by GitLab (`canopy-hosting::avatars`, ADR 0008); Canopy's update check and
+  its download only when the user chooses Update; opt-in, scrubbed crash reports to Sentry.
   Every HTTP feature has an off switch and sends nothing before the user accepted the Terms and
   Privacy Policy and answered the crash question. Pictures are cached locally for 12 hours,
-  including failures; a failed refresh keeps the previous picture. Image requests carry no token
-  and follow no redirects. No other telemetry, analytics, backend or service.
+  including authors without one; a failed refresh keeps the previous picture. A failure that is
+  not about the author (repository refused, commit not pushed, network) is never cached per
+  author; it pauses lookups instead. Image requests carry no token and follow no redirects. No
+  other telemetry, analytics, backend or service.
 - **Credentials**: never put credentials into a URL Canopy builds or logs. A hosting token goes
   only to its own host. Git and ssh prompts go through Canopy's own askpass
   (`crates/canopy-app/src/askpass.rs`), never a terminal.
@@ -36,9 +41,10 @@ These come from the owner and override anything else in the repository.
   with the option chosen in Canopy, passed to git explicitly, even where the user's git
   configuration says otherwise; that configuration is the default Canopy's choices start from.
   Whenever Canopy's choice differs from the user's git configuration, the UI says so: which
-  setting, its value and where it is set. Not yet true: `pull` still defers to the user's
-  `pull.rebase`, and nothing reports differences yet (`docs/backlog.md`, "Git settings" and
-  "Pull strategy").
+  setting, its value and where it is set. True so far for pull and fetch only: the pull strategy
+  and `--prune`/`--no-prune` are always passed, and Settings says where they differ from the
+  configuration. Other settings (`push.default`, `rebase.autoStash`, ...) are not passed yet,
+  and no notification reports differences (`docs/backlog.md`, "Git settings").
 - **Toolkit**: egui stays (the owner chose it over React).
 - **Art**: in-app illustrations are drawn in code from the active theme (`ui/art.rs`,
   `docs/art-prompts.md`), never shipped as SVG; the app icon is PNG only (`assets/icon-*.png`).
@@ -53,11 +59,15 @@ These come from the owner and override anything else in the repository.
 
 `vendor/` (third-party code we build, with our patch); `askpass.rs`; saved tokens (`tokens.json`,
 `hosting.rs`) and all of `crates/canopy-hosting/`; crash-report scrubbing (`crash_reports.rs`); URL
-opening in `platform.rs` (web addresses only); log redaction (`logging.rs`, `cli.rs`); URL building
-in `forge.rs`; the update feed; `Cargo.toml`,
-`Cargo.lock`, `deny.toml`; `.github/` (self-hosted runners run code). A change there gets a
-security pass (`/security-review`) before the general review. Ask the owner before storing a
-token anywhere new, contacting a new host or adding a dependency.
+opening and running the chosen editor, terminal and file manager in `platform.rs` (web addresses
+only; a file name only ever as a whole argument); settings import and export (`settings_file.rs`:
+a file never sets consent, trust, the programs Canopy runs or the hosts a token goes to);
+installed-app discovery (`system_apps.rs`); git configuration reading (`repo_config.rs`); log
+redaction (`logging.rs`, `cli.rs`); URL building in `forge.rs`; `ui/kit/glass/gl.rs` (the only
+`unsafe` code); the update feed; `Cargo.toml`, `Cargo.lock`, `deny.toml`; `.github/`
+(self-hosted runners run code). A change there gets a security pass (`/security-review`) before
+the general review. Ask the owner before storing a token anywhere new, contacting a new host or
+adding a dependency.
 
 ## Commands
 
@@ -65,7 +75,8 @@ token anywhere new, contacting a new host or adding a dependency.
 - Lint: `cargo clippy --workspace --all-targets --locked -- -D warnings`
 - Test: `cargo test --workspace --locked` (one: `cargo test -p canopy-core <name>`)
 - Run: `cargo run -p canopy-app -- <repo>` (`--release` for realistic speed)
-- `tools/check.sh`, on this platform: `fmt --check`, clippy, workspace tests,
+- `tools/check.sh`, on this platform: `fmt --check`, clippy, the unsafe policy
+  (`crates/canopy-app/tests/unsafe_policy.rs`), workspace tests,
   `tools/release.py selftest`, `tools/notices.py --check`, `tools/check-docs.py` (the docs map,
   paths in docs, module table and skill mirror), `tools/vendor-eframe.sh --check` (`vendor/eframe`
   is the published crate plus our patch and the build uses it; needs network access),
@@ -126,10 +137,17 @@ token anywhere new, contacting a new host or adding a dependency.
   through a confirmation dialog. Never force-push without `--force-with-lease`.
 - Errors reach the user as toasts carrying git's own stderr (or the libgit2 or server message),
   never a generic "operation failed"; log details with `tracing`.
-- Propagate `canopy_core::Result`; clippy rejects `unwrap`/`expect` outside tests; no `unsafe`.
+- Lints live in the workspace `Cargo.toml` (`[workspace.lints]`: pedantic, cargo and chosen
+  nursery and restriction lints) and `clippy.toml`, which refuses the usual calls that break the
+  git, libgit2 and colour rules in this section. Silence a finding only with
+  `#[expect(lint, reason = "...")]` at the narrowest scope, never `allow`.
+- Propagate `canopy_core::Result`; clippy rejects `unwrap`/`expect` outside tests. No `unsafe`
+  except in `crates/canopy-app/src/ui/kit/glass/gl.rs` (the backdrop-blur OpenGL calls, approved
+  by the owner): one operation per `unsafe` block, each with a `// SAFETY:` comment;
+  `tools/check.sh` fails on `unsafe` anywhere else.
 - Paths are `Path`/`PathBuf`, joined with `join`, never concatenated with `/`; not assumed UTF-8.
-- In the same change: a feature updates `docs/features.md` and, until the first numbered build is released,
-  `CHANGELOG.md` (Unreleased; afterwards the commit subject is the release note); a
+- In the same change: a feature updates `docs/features.md` and, until the first numbered build is
+  released, `CHANGELOG.md` (Unreleased; afterwards the commit subject is the release note); a
   module, `docs/architecture.md`; a token or component, `docs/design.md`. A consequential,
   hard-to-reverse decision gets an ADR in `docs/adr/` (`project-docs` skill).
 - Bundled fonts and assets need a licence row (fonts: `crates/canopy-app/assets/fonts/README.md`)

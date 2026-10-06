@@ -2,7 +2,11 @@
 //! type changes, large untracked folders, embedded repositories, safe paths and ignore rules),
 //! against throwaway repositories built with the `git` CLI.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)] // Test helpers may panic: that is a failed test.
+#![expect(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "helpers outside #[test] functions may panic too: that is a failed test"
+)]
 
 use std::fs;
 use std::path::Path;
@@ -20,6 +24,10 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "tests drive git directly to build and check repositories"
+)]
 fn run_git(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new("git")
         .current_dir(dir)
@@ -249,7 +257,7 @@ fn mode_only_change_shows_in_status_and_diff() {
     assert_eq!(st.unstaged.len(), 1, "{st:?}");
     let e = &st.unstaged[0];
     assert_eq!(e.kind, ChangeKind::Modified);
-    assert_eq!(e.mode_change(), Some((0o100644, 0o100755)));
+    assert_eq!(e.mode_change(), Some((0o100_644, 0o100_755)));
 
     let d = repo
         .file_diff(
@@ -261,14 +269,14 @@ fn mode_only_change_shows_in_status_and_diff() {
             MissingObjects::Fail,
         )
         .unwrap();
-    assert!(d.hunks.is_empty());
-    assert_eq!(d.mode_change(), Some((0o100644, 0o100755)));
+    assert!(d.hunks.is_empty(), "{:?}", d.hunks);
+    assert_eq!(d.mode_change(), Some((0o100_644, 0o100_755)));
 
     // Staged, and then in the commit.
     repo.stage(&["a.txt".to_owned()]).unwrap();
     let st = canopy_core::status::collect(repo.git()).unwrap();
-    assert!(st.unstaged.is_empty());
-    assert_eq!(st.staged[0].mode_change(), Some((0o100644, 0o100755)));
+    assert!(st.unstaged.is_empty(), "{:?}", st.unstaged);
+    assert_eq!(st.staged[0].mode_change(), Some((0o100_644, 0o100_755)));
     let d = repo
         .file_diff(
             &DiffSource::Staged,
@@ -279,13 +287,13 @@ fn mode_only_change_shows_in_status_and_diff() {
             MissingObjects::Fail,
         )
         .unwrap();
-    assert_eq!(d.mode_change(), Some((0o100644, 0o100755)));
+    assert_eq!(d.mode_change(), Some((0o100_644, 0o100_755)));
     let oid = repo
         .commit("chore: make a.txt executable", false, false)
         .unwrap();
     let details = repo.commit_details(oid, MissingObjects::Fail).unwrap();
     assert_eq!(details.files.len(), 1);
-    assert_eq!(details.files[0].mode_change(), Some((0o100644, 0o100755)));
+    assert_eq!(details.files[0].mode_change(), Some((0o100_644, 0o100_755)));
     let d = repo
         .file_diff(
             &DiffSource::Commit(oid),
@@ -296,7 +304,7 @@ fn mode_only_change_shows_in_status_and_diff() {
             MissingObjects::Fail,
         )
         .unwrap();
-    assert_eq!(d.mode_change(), Some((0o100644, 0o100755)));
+    assert_eq!(d.mode_change(), Some((0o100_644, 0o100_755)));
 }
 
 #[cfg(unix)]
@@ -324,7 +332,7 @@ fn file_to_symlink_is_one_typechange_entry_with_both_modes() {
     let st = canopy_core::status::collect(repo.git()).unwrap();
     assert_eq!(st.unstaged.len(), 1, "{st:?}");
     assert_eq!(st.unstaged[0].kind, ChangeKind::Typechange);
-    assert_eq!(st.unstaged[0].mode_change(), Some((0o100644, 0o120000)));
+    assert_eq!(st.unstaged[0].mode_change(), Some((0o100_644, 0o120_000)));
 
     let d = repo
         .file_diff(
@@ -337,10 +345,10 @@ fn file_to_symlink_is_one_typechange_entry_with_both_modes() {
         )
         .unwrap();
     assert_eq!(d.kind, Some(ChangeKind::Typechange));
-    assert_eq!(d.mode_change(), Some((0o100644, 0o120000)));
+    assert_eq!(d.mode_change(), Some((0o100_644, 0o120_000)));
 
     // Hunk staging refuses a type change instead of applying half of it.
-    let key = d.hunks.first().map(|h| h.key()).unwrap_or((0, 0, 0, 0));
+    let key = d.hunks.first().map_or((0, 0, 0, 0), canopy_core::Hunk::key);
     for result in [
         repo.apply_hunk(canopy_core::HunkAction::Stage, "a.txt", 0, key, 3),
         repo.apply_lines(canopy_core::HunkAction::Stage, "a.txt", 0, key, &[0], 3),
@@ -356,7 +364,7 @@ fn file_to_symlink_is_one_typechange_entry_with_both_modes() {
     let details = repo.commit_details(oid, MissingObjects::Fail).unwrap();
     assert_eq!(details.files.len(), 1, "{:?}", details.files);
     assert_eq!(details.files[0].kind, ChangeKind::Typechange);
-    assert_eq!(details.files[0].mode_change(), Some((0o100644, 0o120000)));
+    assert_eq!(details.files[0].mode_change(), Some((0o100_644, 0o120_000)));
     let d = repo
         .file_diff(
             &DiffSource::Commit(oid),
@@ -368,7 +376,7 @@ fn file_to_symlink_is_one_typechange_entry_with_both_modes() {
         )
         .unwrap();
     assert_eq!(d.kind, Some(ChangeKind::Typechange));
-    assert_eq!(d.mode_change(), Some((0o100644, 0o120000)));
+    assert_eq!(d.mode_change(), Some((0o100_644, 0o120_000)));
 }
 
 // --- Untracked folders ---------------------------------------------------------------------------
@@ -398,8 +406,8 @@ fn small_untracked_folders_list_every_file() {
             "new/deep/f2.js"
         ]
     );
-    assert!(st.untracked_dirs.is_empty());
-    assert_eq!(st.unstaged[0].new_mode, Some(0o100644));
+    assert!(st.untracked_dirs.is_empty(), "{:?}", st.untracked_dirs);
+    assert_eq!(st.unstaged[0].new_mode, Some(0o100_644));
 }
 
 #[test]
@@ -438,7 +446,7 @@ fn many_untracked_files_collapse_to_folders_and_expand_one_level() {
     // The default limit lists them all.
     let st = canopy_core::status::collect(repo.git()).unwrap();
     assert_eq!(st.unstaged.len(), 13);
-    assert!(st.untracked_dirs.is_empty());
+    assert!(st.untracked_dirs.is_empty(), "{:?}", st.untracked_dirs);
     assert!(matches!(
         repo.untracked_children("../outside"),
         Err(Error::UnsafePath { .. })
@@ -617,7 +625,7 @@ fn ignore_files_that_are_symlinks_are_refused() {
         assert!(matches!(err, Error::UnsafePath { .. }), "{err:?}");
     }
     let exclude = p.join(".git").join("info").join("exclude");
-    fs::remove_file(&exclude).ok();
+    let _ = fs::remove_file(&exclude);
     std::os::unix::fs::symlink(&victim, &exclude).unwrap();
     assert!(matches!(
         repo.add_ignore_rule(
@@ -653,7 +661,7 @@ fn why_ignored_covers_tracked_files_and_negation() {
     let keep = repo.why_ignored("keep.txt").unwrap().expect("negation");
     assert!(keep.negated());
     assert_eq!(keep.line, 2);
-    assert!(repo.why_ignored("../x").is_err());
+    repo.why_ignored("../x").unwrap_err();
 }
 
 #[test]
