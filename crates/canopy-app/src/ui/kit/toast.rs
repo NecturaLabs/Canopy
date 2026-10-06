@@ -351,6 +351,8 @@ pub(crate) fn gallery(ui: &mut Ui) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use egui::Rect;
 
     /// A card follows the density like everything around it: Dense's is tighter, with a smaller
     /// glyph, than Comfortable's (Deeper keeps each density's).
@@ -364,8 +366,6 @@ mod tests {
         assert_eq!(DEEPER_DENSE.toast_pad, DENSE.toast_pad);
         assert_eq!(DEEPER_COMFORTABLE.toast_pad, COMFORTABLE.toast_pad);
     }
-    use super::*;
-    use egui::Rect;
 
     fn context() -> egui::Context {
         let ctx = egui::Context::default();
