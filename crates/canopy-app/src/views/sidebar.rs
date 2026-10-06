@@ -634,4 +634,59 @@ mod tests {
             "{actions:?}"
         );
     }
+
+    /// O9, KPL-F13: the Remotes header's "+" is reachable from the keyboard: Tab from the header
+    /// lands on it, and Shift+Tab goes back to the header.
+    #[test]
+    fn the_remotes_header_button_is_reachable_by_tab_and_shift_tab() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = tab_with(vec![origin()]);
+        tab.collapsed.insert("branches".into());
+        let mut actions = Vec::new();
+        let key = |shift: bool| egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: if shift {
+                egui::Modifiers::SHIFT
+            } else {
+                egui::Modifiers::default()
+            },
+        };
+        let mut focused = Vec::new();
+        for _ in 0..6 {
+            let _ = sidebar_frame(&ctx, &mut tab, vec![key(false)], &mut actions);
+            let now = sidebar_frame_focus(&ctx, &mut tab, Vec::new(), &mut actions).1;
+            let reached = now.as_deref() == Some("Add remote…");
+            focused.push(now);
+            if reached {
+                break;
+            }
+        }
+        assert_eq!(
+            focused.last().cloned().flatten().as_deref(),
+            Some("Add remote…"),
+            "Tab never reached the header's +: {focused:?}"
+        );
+        assert!(
+            focused
+                .iter()
+                .rev()
+                .nth(1)
+                .is_some_and(|l| l.as_deref().is_some_and(|l| l.starts_with("Remotes"))),
+            "the + comes right after its header: {focused:?}"
+        );
+        let _ = sidebar_frame(&ctx, &mut tab, vec![key(true)], &mut actions);
+        let back = sidebar_frame_focus(&ctx, &mut tab, Vec::new(), &mut actions).1;
+        crate::ui::motion::set_reduced(false);
+        assert!(
+            back.as_deref().is_some_and(|l| l.starts_with("Remotes")),
+            "Shift+Tab goes back to the header: {back:?}"
+        );
+        assert!(actions.is_empty(), "{actions:?}");
+    }
 }
