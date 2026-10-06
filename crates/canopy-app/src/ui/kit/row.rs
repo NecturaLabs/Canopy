@@ -138,6 +138,14 @@ pub struct RowCtx {
 const PAD: f32 = 10.0;
 /// Gap between a row's icon, label, detail and trailing text.
 const GAP: f32 = 8.0;
+/// A disclosure chevron's column: its inset from the row's left edge, its width, and the gap
+/// after it in a tree row (a disclosure's body starts at their sum, under the header's icon or,
+/// without one, its label).
+const CHEVRON_INSET: f32 = 6.0;
+const CHEVRON_WIDTH: f32 = 12.0;
+const CHEVRON_GAP: f32 = 4.0;
+/// The gap after a section header's chevron.
+const SECTION_CHEVRON_GAP: f32 = 6.0;
 
 /// Everything rows share up to their content: allocation, interaction, the ground layers.
 struct Frame {
@@ -835,9 +843,10 @@ impl<'a> TreeRow<'a> {
         let id = f.response.id;
         let has_children = self.open.is_some();
         let mut open_now = self.open.as_deref().copied().unwrap_or(false);
-        let chevron_x = f.rect.left() + 6.0 + crate::ui::count_f32(self.depth) * m.tree_indent;
+        let chevron_x =
+            f.rect.left() + CHEVRON_INSET + crate::ui::count_f32(self.depth) * m.tree_indent;
         let chevron = Rect::from_center_size(
-            pos2(chevron_x + 6.0, f.rect.center().y),
+            pos2(chevron_x + CHEVRON_WIDTH / 2.0, f.rect.center().y),
             vec2(16.0, f.rect.height()),
         );
         let mut toggled = false;
@@ -917,7 +926,7 @@ impl<'a> TreeRow<'a> {
                 };
                 paint_chevron(&f.painter, chevron.center(), turn, color);
             }
-            let mut x = chevron_x + 12.0 + 4.0;
+            let mut x = chevron_x + CHEVRON_WIDTH + CHEVRON_GAP;
             if let Some(g) = &self.icon {
                 let color = match self.icon_tone {
                     Some(t) if f.enabled => t.color(p),
@@ -1139,7 +1148,7 @@ impl<'a> Disclosure<'a> {
             ui.add_space(theme::XS);
             let r = ui
                 .horizontal(|ui| {
-                    ui.add_space(6.0 + 12.0 + 4.0);
+                    ui.add_space(CHEVRON_INSET + CHEVRON_WIDTH + CHEVRON_GAP);
                     ui.vertical(body).inner
                 })
                 .inner;
@@ -1257,7 +1266,7 @@ impl<'a> SectionHeader<'a> {
         let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
         let cy = rect.center().y;
         let label_color = p.text_faint.lerp_to_gamma(p.text_dim, hover);
-        let mut x = rect.left() + 6.0;
+        let mut x = rect.left() + CHEVRON_INSET;
         if collapsible {
             let turn = anim::ease_bool(
                 &ctx,
@@ -1266,8 +1275,13 @@ impl<'a> SectionHeader<'a> {
                 motion::BASE,
                 motion::BASE,
             );
-            paint_chevron(&painter, pos2(x + 6.0, cy), turn, label_color);
-            x += 12.0 + 6.0;
+            paint_chevron(
+                &painter,
+                pos2(x + CHEVRON_WIDTH / 2.0, cy),
+                turn,
+                label_color,
+            );
+            x += CHEVRON_WIDTH + SECTION_CHEVRON_GAP;
         }
         if let Some(g) = &self.icon {
             let glyph = painter.layout_no_wrap(g.clone(), FontId::proportional(13.0), p.text_faint);
@@ -2091,5 +2105,32 @@ mod tests {
         });
         let p = theme::palette(&ctx);
         assert_eq!(grounds, vec![p.standard.pane]);
+    }
+
+    /// V22: a disclosure's header icon takes its tone (the checks header's red, amber or green).
+    #[test]
+    fn a_disclosure_header_icon_keeps_its_tone() {
+        let ctx = ctx();
+        let p = *theme::palette(&ctx);
+        for (tone, color) in [
+            (Tone::Danger, p.danger),
+            (Tone::Warning, p.warning),
+            (Tone::Success, p.success),
+        ] {
+            let out = run(&ctx, Vec::new(), |ui| {
+                let mut open = false;
+                let _ = Disclosure::new("checks", "2 checks failed", &mut open)
+                    .icon(egui_phosphor::regular::X_CIRCLE)
+                    .icon_tone(tone)
+                    .show(ui, |_| ());
+            });
+            let icon = out.shapes.iter().find_map(|c| match &c.shape {
+                Shape::Text(t) if t.galley.text() == egui_phosphor::regular::X_CIRCLE => {
+                    Some(t.fallback_color)
+                }
+                _ => None,
+            });
+            assert_eq!(icon, Some(color), "{tone:?}");
+        }
     }
 }
