@@ -77,6 +77,8 @@ pub enum Action {
     },
     /// Every repository back to the defaults in Settings.
     ResetRepoSettings,
+    /// Settings were replaced as a whole (imported, or reset): apply what is not read live.
+    SettingsReplaced,
     IdentitySettings,
     SaveIdentity {
         repo: Option<PathBuf>,

@@ -17,6 +17,7 @@ mod platform;
 mod repo_config;
 mod selfupdate;
 mod settings;
+mod settings_file;
 mod system_apps;
 mod tab;
 mod trust;

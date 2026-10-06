@@ -233,6 +233,17 @@ impl CanopyApp {
                         }
                     }
                 }
+                Action::SettingsReplaced => {
+                    crate::trust::set(&self.settings.trusted_folders);
+                    crate::logging::set_level(self.settings.log_level);
+                    for t in &mut self.tabs {
+                        let prefs = self.settings.diff_for(&t.path);
+                        if t.diff_prefs != prefs {
+                            t.diff_prefs = prefs;
+                            t.reload_diff();
+                        }
+                    }
+                }
                 Action::IdentitySettings => {
                     self.open_settings(SettingsScreen::at(settings_screen::Section::Git));
                 }

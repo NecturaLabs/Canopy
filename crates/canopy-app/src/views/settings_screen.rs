@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
@@ -58,12 +58,14 @@ pub enum Section {
     Updates,
     Privacy,
     Keyboard,
+    /// Export, import and reset.
+    Data,
     /// The active repository's own settings (shown while a repository is open).
     Repository,
 }
 
 impl Section {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Appearance,
         Self::Git,
         Self::Integrations,
@@ -71,6 +73,7 @@ impl Section {
         Self::Updates,
         Self::Privacy,
         Self::Keyboard,
+        Self::Data,
     ];
 
     fn label(self) -> (&'static str, &'static str) {
@@ -82,6 +85,7 @@ impl Section {
             Self::Updates => (icon::ARROW_CIRCLE_UP, "Updates"),
             Self::Privacy => (icon::SHIELD_CHECK, "Privacy"),
             Self::Keyboard => (icon::KEYBOARD, "Keyboard"),
+            Self::Data => (icon::ARCHIVE, "Backup and reset"),
             Self::Repository => (icon::FOLDER_SIMPLE, "This repository"),
         }
     }
@@ -134,6 +138,10 @@ pub struct SettingsScreen {
     remote_drafts: HashMap<String, String>,
     /// The URL last saved for a remote, and when, until the configuration shows it.
     remote_saved: Option<(String, String, Instant)>,
+    /// An export or import waiting on its file chooser.
+    file_task: Option<crate::settings_file::FileTask>,
+    /// What the last export, import or reset did: `(failed, message)`.
+    file_status: Option<(bool, String)>,
 }
 
 /// Why the active repository's authors show initials instead of pictures
@@ -357,6 +365,7 @@ pub fn show(
     let m = theme::metrics();
     let mut result = SettingsResult::default();
     screen.picker.begin_frame();
+    poll_file_task(screen, settings, actions);
     if !screen.apps_asked {
         // Picks up an editor or terminal installed since the last look.
         screen.apps_asked = true;
@@ -535,6 +544,7 @@ impl Page<'_, '_> {
                 }
             }
             Section::Keyboard => keyboard(ui),
+            Section::Data => backup(ui, screen, settings, actions),
             Section::Repository => repository(ui, screen, settings, tokens, data, actions),
         }
     }
@@ -695,7 +705,13 @@ fn synonyms(title: &str) -> &'static str {
         "Send crash reports" => "crash sentry telemetry error report",
         "Log detail" => "log logging debug verbose diagnostics",
         "Logs and crash reports" => "log logs diagnostics folder copy",
-        "Privacy Policy" | "Terms of Service" => "legal privacy terms document",
+        "Privacy Policy" | "Terms of Service" => {
+            "legal privacy terms document consent accepted agreement"
+        }
+        "Export settings" | "Import settings" => {
+            "backup file json move computer copy transfer save load"
+        }
+        "Reset all settings" => "defaults factory start over restore clear",
         "Check for updates" | "Include beta builds" => "update upgrade version release beta",
         "Tokens" => "token account sign in personal access github gitlab api pat credential",
         "Version" => "update upgrade version release check now what's new",
@@ -1037,6 +1053,29 @@ const READING_WIDTH: f32 = 560.0;
 fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
     row_more(ui, title, help, "", control);
     row_end(ui);
+}
+
+/// Every setting's default, for the buttons that go back to it.
+static DEFAULTS: LazyLock<Settings> = LazyLock::new(Settings::default);
+
+/// A button back to a setting's default, shown while the setting differs from it (drawn right
+/// to left, so it sits before the control). Returns true when it was clicked.
+fn revert<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, default: &T, name: &str) -> bool {
+    if value == default {
+        return false;
+    }
+    let clicked = IconButton::new(
+        icon::ARROW_COUNTER_CLOCKWISE,
+        format!("Reset {name} to its default"),
+    )
+    .size(Size::Sm)
+    .id_salt(("revert", name))
+    .show(ui)
+    .clicked();
+    if clicked {
+        value.clone_from(default);
+    }
+    clicked
 }
 
 /// The tag on a global setting that each repository can override.
@@ -1543,6 +1582,20 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     heading(ui, "Theme");
     if block(ui, "Theme", "") {
         theme_cards(ui, s);
+        if s.theme != DEFAULTS.theme {
+            let m = theme::metrics();
+            ui.add_space(theme::SM);
+            if LinkButton::new(format!(
+                "Back to the default theme, {}",
+                DEFAULTS.theme.name()
+            ))
+            .text_size(m.meta_size)
+            .show(ui)
+            .clicked()
+            {
+                s.theme = DEFAULTS.theme;
+            }
+        }
     }
     group_gap(ui, theme::LG);
     heading(ui, "Look");
@@ -1555,6 +1608,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             Segmented::new(&mut s.style, &options)
                 .label("Style")
                 .show(ui);
+            revert(ui, &mut s.style, &DEFAULTS.style, "Style");
         },
     );
     let blocked = theme::glass_blocked(
@@ -1579,6 +1633,12 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
                 on,
                 "Translucent surfaces",
             );
+            revert(
+                ui,
+                &mut s.translucent,
+                &DEFAULTS.translucent,
+                "Translucent surfaces",
+            );
         },
     );
     row(
@@ -1590,6 +1650,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             Segmented::new(&mut s.density, &options)
                 .label("Density")
                 .show(ui);
+            revert(ui, &mut s.density, &DEFAULTS.density, "Density");
         },
     );
     let system = match motion::system() {
@@ -1602,6 +1663,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         Segmented::new(&mut s.motion, &options)
             .label("Motion")
             .show(ui);
+        revert(ui, &mut s.motion, &DEFAULTS.motion, "Motion");
     });
     group_gap(ui, theme::LG);
     heading(ui, "Interface");
@@ -1615,6 +1677,9 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         ),
         |ui| {
             zoom_slider(ui, s, preview);
+            if revert(ui, &mut s.zoom, &DEFAULTS.zoom, "Zoom") {
+                *preview = None;
+            }
         },
     );
     row(
@@ -1628,6 +1693,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             )
             .label("Dates")
             .show(ui);
+            revert(ui, &mut s.relative_dates, &DEFAULTS.relative_dates, "Dates");
         },
     );
     row(
@@ -1641,6 +1707,12 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             )
             .label("Commit date format")
             .show(ui);
+            revert(
+                ui,
+                &mut s.iso_dates,
+                &DEFAULTS.iso_dates,
+                "Commit date format",
+            );
         },
     );
     row(
@@ -1649,6 +1721,12 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Pictures or coloured initials next to authors.",
         |ui| {
             switch(ui, &mut s.show_avatars, "Author avatars");
+            revert(
+                ui,
+                &mut s.show_avatars,
+                &DEFAULTS.show_avatars,
+                "Author avatars",
+            );
         },
     );
 }
@@ -2177,6 +2255,7 @@ fn git(
             Segmented::new(&mut s.pull_mode, &options)
                 .label("Pull strategy")
                 .show(ui);
+            revert(ui, &mut s.pull_mode, &DEFAULTS.pull_mode, "Pull strategy");
         },
     );
     default_row(
@@ -2189,6 +2268,12 @@ fn git(
             .as_ref(),
         |ui| {
             switch(ui, &mut s.prune_on_fetch, "Prune on fetch");
+            revert(
+                ui,
+                &mut s.prune_on_fetch,
+                &DEFAULTS.prune_on_fetch,
+                "Prune on fetch",
+            );
         },
     );
     default_row(
@@ -2207,6 +2292,12 @@ fn git(
                 .name("Fetch in the background")
                 .id_salt("auto-fetch")
                 .show(ui);
+            revert(
+                ui,
+                &mut s.auto_fetch_minutes,
+                &DEFAULTS.auto_fetch_minutes,
+                "Fetch in the background",
+            );
         },
     );
     heading(ui, "Commits");
@@ -2217,6 +2308,7 @@ fn git(
         None,
         |ui| {
             switch(ui, &mut s.signoff, "Add Signed-off-by");
+            revert(ui, &mut s.signoff, &DEFAULTS.signoff, "Add Signed-off-by");
         },
     );
     row(
@@ -2225,6 +2317,12 @@ fn git(
         "How many commits the history loads before \"Load more\".",
         |ui| {
             commit_page(ui, s);
+            revert(
+                ui,
+                &mut s.commit_page,
+                &DEFAULTS.commit_page,
+                "Commits per page",
+            );
         },
     );
     heading(ui, "Diffs");
@@ -2239,6 +2337,7 @@ fn git(
             )
             .label("Diff layout")
             .show(ui);
+            revert(ui, &mut s.split_diff, &DEFAULTS.split_diff, "Diff layout");
         },
     );
     row(
@@ -2247,6 +2346,12 @@ fn git(
         "Colours code in diffs by language (Rust, TypeScript, Python, Markdown and about 200 more).",
         |ui| {
             switch(ui, &mut s.syntax_highlight, "Syntax highlighting");
+            revert(
+                ui,
+                &mut s.syntax_highlight,
+                &DEFAULTS.syntax_highlight,
+                "Syntax highlighting",
+            );
         },
     );
     default_row(
@@ -2269,6 +2374,12 @@ fn git(
                 .width(ZOOM_RAIL_WIDTH)
                 .id_salt("diff-context")
                 .show(ui);
+            revert(
+                ui,
+                &mut s.diff.context,
+                &DEFAULTS.diff.context,
+                "Context lines",
+            );
         },
     );
     default_row(
@@ -2283,6 +2394,12 @@ fn git(
                 .name("Whitespace")
                 .id_salt("whitespace")
                 .show(ui);
+            revert(
+                ui,
+                &mut s.diff.whitespace,
+                &DEFAULTS.diff.whitespace,
+                "Whitespace",
+            );
         },
     );
     let overridden = s.repos_with_overrides();
@@ -3148,6 +3265,12 @@ fn integrations(
             )
             .label("Clone protocol")
             .show(ui);
+            revert(
+                ui,
+                &mut s.clone_protocol,
+                &DEFAULTS.clone_protocol,
+                "Clone protocol",
+            );
         },
     );
     heading(ui, "GitHub and GitLab");
@@ -3172,6 +3295,12 @@ fn integrations(
         "Load, review and act on pull/merge requests through the GitHub and GitLab APIs. Requests load when you open a repository hosted there. Off keeps Canopy offline apart from git itself.",
         |ui| {
             switch(ui, &mut s.hosting_api, "Pull and merge requests");
+            revert(
+                ui,
+                &mut s.hosting_api,
+                &DEFAULTS.hosting_api,
+                "Pull and merge requests",
+            );
         },
     );
     heading(ui, "Tools");
@@ -3574,6 +3703,87 @@ fn picture_note(ui: &mut Ui, note: &PictureNote, open_accounts: &std::cell::Cell
     }
 }
 
+/// What the user agreed to: the Terms and the Privacy Policy accepted, and the crash report
+/// answer, with the way to change it. Reading a document here accepts nothing.
+fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
+    use crate::ui::legal::{Document, PRIVACY_VERSION, TERMS_VERSION};
+    let p = palette(ui.ctx());
+    heading(ui, "Consent");
+    let status = |accepted: &str, current: &str| {
+        if accepted == current {
+            format!("You accepted this version (last updated {current}).")
+        } else if accepted.is_empty() {
+            "Not accepted yet. Canopy asks before it contacts any server.".to_owned()
+        } else {
+            format!(
+                "You accepted the version of {accepted}; it was updated on {current}. Canopy asks you to accept the new one when it starts."
+            )
+        }
+    };
+    let documents = [
+        (
+            Document::Terms,
+            "Terms of Service",
+            "The agreement for using Canopy.",
+            status(&s.accepted_terms, TERMS_VERSION),
+            icon::SCROLL,
+            "read-terms",
+        ),
+        (
+            Document::Privacy,
+            "Privacy Policy",
+            "What Canopy collects and your rights.",
+            status(&s.accepted_privacy, PRIVACY_VERSION),
+            icon::SHIELD_CHECK,
+            "read-privacy",
+        ),
+    ];
+    for (document, title, about, state, glyph, salt) in documents {
+        row(ui, title, &format!("{about} {state}"), |ui| {
+            if Button::new("Read")
+                .icon(glyph)
+                .id_salt(salt)
+                .show(ui)
+                .clicked()
+            {
+                actions.push(Action::OpenDialog(Dialog::Legal(document)));
+            }
+        });
+    }
+    if crate::crash_reports::available() {
+        let before = s.crash_reports;
+        let mut on = s.crash_reports == Some(true);
+        let answer = match s.crash_reports {
+            None => "You have not answered yet, so nothing is sent.",
+            Some(true) => "Your answer: send them.",
+            Some(false) => "Your answer: do not send them.",
+        };
+        row_more(
+            ui,
+            "Send crash reports",
+            &format!(
+                "When Canopy crashes, send the error and a stack trace to NecturaLabs. {answer}"
+            ),
+            "Also sent: the Canopy version, your operating system and a short record of each session. Stored by Sentry in the EU and deleted after 90 days. Takes effect immediately.",
+            |ui| {
+                switch(ui, &mut on, "Send crash reports");
+            },
+        );
+        row_end(ui);
+        if before != Some(on) && (before.is_some() || on) {
+            actions.push(Action::SetCrashReports(on));
+        }
+    } else if block(
+        ui,
+        "Send crash reports",
+        "This build of Canopy cannot send crash reports.",
+    ) {
+        ui.label(
+            RichText::new("This build of Canopy cannot send crash reports.").color(p.text_dim),
+        );
+    }
+}
+
 /// Returns true when "Open Accounts" was clicked.
 fn privacy(
     ui: &mut Ui,
@@ -3582,8 +3792,7 @@ fn privacy(
     picker: &mut crate::ui::folder_picker::FolderPicker,
     pictures: Option<&PictureNote>,
 ) -> bool {
-    use crate::ui::legal::Document;
-    let p = palette(ui.ctx());
+    consent(ui, s, actions);
     heading(ui, "Partial clones");
     row_more(
         ui,
@@ -3625,35 +3834,15 @@ fn privacy(
         "Sends commit IDs to GitHub or author emails to GitLab. Pictures, and authors without one, are remembered for 12 hours. A failed refresh keeps the previous picture. Turn off to use initials and stop new requests. Also requires Pull and merge requests to be on.",
         |ui| {
             switch(ui, &mut s.download_avatars, "Download profile pictures");
+            revert(
+                ui,
+                &mut s.download_avatars,
+                &DEFAULTS.download_avatars,
+                "Download profile pictures",
+            );
         },
     );
     row_end(ui);
-    heading(ui, "Crash reports");
-    if crate::crash_reports::available() {
-        let before = s.crash_reports;
-        let mut on = s.crash_reports == Some(true);
-        row_more(
-            ui,
-            "Send crash reports",
-            "When Canopy crashes, send the error and a stack trace to NecturaLabs.",
-            "Also sent: the Canopy version, your operating system and a short record of each session. Stored by Sentry in the EU and deleted after 90 days. Takes effect immediately.",
-            |ui| {
-                switch(ui, &mut on, "Send crash reports");
-            },
-        );
-        row_end(ui);
-        if before != Some(on) && (before.is_some() || on) {
-            actions.push(Action::SetCrashReports(on));
-        }
-    } else if block(
-        ui,
-        "Send crash reports",
-        "This build of Canopy cannot send crash reports.",
-    ) {
-        ui.label(
-            RichText::new("This build of Canopy cannot send crash reports.").color(p.text_dim),
-        );
-    }
     heading(ui, "Diagnostics");
     row_more(
         ui,
@@ -3668,6 +3857,7 @@ fn privacy(
                 .name("Log detail")
                 .id_salt("log-level")
                 .show(ui);
+            revert(ui, &mut s.log_level, &DEFAULTS.log_level, "Log detail");
             if s.log_level != before {
                 crate::logging::set_level(s.log_level);
             }
@@ -3698,43 +3888,6 @@ fn privacy(
         },
     );
     row_end(ui);
-    heading(ui, "Documents");
-    row(
-        ui,
-        "Privacy Policy",
-        &format!(
-            "What Canopy collects and your rights. Last updated {}.",
-            crate::ui::legal::PRIVACY_VERSION
-        ),
-        |ui| {
-            if Button::new("Read")
-                .icon(icon::SHIELD_CHECK)
-                .id_salt("read-privacy")
-                .show(ui)
-                .clicked()
-            {
-                actions.push(Action::OpenDialog(Dialog::Legal(Document::Privacy)));
-            }
-        },
-    );
-    row(
-        ui,
-        "Terms of Service",
-        &format!(
-            "The agreement for using Canopy. Last updated {}.",
-            crate::ui::legal::TERMS_VERSION
-        ),
-        |ui| {
-            if Button::new("Read")
-                .icon(icon::SCROLL)
-                .id_salt("read-terms")
-                .show(ui)
-                .clicked()
-            {
-                actions.push(Action::OpenDialog(Dialog::Legal(Document::Terms)));
-            }
-        },
-    );
     open_accounts.get()
 }
 
@@ -3795,6 +3948,12 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
         "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
         |ui| {
             switch(ui, &mut s.check_updates, "Check for updates");
+            revert(
+                ui,
+                &mut s.check_updates,
+                &DEFAULTS.check_updates,
+                "Check for updates",
+            );
         },
     );
     row(
@@ -3803,6 +3962,12 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
         "Also offer beta builds, which are tried out less before they are published.",
         |ui| {
             switch(ui, &mut s.include_prereleases, "Include beta builds");
+            revert(
+                ui,
+                &mut s.include_prereleases,
+                &DEFAULTS.include_prereleases,
+                "Include beta builds",
+            );
         },
     );
 }
@@ -3901,6 +4066,107 @@ fn shortcut_matches(section: KeySection, query: &str) -> usize {
                     .any(|k| k.to_lowercase().contains(query))
         })
         .count()
+}
+
+/// Takes an export's or import's result once its file chooser and file access are done.
+fn poll_file_task(screen: &mut SettingsScreen, s: &mut Settings, actions: &mut Vec<Action>) {
+    use crate::settings_file::Outcome;
+    let Some(outcome) = screen
+        .file_task
+        .as_ref()
+        .and_then(crate::settings_file::FileTask::poll)
+    else {
+        return;
+    };
+    screen.file_task = None;
+    screen.file_status = match outcome {
+        Outcome::Cancelled => None,
+        Outcome::Failed(e) => Some((true, e)),
+        Outcome::Exported(path) => Some((false, format!("Exported to {}.", path.display()))),
+        Outcome::Read(path, text) => match crate::settings_file::import(s, &text) {
+            Ok(imported) => {
+                *s = imported;
+                actions.push(Action::SettingsReplaced);
+                Some((false, format!("Imported from {}.", path.display())))
+            }
+            Err(e) => Some((true, e)),
+        },
+    };
+}
+
+/// Backup and reset: settings to and from a file, and every preference back to its default.
+fn backup(ui: &mut Ui, screen: &mut SettingsScreen, s: &mut Settings, actions: &mut Vec<Action>) {
+    let busy = screen.file_task.is_some();
+    if let Some((failed, message)) = &screen.file_status
+        && !Filter::searching(ui.ctx())
+    {
+        Note {
+            text: message.clone(),
+            warn: *failed,
+        }
+        .show(ui);
+        ui.add_space(theme::SM);
+    }
+    heading(ui, "Settings file");
+    row(
+        ui,
+        "Export settings",
+        "Saves your preferences to a file you choose, to keep or to use on another computer. Tokens, trusted folders and your answers to the Terms, the Privacy Policy and crash reports are never in it.",
+        |ui| {
+            if Button::new(if busy { "Choosing…" } else { "Export…" })
+                .icon(icon::EXPORT)
+                .enabled(!busy)
+                .id_salt("settings-export")
+                .show(ui)
+                .clicked()
+            {
+                match crate::settings_file::export(s) {
+                    Ok(text) => {
+                        screen.file_task =
+                            Some(crate::settings_file::FileTask::export(ui.ctx(), text));
+                        screen.file_status = None;
+                    }
+                    Err(e) => screen.file_status = Some((true, e)),
+                }
+            }
+        },
+    );
+    row(
+        ui,
+        "Import settings",
+        "Takes the preferences from a settings file. Anything the file does not name stays as it is; a file that is not Canopy's changes nothing.",
+        |ui| {
+            if Button::new(if busy { "Choosing…" } else { "Import…" })
+                .icon(icon::DOWNLOAD_SIMPLE)
+                .enabled(!busy)
+                .id_salt("settings-import")
+                .show(ui)
+                .clicked()
+            {
+                screen.file_task = Some(crate::settings_file::FileTask::import(ui.ctx()));
+                screen.file_status = None;
+            }
+        },
+    );
+    heading(ui, "Start over");
+    row(
+        ui,
+        "Reset all settings",
+        "Every preference back to its default, which turns pull and merge requests, profile pictures and update checks back on. Tokens, trusted folders, recent repositories and your answers to the Terms, the Privacy Policy and crash reports stay.",
+        |ui| {
+            if confirm_button(ui, "reset-all-settings", "Reset all", "Reset every setting") {
+                match crate::settings_file::reset(s) {
+                    Ok(fresh) => {
+                        *s = fresh;
+                        actions.push(Action::SettingsReplaced);
+                        screen.file_status =
+                            Some((false, "Every setting is back to its default.".to_owned()));
+                    }
+                    Err(e) => screen.file_status = Some((true, e)),
+                }
+            }
+        },
+    );
 }
 
 fn keyboard(ui: &mut Ui) {
@@ -4269,6 +4535,60 @@ mod tests {
         assert_eq!(pull_note(&ff, PullMode::FastForwardOnly), None);
         ff.pull_ff = Some(fact("pull.ff", "true"));
         assert_eq!(pull_note(&ff, PullMode::Merge), None);
+    }
+
+    #[test]
+    fn backup_reset_and_consent_are_found() {
+        let mut settings = Settings::default();
+        let found = |query: &str, settings: &mut Settings| {
+            draw_screen(SettingsScreen::searching(query), settings).search
+        };
+        let backup = found("backup", &mut settings);
+        assert!(backup.count(Section::Data) >= 3, "{backup:?}");
+        let defaults = found("factory defaults", &mut settings);
+        assert_eq!(defaults.count(Section::Data), 1, "{defaults:?}");
+        let consent = found("consent", &mut settings);
+        assert!(consent.count(Section::Privacy) >= 2, "{consent:?}");
+    }
+
+    #[test]
+    fn a_setting_goes_back_to_its_default_only_when_asked() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut value = 7_u32;
+        let frame = |events: Vec<egui::Event>, value: &mut u32| {
+            let mut clicked = false;
+            let mut button = Rect::NOTHING;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    clicked = revert(ui, value, &3, "Test");
+                    button = ui.min_rect();
+                },
+            );
+            output.textures_delta.clear();
+            (clicked, button)
+        };
+        let (clicked, button) = frame(Vec::new(), &mut value);
+        assert!(!clicked, "drawing alone changes nothing");
+        assert_eq!(value, 7);
+        let at = button.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![egui::Event::PointerMoved(at), press(true)], &mut value);
+        let (clicked, _) = frame(vec![press(false)], &mut value);
+        assert!(clicked, "the button at {button:?} was clicked");
+        assert_eq!(value, 3, "back to the default");
+        // At the default there is nothing to go back to.
+        let (_, after) = frame(Vec::new(), &mut value);
+        assert!(after.width() <= 0.0, "no button at the default: {after:?}");
     }
 
     #[test]
