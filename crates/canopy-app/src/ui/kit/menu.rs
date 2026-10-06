@@ -12,22 +12,26 @@
 //! });
 //! ```
 //!
-//! Pointer-opened menus fade in and grow from the anchor side; keyboard-opened ones appear at once
-//! with the first item focused. Highlight follows the last input: the hovered item, or the focused
-//! one after a key press. Disabled items are hidden in context menus and shown at the disabled
-//! opacity, with their reason as a tooltip, in menus opened from a button.
+//! Pointer-opened menus fade in and grow from the anchor side; keyboard-opened ones (Enter or
+//! Space on a menu button, Shift+F10 on a focused row) appear at once with the first item focused.
+//! An open menu keeps keyboard focus on its items: Up, Down, Home and End move between them,
+//! wrapping at the ends, and nothing behind the menu takes the arrows. Highlight follows the last
+//! input: the hovered item, or the focused one after a key press. Disabled items are hidden in
+//! context menus and shown at the disabled opacity, with their reason as a tooltip, in menus
+//! opened from a button.
 
 use std::cell::Cell;
 use std::sync::Arc;
 
 use egui::containers::menu::{MenuState, SubMenu};
 use egui::{
-    Align, Align2, Color32, CornerRadius, FontFamily, FontId, Frame, Id, Key, Layout, Margin,
-    Popup, Rangef, Rect, Response, Sense, Shadow, Shape, Stroke, Ui, Vec2, Widget, WidgetInfo,
-    WidgetType, pos2, vec2,
+    Align, Align2, Color32, CornerRadius, FontFamily, FontId, Frame, Id, Key, LayerId, Layout,
+    Margin, Popup, Pos2, Rangef, Rect, Response, Sense, SetOpenCommand, Shadow, Shape, Stroke, Ui,
+    Vec2, Widget, WidgetInfo, WidgetType, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
+use super::a11y::FocusReturn;
 use super::overlay::{self, Entrance, ExitMotion, Layer, TooltipExt};
 use super::{ForceState, focus_visible, paint};
 use crate::keymap::{self, Command};
@@ -106,8 +110,6 @@ pub struct Menu<'a> {
     /// Whether the icon column is reserved (some item had an icon last frame).
     icons: bool,
     saw_icon: Cell<bool>,
-    /// Focus the first item (a keyboard-opened menu's first frame).
-    focus_first: Cell<bool>,
 }
 
 impl Menu<'_> {
@@ -120,7 +122,9 @@ impl Menu<'_> {
         let mut item = MenuItem::new(glyph, label);
         item.reserve_icon = self.icons;
         item.hide_disabled = self.kind == Kind::Context;
-        item.autofocus = self.focus_first.replace(false);
+        if self.kind != Kind::Inline {
+            item.menu = Some(self.id);
+        }
         item
     }
 
@@ -166,7 +170,10 @@ impl Menu<'_> {
             && ctx.input(|i| i.key_pressed(Key::ArrowRight) || i.key_pressed(Key::Enter));
         if keyboard_open && !open {
             MenuState::from_ui(self.ui, |s, _| s.open_item = Some(sub_id));
-            ctx.data_mut(|d| d.insert_temp(sub_id.with("kit-focus-first"), true));
+            ctx.data_mut(|d| {
+                d.insert_temp(sub_id.with("kit-focus-first"), true);
+                d.insert_temp(keyed_key(sub_id), true);
+            });
         }
         // The pointer must rest on the item before the submenu opens.
         let hover_key = item_id.with("kit-hover-since");
@@ -258,23 +265,106 @@ fn body<R>(
         }
     }
     let ctx = ui.ctx().clone();
-    ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        let mut menu = Menu {
-            ui,
-            id,
-            kind,
-            icons,
-            saw_icon: Cell::new(false),
-            focus_first: Cell::new(focus_first),
-        };
-        let r = add(&mut menu);
-        let saw = menu.saw_icon.get();
-        ctx.data_mut(|d| d.insert_temp(icons_key, saw));
-        let _ = menu.id;
-        r
-    })
-    .inner
+    ctx.data_mut(|d| {
+        d.insert_temp(items_key(id), Vec::<Id>::new());
+        if focus_first {
+            d.insert_temp(first_key(id), true);
+        }
+    });
+    let r = ui
+        .with_layout(Layout::top_down_justified(Align::Min), |ui| {
+            if kind != Kind::Inline {
+                // The items are the menu's parts.
+                ui.ctx().accesskit_node_builder(ui.unique_id(), |n| {
+                    n.set_role(egui::accesskit::Role::Menu);
+                });
+            }
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let mut menu = Menu {
+                ui,
+                id,
+                kind,
+                icons,
+                saw_icon: Cell::new(false),
+            };
+            let r = add(&mut menu);
+            let saw = menu.saw_icon.get();
+            ctx.data_mut(|d| d.insert_temp(icons_key, saw));
+            r
+        })
+        .inner;
+    // A sizing pass shows no item that can take focus, so the flag waits for the real one.
+    let sizing = ui.is_sizing_pass();
+    let items = ctx.data_mut(|d| {
+        if !sizing {
+            d.remove::<bool>(first_key(id));
+        }
+        d.remove_temp::<Vec<Id>>(items_key(id)).unwrap_or_default()
+    });
+    if kind != Kind::Inline {
+        arrows(&ctx, id, &items);
+    }
+    r
+}
+
+/// What a menu's items share during a frame: whether the first item that can take focus should
+/// (the flag is taken by the first shown, enabled item), and the items that can, in order.
+fn first_key(menu: Id) -> Id {
+    menu.with("kit-menu-focus-first")
+}
+fn items_key(menu: Id) -> Id {
+    menu.with("kit-menu-items")
+}
+/// Whether a key has moved in the menu since it opened (a keyboard-opened menu starts keyed).
+fn keyed_key(menu: Id) -> Id {
+    menu.with("kit-menu-keyed")
+}
+
+/// Keyboard focus inside an open menu whose focusable `items` are listed in order: the arrows
+/// move only between them, Down and Up wrap at the ends, Home and End go to the first and last
+/// item. A menu opened by the pointer holds focus on its first item without showing it: the
+/// first Down shows it there and the first Up goes to the last item.
+fn arrows(ctx: &egui::Context, menu: Id, items: &[Id]) {
+    let Some(at) = ctx
+        .memory(egui::Memory::focused)
+        .and_then(|f| items.iter().position(|i| *i == f))
+    else {
+        return;
+    };
+    let none = egui::Modifiers::NONE;
+    let (down, up, home, end, side) = ctx.input_mut(|i| {
+        (
+            i.consume_key(none, Key::ArrowDown),
+            i.consume_key(none, Key::ArrowUp),
+            i.consume_key(none, Key::Home),
+            i.consume_key(none, Key::End),
+            i.key_pressed(Key::ArrowLeft) || i.key_pressed(Key::ArrowRight),
+        )
+    });
+    if !(down || up || home || end || side) {
+        return;
+    }
+    // egui would also move focus to the nearest widget that way, inside the menu or not; Left and
+    // Right belong to submenus.
+    ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+    if side {
+        return;
+    }
+    let keyed =
+        ctx.data_mut(|d| std::mem::replace(d.get_temp_mut_or(keyed_key(menu), false), true));
+    let last = items.len() - 1;
+    let to = match (home, end, down) {
+        (true, ..) => 0,
+        (_, true, _) => last,
+        (.., true) if !keyed => at,
+        (.., true) if at == last => 0,
+        (.., true) => at + 1,
+        _ if !keyed || at == 0 => last,
+        _ => at - 1,
+    };
+    if to != at {
+        ctx.memory_mut(|m| m.request_focus(items[to]));
+    }
 }
 
 /// Shows a menu in `popup` anchored to `anchor`.
@@ -289,16 +379,25 @@ fn show_popup<R>(
     let id = popup.get_id();
     let was_open = Popup::is_id_open(&ctx, id);
     let kbd_key = id.with("kit-keyboard-opened");
-    let opened_now = anchor.clicked() || anchor.secondary_clicked();
+    let back_key = id.with("kit-menu-back");
+    let opened_now = anchor.clicked() || anchor.secondary_clicked() || keyboard_now;
     if opened_now && !was_open {
-        ctx.data_mut(|d| d.insert_temp(kbd_key, keyboard_now));
+        // Focus goes to the first item either way (a pointer-opened menu shows it only once a
+        // key moves), and back to what had it when the menu closes.
+        let mut back = FocusReturn::default();
+        back.remember(&ctx);
+        ctx.data_mut(|d| {
+            d.insert_temp(kbd_key, keyboard_now);
+            d.insert_temp(keyed_key(id), keyboard_now);
+            d.insert_temp(back_key, back);
+            d.insert_temp(first_key(id), true);
+        });
     }
     let keyboard = ctx.data(|d| d.get_temp::<bool>(kbd_key)).unwrap_or(false);
     let anchor_rect = anchor.rect;
     let m = theme::metrics();
     let shown = popup.frame(Frame::NONE).style(stock_style).show(|ui| {
         let layer = ui.layer_id();
-        let (_, fresh) = overlay::presence(ui.ctx(), id);
         let e = Entrance::of(ui.ctx(), id, motion::BASE, motion::SLOW, keyboard, None);
         ui.multiply_opacity(e.fade);
         let start = overlay::next_shape(ui.ctx(), layer);
@@ -306,11 +405,12 @@ fn show_popup<R>(
             ui,
             Layer::Menu,
             Margin::same(crate::ui::points_i8(m.menu_pad)),
-            |ui| body(ui, id, kind, fresh && keyboard, add),
+            |ui| body(ui, id, kind, false, add),
         );
         let rect = r.response.rect;
         let point = match kind {
             Kind::Context => Popup::position_of_id(ui.ctx(), id)
+                .or_else(|| ui.ctx().data(|d| d.get_temp::<Pos2>(context_at_key(id))))
                 .map_or(anchor_rect, |p| Rect::from_min_size(p, Vec2::ZERO)),
             _ => anchor_rect,
         };
@@ -340,17 +440,56 @@ fn show_popup<R>(
         // Context actions inside a navigation popup stay above it.
         ctx.set_sublayer(anchor.layer_id, s.response.layer_id);
     }
-    if was_open && !Popup::is_id_open(&ctx, id) && keyboard {
-        anchor.request_focus();
+    if let Some(s) = &shown {
+        ctx.data_mut(|d| d.insert_temp(id.with("kit-menu-layer"), s.response.layer_id));
+    }
+    if was_open && !Popup::is_id_open(&ctx, id) {
+        let mut back = ctx
+            .data_mut(|d| d.remove_temp::<FocusReturn>(back_key))
+            .unwrap_or_default();
+        if keyboard {
+            anchor.request_focus();
+        } else if let Some(layer) = ctx.data(|d| d.get_temp::<LayerId>(id.with("kit-menu-layer"))) {
+            // Unless an item moved focus on (into a dialog it opened).
+            back.restore(&ctx, layer);
+        }
     }
     shown.map(|s| s.inner)
 }
 
-/// A context menu on `response`, opened by a secondary click at the pointer. Returns what `add`
+/// Where a context menu opened from the keyboard stands: below its row, by the row's start.
+fn context_at_key(popup: Id) -> Id {
+    popup.with("kit-context-at")
+}
+
+/// A context menu on `response`, opened by a secondary click at the pointer, or by Shift+F10
+/// while `response` has keyboard focus, below it with its first item focused. Returns what `add`
 /// returned while it is open.
 pub fn context<R>(response: &Response, add: impl FnOnce(&mut Menu<'_>) -> R) -> Option<R> {
-    let popup = Popup::context_menu(response);
-    show_popup(response, popup, Kind::Context, false, add)
+    let ctx = &response.ctx;
+    let id = Popup::default_response_id(response);
+    let at_key = context_at_key(id);
+    let by_key =
+        response.has_focus() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, Key::F10));
+    if by_key {
+        let at = pos2(response.rect.left() + theme::SM, response.rect.bottom());
+        ctx.data_mut(|d| d.insert_temp(at_key, at));
+    } else if response.secondary_clicked() || !Popup::is_id_open(ctx, id) {
+        ctx.data_mut(|d| d.remove::<Pos2>(at_key));
+    }
+    let popup = match ctx.data(|d| d.get_temp::<Pos2>(at_key)) {
+        Some(at) => Popup::menu(response)
+            .open_memory(if by_key {
+                Some(SetOpenCommand::Bool(true))
+            } else if response.clicked() {
+                Some(SetOpenCommand::Bool(false))
+            } else {
+                None
+            })
+            .at_position(at),
+        None => Popup::context_menu(response),
+    };
+    show_popup(response, popup, Kind::Context, by_key, add)
 }
 
 /// A menu opened by clicking `button` (or Enter/Space on it, which opens it with the first item
@@ -456,7 +595,8 @@ pub struct MenuItem {
     open: bool,
     reserve_icon: bool,
     hide_disabled: bool,
-    autofocus: bool,
+    /// The menu it is shown in: it takes the menu's first focus and the arrows' turn there.
+    menu: Option<Id>,
     id_salt: Option<Id>,
     force: Option<ForceState>,
 }
@@ -475,7 +615,7 @@ impl MenuItem {
             open: false,
             reserve_icon: !glyph.is_empty(),
             hide_disabled: false,
-            autofocus: false,
+            menu: None,
             id_salt: None,
             force: None,
         }
@@ -594,8 +734,17 @@ impl MenuItem {
             None => ui.allocate_response(vec2(width, height), sense),
         };
         let rect = response.rect;
-        if self.autofocus && enabled {
-            response.request_focus();
+        if let Some(menu) = self.menu
+            && enabled
+        {
+            let first = ctx.data_mut(|d| {
+                d.get_temp_mut_or_default::<Vec<Id>>(items_key(menu))
+                    .push(response.id);
+                d.remove_temp::<bool>(first_key(menu)).unwrap_or(false)
+            });
+            if first {
+                response.request_focus();
+            }
         }
         let f = self.force.unwrap_or_default();
         let keyboard = focus_visible(&ctx);
@@ -876,7 +1025,7 @@ mod tests {
     ) -> egui::FullOutput {
         let mut out = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1024.0, 640.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1024.0, 640.0))),
                 events,
                 ..Default::default()
             },
@@ -886,7 +1035,7 @@ mod tests {
         out
     }
 
-    fn click(at: egui::Pos2, button: egui::PointerButton) -> [Vec<egui::Event>; 2] {
+    fn click(at: Pos2, button: egui::PointerButton) -> [Vec<egui::Event>; 2] {
         [
             vec![
                 egui::Event::PointerMoved(at),
@@ -1095,5 +1244,165 @@ mod tests {
     #[test]
     fn shortcut_text_prefers_the_single_key() {
         assert_eq!(shortcut_text(Command::Fetch), "f");
+    }
+
+    fn key(key: Key, modifiers: egui::Modifiers) -> Vec<egui::Event> {
+        vec![egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }]
+    }
+
+    /// What a frame of a row with a context menu saw: the row, whether the menu is open, and the
+    /// label of the focused widget (the row is "Row", the items their own labels).
+    struct Seen {
+        row: Rect,
+        open: bool,
+        focused: Option<String>,
+    }
+
+    /// A focusable row with a context menu of a hidden (disabled) item, three items and a button
+    /// below it; returns what the frame saw.
+    fn row_with_menu(ctx: &egui::Context, events: Vec<egui::Event>) -> Seen {
+        let mut row = Rect::NOTHING;
+        let mut open = false;
+        let mut names: Vec<(Id, String)> = Vec::new();
+        let _ = run(ctx, events, |ui| {
+            let r = ui.allocate_response(vec2(300.0, 28.0), Sense::click());
+            names.push((r.id, "Row".to_owned()));
+            row = r.rect;
+            open = context(&r, |m| {
+                m.item(icon::TRASH, "Unavailable").enabled(false).show(m.ui);
+                for label in ["First", "Second", "Third"] {
+                    let i = m.item(icon::TAG, label).show(m.ui);
+                    names.push((i.id, label.to_owned()));
+                }
+            })
+            .is_some();
+            let below = ui.button("Below");
+            names.push((below.id, "Below".to_owned()));
+        });
+        let focused = ctx.memory(egui::Memory::focused).and_then(|f| {
+            names
+                .iter()
+                .find(|(id, _)| *id == f)
+                .map(|(_, n)| n.clone())
+        });
+        Seen { row, open, focused }
+    }
+
+    /// A11Y-11 and REVIEW-KIT-3: Shift+F10 on a focused row opens its context menu with the first
+    /// item that is shown focused (the disabled one before it is hidden), and Escape gives focus
+    /// back to the row.
+    #[test]
+    fn shift_f10_opens_a_focused_rows_context_menu() {
+        let ctx = context_();
+        let none = egui::Modifiers::NONE;
+        assert!(!row_with_menu(&ctx, Vec::new()).open);
+        let _ = row_with_menu(&ctx, key(Key::Tab, none));
+        let seen = row_with_menu(&ctx, Vec::new());
+        assert_eq!(seen.focused.as_deref(), Some("Row"), "Tab reaches the row");
+        let _ = row_with_menu(&ctx, key(Key::F10, egui::Modifiers::SHIFT));
+        let seen = row_with_menu(&ctx, Vec::new());
+        assert!(seen.open, "Shift+F10 opens the menu");
+        assert_eq!(
+            seen.focused.as_deref(),
+            Some("First"),
+            "on its first shown item"
+        );
+        let _ = row_with_menu(&ctx, key(Key::Escape, none));
+        let seen = row_with_menu(&ctx, Vec::new());
+        assert!(!seen.open, "Escape closes it");
+        assert_eq!(
+            seen.focused.as_deref(),
+            Some("Row"),
+            "and focus is back on the row"
+        );
+    }
+
+    /// A11Y-10: the arrows move only inside an open menu, wrapping at its ends; nothing behind it
+    /// (the button below) takes focus. After a pointer open the first Down lands on the first item.
+    #[test]
+    fn the_arrows_stay_inside_an_open_menu() {
+        let ctx = context_();
+        let none = egui::Modifiers::NONE;
+        let seen = row_with_menu(&ctx, Vec::new());
+        for events in click(seen.row.center(), egui::PointerButton::Secondary) {
+            let _ = row_with_menu(&ctx, events);
+        }
+        let seen = row_with_menu(&ctx, Vec::new());
+        assert!(seen.open, "secondary click opens it");
+        assert_eq!(
+            seen.focused.as_deref(),
+            Some("First"),
+            "the first item holds focus unseen"
+        );
+        let mut path = Vec::new();
+        for k in [
+            Key::ArrowDown,
+            Key::ArrowDown,
+            Key::ArrowDown,
+            Key::ArrowDown,
+            Key::ArrowUp,
+            Key::ArrowRight,
+            Key::ArrowLeft,
+            Key::End,
+            Key::Home,
+        ] {
+            let _ = row_with_menu(&ctx, key(k, none));
+            let seen = row_with_menu(&ctx, Vec::new());
+            assert!(seen.open, "the menu stays open on {k:?}");
+            path.push(seen.focused.unwrap_or_default());
+        }
+        assert_eq!(
+            path,
+            [
+                "First", "Second", "Third", "First", "Third", "Third", "Third", "Third", "First"
+            ]
+        );
+    }
+
+    /// An open menu is announced as a menu holding its items.
+    #[test]
+    fn an_open_menu_is_a_menu_of_its_items() {
+        use egui::accesskit::Role;
+
+        let ctx = context_();
+        ctx.enable_accesskit();
+        let seen = row_with_menu(&ctx, Vec::new());
+        for events in click(seen.row.center(), egui::PointerButton::Secondary) {
+            let _ = row_with_menu(&ctx, events);
+        }
+        let _ = row_with_menu(&ctx, Vec::new());
+        let out = run(&ctx, Vec::new(), |ui| {
+            let r = ui.allocate_response(vec2(300.0, 28.0), Sense::click());
+            let _ = context(&r, |m| {
+                m.item(icon::TRASH, "Unavailable").enabled(false).show(m.ui);
+                for label in ["First", "Second", "Third"] {
+                    m.item(icon::TAG, label).show(m.ui);
+                }
+            });
+            let _ = ui.button("Below");
+        });
+        let nodes = out
+            .platform_output
+            .accesskit_update
+            .expect("accesskit")
+            .nodes;
+        let label = |id| {
+            nodes
+                .iter()
+                .find(|(n, _)| *n == id)
+                .and_then(|(_, n)| n.label().map(str::to_owned))
+        };
+        let (_, menu) = nodes
+            .iter()
+            .find(|(_, n)| n.role() == Role::Menu)
+            .expect("a menu node");
+        let items: Vec<_> = menu.children().iter().filter_map(|c| label(*c)).collect();
+        assert_eq!(items, ["First", "Second", "Third"]);
     }
 }
