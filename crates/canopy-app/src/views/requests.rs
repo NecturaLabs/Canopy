@@ -1282,10 +1282,12 @@ fn action_bar(
     if let Some(Some(source)) = tab.requests.token
         && source != TokenSource::Saved
     {
-        ui.label(
-            RichText::new(format!("{}  Using the token {}", icon::KEY, source.label()))
-                .size(m.small_size)
-                .color(p.text_faint),
+        commit_detail::without_icons(
+            ui.label(
+                RichText::new(format!("{}  Using the token {}", icon::KEY, source.label()))
+                    .size(m.small_size)
+                    .color(p.text_faint),
+            ),
         );
     }
 }

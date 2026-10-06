@@ -410,7 +410,9 @@ fn clean_home(
                     ),
                     (None, false) => (format!("{}  {}", icon::GIT_BRANCH, snap.head.label()), None),
                 };
-                ui.label(RichText::new(status).size(m.body_size).color(p.text));
+                commit_detail::without_icons(
+                    ui.label(RichText::new(status).size(m.body_size).color(p.text)),
+                );
                 if let Some((label, action)) = next {
                     ui.add_space(theme::SM);
                     if Button::new(label)
@@ -853,13 +855,15 @@ fn composer(
     let footer = |ui: &mut Ui, actions: &mut Vec<Action>| {
         if let Some(warning) = warning {
             ui.horizontal_wrapped(|ui| {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(format!("{}  {warning}", icon::WARNING))
-                            .color(p.warning)
-                            .size(m.small_size),
-                    )
-                    .wrap(),
+                commit_detail::without_icons(
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("{}  {warning}", icon::WARNING))
+                                .color(p.warning)
+                                .size(m.small_size),
+                        )
+                        .wrap(),
+                    ),
                 );
                 if Button::new("Edit identity")
                     .size(Size::Sm)

@@ -316,7 +316,7 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                     hint(Command::TakeBoth),
                     hint(Command::ClearChoice),
                 );
-                ui.add(egui::Label::new(RichText::new(keys).size(m.small_size).color(p.text_faint)).truncate())
+                commit_detail::without_icons(ui.add(egui::Label::new(RichText::new(keys).size(m.small_size).color(p.text_faint)).truncate()))
                     .kit_tooltip("Press ? for every shortcut").show();
                 ui.label(RichText::new(if done == n {
                     "All conflicts have a choice. Save the resolved file to stage it."
@@ -881,13 +881,13 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                     RichText::new(format!("Conflict {}", k + 1))
                         .font(FontId::new(m.body_size, theme::semibold())),
                 );
-                match &choice {
+                commit_detail::without_icons(match &choice {
                     Some(c) => ui.label(small(
                         format!("{}  {}", icon::CHECK, choice_label(c)),
                         p.success,
                     )),
                     None => ui.label(small(format!("{}  Unresolved", icon::WARNING), p.warning)),
-                };
+                });
             });
             ui.add_space(theme::XS);
             let mut picked: Option<Option<Choice>> = None;

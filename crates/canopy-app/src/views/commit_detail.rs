@@ -540,10 +540,12 @@ fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
     }
     if !d.parents.is_empty() {
         ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new(icon::GIT_COMMIT)
-                    .size(m.icon_sm)
-                    .color(p.text_faint),
+            without_icons(
+                ui.label(
+                    RichText::new(icon::GIT_COMMIT)
+                        .size(m.icon_sm)
+                        .color(p.text_faint),
+                ),
             );
             ui.label(
                 RichText::new(if d.parents.len() > 1 {
@@ -670,9 +672,40 @@ fn meta_row(ui: &mut Ui, glyph: &str, text: &str) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     ui.horizontal(|ui| {
-        ui.label(RichText::new(glyph).size(m.icon_sm).color(p.text_faint));
+        without_icons(ui.label(RichText::new(glyph).size(m.icon_sm).color(p.text_faint)));
         ui.add(egui::Label::new(RichText::new(text).size(m.meta_size).color(p.text_dim)).wrap());
     });
+}
+
+/// Keeps icon glyphs out of what a screen reader says for a label drawn as "<glyph>  text":
+/// Phosphor's glyphs are private-use characters, read out as noise. A label that is only a glyph
+/// is hidden from screen readers. Returns `response` for chaining.
+pub fn without_icons(response: egui::Response) -> egui::Response {
+    fn plain(text: &str) -> String {
+        text.chars()
+            .filter(|c| !('\u{E000}'..='\u{F8FF}').contains(c))
+            .collect::<String>()
+            .trim()
+            .to_owned()
+    }
+    response.ctx.accesskit_node_builder(response.id, |node| {
+        let label = node.label().map(plain);
+        let value = node.value().map(plain);
+        match label {
+            Some(l) if l.is_empty() => node.clear_label(),
+            Some(l) => node.set_label(l),
+            None => {}
+        }
+        match value {
+            Some(v) if v.is_empty() => node.clear_value(),
+            Some(v) => node.set_value(v),
+            None => {}
+        }
+        if node.label().is_none() && node.value().is_none() {
+            node.set_hidden();
+        }
+    });
+    response
 }
 
 /// The rows of a fixed-height list (`row_h` apart, no spacing) whose top is at `top`, that
