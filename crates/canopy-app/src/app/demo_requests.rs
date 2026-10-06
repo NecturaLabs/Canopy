@@ -164,10 +164,26 @@ impl Scenario {
                 ctx.clone(),
             ));
             self.fill(tab, now);
+            self.seed_signals(ctx, tab, now);
         }
         // The idle thread reports the token it was given; the scenario decides what is known.
         tab.requests.token = Some((self.scene != Scene::NoToken).then_some(TokenSource::Saved));
         true
+    }
+
+    /// Lets the list rows show every request's checks and reviews, as they do in a session where
+    /// the reviewer has already opened each request (the list API sends neither). The request
+    /// whose details are still loading or failed has not been seen yet.
+    fn seed_signals(self, ctx: &egui::Context, tab: &RepoTab, now: i64) {
+        let unseen = matches!(self.scene, Scene::DetailsLoading | Scene::DetailsError);
+        for row in ROWS {
+            if unseen && row.number == BUSY_NUMBER {
+                continue;
+            }
+            if let Some(d) = details(self.kind, row.number, now) {
+                crate::views::requests::remember_signals(ctx, tab, &d);
+            }
+        }
     }
 
     /// Writes the scene into the tab's request state.
