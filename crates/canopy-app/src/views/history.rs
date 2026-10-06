@@ -628,6 +628,20 @@ fn load_more_key() -> egui::Id {
     egui::Id::new("history-load-more-motion")
 }
 
+/// The confirmation before the current branch is hard reset to `oid`.
+fn hard_reset(oid: Oid) -> Action {
+    Action::Confirm {
+        title: format!("Hard reset the current branch to {}?", short_id(oid)),
+        body: "Every uncommitted change is thrown away. This cannot be undone.".into(),
+        confirm: "Hard reset".into(),
+        danger: true,
+        op: Op::Reset {
+            oid,
+            mode: ResetMode::Hard,
+        },
+    }
+}
+
 /// The context menu of a commit row.
 pub fn commit_menu(
     m: &mut Menu<'_>,
@@ -716,20 +730,7 @@ pub fn commit_menu(
                 .show(m.ui)
                 .clicked()
             {
-                actions.push(Action::Confirm {
-                    title: "Hard reset".into(),
-                    body: format!(
-                        "Move the current branch to {} and throw away every uncommitted \
-                         change? This cannot be undone.",
-                        short_id(oid)
-                    ),
-                    confirm: "Reset".into(),
-                    danger: true,
-                    op: Op::Reset {
-                        oid,
-                        mode: ResetMode::Hard,
-                    },
-                });
+                actions.push(hard_reset(oid));
             }
         },
     );
@@ -756,6 +757,17 @@ mod tests {
     use super::*;
 
     /// The id of the history filter's text field, once it has been shown.
+    /// Mop-up D24: the title asks a question naming the commit, the answer is verb + object.
+    #[test]
+    fn a_hard_reset_asks_about_the_commit_it_resets_to() {
+        let oid = Oid::from_str("38b14e7aa0000000000000000000000000000000").expect("oid");
+        let Action::Confirm { title, confirm, .. } = hard_reset(oid) else {
+            panic!("not a confirmation");
+        };
+        assert_eq!(title, "Hard reset the current branch to 38b14e7?");
+        assert_eq!(confirm, "Hard reset");
+    }
+
     fn filter_field(ctx: &egui::Context) -> Option<egui::Id> {
         let id = ctx.data(|d| d.get_temp::<egui::Id>(filter_field_key()));
         assert!(id.is_some(), "the filter field has been shown");

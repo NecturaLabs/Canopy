@@ -480,6 +480,35 @@ fn listed(st: &canopy_core::WorkingStatus, key: egui::Id) -> bool {
     })
 }
 
+/// The confirmation before the unstaged changes to `entry` are thrown away.
+fn discard_one(entry: &FileEntry) -> Action {
+    Action::Confirm {
+        title: format!("Discard changes to {}?", entry.path),
+        body: "Its unstaged changes are thrown away. This cannot be undone.".into(),
+        confirm: "Discard changes".into(),
+        danger: true,
+        op: Op::Discard(vec![entry.clone()]),
+    }
+}
+
+/// The confirmation before every unstaged change in `files` is thrown away.
+fn discard_all(files: &[FileEntry]) -> Action {
+    let n = files.len();
+    Action::Confirm {
+        title: if n == 1 {
+            "Discard changes to 1 file?".to_owned()
+        } else {
+            format!("Discard changes to all {n} files?")
+        },
+        body: "Every unstaged change is thrown away, untracked files included. This cannot be \
+               undone."
+            .into(),
+        confirm: "Discard all changes".into(),
+        danger: true,
+        op: Op::Discard(files.to_vec()),
+    }
+}
+
 fn list(
     ui: &mut Ui,
     tab: &mut RepoTab,
@@ -532,17 +561,7 @@ fn list(
                         .show(m.ui)
                         .clicked()
                     {
-                        actions.push(Action::Confirm {
-                            title: "Discard all changes".into(),
-                            body: format!(
-                                "Throw away every unstaged change in {} files, including untracked \
-                             files? This cannot be undone.",
-                                files.len()
-                            ),
-                            confirm: "Discard all".into(),
-                            danger: true,
-                            op: Op::Discard(files.to_vec()),
-                        });
+                        actions.push(discard_all(files));
                     }
                 });
             }
@@ -674,16 +693,7 @@ fn list(
                     .show(m.ui)
                     .clicked()
                 {
-                    actions.push(Action::Confirm {
-                        title: "Discard changes".into(),
-                        body: format!(
-                            "Throw away the unstaged changes to {}? This cannot be undone.",
-                            entry.path
-                        ),
-                        confirm: "Discard".into(),
-                        danger: true,
-                        op: Op::Discard(vec![entry.clone()]),
-                    });
+                    actions.push(discard_one(&entry));
                 }
             }
         });
@@ -1006,6 +1016,33 @@ mod tests {
             author: person.clone(),
             committer: person,
         }
+    }
+
+    /// Mop-up D24: the titles ask a question naming what goes, the answers are verb + object.
+    #[test]
+    fn discarding_asks_about_the_files_by_name() {
+        let confirm_of = |a: Action| match a {
+            Action::Confirm { title, confirm, .. } => (title, confirm),
+            other => panic!("not a confirmation: {other:?}"),
+        };
+        assert_eq!(
+            confirm_of(discard_one(&entry("src/main.rs"))),
+            (
+                "Discard changes to src/main.rs?".to_owned(),
+                "Discard changes".to_owned()
+            )
+        );
+        assert_eq!(
+            confirm_of(discard_all(&[entry("a"), entry("b")])),
+            (
+                "Discard changes to all 2 files?".to_owned(),
+                "Discard all changes".to_owned()
+            )
+        );
+        assert_eq!(
+            confirm_of(discard_all(&[entry("a")])).0,
+            "Discard changes to 1 file?"
+        );
     }
 
     fn entry(path: &str) -> FileEntry {
