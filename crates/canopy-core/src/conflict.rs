@@ -514,6 +514,24 @@ impl Repo {
         Ok(None)
     }
 
+    /// The mode of `side`'s index stage of the conflicted `path`, when that stage exists.
+    fn side_mode(&self, path: &str, side: Side) -> Result<Option<u32>> {
+        let mut index = self.git().index()?;
+        index.read(true)?;
+        let wanted = path.as_bytes();
+        for conflict in index.conflicts()? {
+            let conflict = conflict?;
+            let entry = match side {
+                Side::Ours => conflict.our,
+                Side::Theirs => conflict.their,
+            };
+            if let Some(e) = entry.filter(|e| e.path == wanted) {
+                return Ok(Some(e.mode));
+            }
+        }
+        Ok(None)
+    }
+
     /// Reads the working copy of `path` and splits it at its conflict markers. Fails with
     /// [`Error::Invalid`] for a file that is missing, a symbolic link, binary (contains a NUL
     /// byte) or not UTF-8, which can only be resolved by choosing a whole side.
@@ -573,8 +591,18 @@ impl Repo {
                 Side::Ours => "--ours",
                 Side::Theirs => "--theirs",
             };
+            // With core.fileMode off (Git for Windows' default) `git add` stages our side's mode
+            // whichever side was chosen, so the chosen side's executable bit is passed.
+            let chmod = match self.side_mode(path, side)? {
+                Some(0o100_755) => Some("--chmod=+x"),
+                Some(0o100_644) => Some("--chmod=-x"),
+                _ => None,
+            };
             self.git_cmd(&["--literal-pathspecs", "checkout", flag, "--", path])?;
-            self.git_cmd(&["--literal-pathspecs", "add", "--", path])?;
+            let mut add = vec!["--literal-pathspecs", "add"];
+            add.extend(chmod);
+            add.extend(["--", path]);
+            self.git_cmd(&add)?;
         } else {
             self.git_cmd(&["--literal-pathspecs", "rm", "-q", "--", path])?;
         }

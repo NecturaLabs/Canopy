@@ -2206,6 +2206,32 @@ fn conflict_fingerprint_is_stable_across_parses() {
 }
 
 #[test]
+fn resolve_with_side_takes_the_sides_mode_without_core_filemode() {
+    // With core.fileMode off (Git for Windows' default) `git add` cannot see the executable bit
+    // and stages the mode of our side: taking their side must still take their mode.
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["config", "core.fileMode", "false"]);
+    both_modified(p);
+    git(p, &["switch", "-q", "other"]);
+    git(p, &["update-index", "--chmod=+x", "--", "a.txt"]);
+    git(p, &["commit", "-q", "-m", "executable"]);
+    git(p, &["switch", "-q", "main"]);
+    repo.merge("other", MergeMode::Default).unwrap_err();
+    for (side, stage, mode) in [(Side::Theirs, 3, "100755"), (Side::Ours, 2, "100644")] {
+        let (staged, blob, _) = stages(p, "a.txt")
+            .into_iter()
+            .find(|s| s.2 == stage)
+            .expect("stage present");
+        assert_eq!(staged, mode);
+        repo.resolve_with_side("a.txt", side).expect("resolve");
+        assert_eq!(stages(p, "a.txt"), [(mode.to_owned(), blob, 0)], "{side:?}");
+        // Back to the conflict for the other side.
+        git(p, &["checkout", "-m", "--", "a.txt"]);
+    }
+}
+
+#[test]
 fn resolve_with_side_matches_git_checkout_ours_and_theirs() {
     let (dir, repo) = fixture();
     let p = dir.path();
