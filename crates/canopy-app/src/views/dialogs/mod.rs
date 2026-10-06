@@ -833,20 +833,18 @@ pub fn show(
                         .iter()
                         .find(|(b, _)| *b == request.target)
                         .map_or("", |(b, _)| *b);
-                    Select::new(&mut pick, &options)
+                    let mut target = Select::new(&mut pick, &options)
                         .label(format!("Merge {} into", request.source))
                         .placeholder("Choose a branch…")
                         .enabled(!options.is_empty())
                         .disabled_reason("No other branches on the remote yet")
-                        .id_salt("request-target")
-                        .show(ui);
+                        .id_salt("request-target");
                     if options.is_empty() {
-                        note(
-                            ui,
+                        target = target.helper(
                             "Canopy knows no other branch on the remote to merge into. Fetch, then try again.",
-                            p.text_faint,
                         );
                     }
+                    target.show(ui);
                     if pick != request.target && !pick.is_empty() {
                         pick.clone_into(&mut request.target);
                     }
@@ -1223,11 +1221,16 @@ fn merge_body(
         .iter()
         .find(|n| *n == target)
         .map_or("", String::as_str);
-    Select::new(&mut pick, &options)
+    let mut branch = Select::new(&mut pick, &options)
         .label("Branch")
         .placeholder("Choose a branch…")
-        .id_salt("merge-target")
-        .show(ui);
+        .enabled(!options.is_empty())
+        .disabled_reason("No other branches yet")
+        .id_salt("merge-target");
+    if options.is_empty() {
+        branch = branch.helper("This repository has no other branch to merge or rebase onto.");
+    }
+    branch.show(ui);
     if pick != target && !pick.is_empty() {
         *target = pick.to_owned();
     }
