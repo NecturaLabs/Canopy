@@ -446,13 +446,16 @@ impl Deck {
 /// A framed group: welcome action cards, settings theme cards, conflict cards. Standard: `panel`
 /// with a 1 pt `border` ring and no shadow. Deeper: `pane` with the `pane_edge` ring and the pane
 /// shadow. An interactive card hovers (`hover` over its fill, `edge` ring), selects (`focus` ring
-/// 1.5 pt and the accent wash) and shows the outside focus ring; it never lifts.
+/// 1.5 pt and the accent wash) and shows the outside focus ring; it never lifts. An interactive
+/// card is announced as a button, or as one choice of a group (a radio button, checked or not)
+/// once [`Self::selected`] is set; cards in a grid share one Tab stop through [`Self::roving`].
 #[derive(Debug, Clone)]
 #[must_use = "call .show(ui, ..)"]
 pub struct Card {
     id_salt: Option<Id>,
     interactive: bool,
-    selected: bool,
+    selected: Option<bool>,
+    roving: Option<(super::row::Roving, usize)>,
     enabled: bool,
     ring: Option<Tone>,
     width: Option<f32>,
@@ -468,7 +471,8 @@ impl Card {
         Self {
             id_salt: None,
             interactive: false,
-            selected: false,
+            selected: None,
+            roving: None,
             enabled: true,
             ring: None,
             width: None,
@@ -484,8 +488,15 @@ impl Card {
         self.interactive = on;
         self
     }
+    /// The card is one choice of a group (the theme cards), chosen or not.
     pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
+        self.selected = Some(selected);
+        self
+    }
+    /// The card is card `index` of the grid `list`: the grid is one Tab stop, and the arrows move
+    /// between its cards (give the [`super::row::Roving`] its `columns`).
+    pub fn roving(mut self, list: super::row::Roving, index: usize) -> Self {
+        self.roving = Some((list, index));
         self
     }
     pub fn enabled(mut self, enabled: bool) -> Self {
@@ -537,8 +548,9 @@ impl Card {
         let s = p.surfaces(style);
         let m = theme::metrics();
         let enabled = self.enabled && ui.is_enabled();
-        let sense = match (self.interactive, enabled) {
-            (true, true) => Sense::click(),
+        let sense = match (self.interactive, enabled, self.roving) {
+            (true, true, Some((list, index))) if !list.takes_tab(&ctx, index, None) => Sense::CLICK,
+            (true, true, _) => Sense::click(),
             _ => Sense::hover(),
         };
         let slot = ui.painter().add(Shape::Noop);
@@ -592,7 +604,7 @@ impl Card {
         } else {
             (s.panel, s.border, None)
         };
-        let selected = self.selected && !off;
+        let selected = self.selected == Some(true) && !off;
         let mut fill = base;
         if selected {
             fill = theme::over(p.accent_tint(), fill);
@@ -654,9 +666,15 @@ impl Card {
         }
         if self.interactive {
             let label = self.label.clone().unwrap_or_default();
-            response.widget_info(|| {
-                WidgetInfo::selected(WidgetType::Button, enabled, self.selected, &label)
+            response.widget_info(|| match self.selected {
+                Some(on) => WidgetInfo::selected(WidgetType::RadioButton, enabled, on, &label),
+                None => WidgetInfo::labeled(WidgetType::Button, enabled, &label),
             });
+            if let Some((list, index)) = self.roving
+                && enabled
+            {
+                list.row(ui, &response, index, false);
+            }
         }
         let response = super::button::tip(
             response,
@@ -1346,12 +1364,14 @@ pub(crate) fn gallery(ui: &mut Ui) {
                 }
                 let mut c = Card::new()
                     .interactive(true)
-                    .selected(*selected)
                     .enabled(*enabled)
                     .width(w)
                     .label(*name)
                     .disabled_reason("Not available")
                     .id_salt(("gallery-card", i));
+                if *selected {
+                    c = c.selected(true);
+                }
                 if let Some(t) = ring {
                     c = c.ring(*t);
                 }
@@ -1363,6 +1383,33 @@ pub(crate) fn gallery(ui: &mut Ui) {
         });
         ui.add_space(theme::SM);
     }
+    small(
+        ui,
+        "Choice cards: one Tab stop, the arrows move between them, the chosen one is checked",
+    );
+    let chosen_id = ui.id().with("gallery-choice");
+    let mut chosen: usize = ui.ctx().data(|d| d.get_temp(chosen_id)).unwrap_or(0);
+    let choices = ["Midnight", "Daylight", "Forest"];
+    let grid = super::row::Roving::new(ui.ctx(), "gallery-choice", choices.len(), Some(chosen))
+        .columns(choices.len());
+    ui.horizontal_top(|ui| {
+        super::a11y::group(ui, egui::accesskit::Role::RadioGroup, "Gallery theme");
+        ui.spacing_mut().item_spacing = vec2(theme::SM, theme::SM);
+        for (i, name) in choices.into_iter().enumerate() {
+            let r = Card::new()
+                .interactive(true)
+                .selected(chosen == i)
+                .roving(grid, i)
+                .width(w)
+                .label(format!("{name} theme"))
+                .id_salt(("gallery-choice", i))
+                .show(ui, |ui| card_body(ui, name));
+            if r.response.clicked() {
+                chosen = i;
+            }
+        }
+    });
+    ui.ctx().data_mut(|d| d.insert_temp(chosen_id, chosen));
     ui.add_space(theme::SM);
     small(ui, "Banners per tone");
     for tone in Tone::ALL {
@@ -2052,5 +2099,94 @@ mod tests {
         ] {
             assert!(labels.iter().any(|l| l == want), "{want}: {labels:?}");
         }
+    }
+
+    /// A11Y-15: an action card is a button; a card that is one choice of a group (a theme) is a
+    /// radio button, checked or not, never a toggle button.
+    #[test]
+    fn cards_are_buttons_or_choices_never_toggles() {
+        use egui::accesskit::{Role, Toggled};
+
+        use super::super::testkit;
+        let ctx = ctx();
+        let nodes = testkit::spoken(&ctx, |ui| {
+            Card::new()
+                .interactive(true)
+                .label("Clone a repository")
+                .show(ui, |ui| ui.label("Clone"));
+            for (name, on) in [("Midnight theme", true), ("Daylight theme", false)] {
+                Card::new()
+                    .interactive(true)
+                    .selected(on)
+                    .label(name)
+                    .id_salt(name)
+                    .show(ui, |ui| ui.label(name));
+            }
+        });
+        let action = testkit::find(&nodes, "Clone a repository").expect("action card");
+        assert_eq!((action.role, action.toggled), (Role::Button, None));
+        for (name, on) in [
+            ("Midnight theme", Toggled::True),
+            ("Daylight theme", Toggled::False),
+        ] {
+            let choice = testkit::find(&nodes, name).expect(name);
+            assert_eq!(
+                (choice.role, choice.toggled),
+                (Role::RadioButton, Some(on)),
+                "{name}"
+            );
+        }
+    }
+
+    /// A grid of choice cards is one Tab stop; the arrows move between the cards, by one to the
+    /// side and by a row up and down.
+    #[test]
+    fn a_card_grid_is_one_tab_stop_with_arrows_inside() {
+        use egui::Key;
+
+        use super::super::testkit;
+        let ctx = ctx();
+        let names = ["A", "B", "C", "D", "E", "F"];
+        let mut show = |ui: &mut Ui| {
+            Button::new("Before").show(ui);
+            let grid = super::super::row::Roving::new(ui.ctx(), "test-grid", 6, Some(1)).columns(3);
+            for row in names.chunks(3).enumerate() {
+                ui.horizontal(|ui| {
+                    for (j, name) in row.1.iter().enumerate() {
+                        Card::new()
+                            .interactive(true)
+                            .selected(row.0 * 3 + j == 1)
+                            .roving(grid, row.0 * 3 + j)
+                            .label(*name)
+                            .id_salt(*name)
+                            .show(ui, |ui| ui.label(*name));
+                    }
+                });
+            }
+            Button::new("After").show(ui);
+        };
+        ctx.enable_accesskit();
+        run(&ctx, Vec::new(), &mut show);
+        let mut path = Vec::new();
+        for k in [
+            Key::Tab,
+            Key::Tab,
+            Key::ArrowRight,
+            Key::ArrowDown,
+            Key::ArrowLeft,
+            Key::ArrowUp,
+            Key::Tab,
+        ] {
+            run(&ctx, testkit::key(k), &mut show);
+            let out = run(&ctx, Vec::new(), &mut show);
+            let update = out.platform_output.accesskit_update.expect("accesskit");
+            let label = update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == update.focus)
+                .and_then(|(_, n)| n.label().map(str::to_owned));
+            path.push(label.unwrap_or_default());
+        }
+        assert_eq!(path, ["Before", "B", "C", "F", "E", "B", "After"]);
     }
 }

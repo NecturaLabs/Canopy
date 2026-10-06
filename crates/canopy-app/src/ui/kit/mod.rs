@@ -14,20 +14,19 @@
 //! The gallery (`--overlay gallery`) shows every component in every state: each module that has
 //! components adds a `gallery(ui)` function and registers it in [`gallery::SECTIONS`].
 
+pub mod a11y;
 pub mod anim;
-pub mod button;
-pub mod gallery;
-pub mod glass;
-pub mod paint;
-
-// Filled by the component phase; each is declared now so its gallery section has a place.
 pub mod avatar;
+pub mod button;
 pub mod chip;
 pub mod choice;
 pub mod field;
+pub mod gallery;
+pub mod glass;
 pub mod graph;
 pub mod menu;
 pub mod overlay;
+pub mod paint;
 pub mod progress;
 pub mod range;
 pub mod row;
@@ -197,8 +196,9 @@ pub(crate) fn content_painter(ui: &egui::Ui) -> egui::Painter {
     painter
 }
 
-/// Whether keyboard focus should be drawn: true after a key press, false again after the pointer
-/// presses or moves (CSS `:focus-visible`). Text fields show focus whatever this says.
+/// Whether keyboard focus should be drawn: true after a key press, false again after a pointer
+/// press (CSS `:focus-visible`; moving the pointer keeps it). Text fields show focus whatever this
+/// says.
 pub fn focus_visible(ctx: &egui::Context) -> bool {
     let id = Id::new("canopy-kit-focus-visible");
     let (key, pointer) = ctx.input(|i| {
