@@ -201,7 +201,9 @@ fn redact_url_credentials(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(i) = rest.find("://") {
-        let (head, tail) = rest.split_at(i + 3);
+        // Git and libcurl accept extra slashes before the authority (`https:///user:pw@host`).
+        let slashes = rest[i + 3..].len() - rest[i + 3..].trim_start_matches('/').len();
+        let (head, tail) = rest.split_at(i + 3 + slashes);
         out.push_str(head);
         let authority_end = tail
             .find(|c: char| {
@@ -456,6 +458,11 @@ mod tests {
             "https://host/a@b and ssh://<redacted>@host/x"
         );
         assert_eq!(scrub_text("no url: a@b", ""), "no url: a@b");
+        // Spellings git and libcurl accept: extra slashes before the authority.
+        assert_eq!(
+            scrub_text("fatal: 'https:///ada:s3cret@github.com/o/r' and http:////x:y@h/", ""),
+            "fatal: 'https:///<redacted>@github.com/o/r' and http:////<redacted>@h/"
+        );
     }
 
     #[test]
