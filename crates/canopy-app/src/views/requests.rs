@@ -132,6 +132,30 @@ pub fn show(
 /// The list panel's id: its resize handle, `<id>/__resize`, marks the seam between the two cards.
 pub const LIST_PANEL: &str = "requests-list";
 
+/// The checks' disclosure line, its glyph and its tone (V22): red when any failed, amber while
+/// any run, green when all passed.
+fn checks_summary(failed: usize, pending: usize, total: usize) -> (&'static str, Tone, String) {
+    if failed > 0 {
+        (
+            icon::X_CIRCLE,
+            Tone::Danger,
+            format!("{failed} of {total} checks failed"),
+        )
+    } else if pending > 0 {
+        (
+            icon::CIRCLE_DASHED,
+            Tone::Warning,
+            format!("{pending} of {total} checks running"),
+        )
+    } else {
+        (
+            icon::CHECK_CIRCLE,
+            Tone::Success,
+            format!("All {total} checks passed"),
+        )
+    }
+}
+
 fn cap(s: &str) -> String {
     let mut c = s.chars();
     c.next()
@@ -1407,27 +1431,13 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64, actions: &mut Vec<Action>) {
             .iter()
             .filter(|c| c.state == CheckState::Pending)
             .count();
-        let (glyph, text) = if failed > 0 {
-            (
-                icon::X_CIRCLE,
-                format!("{failed} of {} checks failed", d.checks.len()),
-            )
-        } else if pending > 0 {
-            (
-                icon::CIRCLE_DASHED,
-                format!("{pending} of {} checks running", d.checks.len()),
-            )
-        } else {
-            (
-                icon::CHECK_CIRCLE,
-                format!("All {} checks passed", d.checks.len()),
-            )
-        };
+        let (glyph, tone, text) = checks_summary(failed, pending, d.checks.len());
         // Open at first when something failed; then as the reviewer left it.
         let open_id = ui.id().with(("checks-open", d.summary.number));
         let mut open = ui.data(|data| data.get_temp(open_id)).unwrap_or(failed > 0);
         Disclosure::new("checks", text, &mut open)
             .icon(glyph)
+            .icon_tone(tone)
             .show(ui, |ui| {
                 for c in &d.checks {
                     let (g, col, word) = match c.state {
@@ -2257,6 +2267,16 @@ mod tests {
         };
         assert_eq!(confirm, "Merge");
         assert!(!danger);
+    }
+
+    /// KPL-F6 (V22): the checks line's icon is red, amber or green by the checks' state.
+    #[test]
+    fn the_checks_line_is_toned_by_their_state() {
+        let tone = |failed, pending| checks_summary(failed, pending, 4).1;
+        assert_eq!(tone(1, 2), Tone::Danger);
+        assert_eq!(tone(0, 2), Tone::Warning);
+        assert_eq!(tone(0, 0), Tone::Success);
+        assert_eq!(checks_summary(0, 0, 4).2, "All 4 checks passed");
     }
 
     /// Deeper's seam between the cards follows the list panel's resize handle: egui registers
