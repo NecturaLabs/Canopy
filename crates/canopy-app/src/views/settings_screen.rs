@@ -154,6 +154,16 @@ pub struct PictureNote {
     pub open_accounts: bool,
 }
 
+impl From<crate::avatars::Explanation> for PictureNote {
+    fn from(why: crate::avatars::Explanation) -> Self {
+        Self {
+            title: why.title.to_owned(),
+            detail: why.detail,
+            open_accounts: why.fix == Some(crate::avatars::Fix::Accounts),
+        }
+    }
+}
+
 /// What the user's version-control configuration says, read off the UI thread for the notes
 /// beside Canopy's choices: the global configuration and the active repository's.
 #[derive(Debug, Default)]
@@ -263,13 +273,6 @@ impl std::fmt::Debug for SettingsScreen {
 
 impl SettingsScreen {
     /// What Privacy says about the active repository's profile pictures, set each frame.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "set from crate::avatars::explain once fix/avatars is merged (workers/settings.md F4)"
-        )
-    )]
     pub fn set_picture_note(&mut self, note: Option<PictureNote>) {
         self.picture_note = note;
     }

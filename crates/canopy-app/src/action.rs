@@ -63,10 +63,6 @@ pub enum Action {
     Cheatsheet,
     Settings,
     /// Settings, opened on one section.
-    #[expect(
-        dead_code,
-        reason = "for views outside Settings that open a section (contracts/settings.md)"
-    )]
     SettingsAt(Section),
     /// Settings → This repository for the open repository at this path (made the active tab).
     RepositorySettings(PathBuf),

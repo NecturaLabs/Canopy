@@ -77,9 +77,8 @@ pub fn show(
             } else {
                 theme::XS
             };
-            // The picture status reaches the view when the avatar work merges: contracts/avatars.md
-            // "Picture status" builds a `PictureNote` from `avatars::explain` here.
-            author(ui, &d, tab, None, actions);
+            let note = crate::avatars::explain_tab(settings, tab).map(PictureNote::from);
+            author(ui, &d, tab, note.as_ref(), actions);
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(short_id(d.oid))
@@ -415,6 +414,24 @@ pub struct PictureNote {
     pub detail: String,
     /// What a click does: open Settings where the cause can be changed.
     pub fix: Option<Action>,
+}
+
+impl From<crate::avatars::Explanation> for PictureNote {
+    fn from(why: crate::avatars::Explanation) -> Self {
+        use crate::avatars::Fix;
+        use crate::views::settings_screen::Section;
+        Self {
+            title: why.title.to_owned(),
+            detail: why.detail,
+            fix: why.fix.map(|f| {
+                Action::SettingsAt(match f {
+                    Fix::Accounts => Section::Accounts,
+                    Fix::Integrations => Section::Integrations,
+                    Fix::Privacy => Section::Privacy,
+                })
+            }),
+        }
+    }
 }
 
 fn author(
@@ -1021,6 +1038,35 @@ mod tests {
             detail: "Turn on Download profile pictures in Settings → Privacy.".into(),
             fix,
         }
+    }
+
+    /// Each fix `avatars::explain` names opens its own Settings section.
+    #[test]
+    fn a_picture_explanation_opens_the_section_that_fixes_it() {
+        use crate::action::Action;
+        use crate::avatars::{Explanation, Fix};
+        use crate::views::settings_screen::Section;
+        let open = |fix| {
+            super::PictureNote::from(Explanation {
+                title: "t",
+                detail: "d".into(),
+                fix,
+            })
+            .fix
+        };
+        assert!(matches!(
+            open(Some(Fix::Accounts)),
+            Some(Action::SettingsAt(Section::Accounts))
+        ));
+        assert!(matches!(
+            open(Some(Fix::Integrations)),
+            Some(Action::SettingsAt(Section::Integrations))
+        ));
+        assert!(matches!(
+            open(Some(Fix::Privacy)),
+            Some(Action::SettingsAt(Section::Privacy))
+        ));
+        assert!(open(None).is_none());
     }
 
     /// Override O2 (contracts/avatars.md, "Picture status UI" 1): when pictures are kept away the

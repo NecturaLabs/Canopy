@@ -855,6 +855,10 @@ impl eframe::App for CanopyApp {
                 .iter()
                 .flat_map(|t| t.forges.iter().map(|(_, f)| f.clone()))
                 .collect();
+            screen.set_picture_note(active_tab.and_then(|tab| {
+                crate::avatars::explain_tab(&self.settings, tab)
+                    .map(settings_screen::PictureNote::from)
+            }));
             let result = settings_screen::show(
                 &ctx,
                 screen,

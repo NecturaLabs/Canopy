@@ -100,10 +100,6 @@ pub enum Pause {
 }
 
 /// Where a tab's pictures stand, for telling the user why authors show initials.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "views adopt it: contracts/avatars.md")
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status<'a> {
     /// Lookups run when an author is due (or nothing has been asked yet).
@@ -117,10 +113,6 @@ pub enum Status<'a> {
 }
 
 /// What decides whether the active repository's authors can have pictures.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "views adopt it: contracts/avatars.md")
-)]
 #[derive(Debug, Clone, Copy)]
 pub struct Situation<'a> {
     /// Settings → Appearance → Author avatars. Off, no avatar is drawn and there is nothing to
@@ -140,10 +132,6 @@ pub struct Situation<'a> {
 }
 
 /// Where in Settings the user can change what keeps pictures away.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "views adopt it: contracts/avatars.md")
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fix {
     /// Add or replace the provider's token.
@@ -155,10 +143,6 @@ pub enum Fix {
 }
 
 /// Why authors show initials instead of pictures, in words for the user.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "views adopt it: contracts/avatars.md")
-)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Explanation {
     /// A few words, for a tooltip's first line or a row label.
@@ -170,10 +154,6 @@ pub struct Explanation {
 
 /// Why the active repository's authors show initials, or `None` when nothing keeps pictures
 /// away (they are loading, cached or the authors have none) or there is nothing to tell.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the views adopt it through contracts/avatars.md")
-)]
 pub fn explain(s: &Situation<'_>, now: i64) -> Option<Explanation> {
     use canopy_core::forge::ForgeKind;
     if !s.show_avatars || !s.consented {
@@ -285,6 +265,23 @@ pub fn explain(s: &Situation<'_>, now: i64) -> Option<Explanation> {
     }
 }
 
+/// [`explain`] for `tab` under `settings`, now.
+pub fn explain_tab(
+    settings: &crate::settings::Settings,
+    tab: &crate::tab::RepoTab,
+) -> Option<Explanation> {
+    let situation = Situation {
+        show_avatars: settings.show_avatars,
+        download: settings.download_avatars,
+        hosting_api: settings.hosting_api,
+        consented: crate::ui::legal::pending(settings).is_none(),
+        forge: tab.forge().map(|(_, f)| f.kind),
+        token: tab.requests.token.as_ref().map(Option::is_some),
+        status: tab.avatars.status(),
+    };
+    explain(&situation, chrono::Utc::now().timestamp())
+}
+
 #[derive(Default)]
 pub struct Avatars {
     pub enabled: bool,
@@ -364,15 +361,10 @@ impl Avatars {
     }
 
     /// Where this tab's pictures stand, for explaining missing ones ([`explain`]).
-    #[expect(dead_code, reason = "the views adopt it through contracts/avatars.md")]
     pub fn status(&self) -> Status<'_> {
         self.status_at(chrono::Utc::now().timestamp())
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "views adopt it: contracts/avatars.md")
-    )]
     fn status_at(&self, now: i64) -> Status<'_> {
         if let Some(blocked) = &self.blocked {
             return Status::Blocked(blocked);
