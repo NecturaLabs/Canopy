@@ -1,8 +1,8 @@
 //! Painting primitives the kit's components share: layered shadows, gradient fills clipped to a
 //! rounded rect, the inner top highlight and bottom line, the field recess, focus rings, 1 pt
-//! seams snapped to the pixel grid, Deeper's floating panes with their focus edge and top deck,
-//! edge and scroll fades, and soft radial glows. Colours come in from the caller, which reads them
-//! from the theme.
+//! seams snapped to the pixel grid, Deeper's floating panes with their focus edge, the top deck's
+//! bars, edge and scroll fades, and soft radial glows. Colours come in from the caller, which reads
+//! them from the theme.
 
 use egui::epaint::tessellator::path::rounded_rectangle;
 use egui::epaint::{CornerRadiusF32, PathShape, PathStroke, RectShape};
@@ -377,11 +377,17 @@ pub fn pane(
     radius
 }
 
-/// The top deck (the repository tab strip and the action bar as one surface). Standard: the flat
-/// chrome with a seam at the bottom. Deeper: a lifted gradient with its own highlight and a
-/// shadow onto the ground, edged by `deck_edge`.
+/// One bar of the top deck (the repository tab strip or the action bar) across `rect`, in the
+/// active style. Standard: the flat chrome with a seam at the bottom. Deeper: the deck's lifted
+/// gradient with its own highlight and a shadow onto the ground, edged below by `deck_edge`.
+/// Deeper's window paints no full-width bar: its tab strip stays on the ground and its action bar
+/// is a card ([`super::surface::Deck`] paints both styles' top bars).
 pub fn deck(painter: &Painter, rect: Rect, p: &Palette, s: &Surfaces) {
-    let style = theme::style();
+    deck_in(painter, rect, p, s, theme::style());
+}
+
+/// [`deck`] in `style`, whatever the active style (the gallery's side-by-side strip).
+pub fn deck_in(painter: &Painter, rect: Rect, p: &Palette, s: &Surfaces, style: Style) {
     if style == Style::Standard {
         painter.rect_filled(rect, CornerRadius::ZERO, s.deck.top);
         seam_h(
