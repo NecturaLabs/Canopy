@@ -473,3 +473,89 @@ impl CanopyApp {
         d
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::AppearanceChoice;
+    use crate::settings::DiffPrefs;
+    use crate::ui::motion::MotionPref;
+    use crate::ui::theme::{Density, Style};
+
+    fn app_with_tab() -> CanopyApp {
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        app
+    }
+
+    /// A repository's own diff options reach its tab; clearing them returns it to the default.
+    #[test]
+    fn a_repository_diff_choice_reaches_its_tab_and_resets() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_tab();
+        let path = app.tabs[0].path.clone();
+        let own = DiffPrefs {
+            context: 10,
+            ..DiffPrefs::default()
+        };
+        app.apply(
+            &ctx,
+            vec![Action::SetRepoDiff {
+                path: path.clone(),
+                prefs: Some(own),
+            }],
+        );
+        assert_eq!(app.tabs[0].diff_prefs, own);
+        assert_eq!(app.settings.repo_diff.get(&path), Some(&own));
+        app.apply(&ctx, vec![Action::ResetRepoSettings]);
+        assert!(app.settings.repo_diff.is_empty() && app.settings.repos.is_empty());
+        assert_eq!(app.tabs[0].diff_prefs, app.settings.diff);
+    }
+
+    /// "Repository settings" on a tab switches to that tab and opens This repository.
+    #[test]
+    fn repository_settings_open_on_their_tab() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_tab();
+        let mut other = test_tab(canopy_core::RepoSnapshot::default());
+        other.path = PathBuf::from("other");
+        app.tabs.push(other);
+        app.apply(
+            &ctx,
+            vec![Action::RepositorySettings(PathBuf::from("other"))],
+        );
+        assert_eq!(app.active, 1);
+        assert!(format!("{:?}", app.settings_screen).contains("Repository"));
+        // A repository with no tab opens nothing.
+        app.settings_screen = None;
+        app.apply(
+            &ctx,
+            vec![Action::RepositorySettings(PathBuf::from("gone"))],
+        );
+        assert!(app.settings_screen.is_none());
+    }
+
+    /// The palette's Appearance entries change the setting as Settings → Appearance does.
+    #[test]
+    fn appearance_choices_from_the_palette_change_the_settings() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.apply(
+            &ctx,
+            vec![
+                Action::SetAppearance(AppearanceChoice::Style(Style::Deeper)),
+                Action::SetAppearance(AppearanceChoice::Density(Density::Dense)),
+                Action::SetAppearance(AppearanceChoice::Motion(MotionPref::Reduced)),
+            ],
+        );
+        assert_eq!(
+            (
+                app.settings.style,
+                app.settings.density,
+                app.settings.motion
+            ),
+            (Style::Deeper, Density::Dense, MotionPref::Reduced)
+        );
+    }
+}

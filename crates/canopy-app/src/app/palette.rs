@@ -519,3 +519,59 @@ impl CanopyApp {
         v
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(entries: &[(Entry, Action)]) -> Vec<&str> {
+        entries.iter().map(|(e, _)| e.label.as_str()).collect()
+    }
+
+    /// With no repository open the palette offers only what works without one.
+    #[test]
+    fn the_palette_offers_repository_commands_only_with_a_tab() {
+        let mut app = test_app();
+        let alone = app.palette_entries();
+        assert!(labels(&alone).contains(&"Open repository…"));
+        assert!(
+            !labels(&alone).contains(&"Pop latest stash"),
+            "{:?}",
+            labels(&alone)
+        );
+        let before = app.palette_inputs();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        assert_ne!(
+            app.palette_inputs(),
+            before,
+            "a new tab rebuilds the entries"
+        );
+        let with_tab = app.palette_entries();
+        let pop = with_tab
+            .iter()
+            .find(|(e, _)| e.label == "Pop latest stash")
+            .map(|(_, a)| a);
+        assert!(
+            matches!(pop, Some(Action::Command(Command::PopStash))),
+            "resolved by the latest stash's commit when chosen: {pop:?}"
+        );
+    }
+
+    /// Every Style and Density choice and the Motion choices are offered.
+    #[test]
+    fn every_appearance_choice_is_in_the_palette() {
+        let app = test_app();
+        let entries = app.appearance_entries();
+        let all = labels(&entries);
+        for style in Style::ALL {
+            let label = format!("Style: {}", style.label());
+            assert!(all.contains(&label.as_str()), "{all:?}");
+        }
+        for density in Density::ALL {
+            let label = format!("Density: {}", density.label());
+            assert!(all.contains(&label.as_str()), "{all:?}");
+        }
+        assert!(all.iter().any(|l| l.starts_with("Motion: ")), "{all:?}");
+    }
+}
