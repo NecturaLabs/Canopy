@@ -117,10 +117,11 @@ impl CanopyApp {
                 message: String::new(),
                 untracked: true,
             })),
-            C::PopStash => actions.push(Action::Op(Op::StashApply {
-                index: 0,
-                pop: true,
-            })),
+            C::PopStash => {
+                if let Some(op) = self.tabs.get(self.active).and_then(toolbar::pop_latest) {
+                    actions.push(Action::Op(op));
+                }
+            }
             C::MergeDialog => actions.push(Action::OpenDialog(Dialog::Merge {
                 target: String::new(),
                 rebase: false,
@@ -334,5 +335,42 @@ mod tests {
         );
         run(&mut app, Command::Dismiss);
         assert!(app.settings_screen.is_none());
+    }
+
+    /// secfix2 F5: the Pop shortcut pops the stash the snapshot shows as latest, by its commit.
+    #[test]
+    fn the_pop_shortcut_pops_the_latest_stash_by_its_commit() {
+        let oid = canopy_core::Oid::from_str("0123456789abcdef0123456789abcdef01234567")
+            .expect("an object id");
+        let mut app = test_app();
+        app.tabs.push(test_tab(canopy_core::RepoSnapshot {
+            stashes: vec![canopy_core::StashInfo {
+                index: 0,
+                message: "On main: wip".into(),
+                oid,
+            }],
+            ..Default::default()
+        }));
+        let actions = run(&mut app, Command::PopStash);
+        assert!(
+            matches!(
+                actions.as_slice(),
+                [Action::Op(Op::StashApplyCommit { oid: o, pop: true })] if *o == oid
+            ),
+            "{actions:?}"
+        );
+        // With no stash known, git's own `stash pop` says why nothing happened.
+        app.tabs[0] = test_tab(canopy_core::RepoSnapshot::default());
+        let actions = run(&mut app, Command::PopStash);
+        assert!(
+            matches!(
+                actions.as_slice(),
+                [Action::Op(Op::StashApply {
+                    index: 0,
+                    pop: true
+                })]
+            ),
+            "{actions:?}"
+        );
     }
 }

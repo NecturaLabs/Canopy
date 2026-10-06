@@ -303,10 +303,8 @@ impl CanopyApp {
                         "Stash",
                         Some(C::PopStash),
                     ),
-                    Action::Op(Op::StashApply {
-                        index: 0,
-                        pop: true,
-                    }),
+                    // Resolved when it runs, by the latest stash's commit.
+                    Action::Command(C::PopStash),
                 ),
                 (
                     e(

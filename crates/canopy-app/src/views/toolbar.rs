@@ -407,9 +407,12 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     .tooltip(pop_tip)
                     .enabled(latest.is_some() && !busy)
                     .disabled_reason(if busy { busy_reason } else { "No stashes" });
-                if running.show(ui, pop, Tool::Pop, Some(Command::PopStash)) {
-                    actions.push(Action::Op(Op::StashApply {
-                        index: 0,
+                if running.show(ui, pop, Tool::Pop, Some(Command::PopStash))
+                    && let Some(st) = latest
+                {
+                    // By its commit: the stash the tooltip named, even if the list changed.
+                    actions.push(Action::Op(Op::StashApplyCommit {
+                        oid: st.oid,
                         pop: true,
                     }));
                 }
@@ -598,6 +601,22 @@ fn open_in_list(
         (StateFilter::All, l) => Some(l.iter().filter(|r| r.state == RequestState::Open).count()),
         (StateFilter::Closed, _) => None,
     }
+}
+
+/// The operation that pops the latest stash, as the keyboard and the palette run it: by the
+/// stash's commit, so a stash list that changed since the snapshot never pops another stash. With
+/// no stash known, plain `git stash pop`, so git says why nothing happened.
+pub fn pop_latest(tab: &RepoTab) -> Option<Op> {
+    Some(match tab.snap.as_ref()?.stashes.first() {
+        Some(latest) => Op::StashApplyCommit {
+            oid: latest.oid,
+            pop: true,
+        },
+        None => Op::StashApply {
+            index: 0,
+            pop: true,
+        },
+    })
 }
 
 /// The count on the Requests view: what the list says, else the last count it gave for this
@@ -1010,6 +1029,20 @@ mod tests {
             (
                 Op::StashApply {
                     index: 0,
+                    pop: false,
+                },
+                None,
+            ),
+            (
+                Op::StashApplyCommit {
+                    oid: canopy_core::Oid::ZERO_SHA1,
+                    pop: true,
+                },
+                Some(Tool::Pop),
+            ),
+            (
+                Op::StashApplyCommit {
+                    oid: canopy_core::Oid::ZERO_SHA1,
                     pop: false,
                 },
                 None,

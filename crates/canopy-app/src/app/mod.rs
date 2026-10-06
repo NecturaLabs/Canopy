@@ -1349,6 +1349,20 @@ pub(super) fn test_app() -> CanopyApp {
     }
 }
 
+/// A tab on no real repository (its worker answers nothing) showing `snap`.
+#[cfg(test)]
+pub(super) fn test_tab(snap: canopy_core::RepoSnapshot) -> RepoTab {
+    let (worker, _, _) = crate::worker::Worker::detached();
+    let mut tab = RepoTab::with_worker(
+        PathBuf::from("fixture"),
+        100,
+        settings::DiffPrefs::default(),
+        worker,
+    );
+    tab.snap = Some(std::sync::Arc::new(snap));
+    tab
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
