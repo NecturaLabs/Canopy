@@ -70,6 +70,12 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] Shift+F10 (row context menu) is not in the `keymap.rs` table, so the cheatsheet does not
       list it; `app/mod.rs` should use `paint::pane_focus` instead of its own copy;
       `theme.rs` `clamp_backdrop` comment is stale.
+- [ ] Toasts: with five unread errors, a new Success or Info toast evicts itself at once
+      (`ui/toast.rs:205-211`), so "Pushed" or "Fetched" never shows; evict the oldest older
+      non-error, or replace the oldest error. Smaller: the conflict indent cache keys on a
+      pointer and never drops entries (`views/resolve.rs` `code_lines_at`); an arrow onto a
+      disabled roving row sticks (`kit/row.rs`); `apply_repo_looks` reassigns the folder name
+      every frame for a root path (`app/dispatch.rs:432`); `gl.rs:1` uses `allow`, not `expect`.
 - [ ] Flaky test: canopy-core `checkout_request_leaves_a_real_remote_branch_of_the_same_name_alone`
       failed once, then passed three reruns; find the race.
 - [ ] Repository config can run code: Canopy's git calls (`canopy_core::cli`, `cli.rs:52-100`)
