@@ -424,13 +424,20 @@ fn header_i64(headers: &HeaderMap, name: &str) -> Option<i64> {
     headers.get(name)?.to_str().ok()?.trim().parse::<i64>().ok()
 }
 
+/// The longest `Retry-After` taken at its word: a day.
+const MAX_RETRY_AFTER: i64 = 86_400;
+
 /// When a rate limit resets: the provider's reset header (unix seconds), else `Retry-After`
-/// (seconds from now).
+/// (seconds from now, between none and [`MAX_RETRY_AFTER`]).
 fn rate_limit_reset(headers: &HeaderMap) -> Option<i64> {
     header_i64(headers, "x-ratelimit-reset")
         .or_else(|| header_i64(headers, "ratelimit-reset"))
         .or_else(|| {
-            header_i64(headers, "retry-after").map(|secs| chrono::Utc::now().timestamp() + secs)
+            header_i64(headers, "retry-after").map(|secs| {
+                chrono::Utc::now()
+                    .timestamp()
+                    .saturating_add(secs.clamp(0, MAX_RETRY_AFTER))
+            })
         })
 }
 
@@ -565,6 +572,31 @@ pub(crate) fn encode(s: &str) -> String {
 mod tests {
     use super::*;
     use ureq::http::HeaderValue;
+
+    #[test]
+    fn huge_retry_after_values_neither_overflow_nor_wait_for_ever() {
+        let now = chrono::Utc::now().timestamp();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "retry-after",
+            HeaderValue::from_static("9223372036854775807"),
+        );
+        let reset = rate_limit_reset(&headers).expect("a reset");
+        assert!((now..=now + 86_400 + 60).contains(&reset), "{reset}");
+        // REST answers reach it too.
+        for status in [403, 429] {
+            assert!(matches!(
+                map_status(status, &headers, b"", ForgeKind::GitHub),
+                Error::RateLimited { reset: Some(r) } if (now..=now + 86_400 + 60).contains(&r)
+            ));
+        }
+        headers.insert(
+            "retry-after",
+            HeaderValue::from_static("-9223372036854775808"),
+        );
+        let reset = rate_limit_reset(&headers).expect("a reset");
+        assert!((now..=now + 60).contains(&reset), "{reset}");
+    }
 
     #[test]
     fn encodes_gitlab_project_ids() {
