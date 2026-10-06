@@ -424,7 +424,7 @@ pub const MIDNIGHT: Palette = Palette {
     text: hex(0xEAEDF2),
     text_dim: hex(0xB2B9C6),
     text_faint: hex(0x9FA6B4),
-    disabled_text: hex(0x7C828E),
+    disabled_text: hex(0x7E8490),
     accent: hex(0xA3ABFF),
     accent2: hex(0x90D9F2),
     focus: hex(0x7F89FF),
@@ -622,7 +622,7 @@ pub const DAYLIGHT: Palette = Palette {
     text: hex(0x131720),
     text_dim: hex(0x4E5767),
     text_faint: hex(0x515A67),
-    disabled_text: hex(0x6A7384),
+    disabled_text: hex(0x626A7A),
     accent: hex(0x1C4BC1),
     accent2: hex(0x006273),
     focus: hex(0x386BE2),
@@ -823,7 +823,7 @@ pub const AURORA: Palette = Palette {
     text: hex(0xE6F3F5),
     text_dim: hex(0xACC8D0),
     text_faint: hex(0x97B5BF),
-    disabled_text: hex(0x758E95),
+    disabled_text: hex(0x7B959C),
     accent: hex(0x56E3E1),
     accent2: hex(0xCBACFC),
     focus: hex(0x49E1DC),
@@ -1024,7 +1024,7 @@ pub const EMBER: Palette = Palette {
     text: hex(0xF4EDE1),
     text_dim: hex(0xCCBCAB),
     text_faint: hex(0xBAA796),
-    disabled_text: hex(0x908272),
+    disabled_text: hex(0x9A8B7A),
     accent: hex(0xFBA156),
     accent2: hex(0x94C3E1),
     focus: hex(0xFF9B4E),
@@ -1225,7 +1225,7 @@ pub const NEON: Palette = Palette {
     text: hex(0xF3F0FB),
     text_dim: hex(0xC8BCD9),
     text_faint: hex(0xB4A7C7),
-    disabled_text: hex(0x81798C),
+    disabled_text: hex(0x8D849A),
     accent: hex(0xFF6EC5),
     accent2: hex(0x39F3FC),
     focus: hex(0x39F3FC),
@@ -1426,7 +1426,7 @@ pub const FOREST: Palette = Palette {
     text: hex(0xF2EDDB),
     text_dim: hex(0xC0C2AA),
     text_faint: hex(0xA6AF99),
-    disabled_text: hex(0x888A75),
+    disabled_text: hex(0x8E917C),
     accent: hex(0xEDC15A),
     accent2: hex(0x83C7E4),
     focus: hex(0xEDC15A),
@@ -1624,7 +1624,7 @@ pub const PAPER: Palette = Palette {
     text: hex(0x2A1F17),
     text_dim: hex(0x615246),
     text_faint: hex(0x635547),
-    disabled_text: hex(0x7C6C5F),
+    disabled_text: hex(0x736356),
     accent: hex(0x005393),
     accent2: hex(0x764627),
     focus: hex(0x1D6CB8),
@@ -1825,7 +1825,7 @@ pub const CONTRAST: Palette = Palette {
     text: hex(0xFFFFFF),
     text_dim: hex(0xE9E9E9),
     text_faint: hex(0xD6D6D6),
-    disabled_text: hex(0x9C9C9C),
+    disabled_text: hex(0xA1A1A1),
     accent: hex(0x7ECFFF),
     accent2: hex(0xFDEA4C),
     focus: hex(0xFDEA4C),
@@ -4902,6 +4902,48 @@ mod tests {
                             text_min,
                         );
                         gate.need(name, fg, &format!("its wash over {on}"), b, 4.5);
+                    }
+                }
+                failures.extend(gate.failures);
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// A banner's or callout's action can be disabled ("Continue" while conflicts remain): disabled
+    /// text keeps the 3:1 floor on every status wash over every ground, and a clear margin, 3.5:1,
+    /// on the grounds banners sit on (pane, panel, Deeper's window ground), so it still reads as
+    /// the step that will come (QV2-9: Ember was 3.16:1; washes over dialogs were down to 2.71:1).
+    /// Contrast keeps 4.5:1 everywhere.
+    #[test]
+    fn disabled_actions_read_on_banners() {
+        let mut failures = Vec::new();
+        for id in ThemeId::ALL {
+            let p = id.palette();
+            let floor = if p.strict { 4.5 } else { 3.0 };
+            let banner = if p.strict { 4.5 } else { 3.5 };
+            for style in Style::ALL {
+                let s = p.surfaces(style);
+                let mut gate = Gate::new(p, style);
+                for (name, wash) in [
+                    ("accent", p.accent_tint()),
+                    ("success", p.success_tint()),
+                    ("warning", p.warning_tint()),
+                    ("danger", p.danger_tint()),
+                ] {
+                    for (on, bg) in grounds(s, style) {
+                        let min = if matches!(on.as_str(), "pane" | "panel" | "deeper ground") {
+                            banner
+                        } else {
+                            floor
+                        };
+                        gate.need(
+                            "disabled_text",
+                            p.disabled_text,
+                            &format!("{name} wash over {on}"),
+                            over(wash, bg),
+                            min,
+                        );
                     }
                 }
                 failures.extend(gate.failures);

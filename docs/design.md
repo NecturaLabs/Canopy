@@ -52,7 +52,9 @@ rather than beige, khaki or lilac; text and the status colour stay readable on e
 fills the danger button. Light themes ring the switch knob in `knob_edge`. Disabled controls use
 `Palette::disabled_text` on `Surfaces::disabled_fill` with a `disabled_edge` ring, flat in both
 styles and never dimmed again with `DISABLED_ALPHA` (`disabled_tokens_are_readable`: at least
-3:1, 4.5:1 in Contrast).
+3:1, 4.5:1 in Contrast). A banner's or callout's action can be disabled too, so disabled text
+also keeps 3:1 on every status wash and 3.5:1 on the washes of the grounds banners sit on
+(`disabled_actions_read_on_banners`; Contrast 4.5:1 throughout).
 
 Each theme has one idea, carried by its ladder, signature, selection and status colours:
 
