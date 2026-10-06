@@ -70,15 +70,18 @@ token only as `Authorization: Bearer` to the API base of the repository's own ho
   or `retry-after`. Show the reset time (the error's text does); never retry in
   a loop, and never poll faster than a user action.
 - **Errors**: `Error` carries the server's own message (`server_message`), made plain text
-  (`plain_text`); a new variant's `Display` must not echo a header or token. The app shows
-  `e.to_string()` in a toast.
+  (`plain_text`); any other server-derived text an error carries (a transport message, a JSON
+  shape error, GitLab's `merge_error`) goes through `http::shorten` where the error is built. A
+  new variant's `Display` must not echo a header or token. The app shows `e.to_string()` in a
+  toast.
 - A link in an API response is data. Open it only through `platform::open_url`, which accepts web
   addresses only.
 
 ## 5. The app side (`crates/canopy-app/src/hosting.rs`, `tab.rs`, `app/`, `views/requests.rs`)
 
 - Add a `HostJob` variant (and, for a result the UI shows, a `HostEvent` variant), handle it in
-  `hosting::serve` on the per-forge hosting thread, and apply the event in `tab.rs`. Views and
+  `hosting::serve_jobs` (the job loop `hosting::serve` runs beside the request-checks lane) on
+  the per-forge hosting thread, and apply the event in `tab.rs`. Views and
   `app/` only send jobs and render tab state; they never call `Client`.
 - The consent and settings gates are structural: `app/mod.rs` starts the hosting thread
   (`RepoTab::ensure_host` in `tab.rs`) only after `ui::legal::pending(&settings)` is `None`
