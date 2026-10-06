@@ -286,117 +286,117 @@ const fn hex(rgb: u32) -> Color32 {
 // Each theme is an OKLCH surface ladder in its own neutral hue (Standard: flat chrome one clear
 // step off the ground; Deeper: a receding ground under lifted cards), its signature colours, status
 // tones and ten lanes at least dE 25 apart, contrast-fitted against the tests at the end of this file.
-/// "Midnight" (Observatory: a cool blue-black night under one indigo signature): Blue-black graphite with a cool cast, an indigo signature and starlight-blue links: the calm default.
+/// "Midnight" (Observatory: navy-ink night, periwinkle signature, starlight links): Observatory: navy-ink night, a periwinkle signature and starlight links, precise as an instrument.
 pub const MIDNIGHT: Palette = Palette {
     name: "Midnight",
-    concept: "Blue-black graphite with a cool cast, an indigo signature and starlight-blue links: the calm default.",
+    concept: "Observatory: navy-ink night, a periwinkle signature and starlight links, precise as an instrument.",
     dark: true,
     strict: false,
     standard: Surfaces {
-        bg: hex(0x0B0E13),
-        panel: hex(0x13161E),
-        pane: hex(0x0B0E13),
-        elevated: hex(0x171B24),
-        overlay: hex(0x191C26),
-        field: hex(0x0E1117),
-        track: hex(0x090B11),
-        switch_off: hex(0x2B313D),
-        badge: hex(0x242936),
-        border: hex(0x1C202B),
-        edge: hex(0x222733),
-        raised_edge: hex(0x222733),
-        overlay_edge: hex(0x222733),
-        tab_edge: hex(0x212632),
-        track_edge: hex(0x191D27),
+        bg: hex(0x0B0F19),
+        panel: hex(0x111723),
+        pane: hex(0x0B0F19),
+        elevated: hex(0x161D2B),
+        overlay: hex(0x181E2D),
+        field: hex(0x0E131E),
+        track: hex(0x080D17),
+        switch_off: hex(0x2A3346),
+        badge: hex(0x232B3E),
+        border: hex(0x1B2233),
+        edge: hex(0x21293B),
+        raised_edge: hex(0x21293B),
+        overlay_edge: hex(0x20283B),
+        tab_edge: hex(0x20283A),
+        track_edge: hex(0x181F2E),
         pane_edge: None,
-        keycap_edge: hex(0x05070E),
-        raised: Fill::flat(hex(0x171B24)),
-        raised_hover: Fill::flat(hex(0x1B1F2A)),
-        raised_pressed: Fill::flat(hex(0x141820)),
-        thumb: Fill::flat(hex(0x1E222D)),
-        keycap: Fill::flat(hex(0x1B1F29)),
-        tab: Fill::flat(hex(0x171B24)),
-        tooltip: Fill::flat(hex(0x242936)),
+        keycap_edge: hex(0x050914),
+        raised: Fill::flat(hex(0x161D2B)),
+        raised_hover: Fill::flat(hex(0x1A2131)),
+        raised_pressed: Fill::flat(hex(0x141927)),
+        thumb: Fill::flat(hex(0x1D2435)),
+        keycap: Fill::flat(hex(0x1A2131)),
+        tab: Fill::flat(hex(0x161D2B)),
+        tooltip: Fill::flat(hex(0x232B3E)),
         knob: Fill::flat(hex(0xFFFFFF)),
-        primary: Fill::flat(hex(0x626DD0)),
-        primary_hover: Fill::flat(hex(0x5E69CB)),
-        primary_pressed: Fill::flat(hex(0x5B65C6)),
+        primary: Fill::flat(hex(0x646CD6)),
+        primary_hover: Fill::flat(hex(0x6067D1)),
+        primary_pressed: Fill::flat(hex(0x5D63CD)),
         danger_solid: Fill::flat(hex(0xD73E41)),
         danger_solid_hover: Fill::flat(hex(0xD2383D)),
         danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0x111F1D),
-        removed_bg: hex(0x1F1318),
-        added_gutter: hex(0x162D27),
-        removed_gutter: hex(0x30181D),
-        deck: Fill::flat(hex(0x13161E)),
-        deck_edge: hex(0x1C202B),
-        pane_header: hex(0x0B0E13),
-        pane_header_seam: hex(0x1C202B),
+        added_bg: hex(0x112023),
+        removed_bg: hex(0x1F141E),
+        added_gutter: hex(0x162D2C),
+        removed_gutter: hex(0x301822),
+        deck: Fill::flat(hex(0x111723)),
+        deck_edge: hex(0x1B2233),
+        pane_header: hex(0x0B0F19),
+        pane_header_seam: hex(0x1B2233),
         knob_edge: None,
-        disabled_fill: hex(0x151921),
-        disabled_edge: hex(0x1D212C),
+        disabled_fill: hex(0x141A28),
+        disabled_edge: hex(0x1C2334),
     },
     deeper: Surfaces {
-        bg: hex(0x05060D),
-        panel: hex(0x05060D),
-        pane: hex(0x12151C),
-        elevated: hex(0x1B1F29),
-        overlay: hex(0x1C202B),
-        field: hex(0x0D1016),
-        track: hex(0x04060C),
-        switch_off: hex(0x2B313D),
-        badge: hex(0x252A36),
-        border: hex(0x1C202B),
-        edge: hex(0x252A36),
-        raised_edge: hex(0x272C38),
-        overlay_edge: hex(0x252A36),
-        tab_edge: hex(0x242935),
-        track_edge: hex(0x181B24),
-        pane_edge: Some(hex(0x1F242F)),
-        keycap_edge: hex(0x020308),
+        bg: hex(0x040813),
+        panel: hex(0x040813),
+        pane: hex(0x111622),
+        elevated: hex(0x1A2131),
+        overlay: hex(0x1B2233),
+        field: hex(0x0D111C),
+        track: hex(0x030612),
+        switch_off: hex(0x2A3346),
+        badge: hex(0x232B3E),
+        border: hex(0x1B2233),
+        edge: hex(0x232B3E),
+        raised_edge: hex(0x252D40),
+        overlay_edge: hex(0x232B3E),
+        tab_edge: hex(0x222A3D),
+        track_edge: hex(0x171D2C),
+        pane_edge: Some(hex(0x1E2637)),
+        keycap_edge: hex(0x02040E),
         raised: Fill {
-            top: hex(0x222733),
-            bottom: hex(0x1B1F2A),
+            top: hex(0x21293B),
+            bottom: hex(0x1A2131),
         },
         raised_hover: Fill {
-            top: hex(0x272C39),
-            bottom: hex(0x202430),
+            top: hex(0x262E41),
+            bottom: hex(0x1E2638),
         },
         raised_pressed: Fill {
-            top: hex(0x191C26),
-            bottom: hex(0x1B1F29),
+            top: hex(0x181E2D),
+            bottom: hex(0x1A2030),
         },
         thumb: Fill {
-            top: hex(0x262B38),
-            bottom: hex(0x202430),
+            top: hex(0x252D40),
+            bottom: hex(0x1E2638),
         },
         keycap: Fill {
-            top: hex(0x242935),
-            bottom: hex(0x1C202B),
+            top: hex(0x222A3D),
+            bottom: hex(0x1B2233),
         },
         tab: Fill {
-            top: hex(0x202430),
-            bottom: hex(0x1B1F29),
+            top: hex(0x1E2638),
+            bottom: hex(0x1A2030),
         },
         tooltip: Fill {
-            top: hex(0x292E3A),
-            bottom: hex(0x232834),
+            top: hex(0x272F42),
+            bottom: hex(0x21293C),
         },
         knob: Fill {
             top: hex(0xFFFFFF),
             bottom: hex(0xEDEEF1),
         },
         primary: Fill {
-            top: hex(0x626DD1),
-            bottom: hex(0x505ABB),
+            top: hex(0x626BD7),
+            bottom: hex(0x5157C1),
         },
         primary_hover: Fill {
-            top: hex(0x5D68CB),
-            bottom: hex(0x4B55B5),
+            top: hex(0x5D65D1),
+            bottom: hex(0x4C51BB),
         },
         primary_pressed: Fill {
-            top: hex(0x5861C2),
-            bottom: hex(0x5C66C8),
+            top: hex(0x5960C8),
+            bottom: hex(0x5E65CE),
         },
         danger_solid: Fill {
             top: hex(0xD73E40),
@@ -410,183 +410,183 @@ pub const MIDNIGHT: Palette = Palette {
             top: hex(0xC72C34),
             bottom: hex(0xCC3239),
         },
-        added_bg: hex(0x172525),
-        removed_bg: hex(0x251920),
-        added_gutter: hex(0x1C322E),
-        removed_gutter: hex(0x361D24),
+        added_bg: hex(0x16262B),
+        removed_bg: hex(0x241A26),
+        added_gutter: hex(0x1B3333),
+        removed_gutter: hex(0x351E29),
         deck: Fill {
-            top: hex(0x1E222D),
-            bottom: hex(0x181B24),
+            top: hex(0x1D2435),
+            bottom: hex(0x171D2C),
         },
-        deck_edge: hex(0x020309),
-        pane_header: hex(0x1D202E),
-        pane_header_seam: hex(0x444A87),
+        deck_edge: hex(0x02040E),
+        pane_header: hex(0x1C2234),
+        pane_header_seam: hex(0x454C8A),
         knob_edge: None,
-        disabled_fill: hex(0x181B24),
-        disabled_edge: hex(0x202430),
+        disabled_fill: hex(0x171D2C),
+        disabled_edge: hex(0x1E2638),
     },
-    text: hex(0xE9EBEF),
-    text_dim: hex(0xB2B6BF),
-    text_faint: hex(0x9FA3AD),
-    disabled_text: hex(0x7C8088),
-    accent: hex(0x9AA2FF),
-    accent2: hex(0x7FC8F3),
-    focus: hex(0x7C86FF),
-    selection: hex(0x7C86FF),
-    selection_alpha: 33,
+    text: hex(0xEAEDF2),
+    text_dim: hex(0xB2B9C6),
+    text_faint: hex(0x9FA6B4),
+    disabled_text: hex(0x7C828E),
+    accent: hex(0xA3ABFF),
+    accent2: hex(0x90D9F2),
+    focus: hex(0x7F89FF),
+    selection: hex(0x7F89FF),
+    selection_alpha: 34,
     on_accent: hex(0xFFFFFF),
-    success: hex(0x4CC38A),
-    warning: hex(0xD9A54A),
-    danger: hex(0xFF7D81),
+    success: hex(0x55D69F),
+    warning: hex(0xEDB65C),
+    danger: hex(0xFD8284),
     danger_base: hex(0xE5484D),
     on_danger: hex(0xFFFFFF),
     tones: Tones {
-        accent: hex(0x7C86FF),
+        accent: hex(0x7F89FF),
         success: hex(0x4CC38A),
         warning: hex(0xD9A54A),
         danger: hex(0xE5484D),
     },
-    control_border: hex(0x797E89),
-    on_tooltip: hex(0xE9EBEF),
-    on_tooltip_dim: hex(0xAEB1B8),
+    control_border: hex(0x798090),
+    on_tooltip: hex(0xEAEDF2),
+    on_tooltip_dim: hex(0xAEB3BC),
     hover_ink: hex(0xFFFFFF),
     shadow: hex(0x000000),
     primary_shadow: hex(0x000000),
     danger_shadow: hex(0x000000),
     scrim: Color32::from_rgba_premultiplied(2, 2, 3, 158),
     glass_alpha: 153,
-    glass_luminance: 0.036,
+    glass_luminance: 0.04,
     lanes: [
-        hex(0xA5B1FF),
-        hex(0x4CD494),
-        hex(0xED9234),
-        hex(0x00BFF7),
-        hex(0xDFC43D),
-        hex(0xF59BF0),
-        hex(0x01DEDF),
-        hex(0x8EBE4F),
-        hex(0xF980A0),
-        hex(0xFFAD8E),
+        hex(0xA9B4FF),
+        hex(0x25CEFA),
+        hex(0x55D69F),
+        hex(0xF6A6F8),
+        hex(0xBFB83E),
+        hex(0x12E3E0),
+        hex(0xFD8BA1),
+        hex(0x97CE6D),
+        hex(0xFF9B78),
+        hex(0xEBA540),
     ],
     syntax: Syntax {
-        keyword: hex(0xADB8FF),
-        string: hex(0x7BD4A4),
-        comment: hex(0x9698A0),
-        number: hex(0xF3B17A),
-        function: hex(0x82CBF6),
-        type_: hex(0x7BDAD9),
-        constant: hex(0xF49CBB),
+        keyword: hex(0xAEB6FF),
+        string: hex(0x83D9AE),
+        comment: hex(0x8D93A8),
+        number: hex(0xF2B582),
+        function: hex(0x8FD3F7),
+        type_: hex(0xCDB8FF),
+        constant: hex(0xF5A1C0),
     },
 };
 
-/// "Daylight" (Studio morning: white canvas in cool slate chrome with the indigo signature): Crisp white canvas framed by cool slate chrome, with the indigo signature as ink.
+/// "Daylight" (Drafting studio: white sheets on slate, cobalt ink, teal pen): Drafting studio: cool white sheets on a slate desk, cobalt ink and a teal second pen.
 pub const DAYLIGHT: Palette = Palette {
     name: "Daylight",
-    concept: "Crisp white canvas framed by cool slate chrome, with the indigo signature as ink.",
+    concept: "Drafting studio: cool white sheets on a slate desk, cobalt ink and a teal second pen.",
     dark: false,
     strict: false,
     standard: Surfaces {
-        bg: hex(0xFFFFFF),
-        panel: hex(0xF2F4F7),
-        pane: hex(0xFFFFFF),
+        bg: hex(0xF7F9FC),
+        panel: hex(0xE4EBF5),
+        pane: hex(0xF7F9FC),
         elevated: hex(0xFFFFFF),
         overlay: hex(0xFFFFFF),
         field: hex(0xFFFFFF),
-        track: hex(0xEFF1F5),
-        switch_off: hex(0xCED2DC),
-        badge: hex(0xE8EAF0),
-        border: hex(0xE0E3EA),
-        edge: hex(0xD5D9E2),
-        raised_edge: hex(0xD5D9E2),
-        overlay_edge: hex(0xDCE0E8),
-        tab_edge: hex(0xDCE0E8),
-        track_edge: hex(0xE3E6ED),
+        track: hex(0xE6ECF4),
+        switch_off: hex(0xC3CEDD),
+        badge: hex(0xDEE5EF),
+        border: hex(0xD5DEEA),
+        edge: hex(0xC9D4E3),
+        raised_edge: hex(0xC9D4E3),
+        overlay_edge: hex(0xD1DBE8),
+        tab_edge: hex(0xD1DBE8),
+        track_edge: hex(0xD8E1EC),
         pane_edge: None,
-        keycap_edge: hex(0xC3C7D0),
+        keycap_edge: hex(0xB7C2D1),
         raised: Fill::flat(hex(0xFFFFFF)),
-        raised_hover: Fill::flat(hex(0xF8F9FB)),
-        raised_pressed: Fill::flat(hex(0xF2F4F7)),
+        raised_hover: Fill::flat(hex(0xF0F3F9)),
+        raised_pressed: Fill::flat(hex(0xE9EEF5)),
         thumb: Fill::flat(hex(0xFFFFFF)),
-        keycap: Fill::flat(hex(0xF5F6F9)),
+        keycap: Fill::flat(hex(0xECF1F7)),
         tab: Fill::flat(hex(0xFFFFFF)),
-        tooltip: Fill::flat(hex(0x1C1F27)),
+        tooltip: Fill::flat(hex(0x181E29)),
         knob: Fill::flat(hex(0xFFFFFF)),
-        primary: Fill::flat(hex(0x5D67C9)),
-        primary_hover: Fill::flat(hex(0x5761C2)),
-        primary_pressed: Fill::flat(hex(0x545DBE)),
+        primary: Fill::flat(hex(0x2C5FDD)),
+        primary_hover: Fill::flat(hex(0x2658D5)),
+        primary_pressed: Fill::flat(hex(0x2354D1)),
         danger_solid: Fill::flat(hex(0xD73E41)),
         danger_solid_hover: Fill::flat(hex(0xD2383D)),
         danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0xEEFAF5),
-        removed_bg: hex(0xFEF2F2),
-        added_gutter: hex(0xDEF5EC),
-        removed_gutter: hex(0xFDE6E6),
-        deck: Fill::flat(hex(0xF2F4F7)),
-        deck_edge: hex(0xE0E3EA),
-        pane_header: hex(0xFFFFFF),
-        pane_header_seam: hex(0xE0E3EA),
+        added_bg: hex(0xE7F4F2),
+        removed_bg: hex(0xF7ECEF),
+        added_gutter: hex(0xD7F0E9),
+        removed_gutter: hex(0xF6E1E3),
+        deck: Fill::flat(hex(0xE4EBF5)),
+        deck_edge: hex(0xD5DEEA),
+        pane_header: hex(0xF7F9FC),
+        pane_header_seam: hex(0xD5DEEA),
         knob_edge: Some(hex(0x94928B)),
-        disabled_fill: hex(0xECEEF2),
-        disabled_edge: hex(0xDEE1E9),
+        disabled_fill: hex(0xE2E8F1),
+        disabled_edge: hex(0xD3DCE9),
     },
     deeper: Surfaces {
-        bg: hex(0xE6E8EE),
-        panel: hex(0xE6E8EE),
+        bg: hex(0xDCE3EE),
+        panel: hex(0xDCE3EE),
         pane: hex(0xFFFFFF),
         elevated: hex(0xFFFFFF),
         overlay: hex(0xFFFFFF),
         field: hex(0xFFFFFF),
-        track: hex(0xE3E6ED),
-        switch_off: hex(0xCED2DC),
-        badge: hex(0xE8EAF0),
-        border: hex(0xE3E6ED),
-        edge: hex(0xD4D8E2),
-        raised_edge: hex(0xD4D8E2),
-        overlay_edge: hex(0xDEE1E9),
-        tab_edge: hex(0xDADEE7),
-        track_edge: hex(0xDADEE7),
-        pane_edge: Some(hex(0xDEE1E9)),
-        keycap_edge: hex(0xC2C6CF),
+        track: hex(0xD8E1EC),
+        switch_off: hex(0xC3CEDD),
+        badge: hex(0xDEE5EF),
+        border: hex(0xD8E1EC),
+        edge: hex(0xC8D3E2),
+        raised_edge: hex(0xC8D3E2),
+        overlay_edge: hex(0xD3DCE9),
+        tab_edge: hex(0xCFD9E7),
+        track_edge: hex(0xCFD9E7),
+        pane_edge: Some(hex(0xD3DCE9)),
+        keycap_edge: hex(0xB6C1D0),
         raised: Fill {
             top: hex(0xFFFFFF),
-            bottom: hex(0xF9FAFB),
+            bottom: hex(0xF0F4F9),
         },
         raised_hover: Fill {
-            top: hex(0xFFFFFF),
-            bottom: hex(0xF5F6F8),
+            top: hex(0xF7F9FC),
+            bottom: hex(0xECF0F7),
         },
         raised_pressed: Fill {
-            top: hex(0xF0F2F5),
-            bottom: hex(0xF4F5F8),
+            top: hex(0xE7ECF4),
+            bottom: hex(0xEBF0F6),
         },
         thumb: Fill {
             top: hex(0xFFFFFF),
-            bottom: hex(0xFBFCFD),
+            bottom: hex(0xF3F6FA),
         },
         keycap: Fill {
-            top: hex(0xFFFFFF),
-            bottom: hex(0xF7F8FA),
+            top: hex(0xF7F9FC),
+            bottom: hex(0xEEF2F8),
         },
         tab: Fill {
             top: hex(0xFFFFFF),
-            bottom: hex(0xFBFBFC),
+            bottom: hex(0xF2F5FA),
         },
-        tooltip: Fill::flat(hex(0x1C1F27)),
+        tooltip: Fill::flat(hex(0x181E29)),
         knob: Fill {
             top: hex(0xFFFFFF),
-            bottom: hex(0xF4F5F8),
+            bottom: hex(0xF3F5F8),
         },
         primary: Fill {
-            top: hex(0x636DD0),
-            bottom: hex(0x515ABB),
+            top: hex(0x3569E7),
+            bottom: hex(0x2354D1),
         },
         primary_hover: Fill {
-            top: hex(0x5E68CA),
-            bottom: hex(0x4C55B5),
+            top: hex(0x2F62E0),
+            bottom: hex(0x1D4DC9),
         },
         primary_pressed: Fill {
-            top: hex(0x5159BA),
-            bottom: hex(0x555EBF),
+            top: hex(0x2050CD),
+            bottom: hex(0x2455D2),
         },
         danger_solid: Fill {
             top: hex(0xD73E40),
@@ -605,181 +605,181 @@ pub const DAYLIGHT: Palette = Palette {
         added_gutter: hex(0xDEF5EC),
         removed_gutter: hex(0xFDE6E6),
         deck: Fill {
-            top: hex(0xFFFFFF),
-            bottom: hex(0xF8F8FA),
+            top: hex(0xF7F9FC),
+            bottom: hex(0xEFF3F8),
         },
-        deck_edge: hex(0xD0D4DE),
-        pane_header: hex(0xF3F4F9),
-        pane_header_seam: hex(0xBABFEC),
-        knob_edge: Some(hex(0x888A91)),
-        disabled_fill: hex(0xECEEF3),
-        disabled_edge: hex(0xDCE0E8),
+        deck_edge: hex(0xC4CFDE),
+        pane_header: hex(0xF2F4FA),
+        pane_header_seam: hex(0xA9BFF2),
+        knob_edge: Some(hex(0x878B91)),
+        disabled_fill: hex(0xE3E9F2),
+        disabled_edge: hex(0xD1DBE8),
     },
-    text: hex(0x17191F),
-    text_dim: hex(0x535865),
-    text_faint: hex(0x565A66),
-    disabled_text: hex(0x717684),
-    accent: hex(0x464CBB),
-    accent2: hex(0x006089),
-    focus: hex(0x5E6AD2),
-    selection: hex(0x5E6AD2),
-    selection_alpha: 34,
+    text: hex(0x131720),
+    text_dim: hex(0x4E5767),
+    text_faint: hex(0x515A67),
+    disabled_text: hex(0x6A7384),
+    accent: hex(0x1C4BC1),
+    accent2: hex(0x006273),
+    focus: hex(0x386BE2),
+    selection: hex(0x5280E8),
+    selection_alpha: 30,
     on_accent: hex(0xFFFFFF),
-    success: hex(0x00664B),
-    warning: hex(0x7A5200),
-    danger: hex(0xAD141A),
+    success: hex(0x00624B),
+    warning: hex(0x744F00),
+    danger: hex(0xA70E14),
     danger_base: hex(0xD93D42),
     on_danger: hex(0xFFFFFF),
     tones: Tones {
-        accent: hex(0x8390E8),
+        accent: hex(0x628EED),
         success: hex(0x23BA7D),
         warning: hex(0xF8AC3D),
         danger: hex(0xF05656),
     },
-    control_border: hex(0x767A84),
-    on_tooltip: hex(0xF2F3F6),
-    on_tooltip_dim: hex(0xB2B3B8),
-    hover_ink: hex(0x12161F),
-    shadow: hex(0x141C30),
-    primary_shadow: hex(0x1E2059),
+    control_border: hex(0x6D7785),
+    on_tooltip: hex(0xF1F3F8),
+    on_tooltip_dim: hex(0xB0B3BA),
+    hover_ink: hex(0x10161F),
+    shadow: hex(0x16243C),
+    primary_shadow: hex(0x062372),
     danger_shadow: hex(0x781414),
-    scrim: Color32::from_rgba_premultiplied(6, 7, 10, 82),
+    scrim: Color32::from_rgba_premultiplied(5, 7, 12, 82),
     glass_alpha: 178,
-    glass_luminance: 0.43,
+    glass_luminance: 0.38,
     lanes: [
-        hex(0x535DCC),
-        hex(0x017F5B),
-        hex(0xC65200),
-        hex(0xAB4FAF),
-        hex(0x0D8822),
-        hex(0xC74145),
-        hex(0x017292),
-        hex(0x738200),
-        hex(0xA1225F),
-        hex(0x7D5500),
+        hex(0x3764CD),
+        hex(0x02798B),
+        hex(0xB73E00),
+        hex(0x077D0A),
+        hex(0x913DA1),
+        hex(0x7E5C01),
+        hex(0x0181C4),
+        hex(0xB83241),
+        hex(0x007A54),
+        hex(0xA02366),
     ],
     syntax: Syntax {
-        keyword: hex(0x4B50B0),
-        string: hex(0x116F42),
-        comment: hex(0x696B75),
-        number: hex(0x974C01),
-        function: hex(0x006495),
-        type_: hex(0x006B70),
-        constant: hex(0xA22C5E),
+        keyword: hex(0x2D4FCB),
+        string: hex(0x13703F),
+        comment: hex(0x656C7C),
+        number: hex(0xA04800),
+        function: hex(0x00658C),
+        type_: hex(0x7440BC),
+        constant: hex(0xB0295C),
     },
 };
 
-/// "Aurora" (Polar night: a deep-marine sky with aurora lights): Deep marine navy under a polar-sky blue, with aurora violet and green in the lights.
+/// "Aurora" (Polar night: deep marine sky, ice-teal and aurora violet): Polar night: deep marine sky lit by ice-teal and aurora violet, with green lights in the lanes.
 pub const AURORA: Palette = Palette {
     name: "Aurora",
-    concept: "Deep marine navy under a polar-sky blue, with aurora violet and green in the lights.",
+    concept: "Polar night: deep marine sky lit by ice-teal and aurora violet, with green lights in the lanes.",
     dark: true,
     strict: false,
     standard: Surfaces {
-        bg: hex(0x04111F),
-        panel: hex(0x081829),
-        pane: hex(0x04111F),
-        elevated: hex(0x0C1F31),
-        overlay: hex(0x0D2033),
-        field: hex(0x051424),
-        track: hex(0x020E1D),
-        switch_off: hex(0x1F354C),
-        badge: hex(0x172D44),
-        border: hex(0x102439),
-        edge: hex(0x152B42),
-        raised_edge: hex(0x152B42),
-        overlay_edge: hex(0x152B41),
-        tab_edge: hex(0x142A40),
-        track_edge: hex(0x0E2134),
+        bg: hex(0x001B26),
+        panel: hex(0x001121),
+        pane: hex(0x001B26),
+        elevated: hex(0x032A38),
+        overlay: hex(0x042B3A),
+        field: hex(0x011F2A),
+        track: hex(0x001822),
+        switch_off: hex(0x164253),
+        badge: hex(0x0C3A4B),
+        border: hex(0x063040),
+        edge: hex(0x093849),
+        raised_edge: hex(0x093849),
+        overlay_edge: hex(0x093748),
+        tab_edge: hex(0x083747),
+        track_edge: hex(0x042C3B),
         pane_edge: None,
-        keycap_edge: hex(0x000A19),
-        raised: Fill::flat(hex(0x0C1F31)),
-        raised_hover: Fill::flat(hex(0x0F2337)),
-        raised_pressed: Fill::flat(hex(0x091B2D)),
-        thumb: Fill::flat(hex(0x11263B)),
-        keycap: Fill::flat(hex(0x0F2337)),
-        tab: Fill::flat(hex(0x0C1F31)),
-        tooltip: Fill::flat(hex(0x172D44)),
+        keycap_edge: hex(0x00131D),
+        raised: Fill::flat(hex(0x032A38)),
+        raised_hover: Fill::flat(hex(0x052F3E)),
+        raised_pressed: Fill::flat(hex(0x022634)),
+        thumb: Fill::flat(hex(0x063242)),
+        keycap: Fill::flat(hex(0x052E3E)),
+        tab: Fill::flat(hex(0x032A38)),
+        tooltip: Fill::flat(hex(0x0C3A4B)),
         knob: Fill::flat(hex(0xFFFFFF)),
-        primary: Fill::flat(hex(0x0767B0)),
-        primary_hover: Fill::flat(hex(0x0060A7)),
-        primary_pressed: Fill::flat(hex(0x005DA1)),
+        primary: Fill::flat(hex(0x2BD7D6)),
+        primary_hover: Fill::flat(hex(0x38DFDD)),
+        primary_pressed: Fill::flat(hex(0x08CCCB)),
         danger_solid: Fill::flat(hex(0xD73E41)),
         danger_solid_hover: Fill::flat(hex(0xD2383D)),
         danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0x0D232B),
-        removed_bg: hex(0x191523),
-        added_gutter: hex(0x143437),
-        removed_gutter: hex(0x2A1A27),
-        deck: Fill::flat(hex(0x081829)),
-        deck_edge: hex(0x102439),
-        pane_header: hex(0x04111F),
-        pane_header_seam: hex(0x102439),
+        added_bg: hex(0x0A2D2E),
+        removed_bg: hex(0x151F2A),
+        added_gutter: hex(0x133B35),
+        removed_gutter: hex(0x27222D),
+        deck: Fill::flat(hex(0x001121)),
+        deck_edge: hex(0x063040),
+        pane_header: hex(0x001B26),
+        pane_header_seam: hex(0x063040),
         knob_edge: None,
-        disabled_fill: hex(0x0A1C2E),
-        disabled_edge: hex(0x11253A),
+        disabled_fill: hex(0x032735),
+        disabled_edge: hex(0x063141),
     },
     deeper: Surfaces {
-        bg: hex(0x000918),
-        panel: hex(0x000918),
-        pane: hex(0x071828),
-        elevated: hex(0x0F2337),
-        overlay: hex(0x102439),
-        field: hex(0x051322),
-        track: hex(0x000816),
-        switch_off: hex(0x1F354C),
-        badge: hex(0x182E44),
-        border: hex(0x102439),
-        edge: hex(0x182E44),
-        raised_edge: hex(0x1A3046),
-        overlay_edge: hex(0x182E44),
-        tab_edge: hex(0x172D43),
-        track_edge: hex(0x0C1F32),
-        pane_edge: Some(hex(0x13283D)),
-        keycap_edge: hex(0x000510),
+        bg: hex(0x001121),
+        panel: hex(0x001121),
+        pane: hex(0x02232F),
+        elevated: hex(0x052E3E),
+        overlay: hex(0x063040),
+        field: hex(0x001D29),
+        track: hex(0x001119),
+        switch_off: hex(0x164253),
+        badge: hex(0x0D3A4B),
+        border: hex(0x063040),
+        edge: hex(0x0D3A4B),
+        raised_edge: hex(0x103C4E),
+        overlay_edge: hex(0x0D3A4B),
+        tab_edge: hex(0x0B394A),
+        track_edge: hex(0x042A39),
+        pane_edge: Some(hex(0x073444)),
+        keycap_edge: hex(0x000C13),
         raised: Fill {
-            top: hex(0x152B42),
-            bottom: hex(0x0F2337),
+            top: hex(0x093849),
+            bottom: hex(0x052F3E),
         },
         raised_hover: Fill {
-            top: hex(0x1A3047),
-            bottom: hex(0x13283E),
+            top: hex(0x103D4E),
+            bottom: hex(0x073445),
         },
         raised_pressed: Fill {
-            top: hex(0x0D2033),
-            bottom: hex(0x0F2236),
+            top: hex(0x042B3A),
+            bottom: hex(0x052E3D),
         },
         thumb: Fill {
-            top: hex(0x192F46),
-            bottom: hex(0x13283E),
+            top: hex(0x0F3C4D),
+            bottom: hex(0x073445),
         },
         keycap: Fill {
-            top: hex(0x172D43),
-            bottom: hex(0x102439),
+            top: hex(0x0B394A),
+            bottom: hex(0x063040),
         },
         tab: Fill {
-            top: hex(0x13283E),
-            bottom: hex(0x0F2236),
+            top: hex(0x073445),
+            bottom: hex(0x052E3D),
         },
         tooltip: Fill {
-            top: hex(0x1C3249),
-            bottom: hex(0x162C42),
+            top: hex(0x123E50),
+            bottom: hex(0x0A3849),
         },
         knob: Fill {
             top: hex(0xFFFFFF),
-            bottom: hex(0xECEFF1),
+            bottom: hex(0xECEFF0),
         },
         primary: Fill {
-            top: hex(0x1870BA),
-            bottom: hex(0x005DA1),
+            top: hex(0x3CE1E0),
+            bottom: hex(0x08CCCB),
         },
         primary_hover: Fill {
-            top: hex(0x0D69B3),
-            bottom: hex(0x015697),
+            top: hex(0x47E9E7),
+            bottom: hex(0x21D3D2),
         },
         primary_pressed: Fill {
-            top: hex(0x00599C),
-            bottom: hex(0x005EA3),
+            top: hex(0x02C8C7),
+            bottom: hex(0x0FCDCC),
         },
         danger_solid: Fill {
             top: hex(0xD73E40),
@@ -793,46 +793,239 @@ pub const AURORA: Palette = Palette {
             top: hex(0xC72C34),
             bottom: hex(0xCC3239),
         },
-        added_bg: hex(0x0F2A33),
-        removed_bg: hex(0x1B1C2B),
-        added_gutter: hex(0x173A3E),
-        removed_gutter: hex(0x2D202E),
+        added_bg: hex(0x0C3436),
+        removed_bg: hex(0x172632),
+        added_gutter: hex(0x15423C),
+        removed_gutter: hex(0x292934),
         deck: Fill {
-            top: hex(0x11263B),
-            bottom: hex(0x0C1F32),
+            top: hex(0x063242),
+            bottom: hex(0x042A39),
         },
-        deck_edge: hex(0x000510),
-        pane_header: hex(0x112739),
-        pane_header_seam: hex(0x346A8C),
+        deck_edge: hex(0x000C14),
+        pane_header: hex(0x0B333E),
+        pane_header_seam: hex(0x237D81),
         knob_edge: None,
-        disabled_fill: hex(0x0C1F32),
-        disabled_edge: hex(0x13283E),
+        disabled_fill: hex(0x042A39),
+        disabled_edge: hex(0x073445),
     },
-    text: hex(0xE7F0F5),
-    text_dim: hex(0xB2C2CD),
-    text_faint: hex(0x9DAFBD),
-    disabled_text: hex(0x74838D),
-    accent: hex(0x67C4FD),
-    accent2: hex(0xCEACF7),
-    focus: hex(0x66C6FD),
-    selection: hex(0x67C4FD),
-    selection_alpha: 31,
-    on_accent: hex(0xFFFFFF),
-    success: hex(0x64E3AB),
-    warning: hex(0xF5C76C),
-    danger: hex(0xFD8A8F),
+    text: hex(0xE6F3F5),
+    text_dim: hex(0xACC8D0),
+    text_faint: hex(0x97B5BF),
+    disabled_text: hex(0x758E95),
+    accent: hex(0x56E3E1),
+    accent2: hex(0xCBACFC),
+    focus: hex(0x49E1DC),
+    selection: hex(0x56D4D5),
+    selection_alpha: 30,
+    on_accent: hex(0x001925),
+    success: hex(0x7EE888),
+    warning: hex(0xF9C468),
+    danger: hex(0xFE8291),
     danger_base: hex(0xE5484D),
     on_danger: hex(0xFFFFFF),
     tones: Tones {
-        accent: hex(0x67C4FD),
-        success: hex(0x64E3AB),
+        accent: hex(0x45D6D4),
+        success: hex(0x72D97C),
         warning: hex(0xFBA541),
         danger: hex(0xE5484D),
     },
-    control_border: hex(0x6E8294),
-    on_tooltip: hex(0xE7F0F5),
-    on_tooltip_dim: hex(0xA9B6C0),
-    hover_ink: hex(0xE7F0F5),
+    control_border: hex(0x698F9D),
+    on_tooltip: hex(0xE6F3F5),
+    on_tooltip_dim: hex(0xA5BCC2),
+    hover_ink: hex(0xE6F3F5),
+    shadow: hex(0x000000),
+    primary_shadow: hex(0x000000),
+    danger_shadow: hex(0x000000),
+    scrim: Color32::from_rgba_premultiplied(2, 2, 3, 158),
+    glass_alpha: 153,
+    glass_luminance: 0.05,
+    lanes: [
+        hex(0x01DAD9),
+        hex(0xCDADFF),
+        hex(0x7AD983),
+        hex(0xFF9BCB),
+        hex(0xD7AB1B),
+        hex(0x01CEFE),
+        hex(0xFE9C4C),
+        hex(0xB2CFFF),
+        hex(0xC9DA5D),
+        hex(0xFFBA93),
+    ],
+    syntax: Syntax {
+        keyword: hex(0xCBAAFF),
+        string: hex(0x82E8B4),
+        comment: hex(0x8FA6BA),
+        number: hex(0xF6C98C),
+        function: hex(0x72DDE8),
+        type_: hex(0x9EC6FF),
+        constant: hex(0xF6A6CA),
+    },
+};
+
+/// "Ember" (Forge at dusk: smoked oak, cream type, molten copper): Forge at dusk: smoked oak and cream type around a molten copper glow, with cool steel links.
+pub const EMBER: Palette = Palette {
+    name: "Ember",
+    concept: "Forge at dusk: smoked oak and cream type around a molten copper glow, with cool steel links.",
+    dark: true,
+    strict: false,
+    standard: Surfaces {
+        bg: hex(0x1A120C),
+        panel: hex(0x25190F),
+        pane: hex(0x1A120C),
+        elevated: hex(0x2B1E16),
+        overlay: hex(0x2D2017),
+        field: hex(0x1F150E),
+        track: hex(0x180F09),
+        switch_off: hex(0x453428),
+        badge: hex(0x3D2C20),
+        border: hex(0x32241A),
+        edge: hex(0x3B2A1F),
+        raised_edge: hex(0x3B2A1F),
+        overlay_edge: hex(0x3A2A1E),
+        tab_edge: hex(0x3A291E),
+        track_edge: hex(0x2E2117),
+        pane_edge: None,
+        keycap_edge: hex(0x140B05),
+        raised: Fill::flat(hex(0x2B1E16)),
+        raised_hover: Fill::flat(hex(0x312319)),
+        raised_pressed: Fill::flat(hex(0x271B13)),
+        thumb: Fill::flat(hex(0x35261B)),
+        keycap: Fill::flat(hex(0x312219)),
+        tab: Fill::flat(hex(0x2B1E16)),
+        tooltip: Fill::flat(hex(0x3D2C20)),
+        knob: Fill::flat(hex(0xFEF9F1)),
+        primary: Fill::flat(hex(0xF69445)),
+        primary_hover: Fill::flat(hex(0xFE9B4D)),
+        primary_pressed: Fill::flat(hex(0xEA8839)),
+        danger_solid: Fill::flat(hex(0xD73E41)),
+        danger_solid_hover: Fill::flat(hex(0xD2383D)),
+        danger_solid_pressed: Fill::flat(hex(0xCA3037)),
+        added_bg: hex(0x272213),
+        removed_bg: hex(0x2D1713),
+        added_gutter: hex(0x31311A),
+        removed_gutter: hex(0x3D1C19),
+        deck: Fill::flat(hex(0x25190F)),
+        deck_edge: hex(0x32241A),
+        pane_header: hex(0x1A120C),
+        pane_header_seam: hex(0x32241A),
+        knob_edge: None,
+        disabled_fill: hex(0x281C14),
+        disabled_edge: hex(0x34251A),
+    },
+    deeper: Surfaces {
+        bg: hex(0x130904),
+        panel: hex(0x130904),
+        pane: hex(0x231811),
+        elevated: hex(0x312219),
+        overlay: hex(0x32241A),
+        field: hex(0x1D140E),
+        track: hex(0x120803),
+        switch_off: hex(0x453428),
+        badge: hex(0x3E2D21),
+        border: hex(0x32241A),
+        edge: hex(0x3E2D21),
+        raised_edge: hex(0x402F23),
+        overlay_edge: hex(0x3E2D21),
+        tab_edge: hex(0x3D2C20),
+        track_edge: hex(0x2C1F16),
+        pane_edge: Some(hex(0x37271C)),
+        keycap_edge: hex(0x0E0501),
+        raised: Fill {
+            top: hex(0x3B2A1F),
+            bottom: hex(0x312319),
+        },
+        raised_hover: Fill {
+            top: hex(0x402F23),
+            bottom: hex(0x37271C),
+        },
+        raised_pressed: Fill {
+            top: hex(0x2D2017),
+            bottom: hex(0x302218),
+        },
+        thumb: Fill {
+            top: hex(0x3F2E22),
+            bottom: hex(0x37271C),
+        },
+        keycap: Fill {
+            top: hex(0x3D2C20),
+            bottom: hex(0x32241A),
+        },
+        tab: Fill {
+            top: hex(0x37271C),
+            bottom: hex(0x302218),
+        },
+        tooltip: Fill {
+            top: hex(0x423125),
+            bottom: hex(0x3B2B1F),
+        },
+        knob: Fill {
+            top: hex(0xFEF9F1),
+            bottom: hex(0xEEE8DE),
+        },
+        primary: Fill {
+            top: hex(0xFF9E54),
+            bottom: hex(0xEA8839),
+        },
+        primary_hover: Fill {
+            top: hex(0xFFA96A),
+            bottom: hex(0xF28F41),
+        },
+        primary_pressed: Fill {
+            top: hex(0xE68534),
+            bottom: hex(0xEC8A3A),
+        },
+        danger_solid: Fill {
+            top: hex(0xD73E40),
+            bottom: hex(0xC2282F),
+        },
+        danger_solid_hover: Fill {
+            top: hex(0xD1373B),
+            bottom: hex(0xBC202A),
+        },
+        danger_solid_pressed: Fill {
+            top: hex(0xC72C34),
+            bottom: hex(0xCC3239),
+        },
+        added_bg: hex(0x2F2817),
+        removed_bg: hex(0x351D17),
+        added_gutter: hex(0x38361E),
+        removed_gutter: hex(0x44211D),
+        deck: Fill {
+            top: hex(0x35261B),
+            bottom: hex(0x2C1F16),
+        },
+        deck_edge: hex(0x0F0501),
+        pane_header: hex(0x352519),
+        pane_header_seam: hex(0x8B562E),
+        knob_edge: None,
+        disabled_fill: hex(0x2C1F16),
+        disabled_edge: hex(0x37271C),
+    },
+    text: hex(0xF4EDE1),
+    text_dim: hex(0xCCBCAB),
+    text_faint: hex(0xBAA796),
+    disabled_text: hex(0x908272),
+    accent: hex(0xFBA156),
+    accent2: hex(0x94C3E1),
+    focus: hex(0xFF9B4E),
+    selection: hex(0xFBC499),
+    selection_alpha: 33,
+    on_accent: hex(0x22130B),
+    success: hex(0xB1D372),
+    warning: hex(0xEDD46E),
+    danger: hex(0xFC8191),
+    danger_base: hex(0xE5484D),
+    on_danger: hex(0xFFFFFF),
+    tones: Tones {
+        accent: hex(0xFBA156),
+        success: hex(0xA3C75D),
+        warning: hex(0xEFCA55),
+        danger: hex(0xE94E5A),
+    },
+    control_border: hex(0x928072),
+    on_tooltip: hex(0xF4EDE1),
+    on_tooltip_dim: hex(0xBDB3A7),
+    hover_ink: hex(0xF4EDE1),
     shadow: hex(0x000000),
     primary_shadow: hex(0x000000),
     danger_shadow: hex(0x000000),
@@ -840,332 +1033,139 @@ pub const AURORA: Palette = Palette {
     glass_alpha: 153,
     glass_luminance: 0.043,
     lanes: [
-        hex(0x68C8FF),
-        hex(0xCFA6FF),
-        hex(0xC4B300),
-        hex(0x02CDCC),
-        hex(0xFF7E77),
-        hex(0x50E9A6),
-        hex(0xEE9218),
-        hex(0xFFB6CE),
-        hex(0xA8DE67),
-        hex(0xFFBF86),
+        hex(0xFDA258),
+        hex(0x62C6FF),
+        hex(0xA6CA60),
+        hex(0xFF98A5),
+        hex(0x37E5CA),
+        hex(0xE789CC),
+        hex(0xDDBF47),
+        hex(0x03C4D5),
+        hex(0xBAB4FF),
+        hex(0x61C780),
     ],
     syntax: Syntax {
-        keyword: hex(0xD1B2F7),
-        string: hex(0x84E1B5),
-        comment: hex(0x96A7B7),
-        number: hex(0xFABC86),
-        function: hex(0x85D3FB),
-        type_: hex(0x8DDFDB),
-        constant: hex(0xF6A9D4),
-    },
-};
-
-/// "Ember" (Forge at dusk: warm charcoal, cream type and a copper glow): Warm charcoal and cream type around a bright copper signature, with steel-blue links.
-pub const EMBER: Palette = Palette {
-    name: "Ember",
-    concept: "Warm charcoal and cream type around a bright copper signature, with steel-blue links.",
-    dark: true,
-    strict: false,
-    standard: Surfaces {
-        bg: hex(0x130B07),
-        panel: hex(0x1C130D),
-        pane: hex(0x130B07),
-        elevated: hex(0x231811),
-        overlay: hex(0x251912),
-        field: hex(0x170F09),
-        track: hex(0x110905),
-        switch_off: hex(0x3C2C23),
-        badge: hex(0x34251C),
-        border: hex(0x2A1D15),
-        edge: hex(0x32231A),
-        raised_edge: hex(0x32231A),
-        overlay_edge: hex(0x32231A),
-        tab_edge: hex(0x312219),
-        track_edge: hex(0x261A13),
-        pane_edge: None,
-        keycap_edge: hex(0x0D0502),
-        raised: Fill::flat(hex(0x231811)),
-        raised_hover: Fill::flat(hex(0x291C14)),
-        raised_pressed: Fill::flat(hex(0x1F150E)),
-        thumb: Fill::flat(hex(0x2C1F16)),
-        keycap: Fill::flat(hex(0x281C14)),
-        tab: Fill::flat(hex(0x231811)),
-        tooltip: Fill::flat(hex(0x34251C)),
-        knob: Fill::flat(hex(0xFEF9F3)),
-        primary: Fill::flat(hex(0xF59344)),
-        primary_hover: Fill::flat(hex(0xFD9A4C)),
-        primary_pressed: Fill::flat(hex(0xE98838)),
-        danger_solid: Fill::flat(hex(0xD73E41)),
-        danger_solid_hover: Fill::flat(hex(0xD2383D)),
-        danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0x1F1C0F),
-        removed_bg: hex(0x26110E),
-        added_gutter: hex(0x2A2B16),
-        removed_gutter: hex(0x371614),
-        deck: Fill::flat(hex(0x1C130D)),
-        deck_edge: hex(0x2A1D15),
-        pane_header: hex(0x130B07),
-        pane_header_seam: hex(0x2A1D15),
-        knob_edge: None,
-        disabled_fill: hex(0x20160F),
-        disabled_edge: hex(0x2B1E16),
-    },
-    deeper: Surfaces {
-        bg: hex(0x0A0301),
-        panel: hex(0x0A0301),
-        pane: hex(0x1B120C),
-        elevated: hex(0x281C14),
-        overlay: hex(0x2A1D15),
-        field: hex(0x150D09),
-        track: hex(0x0B0401),
-        switch_off: hex(0x3C2C23),
-        badge: hex(0x35261D),
-        border: hex(0x2A1D15),
-        edge: hex(0x35261D),
-        raised_edge: hex(0x37281E),
-        overlay_edge: hex(0x35261D),
-        tab_edge: hex(0x34251C),
-        track_edge: hex(0x241811),
-        pane_edge: Some(hex(0x2E2018)),
-        keycap_edge: hex(0x070200),
-        raised: Fill {
-            top: hex(0x32231A),
-            bottom: hex(0x291C14),
-        },
-        raised_hover: Fill {
-            top: hex(0x37281F),
-            bottom: hex(0x2F2018),
-        },
-        raised_pressed: Fill {
-            top: hex(0x251912),
-            bottom: hex(0x281B14),
-        },
-        thumb: Fill {
-            top: hex(0x36271E),
-            bottom: hex(0x2F2018),
-        },
-        keycap: Fill {
-            top: hex(0x34251C),
-            bottom: hex(0x2A1D15),
-        },
-        tab: Fill {
-            top: hex(0x2F2018),
-            bottom: hex(0x281B14),
-        },
-        tooltip: Fill {
-            top: hex(0x392920),
-            bottom: hex(0x33241B),
-        },
-        knob: Fill {
-            top: hex(0xFEF9F3),
-            bottom: hex(0xEFE8E0),
-        },
-        primary: Fill {
-            top: hex(0xFF9C50),
-            bottom: hex(0xE98838),
-        },
-        primary_hover: Fill {
-            top: hex(0xFFA867),
-            bottom: hex(0xF18E40),
-        },
-        primary_pressed: Fill {
-            top: hex(0xE58433),
-            bottom: hex(0xEA8939),
-        },
-        danger_solid: Fill {
-            top: hex(0xD73E40),
-            bottom: hex(0xC2282F),
-        },
-        danger_solid_hover: Fill {
-            top: hex(0xD1373B),
-            bottom: hex(0xBC202A),
-        },
-        danger_solid_pressed: Fill {
-            top: hex(0xC72C34),
-            bottom: hex(0xCC3239),
-        },
-        added_bg: hex(0x272214),
-        removed_bg: hex(0x2E1713),
-        added_gutter: hex(0x30311A),
-        removed_gutter: hex(0x3D1C18),
-        deck: Fill {
-            top: hex(0x2C1F16),
-            bottom: hex(0x241811),
-        },
-        deck_edge: hex(0x080200),
-        pane_header: hex(0x2D1F14),
-        pane_header_seam: hex(0x82552C),
-        knob_edge: None,
-        disabled_fill: hex(0x241811),
-        disabled_edge: hex(0x2F2018),
-    },
-    text: hex(0xF2ECE3),
-    text_dim: hex(0xC6BAAD),
-    text_faint: hex(0xB2A498),
-    disabled_text: hex(0x867B6F),
-    accent: hex(0xF19C52),
-    accent2: hex(0x89C6EE),
-    focus: hex(0xF69F50),
-    selection: hex(0xF4CBA9),
-    selection_alpha: 31,
-    on_accent: hex(0x21140D),
-    success: hex(0xAAD374),
-    warning: hex(0xEED558),
-    danger: hex(0xFE838A),
-    danger_base: hex(0xE5484D),
-    on_danger: hex(0xFFFFFF),
-    tones: Tones {
-        accent: hex(0xF19C52),
-        success: hex(0x9DC861),
-        warning: hex(0xEED558),
-        danger: hex(0xE94F55),
-    },
-    control_border: hex(0x88796F),
-    on_tooltip: hex(0xF2ECE3),
-    on_tooltip_dim: hex(0xB9B0A7),
-    hover_ink: hex(0xF2ECE3),
-    shadow: hex(0x000000),
-    primary_shadow: hex(0x000000),
-    danger_shadow: hex(0x000000),
-    scrim: Color32::from_rgba_premultiplied(2, 2, 3, 158),
-    glass_alpha: 153,
-    glass_luminance: 0.036,
-    lanes: [
-        hex(0xFBA455),
-        hex(0x68C5FF),
-        hex(0xD3B83E),
-        hex(0xE18BD5),
-        hex(0x51D39C),
-        hex(0xFB8A79),
-        hex(0x03C6D3),
-        hex(0x9ECE69),
-        hex(0xC8BDFF),
-        hex(0xFFACC2),
-    ],
-    syntax: Syntax {
-        keyword: hex(0xF8AE7B),
-        string: hex(0xB4D88F),
-        comment: hex(0xAC9D91),
-        number: hex(0xE7D17A),
-        function: hex(0x8ECBF3),
+        keyword: hex(0xF8AF7C),
+        string: hex(0xC3D98F),
+        comment: hex(0xA99A8B),
+        number: hex(0xECCB72),
+        function: hex(0x93C8EB),
         type_: hex(0xF0ABCB),
-        constant: hex(0xD3B1ED),
+        constant: hex(0xD9B5F0),
     },
 };
 
-/// "Neon" (Night city: black-violet with electric cyan and hot magenta): Black-violet night, electric cyan and hot magenta; colour lives only in the signals.
+/// "Neon" (Night city: black-violet, hot magenta and electric cyan): Night city: black-violet streets under hot magenta and electric cyan signs.
 pub const NEON: Palette = Palette {
     name: "Neon",
-    concept: "Black-violet night, electric cyan and hot magenta; colour lives only in the signals.",
+    concept: "Night city: black-violet streets under hot magenta and electric cyan signs.",
     dark: true,
     strict: false,
     standard: Surfaces {
-        bg: hex(0x0D0914),
-        panel: hex(0x171122),
-        pane: hex(0x0D0914),
-        elevated: hex(0x1B1428),
-        overlay: hex(0x1D152A),
-        field: hex(0x100C19),
-        track: hex(0x0A0612),
-        switch_off: hex(0x322744),
-        badge: hex(0x2A203C),
-        border: hex(0x211830),
-        edge: hex(0x281E3A),
-        raised_edge: hex(0x281E3A),
-        overlay_edge: hex(0x281E39),
-        tab_edge: hex(0x271D39),
-        track_edge: hex(0x1E162B),
+        bg: hex(0x0E091A),
+        panel: hex(0x020108),
+        pane: hex(0x0E091A),
+        elevated: hex(0x1D1330),
+        overlay: hex(0x1F1433),
+        field: hex(0x120B1F),
+        track: hex(0x0C0618),
+        switch_off: hex(0x342550),
+        badge: hex(0x2D1E47),
+        border: hex(0x23173A),
+        edge: hex(0x2B1C45),
+        raised_edge: hex(0x2B1C45),
+        overlay_edge: hex(0x2A1B45),
+        tab_edge: hex(0x2A1B44),
+        track_edge: hex(0x201434),
         pane_edge: None,
-        keycap_edge: hex(0x070310),
-        raised: Fill::flat(hex(0x1B1428)),
-        raised_hover: Fill::flat(hex(0x20182F)),
-        raised_pressed: Fill::flat(hex(0x181123)),
-        thumb: Fill::flat(hex(0x231A33)),
-        keycap: Fill::flat(hex(0x20172E)),
-        tab: Fill::flat(hex(0x1B1428)),
-        tooltip: Fill::flat(hex(0x2A203C)),
+        keycap_edge: hex(0x090316),
+        raised: Fill::flat(hex(0x1D1330)),
+        raised_hover: Fill::flat(hex(0x221638)),
+        raised_pressed: Fill::flat(hex(0x1A102B)),
+        thumb: Fill::flat(hex(0x26183D)),
+        keycap: Fill::flat(hex(0x221637)),
+        tab: Fill::flat(hex(0x1D1330)),
+        tooltip: Fill::flat(hex(0x2D1E47)),
         knob: Fill::flat(hex(0xFFFFFF)),
-        primary: Fill::flat(hex(0x00E0F3)),
-        primary_hover: Fill::flat(hex(0x03E8FC)),
-        primary_pressed: Fill::flat(hex(0x00D3E6)),
+        primary: Fill::flat(hex(0xFD53BE)),
+        primary_hover: Fill::flat(hex(0xFF63C2)),
+        primary_pressed: Fill::flat(hex(0xF046B2)),
         danger_solid: Fill::flat(hex(0xD73E41)),
         danger_solid_hover: Fill::flat(hex(0xD2383D)),
         danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0x151E1E),
-        removed_bg: hex(0x210E19),
-        added_gutter: hex(0x1C3127),
-        removed_gutter: hex(0x32131E),
-        deck: Fill::flat(hex(0x171122)),
-        deck_edge: hex(0x211830),
-        pane_header: hex(0x0D0914),
-        pane_header_seam: hex(0x211830),
+        added_bg: hex(0x161E24),
+        removed_bg: hex(0x220E1F),
+        added_gutter: hex(0x1D312C),
+        removed_gutter: hex(0x331323),
+        deck: Fill::flat(hex(0x020108)),
+        deck_edge: hex(0x23173A),
+        pane_header: hex(0x0E091A),
+        pane_header_seam: hex(0x23173A),
         knob_edge: None,
-        disabled_fill: hex(0x191224),
-        disabled_edge: hex(0x221931),
+        disabled_fill: hex(0x1B112C),
+        disabled_edge: hex(0x25173C),
     },
     deeper: Surfaces {
-        bg: hex(0x020008),
-        panel: hex(0x020008),
-        pane: hex(0x140F1E),
-        elevated: hex(0x20172E),
-        overlay: hex(0x211830),
-        field: hex(0x0F0B17),
-        track: hex(0x06020E),
-        switch_off: hex(0x322744),
-        badge: hex(0x2B213C),
-        border: hex(0x211830),
-        edge: hex(0x2B213C),
-        raised_edge: hex(0x2D233F),
-        overlay_edge: hex(0x2B213C),
-        tab_edge: hex(0x2A203B),
-        track_edge: hex(0x1C1428),
-        pane_edge: Some(hex(0x251B35)),
-        keycap_edge: hex(0x04000B),
+        bg: hex(0x04010D),
+        panel: hex(0x04010D),
+        pane: hex(0x160E25),
+        elevated: hex(0x221637),
+        overlay: hex(0x23173A),
+        field: hex(0x110A1D),
+        track: hex(0x070115),
+        switch_off: hex(0x342550),
+        badge: hex(0x2D1E48),
+        border: hex(0x23173A),
+        edge: hex(0x2D1E48),
+        raised_edge: hex(0x2F204A),
+        overlay_edge: hex(0x2D1E48),
+        tab_edge: hex(0x2C1D47),
+        track_edge: hex(0x1E1331),
+        pane_edge: Some(hex(0x271940)),
+        keycap_edge: hex(0x050011),
         raised: Fill {
-            top: hex(0x281E3A),
-            bottom: hex(0x20182F),
+            top: hex(0x2B1C45),
+            bottom: hex(0x221638),
         },
         raised_hover: Fill {
-            top: hex(0x2D233F),
-            bottom: hex(0x251C36),
+            top: hex(0x30214B),
+            bottom: hex(0x281A40),
         },
         raised_pressed: Fill {
-            top: hex(0x1D152A),
-            bottom: hex(0x1F172D),
+            top: hex(0x1F1433),
+            bottom: hex(0x211537),
         },
         thumb: Fill {
-            top: hex(0x2C223E),
-            bottom: hex(0x251C36),
+            top: hex(0x2F204A),
+            bottom: hex(0x281A40),
         },
         keycap: Fill {
-            top: hex(0x2A203B),
-            bottom: hex(0x211830),
+            top: hex(0x2C1D47),
+            bottom: hex(0x23173A),
         },
         tab: Fill {
-            top: hex(0x251C36),
-            bottom: hex(0x1F172D),
+            top: hex(0x281A40),
+            bottom: hex(0x211537),
         },
         tooltip: Fill {
-            top: hex(0x2F2441),
-            bottom: hex(0x291F3A),
+            top: hex(0x31224C),
+            bottom: hex(0x2B1C46),
         },
         knob: Fill {
             top: hex(0xFFFFFF),
             bottom: hex(0xEFEEF1),
         },
         primary: Fill {
-            top: hex(0x13EAFE),
-            bottom: hex(0x00D3E6),
+            top: hex(0xFF6AC4),
+            bottom: hex(0xF046B2),
         },
         primary_hover: Fill {
-            top: hex(0x60EEFF),
-            bottom: hex(0x03DBEE),
+            top: hex(0xFF7AC8),
+            bottom: hex(0xF84EB9),
         },
         primary_pressed: Fill {
-            top: hex(0x05CFE1),
-            bottom: hex(0x02D5E7),
+            top: hex(0xEC41AF),
+            bottom: hex(0xF247B4),
         },
         danger_solid: Fill {
             top: hex(0xD73E40),
@@ -1179,46 +1179,46 @@ pub const NEON: Palette = Palette {
             top: hex(0xC72C34),
             bottom: hex(0xCC3239),
         },
-        added_bg: hex(0x1B2427),
-        removed_bg: hex(0x271422),
-        added_gutter: hex(0x22362F),
-        removed_gutter: hex(0x381826),
+        added_bg: hex(0x1D232E),
+        removed_bg: hex(0x291329),
+        added_gutter: hex(0x233635),
+        removed_gutter: hex(0x39182C),
         deck: Fill {
-            top: hex(0x231A33),
-            bottom: hex(0x1C1428),
+            top: hex(0x26183D),
+            bottom: hex(0x1E1331),
         },
-        deck_edge: hex(0x04010B),
-        pane_header: hex(0x1A2030),
-        pane_header_seam: hex(0x207785),
+        deck_edge: hex(0x050012),
+        pane_header: hex(0x1D1F37),
+        pane_header_seam: hex(0x27798B),
         knob_edge: None,
-        disabled_fill: hex(0x1C1428),
-        disabled_edge: hex(0x251C36),
+        disabled_fill: hex(0x1E1331),
+        disabled_edge: hex(0x281A40),
     },
-    text: hex(0xF1EEF8),
-    text_dim: hex(0xC2BBD3),
-    text_faint: hex(0xADA5BF),
-    disabled_text: hex(0x7E788C),
-    accent: hex(0x2CECF8),
-    accent2: hex(0xFD71CF),
-    focus: hex(0x2CECF8),
-    selection: hex(0x6CE6F3),
-    selection_alpha: 30,
-    on_accent: hex(0x001018),
-    success: hex(0x64F784),
+    text: hex(0xF3F0FB),
+    text_dim: hex(0xC8BCD9),
+    text_faint: hex(0xB4A7C7),
+    disabled_text: hex(0x81798C),
+    accent: hex(0xFF6EC5),
+    accent2: hex(0x39F3FC),
+    focus: hex(0x39F3FC),
+    selection: hex(0xF160B8),
+    selection_alpha: 34,
+    on_accent: hex(0x10091A),
+    success: hex(0x60F882),
     warning: hex(0xF7E343),
-    danger: hex(0xFF7F75),
+    danger: hex(0xFF7455),
     danger_base: hex(0xE5484D),
     on_danger: hex(0xFFFFFF),
     tones: Tones {
-        accent: hex(0x2CECF8),
+        accent: hex(0xFB51BC),
         success: hex(0x64F784),
         warning: hex(0xF7E343),
         danger: hex(0xE5484D),
     },
-    control_border: hex(0x7F7791),
-    on_tooltip: hex(0xF1EEF8),
-    on_tooltip_dim: hex(0xB5B0C0),
-    hover_ink: hex(0xF1EEF8),
+    control_border: hex(0x837599),
+    on_tooltip: hex(0xF3F0FB),
+    on_tooltip_dim: hex(0xB8B1C5),
+    hover_ink: hex(0xF3F0FB),
     shadow: hex(0x000000),
     primary_shadow: hex(0x000000),
     danger_shadow: hex(0x000000),
@@ -1226,139 +1226,139 @@ pub const NEON: Palette = Palette {
     glass_alpha: 153,
     glass_luminance: 0.036,
     lanes: [
-        hex(0x03DAE6),
-        hex(0xFF9BDA),
-        hex(0x99C301),
-        hex(0x9CBAFF),
-        hex(0xFE9300),
-        hex(0x03F4C2),
-        hex(0xFF8D64),
-        hex(0x51D060),
-        hex(0xFFBEBA),
-        hex(0xF7CD02),
+        hex(0xFF9CD3),
+        hex(0x02DBE4),
+        hex(0x57E176),
+        hex(0xD7C301),
+        hex(0xCF92FF),
+        hex(0xB0E649),
+        hex(0x9DBAFF),
+        hex(0xFA9D01),
+        hex(0xFFBEB0),
+        hex(0xFF8E61),
     ],
     syntax: Syntax {
-        keyword: hex(0xFF8ED7),
+        keyword: hex(0xFF7DD8),
         string: hex(0x6BF29A),
-        comment: hex(0xA79EB9),
+        comment: hex(0xA597BE),
         number: hex(0xF5E05D),
         function: hex(0x49EAF5),
-        type_: hex(0xD1A9FF),
+        type_: hex(0xC6A4FF),
         constant: hex(0xFFAF78),
     },
 };
 
-/// "Forest" (Evergreen at dusk: deep green shade, sunlit gold and lake water): Evergreen shade under warm cream type, lit by a sunlit-gold signature and lake-blue water.
+/// "Forest" (Evergreen at dusk: moss and shade, sunlit gold, lake water): Evergreen at dusk: moss and deep shade under cream type, sunlit gold and lake water.
 pub const FOREST: Palette = Palette {
     name: "Forest",
-    concept: "Evergreen shade under warm cream type, lit by a sunlit-gold signature and lake-blue water.",
+    concept: "Evergreen at dusk: moss and deep shade under cream type, sunlit gold and lake water.",
     dark: true,
     strict: false,
     standard: Surfaces {
-        bg: hex(0x03110B),
-        panel: hex(0x061A12),
-        pane: hex(0x03110B),
-        elevated: hex(0x082117),
-        overlay: hex(0x082218),
-        field: hex(0x04150E),
-        track: hex(0x010F08),
-        switch_off: hex(0x18382B),
-        badge: hex(0x103124),
-        border: hex(0x0A271C),
-        edge: hex(0x0E2F22),
-        raised_edge: hex(0x0E2F22),
-        overlay_edge: hex(0x0E2E22),
-        tab_edge: hex(0x0D2E21),
-        track_edge: hex(0x092319),
+        bg: hex(0x071B10),
+        panel: hex(0x00140A),
+        pane: hex(0x071B10),
+        elevated: hex(0x0F2B1C),
+        overlay: hex(0x102D1D),
+        field: hex(0x091F14),
+        track: hex(0x04190D),
+        switch_off: hex(0x214331),
+        badge: hex(0x193B29),
+        border: hex(0x133121),
+        edge: hex(0x173927),
+        raised_edge: hex(0x173927),
+        overlay_edge: hex(0x173927),
+        tab_edge: hex(0x163826),
+        track_edge: hex(0x112E1E),
         pane_edge: None,
-        keycap_edge: hex(0x000B05),
-        raised: Fill::flat(hex(0x082117)),
-        raised_hover: Fill::flat(hex(0x0A261B)),
-        raised_pressed: Fill::flat(hex(0x071D14)),
-        thumb: Fill::flat(hex(0x0B291E)),
-        keycap: Fill::flat(hex(0x0A251B)),
-        tab: Fill::flat(hex(0x082117)),
-        tooltip: Fill::flat(hex(0x103124)),
-        knob: Fill::flat(hex(0xFCFAF1)),
-        primary: Fill::flat(hex(0xE5B340)),
-        primary_hover: Fill::flat(hex(0xEDBA48)),
-        primary_pressed: Fill::flat(hex(0xDAA732)),
+        keycap_edge: hex(0x011509),
+        raised: Fill::flat(hex(0x0F2B1C)),
+        raised_hover: Fill::flat(hex(0x123020)),
+        raised_pressed: Fill::flat(hex(0x0D2719)),
+        thumb: Fill::flat(hex(0x143423)),
+        keycap: Fill::flat(hex(0x123020)),
+        tab: Fill::flat(hex(0x0F2B1C)),
+        tooltip: Fill::flat(hex(0x193B29)),
+        knob: Fill::flat(hex(0xFCFAF0)),
+        primary: Fill::flat(hex(0xE6B441)),
+        primary_hover: Fill::flat(hex(0xEEBB49)),
+        primary_pressed: Fill::flat(hex(0xDBA833)),
         danger_solid: Fill::flat(hex(0xD73E41)),
         danger_solid_hover: Fill::flat(hex(0xD2383D)),
         danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0x0C2214),
-        removed_bg: hex(0x171710),
-        added_gutter: hex(0x14321C),
-        removed_gutter: hex(0x271C14),
-        deck: Fill::flat(hex(0x061A12)),
-        deck_edge: hex(0x0A271C),
-        pane_header: hex(0x03110B),
-        pane_header_seam: hex(0x0A271C),
+        added_bg: hex(0x102C18),
+        removed_bg: hex(0x1A2115),
+        added_gutter: hex(0x19391F),
+        removed_gutter: hex(0x2B2419),
+        deck: Fill::flat(hex(0x00140A)),
+        deck_edge: hex(0x133121),
+        pane_header: hex(0x071B10),
+        pane_header_seam: hex(0x133121),
         knob_edge: None,
-        disabled_fill: hex(0x071E15),
-        disabled_edge: hex(0x0B281D),
+        disabled_fill: hex(0x0E281A),
+        disabled_edge: hex(0x133322),
     },
     deeper: Surfaces {
-        bg: hex(0x000904),
-        panel: hex(0x000904),
-        pane: hex(0x051911),
-        elevated: hex(0x0A251B),
-        overlay: hex(0x0A271C),
-        field: hex(0x04140D),
-        track: hex(0x000904),
-        switch_off: hex(0x18382B),
-        badge: hex(0x113124),
-        border: hex(0x0A271C),
-        edge: hex(0x113124),
-        raised_edge: hex(0x133326),
-        overlay_edge: hex(0x113124),
-        tab_edge: hex(0x103023),
-        track_edge: hex(0x082117),
-        pane_edge: Some(hex(0x0C2B1F)),
-        keycap_edge: hex(0x000502),
+        bg: hex(0x001309),
+        panel: hex(0x001309),
+        pane: hex(0x0B2317),
+        elevated: hex(0x123020),
+        overlay: hex(0x133121),
+        field: hex(0x081E12),
+        track: hex(0x001207),
+        switch_off: hex(0x214331),
+        badge: hex(0x1A3C2A),
+        border: hex(0x133121),
+        edge: hex(0x1A3C2A),
+        raised_edge: hex(0x1C3E2B),
+        overlay_edge: hex(0x1A3C2A),
+        tab_edge: hex(0x193B29),
+        track_edge: hex(0x102B1D),
+        pane_edge: Some(hex(0x153524)),
+        keycap_edge: hex(0x000D05),
         raised: Fill {
-            top: hex(0x0E2F22),
-            bottom: hex(0x0A261B),
+            top: hex(0x173927),
+            bottom: hex(0x123020),
         },
         raised_hover: Fill {
-            top: hex(0x143427),
-            bottom: hex(0x0C2B1F),
+            top: hex(0x1D3F2C),
+            bottom: hex(0x153624),
         },
         raised_pressed: Fill {
-            top: hex(0x082218),
-            bottom: hex(0x0A251A),
+            top: hex(0x102D1D),
+            bottom: hex(0x122F1F),
         },
         thumb: Fill {
-            top: hex(0x123326),
-            bottom: hex(0x0C2B1F),
+            top: hex(0x1C3D2B),
+            bottom: hex(0x153624),
         },
         keycap: Fill {
-            top: hex(0x103023),
-            bottom: hex(0x0A271C),
+            top: hex(0x193B29),
+            bottom: hex(0x133121),
         },
         tab: Fill {
-            top: hex(0x0C2B1F),
-            bottom: hex(0x0A251A),
+            top: hex(0x153624),
+            bottom: hex(0x122F1F),
         },
         tooltip: Fill {
-            top: hex(0x153528),
-            bottom: hex(0x0F2F23),
+            top: hex(0x1E402D),
+            bottom: hex(0x183A28),
         },
         knob: Fill {
-            top: hex(0xFCFAF1),
+            top: hex(0xFCFAF0),
             bottom: hex(0xECE9DE),
         },
         primary: Fill {
-            top: hex(0xEFBC4B),
-            bottom: hex(0xDAA732),
+            top: hex(0xF0BD4C),
+            bottom: hex(0xDBA833),
         },
         primary_hover: Fill {
-            top: hex(0xF7C353),
-            bottom: hex(0xE1AE3B),
+            top: hex(0xF8C454),
+            bottom: hex(0xE2AF3C),
         },
         primary_pressed: Fill {
-            top: hex(0xD6A42C),
-            bottom: hex(0xDBA933),
+            top: hex(0xD7A52E),
+            bottom: hex(0xDCAA35),
         },
         danger_solid: Fill {
             top: hex(0xD73E40),
@@ -1372,68 +1372,68 @@ pub const FOREST: Palette = Palette {
             top: hex(0xC72C34),
             bottom: hex(0xCC3239),
         },
-        added_bg: hex(0x0E2A19),
-        removed_bg: hex(0x191F15),
-        added_gutter: hex(0x163921),
-        removed_gutter: hex(0x292319),
+        added_bg: hex(0x14331E),
+        removed_bg: hex(0x1E281B),
+        added_gutter: hex(0x1C4025),
+        removed_gutter: hex(0x2E2B1F),
         deck: Fill {
-            top: hex(0x0B291E),
-            bottom: hex(0x082117),
+            top: hex(0x143423),
+            bottom: hex(0x102B1D),
         },
-        deck_edge: hex(0x000502),
-        pane_header: hex(0x16281A),
-        pane_header_seam: hex(0x716833),
+        deck_edge: hex(0x000E05),
+        pane_header: hex(0x1D3220),
+        pane_header_seam: hex(0x766E36),
         knob_edge: None,
-        disabled_fill: hex(0x082117),
-        disabled_edge: hex(0x0C2B1F),
+        disabled_fill: hex(0x102B1D),
+        disabled_edge: hex(0x153624),
     },
-    text: hex(0xF0EDDE),
-    text_dim: hex(0xBEC0AB),
-    text_faint: hex(0xA5AD99),
-    disabled_text: hex(0x80826E),
-    accent: hex(0xE7BF57),
-    accent2: hex(0x81C9E9),
-    focus: hex(0xEAC25A),
+    text: hex(0xF2EDDB),
+    text_dim: hex(0xC0C2AA),
+    text_faint: hex(0xA6AF99),
+    disabled_text: hex(0x888A75),
+    accent: hex(0xEDC15A),
+    accent2: hex(0x83C7E4),
+    focus: hex(0xEDC15A),
     selection: hex(0x7AC7E2),
     selection_alpha: 34,
     on_accent: hex(0x1E1908),
-    success: hex(0x7FE284),
-    warning: hex(0xFFA05C),
-    danger: hex(0xFB8087),
+    success: hex(0x87E17E),
+    warning: hex(0xFFA963),
+    danger: hex(0xFA8798),
     danger_base: hex(0xE5484D),
     on_danger: hex(0xFFFFFF),
     tones: Tones {
-        accent: hex(0xE7BF57),
-        success: hex(0x68D36F),
-        warning: hex(0xFFA05C),
-        danger: hex(0xD95544),
+        accent: hex(0xEDC15A),
+        success: hex(0x71D268),
+        warning: hex(0xFE9D4A),
+        danger: hex(0xD95448),
     },
-    control_border: hex(0x6F8372),
-    on_tooltip: hex(0xF0EDDE),
-    on_tooltip_dim: hex(0xADB5A6),
-    hover_ink: hex(0xF0EDDE),
+    control_border: hex(0x798E79),
+    on_tooltip: hex(0xF2EDDB),
+    on_tooltip_dim: hex(0xB1B8A6),
+    hover_ink: hex(0xF2EDDB),
     shadow: hex(0x000000),
     primary_shadow: hex(0x000000),
     danger_shadow: hex(0x000000),
     scrim: Color32::from_rgba_premultiplied(2, 2, 3, 158),
     glass_alpha: 153,
-    glass_luminance: 0.039,
+    glass_luminance: 0.05,
     lanes: [
-        hex(0xE0B53E),
-        hex(0x7DD281),
-        hex(0xA99FFF),
-        hex(0xC0D362),
-        hex(0xE18BD5),
-        hex(0x02CAB6),
-        hex(0xFFA676),
-        hex(0x1AD5F9),
-        hex(0xFFA4B4),
-        hex(0x9CC7FF),
+        hex(0xE2B33F),
+        hex(0x33CCFF),
+        hex(0x84D17C),
+        hex(0xFF9A97),
+        hex(0x7BAFFF),
+        hex(0xA9B945),
+        hex(0xC296F5),
+        hex(0xF39254),
+        hex(0x00C7C2),
+        hex(0xFFA4D5),
     ],
     syntax: Syntax {
         keyword: hex(0x92DCA1),
-        string: hex(0xD2D982),
-        comment: hex(0x9AA896),
+        string: hex(0xD9D682),
+        comment: hex(0x93A493),
         number: hex(0xF4C677),
         function: hex(0x87CFF0),
         type_: hex(0xCCB9F1),
@@ -1441,37 +1441,37 @@ pub const FOREST: Palette = Palette {
     },
 };
 
-/// "Paper" (Letterpress: cream stock, Prussian ink and sepia): Warm cream stock with Prussian fountain-pen ink and sepia, set like a printed page.
+/// "Paper" (Letterpress: cream stock on kraft, Prussian ink, highlighter): Letterpress: cream stock on a kraft desk, Prussian ink, sepia notes and a yellow highlighter.
 pub const PAPER: Palette = Palette {
     name: "Paper",
-    concept: "Warm cream stock with Prussian fountain-pen ink and sepia, set like a printed page.",
+    concept: "Letterpress: cream stock on a kraft desk, Prussian ink, sepia notes and a yellow highlighter.",
     dark: false,
     strict: false,
     standard: Surfaces {
-        bg: hex(0xFAF5EC),
-        panel: hex(0xF0EADF),
-        pane: hex(0xFAF5EC),
-        elevated: hex(0xFFFBF5),
-        overlay: hex(0xFFFBF5),
-        field: hex(0xFFFBF5),
-        track: hex(0xEEE7DB),
-        switch_off: hex(0xD2C8B9),
-        badge: hex(0xE8E0D3),
-        border: hex(0xE1D9CA),
-        edge: hex(0xD8CEBF),
-        raised_edge: hex(0xD8CEBF),
-        overlay_edge: hex(0xDFD6C7),
-        tab_edge: hex(0xDFD6C7),
-        track_edge: hex(0xE4DCCE),
+        bg: hex(0xF9F2E4),
+        panel: hex(0xEEE0CB),
+        pane: hex(0xF9F2E4),
+        elevated: hex(0xFFF9EE),
+        overlay: hex(0xFFF9EE),
+        field: hex(0xFFF9EE),
+        track: hex(0xECE4D3),
+        switch_off: hex(0xD0C5AF),
+        badge: hex(0xE6DDCB),
+        border: hex(0xE0D5C1),
+        edge: hex(0xD6CBB5),
+        raised_edge: hex(0xD6CBB5),
+        overlay_edge: hex(0xDDD2BE),
+        tab_edge: hex(0xDDD2BE),
+        track_edge: hex(0xE2D8C5),
         pane_edge: None,
-        keycap_edge: hex(0xC6BCAD),
-        raised: Fill::flat(hex(0xFFFBF5)),
-        raised_hover: Fill::flat(hex(0xF5EFE5)),
-        raised_pressed: Fill::flat(hex(0xF0EADF)),
-        thumb: Fill::flat(hex(0xFFFBF5)),
-        keycap: Fill::flat(hex(0xF3ECE2)),
-        tab: Fill::flat(hex(0xFFFBF5)),
-        tooltip: Fill::flat(hex(0x2B221A)),
+        keycap_edge: hex(0xC4B9A4),
+        raised: Fill::flat(hex(0xFFF9EE)),
+        raised_hover: Fill::flat(hex(0xF3ECDC)),
+        raised_pressed: Fill::flat(hex(0xEFE6D6)),
+        thumb: Fill::flat(hex(0xFFF9EE)),
+        keycap: Fill::flat(hex(0xF1E9D9)),
+        tab: Fill::flat(hex(0xFFF9EE)),
+        tooltip: Fill::flat(hex(0x2C2017)),
         knob: Fill::flat(hex(0xFFFEFD)),
         primary: Fill::flat(hex(0x125CA1)),
         primary_hover: Fill::flat(hex(0x07559A)),
@@ -1479,61 +1479,61 @@ pub const PAPER: Palette = Palette {
         danger_solid: Fill::flat(hex(0xD53C3F)),
         danger_solid_hover: Fill::flat(hex(0xCF353A)),
         danger_solid_pressed: Fill::flat(hex(0xCA3037)),
-        added_bg: hex(0xEFF0E1),
-        removed_bg: hex(0xF8EAE0),
-        added_gutter: hex(0xE6EAD8),
-        removed_gutter: hex(0xF7DFD7),
-        deck: Fill::flat(hex(0xF0EADF)),
-        deck_edge: hex(0xE1D9CA),
-        pane_header: hex(0xFAF5EC),
-        pane_header_seam: hex(0xE1D9CA),
+        added_bg: hex(0xEEEDDA),
+        removed_bg: hex(0xF7E7D9),
+        added_gutter: hex(0xE5E8D1),
+        removed_gutter: hex(0xF6DDD0),
+        deck: Fill::flat(hex(0xEEE0CB)),
+        deck_edge: hex(0xE0D5C1),
+        pane_header: hex(0xF9F2E4),
+        pane_header_seam: hex(0xE0D5C1),
         knob_edge: Some(hex(0x96908B)),
-        disabled_fill: hex(0xEBE4D7),
-        disabled_edge: hex(0xE0D7C8),
+        disabled_fill: hex(0xE9E0CF),
+        disabled_edge: hex(0xDED4BF),
     },
     deeper: Surfaces {
-        bg: hex(0xE6DED1),
-        panel: hex(0xE6DED1),
-        pane: hex(0xFFFBF5),
-        elevated: hex(0xFFFBF5),
-        overlay: hex(0xFFFBF5),
-        field: hex(0xFFFBF5),
-        track: hex(0xE4DCCE),
-        switch_off: hex(0xD2C8B9),
-        badge: hex(0xE8E0D3),
-        border: hex(0xE4DCCE),
-        edge: hex(0xD7CEBE),
-        raised_edge: hex(0xD7CEBE),
-        overlay_edge: hex(0xE0D7C8),
-        tab_edge: hex(0xDDD4C4),
-        track_edge: hex(0xDDD4C4),
-        pane_edge: Some(hex(0xE0D7C8)),
-        keycap_edge: hex(0xC5BCAC),
+        bg: hex(0xE5DBC8),
+        panel: hex(0xE5DBC8),
+        pane: hex(0xFFF9EE),
+        elevated: hex(0xFFF9EE),
+        overlay: hex(0xFFF9EE),
+        field: hex(0xFFF9EE),
+        track: hex(0xE2D8C5),
+        switch_off: hex(0xD0C5AF),
+        badge: hex(0xE6DDCB),
+        border: hex(0xE2D8C5),
+        edge: hex(0xD6CBB5),
+        raised_edge: hex(0xD6CBB5),
+        overlay_edge: hex(0xDED4BF),
+        tab_edge: hex(0xDBD0BB),
+        track_edge: hex(0xDBD0BB),
+        pane_edge: Some(hex(0xDED4BF)),
+        keycap_edge: hex(0xC4B9A3),
         raised: Fill {
-            top: hex(0xFFFBF5),
-            bottom: hex(0xF6F0E6),
+            top: hex(0xFFF9EE),
+            bottom: hex(0xF4ECDD),
         },
         raised_hover: Fill {
-            top: hex(0xFAF5EC),
-            bottom: hex(0xF2ECE1),
+            top: hex(0xF9F2E4),
+            bottom: hex(0xF1E8D8),
         },
         raised_pressed: Fill {
-            top: hex(0xEFE8DC),
-            bottom: hex(0xF2EBE0),
+            top: hex(0xEDE4D3),
+            bottom: hex(0xF0E8D7),
         },
         thumb: Fill {
-            top: hex(0xFFFBF5),
-            bottom: hex(0xF7F2E8),
+            top: hex(0xFFF9EE),
+            bottom: hex(0xF6EEE0),
         },
         keycap: Fill {
-            top: hex(0xFAF5EC),
-            bottom: hex(0xF4EEE3),
+            top: hex(0xF9F2E4),
+            bottom: hex(0xF2EADB),
         },
         tab: Fill {
-            top: hex(0xFFFBF5),
-            bottom: hex(0xF7F1E7),
+            top: hex(0xFFF9EE),
+            bottom: hex(0xF5EEDF),
         },
-        tooltip: Fill::flat(hex(0x2B221A)),
+        tooltip: Fill::flat(hex(0x2C2017)),
         knob: Fill {
             top: hex(0xFFFEFD),
             bottom: hex(0xF6F4F0),
@@ -1562,34 +1562,34 @@ pub const PAPER: Palette = Palette {
             top: hex(0xC72C34),
             bottom: hex(0xCC3239),
         },
-        added_bg: hex(0xF4F5EA),
-        removed_bg: hex(0xFDEFE9),
-        added_gutter: hex(0xEAF0DF),
-        removed_gutter: hex(0xFBE5DE),
+        added_bg: hex(0xF4F3E3),
+        removed_bg: hex(0xFDEDE2),
+        added_gutter: hex(0xEAEEDA),
+        removed_gutter: hex(0xFBE3D9),
         deck: Fill {
-            top: hex(0xFAF5EC),
-            bottom: hex(0xF4EEE4),
+            top: hex(0xF9F2E4),
+            bottom: hex(0xF3EBDC),
         },
-        deck_edge: hex(0xD4CABA),
-        pane_header: hex(0xF0F0EF),
-        pane_header_seam: hex(0x9EBEDA),
+        deck_edge: hex(0xD2C7B1),
+        pane_header: hex(0xF0EEE8),
+        pane_header_seam: hex(0x9EBDD6),
         knob_edge: Some(hex(0x8D8A83)),
-        disabled_fill: hex(0xECE4D8),
-        disabled_edge: hex(0xDED5C6),
+        disabled_fill: hex(0xEAE1CF),
+        disabled_edge: hex(0xDDD2BD),
     },
-    text: hex(0x291F18),
-    text_dim: hex(0x625448),
-    text_faint: hex(0x625548),
-    disabled_text: hex(0x7D6E62),
-    accent: hex(0x025595),
+    text: hex(0x2A1F17),
+    text_dim: hex(0x615246),
+    text_faint: hex(0x635547),
+    disabled_text: hex(0x7C6C5F),
+    accent: hex(0x005393),
     accent2: hex(0x764627),
     focus: hex(0x1D6CB8),
-    selection: hex(0xB67F40),
-    selection_alpha: 34,
+    selection: hex(0xF8E048),
+    selection_alpha: 100,
     on_accent: hex(0xFFFDFA),
-    success: hex(0x245F1F),
-    warning: hex(0x704D00),
-    danger: hex(0x9F1D28),
+    success: hex(0x235E1E),
+    warning: hex(0x6E4C00),
+    danger: hex(0x9C1A25),
     danger_base: hex(0xD93D42),
     on_danger: hex(0xFFFDFA),
     tones: Tones {
@@ -1598,33 +1598,33 @@ pub const PAPER: Palette = Palette {
         warning: hex(0xEBAE42),
         danger: hex(0xE3645C),
     },
-    control_border: hex(0x7D7264),
-    on_tooltip: hex(0xF6F3EC),
-    on_tooltip_dim: hex(0xB9B4AD),
-    hover_ink: hex(0x1B150B),
-    shadow: hex(0x301D0D),
+    control_border: hex(0x7D705E),
+    on_tooltip: hex(0xF7F3EB),
+    on_tooltip_dim: hex(0xBAB4AB),
+    hover_ink: hex(0x1A150B),
+    shadow: hex(0x311C09),
     primary_shadow: hex(0x03294F),
     danger_shadow: hex(0x781414),
     scrim: Color32::from_rgba_premultiplied(11, 8, 5, 82),
     glass_alpha: 178,
     glass_luminance: 0.35,
     lanes: [
-        hex(0x005BA6),
-        hex(0x8D4300),
-        hex(0x007E44),
-        hex(0x7B44A1),
-        hex(0x517700),
-        hex(0x9C336B),
-        hex(0x007495),
-        hex(0x5D4F00),
-        hex(0x9F2C36),
-        hex(0x015A4D),
+        hex(0x005DA1),
+        hex(0x9E2E21),
+        hex(0x426800),
+        hex(0x6955B8),
+        hex(0x007E45),
+        hex(0xAB3A60),
+        hex(0x02796F),
+        hex(0x822A75),
+        hex(0x644A00),
+        hex(0x01556E),
     ],
     syntax: Syntax {
         keyword: hex(0x2852A3),
-        string: hex(0x38692D),
-        comment: hex(0x726354),
-        number: hex(0x924413),
+        string: hex(0x466A1E),
+        comment: hex(0x766759),
+        number: hex(0xA2470F),
         function: hex(0x644792),
         type_: hex(0x02686C),
         constant: hex(0x8F3662),
@@ -1862,6 +1862,27 @@ impl ThemeId {
             Self::Forest => &FOREST,
             Self::Paper => &PAPER,
             Self::Contrast => &CONTRAST,
+        }
+    }
+
+    /// The theme's structure.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the kit and views read it once they honour the record"
+        )
+    )]
+    pub fn design(self) -> &'static Design {
+        match self {
+            Self::Midnight => &MIDNIGHT_DESIGN,
+            Self::Daylight => &DAYLIGHT_DESIGN,
+            Self::Aurora => &AURORA_DESIGN,
+            Self::Ember => &EMBER_DESIGN,
+            Self::Neon => &NEON_DESIGN,
+            Self::Forest => &FOREST_DESIGN,
+            Self::Paper => &PAPER_DESIGN,
+            Self::Contrast => &CONTRAST_DESIGN,
         }
     }
 
@@ -2394,6 +2415,633 @@ pub fn palette(_ctx: &egui::Context) -> &'static Palette {
 /// The surfaces of the active theme and style.
 pub fn surfaces(_ctx: &egui::Context) -> &'static Surfaces {
     active().palette().surfaces(style())
+}
+
+/// The structure of the active theme: how it draws corners, edges, shadows, selection, focus,
+/// labels, headings, the graph and its art.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the kit and views read it once they honour the record"
+    )
+)]
+pub fn design(_ctx: &egui::Context) -> &'static Design {
+    active().design()
+}
+
+// -------------------------------------------------------------------------------------- design
+
+pub use design::*;
+
+/// The per-theme design record (wave 3): the structure half of each theme.
+mod design {
+    #![cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the record is read by its tests until the kit and views honour it"
+        )
+    )]
+    use egui::{Color32, FontFamily};
+
+    use super::{Elevation, FULL, Palette, ShadowLayer, hex, medium, semibold};
+
+    /// A theme's structure, the half of its identity colour cannot carry: corners, edges, shadows,
+    /// how panes separate, the ground, the interaction voice, type, the graph, icons, art and motion.
+    /// Every field changes what the kit and the views paint (`contracts/theme-2.md` says how); the
+    /// colours stay in the [`Palette`].
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Design {
+        /// Factor on every radius of the active [`Metrics`] ([`Design::radius`]): below 1 sharper and
+        /// more technical, above 1 softer and more rounded. [`FULL`] stays full.
+        pub radius_scale: f32,
+        /// Width in points of seams, card edges and control rings.
+        pub edge_width: f32,
+        pub edges: EdgeMode,
+        pub shadows: ShadowCharacter,
+        /// How Standard's flush regions part (Deeper always floats cards).
+        pub panes: PaneSeparation,
+        /// Treatment of the window ground where no content sits: Deeper's gutter, the welcome screen
+        /// and empty states. Content grounds stay flat.
+        pub ground: Ground,
+        pub selection: SelectionStyle,
+        pub focus: FocusStyle,
+        pub hover: HoverStyle,
+        /// The active repository tab and the active view tab.
+        pub active_tab: TabStyle,
+        /// Section labels (sidebar sections, settings groups, table headers, menu headings).
+        pub labels: LabelStyle,
+        /// Face of titles and headlines; body text stays Inter.
+        pub heading: HeadingFace,
+        pub graph: GraphStyle,
+        pub icons: IconWeight,
+        /// The motif of the welcome backdrop and the empty-state illustrations (`ui/art.rs`).
+        pub art: ArtMotif,
+        /// Easing and pace within the user's Motion setting (Reduced still turns motion off).
+        pub motion: MotionCharacter,
+        /// Translucent surfaces: a premultiplied tint laid over `Surfaces::overlay` before the glass
+        /// opacity, so the glass leans to the theme's light. Transparent: plain overlay.
+        pub glass_tint: Color32,
+    }
+
+    /// How region edges and control rings are drawn.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum EdgeMode {
+        /// 1 px seams in `Surfaces::border` between regions and under headers; controls ringed.
+        Hairline,
+        /// No seams between regions of different tone: the tonal step alone parts them (a seam only
+        /// where both sides share one tone). Controls keep their rings.
+        Tonal,
+        /// Strong lines: seams and card edges in `Palette::control_border` at `edge_width`.
+        Outline,
+        /// Hairlines, plus edges that light up: the focused pane, the active tab and primary buttons
+        /// carry a 1 px `focus` edge with a soft glow of it (neon tubes).
+        Lit,
+    }
+
+    /// Character of shadows, applied to every [`Material`] layer through [`Design::shadow`].
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ShadowCharacter {
+        /// The material tables as they are: long, soft, low-alpha layers.
+        Soft,
+        /// Short and close like a sheet on a desk: blur under half, offset halved, slightly darker.
+        Crisp,
+        /// No shadows below floating layers; floating layers keep a faint, short one so they lift.
+        Flat,
+        /// Light, not shade: every layer centred under its surface (no drop) and a little wider.
+        Glow,
+    }
+
+    /// How Standard's flush regions (sidebar, content, details) part.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum PaneSeparation {
+        /// A 1 px seam in `Surfaces::border`.
+        Seams,
+        /// The tone step alone (sidebar and content differ by `Surfaces::panel`).
+        Tonal,
+        /// A strong rule in `Palette::control_border` at `Design::edge_width`.
+        Outline,
+    }
+
+    /// The window ground's treatment where no content sits. Every variant is a translucent `ink`
+    /// laid over the style's ground (`Surfaces::bg`, and `pane` on the welcome screen in Standard),
+    /// so text and controls painted over it keep their contrast (tested).
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum Ground {
+        Flat,
+        /// `ink` at `top` alpha at the top edge, fading linearly to `bottom` alpha at the bottom.
+        Vertical {
+            ink: Color32,
+            top: u8,
+            bottom: u8,
+        },
+        /// A radial glow of `ink` at `alpha`, centred at `center` (fractions of the rect, may lie
+        /// outside it) with a radius of `radius` times the rect's longer side, fading smoothly
+        /// (`kit::paint`'s banding-free glow).
+        Glow {
+            ink: Color32,
+            alpha: u8,
+            center: (f32, f32),
+            radius: f32,
+        },
+        /// The edges darkened by `ink` at `alpha` (aged stock), clear in the middle.
+        Vignette {
+            ink: Color32,
+            alpha: u8,
+        },
+    }
+
+    /// How a selected row, item or chip is marked. Every style keeps the [`Palette::selected`] wash
+    /// under it, so the contrast tests hold for all of them.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum SelectionStyle {
+        /// The wash alone.
+        Wash,
+        /// The wash plus a leading bar of `width` points in `Palette::focus`, full row height,
+        /// inset by the row's radius.
+        Bar { width: f32 },
+        /// The wash plus a ring of `width` points in `Palette::focus` at 70%.
+        Outline { width: f32 },
+        /// The wash plus a soft inner glow of `Palette::selection` along its edges (6 pt, 40% to 0).
+        Glow,
+    }
+
+    /// The keyboard focus ring.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum FocusStyle {
+        /// A ring of `width` in `Palette::focus`, `offset` points outside the control.
+        Ring { width: f32, offset: f32 },
+        /// A 1.5 pt ring of `Palette::focus` plus a soft glow of it `width` points wide (35% to 0).
+        Glow { width: f32 },
+        /// A ring of `width` in `Palette::focus` with a 1 pt ring of the ground inside it, so it
+        /// reads on any fill.
+        Double { width: f32 },
+    }
+
+    /// What a hovered row or quiet control shows.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum HoverStyle {
+        /// The translucent [`Palette::hover`] wash.
+        Tint,
+        /// The wash plus the raised fill's top highlight and a contact shadow: the item lifts.
+        Lift,
+        /// The wash plus a 1 px ring in `Surfaces::edge` (`control_border` in Contrast).
+        Edge,
+    }
+
+    /// The active repository tab and view tab.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum TabStyle {
+        /// A filled, ringed tab lifted off the strip (`Surfaces::tab`, `tab_edge`).
+        Lifted,
+        /// No fill: an underline of `width` points in `Palette::focus` under the label.
+        Underline { width: f32 },
+        /// A filled tab with a rule of `width` points in `Palette::accent` along its top edge
+        /// (a bookmark).
+        TopRule { width: f32 },
+    }
+
+    /// Letter case of section labels.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum LabelCase {
+        /// ALL CAPS at `Metrics::micro_size`.
+        Upper,
+        /// As written (labels are authored in title case), at `Metrics::small_size`.
+        Title,
+    }
+
+    /// A weight of the UI face.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Weight {
+        Regular,
+        Medium,
+        Semibold,
+    }
+
+    impl Weight {
+        /// The bundled face of this weight.
+        pub fn family(self) -> FontFamily {
+            match self {
+                Self::Regular => FontFamily::Proportional,
+                Self::Medium => medium(),
+                Self::Semibold => semibold(),
+            }
+        }
+    }
+
+    /// Section labels: case, letter-spacing (em, times the label's size) and weight.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct LabelStyle {
+        pub case: LabelCase,
+        pub tracking: f32,
+        pub weight: Weight,
+    }
+
+    impl LabelStyle {
+        /// `text` in this style's case.
+        pub fn cased(self, text: &str) -> String {
+            match self.case {
+                LabelCase::Upper => text.to_uppercase(),
+                LabelCase::Title => text.to_owned(),
+            }
+        }
+    }
+
+    /// Face of titles and headlines.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum HeadingFace {
+        /// Inter Semibold, like the rest of the interface.
+        Ui,
+        /// Canopy Serif Bold (a Latin subset of PT Serif Bold): a book face for Paper's titles.
+        Serif,
+        /// Atkinson Hyperlegible Bold: designed for low vision, for Contrast's titles.
+        Hyperlegible,
+    }
+
+    impl HeadingFace {
+        /// The egui family name the face is registered under (`ui/fonts.rs`).
+        pub const fn family_name(self) -> &'static str {
+            match self {
+                Self::Ui => "semibold",
+                Self::Serif => "heading-serif",
+                Self::Hyperlegible => "heading-hyperlegible",
+            }
+        }
+
+        pub fn family(self) -> FontFamily {
+            FontFamily::Name(self.family_name().into())
+        }
+
+        /// Size factor that gives the face Inter's apparent size (x-height), applied to heading sizes.
+        pub const fn size_scale(self) -> f32 {
+            match self {
+                Self::Ui => 1.0,
+                Self::Serif => 1.06,
+                Self::Hyperlegible => 1.04,
+            }
+        }
+    }
+
+    /// Shape of a commit node in the graph.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum NodeShape {
+        /// A filled circle on a ring of the row's ground.
+        Dot,
+        /// A hollow circle: a ring in the lane colour around the row's ground.
+        Ring,
+        /// A filled square with `Metrics::radius_sm` scaled corners.
+        Square,
+        /// A filled diamond (a square turned 45 degrees).
+        Diamond,
+    }
+
+    /// How an edge between lanes is drawn.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Curve {
+        /// A cubic curve leaving and entering vertically.
+        Smooth,
+        /// Vertical, then a rounded corner, horizontal, a rounded corner, vertical (a metro map).
+        Rounded,
+        /// Vertical, then a straight diagonal across one row, then vertical (a circuit trace).
+        Angular,
+    }
+
+    /// The history graph's drawing.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct GraphStyle {
+        pub node: NodeShape,
+        /// Factor on `Metrics::graph_node_r` and `graph_head_halo`.
+        pub node_scale: f32,
+        /// Factor on `Metrics::graph_edge` and `graph_merge_stroke`.
+        pub line_scale: f32,
+        pub curve: Curve,
+    }
+
+    /// Phosphor weight for icons.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum IconWeight {
+        /// Regular everywhere.
+        Regular,
+        /// Regular, with the `fill` glyph for active and selected icons (the active view tab, a
+        /// toggled tool, the selected sidebar row, the checked menu item).
+        FillAccents,
+    }
+
+    /// The motif `ui/art.rs` draws the welcome backdrop and the empty states from.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum ArtMotif {
+        /// Midnight: stars joined into constellations, the commits as stars.
+        Constellation,
+        /// Daylight: drafting geometry: circles, construction lines and a low sun.
+        Drafting,
+        /// Aurora: curtains of light in bands across the top.
+        Aurora,
+        /// Ember: sparks rising from a warm glow below.
+        Embers,
+        /// Neon: a perspective grid running to a lit horizon.
+        NeonGrid,
+        /// Forest: layered branching silhouettes, a canopy over the tree.
+        Canopy,
+        /// Paper: ink strokes and fibres on the stock, a fountain-pen line.
+        Ink,
+        /// Contrast: bold line art, no glows or gradients.
+        Signal,
+    }
+
+    /// Easing and pace of the theme's motion.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum MotionCharacter {
+        /// Quick and exact: 0.8 times the durations.
+        Crisp,
+        Standard,
+        /// Unhurried: 1.2 times the durations, ease-in-out instead of ease-out for enters.
+        Soft,
+    }
+
+    impl MotionCharacter {
+        /// Factor on every `ui::motion` duration.
+        pub const fn duration_scale(self) -> f32 {
+            match self {
+                Self::Crisp => 0.8,
+                Self::Standard => 1.0,
+                Self::Soft => 1.2,
+            }
+        }
+    }
+
+    impl Design {
+        /// `r` (a [`Metrics`] radius) in this theme: scaled and rounded, [`FULL`] kept full, and a
+        /// rounded corner never squared off entirely.
+        pub fn radius(&self, r: u8) -> u8 {
+            if r == FULL || r == 0 {
+                return r;
+            }
+            crate::ui::saturate_u8((f32::from(r) * self.radius_scale).round()).max(1)
+        }
+
+        /// Shadow `layer` of `level` in this theme's character, or `None` when the theme draws no
+        /// shadow there.
+        pub fn shadow(&self, level: Elevation, layer: ShadowLayer) -> Option<ShadowLayer> {
+            let scale = |v: u8, f: f32| crate::ui::saturate_u8((f32::from(v) * f).round());
+            match self.shadows {
+                ShadowCharacter::Soft => Some(layer),
+                ShadowCharacter::Crisp => Some(ShadowLayer {
+                    dy: layer.dy.signum() * (layer.dy.abs() / 2).max(1),
+                    blur: scale(layer.blur, 0.45).max(1),
+                    alpha: scale(layer.alpha, 1.1),
+                    ..layer
+                }),
+                ShadowCharacter::Flat => (level == Elevation::Floating).then_some(ShadowLayer {
+                    dy: layer.dy.min(4),
+                    blur: scale(layer.blur, 0.4),
+                    alpha: scale(layer.alpha, 0.6),
+                    ..layer
+                }),
+                ShadowCharacter::Glow => Some(ShadowLayer {
+                    dy: 0,
+                    blur: scale(layer.blur, 1.2),
+                    spread: layer.spread.max(0),
+                    alpha: scale(layer.alpha, 0.8),
+                    ..layer
+                }),
+            }
+        }
+    }
+
+    const fn labels(case: LabelCase, tracking: f32, weight: Weight) -> LabelStyle {
+        LabelStyle {
+            case,
+            tracking,
+            weight,
+        }
+    }
+
+    const fn graph(node: NodeShape, node_scale: f32, line_scale: f32, curve: Curve) -> GraphStyle {
+        GraphStyle {
+            node,
+            node_scale,
+            line_scale,
+            curve,
+        }
+    }
+
+    /// Midnight, "Observatory": precise as an instrument. Hairlines, soft long shadows, a selection
+    /// bar like an indicator, a faint zenith-to-horizon lift, constellations.
+    pub const MIDNIGHT_DESIGN: Design = Design {
+        radius_scale: 1.0,
+        edge_width: 1.0,
+        edges: EdgeMode::Hairline,
+        shadows: ShadowCharacter::Soft,
+        panes: PaneSeparation::Seams,
+        ground: Ground::Vertical {
+            ink: hex(0x7F89FF),
+            top: 0,
+            bottom: 12,
+        },
+        selection: SelectionStyle::Bar { width: 2.0 },
+        focus: FocusStyle::Ring {
+            width: 2.0,
+            offset: 1.0,
+        },
+        hover: HoverStyle::Tint,
+        active_tab: TabStyle::Lifted,
+        labels: labels(LabelCase::Upper, 0.07, Weight::Semibold),
+        heading: HeadingFace::Ui,
+        graph: graph(NodeShape::Dot, 1.0, 1.0, Curve::Smooth),
+        icons: IconWeight::Regular,
+        art: ArtMotif::Constellation,
+        motion: MotionCharacter::Standard,
+        glass_tint: Palette::tint(hex(0x1A1F4A), 28),
+    };
+
+    /// Daylight, "Drafting studio": crisp daylight geometry. Tighter corners, hairlines, short cool
+    /// shadows, a clean cobalt wash, an underlined active tab, hollow nodes on a metro map.
+    pub const DAYLIGHT_DESIGN: Design = Design {
+        radius_scale: 0.72,
+        edge_width: 1.0,
+        edges: EdgeMode::Hairline,
+        shadows: ShadowCharacter::Crisp,
+        panes: PaneSeparation::Seams,
+        ground: Ground::Flat,
+        selection: SelectionStyle::Wash,
+        focus: FocusStyle::Ring {
+            width: 2.0,
+            offset: 1.0,
+        },
+        hover: HoverStyle::Tint,
+        active_tab: TabStyle::Underline { width: 2.0 },
+        labels: labels(LabelCase::Title, 0.0, Weight::Semibold),
+        heading: HeadingFace::Ui,
+        graph: graph(NodeShape::Ring, 1.05, 0.85, Curve::Rounded),
+        icons: IconWeight::Regular,
+        art: ArtMotif::Drafting,
+        motion: MotionCharacter::Crisp,
+        glass_tint: Palette::tint(hex(0xDCE5FF), 30),
+    };
+
+    /// Aurora, "Polar night": luminous and soft. Rounder corners, no hard seams, a glow from the top
+    /// of the sky, a lit selection band, a glowing focus ring, a band of light under the active
+    /// tab, hollow nodes like stars, curtains of light.
+    pub const AURORA_DESIGN: Design = Design {
+        radius_scale: 1.1,
+        edge_width: 1.0,
+        edges: EdgeMode::Tonal,
+        shadows: ShadowCharacter::Soft,
+        panes: PaneSeparation::Tonal,
+        ground: Ground::Glow {
+            ink: hex(0x5FD6E0),
+            alpha: 20,
+            center: (0.5, -0.25),
+            radius: 1.1,
+        },
+        selection: SelectionStyle::Glow,
+        focus: FocusStyle::Glow { width: 4.0 },
+        hover: HoverStyle::Tint,
+        active_tab: TabStyle::Underline { width: 2.0 },
+        labels: labels(LabelCase::Upper, 0.09, Weight::Medium),
+        heading: HeadingFace::Ui,
+        graph: graph(NodeShape::Ring, 1.05, 1.1, Curve::Smooth),
+        icons: IconWeight::Regular,
+        art: ArtMotif::Aurora,
+        motion: MotionCharacter::Soft,
+        glass_tint: Palette::tint(hex(0x0B3A44), 30),
+    };
+
+    /// Ember, "Forge at dusk": warm and hand-made. The softest corners, tonal fields instead of
+    /// lines, a hearth glow rising from below, items that lift when hovered, sparks.
+    pub const EMBER_DESIGN: Design = Design {
+        radius_scale: 1.3,
+        edge_width: 1.0,
+        edges: EdgeMode::Tonal,
+        shadows: ShadowCharacter::Soft,
+        panes: PaneSeparation::Tonal,
+        ground: Ground::Glow {
+            ink: hex(0xF0954A),
+            alpha: 18,
+            center: (0.5, 1.2),
+            radius: 1.0,
+        },
+        selection: SelectionStyle::Wash,
+        focus: FocusStyle::Glow { width: 4.0 },
+        hover: HoverStyle::Lift,
+        active_tab: TabStyle::Lifted,
+        labels: labels(LabelCase::Title, 0.01, Weight::Semibold),
+        heading: HeadingFace::Ui,
+        graph: graph(NodeShape::Dot, 1.1, 1.2, Curve::Smooth),
+        icons: IconWeight::FillAccents,
+        art: ArtMotif::Embers,
+        motion: MotionCharacter::Soft,
+        glass_tint: Palette::tint(hex(0x4A2410), 26),
+    };
+
+    /// Neon, "Night city": sharp and lit. Near-square corners, edges that glow instead of shadows
+    /// that drop, an outlined selection, wide-tracked signage labels, diamonds on circuit traces, a
+    /// grid running to a magenta horizon.
+    pub const NEON_DESIGN: Design = Design {
+        radius_scale: 0.4,
+        edge_width: 1.0,
+        edges: EdgeMode::Lit,
+        shadows: ShadowCharacter::Glow,
+        panes: PaneSeparation::Seams,
+        ground: Ground::Vertical {
+            ink: hex(0xFF4FCB),
+            top: 0,
+            bottom: 16,
+        },
+        selection: SelectionStyle::Outline { width: 1.0 },
+        focus: FocusStyle::Glow { width: 5.0 },
+        hover: HoverStyle::Edge,
+        active_tab: TabStyle::Underline { width: 2.0 },
+        labels: labels(LabelCase::Upper, 0.14, Weight::Semibold),
+        heading: HeadingFace::Ui,
+        graph: graph(NodeShape::Diamond, 1.1, 1.0, Curve::Angular),
+        icons: IconWeight::Regular,
+        art: ArtMotif::NeonGrid,
+        motion: MotionCharacter::Crisp,
+        glass_tint: Palette::tint(hex(0x3A0F4A), 30),
+    };
+
+    /// Forest, "Evergreen at dusk": organic and calm. Rounded corners, tonal fields, sunlight
+    /// filtering down from above, a trunk-like selection bar, thick branch-like lines, a canopy.
+    pub const FOREST_DESIGN: Design = Design {
+        radius_scale: 1.2,
+        edge_width: 1.0,
+        edges: EdgeMode::Tonal,
+        shadows: ShadowCharacter::Soft,
+        panes: PaneSeparation::Tonal,
+        ground: Ground::Vertical {
+            ink: hex(0xE7BF57),
+            top: 12,
+            bottom: 0,
+        },
+        selection: SelectionStyle::Bar { width: 3.0 },
+        focus: FocusStyle::Ring {
+            width: 2.0,
+            offset: 1.0,
+        },
+        hover: HoverStyle::Tint,
+        active_tab: TabStyle::Lifted,
+        labels: labels(LabelCase::Title, 0.02, Weight::Medium),
+        heading: HeadingFace::Ui,
+        graph: graph(NodeShape::Dot, 1.0, 1.3, Curve::Smooth),
+        icons: IconWeight::Regular,
+        art: ArtMotif::Canopy,
+        motion: MotionCharacter::Soft,
+        glass_tint: Palette::tint(hex(0x123A20), 26),
+    };
+
+    /// Paper, "Letterpress": printed matter. Sharp corners, ruled hairlines, short warm sheet
+    /// shadows, aged edges on the stock, a highlighter selection, a bookmark on the active tab,
+    /// small-caps labels, serif titles, ink rings on the graph.
+    pub const PAPER_DESIGN: Design = Design {
+        radius_scale: 0.45,
+        edge_width: 1.0,
+        edges: EdgeMode::Hairline,
+        shadows: ShadowCharacter::Crisp,
+        panes: PaneSeparation::Seams,
+        ground: Ground::Vignette {
+            ink: hex(0x6B4A22),
+            alpha: 18,
+        },
+        selection: SelectionStyle::Wash,
+        focus: FocusStyle::Ring {
+            width: 1.5,
+            offset: 1.0,
+        },
+        hover: HoverStyle::Tint,
+        active_tab: TabStyle::TopRule { width: 2.0 },
+        labels: labels(LabelCase::Upper, 0.11, Weight::Semibold),
+        heading: HeadingFace::Serif,
+        graph: graph(NodeShape::Ring, 1.0, 0.9, Curve::Smooth),
+        icons: IconWeight::Regular,
+        art: ArtMotif::Ink,
+        motion: MotionCharacter::Standard,
+        glass_tint: Palette::tint(hex(0xFFF3D6), 30),
+    };
+
+    /// Contrast, "Signal": maximum legibility, still designed. Strong outlines instead of shadows,
+    /// an outlined selection, a double focus ring, a thick underline, bold labels, Atkinson
+    /// Hyperlegible titles, square nodes on thick lines, line art without glows.
+    pub const CONTRAST_DESIGN: Design = Design {
+        radius_scale: 0.6,
+        edge_width: 1.5,
+        edges: EdgeMode::Outline,
+        shadows: ShadowCharacter::Flat,
+        panes: PaneSeparation::Outline,
+        ground: Ground::Flat,
+        selection: SelectionStyle::Outline { width: 2.0 },
+        focus: FocusStyle::Double { width: 2.5 },
+        hover: HoverStyle::Edge,
+        active_tab: TabStyle::Underline { width: 3.0 },
+        labels: labels(LabelCase::Upper, 0.06, Weight::Semibold),
+        heading: HeadingFace::Hyperlegible,
+        graph: graph(NodeShape::Square, 1.15, 1.25, Curve::Rounded),
+        icons: IconWeight::FillAccents,
+        art: ArtMotif::Signal,
+        motion: MotionCharacter::Crisp,
+        glass_tint: Color32::TRANSPARENT,
+    };
 }
 
 // ------------------------------------------------------------------------------------ material
@@ -4337,5 +4985,273 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Owner (6 Oct 2026): each theme is a design of its own, not a recolour. Every pair of themes
+    /// differs in at least four structural choices, and no two share an art motif.
+    #[test]
+    fn every_theme_is_a_design_of_its_own() {
+        use std::mem::discriminant as kind;
+        let traits = |d: &Design| {
+            [
+                format!("{:.1}", (d.radius_scale * 4.0).round() / 4.0),
+                format!("{:?}", d.edges),
+                format!("{:?}", d.shadows),
+                format!("{:?}", d.panes),
+                format!("{:?}", kind(&d.ground)),
+                format!("{:?}", kind(&d.selection)),
+                format!("{:?}", kind(&d.focus)),
+                format!("{:?}", d.hover),
+                format!("{:?}", kind(&d.active_tab)),
+                format!("{:?}{:?}", d.labels.case, d.labels.weight),
+                format!("{:?}", d.heading),
+                format!("{:?}{:?}", d.graph.node, d.graph.curve),
+                format!("{:?}", d.icons),
+                format!("{:?}", d.motion),
+            ]
+        };
+        let mut motifs = std::collections::HashSet::new();
+        for (i, a) in ThemeId::ALL.iter().enumerate() {
+            assert!(
+                motifs.insert(a.design().art),
+                "{}: art motif shared",
+                a.name()
+            );
+            for b in ThemeId::ALL.iter().skip(i + 1) {
+                let (x, y) = (traits(a.design()), traits(b.design()));
+                let differ = x.iter().zip(&y).filter(|(p, q)| p != q).count();
+                assert!(
+                    differ >= 4,
+                    "{} and {} differ in only {differ} structural choices",
+                    a.name(),
+                    b.name()
+                );
+            }
+        }
+    }
+
+    /// A theme's radius scale reshapes every corner but keeps pills full, square corners square
+    /// and a rounded corner from collapsing; sharp themes stay sharper than soft ones.
+    #[test]
+    fn design_radii_scale_and_keep_their_shape() {
+        for id in ThemeId::ALL {
+            let d = id.design();
+            assert!((0.3..=1.5).contains(&d.radius_scale), "{}", id.name());
+            assert_eq!(d.radius(FULL), FULL);
+            assert_eq!(d.radius(0), 0);
+            let mut last = 0;
+            for r in 1..=40 {
+                let v = d.radius(r);
+                assert!(v >= 1 && v >= last, "{}: radius {r} -> {v}", id.name());
+                last = v;
+            }
+        }
+        let r = |id: ThemeId| id.design().radius(COMFORTABLE.radius);
+        for sharp in [ThemeId::Neon, ThemeId::Paper, ThemeId::Daylight] {
+            for soft in [ThemeId::Ember, ThemeId::Forest, ThemeId::Aurora] {
+                assert!(r(sharp) < r(soft), "{sharp:?} sharper than {soft:?}");
+            }
+        }
+    }
+
+    /// Lines, rings and markers the record sizes stay visible and never heavy.
+    #[test]
+    fn design_strokes_are_sized_sensibly() {
+        for id in ThemeId::ALL {
+            let d = id.design();
+            let mut widths = vec![("edge", d.edge_width)];
+            match d.selection {
+                SelectionStyle::Bar { width } | SelectionStyle::Outline { width } => {
+                    widths.push(("selection", width));
+                }
+                SelectionStyle::Wash | SelectionStyle::Glow => {}
+            }
+            match d.focus {
+                FocusStyle::Ring { width, offset } => {
+                    widths.push(("focus", width));
+                    assert!((0.0..=2.0).contains(&offset), "{}", id.name());
+                }
+                FocusStyle::Glow { width } | FocusStyle::Double { width } => {
+                    widths.push(("focus", width));
+                }
+            }
+            match d.active_tab {
+                TabStyle::Underline { width } | TabStyle::TopRule { width } => {
+                    widths.push(("tab", width));
+                }
+                TabStyle::Lifted => {}
+            }
+            for (what, w) in widths {
+                assert!((1.0..=6.0).contains(&w), "{}: {what} width {w}", id.name());
+            }
+            let g = d.graph;
+            assert!((0.8..=1.4).contains(&g.node_scale), "{}", id.name());
+            assert!((0.8..=1.4).contains(&g.line_scale), "{}", id.name());
+            assert!((0.0..=0.2).contains(&d.labels.tracking), "{}", id.name());
+            assert!((0.7..=1.3).contains(&d.motion.duration_scale()));
+            assert!((1.0..=1.1).contains(&d.heading.size_scale()));
+        }
+        // Contrast keeps the strongest structure: outlines, a double ring, no shadows.
+        let c = ThemeId::Contrast.design();
+        assert_eq!(c.edges, EdgeMode::Outline);
+        assert!(matches!(c.focus, FocusStyle::Double { .. }));
+        assert_eq!(c.shadows, ShadowCharacter::Flat);
+        assert_eq!(c.ground, Ground::Flat);
+    }
+
+    /// Ground treatments are washes laid over the ground: text, links, the focus ring and input
+    /// outlines keep their targets on the strongest point of the wash, on both styles' grounds.
+    #[test]
+    fn ground_treatments_keep_text_readable() {
+        let mut failures = Vec::new();
+        for id in ThemeId::ALL {
+            let p = id.palette();
+            let wash = match id.design().ground {
+                Ground::Flat => continue,
+                Ground::Vertical { ink, top, bottom } => Palette::tint(ink, top.max(bottom)),
+                Ground::Glow { ink, alpha, .. } | Ground::Vignette { ink, alpha } => {
+                    Palette::tint(ink, alpha)
+                }
+            };
+            for style in Style::ALL {
+                let s = p.surfaces(style);
+                let mut gate = Gate::new(p, style);
+                let (text_min, dim_min, faint_min, rim_min) = targets(p);
+                for (on, g) in [("ground", s.bg), ("pane", s.pane)] {
+                    let b = over(wash, g);
+                    let on = format!("ground treatment over {on}");
+                    gate.need("text", p.text, &on, b, text_min);
+                    gate.need("text_dim", p.text_dim, &on, b, dim_min);
+                    gate.need("text_faint", p.text_faint, &on, b, faint_min);
+                    gate.need("accent", p.accent, &on, b, 4.5);
+                    gate.need("focus", p.focus, &on, b, rim_min);
+                    gate.need("control_border", p.control_border, &on, b, rim_min);
+                }
+                failures.extend(gate.failures);
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// The theme's glass tint keeps every pairing `glass_keeps_contrast_over_any_backdrop` checks;
+    /// Contrast never tints (it never uses glass).
+    #[test]
+    fn glass_tint_keeps_contrast_over_any_backdrop() {
+        let probes = [
+            Color32::WHITE,
+            Color32::BLACK,
+            Color32::from_rgb(255, 0, 0),
+            Color32::from_rgb(0, 255, 0),
+            Color32::from_rgb(0, 0, 255),
+            Color32::from_rgb(255, 255, 0),
+            Color32::from_rgb(0, 255, 255),
+            Color32::from_rgb(255, 0, 255),
+            Color32::from_gray(128),
+        ];
+        let mut failures = Vec::new();
+        for id in ThemeId::ALL {
+            let p = id.palette();
+            let tint = id.design().glass_tint;
+            if p.glass_alpha == 0 {
+                assert_eq!(tint, Color32::TRANSPARENT, "{}", p.name);
+                continue;
+            }
+            assert!(
+                tint.a() <= 40,
+                "{}: the tint leans, it does not repaint",
+                p.name
+            );
+            for style in Style::ALL {
+                let s = p.surfaces(style);
+                let fill = over(tint, s.overlay);
+                let mut gate = Gate::new(p, style);
+                let (text_min, dim_min, faint_min, _) = targets(p);
+                for probe in probes {
+                    let backdrop = clamp_backdrop(probe, p.dark, p.glass_luminance);
+                    let glass = over(Palette::tint(fill, p.glass_alpha), backdrop);
+                    for bg in [glass, over(p.hover_strong(), glass)] {
+                        gate.need("text", p.text, "tinted glass", bg, text_min);
+                        gate.need("text_dim", p.text_dim, "tinted glass", bg, dim_min);
+                        gate.need("text_faint", p.text_faint, "tinted glass", bg, faint_min);
+                        gate.need("accent", p.accent, "tinted glass", bg, 4.5);
+                        gate.need("danger", p.danger, "tinted glass", bg, 4.5);
+                        gate.need("control_border", p.control_border, "tinted glass", bg, 3.0);
+                        gate.need("focus", p.focus, "tinted glass", bg, 3.0);
+                    }
+                }
+                failures.extend(gate.failures);
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// Shadow characters: Soft keeps the tables, Crisp shortens, Flat keeps only a faint floating
+    /// lift, Glow centres every layer.
+    #[test]
+    fn shadow_characters_reshape_the_layers() {
+        let drop = ShadowLayer {
+            dy: 10,
+            blur: 28,
+            spread: -8,
+            alpha: 166,
+            tint: ShadowTint::Shadow,
+        };
+        let with = |shadows| Design {
+            shadows,
+            ..MIDNIGHT_DESIGN
+        };
+        assert_eq!(
+            with(ShadowCharacter::Soft).shadow(Elevation::Pane, drop),
+            Some(drop)
+        );
+        let crisp = with(ShadowCharacter::Crisp)
+            .shadow(Elevation::Floating, drop)
+            .unwrap();
+        assert!(crisp.blur < drop.blur / 2 && crisp.dy < drop.dy && crisp.dy > 0);
+        let flat = with(ShadowCharacter::Flat);
+        assert_eq!(flat.shadow(Elevation::Control, drop), None);
+        assert_eq!(flat.shadow(Elevation::Pane, drop), None);
+        let lift = flat.shadow(Elevation::Floating, drop).unwrap();
+        assert!(lift.alpha < drop.alpha && lift.blur < drop.blur);
+        let glow = with(ShadowCharacter::Glow)
+            .shadow(Elevation::Primary, drop)
+            .unwrap();
+        assert_eq!(glow.dy, 0);
+        assert!(glow.spread >= 0 && glow.blur > drop.blur);
+    }
+
+    /// Heading faces and label weights resolve to the families `ui/fonts.rs` registers, and label
+    /// case is applied as the record says.
+    #[test]
+    fn type_tokens_resolve() {
+        assert_eq!(HeadingFace::Ui.family(), semibold());
+        assert_ne!(
+            HeadingFace::Serif.family(),
+            HeadingFace::Hyperlegible.family()
+        );
+        assert_eq!(Weight::Semibold.family(), semibold());
+        assert_eq!(Weight::Medium.family(), medium());
+        assert_eq!(Weight::Regular.family(), FontFamily::Proportional);
+        let upper = LabelStyle {
+            case: LabelCase::Upper,
+            tracking: 0.1,
+            weight: Weight::Semibold,
+        };
+        assert_eq!(upper.cased("Remotes"), "REMOTES");
+        let title = LabelStyle {
+            case: LabelCase::Title,
+            ..upper
+        };
+        assert_eq!(title.cased("Remotes"), "Remotes");
+        let ctx = egui::Context::default();
+        for id in ThemeId::ALL {
+            apply(&ctx, id, Appearance::STILL);
+            assert_eq!(design(&ctx), id.design());
+        }
+        assert_ne!(
+            IconWeight::Regular,
+            ThemeId::Contrast.design().icons,
+            "Contrast's active icons are filled"
+        );
     }
 }
