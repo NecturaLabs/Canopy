@@ -1,6 +1,8 @@
 # ADR 0003: Which network services Canopy contacts, and the consent that gates them
 
-**Status:** partially superseded by [ADR 0008](0008-author-profile-pictures.md) for author pictures
+**Status:** partially superseded by [ADR 0008](0008-author-profile-pictures.md) for author pictures;
+amended by [ADR 0011](0011-request-list-rollup-through-graphql.md): the hosting API row also covers
+one GraphQL query per request-list refresh on the same host
 **Date:** 2026-10-01
 
 ## Context and problem statement

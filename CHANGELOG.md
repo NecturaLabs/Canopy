@@ -10,6 +10,10 @@ commits since the previous build.
 
 ### Added
 
+- Pull and merge request lists show each request's checks and review without opening it, when
+  Canopy has a token for the server: passed, failed or running checks, and approved, changes
+  requested or (GitHub) review required. Loading the list sends one more request to the same
+  server.
 - Redesigned themes and appearance options. All eight themes take the new look, each with its
   own character: quiet two-tone chrome in the theme's own tint, signature and status colours in
   its own temperature, clean coloured banners, graph lines that never look alike, and soft

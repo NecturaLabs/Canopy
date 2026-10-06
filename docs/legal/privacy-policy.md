@@ -84,7 +84,7 @@ Canopy checks the archive against the SHA-256 checksum in the update file before
 
 ## GitHub and GitLab
 
-When you open a repository whose remote is on GitHub (github.com) or GitLab (gitlab.com or a self-hosted GitLab server), Canopy loads its pull or merge requests from that service's API. When you comment, review, merge or create a request in Canopy, it sends that to the same API. To stop all of this, turn off Pull and merge requests in the Integrations section of Settings.
+When you open a repository whose remote is on GitHub (github.com) or GitLab (gitlab.com or a self-hosted GitLab server), Canopy loads its pull or merge requests from that service's API. When you comment, review, merge or create a request in Canopy, it sends that to the same API. When Canopy has a token for that server, each time it loads the list of requests it also asks the same server, in one request, where each listed request's checks and reviews stand; that request names the project and the request numbers and carries your token like the others. Without a token, Canopy does not send it. To stop all of this, turn off Pull and merge requests in the Integrations section of Settings.
 
 To sign in to the API, Canopy uses the first of these that it finds:
 

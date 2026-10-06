@@ -161,8 +161,10 @@ Without a GitHub or GitLab remote, the requests view offers Publish… for a rep
 remote and Add remote… for one whose remotes are elsewhere.
 
 Request list icons show lifecycle and draft state. Branches have a separate line with room
-reserved for the target. Check and review verdicts are loaded for the selected request's details;
-list summaries do not carry those verdicts. Bulk or bounded cached list badges remain planned.
+reserved for the target. The request list shows each request's checks (passed, failed, running)
+and review (approved, changes requested, and on GitHub review required) without opening it when
+Canopy has a token for the host; without a token a row shows them once the request was opened in
+the session.
 
 ## Interface
 

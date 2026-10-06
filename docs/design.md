@@ -284,6 +284,11 @@ in the density's metrics:
   changed lines visible without reducing text size.
 - Draft requests use a dim pencil icon in the list, distinct from the green open request icon;
   the full state and branch pair remain available on hover.
+- The right-aligned glyphs on a request row's title line come from the list's rollup when there
+  is one (texts "Checks passed", "Checks failed", "Checks running"; a neutral state such as a
+  skipped pipeline shows nothing), otherwise from the request's remembered details ("All N checks
+  passed", "N of M checks failed"…). "Review required" (GitHub only) is `USER_CIRCLE_DASHED` in
+  `Tone::Neutral`: a to-do, not a warning.
 - The request conversation ends with a primary Comment action. It stays visibly placed below the
   editor when empty, with a short explanation of why it is disabled.
 - Review summaries name each reviewer's state in text as well as showing its icon and colour.

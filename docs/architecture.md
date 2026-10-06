@@ -3,7 +3,8 @@
 Canopy is a Cargo workspace with three crates. The split is strict: everything that knows about Git
 lives in `canopy-core`, everything that draws lives in `canopy-app`, and the only bridge is a
 background worker per repository. `canopy-hosting` is the one HTTP client: the GitHub and GitLab
-REST APIs and Canopy's update manifest. `canopy-core` never makes an HTTP request, and
+REST APIs (plus one GraphQL query for a request list's checks and reviews) and Canopy's update
+manifest. `canopy-core` never makes an HTTP request, and
 `canopy-app` reaches the network only through `git` and `canopy-hosting` (plus the opt-in crash
 report transport).
 
@@ -66,10 +67,10 @@ thread.
 | Module | Responsibility |
 |---|---|
 | `avatars.rs` | Author profile lookup and validated, credential-free HTTPS image downloads; exact image hosts, no redirects and a 2 MiB compressed limit (ADR 0008); a separate repository request (`Client::author_repository`) tells GitHub's two 404s apart, and Gravatar/Libravatar links ask for a 404 (`d=404`) instead of a generated stand-in. |
-| `client.rs` | `Client`: provider-neutral entry point for listing, reading, creating, merging, closing, commenting on and approving pull and merge requests. |
-| `github.rs`, `gitlab.rs` | The two providers' REST calls (GitHub API v3, GitLab API v4 including self-hosted hosts). |
-| `http.rs` | One `ureq` agent per client, the common headers, timeouts, and HTTP failures mapped to `Error` with the server's own message. The token travels only in an `Authorization` header. |
-| `model.rs` | Provider-neutral request, review, check and comment types. |
+| `client.rs` | `Client`: provider-neutral entry point for listing, reading, creating, merging, closing, commenting on and approving pull and merge requests, and reading a page's checks and reviews (`rollup`, only with a token). `with_switch` stops every request once the hosting thread is let go. |
+| `github.rs`, `gitlab.rs` | The two providers' REST calls (GitHub API v3, GitLab API v4 including self-hosted hosts) and the one GraphQL query each for a list's checks and reviews (`rollup`). |
+| `http.rs` | One `ureq` agent per client, the common headers, timeouts, and HTTP failures mapped to `Error` with the server's own message, made plain text (`plain_text`). The token travels only in an `Authorization` header. The GraphQL endpoint on the same host (`graphql`: same headers, no redirects). One 10 MiB body limit for every response. |
+| `model.rs` | Provider-neutral request, review, check and comment types; `Rollup`/`ReviewDecision` (a list row's checks and review). |
 | `token.rs` | Finding a token: provider environment variables (offered only to their own host) or git's credential helpers. |
 | `updates.rs` | Canopy's own update manifest, fetched anonymously from the public `NecturaLabs/app-updates` repository. |
 | `error.rs` | Errors, carrying the server's message. |
@@ -88,12 +89,12 @@ thread.
 | `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. |
 | `app/clone.rs`, `app/request_flow.rs` | Cloning on a background thread; creating and checking out pull and merge requests. |
 | `app/screenshot.rs` | Headless screenshots for `--screenshot`. |
-| `app/demo_requests.rs` | Invented pull and merge requests the requests view shows under `--screenshot --demo-requests`; never reachable in a normal run, no network. |
+| `app/demo_requests.rs` | Invented pull and merge requests the requests view shows under `--screenshot --demo-requests`, each row carrying a rollup as with a token; never reachable in a normal run, no network. |
 | `tab.rs` | `RepoTab`: one open repository's snapshot, selections, in-flight work and the state a failed or superseded job leaves behind. |
 | `worker.rs` | Reads Git's pending merge message off the UI thread, applied only to an empty composer still in a merge. One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; debounced file watcher. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it, but only in a trusted folder; elsewhere it sends `Event::DownloadsRefused` and fails the read with a message that says why. |
 | `identity_worker.rs` | One background thread shared by tabs and first launch. It reads Git's effective author and committer through `canopy-core::identity`, writes `user.*` configuration only after a user action, and returns results for Settings and the commit warning. |
 | `avatars.rs` | Twelve-hour persistent thumbnail and no-picture cache that classifies misses (about the author: cached; repository refused: the tab stops asking; unknown commit: another of the author's is tried, at most 1024 remembered; unreachable: a 10-minute pause), the off switch and budget checked before every provider request, `explain` (why pictures are missing, for the views), serialized across the per-host picture threads (which pull request jobs never wait for), an hourly lookup budget that leaves GitHub's anonymous quota to pull requests, files unused for 30 days deleted at start-up, with bounded PNG/JPEG decoding off the UI thread and a per-tab texture cache that drops the least recently shown picture past 256. |
-| `hosting.rs` | A background thread per repository tab for pull and merge requests through `canopy-hosting` (`HostJob`), and the token store (`tokens.json`, per host and port). |
+| `hosting.rs` | A background thread per repository tab for pull and merge requests through `canopy-hosting` (`HostJob`), and the token store (`tokens.json`, per host and port). With a token, a list refresh also fetches the rows' checks and reviews (`add_rollup`, one query after the jobs queued behind the list, paused until a rate limit resets, an hour at most) and sends the list twice, first without them. Dropping the `HostWorker` turns off its switch, so a job under way sends nothing more. |
 | `askpass.rs` | Credential prompts for git and ssh: Canopy's own executable is `GIT_ASKPASS`/`SSH_ASKPASS`, and the running app answers over loopback (ADR 0005). |
 | `updater.rs` | The update check against the manifest, and the background install (`Updater::install`, `InstallState`); nothing is downloaded until the user chooses Update. |
 | `selfupdate/mod.rs` | The in-app update ([ADR 0006](adr/0006-canopy-updates-itself-in-place.md)): detects an installer-managed install (`.canopy-install` receipt), downloads and verifies the archive, unpacks it, swaps the install folder in two phases with rollback and refreshes the receipt and registered desktop entry and icons; elsewhere runs the one-line installer; and starts the new program after the window closed. |
