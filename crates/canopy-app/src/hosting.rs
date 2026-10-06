@@ -452,44 +452,110 @@ fn run(
     serve(&client, &forge, &jobs, &avatar_jobs, &emit);
 }
 
+/// A list shown without its checks and reviews: the list job it answers (see [`serve`]), its
+/// filter and its rows.
+struct Shown {
+    list: u64,
+    filter: StateFilter,
+    rows: Vec<RequestSummary>,
+}
+
+/// Which list job's rows the tab was sent last. The lock is held while a list is sent, so a
+/// list's checks are sent only while its rows are still the ones shown.
+type LastList = std::sync::Mutex<u64>;
+
+fn last_list(last: &LastList) -> std::sync::MutexGuard<'_, u64> {
+    last.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Runs `jobs` against `client` until the tab drops its end of the queue. `emit` reports an event
 /// to the tab and says whether it got there; author pictures go to `avatar_jobs`.
 ///
 /// A loaded list's checks and reviews (one query that can take seconds) wait for
 /// [`ROLLUP_DELAY`] and for every job queued by then, such as the details of the request the list
-/// selected or an action the user started, so those are not held up behind it. A newer list
-/// replaces a waiting one.
+/// selected or an action the user started. Then they load on a lane of their own
+/// ([`add_rollups`]), so a request opened or an action started while the query runs does not
+/// wait for it either. A newer list replaces one still waiting, and the checks of a list the tab
+/// no longer shows are dropped.
 fn serve(
     client: &Client,
     forge: &Forge,
     jobs: &Receiver<HostJob>,
     avatar_jobs: &Sender<(canopy_core::Oid, String)>,
-    emit: &dyn Fn(HostEvent) -> bool,
+    emit: &(dyn Fn(HostEvent) -> bool + Sync),
+) {
+    let last = LastList::new(0);
+    let (rollups, shown) = unbounded::<Shown>();
+    std::thread::scope(|scope| {
+        let lane = std::thread::Builder::new()
+            .name(format!("request-checks:{}", forge.host))
+            .spawn_scoped(scope, || add_rollups(client, &shown, &last, emit));
+        if let Err(e) = &lane {
+            tracing::error!("could not start the request-checks thread: {e}");
+        }
+        serve_jobs(client, forge, jobs, avatar_jobs, &rollups, &last, emit);
+        // Ends the lane once its query, if any, is done.
+        drop(rollups);
+    });
+}
+
+/// The lane that gives shown lists their checks and reviews ([`add_rollup`]), newest first, and
+/// sends a list again with them only while it is still the one the tab shows.
+fn add_rollups(
+    client: &Client,
+    shown: &Receiver<Shown>,
+    last: &LastList,
+    emit: &(dyn Fn(HostEvent) -> bool + Sync),
+) {
+    // Until when (unix seconds) the list goes without checks and reviews after a rate limit.
+    let mut paused = 0;
+    while let Ok(mut next) = shown.recv() {
+        // Only the newest list is worth a query.
+        while let Ok(newer) = shown.try_recv() {
+            next = newer;
+        }
+        if *last_list(last) != next.list {
+            continue;
+        }
+        let now = chrono::Utc::now().timestamp();
+        if add_rollup(&mut next.rows, client.has_token(), &mut paused, now, |n| {
+            client.rollup(n)
+        }) {
+            let current = last_list(last);
+            if *current == next.list {
+                emit(HostEvent::List(next.filter, Ok(next.rows)));
+            }
+        }
+    }
+}
+
+/// The job loop of [`serve`]; `rollups` takes each list due for its checks and reviews.
+fn serve_jobs(
+    client: &Client,
+    forge: &Forge,
+    jobs: &Receiver<HostJob>,
+    avatar_jobs: &Sender<(canopy_core::Oid, String)>,
+    rollups: &Sender<Shown>,
+    last: &LastList,
+    emit: &(dyn Fn(HostEvent) -> bool + Sync),
 ) {
     let send = |e: HostEvent| {
         emit(e);
     };
-    // Until when (unix seconds) the list goes without checks and reviews after a rate limit.
-    let mut rollup_paused = 0;
     // A list shown without its checks and reviews, and when they may be asked for.
-    let mut waiting: Option<(StateFilter, Vec<RequestSummary>, Instant)> = None;
+    let mut waiting: Option<(Shown, Instant)> = None;
     loop {
         let next = match &waiting {
             None => jobs.recv().map_err(RecvTimeoutError::from),
-            Some((.., due)) => jobs.recv_deadline(*due),
+            Some((_, due)) => jobs.recv_deadline(*due),
         };
         let job = match next {
             Ok(job) => job,
             Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {
-                if let Some((filter, mut list, _)) = waiting.take() {
-                    let now = chrono::Utc::now().timestamp();
-                    let has_token = client.has_token();
-                    if add_rollup(&mut list, has_token, &mut rollup_paused, now, |n| {
-                        client.rollup(n)
-                    }) {
-                        send(HostEvent::List(filter, Ok(list)));
-                    }
+                if let Some((shown, _)) = waiting.take() {
+                    let _ = rollups.send(shown);
                 }
                 continue;
             }
@@ -508,16 +574,25 @@ fn serve(
             }
             HostJob::List(filter) => {
                 waiting = None;
-                match client.list(filter, 100) {
-                    // The list shows at once; its checks and reviews follow in a second event
-                    // for the same filter, which replaces it (the selection stays). A list the
-                    // tab no longer takes was let go with its thread: nothing more is asked.
-                    Ok(list) => {
-                        if emit(HostEvent::List(filter, Ok(list.clone()))) {
-                            waiting = Some((filter, list, Instant::now() + ROLLUP_DELAY));
-                        }
+                let result = client.list(filter, 100);
+                // Held while the list is sent, so no older list's checks can follow it.
+                let mut sent = last_list(last);
+                *sent += 1;
+                let list = *sent;
+                // The list shows at once; its checks and reviews follow in a second event for
+                // the same filter, which replaces it (the selection stays). A list the tab no
+                // longer takes was let go with its thread: nothing more is asked.
+                let delivered = match result {
+                    Ok(rows) => emit(HostEvent::List(filter, Ok(rows.clone()))).then_some(rows),
+                    Err(e) => {
+                        send(HostEvent::List(filter, Err(s(e))));
+                        None
                     }
-                    Err(e) => send(HostEvent::List(filter, Err(s(e)))),
+                };
+                drop(sent);
+                if let Some(rows) = delivered {
+                    let due = Instant::now() + ROLLUP_DELAY;
+                    waiting = Some((Shown { list, filter, rows }, due));
                 }
             }
             HostJob::Details(n) => send(HostEvent::Details(
@@ -813,48 +888,55 @@ mod tests {
         assert_eq!(paused, 5_000 + ROLLUP_PAUSE_MAX_SECS);
     }
 
-    type Answer = Box<dyn Fn(&str) -> String + Send>;
+    type Answer = Box<dyn Fn(&str) -> String + Send + Sync>;
 
-    /// A loopback stand-in for GitHub's API: one request per connection, answered with 200 and
-    /// `answer(target)`. Returns its base URL and the `METHOD target` lines it received, in order.
+    /// A loopback stand-in for GitHub's API: one request per connection, each connection on a
+    /// thread of its own (an answer may wait), answered with 200 and `answer(target)`. Returns its
+    /// base URL and the `METHOD target` lines it received, in order of arrival.
     fn stub(answer: Answer) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
         use std::io::{BufRead, BufReader, Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let base = format!("http://{}", listener.local_addr().expect("address"));
         let log = Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = Arc::clone(&log);
+        let answer: Arc<Answer> = Arc::new(answer);
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { continue };
-                let mut reader = BufReader::new(stream.try_clone().expect("clone"));
-                let mut line = String::new();
-                if reader.read_line(&mut line).unwrap_or(0) == 0 {
-                    continue;
-                }
-                let mut length = 0;
-                loop {
-                    let mut header = String::new();
-                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
-                        break;
+                let (seen, answer) = (Arc::clone(&seen), Arc::clone(&answer));
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        return;
                     }
-                    if let Some((name, value)) = header.split_once(':')
-                        && name.eq_ignore_ascii_case("content-length")
-                    {
-                        length = value.trim().parse().unwrap_or(0);
+                    let mut length = 0;
+                    loop {
+                        let mut header = String::new();
+                        if reader.read_line(&mut header).unwrap_or(0) == 0
+                            || header.trim().is_empty()
+                        {
+                            break;
+                        }
+                        if let Some((name, value)) = header.split_once(':')
+                            && name.eq_ignore_ascii_case("content-length")
+                        {
+                            length = value.trim().parse().unwrap_or(0);
+                        }
                     }
-                }
-                let mut body = vec![0; length];
-                let _ = reader.read_exact(&mut body);
-                let mut parts = line.split_whitespace();
-                let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
-                seen.lock().expect("log").push(format!("{method} {target}"));
-                let reply = answer(target);
-                let mut stream = stream;
-                let _ = write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
-                    reply.len()
-                );
+                    let mut body = vec![0; length];
+                    let _ = reader.read_exact(&mut body);
+                    let mut parts = line.split_whitespace();
+                    let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+                    seen.lock().expect("log").push(format!("{method} {target}"));
+                    let reply = answer(target);
+                    let mut stream = stream;
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    );
+                });
             }
         });
         (base, log)
@@ -975,6 +1057,117 @@ mod tests {
                 .any(|l| l.starts_with("POST /repos/o/r/issues/1/comments")),
             "{log:?}"
         );
+    }
+
+    #[test]
+    fn a_request_opened_while_the_checks_load_does_not_wait_for_them() {
+        // The list's checks and reviews are under way (a query that can take seconds) when the
+        // user opens a request: its details come without waiting for the query to finish.
+        let (arrived, query_arrived) = unbounded::<()>();
+        let (release, released) = unbounded::<()>();
+        let (base, _) = stub(Box::new(move |target| {
+            if target.starts_with("/repos/o/r/pulls?") {
+                pulls(&[1])
+            } else if target == "/graphql" {
+                let _ = arrived.send(());
+                let _ = released.recv_timeout(Duration::from_secs(10));
+                ROLLUP_ANSWER.to_owned()
+            } else if target == "/repos/o/r/pulls/1" {
+                pull(1).to_string()
+            } else {
+                "[]".to_owned()
+            }
+        }));
+        let (worker, thread) = worker_for(&base);
+        worker.send(HostJob::List(StateFilter::Open));
+        query_arrived
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the list's query was sent");
+        worker.send(HostJob::Details(1));
+        let opened = loop {
+            match worker.events.recv_timeout(Duration::from_secs(5)) {
+                Ok(HostEvent::Details(n, details)) => break (n, details.is_ok()),
+                Ok(_) => {}
+                Err(e) => panic!("the request waited for the list's checks: {e}"),
+            }
+        };
+        assert_eq!(opened, (1, true));
+        let _ = release.send(());
+        let with_checks = loop {
+            match worker.events.recv_timeout(Duration::from_secs(10)) {
+                Ok(HostEvent::List(_, Ok(list))) => break list,
+                Ok(_) => {}
+                Err(e) => panic!("no list with its checks: {e}"),
+            }
+        };
+        assert_eq!(with_checks[0].rollup, Some(PASSING));
+        drop(worker);
+        thread.join().expect("hosting thread");
+    }
+
+    #[test]
+    fn a_newer_list_is_never_replaced_by_an_older_ones_checks() {
+        // The checks of the first list arrive after a second list was shown: they belong to rows
+        // that may have changed, so they are dropped rather than shown over the newer list.
+        let (arrived, query_arrived) = unbounded::<()>();
+        let (release, released) = unbounded::<()>();
+        let lists = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let served = Arc::clone(&lists);
+        let (base, log) = stub(Box::new(move |target| {
+            if target.starts_with("/repos/o/r/pulls?") {
+                // The first list has request 1, the second requests 1 and 2.
+                if served.fetch_add(1, Ordering::SeqCst) == 0 {
+                    pulls(&[1])
+                } else {
+                    pulls(&[2, 1])
+                }
+            } else if target == "/graphql" {
+                let _ = arrived.send(());
+                let _ = released.recv_timeout(Duration::from_secs(10));
+                ROLLUP_ANSWER.to_owned()
+            } else {
+                "[]".to_owned()
+            }
+        }));
+        let (worker, thread) = worker_for(&base);
+        worker.send(HostJob::List(StateFilter::Open));
+        query_arrived
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the first list's query was sent");
+        worker.send(HostJob::List(StateFilter::Open));
+        let mut shown = Vec::new();
+        while shown.len() < 2 {
+            match worker.events.recv_timeout(Duration::from_secs(5)) {
+                Ok(HostEvent::List(_, Ok(list))) => shown.push(list),
+                Ok(_) => {}
+                Err(e) => panic!("the second list waited for the first one's checks: {e}"),
+            }
+        }
+        assert_eq!(shown[1].len(), 2, "the second list is shown");
+        // The first query ends; the second list's own query follows.
+        let _ = release.send(());
+        query_arrived
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the second list's query was sent");
+        let _ = release.send(());
+        let last = loop {
+            match worker.events.recv_timeout(Duration::from_secs(10)) {
+                Ok(HostEvent::List(_, Ok(list))) => break list,
+                Ok(_) => {}
+                Err(e) => panic!("no list with its checks: {e}"),
+            }
+        };
+        assert_eq!(last.len(), 2, "only the newer list's checks are shown");
+        assert_eq!(last[1].rollup, Some(PASSING));
+        drop(worker);
+        thread.join().expect("hosting thread");
+        let queries = log
+            .lock()
+            .expect("log")
+            .iter()
+            .filter(|l| l.as_str() == "POST /graphql")
+            .count();
+        assert_eq!(queries, 2);
     }
 
     #[test]
