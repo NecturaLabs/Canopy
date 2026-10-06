@@ -1050,18 +1050,23 @@ pub fn request_restart(exe: PathBuf) {
 
 /// Starts the program a restart was requested for, with the arguments this run had. Called after
 /// the window closed, so the new Canopy reads the settings this one saved.
-#[expect(clippy::disallowed_methods, reason = "starts the new Canopy")]
 pub fn run_requested_restart() {
+    if let Some((exe, Err(e))) = start_requested_restart() {
+        tracing::warn!("could not restart into {}: {e}", exe.display());
+    }
+}
+
+/// [`run_requested_restart`]'s work: the program asked for and its process, or why it did not
+/// start; `None` when no restart was asked for.
+#[expect(clippy::disallowed_methods, reason = "starts the new Canopy")]
+fn start_requested_restart() -> Option<(PathBuf, io::Result<std::process::Child>)> {
     let exe = RESTART
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take();
-    if let Some(exe) = exe {
-        let args: Vec<_> = std::env::args_os().skip(1).collect();
-        if let Err(e) = Command::new(&exe).args(args).spawn() {
-            tracing::warn!("could not restart into {}: {e}", exe.display());
-        }
-    }
+        .take()?;
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let child = Command::new(&exe).args(args).spawn();
+    Some((exe, child))
 }
 
 /// Names of `dir`'s entries, for tests and diagnostics.

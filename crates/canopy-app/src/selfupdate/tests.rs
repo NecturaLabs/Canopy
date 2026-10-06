@@ -1115,26 +1115,51 @@ fn the_installer_fallback_reports_a_failure_and_refuses_a_foreign_script() {
     install_with_installer(&missing, 413, &mut |_| {}).unwrap_err();
 }
 
+/// Writes `script` to a new executable at `path` from a child process. Written from this process,
+/// the file would be open for writing in any process another test thread forks meanwhile, until
+/// that process runs its own program; starting the script in that window fails with "Text file
+/// busy" (ETXTBSY).
+#[cfg(unix)]
+#[expect(clippy::disallowed_methods, reason = "writes a test program")]
+fn executable(path: &Path, script: &str) {
+    let mut sh = Command::new("sh")
+        .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("sh");
+    sh.stdin
+        .take()
+        .expect("stdin")
+        .write_all(script.as_bytes())
+        .expect("script");
+    assert!(
+        sh.wait().expect("sh").success(),
+        "{} written",
+        path.display()
+    );
+}
+
 #[test]
 fn a_restart_runs_what_was_asked_after_the_window_closed() {
     // Nothing requested: nothing happens (and nothing panics).
     run_requested_restart();
-    let tmp = tempfile::tempdir().expect("tmp");
-    let marker = tmp.path().join("started");
+    assert!(start_requested_restart().is_none());
     #[cfg(unix)]
     {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let marker = tmp.path().join("started");
         let exe = tmp.path().join("canopy");
-        write(&exe, &format!("#!/bin/sh\ntouch '{}'\n", marker.display()));
-        set_mode(&exe, 0o755).expect("mode");
-        request_restart(exe);
-        run_requested_restart();
-        for _ in 0..100 {
-            if marker.exists() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert!(marker.exists(), "the program was started");
-        run_requested_restart();
+        executable(&exe, &format!("#!/bin/sh\ntouch '{}'\n", marker.display()));
+        request_restart(exe.clone());
+        let (started, child) = start_requested_restart().expect("a restart was asked for");
+        assert_eq!(started, exe);
+        let status = child
+            .expect("the program was started")
+            .wait()
+            .expect("wait");
+        assert!(status.success(), "{status}");
+        assert!(marker.exists(), "the program ran");
+        assert!(start_requested_restart().is_none(), "a restart runs once");
     }
 }
