@@ -1783,6 +1783,49 @@ mod tests {
         );
     }
 
+    /// The Add remote form says under the URL field why a typed URL is refused.
+    #[test]
+    fn the_add_remote_form_says_why_a_url_is_refused() {
+        use super::url::UrlSource;
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut dialog = Dialog::add_remote(&crate::settings::Settings::default());
+        if let Dialog::AddRemote { builder, .. } = &mut dialog {
+            builder.source = UrlSource::Url;
+            builder.url = "https://user:secret@github.com/o/r.git".into();
+        }
+        let mut picker = crate::ui::folder_picker::FolderPicker::default();
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |_| {
+                super::show(
+                    &ctx,
+                    &mut dialog,
+                    None,
+                    &mut picker,
+                    false,
+                    &crate::updater::Updater::default(),
+                    "git version 2.55.0",
+                );
+            });
+            output.textures_delta.clear();
+            texts = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+        }
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.contains("Remove the user name and password")),
+            "{texts:?}"
+        );
+    }
+
     /// The legal documents read in a card that fills most of the room a modal has (O1), at the
     /// reading measure, in both the plain dialog and the consent.
     #[test]
