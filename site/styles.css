@@ -315,7 +315,7 @@ kbd + kbd { margin-left: 3px; }
 /* A heading on the left, its list on the right, a hairline between */
 .split-list { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 40px 0; align-items: start; }
 .split-list > .text { padding-right: clamp(32px, 6vw, 88px); }
-.split-list > .keys, .split-list > .options { padding-left: clamp(32px, 4vw, 56px); border-left: 1px solid var(--seam); align-self: stretch; display: flex; flex-direction: column; justify-content: center; }
+.split-list > .keys, .split-list > .options, .split-list > .rules { padding-left: clamp(32px, 4vw, 56px); border-left: 1px solid var(--seam); align-self: stretch; display: flex; flex-direction: column; justify-content: center; }
 
 /* Shortcut rows: the real bindings for each job */
 .keys li { display: grid; grid-template-columns: minmax(120px, auto) minmax(0, 1fr); align-items: center; gap: 18px; min-height: 52px; padding: 10px 0; font-size: 15.5px; }
@@ -331,6 +331,10 @@ kbd + kbd { margin-left: 3px; }
 .caption { margin-top: 16px; font-size: 13.5px; color: var(--faint); }
 
 .rules { margin-top: 32px; border-block: 1px solid var(--seam); }
+.split-list > .rules { margin-top: 0; border-block: 0; }
+.sheet-shot { margin-top: clamp(40px, 5vw, 64px); max-width: 864px; background: none; }
+/* The crop has a few pixels of the dimmed app around the sheet; show the sheet alone */
+.sheet-shot img { clip-path: inset(3px round var(--r-lg)); }
 .rules li { padding: 14px 0; font-size: 15.5px; }
 .rules li + li { border-top: 1px solid var(--seam); }
 
@@ -463,7 +467,7 @@ kbd + kbd { margin-left: 3px; }
   .palette { align-self: stretch; }
   .split, .split-media, .split-media.reverse, .split-list, .lists { grid-template-columns: minmax(0, 1fr); }
   .split-list > .text { padding-right: 0; }
-  .split-list > .keys, .split-list > .options { padding-left: 0; border-left: 0; border-top: 1px solid var(--seam); }
+  .split-list > .keys, .split-list > .options, .split-list > .rules { padding-left: 0; border-left: 0; border-top: 1px solid var(--seam); }
   .split-media.reverse .window { order: 2; }
   .stage { padding-bottom: 0; }
   .hero { padding-bottom: clamp(64px, 9vw, 96px); }
@@ -523,17 +527,10 @@ kbd + kbd { margin-left: 3px; }
   .keyboard figure.window { display: none; }
 
   /* Screenshots at a size you can read: a taller frame shows the left of each picture, larger */
-  .wide-shot img, .conflicts .window img, .custom .window img { aspect-ratio: 4 / 3; object-fit: cover; object-position: 0 0; }
+  .wide-shot img, .custom .window img { aspect-ratio: 4 / 3; object-fit: cover; object-position: 0 0; }
   .requests .wide-shot img { aspect-ratio: 1; }
   .compare-frame img { aspect-ratio: 4 / 5; object-fit: cover; object-position: 0 0; }
 
-  /* Conflicts: the heading and its paragraph come before the picture, the keys after it */
-  .conflicts .text { display: contents; }
-  .conflicts h2 { order: 1; }
-  .conflicts .text > p:not(.aside) { order: 2; margin-top: -20px; }
-  .conflicts .window { order: 3; }
-  .conflicts .keys { order: 4; margin-top: 0; }
-  .conflicts .aside { order: 5; margin-top: -12px; }
 
   .compare { margin-top: 28px; }
   .compare-control { font-size: 13.5px; }

@@ -164,8 +164,21 @@
   </section>
 
   <section class="sec conflicts" id="conflicts" aria-labelledby="h-conflicts">
-    <div class="wrap split split-media">
-      <figure class="window">
+    <div class="wrap">
+      <div class="split-list">
+        <div class="text">
+          <h2 id="h-conflicts">Merges and conflicts</h2>
+          <p>The resolver shows your version and the incoming one side by side: keep either, both, or edit by hand. Continue and Abort stay in view until the merge, rebase or cherry-pick is done.</p>
+          <p class="aside">Discarding, a hard reset, deleting a branch and force pushing ask first. A force push always uses&nbsp;<code translate="no">--force-with-lease</code>.</p>
+        </div>
+        <ul class="keys" aria-label="Conflict shortcuts">
+          <li><span class="caps"><kbd>]</kbd><kbd>[</kbd></span><span>Next and previous conflict</span></li>
+          <li><span class="caps"><kbd>H</kbd><kbd>L</kbd></span><span>Take current or incoming</span></li>
+          <li><span class="caps"><kbd>B</kbd></span><span>Take both</span></li>
+          <li><span class="caps"><kbd>Z</kbd></span><span>Undo the choice</span></li>
+        </ul>
+      </div>
+      <figure class="window wide-shot">
         <picture class="shot-dark">
           <source media="(max-width: 720px)" srcset="assets/shots/m-conflict-crop.webp" width="800" height="420">
           <img src="assets/shots/m-conflict.webp" width="1440" height="900" loading="lazy" alt="A merge in progress: a banner with Continue and Abort, and a conflict card showing the current and incoming versions, each with Keep this version.">
@@ -175,17 +188,6 @@
           <img src="assets/shots/d-conflict.webp" width="1440" height="900" loading="lazy" alt="The conflict resolver in Daylight, with the current and incoming versions side by side.">
         </picture>
       </figure>
-      <div class="text">
-        <h2 id="h-conflicts">Merges and conflicts</h2>
-        <p>The resolver shows your version and the incoming one side by side: keep either, both, or edit by hand. Continue and Abort stay in view until the merge, rebase or cherry-pick is done.</p>
-        <ul class="keys" aria-label="Conflict shortcuts">
-          <li><span class="caps"><kbd>]</kbd><kbd>[</kbd></span><span>Next and previous conflict</span></li>
-          <li><span class="caps"><kbd>H</kbd><kbd>L</kbd></span><span>Take current or incoming</span></li>
-          <li><span class="caps"><kbd>B</kbd></span><span>Take both</span></li>
-          <li><span class="caps"><kbd>Z</kbd></span><span>Undo the choice</span></li>
-        </ul>
-        <p class="aside">Discarding, a hard reset, deleting a branch and force pushing ask first. A force push always uses&nbsp;<code translate="no">--force-with-lease</code>.</p>
-      </div>
     </div>
   </section>
 
@@ -217,17 +219,19 @@
   </section>
 
   <section class="sec keyboard" id="keyboard" aria-labelledby="h-keyboard">
-    <div class="wrap split split-media reverse">
-      <div class="text">
-        <h2 id="h-keyboard">Keyboard</h2>
-        <p><kbd>Ctrl</kbd><kbd>K</kbd> opens the command palette, with every command and every branch to check out. <kbd>?</kbd> shows every shortcut. Lists take vim motions and single-key actions, as in lazygit.</p>
+    <div class="wrap">
+      <div class="split-list">
+        <div class="text">
+          <h2 id="h-keyboard">Keyboard</h2>
+          <p><kbd>Ctrl</kbd><kbd>K</kbd> opens the command palette, with every command and every branch to check out. <kbd>?</kbd> shows every shortcut. Lists take vim motions and single-key actions, as in lazygit.</p>
+        </div>
         <ul class="rules">
           <li>Super is never bound: it stays your window manager's.</li>
           <li>Bare keys never fire while you are typing.</li>
           <li><kbd>P</kbd> pulls, <kbd>Shift</kbd><kbd>P</kbd> pushes, <kbd>F</kbd> fetches.</li>
         </ul>
       </div>
-      <figure class="window">
+      <figure class="window sheet-shot">
         <img class="shot-dark" src="assets/shots/m-cheatsheet-crop.webp" width="864" height="820" loading="lazy" alt="Canopy's keyboard shortcuts sheet, grouped into Anywhere, History, Changes and Resolving a conflicted file, each command with its keys.">
         <img class="shot-light" src="assets/shots/d-cheatsheet-crop.webp" width="864" height="820" loading="lazy" alt="The keyboard shortcuts sheet in Daylight.">
       </figure>
