@@ -1126,7 +1126,7 @@ mod tests {
         let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 30.0));
         let ground = Fill {
             top: theme::ThemeId::Midnight.palette().text,
-            bottom: theme::ThemeId::Midnight.palette().bg(),
+            bottom: theme::ThemeId::Midnight.palette().s().pane,
         };
         for edge in [
             FadeEdge::Top,
