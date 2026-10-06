@@ -1108,6 +1108,44 @@ mod tests {
         assert_eq!(n.expanded, Some(false));
     }
 
+    /// A select's helper describes it and its error marks it invalid, as a text field's do.
+    #[test]
+    fn a_select_speaks_its_helper_and_its_error() {
+        let ctx = testkit::ctx();
+        ctx.enable_accesskit();
+        let combo = |helper: &str, error: Option<&str>| {
+            let mut v = 9_u8;
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                Select::new(&mut v, &STRATEGIES)
+                    .name("Strategy")
+                    .helper(helper)
+                    .error(error)
+                    .id_salt("speaks")
+                    .show(ui);
+            });
+            out.textures_delta.clear();
+            out.platform_output
+                .accesskit_update
+                .and_then(|u| {
+                    u.nodes
+                        .into_iter()
+                        .map(|(_, n)| n)
+                        .find(|n| n.role() == Role::ComboBox)
+                })
+                .expect("a combo box")
+        };
+        let helped = combo("Canopy passes it to git.", None);
+        assert_eq!(helped.description(), Some("Canopy passes it to git."));
+        assert_eq!(helped.invalid(), None);
+        let wrong = combo("Canopy passes it to git.", Some("Choose a strategy."));
+        assert_eq!(
+            wrong.description(),
+            Some("Choose a strategy."),
+            "the error wins"
+        );
+        assert_eq!(wrong.invalid(), Some(Invalid::True));
+    }
+
     #[test]
     fn keyboard_lists_open_at_once_even_with_motion_on() {
         let ctx = testkit::ctx();
