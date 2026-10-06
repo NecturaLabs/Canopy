@@ -2366,16 +2366,6 @@ impl Palette {
             s.overlay_edge
         }
     }
-
-    /// The ground content is painted on (`Surfaces::pane`: the window ground in Standard, the
-    /// floating card in Deeper).
-    #[expect(
-        clippy::misnamed_getters,
-        reason = "bg names the content ground, which is the pane surface"
-    )]
-    pub fn bg(&self) -> Color32 {
-        self.s().pane
-    }
 }
 
 /// Relative luminance (WCAG 2.2) of an opaque colour.

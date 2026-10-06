@@ -167,7 +167,7 @@ fn theme_items(m: &mut menu::Menu<'_>, current: ThemeId) -> Option<ThemeId> {
         let radius = metrics.icon_md / 2.0;
         let center = pos2(r.rect.left() + theme::SM + radius, r.rect.center().y);
         let painter = m.ui.painter();
-        painter.circle_filled(center, radius, tp.bg());
+        painter.circle_filled(center, radius, tp.s().pane);
         painter.circle_filled(center, radius * 0.45, tp.accent);
         painter.circle_stroke(
             center,
