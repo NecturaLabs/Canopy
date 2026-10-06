@@ -126,6 +126,35 @@ pub struct RequestSummary {
     pub web_url: String,
     /// Label names.
     pub labels: Vec<String>,
+    /// Where the checks and the reviews stand, when the list came with them (see [`Rollup`]);
+    /// `None` when they are not known.
+    pub rollup: Option<Rollup>,
+}
+
+/// What a reviewer scans a request list for: where the request's CI checks and reviews stand.
+///
+/// [`crate::Client::rollup`] reads it for a whole page of requests in one query; the request
+/// list itself carries neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Rollup {
+    /// The combined state of the checks on the head commit (GitHub's status check rollup,
+    /// GitLab's head pipeline); `None` when the head has none.
+    pub checks: Option<CheckState>,
+    /// The review standing; `None` when nobody has approved or asked for changes and no review
+    /// is required.
+    pub review: Option<ReviewDecision>,
+}
+
+/// Where a request's reviews stand, as a whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReviewDecision {
+    /// Approved (GitHub: the review decision, or an approval when no review is required;
+    /// GitLab: at least one approval).
+    Approved,
+    /// A reviewer asked for changes (GitHub only).
+    ChangesRequested,
+    /// The branch rules require a review that has not been given yet (GitHub only).
+    Required,
 }
 
 /// A CI check on the request's head commit.

@@ -424,6 +424,8 @@ fn run(
         }
         jobs
     };
+    // Until when (unix seconds) the list goes without checks and reviews after a rate limit.
+    let mut rollup_paused = 0;
     while let Ok(job) = jobs.recv() {
         let label = job.label(forge.kind);
         tracing::debug!(host = %forge.host, job = %label, "hosting job");
@@ -437,9 +439,21 @@ fn run(
                     emit(HostEvent::Avatar { oid, email, result });
                 }
             }
-            HostJob::List(filter) => {
-                emit(HostEvent::List(filter, client.list(filter, 100).map_err(s)));
-            }
+            HostJob::List(filter) => match client.list(filter, 100) {
+                Ok(mut list) => {
+                    // The list shows at once; its checks and reviews follow in a second event
+                    // for the same filter, which replaces it (the selection stays).
+                    emit(HostEvent::List(filter, Ok(list.clone())));
+                    let now = chrono::Utc::now().timestamp();
+                    let has_token = client.has_token();
+                    if add_rollup(&mut list, has_token, &mut rollup_paused, now, |n| {
+                        client.rollup(n)
+                    }) {
+                        emit(HostEvent::List(filter, Ok(list)));
+                    }
+                }
+                Err(e) => emit(HostEvent::List(filter, Err(s(e)))),
+            },
             HostJob::Details(n) => emit(HostEvent::Details(
                 n,
                 Box::new(client.details(n).map_err(s)),
@@ -469,6 +483,48 @@ fn run(
                 number: Some(n),
                 result: client.approve(n).map_err(s),
             }),
+        }
+    }
+}
+
+/// How long the list goes without checks and reviews after a rate limit that named no reset.
+const ROLLUP_PAUSE_SECS: i64 = 60;
+
+/// Gives each row of a freshly loaded `list` its checks and reviews ([`Client::rollup`]: one
+/// query for the page), only when a token is set and no rate limit asked to wait (`paused`, unix
+/// seconds, moved to the limit's reset when one answers). Without them a row shows what the
+/// request's details said when they were opened, as before. A failure is logged like any skipped
+/// part of a request and leaves the rows as they are. Returns whether any row got a rollup.
+fn add_rollup(
+    list: &mut [RequestSummary],
+    has_token: bool,
+    paused: &mut i64,
+    now: i64,
+    fetch: impl FnOnce(&[u64]) -> canopy_hosting::Result<Vec<(u64, canopy_hosting::Rollup)>>,
+) -> bool {
+    if !has_token || list.is_empty() || now < *paused {
+        return false;
+    }
+    let numbers: Vec<u64> = list.iter().map(|r| r.number).collect();
+    match fetch(&numbers) {
+        Ok(found) => {
+            let mut added = false;
+            for (number, rollup) in found {
+                if let Some(row) = list.iter_mut().find(|r| r.number == number) {
+                    row.rollup = Some(rollup);
+                    added = true;
+                }
+            }
+            added
+        }
+        Err(e) => {
+            if let canopy_hosting::Error::RateLimited { reset } = &e {
+                *paused = reset
+                    .filter(|&r| r > now)
+                    .unwrap_or(now + ROLLUP_PAUSE_SECS);
+            }
+            tracing::warn!(error = %e, "skipping the checks and reviews of the request list");
+            false
         }
     }
 }
@@ -562,6 +618,114 @@ mod tests {
         assert_eq!(reloaded.get_for(&other_port), None);
         assert_eq!(reloaded.get_for(&github), Some("ghp_a"));
         Ok(())
+    }
+
+    fn rows(numbers: &[u64]) -> Vec<RequestSummary> {
+        numbers
+            .iter()
+            .map(|&number| RequestSummary {
+                number,
+                title: format!("PR {number}"),
+                author: "ann".into(),
+                state: canopy_hosting::RequestState::Open,
+                draft: false,
+                source_branch: "topic".into(),
+                target_branch: "main".into(),
+                from_fork: false,
+                created_at: 0,
+                updated_at: 0,
+                web_url: String::new(),
+                labels: Vec::new(),
+                rollup: None,
+            })
+            .collect()
+    }
+
+    const PASSING: canopy_hosting::Rollup = canopy_hosting::Rollup {
+        checks: Some(canopy_hosting::CheckState::Success),
+        review: Some(canopy_hosting::ReviewDecision::Approved),
+    };
+
+    #[test]
+    fn a_list_gets_its_rollup_in_one_query_only_with_a_token() {
+        let mut list = rows(&[3, 2, 1]);
+        let mut paused = 0;
+        let mut asked = Vec::new();
+        let added = add_rollup(&mut list, false, &mut paused, 1_000, |n| {
+            asked.push(n.to_vec());
+            Ok(vec![(1, PASSING)])
+        });
+        assert!(!added && asked.is_empty(), "no token, no query");
+        let added = add_rollup(&mut list, true, &mut paused, 1_000, |n| {
+            asked.push(n.to_vec());
+            Ok(vec![(1, PASSING), (3, canopy_hosting::Rollup::default())])
+        });
+        assert!(added);
+        assert_eq!(asked, [vec![3, 2, 1]], "one query for the whole page");
+        let got: Vec<_> = list.iter().map(|r| r.rollup).collect();
+        assert_eq!(
+            got,
+            [Some(canopy_hosting::Rollup::default()), None, Some(PASSING)],
+            "a request the query did not answer keeps no rollup"
+        );
+        let mut empty = rows(&[]);
+        assert!(!add_rollup(&mut empty, true, &mut paused, 1_000, |_| {
+            panic!("an empty list needs no query")
+        }));
+        // Answers for none of the rows add nothing, so the list is not sent again.
+        let mut unanswered = rows(&[5]);
+        assert!(!add_rollup(
+            &mut unanswered,
+            true,
+            &mut paused,
+            1_000,
+            |_| { Ok(vec![(6, PASSING)]) }
+        ));
+    }
+
+    #[test]
+    fn a_rate_limited_rollup_waits_for_the_reset() {
+        let mut list = rows(&[1]);
+        let mut paused = 0;
+        let limited = |reset| {
+            move |_: &[u64]| -> canopy_hosting::Result<Vec<(u64, canopy_hosting::Rollup)>> {
+                Err(canopy_hosting::Error::RateLimited { reset })
+            }
+        };
+        assert!(!add_rollup(
+            &mut list,
+            true,
+            &mut paused,
+            1_000,
+            limited(Some(1_900))
+        ));
+        assert_eq!(paused, 1_900);
+        assert_eq!(list[0].rollup, None, "the rows stay as they were");
+        let mut calls = 0;
+        add_rollup(&mut list, true, &mut paused, 1_899, |_| {
+            calls += 1;
+            Ok(vec![(1, PASSING)])
+        });
+        assert_eq!(calls, 0, "nothing is sent before the reset");
+        add_rollup(&mut list, true, &mut paused, 1_900, |_| {
+            calls += 1;
+            Ok(vec![(1, PASSING)])
+        });
+        assert_eq!((calls, list[0].rollup), (1, Some(PASSING)));
+        // No reset named (or one already past): a minute's pause.
+        add_rollup(&mut list, true, &mut paused, 2_000, limited(None));
+        assert_eq!(paused, 2_000 + ROLLUP_PAUSE_SECS);
+        add_rollup(&mut list, true, &mut paused, 3_000, limited(Some(10)));
+        assert_eq!(paused, 3_000 + ROLLUP_PAUSE_SECS);
+        // Any other failure sends again with the next list.
+        let mut other = 0;
+        for _ in 0..2 {
+            add_rollup(&mut list, true, &mut paused, 4_000, |_| {
+                other += 1;
+                Err(canopy_hosting::Error::Network("refused".into()))
+            });
+        }
+        assert_eq!(other, 2);
     }
 
     #[test]

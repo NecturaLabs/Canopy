@@ -20,6 +20,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Longest server message kept from a non-JSON error body.
 const MAX_MESSAGE: usize = 300;
+/// Largest API response body read (ureq's own default for a whole-body read, stated here so
+/// every request, the GraphQL query included, visibly shares it).
+const MAX_BODY: u64 = 10 * 1024 * 1024;
 
 /// The running build, announced in the `User-Agent` of every request.
 static BUILD: OnceLock<String> = OnceLock::new();
@@ -190,6 +193,19 @@ impl Http {
             Method::Put => self.send_with_body(self.agent.put(&url), payload.as_deref()),
             Method::Patch => self.send_with_body(self.agent.patch(&url), payload.as_deref()),
         };
+        self.receive(method, path, started, result)
+            .map(|(_, bytes)| bytes)
+    }
+
+    /// Reads the response to `method path`, sent at `started`: the headers and body of a 2xx
+    /// response, or the mapped error. Logs method, path, status and duration, never a body.
+    fn receive(
+        &self,
+        method: Method,
+        path: &str,
+        started: std::time::Instant,
+        result: Result<Response<Body>, ureq::Error>,
+    ) -> Result<(HeaderMap, Vec<u8>)> {
         let mut response = result.map_err(|e| {
             let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             tracing::warn!(method = method.as_str(), path, ms, error = %e, "hosting request failed");
@@ -206,15 +222,94 @@ impl Http {
         tracing::debug!(method = method.as_str(), path, status, ms, rate_limit_remaining = ?remaining, "hosting request");
         let bytes = response
             .body_mut()
+            .with_config()
+            .limit(MAX_BODY)
             .read_to_vec()
             .map_err(|e| Error::Network(e.to_string()))?;
         if (200..300).contains(&status) {
-            Ok(bytes)
+            Ok((response.headers().clone(), bytes))
         } else {
             let err = map_status(status, response.headers(), &bytes, self.kind);
             tracing::warn!(method = method.as_str(), path, status, ms, error = %err, "hosting request rejected");
             Err(err)
         }
+    }
+
+    /// The GraphQL endpoint on the API's own host: `/graphql` beside a root API
+    /// (`https://api.github.com`), `/api/graphql` in place of a versioned REST root
+    /// (`https://gitlab.example.com/api/v4`, GitHub Enterprise's `/api/v3`). Returns the full URL
+    /// and its path from the host's root, which is all a log line names.
+    fn graphql_endpoint(&self) -> (String, &'static str) {
+        let versioned = self
+            .base
+            .strip_suffix("/api/v4")
+            .or_else(|| self.base.strip_suffix("/api/v3"));
+        let (root, path) = match versioned {
+            Some(root) => (root, "/api/graphql"),
+            None => (self.base.as_str(), "/graphql"),
+        };
+        (format!("{root}{path}"), path)
+    }
+
+    /// Sends one GraphQL `query` with `variables` to the API's GraphQL endpoint on the same host
+    /// ([`Self::graphql_endpoint`]) and returns the response's `data`.
+    ///
+    /// The request carries the same `User-Agent` and token as every other, follows no redirect,
+    /// reads the body with the same limit as [`Self::json`] and logs the same fields (method,
+    /// path, status, duration). A failed status maps as for any request ([`map_status`]). In a
+    /// successful response, errors that come with no requests left, a `retry-after`, or a
+    /// message or type saying a rate limit was hit become [`Error::RateLimited`]; other errors
+    /// fail the call only when no `data` came back (GitHub answers a missing pull request with
+    /// an error beside the rest of the data).
+    pub(crate) fn graphql<T: DeserializeOwned>(&self, query: &str, variables: &Value) -> Result<T> {
+        let (url, path) = self.graphql_endpoint();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "query": query,
+            "variables": variables,
+        }))
+        .map_err(|e| Error::Parse(e.to_string()))?;
+        let mut req = self
+            .agent
+            .post(&url)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json");
+        if let Some(token) = &self.token {
+            req = req.header("Authorization", format!("Bearer {token}"));
+        }
+        let started = std::time::Instant::now();
+        let result = req.config().max_redirects(0).build().send(&*payload);
+        let (headers, bytes) = self.receive(Method::Post, path, started, result)?;
+        let envelope: GraphqlEnvelope<T> = parse(&bytes, "GraphQL response")?;
+        // GitHub answers an exhausted GraphQL quota with 200, an error and no requests left, and
+        // a secondary limit with 200 or 403, an error saying so and perhaps `retry-after`.
+        let limited = !envelope.errors.is_empty()
+            && (header_i64(&headers, "x-ratelimit-remaining") == Some(0)
+                || headers.contains_key("retry-after")
+                || envelope.errors.iter().any(|e| {
+                    e.kind.as_deref() == Some("RATE_LIMITED")
+                        || e.message.to_ascii_lowercase().contains("rate limit")
+                }));
+        if limited {
+            return Err(Error::RateLimited {
+                reset: rate_limit_reset(&headers),
+            });
+        }
+        envelope.data.ok_or_else(|| {
+            let messages: Vec<&str> = envelope
+                .errors
+                .iter()
+                .map(|e| e.message.trim())
+                .filter(|m| !m.is_empty())
+                .collect();
+            Error::Api {
+                status: 200,
+                message: if messages.is_empty() {
+                    "The GraphQL response carried no data".to_owned()
+                } else {
+                    shorten(&messages.join("; "))
+                },
+            }
+        })
     }
 
     fn send_with_body(
@@ -283,6 +378,23 @@ pub fn is_loopback_base(url: &str) -> bool {
 
 pub(crate) fn parse<T: DeserializeOwned>(bytes: &[u8], what: &str) -> Result<T> {
     serde_json::from_slice(bytes).map_err(|e| Error::Parse(format!("{what}: {e}")))
+}
+
+/// A GraphQL response: `data`, `errors`, or both.
+#[derive(serde::Deserialize)]
+struct GraphqlEnvelope<T> {
+    data: Option<T>,
+    #[serde(default)]
+    errors: Vec<GraphqlError>,
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(default)]
+struct GraphqlError {
+    message: String,
+    /// GitHub's error type, such as `RATE_LIMITED` or `NOT_FOUND`.
+    #[serde(rename = "type")]
+    kind: Option<String>,
 }
 
 fn header_i64(headers: &HeaderMap, name: &str) -> Option<i64> {
@@ -436,6 +548,49 @@ mod tests {
         assert_eq!(encode("group/sub/project"), "group%2Fsub%2Fproject");
         assert_eq!(encode("a.b_c-d~e"), "a.b_c-d~e");
         assert_eq!(encode("x y+z"), "x%20y%2Bz");
+    }
+
+    #[test]
+    fn graphql_lives_on_the_api_host() {
+        let endpoint = |kind, base: &str| Http::new(kind, base, None).graphql_endpoint();
+        assert_eq!(
+            endpoint(ForgeKind::GitHub, "https://api.github.com"),
+            ("https://api.github.com/graphql".to_owned(), "/graphql")
+        );
+        assert_eq!(
+            endpoint(ForgeKind::GitHub, "https://ghe.corp/api/v3/"),
+            ("https://ghe.corp/api/graphql".to_owned(), "/api/graphql")
+        );
+        assert_eq!(
+            endpoint(ForgeKind::GitLab, "https://gitlab.corp:8443/api/v4"),
+            (
+                "https://gitlab.corp:8443/api/graphql".to_owned(),
+                "/api/graphql"
+            )
+        );
+        assert_eq!(
+            endpoint(ForgeKind::GitLab, "http://127.0.0.1:4000"),
+            ("http://127.0.0.1:4000/graphql".to_owned(), "/graphql")
+        );
+        // Whatever the root, the endpoint keeps its scheme, host and port: only the path after
+        // the authority changes, and nothing but the API root goes into it.
+        for (kind, base) in [
+            (ForgeKind::GitHub, "https://api.github.com"),
+            (ForgeKind::GitLab, "https://gitlab.com/api/v4"),
+            (ForgeKind::GitLab, "https://gitlab.corp:8443/api/v4"),
+            (ForgeKind::GitLab, "https://gitlab.corp/sub/api/v4"),
+            (ForgeKind::GitHub, "https://ghe.corp/api/v3"),
+            (ForgeKind::GitLab, "https://evil.example/api/v4/api/v4"),
+        ] {
+            let (url, _) = endpoint(kind, base);
+            // `scheme://host:port`: everything before the third `/`.
+            let authority = |u: &str| u.splitn(4, '/').take(3).collect::<Vec<_>>().join("/");
+            assert_eq!(authority(&url), authority(base), "{base} -> {url}");
+            assert!(
+                url.starts_with(base.trim_end_matches("/api/v4").trim_end_matches("/api/v3")),
+                "{base} -> {url}"
+            );
+        }
     }
 
     #[test]

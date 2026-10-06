@@ -18,7 +18,7 @@ use std::sync::{Arc, OnceLock};
 use canopy_core::forge::{Forge, ForgeKind};
 use canopy_hosting::{
     Check, CheckState, Comment, MergeMethod, RequestDetails, RequestState, RequestSummary, Review,
-    StateFilter,
+    ReviewDecision, Rollup, StateFilter,
 };
 
 use crate::hosting::{HostWorker, TokenSource};
@@ -167,22 +167,6 @@ impl Scenario {
         tab.forges = vec![("origin".to_owned(), forge.clone())];
         tab.host = Some(HostWorker::offline(forge, ctx.clone()));
         self.fill(tab, now);
-        self.seed_signals(ctx, tab, now);
-    }
-
-    /// Lets the list rows show every request's checks and reviews, as they do in a session where
-    /// the reviewer has already opened each request (the list API sends neither). The request
-    /// whose details are still loading or failed has not been seen yet.
-    fn seed_signals(self, ctx: &egui::Context, tab: &RepoTab, now: i64) {
-        let unseen = matches!(self.scene, Scene::DetailsLoading | Scene::DetailsError);
-        for row in ROWS {
-            if unseen && row.number == BUSY_NUMBER {
-                continue;
-            }
-            if let Some(d) = details(self.kind, row.number, now) {
-                crate::views::requests::remember_signals(ctx, tab, &d);
-            }
-        }
     }
 
     /// Writes the scene into the tab's request state.
@@ -733,7 +717,32 @@ fn summary(kind: ForgeKind, row: &Row, now: i64) -> RequestSummary {
         updated_at: row.updated.at(now),
         web_url: path,
         labels: row.labels.iter().map(|l| (*l).to_owned()).collect(),
+        rollup: Some(rollup(kind, row)),
     }
+}
+
+/// What the list's rollup says about `row`, as with a token: the combined check state and the
+/// review standing. GitLab reports approvals only; GitHub also asks for a review on an open
+/// request nobody has reviewed (as under branch rules that require one).
+fn rollup(kind: ForgeKind, row: &Row) -> Rollup {
+    let checks = match row.ci {
+        Ci::None => None,
+        Ci::Passing => Some(CheckState::Success),
+        Ci::Failing => Some(CheckState::Failure),
+        Ci::Running | Ci::Mixed => Some(CheckState::Pending),
+    };
+    let said = |verdict: &str| row.reviews.iter().any(|(_, v)| *v == verdict);
+    let github = kind == ForgeKind::GitHub;
+    let review = if github && said(CHANGES) {
+        Some(ReviewDecision::ChangesRequested)
+    } else if said(APPROVED) {
+        Some(ReviewDecision::Approved)
+    } else if github && row.state == RequestState::Open && !row.draft {
+        Some(ReviewDecision::Required)
+    } else {
+        None
+    };
+    Rollup { checks, review }
 }
 
 /// The list rows `filter` shows, as the provider would return them.
@@ -874,6 +883,35 @@ mod tests {
             closed.iter().any(|r| r.state == RequestState::Merged)
                 && closed.iter().any(|r| r.state == RequestState::Closed)
         );
+    }
+
+    /// The list comes with every row's checks and review, as with a token, in each state a row
+    /// can show; GitLab only ever reports approvals.
+    #[test]
+    fn the_list_carries_its_rollup() {
+        let all = rows(StateFilter::All);
+        assert!(all.iter().all(|r| r.rollup.is_some()));
+        let reviews: Vec<_> = all.iter().filter_map(|r| r.rollup?.review).collect();
+        for decision in [
+            ReviewDecision::Approved,
+            ReviewDecision::ChangesRequested,
+            ReviewDecision::Required,
+        ] {
+            assert!(reviews.contains(&decision), "{decision:?} in {reviews:?}");
+        }
+        let checks: Vec<_> = all.iter().filter_map(|r| r.rollup?.checks).collect();
+        for state in [
+            CheckState::Success,
+            CheckState::Failure,
+            CheckState::Pending,
+        ] {
+            assert!(checks.contains(&state), "{state:?} in {checks:?}");
+        }
+        let gitlab = summaries(ForgeKind::GitLab, StateFilter::All, NOW);
+        assert!(gitlab.iter().all(|r| {
+            r.rollup
+                .is_some_and(|x| matches!(x.review, None | Some(ReviewDecision::Approved)))
+        }));
     }
 
     #[test]

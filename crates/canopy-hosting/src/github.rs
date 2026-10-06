@@ -1,14 +1,17 @@
 //! GitHub REST API v3 (`https://api.github.com`): pull requests.
 
+use std::collections::HashMap;
+use std::fmt::Write as _;
+
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::client::{PER_PAGE, optional, unix};
-use crate::error::{Result, map_head_conflict};
+use crate::error::{Error, Result, map_head_conflict};
 use crate::http::{Http, Method, encode};
 use crate::model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
-    RequestSummary, Review, StateFilter,
+    RequestSummary, Review, ReviewDecision, Rollup, StateFilter,
 };
 
 /// `/repos/owner/repo`.
@@ -102,6 +105,7 @@ impl Pull {
             updated_at: unix(self.updated_at.as_deref()),
             web_url: self.html_url.clone(),
             labels: self.labels.iter().map(|l| l.name.clone()).collect(),
+            rollup: None,
         }
     }
 }
@@ -233,6 +237,109 @@ pub(crate) fn list(
     }
     out.truncate(limit);
     Ok(out)
+}
+
+/// What [`rollup`] reads for each pull request.
+const ROLLUP_FRAGMENT: &str = "fragment Rollup on PullRequest { number reviewDecision \
+     statusCheckRollup { state } latestOpinionatedReviews(first: 50) { nodes { state } } }";
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RollupData {
+    /// Pull requests by alias (`p<number>`); a number the repository does not have is `null`.
+    repository: Option<HashMap<String, Option<PullRollup>>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct PullRollup {
+    number: u64,
+    review_decision: Option<String>,
+    status_check_rollup: Option<StateJson>,
+    latest_opinionated_reviews: Option<ReviewNodes>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct StateJson {
+    state: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ReviewNodes {
+    nodes: Vec<Option<StateJson>>,
+}
+
+/// The review standing: GitHub's review decision where the branch rules make one, else the
+/// reviewers' latest verdicts, where one change request outweighs any number of approvals.
+fn review_decision(decision: Option<&str>, opinions: &[&str]) -> Option<ReviewDecision> {
+    match decision {
+        Some("APPROVED") => Some(ReviewDecision::Approved),
+        Some("CHANGES_REQUESTED") => Some(ReviewDecision::ChangesRequested),
+        Some("REVIEW_REQUIRED") => Some(ReviewDecision::Required),
+        _ if opinions.contains(&"CHANGES_REQUESTED") => Some(ReviewDecision::ChangesRequested),
+        _ if opinions.contains(&"APPROVED") => Some(ReviewDecision::Approved),
+        _ => None,
+    }
+}
+
+impl PullRollup {
+    fn rollup(&self) -> Rollup {
+        let opinions: Vec<&str> = self
+            .latest_opinionated_reviews
+            .iter()
+            .flat_map(|r| r.nodes.iter().flatten())
+            .map(|n| n.state.as_str())
+            .collect();
+        Rollup {
+            // SUCCESS, FAILURE, ERROR, PENDING or EXPECTED, as a commit status's state.
+            checks: self
+                .status_check_rollup
+                .as_ref()
+                .map(|s| status_state(&s.state.to_ascii_lowercase())),
+            review: review_decision(self.review_decision.as_deref(), &opinions),
+        }
+    }
+}
+
+/// The checks and review standing of pull requests `numbers` (at most [`PER_PAGE`], the first
+/// ones taken), in one GraphQL query to the same host: each pull request's status check rollup
+/// state, review decision and latest reviews. A number the repository does not have is left
+/// out.
+pub(crate) fn rollup(http: &Http, path: &str, numbers: &[u64]) -> Result<Vec<(u64, Rollup)>> {
+    let Some((owner, name)) = path.split_once('/') else {
+        return Err(Error::NotFound(format!(
+            "not an owner/name repository: {path}"
+        )));
+    };
+    let mut wanted: Vec<u64> = Vec::new();
+    // GraphQL's Int is 32 bits; no pull request number is larger.
+    for &n in numbers.iter().filter(|&&n| i32::try_from(n).is_ok()) {
+        if !wanted.contains(&n) && wanted.len() < PER_PAGE {
+            wanted.push(n);
+        }
+    }
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut query = String::from(
+        "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {",
+    );
+    for n in &wanted {
+        let _ = write!(query, " p{n}: pullRequest(number: {n}) {{ ...Rollup }}");
+    }
+    query.push_str(" } } ");
+    query.push_str(ROLLUP_FRAGMENT);
+    let data: RollupData = http.graphql(&query, &json!({ "owner": owner, "name": name }))?;
+    let found = data.repository.unwrap_or_default();
+    Ok(wanted
+        .into_iter()
+        .filter_map(|n| {
+            let pull = found.get(&format!("p{n}"))?.as_ref()?;
+            (pull.number == n).then(|| (n, pull.rollup()))
+        })
+        .collect())
 }
 
 pub(crate) fn details(http: &Http, repo: &str, number: u64) -> Result<RequestDetails> {
@@ -430,6 +537,66 @@ mod tests {
         );
         assert_eq!(status_state("error"), CheckState::Failure);
         assert_eq!(status_state("pending"), CheckState::Pending);
+    }
+
+    #[test]
+    fn review_decisions() {
+        use ReviewDecision::{Approved, ChangesRequested, Required};
+        assert_eq!(review_decision(Some("APPROVED"), &[]), Some(Approved));
+        assert_eq!(
+            review_decision(Some("CHANGES_REQUESTED"), &["APPROVED"]),
+            Some(ChangesRequested)
+        );
+        // The branch rules speak first: an approval that is not enough still leaves it required.
+        assert_eq!(
+            review_decision(Some("REVIEW_REQUIRED"), &["APPROVED"]),
+            Some(Required)
+        );
+        // Without rules there is no decision; the reviewers' latest verdicts stand in for it.
+        assert_eq!(
+            review_decision(None, &["APPROVED", "CHANGES_REQUESTED"]),
+            Some(ChangesRequested)
+        );
+        assert_eq!(
+            review_decision(None, &["COMMENTED", "APPROVED"]),
+            Some(Approved)
+        );
+        assert_eq!(review_decision(None, &["COMMENTED", "DISMISSED"]), None);
+        assert_eq!(review_decision(Some("SOMETHING_NEW"), &[]), None);
+    }
+
+    #[test]
+    fn rollup_states() {
+        let pull = |state: Option<&str>| PullRollup {
+            number: 1,
+            status_check_rollup: state.map(|s| StateJson { state: s.into() }),
+            ..PullRollup::default()
+        };
+        let checks = |state| pull(state).rollup().checks;
+        assert_eq!(checks(Some("SUCCESS")), Some(CheckState::Success));
+        assert_eq!(checks(Some("FAILURE")), Some(CheckState::Failure));
+        assert_eq!(checks(Some("ERROR")), Some(CheckState::Failure));
+        assert_eq!(checks(Some("PENDING")), Some(CheckState::Pending));
+        assert_eq!(checks(Some("EXPECTED")), Some(CheckState::Pending));
+        assert_eq!(checks(None), None, "a head without checks has no state");
+        let reviewed = PullRollup {
+            latest_opinionated_reviews: Some(ReviewNodes {
+                nodes: vec![
+                    None,
+                    Some(StateJson {
+                        state: "APPROVED".into(),
+                    }),
+                ],
+            }),
+            ..pull(None)
+        };
+        assert_eq!(
+            reviewed.rollup(),
+            Rollup {
+                checks: None,
+                review: Some(ReviewDecision::Approved)
+            }
+        );
     }
 
     #[test]

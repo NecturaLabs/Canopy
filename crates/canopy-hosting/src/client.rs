@@ -146,6 +146,22 @@ impl Client {
         }
     }
 
+    /// Where the checks and reviews of requests `numbers` stand, as `(number, rollup)` pairs for
+    /// the requests the project has, in one GraphQL query to the GraphQL endpoint on the API's
+    /// own host (`api.github.com/graphql`, `<host>/api/graphql`). It sends the project's path and
+    /// the numbers (the first 100), with the token like every other request, and follows no
+    /// redirect.
+    ///
+    /// GitHub: each pull request's status check rollup state, review decision and reviewers'
+    /// latest verdicts (GitHub's GraphQL API needs a token). GitLab: each merge request's head
+    /// pipeline status and whether it has an approval.
+    pub fn rollup(&self, numbers: &[u64]) -> Result<Vec<(u64, crate::model::Rollup)>> {
+        match self.kind {
+            ForgeKind::GitHub => github::rollup(&self.http, &self.forge.path, numbers),
+            ForgeKind::GitLab => gitlab::rollup(&self.http, &self.forge.path, numbers),
+        }
+    }
+
     /// One request with its description, reviews, checks and conversation (first 100 of each).
     /// Only the request itself failing is an error; reviews, comments or checks that cannot be
     /// read (for example a token without the checks scope) are logged and left empty.
