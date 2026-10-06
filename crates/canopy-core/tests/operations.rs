@@ -13,8 +13,8 @@ use canopy_core::identity::{self, Scope, Source};
 use canopy_core::ops::{HunkAction, MergeMode, ResetMode};
 use canopy_core::{
     ChangeKind, Choice, ConfigScope, ConflictFile, ConflictKind, ConflictRegion, ConflictStyle,
-    DiffSource, GitOptions, LineKind, MissingObjects, PullStrategy, RefKind, Repo, RepoState, Side,
-    Whitespace,
+    DiffSource, GitOptions, LineKind, MissingObjects, PullStrategy, PushDefault, RefKind, Repo,
+    RepoState, Side, Whitespace,
 };
 
 #[expect(
@@ -2989,8 +2989,12 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
         }
     }
 
-    // A force push sends the current branch alone, even under push.default=matching.
-    {
+    // A force push sends the current branch alone, even under push.default=matching or a push
+    // refspec for every branch.
+    for (key, value) in [
+        ("push.default", "matching"),
+        ("remote.origin.push", "refs/heads/*:refs/heads/*"),
+    ] {
         let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
         follow(&copy);
         let p = copy.workdir();
@@ -3002,7 +3006,7 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
         git(up_dir.path(), &["branch", "-q", "-f", "main"]);
         let remote_main = git(up_dir.path(), &["rev-parse", "main"]);
         copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
-        git(p, &["config", "push.default", "matching"]);
+        git(p, &["config", key, value]);
         git(
             p,
             &[
@@ -3020,12 +3024,50 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
         assert_eq!(
             git(up_dir.path(), &["rev-parse", "main"]),
             remote_main,
-            "main on the remote was not rewound"
+            "{key}: main on the remote was not rewound"
         );
         assert_eq!(
             git(up_dir.path(), &["rev-parse", "feature"]),
             git(p, &["rev-parse", "feature"])
         );
+    }
+}
+
+/// A force push goes where a plain push of the branch would: to its upstream of another name
+/// under `upstream`, to the branch of the same name under `current`; `simple` refuses, as git
+/// does.
+#[test]
+fn a_force_push_goes_where_a_push_would() {
+    for (mode, dest) in [
+        (PushDefault::Upstream, Some("main")),
+        (PushDefault::Current, Some("topic")),
+        (PushDefault::Simple, None),
+    ] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        copy.set_options(GitOptions {
+            follow_config: false,
+            push_default: mode,
+            ..GitOptions::default()
+        });
+        let p = copy.workdir();
+        git(up_dir.path(), &["checkout", "-q", "--detach"]);
+        git(
+            p,
+            &["checkout", "-q", "-b", "topic", "--track", "origin/main"],
+        );
+        fs::write(p.join("a.txt"), "forced\n").expect("write");
+        git(p, &["commit", "-q", "-am", "feat: forced"]);
+        let pushed = copy.push(true, |_| {});
+        let ours = git(p, &["rev-parse", "HEAD"]);
+        match dest {
+            Some(dest) => {
+                pushed.expect("force push");
+                assert_eq!(git(up_dir.path(), &["rev-parse", dest]), ours, "{mode:?}");
+            }
+            None => {
+                pushed.unwrap_err();
+            }
+        }
     }
 }
 

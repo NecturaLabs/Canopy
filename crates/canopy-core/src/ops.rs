@@ -8,7 +8,7 @@ use git2::Oid;
 use crate::cli;
 use crate::diff::{DiffSource, Whitespace};
 use crate::model::{ChangeKind, FileEntry, RepoState};
-use crate::{Error, MissingObjects, Repo, Result};
+use crate::{Error, MissingObjects, PushDefault, Repo, Result};
 
 /// How far `git reset` goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -778,14 +778,19 @@ impl Repo {
             .find_branch(&branch, git2::BranchType::Local)
             .and_then(|b| b.upstream())
             .is_ok();
-        // With an upstream this is a bare push: `push.default` decides where it goes.
-        let mut args = self.push_default_override(force);
+        // With an upstream this is a bare push: `push.default` decides where it goes. A force
+        // push names its one destination, so neither `push.default=matching` nor a remote's push
+        // refspecs can force other branches too.
+        let mut args = self.push_default_override();
         args.extend(["push".to_owned(), "--progress".to_owned()]);
         args.extend(self.follow_tags_flag().map(str::to_owned));
         if force {
             args.push("--force-with-lease".to_owned());
         }
-        if !has_upstream {
+        if force && has_upstream {
+            let (remote, dest) = self.push_destination(&branch)?;
+            args.extend([remote, format!("HEAD:{dest}")]);
+        } else if !has_upstream {
             let remotes = self.git().remotes()?;
             let names: Vec<&str> = remotes.iter().flatten().flatten().collect();
             let remote = if names.contains(&"origin") {
@@ -805,6 +810,47 @@ impl Repo {
         }
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
+    /// Where a push without a destination sends `branch`, as `(remote, ref on the remote)`,
+    /// worked out as git does: `branch.<name>.pushRemote`, `remote.pushDefault` or the upstream's
+    /// remote; then the remote's push refspec for the branch, else `push.default`
+    /// ([`Repo::push_default`]). Refuses where git would.
+    fn push_destination(&self, branch: &str) -> Result<(String, String)> {
+        let upstream_remote = self.config_value(&format!("branch.{branch}.remote"));
+        let remote = self
+            .config_value(&format!("branch.{branch}.pushRemote"))
+            .or_else(|| self.config_value("remote.pushDefault"))
+            .or_else(|| upstream_remote.clone())
+            .filter(|r| !r.is_empty() && !r.starts_with('-'))
+            .ok_or_else(|| Error::invalid(format!("No remote to push {branch} to.")))?;
+        let local = format!("refs/heads/{branch}");
+        let out = cli::run(
+            self.workdir(),
+            &["for-each-ref", "--format=%(push:remoteref)", "--", &local],
+        )?;
+        let mapped = out.trim();
+        if !mapped.is_empty() {
+            return Ok((remote, mapped.to_owned()));
+        }
+        let merge = self.config_value(&format!("branch.{branch}.merge"));
+        let triangular = upstream_remote.as_deref() != Some(remote.as_str());
+        let mode = self.push_default();
+        let dest = match mode {
+            PushDefault::Current => Some(local),
+            PushDefault::Simple if triangular => Some(local),
+            PushDefault::Upstream if triangular => None,
+            PushDefault::Upstream => merge,
+            PushDefault::Simple => merge.filter(|m| *m == local),
+        };
+        let dest = dest.ok_or_else(|| {
+            Error::invalid(format!(
+                "Git cannot tell where to push {branch} to {remote} with push.default={}: name \
+                 the branch in a terminal, or change Settings → Git → Push to.",
+                mode.value()
+            ))
+        })?;
+        Ok((remote, dest))
     }
 
     /// Publishes the local branch `name` (checked out or not) to `remote` and makes the remote

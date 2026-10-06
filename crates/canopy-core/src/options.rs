@@ -204,26 +204,28 @@ impl Repo {
         })
     }
 
-    /// The `-c push.default=…` override for a push without a destination. A `force` push follows
-    /// the configuration only where it sends the current branch alone (`simple`, `upstream`,
-    /// `current`): `matching` would force every branch the remote also has.
-    pub(crate) fn push_default_override(&self, force: bool) -> Vec<String> {
-        let decides = if force {
-            self.configured_value("push.default").is_some_and(|v| {
-                PushDefault::ALL
-                    .iter()
-                    .any(|d| v.eq_ignore_ascii_case(d.value()))
-            })
-        } else {
-            self.config_decides(r"^push\.default$")
-        };
-        if decides {
+    /// The `-c push.default=…` override for a push without a destination.
+    pub(crate) fn push_default_override(&self) -> Vec<String> {
+        if self.config_decides(r"^push\.default$") {
             return Vec::new();
         }
         vec![
             "-c".to_owned(),
             format!("push.default={}", self.options().push_default.value()),
         ]
+    }
+
+    /// Where a push without a destination sends the current branch: the configuration's
+    /// `push.default` while Canopy follows it and it names one branch (`simple`, `upstream` or
+    /// `current`), else Canopy's choice.
+    pub(crate) fn push_default(&self) -> PushDefault {
+        self.configured_value("push.default")
+            .and_then(|v| {
+                PushDefault::ALL
+                    .into_iter()
+                    .find(|d| v.eq_ignore_ascii_case(d.value()))
+            })
+            .unwrap_or(self.options().push_default)
     }
 
     pub(crate) fn cleanup_flag(&self) -> Option<String> {
@@ -233,9 +235,14 @@ impl Repo {
 
     /// The value the git configuration sets for `key`, while Canopy follows it.
     fn configured_value(&self, key: &str) -> Option<String> {
-        if !self.options().follow_config {
-            return None;
-        }
+        self.options()
+            .follow_config
+            .then(|| self.config_value(key))
+            .flatten()
+    }
+
+    /// The value the git configuration sets for `key`, as git reads it.
+    pub(crate) fn config_value(&self, key: &str) -> Option<String> {
         let out = cli::run_unchecked(self.workdir(), &["config", "--get", key]).ok()?;
         (out.code == Some(0)).then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
     }
