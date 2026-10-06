@@ -456,7 +456,9 @@ pub struct Worker {
     /// Events from the thread.
     pub events: Receiver<Event>,
     /// Dropping this stops the file watcher's thread.
-    _stop_watcher: Sender<()>,
+    stop_watcher: Sender<()>,
+    /// Disconnects once the repository thread and the file watcher's have both ended.
+    ended: Receiver<()>,
 }
 
 impl Worker {
@@ -467,9 +469,14 @@ impl Worker {
         let thread_ctx = ctx.clone();
         let thread_path = path.clone();
         let failed = ev_tx.clone();
+        let (ended_tx, ended) = crossbeam_channel::bounded(0);
+        let run_ended = ended_tx.clone();
         let spawned = std::thread::Builder::new()
             .name(format!("repo:{}", path.display()))
-            .spawn(move || run(thread_path, job_rx, ev_tx, thread_ctx));
+            .spawn(move || {
+                let _ended = run_ended;
+                run(thread_path, job_rx, ev_tx, thread_ctx);
+            });
         if let Err(e) = spawned {
             // Without a thread the tab would wait for its first snapshot forever: show why.
             tracing::error!("could not start the repository thread: {e}");
@@ -479,11 +486,12 @@ impl Worker {
             ctx.request_repaint();
         }
         let (stop_watcher, stop) = crossbeam_channel::bounded(0);
-        watch(path, jobs.clone(), stop);
+        watch(path, jobs.clone(), stop, ended_tx);
         Self {
             jobs,
             events,
-            _stop_watcher: stop_watcher,
+            stop_watcher,
+            ended,
         }
     }
 
@@ -493,10 +501,12 @@ impl Worker {
         let (jobs, job_rx) = unbounded();
         let (ev_tx, events) = unbounded();
         let (stop_watcher, _) = crossbeam_channel::bounded(0);
+        let (_, ended) = crossbeam_channel::bounded(0);
         let worker = Self {
             jobs,
             events,
-            _stop_watcher: stop_watcher,
+            stop_watcher,
+            ended,
         };
         (worker, ev_tx, job_rx)
     }
@@ -504,6 +514,22 @@ impl Worker {
     /// Queues a job.
     pub fn send(&self, job: Job) {
         let _ = self.jobs.send(job);
+    }
+}
+
+impl Drop for Worker {
+    /// Stops both threads and gives them a second to end (a running operation may take longer),
+    /// so a process exiting right after, a test or the app quitting, does not tear libgit2 and
+    /// OpenSSL down while a thread is still using them.
+    fn drop(&mut self) {
+        // Dropping the senders ends the threads: the watcher's loop, then the repository
+        // thread's once the watcher's copy of the jobs sender has gone too.
+        drop(std::mem::replace(
+            &mut self.stop_watcher,
+            crossbeam_channel::bounded(0).0,
+        ));
+        drop(std::mem::replace(&mut self.jobs, unbounded().0));
+        let _ = self.ended.recv_timeout(Duration::from_secs(1));
     }
 }
 
@@ -1150,12 +1176,13 @@ fn relevant_git_path(rel: &Path) -> bool {
 /// full refresh, other changes a status refresh, both debounced; ignored files are skipped.
 /// Symbolic links are not followed. A linked worktree's or submodule's git folder (and the
 /// common folder it shares) lives outside the working tree, so it gets watches of its own. The
-/// thread ends when `stop`'s sender (held by [`Worker`]) is dropped.
-fn watch(path: PathBuf, jobs: Sender<Job>, stop: Receiver<()>) {
+/// thread ends when `stop`'s sender (held by [`Worker`]) is dropped, and drops `ended` then.
+fn watch(path: PathBuf, jobs: Sender<Job>, stop: Receiver<()>, ended: Sender<()>) {
     let spawned = std::thread::Builder::new()
         .name("watcher".into())
         .spawn(move || {
             use notify::{Config, RecursiveMode, Watcher};
+            let _ended = ended;
             let repo = match git2::Repository::open(&path) {
                 Ok(r) => r,
                 Err(e) => {
@@ -1293,7 +1320,8 @@ mod tests {
 
         let (tx, rx) = crossbeam_channel::unbounded();
         let (_stop, stop) = crossbeam_channel::bounded::<()>(0);
-        watch(linked.clone(), tx, stop);
+        let (ended, _ended) = crossbeam_channel::bounded::<()>(0);
+        watch(linked.clone(), tx, stop, ended);
         // Registering the watches happens on the watcher's thread; give it a moment.
         std::thread::sleep(Duration::from_millis(500));
         // A commit in the linked worktree changes its HEAD's branch, whose ref lives in the

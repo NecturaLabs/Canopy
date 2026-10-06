@@ -167,11 +167,6 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] `tests/safety.rs` non-UTF-8 folder test: when the filesystem refuses the name (NTFS under
       `TMPDIR`), fail with a message naming that cause instead of an `unwrap` panic.
 - [ ] Verify the one-line installers on real machines after the first stable release.
-- [ ] Tests: a `canopy` test binary that runs only a short `RepoTab::new` test (such as
-      `tab::tests::a_pull_decision_or_its_conflicts_end_the_running_pull`) often dies with
-      SIGSEGV after passing: the tab's file-watcher thread is in libcrypto while the process
-      exits. Whole-suite runs pass. Stop and join the watcher when a `RepoTab` drops (also
-      covers the app quitting mid-scan).
 - [ ] Log redaction: `canopy_core::cli::redact_url` removes credentials from the first URL in a
       text only, and it also runs on git's stderr and error text (`cli.rs` `record`, `worker.rs`),
       so `user:token@` in a second URL reaches the log; redact every URL, as
