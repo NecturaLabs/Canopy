@@ -10,7 +10,7 @@ use egui::{
     Vec2, Widget, WidgetInfo, pos2, vec2,
 };
 
-use super::button::{disabled_painter, tooltip_text, with_tooltip};
+use super::button::{tooltip_text, with_tooltip};
 use super::toggle::{claim_arrows, gallery_caption, gallery_row, remembered};
 use super::{ForceState, Interact, paint};
 use crate::ui::motion;
@@ -172,10 +172,7 @@ impl<'a, T: Numeric> Slider<'a, T> {
             let (painter, color) = if enabled {
                 (ui.painter().clone(), p.text)
             } else {
-                (
-                    super::content_painter(ui),
-                    super::disabled_text(p, theme::style()),
-                )
+                (super::content_painter(ui), p.disabled_text)
             };
             painter.galley(row.left_top(), Arc::clone(label), color);
             painter.galley(
@@ -263,7 +260,7 @@ impl<'a, T: Numeric> Slider<'a, T> {
         };
 
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let painter = super::content_painter(ui);
             let full = CornerRadius::same(theme::FULL);
             let cy = rect.center().y;
             let rail = Rect::from_x_y_ranges(
@@ -271,25 +268,46 @@ impl<'a, T: Numeric> Slider<'a, T> {
                 egui::Rangef::new(cy - m.slider_rail / 2.0, cy + m.slider_rail / 2.0),
             );
             let x = to_x(v);
-            painter.rect_filled(rail, full, s.switch_off);
+            // Disabled: the rail in `disabled_edge`, its filled part and the thumb's ring in the
+            // disabled mark, the thumb a flat `disabled_fill` (no accent, no shadow).
+            let mark = super::disabled_mark(p, s);
+            painter.rect_filled(
+                rail,
+                full,
+                if enabled {
+                    s.switch_off
+                } else {
+                    s.disabled_edge
+                },
+            );
             let filled = Rect::from_min_max(rail.min, pos2(x, rail.bottom()));
             if filled.width() > 0.0 {
-                paint::fill(&painter, filled, full, s.primary);
+                let fill = if enabled {
+                    s.primary
+                } else {
+                    theme::Fill::flat(mark)
+                };
+                paint::fill(&painter, filled, full, fill);
             }
             let thumb_r = r * (1.0 + (THUMB_GROW - 1.0) * grow);
             let thumb = Rect::from_center_size(pos2(x, cy), Vec2::splat(thumb_r * 2.0));
-            // The same white knob as the switch: its material (contact shadow, and in light
-            // themes the knob ring that keeps it apart from a pale rail).
-            paint::surface(
-                &painter,
-                thumb,
-                full,
-                p,
-                theme::style(),
-                Elevation::Knob,
-                s.knob,
-                s.knob_edge,
-            );
+            if enabled {
+                // The same white knob as the switch: its material (contact shadow, and in light
+                // themes the knob ring that keeps it apart from a pale rail).
+                paint::surface(
+                    &painter,
+                    thumb,
+                    full,
+                    p,
+                    theme::style(),
+                    Elevation::Knob,
+                    s.knob,
+                    s.knob_edge,
+                );
+            } else {
+                painter.rect_filled(thumb, full, s.disabled_fill);
+                paint::rim(&painter, thumb, full, mark);
+            }
             if st.focus > 0.0 {
                 paint::focus_ring(
                     &painter,

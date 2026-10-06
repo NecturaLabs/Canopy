@@ -258,7 +258,7 @@ fn frame(ui: &mut Ui, spec: &FrameSpec) -> Frame {
             },
         }
     } else {
-        let off = super::disabled_text(p, theme::style());
+        let off = p.disabled_text;
         RowCtx {
             rect,
             content: rect.shrink2(vec2(PAD, 0.0)),

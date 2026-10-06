@@ -611,10 +611,9 @@ impl MenuItem {
                 || (response.has_focus() && keyboard)
                 || (response.hovered() && !other_focused));
         if ui.is_rect_visible(rect) {
-            let mut painter = ui.painter().clone();
-            if !enabled && ui.is_enabled() {
-                painter.multiply_opacity(theme::DISABLED_ALPHA);
-            }
+            // A disabled item reads as unavailable in `disabled_text` at full strength (H7), with
+            // no faded danger red.
+            let painter = super::content_painter(ui);
             if highlight {
                 let ground = if self.danger {
                     p.danger_highlight()
@@ -623,10 +622,10 @@ impl MenuItem {
                 };
                 painter.rect_filled(rect, item_radius(), ground);
             }
-            let (text_color, icon_color) = if self.danger {
-                (p.danger, p.danger)
-            } else {
-                (p.text, p.text_faint)
+            let (text_color, icon_color, detail_color) = match (enabled, self.danger) {
+                (false, _) => (p.disabled_text, p.disabled_text, p.disabled_text),
+                (true, true) => (p.danger, p.danger, p.text_dim),
+                (true, false) => (p.text, p.text_faint, p.text_dim),
             };
             let mut x = rect.left() + ITEM_PAD;
             let cy = rect.center().y;
@@ -649,7 +648,7 @@ impl MenuItem {
                     painter.galley(
                         pos2(x, top + label.size().y + gap),
                         Arc::clone(d),
-                        p.text_dim,
+                        detail_color,
                     );
                 }
                 None => {
@@ -661,7 +660,9 @@ impl MenuItem {
                 }
             }
             if let Some(t) = &trailing {
-                let color = if self.checked == Some(true) && self.trailing != Trailing::Caret {
+                let color = if !enabled {
+                    p.disabled_text
+                } else if self.checked == Some(true) && self.trailing != Trailing::Caret {
                     p.accent
                 } else {
                     p.text_faint

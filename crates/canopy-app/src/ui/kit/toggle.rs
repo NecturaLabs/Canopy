@@ -3,8 +3,9 @@
 //!
 //! Each is a glyph (box, dot or track) and an optional label, one hit area for both. Checked
 //! fills crossfade and the tick, dot and switch thumb move on the spec's springs; reduced motion
-//! makes every change instant. Disabled controls paint at `DISABLED_ALPHA` and stay hoverable so
-//! their reason can show.
+//! makes every change instant. Disabled controls paint with the disabled tokens at full strength
+//! (the glyph on `disabled_fill` outlined in the disabled mark, no accent, the label in
+//! `disabled_text`) and stay hoverable so their reason can show.
 
 use std::sync::Arc;
 
@@ -15,7 +16,7 @@ use egui::{
     WidgetType, pos2, vec2,
 };
 
-use super::button::{disabled_painter, tooltip_text, with_tooltip};
+use super::button::{tooltip_text, with_tooltip};
 use super::{ForceState, Interact, anim, paint};
 use crate::ui::motion;
 use crate::ui::theme::{self, Elevation, Fill, Palette};
@@ -93,7 +94,7 @@ fn paint_label(
         if enabled {
             painter.galley(pos, Arc::clone(t), p.text);
         } else {
-            let color = super::disabled_text(p, theme::style());
+            let color = p.disabled_text;
             super::content_painter(ui).galley(pos, Arc::clone(t), color);
         }
     }
@@ -160,12 +161,34 @@ fn fill_at(painter: &Painter, rect: Rect, radius: CornerRadius, fill: Fill, opac
 }
 
 /// The unchecked box or circle: `field` fill and a 1.5 pt rim, `control_border` at rest and
-/// `text_dim` under the pointer.
-fn paint_unchecked(painter: &Painter, rect: Rect, radius: CornerRadius, p: &Palette, hover: f32) {
+/// `text_dim` under the pointer; disabled, `disabled_fill` in the disabled mark.
+fn paint_unchecked(
+    painter: &Painter,
+    rect: Rect,
+    radius: CornerRadius,
+    p: &Palette,
+    hover: f32,
+    enabled: bool,
+) {
     let s = theme::surfaces(painter.ctx());
-    painter.rect_filled(rect, radius, s.field);
-    let rim = p.control_border.lerp_to_gamma(p.text_dim, hover);
+    let (fill, rim) = if enabled {
+        (s.field, p.control_border.lerp_to_gamma(p.text_dim, hover))
+    } else {
+        (s.disabled_fill, super::disabled_mark(p, s))
+    };
+    painter.rect_filled(rect, radius, fill);
     painter.rect_stroke(rect, radius, Stroke::new(RIM, rim), StrokeKind::Inside);
+}
+
+/// The tick, dash or dot over a checked glyph: `on_accent` on the accent fill, `disabled_text`
+/// on a disabled glyph (which has no accent fill), faded in by `alpha`.
+fn mark_color(p: &Palette, enabled: bool, alpha: f32) -> Color32 {
+    let c = if enabled {
+        p.on_accent
+    } else {
+        p.disabled_text
+    };
+    c.gamma_multiply(alpha.min(1.0))
 }
 
 /// A round-capped polyline (the tick and the dash).
@@ -254,16 +277,18 @@ impl<'a> Checkbox<'a> {
         let on = checked || self.indeterminate;
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let painter = super::content_painter(ui);
             let id = response.id;
             let boxed = Rect::from_center_size(
                 pos2(rect.left() + side / 2.0, rect.center().y),
                 Vec2::splat(side),
             );
             let radius = CornerRadius::same(m.radius_sm);
-            paint_unchecked(&painter, boxed, radius, p, st.hover);
+            paint_unchecked(&painter, boxed, radius, p, st.hover, enabled);
             let fill = crossfade(&ctx, id.with("kit-check-fill"), on, FILL_FADE, self.force);
-            fill_at(&painter, boxed, radius, s.primary, fill);
+            if enabled {
+                fill_at(&painter, boxed, radius, s.primary, fill);
+            }
             let unit = TICK_BOX / 24.0;
             let at = |x: f32, y: f32, scale: f32| {
                 boxed.center() + vec2(x - 12.0, y - 12.0) * unit * scale
@@ -275,7 +300,7 @@ impl<'a> Checkbox<'a> {
                     &painter,
                     &[at(5.0, 12.5, k), at(9.5, 17.0, k), at(19.0, 7.5, k)],
                     TICK_STROKE * unit * k,
-                    p.on_accent.gamma_multiply(alpha.min(1.0)),
+                    mark_color(p, enabled, alpha),
                 );
             }
             let (scale, alpha) = mark(
@@ -290,7 +315,7 @@ impl<'a> Checkbox<'a> {
                     &painter,
                     &[at(6.0, 12.0, k), at(18.0, 12.0, k)],
                     TICK_STROKE * unit * k,
-                    p.on_accent.gamma_multiply(alpha.min(1.0)),
+                    mark_color(p, enabled, alpha),
                 );
             }
             if st.focus > 0.0 {
@@ -400,14 +425,14 @@ impl Radio {
             allocate_row(ui, Vec2::splat(side), text.as_ref(), self.id_salt, sense);
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let painter = super::content_painter(ui);
             let id = response.id;
             let circle = Rect::from_center_size(
                 pos2(rect.left() + side / 2.0, rect.center().y),
                 Vec2::splat(side),
             );
             let radius = CornerRadius::same(theme::FULL);
-            paint_unchecked(&painter, circle, radius, p, st.hover);
+            paint_unchecked(&painter, circle, radius, p, st.hover, enabled);
             let fill = crossfade(
                 &ctx,
                 id.with("kit-radio-fill"),
@@ -415,13 +440,15 @@ impl Radio {
                 FILL_FADE,
                 self.force,
             );
-            fill_at(&painter, circle, radius, s.primary, fill);
+            if enabled {
+                fill_at(&painter, circle, radius, s.primary, fill);
+            }
             let (scale, alpha) = mark(&ctx, id.with("kit-radio-dot"), self.selected, self.force);
             if alpha > 0.0 && scale > 0.0 {
                 painter.circle_filled(
                     circle.center(),
                     DOT / 2.0 * scale,
-                    p.on_accent.gamma_multiply(alpha.min(1.0)),
+                    mark_color(p, enabled, alpha),
                 );
             }
             if st.focus > 0.0 {
@@ -608,10 +635,7 @@ impl<'a, T: PartialEq + Clone> RadioGroup<'a, T> {
                                     let (painter, color) = if enabled {
                                         (ui.painter().clone(), p.text_dim)
                                     } else {
-                                        (
-                                            super::content_painter(ui),
-                                            super::disabled_text(p, theme::style()),
-                                        )
+                                        (super::content_painter(ui), p.disabled_text)
                                     };
                                     let g = painter.layout(
                                         (*d).to_owned(),
@@ -745,7 +769,7 @@ impl<'a> Switch<'a> {
         let on = *self.value;
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let painter = super::content_painter(ui);
             let id = response.id;
             let track = Rect::from_min_size(
                 pos2(rect.left(), rect.center().y - m.switch.y / 2.0),
@@ -759,16 +783,23 @@ impl<'a> Switch<'a> {
                 TRACK_FADE,
                 self.force,
             );
-            painter.rect_filled(track, radius, s.switch_off);
-            if p.strict && fill < 1.0 {
-                paint::rim(
-                    &painter,
-                    track,
-                    radius,
-                    p.control_border.gamma_multiply(1.0 - fill),
-                );
+            if enabled {
+                painter.rect_filled(track, radius, s.switch_off);
+                if p.strict && fill < 1.0 {
+                    paint::rim(
+                        &painter,
+                        track,
+                        radius,
+                        p.control_border.gamma_multiply(1.0 - fill),
+                    );
+                }
+                fill_at(&painter, track, radius, s.primary, fill);
+            } else {
+                // Disabled: the neutral track in the disabled mark; the knob's side keeps the
+                // value.
+                painter.rect_filled(track, radius, s.disabled_fill);
+                paint::rim(&painter, track, radius, super::disabled_mark(p, s));
             }
-            fill_at(&painter, track, radius, s.primary, fill);
             let target = if on { m.switch_travel } else { 0.0 };
             let travel = match self.force.map(|f| f.progress) {
                 Some(Some(k)) => target * k,
@@ -781,16 +812,20 @@ impl<'a> Switch<'a> {
                 pos2(left, track.center().y - m.switch_knob / 2.0),
                 vec2(m.switch_knob + grow, m.switch_knob),
             );
-            paint::surface(
-                &painter,
-                knob,
-                radius,
-                p,
-                style,
-                Elevation::Knob,
-                s.knob,
-                s.knob_edge,
-            );
+            if enabled {
+                paint::surface(
+                    &painter,
+                    knob,
+                    radius,
+                    p,
+                    style,
+                    Elevation::Knob,
+                    s.knob,
+                    s.knob_edge,
+                );
+            } else {
+                painter.rect_filled(knob, radius, super::disabled_mark(p, s));
+            }
             if st.focus > 0.0 {
                 paint::focus_ring(
                     &painter,

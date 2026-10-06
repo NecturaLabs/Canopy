@@ -176,57 +176,18 @@ impl ForceState {
     };
 }
 
-/// The contrast a disabled label keeps on its control and the surface under it.
-const DISABLED_TEXT_CONTRAST: f64 = 3.2;
+/// Labels and icons of disabled controls: the theme's [`Palette::disabled_text`], painted at full
+/// strength (never also faded by `DISABLED_ALPHA`). New code reads the token directly; this stays
+/// for the field, select and chip modules until they do.
+pub(crate) fn disabled_text(p: &Palette, _style: theme::Style) -> Color32 {
+    p.disabled_text
+}
 
-/// Labels and icons of disabled controls. A disabled control's surfaces (fill, ring, track) paint
-/// at `DISABLED_ALPHA` with no elevation, but its text stays opaque in this colour, so it reads
-/// as unavailable without becoming illegible: `text_faint` moved towards the pane as far as it
-/// goes while it still reads at 3.2:1 on every surface a control sits on, and on the dimmed
-/// control fills over them. Cached per theme and style.
-pub(crate) fn disabled_text(p: &Palette, style: theme::Style) -> Color32 {
-    thread_local! {
-        static CACHE: std::cell::RefCell<std::collections::HashMap<(&'static str, theme::Style), Color32>> =
-            std::cell::RefCell::default();
-    }
-    if let Some(c) = CACHE.with(|m| m.borrow().get(&(p.name, style)).copied()) {
-        return c;
-    }
-    let s = p.surfaces(style);
-    let dim = |c: Color32| c.gamma_multiply(theme::DISABLED_ALPHA);
-    let grounds: Vec<Color32> = [s.pane, s.panel, s.elevated, s.overlay, s.field]
-        .into_iter()
-        .flat_map(|g| {
-            [
-                g,
-                theme::over(dim(s.raised.top), g),
-                theme::over(dim(s.raised.bottom), g),
-                theme::over(dim(s.track), g),
-                theme::over(dim(s.thumb.top), g),
-                theme::over(dim(s.switch_off), g),
-            ]
-        })
-        .collect();
-    let readable = |c: Color32| {
-        grounds
-            .iter()
-            .all(|g| theme::contrast(c, *g) >= DISABLED_TEXT_CONTRAST)
-    };
-    let step = |i: u8| f32::from(i) / 20.0;
-    let c = if readable(p.text_faint) {
-        (0..=20)
-            .map(|i| theme::mix(p.text_faint, s.pane, step(i)))
-            .take_while(|c| readable(*c))
-            .last()
-            .unwrap_or(p.text_faint)
-    } else {
-        (0..=20)
-            .map(|i| theme::mix(p.text_faint, p.text, step(i)))
-            .find(|c| readable(*c))
-            .unwrap_or(p.text)
-    };
-    CACHE.with(|m| m.borrow_mut().insert((p.name, style), c));
-    c
+/// The outline and indicator of a disabled selection control (a checkbox's rim and tick ground, a
+/// switch's knob, a slider's fill and thumb ring): halfway between `disabled_edge` and
+/// `disabled_text`, so the control keeps its shape and its value without reading as enabled.
+pub(crate) fn disabled_mark(p: &Palette, s: &theme::Surfaces) -> Color32 {
+    theme::mix(s.disabled_edge, p.disabled_text, 0.5)
 }
 
 /// The painter a control draws its labels and icons with: `ui`'s, with egui's own disabled fade
@@ -333,7 +294,7 @@ mod tests {
 
     use super::testkit;
     use super::theme::{self, Density, Style, ThemeId};
-    use super::{chip, choice, field, range, row, select, toggle};
+    use super::{chip, choice, field, menu, range, row, select, toggle};
 
     #[test]
     fn disabled_text_reads_on_every_control_surface() {
@@ -434,6 +395,154 @@ mod tests {
                 for (name, show) in controls {
                     let w = testkit::weakest_label(&ctx, &grounds, show);
                     assert!(w >= 3.0, "{id:?} {style:?} disabled {name}: {w:.2}:1");
+                }
+            }
+        }
+    }
+
+    /// Every colour `shapes` painted: fills, strokes and text, with the painter's opacity applied.
+    fn every_color(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Color32> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<egui::Color32>) {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                egui::Shape::Rect(r) if r.blur_width == 0.0 => {
+                    out.extend([r.fill, r.stroke.color]);
+                }
+                egui::Shape::Circle(c) => out.extend([c.fill, c.stroke.color]),
+                egui::Shape::Path(p) => {
+                    if let egui::epaint::ColorMode::Solid(c) = p.stroke.color {
+                        out.push(c);
+                    }
+                    out.push(p.fill);
+                }
+                egui::Shape::LineSegment { stroke, .. } => out.push(stroke.color),
+                egui::Shape::Text(t) => out.push(
+                    t.override_text_color
+                        .unwrap_or(t.fallback_color)
+                        .gamma_multiply(t.opacity_factor),
+                ),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for c in shapes {
+            walk(&c.shape, &mut out);
+        }
+        out.retain(|c| c.a() > 0);
+        out
+    }
+
+    /// H11 (theme-design "Disabled tokens"): a disabled control paints with `disabled_fill`,
+    /// `disabled_edge` and `disabled_text` at full strength, whether it is disabled itself or sits
+    /// in a disabled `Ui`: nothing it paints is faded by `DISABLED_ALPHA`, no accent or danger
+    /// fill shows through, and its label is `disabled_text`.
+    #[test]
+    fn disabled_controls_paint_the_disabled_tokens_at_full_strength() {
+        type Show = fn(&mut Ui, bool);
+        let controls: [(&str, Show); 14] = [
+            ("menu item", |ui, on| {
+                menu::MenuItem::new(icon::GIT_BRANCH, "Check out")
+                    .description("Switch to this branch")
+                    .shortcut(crate::keymap::Command::Fetch)
+                    .enabled(on)
+                    .show(ui);
+            }),
+            ("danger menu item", |ui, on| {
+                menu::MenuItem::new(icon::TRASH, "Delete branch…")
+                    .danger()
+                    .enabled(on)
+                    .show(ui);
+            }),
+            ("underline tabs", |ui, on| {
+                let _ = choice::UnderlineTabs::new(&mut 0_u8, &[(0, "Privacy"), (1, "Terms")])
+                    .enabled(on)
+                    .show(ui);
+            }),
+            ("primary", |ui, on| {
+                super::Button::new("Commit").primary().enabled(on).show(ui);
+            }),
+            ("danger", |ui, on| {
+                super::Button::new("Delete").danger().enabled(on).show(ui);
+            }),
+            ("secondary", |ui, on| {
+                super::Button::new("Fetch").enabled(on).show(ui);
+            }),
+            ("icon button", |ui, on| {
+                super::IconButton::new(icon::GEAR, "Settings")
+                    .enabled(on)
+                    .show(ui);
+            }),
+            ("tool button", |ui, on| {
+                super::ToolButton::new(icon::TAG, "Tag")
+                    .enabled(on)
+                    .show(ui);
+            }),
+            ("split button", |ui, on| {
+                let mut v = 0_u8;
+                super::button::SplitButton::new(&mut v, &[(0, "Commit"), (1, "Push")])
+                    .enabled(on)
+                    .show(ui);
+            }),
+            ("checkbox", |ui, on| {
+                toggle::Checkbox::new(&mut true, "Amend")
+                    .enabled(on)
+                    .show(ui);
+            }),
+            ("radio", |ui, on| {
+                toggle::Radio::new(true, "Fast-forward")
+                    .enabled(on)
+                    .show(ui);
+            }),
+            ("switch", |ui, on| {
+                toggle::Switch::new(&mut true, "Prune").enabled(on).show(ui);
+            }),
+            ("slider", |ui, on| {
+                range::Slider::new(&mut 6.0_f32, 0.0..=10.0)
+                    .label("Context lines")
+                    .header(true)
+                    .enabled(on)
+                    .show(ui);
+            }),
+            ("segmented", |ui, on| {
+                choice::Segmented::new(&mut 0_u8, &[(0, "Unified"), (1, "Side by side")])
+                    .enabled(on)
+                    .show(ui);
+            }),
+        ];
+        for id in ThemeId::ALL {
+            for style in Style::ALL {
+                let ctx = testkit::ctx_with(id, style, Density::Comfortable);
+                let p = id.palette();
+                let s = p.surfaces(style);
+                let accents = [
+                    s.primary.top,
+                    s.primary.bottom,
+                    s.danger_solid.top,
+                    s.danger_solid.bottom,
+                ];
+                for (name, show) in controls {
+                    for in_disabled_ui in [false, true] {
+                        let shapes = testkit::frame(&ctx, Vec::new(), |ui| {
+                            if in_disabled_ui {
+                                ui.add_enabled_ui(false, |ui| show(ui, true));
+                            } else {
+                                show(ui, false);
+                            }
+                        });
+                        let colors = every_color(&shapes);
+                        let at = format!("{id:?} {style:?} {name} (disabled Ui: {in_disabled_ui})");
+                        assert!(
+                            colors.contains(&p.disabled_text),
+                            "{at}: label not in disabled_text: {colors:?}"
+                        );
+                        for c in &colors {
+                            assert_eq!(c.a(), 255, "{at}: faded paint {c:?}");
+                            assert!(
+                                !accents.contains(c),
+                                "{at}: an accent or danger fill shows through: {c:?}"
+                            );
+                        }
+                    }
                 }
             }
         }

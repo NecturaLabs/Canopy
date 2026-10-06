@@ -354,27 +354,23 @@ impl Button {
         };
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
-            let ink_painter = if enabled {
-                painter.clone()
-            } else {
-                super::content_painter(ui)
-            };
+            // A disabled button paints its own dimmed tokens at full strength, also in a disabled
+            // `Ui` (whose fade `content_painter` takes back off).
+            let painter = super::content_painter(ui);
+            let ink_painter = painter.clone();
             let radius = CornerRadius::same(m.radius);
             let (fill, ring, level, label, focus) = match self.kind {
                 // Disabled: no accent or danger fill (a dimmed one reads as a muddy, half-lit
-                // button), the neutral raised surface with its ring, dimmed and flat, and a label
-                // that stays readable.
+                // button) but the flat, neutral `disabled_fill` in its `disabled_edge` ring, and
+                // a label in `disabled_text`.
                 ButtonKind::Primary | ButtonKind::Danger | ButtonKind::Secondary if !enabled => (
-                    Some(s.raised),
-                    Some(s.raised_edge),
+                    Some(Fill::flat(s.disabled_fill)),
+                    Some(s.disabled_edge),
                     None,
-                    super::disabled_text(p, style),
+                    p.disabled_text,
                     p.focus,
                 ),
-                ButtonKind::Ghost if !enabled => {
-                    (None, None, None, super::disabled_text(p, style), p.focus)
-                }
+                ButtonKind::Ghost if !enabled => (None, None, None, p.disabled_text, p.focus),
                 ButtonKind::Primary => (
                     Some(blend(
                         blend(s.primary, s.primary_hover, st.hover),
@@ -607,7 +603,7 @@ impl IconButton {
         };
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ICON_ALPHA);
+            let painter = super::content_painter(ui);
             let radius = CornerRadius::same(radius);
             let ground = Color32::TRANSPARENT
                 .lerp_to_gamma(p.hover_strong(), st.hover)
@@ -625,7 +621,7 @@ impl IconButton {
                 );
             }
             let rest = if !enabled {
-                super::disabled_text(p, theme::style())
+                p.disabled_text
             } else if self.active {
                 p.accent
             } else {
@@ -635,11 +631,6 @@ impl IconButton {
                 rest
             } else {
                 rest.lerp_to_gamma(p.text, st.hover.max(st.press))
-            };
-            let painter = if enabled {
-                painter
-            } else {
-                super::content_painter(ui)
             };
             let scale = anim::press_scale(&ctx, response.id, st.held, 0.94);
             let g = painter.layout_no_wrap(self.glyph, FontId::proportional(glyph_size), color);
@@ -799,10 +790,16 @@ impl ToolButton {
         let (rect, response) = ui.allocate_exact_size(size, sense);
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let painter = super::content_painter(ui);
             let radius = CornerRadius::same(m.radius);
             if self.toggled {
-                painter.rect_filled(rect, radius, p.accent_tint());
+                // A disabled toggled tool keeps its state on the neutral disabled fill.
+                let ground = if enabled {
+                    p.accent_tint()
+                } else {
+                    s.disabled_fill
+                };
+                painter.rect_filled(rect, radius, ground);
             }
             let lit = st.hover.max(st.press);
             if lit > 0.0 && !self.toggled {
@@ -830,10 +827,10 @@ impl ToolButton {
             if st.focus > 0.0 {
                 paint::inset_ring(&painter, rect, radius, p.focus.gamma_multiply(st.focus));
             }
-            let (painter, text_color) = if enabled {
-                (painter, p.text_dim.lerp_to_gamma(p.text, lit))
+            let text_color = if enabled {
+                p.text_dim.lerp_to_gamma(p.text, lit)
             } else {
-                (super::content_painter(ui), super::disabled_text(p, style))
+                p.disabled_text
             };
             let icon_color = if self.toggled && enabled {
                 p.accent
@@ -902,11 +899,9 @@ impl Widget for ToolButton {
 /// The 1 pt divider between tool button groups (`tool_divider`).
 pub fn tool_divider(ui: &mut Ui) {
     let m = theme::metrics();
-    let p = theme::palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
     let width = 2.0 * m.tool_divider_margin + paint::SEAM;
     let (rect, _) = ui.allocate_exact_size(vec2(width, m.tool_divider_height), Sense::hover());
-    let _ = p;
     paint::seam_v(ui.painter(), rect.center().x, rect.y_range(), s.border);
 }
 
@@ -967,7 +962,7 @@ impl LinkButton {
         let (rect, response) = ui.allocate_exact_size(g.size(), sense);
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
+            let painter = &super::content_painter(ui);
             if st.focus > 0.0 {
                 paint::focus_ring(
                     painter,
@@ -977,13 +972,18 @@ impl LinkButton {
                     Color32::TRANSPARENT,
                 );
             }
+            let ink = if enabled { p.accent2 } else { p.disabled_text };
             let baseline = rect.top() + g.rows.first().map_or(rect.height(), |r| r.rect().bottom());
-            painter.galley(rect.min, g, p.accent2);
+            painter.galley(rect.min, g, ink);
             if st.hover > 0.5 {
-                paint::seam_h(painter, rect.x_range(), baseline + 1.0, p.accent2);
+                paint::seam_h(painter, rect.x_range(), baseline + 1.0, ink);
             }
         }
-        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let response = if enabled {
+            response.on_hover_cursor(egui::CursorIcon::PointingHand)
+        } else {
+            response
+        };
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Link, enabled, &self.text));
         response
     }
@@ -1116,19 +1116,19 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
         let (rest, hover, pressed, on) = if enabled {
             (rest, hover, pressed, on)
         } else {
-            // Disabled like a Button: the neutral raised surface, dimmed and flat.
-            let label = super::disabled_text(p, style);
-            (s.raised, s.raised, s.raised, label)
+            // Disabled like a Button: the flat, neutral disabled fill.
+            let off = Fill::flat(s.disabled_fill);
+            (off, off, off, p.disabled_text)
         };
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let painter = super::content_painter(ui);
             let radius = CornerRadius::same(m.radius);
             let ring = (!enabled || self.kind != ButtonKind::Primary).then_some(s.raised_edge);
             if enabled {
                 paint::surface(&painter, rect, radius, p, style, level, rest, ring);
             } else {
                 paint::fill(&painter, rect, radius, rest);
-                paint::rim(&painter, rect, radius, s.raised_edge);
+                paint::rim(&painter, rect, radius, s.disabled_edge);
             }
             for (half, st, corners) in [
                 (
@@ -1169,11 +1169,10 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                     );
                 }
             }
-            let seam = Palette::tint(on, 64);
-            let painter = if enabled {
-                painter
+            let seam = if enabled {
+                Palette::tint(on, 64)
             } else {
-                super::content_painter(ui)
+                s.disabled_edge
             };
             painter.vline(
                 caret_rect.left(),
@@ -1545,39 +1544,65 @@ mod tests {
         }
     }
 
+    /// A disabled filled button sits on the flat, neutral `disabled_fill` inside its
+    /// `disabled_edge` ring (theme-design "Disabled tokens"), with no shadow and no dimmed accent,
+    /// in every theme and style, disabled itself or inside a disabled `Ui`.
     #[test]
-    fn disabled_filled_buttons_dim_to_the_neutral_surface() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
-        let p = theme::palette(&ctx);
-        let fills = |kind: ButtonKind, enabled: bool| {
-            let shapes = frame(&ctx, Vec::new(), |ui| {
-                Button::new("Commit").kind(kind).enabled(enabled).show(ui);
-            });
-            shapes
-                .iter()
-                .filter_map(|c| match &c.shape {
-                    Shape::Rect(r) if r.blur_width == 0.0 => Some(r.fill),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        };
-        assert!(fills(ButtonKind::Primary, true).contains(&p.standard.primary.top));
-        let dimmed = p.standard.raised.top.gamma_multiply(theme::DISABLED_ALPHA);
-        for kind in [
-            ButtonKind::Primary,
-            ButtonKind::Danger,
-            ButtonKind::Secondary,
-        ] {
-            let dim = fills(kind, false);
-            assert!(dim.contains(&dimmed), "{kind:?}: {dim:?}");
-            for accent in [p.standard.primary.top, p.standard.danger_solid.top] {
-                let muddy = accent.gamma_multiply(theme::DISABLED_ALPHA);
-                assert!(
-                    !dim.contains(&muddy),
-                    "{kind:?} keeps a dimmed accent: {dim:?}"
-                );
+    fn disabled_filled_buttons_use_the_neutral_disabled_fill() {
+        for id in theme::ThemeId::ALL {
+            for style in Style::ALL {
+                let ctx = super::super::testkit::ctx_with(id, style, theme::Density::Comfortable);
+                let p = id.palette();
+                let s = p.surfaces(style);
+                let paint = |kind: ButtonKind, enabled: bool, in_disabled_ui: bool| {
+                    let shapes = frame(&ctx, Vec::new(), |ui| {
+                        ui.add_enabled_ui(!in_disabled_ui, |ui| {
+                            Button::new("Commit").kind(kind).enabled(enabled).show(ui);
+                        });
+                    });
+                    let mut fills = Vec::new();
+                    let mut rings = Vec::new();
+                    let mut shadow = false;
+                    for c in &shapes {
+                        if let Shape::Rect(r) = &c.shape {
+                            if r.blur_width > 0.0 {
+                                shadow = true;
+                            } else {
+                                fills.push(r.fill);
+                                rings.push(r.stroke.color);
+                            }
+                        }
+                    }
+                    (fills, rings, shadow)
+                };
+                if style == Style::Standard {
+                    assert!(
+                        paint(ButtonKind::Primary, true, false)
+                            .0
+                            .contains(&s.primary.top)
+                    );
+                }
+                for kind in [
+                    ButtonKind::Primary,
+                    ButtonKind::Danger,
+                    ButtonKind::Secondary,
+                ] {
+                    for (enabled, in_disabled_ui) in [(false, false), (true, true)] {
+                        let (fills, rings, shadow) = paint(kind, enabled, in_disabled_ui);
+                        let at =
+                            format!("{id:?} {style:?} {kind:?} (disabled Ui: {in_disabled_ui})");
+                        assert!(fills.contains(&s.disabled_fill), "{at}: {fills:?}");
+                        assert!(rings.contains(&s.disabled_edge), "{at}: {rings:?}");
+                        assert!(!shadow, "{at}: a disabled button casts a shadow");
+                        for accent in [s.primary.top, s.danger_solid.top] {
+                            let muddy = accent.gamma_multiply(theme::DISABLED_ALPHA);
+                            assert!(
+                                !fills.contains(&muddy) && !fills.contains(&accent),
+                                "{at} keeps an accent: {fills:?}"
+                            );
+                        }
+                    }
+                }
             }
         }
     }

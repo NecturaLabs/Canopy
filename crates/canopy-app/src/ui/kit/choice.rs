@@ -14,7 +14,7 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use super::button::{disabled_painter, tooltip_text, with_tooltip};
+use super::button::{tooltip_text, with_tooltip};
 use super::chip::{Badge, count_text};
 use super::toggle::{
     arrow_step, claim_arrows, component_id, gallery_caption, gallery_row, group_node, remembered,
@@ -362,15 +362,12 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
         }
 
         if ui.is_rect_visible(track) {
-            // A disabled control dims its track; the thumb (the value) and the labels stay
-            // readable.
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
-            let ink = if enabled {
-                painter.clone()
-            } else {
-                super::content_painter(ui)
-            };
-            let off_text = super::disabled_text(p, style);
+            // A disabled control keeps its track; its thumb (the value) turns to the flat
+            // `disabled_fill` in its `disabled_edge`, and the labels stay readable, all at full
+            // strength.
+            let painter = super::content_painter(ui);
+            let ink = painter.clone();
+            let off_text = p.disabled_text;
             let radius = CornerRadius::same(m.radius);
             paint::fill(
                 &painter,
@@ -394,16 +391,21 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                     rects.first().copied(),
                     force,
                 );
-                paint::surface(
-                    &ink,
-                    thumb,
-                    radius,
-                    p,
-                    style,
-                    Elevation::Thumb,
-                    s.thumb,
-                    None,
-                );
+                if enabled {
+                    paint::surface(
+                        &ink,
+                        thumb,
+                        radius,
+                        p,
+                        style,
+                        Elevation::Thumb,
+                        s.thumb,
+                        None,
+                    );
+                } else {
+                    paint::fill(&ink, thumb, radius, theme::Fill::flat(s.disabled_fill));
+                    paint::rim(&ink, thumb, radius, s.disabled_edge);
+                }
             }
             for (i, (seg, rect)) in segs.iter().zip(&rects).enumerate() {
                 let force = self.force.filter(|(at, _)| *at == i).map(|(_, f)| f);
@@ -700,13 +702,16 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
         }
 
         if ui.is_rect_visible(row) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
-            let ink = if enabled {
-                painter.clone()
+            // Disabled: the disabled tokens at full strength (the indicator in the neutral
+            // disabled mark, never a dimmed accent).
+            let painter = super::content_painter(ui);
+            let ink = painter.clone();
+            let off_text = p.disabled_text;
+            let indicator = if enabled {
+                p.focus
             } else {
-                super::content_painter(ui)
+                super::disabled_mark(p, s)
             };
-            let off_text = super::disabled_text(p, theme::style());
             paint::seam_h(
                 &painter,
                 row.x_range(),
@@ -792,7 +797,7 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
                         sw: 0,
                         se: 0,
                     },
-                    p.focus,
+                    indicator,
                 );
             }
         }
