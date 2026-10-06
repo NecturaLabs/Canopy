@@ -36,7 +36,9 @@ the shared colours with `theme::palette(ctx)`.
   highlights and layered shadows. History splits into two cards, the commit table and the commit
   details, at the details panel's resize handle; a hovered or dragged split shows a thin
   `focus`-tinted line. The focused card carries the `focus` gradient edge and a lit `focus` line
-  along its top, over the `pane_header` strip with its `focus`-tinted seam.
+  along its top, over the `pane_header` strip with its `focus`-tinted seam; a theme with lit edges
+  (Neon) outlines the whole card in a glowing `focus` line instead (`kit::paint::pane_focus`, which
+  the gallery's pane samples use too).
 
 Each theme builds both styles from one surface ladder in its own neutral hue: Standard's chrome is
 at least 2.5 L* off the ground and Deeper's cards at least 4 L* (`surface_steps_are_visible`), so
@@ -390,6 +392,18 @@ use. `tools/screenshot.sh <repo> out.png --overlay gallery [--style deeper] [--d
 [--gallery-page N]` renders every component in every state; a page past the end shows the last,
 and a strip under the content numbers each page from 1 ("Page 4 of 19" for `--gallery-page 3`).
 
+Keyboard and screen readers (`kit::a11y`): a list is one Tab stop (`kit::row::Roving`, used by
+History's commits, each sidebar section and card grids): Tab lands on the row last visited (else the
+selected or checked-out one), the arrows move inside (Left and Right too in a grid), and the next
+Tab leaves the list. A row's actions stay revealed while one of them has focus; a tree row's chevron
+is no Tab stop. Containers are named groups holding their parts in the order shown: a list, a tree,
+a menu, a radio group, a segmented control, a tab list, a select's open list, a callout, a dialog.
+Linux's adapter drops two states, so there the name carries them: a disclosure's ", expanded" or
+", collapsed", and a disabled control's ", unavailable" (roles it reports as read-only excepted);
+a disabled control's reason is its description everywhere. Overlays (the palette, the cheatsheet,
+dialogs) are modal: Tab stays inside, and closing gives focus back to what had it. Dragging a split
+never takes focus; Tab does.
+
 
 ### Ref pill
 
@@ -406,8 +420,8 @@ between a few exclusive options: settings choices, the merge dialog's merge or r
 source and protocol, the request state filter and the diff layout. A recessed `bg` track with a
 hairline `border`; the chosen segment is raised (`elevated`, restrained edge and micro-shadow),
 with an accent baseline and `text`,
-the others `text-dim` brightening on hover. Each segment is a radio button for assistive
-technology and shows the focus ring.
+the others `text-dim` brightening on hover. Each segment is a radio button inside the control's
+radio group for assistive technology and shows the focus ring.
 
 ### Switch and checkbox
 
@@ -438,7 +452,9 @@ left, and up to two `Sm` ghost actions right. Each action is a `NoticeAction`: a
 glyph and its tone (Abort's `danger` circle), and, when unavailable, disabled with the reason on
 hover ("Resolve the 2 conflicts first"), so History, Changes and Requests share one layout.
 `Callout` is the inline note: tint, icon, optional title, wrapped text and up to two actions under
-it, their labels in line with the text (`Callout::show_actions` reports a click). `Card::compact`
+it, their labels in line with the text (`Callout::show_actions` reports a click). Screen readers
+hear it as a group named for its tone (Note, Success, Warning, Error) holding the title, text and
+actions once each; the icon is painted, never spoken. `Card::compact`
 gives picture-led cards (the settings theme cards) `SM` padding instead of `card_pad`.
 
 ### Document tabs
@@ -463,6 +479,10 @@ still; reduce motion shows it finished.
 
 ### Context menu
 
+A secondary click opens a context menu at the pointer; Shift+F10 opens the focused row's below it
+with its first available item focused (`kit::menu::context`). In an open menu Up, Down, Home and
+End move between the items and wrap, nothing behind it moves, and Escape gives focus back to the
+row (the Menu key is not reported by the windowing layer). Screen readers hear a menu of its items.
 An opened submenu item uses the same neutral surface as a hovered menu item.
 Reset choices put the mode name in semibold type above a dim description, with destructive
 Hard reset marked in danger colour and confirmed before it runs.
@@ -483,17 +503,22 @@ Overlay cards (glass with Translucent surfaces on) share a bounded bottom-right 
 most 408 points wide, so five errors remain reachable even in a compact zoomed window. Newest
 notices lead the stack. Titles truncate without displacing Close. Errors stay until dismissed,
 offer Close and Copy, and keep raw output in a scrollable monospace Details disclosure. Known
-failures lead with a plain explanation. A rejected push offers Pull for its originating repository;
+failures lead with a plain explanation; any other error shows git's first line under its title,
+and Details only when git said more. Screen readers hear an error as an alert with its message. A
+rejected push offers Pull for its originating repository;
 account failures offer Accounts. Other toasts dismiss on a card click or after four seconds, which
 run only while the pointer is off the stack and the window has focus. The stack retains five
-notices; a card enters from the right and leaves to the right as it fades, and the cards above one
+notices, and a sixth pushes out the oldest one that is not an error; a card enters from the right and leaves to the right as it fades, and the cards above one
 that left slide into its place (`TOAST_SHIFT`, instant with reduced motion).
 
 ### Command palette
 
 Placed near the top of the window, up to 620 points wide, `radius-lg`, overlay elevation. Its
 height stays inside the viewport. A search field at the top, then scrollable results: icon, command name with matched characters in `accent`, and
-the shortcut right-aligned in `text-faint`. Up/Down move, Enter runs, Esc closes. Branch names
+the shortcut right-aligned in `text-faint`. Up/Down move, Enter runs, Esc closes. It is a modal
+dialog named "Command palette" (the cheatsheet: "Keyboard shortcuts"): Tab stays in its search,
+the results are a list box whose highlighted entry the search reports as active, and closing gives
+focus back to what had it. Branch names
 appear as "Checkout <branch>" entries. Under Appearance, besides the themes, it sets Style,
 Density, Translucent surfaces (On only where it can work) and Motion, as Settings does.
 
