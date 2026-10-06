@@ -54,8 +54,8 @@ start)
   printf '[user]\n\tname = Sim User\n\temail = sim@example.com\n' >"$SIM/home/.gitconfig"
   "$ROOT/tools/mkfixture.sh" --force "$SIM/repo" "$kind" >/dev/null
   git clone -q --bare "$SIM/repo" "$SIM/origin.git"
-  git -C "$SIM/repo" remote remove origin 2>/dev/null || true
-  git -C "$SIM/repo" remote add origin "$SIM/origin.git"
+  # The fixture's own origin and its upstreams stay; only where it points changes.
+  git -C "$SIM/repo" remote set-url origin "$SIM/origin.git"
   git -C "$SIM/repo" fetch -q origin
   (cd "$ROOT" && cargo build -q --release -p canopy-app)
   for n in $(seq 70 99); do [[ -e /tmp/.X11-unix/X$n || -e /tmp/.X$n-lock ]] || break; done
@@ -69,6 +69,8 @@ start)
 x)
   shift
   load
+  # Xvfb has no window manager to give the window keyboard focus; without it keys go nowhere.
+  DISPLAY=$DISPLAY_NO xdotool search --name Canopy windowfocus 2>/dev/null || true
   DISPLAY=$DISPLAY_NO xdotool "$@"
   ;;
 shot)
