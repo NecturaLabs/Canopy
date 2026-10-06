@@ -169,15 +169,29 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
 
     /// Shows the trigger (and the list while open). The response is the trigger's and reports
     /// `changed` when a new value was chosen.
-    pub fn show(self, ui: &mut Ui) -> Response {
-        // Label, trigger and message stack like a text field's, whatever layout holds them.
-        ui.scope(|ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+    pub fn show(mut self, ui: &mut Ui) -> Response {
+        let width = match self.width {
+            Some(w) => w,
+            None if self.fit => fit_width(
+                ui,
+                self.options
+                    .iter()
+                    .map(|(_, l)| *l)
+                    .chain([self.placeholder.as_str()]),
+            ),
+            None => ui.available_width(),
+        };
+        self.width = Some(width);
+        // Label, trigger and message stack like a text field's, in a slot the parent's layout
+        // places as it would the trigger alone (at the right of a right-to-left row).
+        ui.allocate_ui_with_layout(
+            vec2(width, self.size.height()),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
                 self.show_inner(ui)
-            })
-            .inner
-        })
+            },
+        )
         .inner
     }
 
@@ -193,17 +207,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             .unwrap_or_else(|| component_id(ui, "kit-select", self.id_salt));
         let popup_id = id.with("kit-select-list");
         let state_id = id.with("kit-select-state");
-        let width = match self.width {
-            Some(w) => w,
-            None if self.fit => fit_width(
-                ui,
-                self.options
-                    .iter()
-                    .map(|(_, l)| *l)
-                    .chain([self.placeholder.as_str()]),
-            ),
-            None => ui.available_width(),
-        };
+        let width = self.width.unwrap_or_else(|| ui.available_width());
         let chosen = self.options.iter().position(|(v, _)| v == self.value);
 
         // Labels and text paint at full strength even in a disabled `Ui` (in disabled tokens).
@@ -1106,6 +1110,33 @@ mod tests {
         assert_eq!(n.label.as_deref(), Some("Pull strategy"));
         assert_eq!(n.value.as_deref(), Some("Rebase"));
         assert_eq!(n.expanded, Some(false));
+    }
+
+    /// A settings row puts its control at the right in a right-to-left layout: a fixed-width
+    /// select sits there, at its width, as it did before it stacked a label and message.
+    #[test]
+    fn a_select_in_a_right_to_left_row_sits_at_the_right() {
+        let ctx = testkit::ctx();
+        let mut v = 1_u8;
+        let (mut trigger, mut row) = (egui::Rect::NOTHING, egui::Rect::NOTHING);
+        frame(&ctx, Vec::new(), |ui| {
+            ui.set_width(600.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                row = ui.max_rect();
+                trigger = Select::new(&mut v, &STRATEGIES)
+                    .width(200.0)
+                    .id_salt("rtl")
+                    .show(ui)
+                    .rect;
+            });
+        });
+        assert!((trigger.width() - 200.0).abs() < 0.5, "{trigger:?}");
+        assert!(
+            (trigger.right() - row.right()).abs() < 0.5,
+            "the trigger ends at {} in a row ending at {}",
+            trigger.right(),
+            row.right()
+        );
     }
 
     /// A select's helper describes it and its error marks it invalid, as a text field's do.
