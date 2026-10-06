@@ -15,6 +15,7 @@
 //! It also asks the operating system for settings Canopy follows: reduced motion
 //! ([`prefers_reduced_motion`]) and reduced transparency ([`prefers_reduced_transparency`]).
 
+use std::ffi::OsString;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -83,17 +84,20 @@ pub fn open_url(url: &str) -> Result<(), String> {
     spawn(cmd).map_err(|e| e.to_string())
 }
 
-/// Shows `dir` in the file manager.
-#[cfg_attr(
-    any(target_os = "linux", target_os = "macos", target_os = "windows"),
-    expect(
-        clippy::disallowed_methods,
-        reason = "starts the platform's file manager, never git"
-    )
+/// Shows `dir` in the file manager: `command` when there is one (`%d` stands for the folder,
+/// which is added at the end otherwise), else the platform's.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "starts the chosen or the platform's file manager, never git"
 )]
-pub fn open_folder(dir: &Path) -> Result<(), String> {
+pub fn open_folder(dir: &Path, command: &str) -> Result<(), String> {
     if !dir.is_dir() {
         return Err(format!("{} is not a folder", dir.display()));
+    }
+    if let Some((program, args)) = split_command(command.trim()) {
+        let mut cmd = Command::new(&program);
+        cmd.args(with_path(args, &["%d"], dir, true));
+        return spawn(cmd).map_err(|e| format!("{program}: {e}"));
     }
     #[cfg(target_os = "linux")]
     let program = "xdg-open";
@@ -111,11 +115,91 @@ pub fn open_folder(dir: &Path) -> Result<(), String> {
     }
 }
 
-/// The program and arguments of a configured command such as `code --wait`.
-fn split_command(configured: &str) -> Option<(String, Vec<String>)> {
-    let mut parts = configured.split_whitespace().map(str::to_owned);
-    let program = parts.next()?;
-    Some((program, parts.collect()))
+/// The program and arguments of a configured command such as `code --wait` or
+/// `"/opt/My Editor/edit" %f`: words are separated by spaces, and single or double quotes keep
+/// a word with spaces together (the quotes are removed; a backslash is an ordinary character, so
+/// Windows paths need no escaping). An unclosed quote runs to the end.
+pub fn split_command(configured: &str) -> Option<(String, Vec<String>)> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut started = false;
+    let mut quote: Option<char> = None;
+    for c in configured.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => current.push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                started = true;
+            }
+            None if c.is_whitespace() => {
+                if started {
+                    words.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            None => {
+                current.push(c);
+                started = true;
+            }
+        }
+    }
+    if started {
+        words.push(current);
+    }
+    let mut words = words.into_iter();
+    let program = words.next().filter(|p| !p.is_empty())?;
+    Some((program, words.collect()))
+}
+
+/// `word` as [`split_command`] reads it back: quoted when it is empty or has spaces or quotes.
+pub fn quote(word: &str) -> String {
+    if !word.is_empty()
+        && !word
+            .chars()
+            .any(|c| c.is_whitespace() || c == '"' || c == '\'')
+    {
+        word.to_owned()
+    } else if word.contains('"') {
+        format!("'{word}'")
+    } else {
+        format!("\"{word}\"")
+    }
+}
+
+/// A program's name without its folder (and `.exe`), as typed in commands: `code` for
+/// `/usr/bin/code` or `C:\…\Code.exe`.
+pub fn program_name(program: &str) -> String {
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let lower = name.to_ascii_lowercase();
+    lower.strip_suffix(".exe").unwrap_or(&lower).to_owned()
+}
+
+/// A command's arguments with `placeholders` (`%f`, `%d`) replaced by `path`, which is added at
+/// the end when no argument names it.
+fn with_path(args: Vec<String>, placeholders: &[&str], path: &Path, add: bool) -> Vec<OsString> {
+    let mut used = false;
+    let mut out: Vec<OsString> = args
+        .into_iter()
+        .map(|arg| {
+            let Some(code) = placeholders.iter().find(|c| arg.contains(**c)) else {
+                return OsString::from(arg);
+            };
+            used = true;
+            let mut word = OsString::new();
+            for (i, part) in arg.split(code).enumerate() {
+                if i > 0 {
+                    word.push(path.as_os_str());
+                }
+                word.push(part);
+            }
+            word
+        })
+        .collect();
+    if add && !used {
+        out.push(path.as_os_str().to_owned());
+    }
+    out
 }
 
 /// Whether the desktop's default handler might run `file` instead of showing it.
@@ -155,7 +239,7 @@ fn launchable(file: &Path) -> bool {
 pub fn open_in_editor(file: &Path, configured: &str) -> Result<(), String> {
     if let Some((program, args)) = split_command(configured.trim()) {
         let mut cmd = Command::new(&program);
-        cmd.args(args).arg(file);
+        cmd.args(with_path(args, &["%f", "%F"], file, true));
         return spawn(cmd).map_err(|e| format!("{program}: {e}"));
     }
     #[cfg(target_os = "macos")]
@@ -175,7 +259,7 @@ pub fn open_in_editor(file: &Path, configured: &str) -> Result<(), String> {
     {
         if launchable(file) {
             return match file.parent() {
-                Some(dir) => open_folder(dir).and(Err(
+                Some(dir) => open_folder(dir, "").and(Err(
                     "This file could be run rather than opened, so its folder was opened instead. \
                      Set an editor in Settings → Integrations to open it directly."
                         .into(),
@@ -201,7 +285,8 @@ pub fn open_in_editor(file: &Path, configured: &str) -> Result<(), String> {
 pub fn open_terminal(dir: &Path, configured: &str) -> Result<(), String> {
     if let Some((program, args)) = split_command(configured.trim()) {
         let mut cmd = Command::new(&program);
-        cmd.args(args).current_dir(dir);
+        cmd.args(with_path(args, &["%d"], dir, false))
+            .current_dir(dir);
         return spawn(cmd).map_err(|e| format!("{program}: {e}"));
     }
     #[cfg(target_os = "linux")]
@@ -210,19 +295,9 @@ pub fn open_terminal(dir: &Path, configured: &str) -> Result<(), String> {
             .ok()
             .into_iter()
             .chain(
-                [
-                    "x-terminal-emulator",
-                    "kgx",
-                    "gnome-terminal",
-                    "konsole",
-                    "alacritty",
-                    "kitty",
-                    "foot",
-                    "wezterm",
-                    "ghostty",
-                    "xterm",
-                ]
-                .map(String::from),
+                crate::system_apps::LINUX_TERMINALS
+                    .iter()
+                    .map(|t| (*t).to_owned()),
             )
             .collect();
         for term in candidates {
@@ -255,7 +330,7 @@ pub fn open_terminal(dir: &Path, configured: &str) -> Result<(), String> {
 
 /// How long a settings query may take before Canopy gives up on it. PowerShell loading .NET on
 /// a cold start is the slowest case.
-const QUERY_TIMEOUT: Duration = Duration::from_secs(6);
+pub const QUERY_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// Asks the operating system whether the user wants reduced motion. Blocks while a helper
 /// program answers (up to a few seconds), so call it off the UI thread. `None` when the system
@@ -360,7 +435,7 @@ pub fn prefers_reduced_transparency() -> Option<bool> {
 /// Runs `cmd` and returns its standard output when it exits successfully within `timeout`.
 /// Output is read on its own thread, so a chatty program cannot fill the pipe and stall, and a
 /// program that outlives the timeout is killed and reaped.
-fn output_within(mut cmd: Command, timeout: Duration) -> Option<String> {
+pub fn output_within(mut cmd: Command, timeout: Duration) -> Option<String> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -589,6 +664,40 @@ mod tests {
             Some(("code".into(), vec!["--wait".into()]))
         );
         assert_eq!(split_command("   "), None);
+        // Quotes keep a path with spaces together; backslashes stay as they are.
+        assert_eq!(
+            split_command(r#""C:\Program Files\Zed\zed.exe" --new 'a "b"' %f"#),
+            Some((
+                r"C:\Program Files\Zed\zed.exe".into(),
+                vec!["--new".into(), "a \"b\"".into(), "%f".into()]
+            ))
+        );
+        assert_eq!(split_command("\"\" x"), None, "an empty program");
+        for word in ["plain", "with space", "say \"hi\"", ""] {
+            let line = format!("prog {}", quote(word));
+            assert_eq!(split_command(&line).unwrap().1, [word], "{line}");
+        }
+        assert_eq!(program_name("/usr/bin/code"), "code");
+        assert_eq!(program_name(r"C:\Apps\Code.EXE"), "code");
+    }
+
+    #[test]
+    fn the_path_goes_where_its_placeholder_is_or_at_the_end() {
+        let file = Path::new("/repo/src/a b.rs");
+        let args = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            with_path(args(&["--goto", "%f:1"]), &["%f", "%F"], file, true),
+            ["--goto", "/repo/src/a b.rs:1"]
+        );
+        assert_eq!(
+            with_path(args(&["--wait"]), &["%f"], file, true),
+            ["--wait", "/repo/src/a b.rs"]
+        );
+        assert_eq!(
+            with_path(args(&["--cwd"]), &["%d"], file, false),
+            ["--cwd"],
+            "a terminal runs in the folder instead"
+        );
     }
 
     #[test]

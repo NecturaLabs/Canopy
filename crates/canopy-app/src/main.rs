@@ -17,6 +17,7 @@ mod platform;
 mod repo_config;
 mod selfupdate;
 mod settings;
+mod system_apps;
 mod tab;
 mod trust;
 mod ui;
@@ -284,6 +285,9 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(2);
         }
     };
+
+    // The editor, terminal and file manager the open actions use when Settings names none.
+    system_apps::refresh(None);
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Canopy")

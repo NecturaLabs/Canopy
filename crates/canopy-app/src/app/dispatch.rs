@@ -1,6 +1,7 @@
 //! Applying the actions a frame collected.
 
 use super::*;
+use crate::system_apps::Kind;
 
 impl CanopyApp {
     pub(super) fn apply(&mut self, ctx: &egui::Context, actions: Vec<Action>) {
@@ -137,7 +138,7 @@ impl CanopyApp {
                 Action::OpenLogs => match crate::logging::log_dir() {
                     Some(dir) => {
                         let _ = std::fs::create_dir_all(&dir);
-                        if let Err(e) = crate::platform::open_folder(&dir) {
+                        if let Err(e) = crate::platform::open_folder(&dir, &self.file_manager()) {
                             self.toasts.push(ctx, ToastKind::Error, "Could not open", e);
                         }
                     }
@@ -273,19 +274,23 @@ impl CanopyApp {
                     }
                 }
                 Action::OpenPath(dir) => {
-                    if let Err(e) = crate::platform::open_folder(&dir) {
+                    if let Err(e) = crate::platform::open_folder(&dir, &self.file_manager()) {
                         self.toasts
                             .push(ctx, ToastKind::Error, "Could not open the folder", e);
                     }
                 }
                 Action::OpenInEditor(file) => {
-                    if let Err(e) = crate::platform::open_in_editor(&file, &self.settings.editor) {
+                    if let Err(e) =
+                        crate::platform::open_in_editor(&file, &self.launcher(Kind::Editor))
+                    {
                         self.toasts
                             .push(ctx, ToastKind::Error, "Could not open the file", e);
                     }
                 }
                 Action::OpenTerminal(p) => {
-                    if let Err(e) = crate::platform::open_terminal(&p, &self.settings.terminal) {
+                    if let Err(e) =
+                        crate::platform::open_terminal(&p, &self.launcher(Kind::Terminal))
+                    {
                         self.toasts
                             .push(ctx, ToastKind::Error, "Could not open a terminal", e);
                     }
@@ -381,6 +386,20 @@ impl CanopyApp {
         } else {
             self.request_identity(IdentityJob::ReadGlobal);
         }
+    }
+
+    /// The command an open action runs: the one chosen in Settings, else the system's.
+    fn launcher(&self, kind: Kind) -> String {
+        let configured = match kind {
+            Kind::Editor => &self.settings.editor,
+            Kind::Terminal => &self.settings.terminal,
+            Kind::FileManager => &self.settings.file_manager,
+        };
+        crate::system_apps::command_for(configured, kind)
+    }
+
+    fn file_manager(&self) -> String {
+        self.launcher(Kind::FileManager)
     }
 
     /// The add-remote dialog, its URL protocol the active repository's choice.

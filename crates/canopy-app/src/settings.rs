@@ -181,11 +181,15 @@ pub struct Settings {
     pub clone_protocol: CloneProtocol,
     /// Self-hosted GitLab hosts, comma-separated.
     pub gitlab_hosts: String,
-    /// Terminal command for "Open terminal here", run in the repository folder.
+    /// Terminal command for "Open terminal here", run in the repository folder (`%d` stands for
+    /// it). Empty uses the system's terminal (`system_apps`).
     pub terminal: String,
-    /// Editor command for "Open in editor"; the file is added as the last argument. Empty uses
-    /// the platform's text editor.
+    /// Editor command for "Open in editor"; `%f` stands for the file, which is added as the last
+    /// argument otherwise. Empty uses the system's editor.
     pub editor: String,
+    /// File manager command for showing a folder; `%d` stands for the folder, which is added as
+    /// the last argument otherwise. Empty uses the system's file manager.
+    pub file_manager: String,
     /// Load pull/merge requests from GitHub and GitLab.
     pub hosting_api: bool,
     /// Folders whose repositories may download missing objects in a partial clone without being
@@ -260,6 +264,7 @@ impl Default for Settings {
             gitlab_hosts: String::new(),
             terminal: String::new(),
             editor: String::new(),
+            file_manager: String::new(),
             hosting_api: true,
             trusted_folders: Vec::new(),
             check_updates: true,

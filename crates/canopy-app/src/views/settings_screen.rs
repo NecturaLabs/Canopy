@@ -22,6 +22,7 @@ use crate::hosting::{self, TokenStore};
 use crate::keymap::{Command, Section as KeySection};
 use crate::repo_config::{ConfigValue, GitFacts};
 use crate::settings::{CloneProtocol, DiffPrefs, PullMode, Settings, WhitespaceMode};
+use crate::system_apps::Kind;
 use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::choice::Segmented;
@@ -120,6 +121,8 @@ pub struct SettingsScreen {
     local_loaded: Option<Identity>,
     local_name: String,
     local_email: String,
+    /// Whether this screen asked for the system's programs to be looked up again.
+    apps_asked: bool,
 }
 
 /// What the user's version-control configuration says, read off the UI thread for the notes
@@ -305,6 +308,11 @@ pub fn show(
     let m = theme::metrics();
     let mut result = SettingsResult::default();
     screen.picker.begin_frame();
+    if !screen.apps_asked {
+        // Picks up an editor or terminal installed since the last look.
+        screen.apps_asked = true;
+        crate::system_apps::refresh(Some(ctx));
+    }
     let (width, height) = shell_size(ctx);
     let sidebar = width >= NAV_MIN_WIDTH;
     let repo = data.identity.repo;
@@ -614,8 +622,9 @@ fn synonyms(title: &str) -> &'static str {
         "Clone protocol" => "ssh https url remote",
         "Self-hosted GitLab" => "gitlab host enterprise server",
         "Pull and merge requests" => "pr mr github gitlab api hosting offline",
-        "Terminal" => "console shell command line",
-        "Editor" => "ide vscode code zed sublime open file",
+        "Terminal" => "console shell command line $terminal kitty alacritty",
+        "Editor" => "ide vscode code zed sublime vim open file $editor $visual",
+        "File manager" => "folder explorer finder nautilus files dolphin show reveal",
         "Trusted folders" => "trust partial clone security",
         "Send crash reports" => "crash sentry telemetry error report",
         "Log detail" => "log logging debug verbose diagnostics",
@@ -1957,6 +1966,14 @@ fn identity_group(
             }
         }
     };
+    // What git would use while the field is empty (a guess from the user and host names, or a
+    // value nobody can save here) shows as its placeholder, never as a value to save.
+    let unchosen = |pick: fn(&Identity) -> &Field| {
+        identity
+            .map(pick)
+            .filter(|f| !f.explicit() && !f.value.is_empty())
+            .map_or_else(String::new, |f| format!("{} (guessed by git)", f.value))
+    };
     row_layout(
         ui,
         "Name",
@@ -1967,6 +1984,7 @@ fn identity_group(
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut screen.identity_name)
+                    .placeholder(unchosen(|i| &i.author.name))
                     .width(FIELD_WIDTH)
                     .name("Name")
                     .id_salt("identity-name")
@@ -1985,6 +2003,7 @@ fn identity_group(
         |ui| {
             fixed_width(ui, FIELD_WIDTH, |ui| {
                 TextField::new(&mut screen.identity_email)
+                    .placeholder(unchosen(|i| &i.author.email))
                     .width(FIELD_WIDTH)
                     .name("Email")
                     .id_salt("identity-email")
@@ -2862,6 +2881,11 @@ fn integrations(
                     .id_salt("clone-dir")
                     .show(ui)
             });
+            if s.clone_dir.trim().is_empty() {
+                Badge::new("Default")
+                    .tooltip("Canopy's default: ~/src when it exists, else your home folder.")
+                    .show(ui);
+            }
         },
     );
     default_row(
@@ -2903,34 +2927,87 @@ fn integrations(
         },
     );
     heading(ui, "Tools");
-    row(
+    let apps = crate::system_apps::get();
+    launcher_row(
         ui,
         "Terminal",
-        "The command \"Open terminal here\" runs, in the repository folder. Empty tries $TERMINAL and common terminals.",
-        |ui| {
-            fixed_width(ui, FIELD_WIDTH, |ui| {
-                TextField::new(&mut s.terminal)
-                    .placeholder("kitty, alacritty, wezterm start --cwd .")
-                    .width(FIELD_WIDTH)
-                    .name("Terminal")
-                    .id_salt("terminal")
-                    .show(ui)
-            });
+        "What \"Open terminal here\" runs, in the repository folder (%d stands for the folder).",
+        Kind::Terminal,
+        &mut s.terminal,
+        apps.as_deref(),
+    );
+    launcher_row(
+        ui,
+        "Editor",
+        "What \"Open in editor\" runs. %f stands for the file; without it the file is added at the end.",
+        Kind::Editor,
+        &mut s.editor,
+        apps.as_deref(),
+    );
+    launcher_row(
+        ui,
+        "File manager",
+        "What \"Show in file manager\" runs. %d stands for the folder; without it the folder is added at the end.",
+        Kind::FileManager,
+        &mut s.file_manager,
+        apps.as_deref(),
+    );
+}
+
+/// An editor, terminal or file manager: the chosen command, or the system's program shown in
+/// the empty field with where it comes from, and a button back to it once one is chosen.
+fn launcher_row(
+    ui: &mut Ui,
+    title: &str,
+    help: &str,
+    kind: Kind,
+    value: &mut String,
+    apps: Option<&crate::system_apps::Apps>,
+) {
+    let system = apps.and_then(|a| a.system(kind));
+    let system_name = match (apps, system) {
+        (None, _) => "Looking for the system's…".to_owned(),
+        (Some(_), Some(choice)) => choice.name.clone(),
+        (Some(_), None) => "The desktop's default".to_owned(),
+    };
+    let tip = system.map_or_else(
+        || "Canopy asks the desktop to open it.".to_owned(),
+        |c| {
+            c.command.as_ref().map_or_else(
+                || "Canopy asks the system to open it.".to_owned(),
+                |cmd| format!("Runs: {cmd}"),
+            )
         },
     );
     row(
         ui,
-        "Editor",
-        "The command \"Open in editor\" runs, with the file added at the end. Empty uses your system's text editor.",
+        title,
+        &format!("{help} Empty uses the system's."),
         |ui| {
+            // Right to left: the field, then its tag or the way back to the system's.
             fixed_width(ui, FIELD_WIDTH, |ui| {
-                TextField::new(&mut s.editor)
-                    .placeholder("code, zed, gnome-text-editor")
+                TextField::new(value)
+                    .placeholder(system_name.clone())
                     .width(FIELD_WIDTH)
-                    .name("Editor")
-                    .id_salt("editor")
+                    .name(title)
+                    .id_salt(("launcher", title))
                     .show(ui)
             });
+            if value.trim().is_empty() {
+                if let Some(choice) = system {
+                    Badge::new(choice.origin.tag()).tooltip(tip).show(ui);
+                }
+            } else if IconButton::new(
+                icon::ARROW_COUNTER_CLOCKWISE,
+                format!("Use the system's ({system_name})"),
+            )
+            .size(Size::Sm)
+            .id_salt(("launcher-reset", title))
+            .show(ui)
+            .clicked()
+            {
+                value.clear();
+            }
         },
     );
 }
