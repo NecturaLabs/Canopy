@@ -3,10 +3,11 @@
 //!
 //! Motion in Canopy is feedback, never decoration. Anything driven by the keyboard or repeated
 //! often (row hover, selection, focus, tab switches, palette filtering, scrolling to the selection)
-//! changes instantly. Pointer feedback, popovers, dialogs and toasts ease, and with reduced motion
-//! every duration here is zero and every spring lands on its target. The operating system's own
-//! setting is read by [`crate::platform::prefers_reduced_motion`] on a background thread
-//! ([`query_system`]).
+//! changes instantly. Pointer feedback, popovers, dialogs and toasts ease, and so do list rows the
+//! repository moves under the user (staging, fetching, switching branches), so the change reads.
+//! With reduced motion every duration here is zero and every spring lands on its target. The
+//! operating system's own setting is read by [`crate::platform::prefers_reduced_motion`] on a
+//! background thread ([`query_system`]).
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -44,6 +45,18 @@ pub const SUBMENU_DELAY: f32 = 0.10;
 pub const TAB_CLOSE: f32 = 0.25;
 /// A determinate progress fill easing towards a larger value.
 pub const PROGRESS_FILL: f32 = 0.18;
+/// When the repository changes the rows of a list (a file staged, commits fetched, a branch
+/// switched): a row sliding from where it was to its new place, a new row fading in where it
+/// lands, and a row that left fading out where it was (`kit::anim::Flip`).
+pub const ROW_MOVE: f32 = 0.2;
+pub const ROW_IN: f32 = 0.18;
+pub const ROW_OUT: f32 = 0.14;
+/// Seconds a tool shows how its operation ended before it fades; not scaled by reduced motion.
+#[expect(
+    dead_code,
+    reason = "views/toolbar.rs switches to it when the shell work merges"
+)]
+pub const OUTCOME_HOLD: f32 = 1.6;
 /// Loops (they run while visible and stop with reduced motion): one indeterminate sweep, one sweep
 /// of the line under search inputs and its wait before the first, one spinner turn, one skeleton
 /// pulse, and the reduced-motion spinner's pulse.

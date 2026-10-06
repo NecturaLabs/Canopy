@@ -9,6 +9,7 @@ use canopy_core::{DiffSource, FileEntry};
 use crate::action::Action;
 use crate::keymap::Command;
 use crate::tab::{FileSelection, RepoTab};
+use crate::ui::kit::anim::Flip;
 use crate::ui::kit::chip::CountBadge;
 use crate::ui::kit::field::{TextArea, TextField};
 use crate::ui::kit::progress::Spinner;
@@ -27,12 +28,16 @@ enum List {
     Staged,
 }
 
-/// Draws the changes view.
-pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
+/// The id of the file lists' panel, beside the diff.
+pub const LIST_PANEL: &str = "changes-list";
+
+/// Draws the changes view. Returns the file lists' panel rectangle when it showed one (Deeper
+/// gives the lists and the diff a card each).
+pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option<Rect> {
     let s = theme::surfaces(ui.ctx());
     let Some(snap) = tab.snap.clone() else {
         ui.centered_and_justified(|ui| Spinner::new().label("changes").show(ui));
-        return;
+        return None;
     };
     state_banner::show(ui, tab, actions);
     // Default selection: the first changed file.
@@ -64,7 +69,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
     }
 
     let pane_max = (ui.available_width() * 0.4).max(160.0);
-    egui::Panel::left("changes-list")
+    let list = egui::Panel::left(LIST_PANEL)
         .resizable(true)
         .default_size(pane_max.min(400.0))
         .min_size(pane_max.min(220.0))
@@ -86,14 +91,19 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         egui::ScrollArea::vertical()
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                                lists(ui, tab, &snap, actions);
-                                ui.add_space(COMPOSER_GAP / 2.0);
-                                let rule = ui.max_rect().x_range();
-                                paint::seam_h(ui.painter(), rule, ui.cursor().min.y, s.border);
-                                ui.add_space(COMPOSER_GAP / 2.0);
-                                egui::Frame::new()
-                                    .inner_margin(egui::Margin::symmetric(4, 0))
-                                    .show(ui, |ui| composer(ui, tab, &snap, actions, true));
+                                let mut flip = list_motion(ui, tab);
+                                lists(ui, tab, &snap, actions, &mut flip);
+                                // The composer follows the lists as they change.
+                                flip.item(ui, composer_key(), None, |ui| {
+                                    ui.add_space(COMPOSER_GAP / 2.0);
+                                    let rule = ui.max_rect().x_range();
+                                    paint::seam_h(ui.painter(), rule, ui.cursor().min.y, s.border);
+                                    ui.add_space(COMPOSER_GAP / 2.0);
+                                    egui::Frame::new()
+                                        .inner_margin(egui::Margin::symmetric(4, 0))
+                                        .show(ui, |ui| composer(ui, tab, &snap, actions, true));
+                                });
+                                flip.end(ui, |key| listed(&snap.status, key));
                             });
                     });
                 return;
@@ -122,7 +132,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            lists(ui, tab, &snap, actions);
+                            let mut flip = list_motion(ui, tab);
+                            lists(ui, tab, &snap, actions, &mut flip);
+                            flip.end(ui, |key| listed(&snap.status, key));
                         });
                 });
         });
@@ -137,6 +149,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 diff::show(ui, tab, actions);
             }
         });
+    Some(list.response.rect)
 }
 
 /// Gap between the last list and the composer when the composer follows the lists.
@@ -223,6 +236,7 @@ fn lists(
     tab: &mut RepoTab,
     snap: &canopy_core::RepoSnapshot,
     actions: &mut Vec<Action>,
+    flip: &mut Flip,
 ) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
@@ -263,19 +277,21 @@ fn lists(
     } else if st.is_clean() {
         // The illustration and the summary live in the main pane (`clean_home`); here the
         // column only says there is nothing to list.
-        list_header(ui, "Changes", 0, Tone::Neutral, |_| {});
+        flip.item(ui, clean_key(), None, |ui| {
+            list_header(ui, "Changes", 0, Tone::Neutral, |_| {});
+        });
     } else {
         let (conflicts, unstaged, staged) = visible_lists(st);
         if conflicts {
-            list(ui, tab, List::Conflicted, &st.conflicted, actions);
+            list(ui, tab, List::Conflicted, &st.conflicted, actions, flip);
             ui.add_space(LIST_GAP);
         }
         if unstaged {
-            list(ui, tab, List::Unstaged, &st.unstaged, actions);
+            list(ui, tab, List::Unstaged, &st.unstaged, actions, flip);
             ui.add_space(LIST_GAP);
         }
         if staged {
-            list(ui, tab, List::Staged, &st.staged, actions);
+            list(ui, tab, List::Staged, &st.staged, actions, flip);
         }
     }
     ui.spacing_mut().item_spacing.y = spacing;
@@ -415,12 +431,66 @@ fn visible_lists(st: &canopy_core::WorkingStatus) -> (bool, bool, bool) {
     (conflicts, unstaged, staged)
 }
 
+/// The file lists' rows as [`Flip`] items for the tab's current data: a file staged or unstaged
+/// slides to its new section, new files fade in and the rest close up smoothly.
+fn list_motion(ui: &Ui, tab: &RepoTab) -> Flip {
+    let id = egui::Id::new(("changes-list-motion", &tab.path));
+    Flip::begin(ui, id, tab.generation, ui.cursor().min).ground(theme::surfaces(ui.ctx()).pane)
+}
+
+/// Keys of the file lists' [`Flip`] items: a section's header and empty line, a file's row in a
+/// section (aliased by its path, so it slides between sections), the clean tree's header and the
+/// composer that follows the lists.
+fn header_key(which: List) -> egui::Id {
+    egui::Id::new(("changes-header", which as u8))
+}
+fn empty_key(which: List) -> egui::Id {
+    egui::Id::new(("changes-empty", which as u8))
+}
+fn row_key(which: List, path: &str) -> egui::Id {
+    egui::Id::new(("changes-row", which as u8, path))
+}
+fn path_key(path: &str) -> egui::Id {
+    egui::Id::new(("changes-file", path))
+}
+fn clean_key() -> egui::Id {
+    egui::Id::new("changes-clean")
+}
+fn composer_key() -> egui::Id {
+    egui::Id::new("changes-composer")
+}
+
+/// Whether the item `key` is still in the lists of `st` (a row out of view is, and is not faded
+/// out). Asked only for rows that were on screen and are not now, when the status changed.
+fn listed(st: &canopy_core::WorkingStatus, key: egui::Id) -> bool {
+    if key == composer_key() {
+        return true;
+    }
+    if st.is_clean() {
+        return key == clean_key();
+    }
+    let (conflicts, unstaged, staged) = visible_lists(st);
+    [
+        (List::Conflicted, conflicts, &st.conflicted),
+        (List::Unstaged, unstaged, &st.unstaged),
+        (List::Staged, staged, &st.staged),
+    ]
+    .into_iter()
+    .any(|(which, shown, files)| {
+        shown
+            && (key == header_key(which)
+                || (files.is_empty() && key == empty_key(which))
+                || files.iter().any(|f| key == row_key(which, &f.path)))
+    })
+}
+
 fn list(
     ui: &mut Ui,
     tab: &mut RepoTab,
     which: List,
     files: &[FileEntry],
     actions: &mut Vec<Action>,
+    flip: &mut Flip,
 ) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
@@ -436,82 +506,86 @@ fn list(
         tone
     };
     let compact = ui.available_width() < 280.0;
-    list_header(ui, title, files.len(), tone, |ui| match which {
-        List::Unstaged if !files.is_empty() => {
-            let stage = if compact {
-                IconButton::new(icon::PLUS, "Stage all files")
-                    .size(Size::Sm)
-                    .shortcut(Command::StageAll)
-                    .show(ui)
-            } else {
-                Button::new("Stage all")
-                    .icon(icon::PLUS)
-                    .size(Size::Sm)
-                    .tooltip("Stage all files")
-                    .shortcut(Command::StageAll)
-                    .show(ui)
-            };
-            if stage.clicked() {
-                actions.push(Action::Op(Op::StageAll));
-            }
-            // Discarding everything lives in an overflow menu, a gap away from Stage.
-            ui.add_space(theme::MD);
-            let more = IconButton::new(icon::DOTS_THREE, "More actions")
-                .size(Size::Sm)
-                .show(ui);
-            menu::menu(&more, |m| {
-                if m.item(icon::ARROW_COUNTER_CLOCKWISE, "Discard all changes…")
-                    .danger()
-                    .show(m.ui)
-                    .clicked()
-                {
-                    actions.push(Action::Confirm {
-                        title: "Discard all changes".into(),
-                        body: format!(
-                            "Throw away every unstaged change in {} files, including untracked \
-                             files? This cannot be undone.",
-                            files.len()
-                        ),
-                        confirm: "Discard all".into(),
-                        danger: true,
-                        op: Op::Discard(files.to_vec()),
-                    });
-                }
-            });
-        }
-        List::Staged if !files.is_empty() => {
-            let unstage = if compact {
-                IconButton::new(icon::MINUS, "Unstage all files")
-                    .size(Size::Sm)
-                    .shortcut(Command::UnstageAll)
-                    .show(ui)
-            } else {
-                Button::new("Unstage all")
-                    .icon(icon::MINUS)
-                    .size(Size::Sm)
-                    .tooltip("Unstage all files")
-                    .shortcut(Command::UnstageAll)
-                    .show(ui)
-            };
-            if unstage.clicked() {
-                actions.push(Action::Op(Op::UnstageAll));
-            }
-        }
-        _ => {}
-    });
-    ui.add_space(theme::XS);
-    if files.is_empty() {
-        ui.horizontal(|ui| {
-            ui.add_space(theme::MD);
-            ui.label(
-                RichText::new(if which == List::Staged {
-                    "Nothing staged yet"
+    flip.item(ui, header_key(which), None, |ui| {
+        list_header(ui, title, files.len(), tone, |ui| match which {
+            List::Unstaged if !files.is_empty() => {
+                let stage = if compact {
+                    IconButton::new(icon::PLUS, "Stage all files")
+                        .size(Size::Sm)
+                        .shortcut(Command::StageAll)
+                        .show(ui)
                 } else {
-                    "No unstaged changes"
-                })
-                .size(m.meta_size)
-                .color(p.text_faint),
-            );
+                    Button::new("Stage all")
+                        .icon(icon::PLUS)
+                        .size(Size::Sm)
+                        .tooltip("Stage all files")
+                        .shortcut(Command::StageAll)
+                        .show(ui)
+                };
+                if stage.clicked() {
+                    actions.push(Action::Op(Op::StageAll));
+                }
+                // Discarding everything lives in an overflow menu, a gap away from Stage.
+                ui.add_space(theme::MD);
+                let more = IconButton::new(icon::DOTS_THREE, "More actions")
+                    .size(Size::Sm)
+                    .show(ui);
+                menu::menu(&more, |m| {
+                    if m.item(icon::ARROW_COUNTER_CLOCKWISE, "Discard all changes…")
+                        .danger()
+                        .show(m.ui)
+                        .clicked()
+                    {
+                        actions.push(Action::Confirm {
+                            title: "Discard all changes".into(),
+                            body: format!(
+                                "Throw away every unstaged change in {} files, including untracked \
+                             files? This cannot be undone.",
+                                files.len()
+                            ),
+                            confirm: "Discard all".into(),
+                            danger: true,
+                            op: Op::Discard(files.to_vec()),
+                        });
+                    }
+                });
+            }
+            List::Staged if !files.is_empty() => {
+                let unstage = if compact {
+                    IconButton::new(icon::MINUS, "Unstage all files")
+                        .size(Size::Sm)
+                        .shortcut(Command::UnstageAll)
+                        .show(ui)
+                } else {
+                    Button::new("Unstage all")
+                        .icon(icon::MINUS)
+                        .size(Size::Sm)
+                        .tooltip("Unstage all files")
+                        .shortcut(Command::UnstageAll)
+                        .show(ui)
+                };
+                if unstage.clicked() {
+                    actions.push(Action::Op(Op::UnstageAll));
+                }
+            }
+            _ => {}
+        });
+        ui.add_space(theme::XS);
+    });
+    if files.is_empty() {
+        flip.item(ui, empty_key(which), None, |ui| {
+            ui.horizontal(|ui| {
+                ui.add_space(theme::MD);
+                ui.label(
+                    RichText::new(if which == List::Staged {
+                        "Nothing staged yet"
+                    } else {
+                        "No unstaged changes"
+                    })
+                    .size(m.meta_size)
+                    .color(p.text_faint),
+                );
+            });
         });
         return;
     }
@@ -540,7 +614,9 @@ fn list(
             tip,
             labelled: conflicted,
         };
-        let (resp, acted) = file_row(ui, f, selected, ("change", which as u8, &f.path), action);
+        let (resp, acted) = flip.item(ui, row_key(which, &f.path), Some(path_key(&f.path)), |ui| {
+            file_row(ui, f, selected, ("change", which as u8, &f.path), action)
+        });
         let toggle = || {
             if which == List::Staged {
                 Op::Unstage(vec![f.path.clone()])
@@ -1002,7 +1078,9 @@ mod tests {
                     events,
                     ..Default::default()
                 },
-                |ui| show(ui, tab, &mut Vec::new()),
+                |ui| {
+                    show(ui, tab, &mut Vec::new());
+                },
             );
             output.textures_delta.clear();
             texts = output
@@ -1330,6 +1408,113 @@ mod tests {
                 });
             }
             assert!(visible, "Commit button must be visible at {size:?}");
+        }
+    }
+
+    /// One frame at time `t`: each text painted and the top of its galley.
+    fn timed_texts(ctx: &egui::Context, tab: &mut RepoTab, t: f64) -> Vec<(String, f32)> {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
+                time: Some(t),
+                ..Default::default()
+            },
+            |ui| {
+                show(ui, tab, &mut Vec::new());
+            },
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                // Only what shows: a sliding row's text inside its (moving) clip.
+                egui::Shape::Text(text)
+                    if shape.clip_rect.intersects(text.visual_bounding_rect()) =>
+                {
+                    Some((text.galley.text().to_owned(), text.pos.y))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn painted_at(texts: &[(String, f32)], text: &str) -> Option<f32> {
+        texts.iter().find(|(t, _)| t == text).map(|(_, y)| *y)
+    }
+
+    /// O1 (owner): staging a file moves its row from Unstaged to Staged by sliding it there, the
+    /// rows below close up smoothly and the composer under the lists follows without a jump;
+    /// with reduced motion everything lands at once.
+    #[test]
+    fn staging_a_file_slides_its_row_to_the_staged_list() {
+        for reduced in [false, true] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                theme::Appearance {
+                    reduce_motion: reduced,
+                    ..theme::Appearance::STILL
+                },
+            );
+            let dir = tempfile::tempdir().expect("temporary tab");
+            let mut tab = RepoTab::new(
+                dir.path().into(),
+                &ctx,
+                100,
+                crate::settings::DiffPrefs::default(),
+            );
+            let mut snap = canopy_core::RepoSnapshot::default();
+            snap.status.unstaged = vec![entry("a.rs"), entry("b.rs"), entry("c.rs")];
+            tab.snap = Some(std::sync::Arc::new(snap.clone()));
+            let mut before = Vec::new();
+            for i in 0..3 {
+                before = timed_texts(&ctx, &mut tab, f64::from(i) * 0.1);
+            }
+            let (b0, c0) = (painted_at(&before, "b.rs"), painted_at(&before, "c.rs"));
+            let composer0 = painted_at(&before, "Summary (required)");
+            // b.rs is staged: the worker sends the new status.
+            snap.status.unstaged = vec![entry("a.rs"), entry("c.rs")];
+            snap.status.staged = vec![entry("b.rs")];
+            tab.snap = Some(std::sync::Arc::new(snap));
+            tab.generation += 1;
+            let change = timed_texts(&ctx, &mut tab, 1.0);
+            let mid = timed_texts(&ctx, &mut tab, 1.08);
+            let mut rest = Vec::new();
+            for i in 0..3 {
+                rest = timed_texts(&ctx, &mut tab, 2.0 + f64::from(i) * 0.1);
+            }
+            let (b1, c1) = (painted_at(&rest, "b.rs"), painted_at(&rest, "c.rs"));
+            let composer1 = painted_at(&rest, "Summary (required)");
+            let (b0, b1, c0, c1) = (
+                b0.expect("b.rs before"),
+                b1.expect("b.rs after"),
+                c0.expect("c.rs before"),
+                c1.expect("c.rs after"),
+            );
+            assert!(b1 > b0 && c1 < c0, "b.rs moves down to Staged, c.rs up");
+            let at = |texts: &[(String, f32)], text: &str| {
+                painted_at(texts, text).unwrap_or_else(|| panic!("{text} painted"))
+            };
+            if reduced {
+                assert_eq!(at(&change, "b.rs"), b1, "reduced: b.rs lands at once");
+                assert_eq!(at(&change, "c.rs"), c1);
+                continue;
+            }
+            assert_eq!(at(&change, "b.rs"), b0, "b.rs starts where it was");
+            assert_eq!(at(&change, "c.rs"), c0, "c.rs starts where it was");
+            assert_eq!(
+                painted_at(&change, "Summary (required)"),
+                composer0,
+                "the composer does not jump"
+            );
+            let b = at(&mid, "b.rs");
+            assert!(b > b0 && b < b1, "b.rs slides: {b0} -> {b} -> {b1}");
+            let c = at(&mid, "c.rs");
+            assert!(c < c0 && c > c1, "c.rs slides: {c0} -> {c} -> {c1}");
+            assert!(composer1.is_some(), "the composer is there at rest");
         }
     }
 }

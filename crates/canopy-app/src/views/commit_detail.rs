@@ -77,7 +77,9 @@ pub fn show(
             } else {
                 theme::XS
             };
-            author(ui, &d, tab);
+            // The picture status reaches the view when the avatar work merges: contracts/avatars.md
+            // "Picture status" builds a `PictureNote` from `avatars::explain` here.
+            author(ui, &d, tab, None, actions);
             ui.horizontal_wrapped(|ui| {
                 ui.label(
                     RichText::new(short_id(d.oid))
@@ -106,11 +108,11 @@ pub fn show(
                 .show();
             });
             // Up to two whole file rows, the "N files changed" line above them (as tall as it
-            // was last frame) and the gaps between them.
+            // was last frame, at first one line of its text) and the gaps between them.
             let stats_key = ui.id().with("commit-file-stats-height");
             let stats_h = ui
                 .data(|data| data.get_temp::<f32>(stats_key))
-                .unwrap_or(ui.spacing().interact_size.y);
+                .unwrap_or_else(|| text_row(ui, m.meta_size));
             let files_min = file_row_height() * crate::ui::count_f32(d.files.len().min(2))
                 + stats_h
                 + theme::XS * 2.0
@@ -134,6 +136,8 @@ pub fn show(
             };
             let first_line = ui.fonts_mut(|f| f.row_height(&first_line));
             information(ui, &mut open, info_room, first_line, |ui| {
+                // Metadata rows as tall as their text, like a list of facts.
+                ui.spacing_mut().interact_size.y = 0.0;
                 if message(ui, &d, summary) {
                     ui.add_space(theme::XS);
                 }
@@ -165,6 +169,71 @@ pub fn show(
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(s.pane))
         .show(ui, |ui| diff::show(ui, tab, actions));
+}
+
+/// Lines of a commit message's body a details pane that sizes itself keeps room for; a longer
+/// body scrolls in its block.
+const BODY_LINES: usize = 2;
+
+/// The least height History gives the details pane when it sizes the pane itself: the pane header
+/// and the commit column as [`show`] lays it out for `d` (any commit while it loads): the author
+/// and SHA rows, the "Commit information" row and its body (the first lines of the message, the
+/// email, the date, the committer and the parents), the changed-files line and the file rows it
+/// keeps in view. So the commit's information shows at the pane's natural size in every density;
+/// a pane made shorter by hand shuts the block and says why.
+pub fn natural_height(ui: &Ui, d: Option<&CommitDetails>) -> f32 {
+    let m = theme::metrics();
+    let gap = theme::XS;
+    let row = ui.spacing().interact_size.y;
+    let author = row.max(m.avatar_detail);
+    let sha = row.max(Size::Xs.height());
+    let disclosure = RowKind::List.height() + theme::XS * 2.0 + gap * 2.0;
+    let fact = text_row(ui, m.meta_size);
+    // The email and the date always; the committer and the parents when the commit has them;
+    // the body's first lines when the message has one.
+    let (facts, body_lines, files) = d.map_or((3, 0, 2), |d| {
+        let committer = d.committer.email != d.author.email || d.committer.name != d.author.name;
+        let body = d
+            .message
+            .trim()
+            .lines()
+            .skip(1)
+            .filter(|l| !l.trim().is_empty());
+        (
+            1 + usize::from(committer) + usize::from(!d.parents.is_empty()),
+            body.count().min(BODY_LINES),
+            d.files.len().min(2),
+        )
+    });
+    let body = if body_lines > 0 {
+        crate::ui::count_f32(body_lines) * fact + theme::XS + gap
+    } else {
+        0.0
+    };
+    let information =
+        text_row(ui, m.small_size) + crate::ui::count_f32(facts) * (fact + gap) + body;
+    let files = file_row_height() * crate::ui::count_f32(files)
+        + text_row(ui, m.meta_size)
+        + theme::XS * 2.0
+        + gap * 3.0;
+    m.pane_header_height
+        + m.detail_pad.y * 2.0
+        + author
+        + gap
+        + sha
+        + gap
+        + disclosure
+        + information
+        + files
+}
+
+/// The height of one line of text at `size` (an icon row of the same size included).
+fn text_row(ui: &Ui, size: f32) -> f32 {
+    let m = theme::metrics();
+    ui.fonts_mut(|f| {
+        f.row_height(&FontId::proportional(size))
+            .max(f.row_height(&FontId::proportional(m.icon_sm)))
+    })
 }
 
 /// Pane navigation belongs to the commit, including when its files have not loaded: the commit's
@@ -336,7 +405,25 @@ fn message(ui: &mut Ui, d: &CommitDetails, summary: bool) -> bool {
     summary || !body.is_empty()
 }
 
-fn author(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
+/// Why the repository's authors show initials instead of pictures, for the author line: the view's
+/// side of `avatars::Explanation` (contracts/avatars.md, "Picture status UI" 1).
+#[derive(Debug, Clone)]
+pub struct PictureNote {
+    /// A few words: the tooltip's first line and the button's accessible name.
+    pub title: String,
+    /// The cause and what to do, under the title.
+    pub detail: String,
+    /// What a click does: open Settings where the cause can be changed.
+    pub fix: Option<Action>,
+}
+
+fn author(
+    ui: &mut Ui,
+    d: &CommitDetails,
+    tab: &mut RepoTab,
+    note: Option<&PictureNote>,
+    actions: &mut Vec<Action>,
+) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     ui.horizontal(|ui| {
@@ -359,7 +446,62 @@ fn author(ui: &mut Ui, d: &CommitDetails, tab: &mut RepoTab) {
         )
         .kit_tooltip(format!("{} <{}>", d.author.name, d.author.email))
         .show();
+        if let Some(note) = note {
+            picture_note(ui, note, actions);
+        }
     });
+}
+
+/// The info mark after the author's name when pictures are kept away: faint at rest, dim on hover,
+/// no fill; its tooltip gives the title and the cause, and a click opens the setting that fixes it.
+fn picture_note(ui: &mut Ui, note: &PictureNote, actions: &mut Vec<Action>) {
+    let ctx = ui.ctx().clone();
+    let p = palette(&ctx);
+    let m = theme::metrics();
+    let side = Size::Xs.height();
+    let sense = if note.fix.is_some() {
+        egui::Sense::click()
+    } else {
+        egui::Sense::focusable_noninteractive()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(side), sense);
+    let st = crate::ui::kit::Interact::of(&ctx, &response, true, None);
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if st.focus > 0.0 {
+            paint::focus_ring(
+                painter,
+                rect,
+                CornerRadius::same(m.radius_sm),
+                p.focus.gamma_multiply(st.focus),
+                egui::Color32::TRANSPARENT,
+            );
+        }
+        let color = p.text_faint.lerp_to_gamma(p.text_dim, st.hover);
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            icon::INFO,
+            FontId::proportional(m.icon_sm),
+            color,
+        );
+    }
+    let title = note.title.clone();
+    let response = response.on_hover_cursor(if note.fix.is_some() {
+        egui::CursorIcon::PointingHand
+    } else {
+        egui::CursorIcon::Default
+    });
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));
+    let response = response
+        .kit_tooltip(note.title.clone())
+        .detail(note.detail.clone())
+        .show();
+    if response.clicked()
+        && let Some(fix) = &note.fix
+    {
+        actions.push(fix.clone());
+    }
 }
 
 fn metadata(ui: &mut Ui, d: &CommitDetails, actions: &mut Vec<Action>) {
@@ -803,6 +945,110 @@ mod tests {
             "the action is shown on a selected row: {nodes:?}"
         );
         assert!(nodes.iter().any(|(l, _)| l == "src/views/history.rs"));
+    }
+
+    /// The author line of a commit by `Author`, with `note` after the name; the actions it asked
+    /// for and the AccessKit labels of the last frame. `keys` are pressed one per frame after
+    /// the first.
+    fn author_line(
+        note: Option<&super::PictureNote>,
+        keys: &[egui::Key],
+    ) -> (Vec<crate::action::Action>, Vec<String>) {
+        let ctx = ctx(Density::Comfortable);
+        ctx.enable_accesskit();
+        let dir = tempfile::tempdir().expect("temporary tab");
+        let mut tab = crate::tab::RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
+        let author = canopy_core::Signature {
+            name: "Author".into(),
+            email: "author@example.com".into(),
+            time: 0,
+            offset_minutes: 0,
+        };
+        let d = canopy_core::CommitDetails {
+            oid: canopy_core::Oid::from_bytes(&[1; 20]).expect("fixture oid"),
+            message: "Selected commit".into(),
+            author: author.clone(),
+            committer: author,
+            parents: Vec::new(),
+            files: Vec::new(),
+            stats_known: true,
+        };
+        let mut actions = Vec::new();
+        let mut labels = Vec::new();
+        let frames = std::iter::once(None).chain(keys.iter().copied().map(Some));
+        for key in frames {
+            let events = key.map_or_else(Vec::new, |key| {
+                [true, false]
+                    .map(|pressed| egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    })
+                    .to_vec()
+            });
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| super::author(ui, &d, &mut tab, note, &mut actions),
+            );
+            out.textures_delta.clear();
+            labels = out
+                .platform_output
+                .accesskit_update
+                .map(|u| {
+                    u.nodes
+                        .iter()
+                        .filter_map(|(_, n)| n.label().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+        (actions, labels)
+    }
+
+    fn note(fix: Option<crate::action::Action>) -> super::PictureNote {
+        super::PictureNote {
+            title: "Profile pictures are off".into(),
+            detail: "Turn on Download profile pictures in Settings → Privacy.".into(),
+            fix,
+        }
+    }
+
+    /// Override O2 (contracts/avatars.md, "Picture status UI" 1): when pictures are kept away the
+    /// author line carries an info button named by the reason, and activating it opens the
+    /// setting that fixes it; with nothing to explain the line is unchanged.
+    #[test]
+    fn the_author_line_explains_missing_pictures_and_opens_the_fix() {
+        let (actions, labels) = author_line(None, &[]);
+        assert!(actions.is_empty());
+        assert!(
+            !labels.iter().any(|l| l == "Profile pictures are off"),
+            "{labels:?}"
+        );
+
+        let fix = Some(crate::action::Action::Settings);
+        let (actions, labels) = author_line(Some(&note(fix)), &[egui::Key::Tab, egui::Key::Enter]);
+        assert!(
+            labels.iter().any(|l| l == "Profile pictures are off"),
+            "{labels:?}"
+        );
+        assert!(
+            matches!(actions.as_slice(), [crate::action::Action::Settings]),
+            "{actions:?}"
+        );
+
+        let (actions, labels) = author_line(Some(&note(None)), &[egui::Key::Tab, egui::Key::Enter]);
+        assert!(labels.iter().any(|l| l == "Profile pictures are off"));
+        assert!(actions.is_empty(), "nothing to open: {actions:?}");
     }
 
     /// One frame-settled draw of the commit information block with `room` to spare: the body's

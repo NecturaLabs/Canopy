@@ -12,6 +12,7 @@ use crate::action::Action;
 use crate::keymap::Command;
 use crate::settings::Settings;
 use crate::tab::RepoTab;
+use crate::ui::kit::anim::Flip;
 use crate::ui::kit::avatar::{self, Person};
 use crate::ui::kit::chip::RefPill;
 use crate::ui::kit::choice::Segmented;
@@ -39,6 +40,9 @@ const GRAPH_LABEL_X: f32 = 12.0;
 const PILL_GAP: f32 = 6.0;
 /// Gap between an author's avatar and name.
 const AVATAR_GAP: f32 = 8.0;
+/// The shortest the details pane gets below the table; a window without room for it and the
+/// table shows one of them at a time.
+const DETAIL_MIN: f32 = 260.0;
 /// The id `RepoTab::filter_history` focuses; the filter field takes focus from it.
 const FILTER_ID: &str = "history-filter";
 
@@ -79,8 +83,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         compact_table_min
     };
     let table_required = table_preferred - row_h * 4.0;
-    let compact = h < 260.0 + table_required;
-    let table_min = table_preferred.min((h - 260.0).max(table_required));
+    let compact = h < DETAIL_MIN + table_required;
+    let table_min = table_preferred.min((h - DETAIL_MIN).max(table_required));
     tab.history_layout.compact = compact;
     let mut layout = tab.history_layout;
     let selected = tab.selected_commit.is_some();
@@ -146,23 +150,33 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
             });
     } else {
         let detail_max = (h - table_min).min(h * 0.70);
-        let default_height = (h * 0.40).max(260.0).min(detail_max);
-        let default_height = tab.diff.as_ref().map_or(default_height, |d| {
-            diff::inspector_height(d, default_height)
-                .max(260.0)
-                .min(detail_max)
-        });
+        let detail_min = DETAIL_MIN.min(detail_max);
         let panel_id = egui::Id::new("details");
         let automatic_id = panel_id.with("automatic-height");
-        let previous_default = ui.ctx().data(|d| d.get_temp::<f32>(automatic_id));
+        let previous_default = ui.ctx().data_mut(|d| d.get_persisted::<f32>(automatic_id));
+        // Sized by the app, the pane is at least tall enough for the commit's information.
+        let natural = commit_detail::natural_height(ui, tab.details.as_deref()).max(DETAIL_MIN);
+        let fallback = (h * 0.40).max(natural).min(detail_max);
+        // Fitted to the open diff. Without one (the selected commit's details or diff still on
+        // their way, a commit with no files, an error) the pane keeps the height it has: a click
+        // must not show the pane at another height for the frames before the diff arrives.
+        let default_height = match &tab.diff {
+            Some(d) => diff::inspector_height(d, fallback)
+                .max(natural)
+                .min(detail_max),
+            None => {
+                previous_default.map_or(fallback, |previous| previous.clamp(detail_min, detail_max))
+            }
+        };
         let state = egui::containers::panel::PanelState::load(ui.ctx(), panel_id);
         let automatic = state.is_none()
             || state
                 .zip(previous_default)
                 .is_some_and(|(state, previous)| (state.size().y - previous).abs() <= 1.0);
+        // Kept with the panel's own state, so the pane still fits its diffs after a restart.
         if automatic {
             ui.ctx().data_mut(|data| {
-                data.insert_temp(automatic_id, default_height);
+                data.insert_persisted(automatic_id, default_height);
                 if let Some(mut state) = state {
                     state.outer_rect.min.y = state.outer_rect.max.y - default_height;
                     data.insert_persisted(panel_id, state);
@@ -175,7 +189,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
             .resizable(true)
             .show_separator_line(false)
             .default_size(default_height)
-            .min_size(260.0_f32.min(detail_max))
+            .min_size(detail_min)
             .max_size(detail_max)
             .frame(egui::Frame::new().fill(s.pane))
             .show(ui, |ui| {
@@ -398,29 +412,37 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         .id_salt("history-rows")
         .vertical_scroll_offset(offset);
     let mut wanted_pictures = Vec::new();
+    let motion = egui::Id::new(("history-motion", &tab.path));
+    let generation = tab.generation;
     let list = area.show_rows(ui, row_h, total_rows, |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
+        // Rows keep their place on screen as commits arrive or go (a fetch, a commit, a branch
+        // switch): they slide to their new rows instead of jumping.
+        let origin = ui.max_rect().min - vec2(0.0, crate::ui::count_f32(range.start) * row_h);
+        let mut flip = Flip::begin(ui, motion, generation, origin).ground(s.pane);
         for ri in range {
             let Some(ci) = commit_at(ri).filter(|_| ri < row_count) else {
-                let (rect, _) =
-                    ui.allocate_exact_size(vec2(full.width(), row_h), egui::Sense::hover());
-                let mut slot = ui.new_child(
-                    UiBuilder::new()
+                flip.item(ui, load_more_key(), None, |ui| {
+                    let (rect, _) =
+                        ui.allocate_exact_size(vec2(full.width(), row_h), egui::Sense::hover());
+                    let mut slot = ui.new_child(
+                        UiBuilder::new()
+                            .id_salt("history-load-more")
+                            .max_rect(rect)
+                            .layout(
+                                Layout::left_to_right(Align::Center).with_main_align(Align::Center),
+                            ),
+                    );
+                    if Button::new("Load more commits")
+                        .secondary()
+                        .icon(icon::ARROW_DOWN)
                         .id_salt("history-load-more")
-                        .max_rect(rect)
-                        .layout(
-                            Layout::left_to_right(Align::Center).with_main_align(Align::Center),
-                        ),
-                );
-                if Button::new("Load more commits")
-                    .secondary()
-                    .icon(icon::ARROW_DOWN)
-                    .id_salt("history-load-more")
-                    .show(&mut slot)
-                    .clicked()
-                {
-                    actions.push(Action::LoadMore);
-                }
+                        .show(&mut slot)
+                        .clicked()
+                    {
+                        actions.push(Action::LoadMore);
+                    }
+                });
                 continue;
             };
             let Some(c) = snap.commits.get(ci) else {
@@ -456,113 +478,128 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
             }
             let summary_x = x;
             let date = date_text(c.author.time);
-            let response = ListRow::new(("history-row", c.oid))
-                .kind(RowKind::History)
-                .index(ri)
-                .selected(selected)
-                .show_with(ui, |rc, painter| {
-                    let cy = rc.rect.center().y;
-                    if show_graph && let Some(g) = g {
-                        let column =
-                            Rect::from_min_size(rc.rect.min, vec2(graph_w, rc.rect.height()));
-                        let mut marks = Marks::new(rc.ground);
-                        marks.head = is_head;
-                        graph::paint_row(painter, column, geometry, g, marks);
-                    }
-                    let font = if selected || is_head {
-                        FontId::new(m.body_size, theme::medium())
-                    } else {
-                        FontId::proportional(m.body_size)
-                    };
-                    paint_line(
-                        painter, summary_x, desc_right, cy, &c.summary, font, rc.text,
-                    );
-                    if show_author {
-                        let mut name_x = author_x + CELL_PAD;
-                        if let Some(picture) = picture {
-                            let d = m.avatar_row;
-                            let person =
-                                Person::new(&c.author.name, &c.author.email).picture(picture);
-                            avatar::paint(
-                                painter,
-                                pos2(name_x + d / 2.0, cy),
-                                d,
-                                &person,
-                                None,
-                                Some(egui::Id::new(("history-avatar", &c.author.email))),
-                            );
-                            name_x += d + AVATAR_GAP;
+            flip.item(ui, row_key(c.oid), None, |ui| {
+                let response = ListRow::new(("history-row", c.oid))
+                    .kind(RowKind::History)
+                    .index(ri)
+                    .selected(selected)
+                    .show_with(ui, |rc, painter| {
+                        let cy = rc.rect.center().y;
+                        if show_graph && let Some(g) = g {
+                            let column =
+                                Rect::from_min_size(rc.rect.min, vec2(graph_w, rc.rect.height()));
+                            let mut marks = Marks::new(rc.ground);
+                            marks.head = is_head;
+                            graph::paint_row(painter, column, geometry, g, marks);
                         }
+                        let font = if selected || is_head {
+                            FontId::new(m.body_size, theme::medium())
+                        } else {
+                            FontId::proportional(m.body_size)
+                        };
                         paint_line(
-                            painter,
-                            name_x,
-                            date_x - CELL_PAD,
-                            cy,
-                            &c.author.name,
-                            FontId::proportional(m.body_size),
-                            rc.dim,
+                            painter, summary_x, desc_right, cy, &c.summary, font, rc.text,
                         );
+                        if show_author {
+                            let mut name_x = author_x + CELL_PAD;
+                            if let Some(picture) = picture {
+                                let d = m.avatar_row;
+                                let person =
+                                    Person::new(&c.author.name, &c.author.email).picture(picture);
+                                avatar::paint(
+                                    painter,
+                                    pos2(name_x + d / 2.0, cy),
+                                    d,
+                                    &person,
+                                    None,
+                                    Some(egui::Id::new(("history-avatar", &c.author.email))),
+                                );
+                                name_x += d + AVATAR_GAP;
+                            }
+                            paint_line(
+                                painter,
+                                name_x,
+                                date_x - CELL_PAD,
+                                cy,
+                                &c.author.name,
+                                FontId::proportional(m.body_size),
+                                rc.dim,
+                            );
+                        }
+                        if show_date {
+                            paint_line(
+                                painter,
+                                date_x + CELL_PAD,
+                                sha_x - CELL_PAD,
+                                cy,
+                                &date,
+                                FontId::proportional(m.body_size),
+                                rc.dim,
+                            );
+                        }
+                        if show_sha {
+                            paint_line(
+                                painter,
+                                sha_x + CELL_PAD,
+                                full.max.x,
+                                cy,
+                                &short_id(c.oid),
+                                FontId::monospace(m.sha_size),
+                                rc.accent,
+                            );
+                        }
+                    });
+                if !pills.is_empty() {
+                    let clip = Rect::from_min_max(
+                        pos2(desc_x, response.rect.top()),
+                        pos2(desc_right, response.rect.bottom()),
+                    )
+                    .intersect(ui.clip_rect());
+                    let painter = ui.painter().with_clip_rect(clip);
+                    for (pill, left) in &pills {
+                        pill.paint(ui, &painter, *left, response.rect.center().y);
                     }
-                    if show_date {
-                        paint_line(
-                            painter,
-                            date_x + CELL_PAD,
-                            sha_x - CELL_PAD,
-                            cy,
-                            &date,
-                            FontId::proportional(m.body_size),
-                            rc.dim,
-                        );
-                    }
-                    if show_sha {
-                        paint_line(
-                            painter,
-                            sha_x + CELL_PAD,
-                            full.max.x,
-                            cy,
-                            &short_id(c.oid),
-                            FontId::monospace(m.sha_size),
-                            rc.accent,
-                        );
-                    }
-                });
-            if !pills.is_empty() {
-                let clip = Rect::from_min_max(
-                    pos2(desc_x, response.rect.top()),
-                    pos2(desc_right, response.rect.bottom()),
-                )
-                .intersect(ui.clip_rect());
-                let painter = ui.painter().with_clip_rect(clip);
-                for (pill, left) in &pills {
-                    pill.paint(ui, &painter, *left, response.rect.center().y);
                 }
-            }
-            // The row paints its own columns; screen readers get the commit in one sentence.
-            let info = format!(
-                "Commit {}, {}, by {}, {}",
-                short_id(c.oid),
-                c.summary,
-                c.author.name,
-                widgets::relative_time_format(c.author.time, now, settings.iso_dates)
-            );
-            ui.ctx()
-                .accesskit_node_builder(response.id, |n| n.set_label(info));
-            let response = response.on_hover_text_at_pointer(format!(
-                "{}\n{} <{}>\n{}",
-                c.summary,
-                c.author.name,
-                c.author.email,
-                widgets::full_date(c.author.time, c.author.offset_minutes)
-            ));
-            if response.clicked() {
-                clicked = Some(c.oid);
-            }
-            let oid = c.oid;
-            let summary = c.summary.clone();
-            menu::context(&response, |m| {
-                commit_menu(m, oid, &summary, forge.as_ref(), actions);
+                // The row paints its own columns; screen readers get the commit in one sentence.
+                let info = format!(
+                    "Commit {}, {}, by {}, {}",
+                    short_id(c.oid),
+                    c.summary,
+                    c.author.name,
+                    widgets::relative_time_format(c.author.time, now, settings.iso_dates)
+                );
+                ui.ctx()
+                    .accesskit_node_builder(response.id, |n| n.set_label(info));
+                let response = response.on_hover_text_at_pointer(format!(
+                    "{}\n{} <{}>\n{}",
+                    c.summary,
+                    c.author.name,
+                    c.author.email,
+                    widgets::full_date(c.author.time, c.author.offset_minutes)
+                ));
+                if response.clicked() {
+                    clicked = Some(c.oid);
+                }
+                let oid = c.oid;
+                let summary = c.summary.clone();
+                menu::context(&response, |m| {
+                    commit_menu(m, oid, &summary, forge.as_ref(), actions);
+                });
             });
         }
+        // Rows that were on screen and are not now fade out only when they left the history.
+        let listed = std::cell::OnceCell::new();
+        flip.end(ui, |key| {
+            key == load_more_key()
+                || listed
+                    .get_or_init(|| {
+                        (0..row_count)
+                            .filter_map(|ri| commit_at(ri).and_then(|ci| snap.commits.get(ci)))
+                            .map(|c| row_key(c.oid))
+                            .collect::<std::collections::HashSet<_>>()
+                    })
+                    .contains(&key)
+        });
     });
     ui.spacing_mut().item_spacing.y = row_spacing;
 
@@ -576,6 +613,14 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
         return true;
     }
     false
+}
+
+/// The [`Flip`] key of a commit's row, and of the "Load more commits" row.
+fn row_key(oid: Oid) -> egui::Id {
+    egui::Id::new(("history-row-motion", oid))
+}
+fn load_more_key() -> egui::Id {
+    egui::Id::new("history-load-more-motion")
 }
 
 /// The context menu of a commit row.
@@ -1052,6 +1097,44 @@ mod tests {
         }
     }
 
+    /// H17: at 1440x900 a commit with several files shows its commit information beside the two
+    /// file rows, in every density and style: the pane sizes itself for both.
+    #[test]
+    fn commit_information_shows_beside_two_files_at_the_natural_pane_height() {
+        for style in [theme::Style::Standard, theme::Style::Deeper] {
+            for density in [theme::Density::Comfortable, theme::Density::Dense] {
+                let ctx = egui::Context::default();
+                crate::ui::fonts::install(&ctx);
+                theme::apply(
+                    &ctx,
+                    theme::ThemeId::Midnight,
+                    theme::Appearance {
+                        style,
+                        density,
+                        ..theme::Appearance::STILL
+                    },
+                );
+                let (mut tab, _dir) = populated_tab(&ctx);
+                let mut details = (**tab.details.as_ref().expect("fixture details")).clone();
+                let mut other = details.files[0].clone();
+                other.path = "other.rs".into();
+                details.files.push(other);
+                let date = widgets::full_date(details.author.time, details.author.offset_minutes);
+                tab.details = Some(std::sync::Arc::new(details));
+                let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
+                diff.hunks[0].lines.truncate(7);
+                tab.diff = Some(std::sync::Arc::new(diff));
+                let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
+                for text in ["author@example.com", date.as_str(), "file.rs", "other.rs"] {
+                    assert!(
+                        visible.iter().any(|t| t == text),
+                        "{style:?} {density:?}: {text} must show whole: {visible:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn filtering_returns_from_full_details_and_focuses_the_filter() {
         for size in [vec2(562.5, 350.0), vec2(1440.0, 900.0)] {
@@ -1184,6 +1267,152 @@ mod tests {
             panel.size().y <= 320.0,
             "a loaded short diff must reclaim the automatic empty pane space: {:?}",
             panel.size()
+        );
+    }
+
+    /// The top of the details pane after one frame of History at `size`.
+    fn details_top(ctx: &egui::Context, tab: &mut RepoTab, size: egui::Vec2) -> f32 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                ..Default::default()
+            },
+            |ui| {
+                egui::Panel::top("test-actions")
+                    .exact_size(96.0)
+                    .show(ui, |_| {});
+                egui::Panel::bottom("test-status")
+                    .exact_size(26.0)
+                    .show(ui, |_| {});
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::new())
+                    .show(ui, |ui| {
+                        show(ui, tab, &Settings::default(), &mut Vec::new());
+                    });
+            },
+        );
+        output.textures_delta.clear();
+        egui::containers::panel::PanelState::load(ctx, egui::Id::new("details"))
+            .map_or(f32::NAN, |state| state.outer_rect.top())
+    }
+
+    /// O2: clicking another commit must not show the details pane at another height for the
+    /// frames before the commit's details and diff arrive. Frame by frame, from the click until
+    /// the new (equally short) diff is on screen, the pane's top stays where it was.
+    #[test]
+    fn selecting_a_commit_keeps_the_details_pane_in_place_while_it_loads() {
+        for style in [theme::Style::Standard, theme::Style::Deeper] {
+            for density in [theme::Density::Comfortable, theme::Density::Dense] {
+                let ctx = egui::Context::default();
+                crate::ui::fonts::install(&ctx);
+                theme::apply(
+                    &ctx,
+                    theme::ThemeId::Midnight,
+                    theme::Appearance {
+                        style,
+                        density,
+                        ..theme::Appearance::STILL
+                    },
+                );
+                let (mut tab, _dir) = populated_tab(&ctx);
+                let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
+                diff.hunks[0].lines.truncate(7);
+                let diff = std::sync::Arc::new(diff);
+                tab.diff = Some(std::sync::Arc::clone(&diff));
+                let size = vec2(1440.0, 900.0);
+                let mut settled = f32::NAN;
+                for _ in 0..4 {
+                    settled = details_top(&ctx, &mut tab, size);
+                }
+                let next = Oid::from_bytes(&[2; 20]).expect("fixture oid");
+                let mut details = (**tab.details.as_ref().expect("fixture details")).clone();
+                details.oid = next;
+                let entry = details.files[0].clone();
+                tab.select_commit(next);
+                let mut tops = Vec::new();
+                // The click: nothing of the new commit has arrived.
+                for _ in 0..3 {
+                    tops.push(details_top(&ctx, &mut tab, size));
+                }
+                // Its details arrive; the diff is still on its way.
+                tab.details = Some(std::sync::Arc::new(details));
+                tops.push(details_top(&ctx, &mut tab, size));
+                // The diff arrives.
+                tab.file = Some(crate::tab::FileSelection {
+                    source: canopy_core::DiffSource::Commit(next),
+                    entry,
+                    conflicted: false,
+                });
+                tab.diff = Some(std::sync::Arc::clone(&diff));
+                for _ in 0..3 {
+                    tops.push(details_top(&ctx, &mut tab, size));
+                }
+                assert!(
+                    tops.iter().all(|top| (top - settled).abs() < 0.5),
+                    "{style:?} {density:?}: the details pane settled at {settled} and then \
+                     moved, frame by frame: {tops:?}"
+                );
+            }
+        }
+    }
+
+    /// eframe's storage in memory: what it writes to disk on exit.
+    #[derive(Default)]
+    struct Saved(std::collections::HashMap<String, String>);
+
+    impl eframe::Storage for Saved {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_owned(), value);
+        }
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+        fn flush(&mut self) {}
+    }
+
+    /// A pane the user never resized still fits its diffs after a restart (egui keeps the panel's
+    /// state across runs; the height it was fitted to must come with it, or the restored pane
+    /// reads as resized by hand and stops following the diff).
+    #[test]
+    fn the_automatic_inspector_height_survives_a_restart() {
+        let size = vec2(2560.0, 1440.0);
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let (mut tab, _dir) = populated_tab(&ctx);
+        let long = std::sync::Arc::clone(tab.diff.as_ref().expect("fixture diff"));
+        let mut short = (*long).clone();
+        short.hunks[0].lines.truncate(7);
+        tab.diff = Some(std::sync::Arc::new(short));
+        let mut short_top = f32::NAN;
+        for _ in 0..4 {
+            short_top = details_top(&ctx, &mut tab, size);
+        }
+        // What eframe saves on exit and restores at the next start, through its own storage.
+        let mut saved = Saved::default();
+        eframe::set_value(&mut saved, eframe::APP_KEY, &ctx.memory(Clone::clone));
+        let restarted = egui::Context::default();
+        let memory: egui::Memory =
+            eframe::get_value(&saved, eframe::APP_KEY).expect("restored memory");
+        restarted.memory_mut(|m| *m = memory);
+        crate::ui::fonts::install(&restarted);
+        theme::apply(
+            &restarted,
+            theme::ThemeId::Midnight,
+            theme::Appearance::STILL,
+        );
+        let (mut tab, _dir) = populated_tab(&restarted);
+        tab.diff = Some(long);
+        let mut long_top = f32::NAN;
+        for _ in 0..4 {
+            long_top = details_top(&restarted, &mut tab, size);
+        }
+        assert!(
+            long_top < short_top - 20.0,
+            "after a restart the pane must still grow to a longer diff: {short_top} -> {long_top}"
         );
     }
 
@@ -1397,6 +1626,132 @@ mod tests {
             "the long summary may paint over Expand: summary clip {:?}, Expand {expand:?}",
             summary.clip_rect
         );
+    }
+
+    /// A snapshot of commits with these summaries, newest first, each its own commit.
+    fn history_of(summaries: &[&str]) -> canopy_core::RepoSnapshot {
+        canopy_core::RepoSnapshot {
+            commits: summaries
+                .iter()
+                .map(|s| canopy_core::CommitSummary {
+                    oid: Oid::from_bytes(&[s.bytes().fold(7u8, |h, b| h.wrapping_mul(31) ^ b); 20])
+                        .expect("fixture oid"),
+                    summary: (*s).to_owned(),
+                    author: canopy_core::Signature {
+                        name: "Author".into(),
+                        email: "author@example.com".into(),
+                        time: 0,
+                        offset_minutes: 0,
+                    },
+                    parents: Vec::new(),
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// One frame of the table at time `t`: each summary painted and the top of its galley.
+    fn table_at(ctx: &egui::Context, tab: &mut RepoTab, t: f64) -> Vec<(String, f32)> {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 700.0))),
+                time: Some(t),
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    table(ui, tab, &Settings::default(), &mut Vec::new());
+                });
+            },
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text)
+                    if shape.clip_rect.intersects(text.visual_bounding_rect()) =>
+                {
+                    Some((text.galley.text().to_owned(), text.pos.y))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// O1 (owner): new commits arriving at the top (a fetch, a commit) push the rows below down
+    /// by sliding them from where they were, and the new row fades in where it lands; with
+    /// reduced motion they land at once.
+    #[test]
+    fn new_commits_slide_the_history_down_instead_of_jumping() {
+        for reduced in [false, true] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                theme::Appearance {
+                    reduce_motion: reduced,
+                    ..theme::Appearance::STILL
+                },
+            );
+            let dir = tempfile::tempdir().expect("temporary tab");
+            let mut tab = RepoTab::new(
+                dir.path().into(),
+                &ctx,
+                100,
+                crate::settings::DiffPrefs::default(),
+            );
+            tab.snap = Some(std::sync::Arc::new(history_of(&["second", "first"])));
+            let mut before = Vec::new();
+            for i in 0..3 {
+                before = table_at(&ctx, &mut tab, f64::from(i) * 0.1);
+            }
+            let y = |texts: &[(String, f32)], s: &str| {
+                texts.iter().find(|(t, _)| t == s).map(|(_, y)| *y)
+            };
+            let second0 = y(&before, "second").expect("second before");
+            tab.snap = Some(std::sync::Arc::new(history_of(&[
+                "third", "second", "first",
+            ])));
+            tab.generation += 1;
+            let change = table_at(&ctx, &mut tab, 1.0);
+            let mid = table_at(&ctx, &mut tab, 1.08);
+            let mut rest = Vec::new();
+            for i in 0..3 {
+                rest = table_at(&ctx, &mut tab, 2.0 + f64::from(i) * 0.1);
+            }
+            let second1 = y(&rest, "second").expect("second after");
+            assert!(
+                (second1 - second0 - RowKind::History.height()).abs() < 0.5,
+                "one row down: {second0} -> {second1}"
+            );
+            assert_eq!(
+                y(&rest, "third"),
+                Some(second0),
+                "the new commit rests at the top"
+            );
+            if reduced {
+                assert_eq!(
+                    y(&change, "second"),
+                    Some(second1),
+                    "reduced: lands at once"
+                );
+                continue;
+            }
+            assert_eq!(y(&change, "second"), Some(second0), "starts where it was");
+            assert_eq!(y(&change, "third"), None, "the new row starts transparent");
+            let m = y(&mid, "second").expect("second sliding");
+            assert!(
+                m > second0 && m < second1,
+                "slides: {second0} -> {m} -> {second1}"
+            );
+            assert_eq!(
+                y(&mid, "third"),
+                Some(second0),
+                "the new row fades in in place"
+            );
+        }
     }
 
     /// The history's ref pills keep their labels readable on every surface a row can have, in

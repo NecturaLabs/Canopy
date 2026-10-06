@@ -824,10 +824,8 @@ impl eframe::App for CanopyApp {
                     history::show(ui, tab, &self.settings, &mut actions);
                     history_split(ui.ctx(), tab)
                 }
-                View::Changes => {
-                    changes::show(ui, tab, &mut actions);
-                    None
-                }
+                View::Changes => changes::show(ui, tab, &mut actions)
+                    .and_then(|list| PaneSplit::beside(list, changes::LIST_PANEL)),
                 View::Requests => {
                     requests::show(ui, tab, self.settings.hosting_api, &mut actions);
                     None
@@ -1001,11 +999,46 @@ impl eframe::App for CanopyApp {
     }
 }
 
+/// Where Deeper splits the content pane into two cards.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Split {
+    /// One card above the other, meeting at this height (History's details below its table).
+    Horizontal(f32),
+    /// Side by side, meeting at this x (a list beside what it shows: Changes, requests).
+    Vertical(f32),
+}
+
+/// A view's answer to [`content_pane`]: where its two Deeper cards meet, and the resize handle
+/// of the panel between them (its line shows in the gutter while it is hovered or dragged).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PaneSplit {
+    pub split: Split,
+    pub handle: Option<egui::Id>,
+}
+
+impl PaneSplit {
+    /// Two cards side by side: `list` is the rectangle `egui::Panel::left(panel)` gave the list
+    /// this frame (`InnerResponse::response.rect`); the cards meet at its right edge. `None` in
+    /// Standard, which paints one flush pane.
+    pub fn beside(list: egui::Rect, panel: impl Into<egui::Id>) -> Option<Self> {
+        (theme::style() == theme::Style::Deeper).then(|| Self {
+            split: Split::Vertical(list.right()),
+            handle: Some(resize_handle(panel.into())),
+        })
+    }
+}
+
+/// The resize handle egui registers for a resizable panel: the panel id with "__resize", centred
+/// on its inner edge, each frame the panel is shown.
+fn resize_handle(panel: egui::Id) -> egui::Id {
+    panel.with("__resize")
+}
+
 /// The central content pane: flush on the pane ground in Standard. In Deeper a floating card over
-/// the ground's gutters, or two when History shows its details below the table (`content` returns
-/// the height where they meet); the card that holds the keyboard (the table, or the only card)
-/// carries the focused-pane edge.
-fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui) -> Option<f32>) {
+/// the ground's gutters, or two when the view splits (`content` returns where: History's details
+/// below the table, a list beside its detail); the first card (the table or list, which holds
+/// the keyboard), or the only one, carries the focused-pane edge.
+fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui) -> Option<PaneSplit>) {
     let m = theme::metrics();
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
@@ -1028,12 +1061,18 @@ fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui) -> Option
             let clip = card.shrink(f32::from(radius.nw) * 0.3);
             ui.set_clip_rect(clip.intersect(ui.clip_rect()));
             let gap = m.pane_gutter;
-            let split = content(ui)
-                .filter(|y| *y - gap > card.top() + gap && *y + gap < card.bottom() - gap);
-            let cards = match split {
-                Some(y) => vec![
+            let split = content(ui).filter(|s| match s.split {
+                Split::Horizontal(y) => y - gap > card.top() + gap && y + gap < card.bottom() - gap,
+                Split::Vertical(x) => x - gap > card.left() + gap && x + gap < card.right() - gap,
+            });
+            let cards = match split.map(|s| s.split) {
+                Some(Split::Horizontal(y)) => vec![
                     egui::Rect::from_min_max(card.min, egui::pos2(card.right(), y - gap / 2.0)),
                     egui::Rect::from_min_max(egui::pos2(card.left(), y + gap / 2.0), card.max),
+                ],
+                Some(Split::Vertical(x)) => vec![
+                    egui::Rect::from_min_max(card.min, egui::pos2(x - gap / 2.0, card.bottom())),
+                    egui::Rect::from_min_max(egui::pos2(x + gap / 2.0, card.top()), card.max),
                 ],
                 None => vec![card],
             };
@@ -1051,16 +1090,17 @@ fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui) -> Option
                 ));
             }
             wide.set(below, egui::Shape::Vec(shapes));
-            if let Some(y) = split {
-                split_gutter(ui, &wide, &cards, radius, y);
+            if let Some(split) = split {
+                split_gutter(ui, &wide, &cards, radius, split);
             }
-            // The card that holds the keyboard (the table) gets the focus edge and a lit top.
+            // The card that holds the keyboard (the table or list) gets the focus edge and a lit
+            // top.
             focused_edge(&wide, cards[0], radius, p.focus);
         });
 }
 
 /// Where History's details meet the table, when they sit below it as their own card (Deeper).
-fn history_split(ctx: &egui::Context, tab: &RepoTab) -> Option<f32> {
+fn history_split(ctx: &egui::Context, tab: &RepoTab) -> Option<PaneSplit> {
     let below = theme::style() == theme::Style::Deeper
         && !tab.history_layout.compact
         && !tab.history_layout.expanded
@@ -1068,79 +1108,97 @@ fn history_split(ctx: &egui::Context, tab: &RepoTab) -> Option<f32> {
     below
         .then(|| ctx.read_response(details_handle()))
         .flatten()
-        .map(|r| r.rect.center().y)
+        .map(|r| PaneSplit {
+            split: Split::Horizontal(r.rect.center().y),
+            handle: Some(details_handle()),
+        })
 }
 
-/// The resize handle of History's details panel (`Panel::bottom("details")`): egui registers it
-/// under the panel id with "__resize", centred on the panel's top edge, each frame it is shown.
+/// The resize handle of History's details panel (`Panel::bottom("details")`), centred on the
+/// panel's top edge.
 fn details_handle() -> egui::Id {
-    egui::Id::new("details").with("__resize")
+    resize_handle(egui::Id::new("details"))
 }
 
-/// The gutter between History's two cards, painted over the content that runs under it: the
-/// ground, the table card's shadow falling into it, the cards' inner corners and edges, the lower
-/// card's top highlight, and the split handle's line while it is hovered or dragged.
+/// The gutter between two cards, painted over the content that runs under it: the ground, the
+/// first card's shadow falling into it (both cards' when side by side), the cards' inner corners
+/// and edges, the second card's top highlight, and the split handle's line while it is hovered or
+/// dragged.
 fn split_gutter(
     ui: &egui::Ui,
     painter: &egui::Painter,
     cards: &[egui::Rect],
     radius: egui::CornerRadius,
-    y: f32,
+    split: PaneSplit,
 ) {
-    let (Some(top), Some(bottom)) = (cards.first(), cards.get(1)) else {
+    let (Some(first), Some(second)) = (cards.first(), cards.get(1)) else {
         return;
     };
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
-    let band = egui::Rect::from_x_y_ranges(top.x_range(), top.bottom()..=bottom.top());
+    let beside = matches!(split.split, Split::Vertical(_));
+    let band = if beside {
+        egui::Rect::from_x_y_ranges(first.right()..=second.left(), first.y_range())
+    } else {
+        egui::Rect::from_x_y_ranges(first.x_range(), first.bottom()..=second.top())
+    };
     painter.rect_filled(band, egui::CornerRadius::ZERO, s.bg);
     let material = p.material(theme::Style::Deeper, theme::Elevation::Pane);
-    painter
-        .with_clip_rect(band)
-        .extend(crate::ui::kit::paint::shadow_shapes(
-            *top, radius, p, &material,
-        ));
+    let shadowed = if beside { cards } else { &cards[..1] };
+    for card in shadowed {
+        painter
+            .with_clip_rect(band)
+            .extend(crate::ui::kit::paint::shadow_shapes(
+                *card, radius, p, &material,
+            ));
+    }
     let r = f32::from(radius.nw);
-    let quarter = std::f32::consts::FRAC_PI_2;
-    for (corner, centre, from) in [
-        (
-            top.left_bottom(),
-            top.left_bottom() + egui::vec2(r, -r),
-            quarter,
-        ),
-        (
-            top.right_bottom(),
-            top.right_bottom() + egui::vec2(-r, -r),
-            0.0,
-        ),
-        (
-            bottom.left_top(),
-            bottom.left_top() + egui::vec2(r, r),
-            2.0 * quarter,
-        ),
-        (
-            bottom.right_top(),
-            bottom.right_top() + egui::vec2(-r, r),
-            3.0 * quarter,
-        ),
-    ] {
+    for (corner, centre, from) in inner_corners(*first, *second, r, beside) {
         corner_mask(painter, corner, centre, r, from, s.bg);
     }
     if let Some(edge) = s.pane_edge {
-        crate::ui::kit::paint::rim(painter, *top, radius, edge);
-        crate::ui::kit::paint::rim(painter, *bottom, radius, edge);
+        crate::ui::kit::paint::rim(painter, *first, radius, edge);
+        crate::ui::kit::paint::rim(painter, *second, radius, edge);
     }
-    crate::ui::kit::paint::top_highlight(painter, *bottom, radius, material.highlight);
-    if ui
-        .ctx()
-        .read_response(details_handle())
-        .is_some_and(|r| r.hovered() || r.dragged())
-    {
-        painter.hline(
-            band.x_range().shrink(r),
-            y,
-            egui::Stroke::new(2.0, theme::Palette::tint(p.focus, 150)),
-        );
+    crate::ui::kit::paint::top_highlight(painter, *second, radius, material.highlight);
+    if split.handle.is_some_and(|handle| {
+        ui.ctx()
+            .read_response(handle)
+            .is_some_and(|r| r.hovered() || r.dragged())
+    }) {
+        let stroke = egui::Stroke::new(2.0, theme::Palette::tint(p.focus, 150));
+        match split.split {
+            Split::Horizontal(y) => painter.hline(band.x_range().shrink(r), y, stroke),
+            Split::Vertical(x) => painter.vline(x, band.y_range().shrink(r), stroke),
+        };
+    }
+}
+
+/// The four rounded corners that face each other across the gutter between `first` and `second`
+/// (one above the other, or `beside`), as (square corner, arc centre, arc start angle) for
+/// [`corner_mask`]. Angles turn clockwise on screen from +x: a quarter turn points down.
+fn inner_corners(
+    first: egui::Rect,
+    second: egui::Rect,
+    r: f32,
+    beside: bool,
+) -> [(egui::Pos2, egui::Pos2, f32); 4] {
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let corner = |at: egui::Pos2, dx: f32, dy: f32, from: f32| (at, at + egui::vec2(dx, dy), from);
+    if beside {
+        [
+            corner(first.right_top(), -r, r, 3.0 * quarter),
+            corner(first.right_bottom(), -r, -r, 0.0),
+            corner(second.left_top(), r, r, 2.0 * quarter),
+            corner(second.left_bottom(), r, -r, quarter),
+        ]
+    } else {
+        [
+            corner(first.left_bottom(), r, -r, quarter),
+            corner(first.right_bottom(), -r, -r, 0.0),
+            corner(second.left_top(), r, r, 2.0 * quarter),
+            corner(second.right_top(), -r, r, 3.0 * quarter),
+        ]
     }
 }
 
@@ -1264,6 +1322,98 @@ mod tests {
         assert!(
             (top - handle).abs() < 1.0,
             "panel top {top}, handle {handle}"
+        );
+    }
+
+    /// Each mask fans over the part of a card's square corner outside its rounded arc: the arc's
+    /// middle points from its centre straight at the corner, for cards above each other and side
+    /// by side.
+    #[test]
+    fn the_gutter_masks_face_the_corners_they_round() {
+        let first = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 200.0));
+        for (second, beside) in [
+            (
+                egui::Rect::from_min_max(egui::pos2(110.0, 0.0), egui::pos2(300.0, 200.0)),
+                true,
+            ),
+            (
+                egui::Rect::from_min_max(egui::pos2(0.0, 210.0), egui::pos2(100.0, 400.0)),
+                false,
+            ),
+        ] {
+            let r = 8.0;
+            for (corner, centre, from) in inner_corners(first, second, r, beside) {
+                let middle = from + std::f32::consts::FRAC_PI_4;
+                let towards = (corner - centre).normalized();
+                let arc = egui::vec2(middle.cos(), middle.sin());
+                assert!(
+                    (towards - arc).length() < 1e-4,
+                    "beside {beside}: corner {corner:?}, arc middle {arc:?}"
+                );
+                assert!((corner - centre).length() - r * std::f32::consts::SQRT_2 < 1e-3);
+                let card = if first.expand(0.5).contains(corner) {
+                    first
+                } else {
+                    second
+                };
+                assert!(card.contains(centre), "the arc centre lies inside its card");
+            }
+        }
+    }
+
+    /// Deeper splits the content pane into two cards side by side where a view's list ends: the
+    /// ground shows in a gutter of `pane_gutter` centred on the split, top to bottom.
+    #[test]
+    fn a_side_by_side_split_paints_a_full_height_gutter() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(
+            &ctx,
+            ThemeId::Midnight,
+            theme::Appearance {
+                style: theme::Style::Deeper,
+                ..theme::Appearance::STILL
+            },
+        );
+        let at = 500.0;
+        let mut card = egui::Rect::NOTHING;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 800.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                content_pane(ui, |ui| {
+                    card = ui.max_rect();
+                    Some(PaneSplit {
+                        split: Split::Vertical(at),
+                        handle: None,
+                    })
+                });
+            },
+        );
+        output.textures_delta.clear();
+        let ground = theme::surfaces(&ctx).bg;
+        let gap = theme::metrics().pane_gutter;
+        let gutter = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(r)
+                    if r.fill == ground && (r.rect.center().x - at).abs() < 0.5 =>
+                {
+                    Some(r.rect)
+                }
+                _ => None,
+            });
+        let gutter = gutter.expect("a gutter on the ground at the split");
+        assert!((gutter.width() - gap).abs() < 0.5, "{gutter:?}");
+        assert!(
+            gutter.top() <= card.top() + 1.0 && gutter.bottom() >= card.bottom() - 1.0,
+            "{gutter:?} spans the pane {card:?}"
         );
     }
 
