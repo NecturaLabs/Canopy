@@ -61,6 +61,8 @@ const RETRY_UNREACHABLE_SECS: i64 = 10 * 60;
 /// Commits of one author tried before giving up on them for the session, when the host has none
 /// of them (they were never pushed there).
 const MAX_UNKNOWN_COMMITS: u8 = 3;
+/// Unknown commits a tab remembers; past this the oldest is forgotten.
+const MAX_UNKNOWN_KEPT: usize = 1024;
 /// Longest server message kept for a refusal, in characters.
 const MAX_SERVER_TEXT: usize = 160;
 
@@ -291,9 +293,11 @@ pub struct Avatars {
     retry_after: i64,
     paused: Option<Pause>,
     blocked: Option<Blocked>,
-    /// Commits the host does not have, and how many of each author's were tried.
+    /// Commits the host does not have, and how many of each author's were tried; at most
+    /// [`MAX_UNKNOWN_KEPT`], forgotten oldest first (`unknown_order`).
     unknown_commits: std::collections::HashSet<Oid>,
     unknown_by_author: HashMap<String, u8>,
+    unknown_order: std::collections::VecDeque<(Oid, String)>,
     /// Counts uses, to find the least recently shown picture.
     clock: Cell<u64>,
 }
@@ -394,6 +398,27 @@ impl Avatars {
         true
     }
 
+    fn remember_unknown(&mut self, oid: Oid, email: &str) {
+        if !self.unknown_commits.insert(oid) {
+            return;
+        }
+        let tried = self.unknown_by_author.entry(email.to_owned()).or_default();
+        *tried = tried.saturating_add(1);
+        self.unknown_order.push_back((oid, email.to_owned()));
+        while self.unknown_order.len() > MAX_UNKNOWN_KEPT {
+            let Some((oid, email)) = self.unknown_order.pop_front() else {
+                break;
+            };
+            self.unknown_commits.remove(&oid);
+            if let Some(tried) = self.unknown_by_author.get_mut(&email) {
+                *tried = tried.saturating_sub(1);
+                if *tried == 0 {
+                    self.unknown_by_author.remove(&email);
+                }
+            }
+        }
+    }
+
     pub fn finish(&mut self, ctx: &egui::Context, oid: Oid, email: String, result: Cached) {
         if self.pending.as_ref() != Some(&(oid, email.clone())) || !self.enabled {
             return;
@@ -410,11 +435,7 @@ impl Avatars {
             }
         });
         match result.note {
-            Some(Note::UnknownCommit) => {
-                self.unknown_commits.insert(oid);
-                let tried = self.unknown_by_author.entry(email.clone()).or_default();
-                *tried = tried.saturating_add(1);
-            }
+            Some(Note::UnknownCommit) => self.remember_unknown(oid, &email),
             Some(Note::Blocked(blocked)) => self.blocked = Some(blocked),
             Some(Note::Unreachable) | None => {}
         }
@@ -1521,6 +1542,30 @@ mod tests {
             "after {MAX_UNKNOWN_COMMITS} unpushed commits the author waits for the next session"
         );
         assert!(pictures.wants("other@example.com", T0 + 3));
+    }
+
+    #[test]
+    fn a_long_session_remembers_a_bounded_number_of_unknown_commits() {
+        let mut pictures = Avatars::default();
+        pictures.set_enabled(true);
+        let commit = |n: usize| Oid::from_str(&format!("{n:040x}")).unwrap();
+        for n in 0..=MAX_UNKNOWN_KEPT {
+            finish_with(
+                &mut pictures,
+                commit(n),
+                &format!("{n}@example.com"),
+                T0,
+                kept(Note::UnknownCommit, None),
+            );
+        }
+        assert_eq!(pictures.unknown_commits.len(), MAX_UNKNOWN_KEPT);
+        assert_eq!(pictures.unknown_by_author.len(), MAX_UNKNOWN_KEPT);
+        // The oldest is forgotten first, so its commit may be asked about again.
+        assert!(!pictures.unknown_commits.contains(&commit(0)));
+        assert!(!pictures.unknown_by_author.contains_key("0@example.com"));
+        assert!(pictures.unknown_commits.contains(&commit(1)));
+        assert!(pictures.unknown_commits.contains(&commit(MAX_UNKNOWN_KEPT)));
+        assert!(pictures.request_at(commit(0), "0@example.com", T0));
     }
 
     #[test]
