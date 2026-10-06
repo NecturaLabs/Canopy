@@ -518,9 +518,17 @@ impl<'t> Core<'t> {
         if self.stepper.is_some() {
             right += 2.0 * button + theme::XS + theme::SM;
         }
+        // Shown or not, and the frame the field was last drawn: a secret starts hidden whenever
+        // its field comes back (the next credential prompt reuses the same id).
         let reveal_id = id.with("kit-field-reveal");
-        let revealed =
-            self.password && ctx.data(|d| d.get_temp::<bool>(reveal_id)).unwrap_or(false);
+        let now = ctx.cumulative_frame_nr();
+        let revealed = self.password
+            && ctx
+                .data(|d| d.get_temp::<(bool, u64)>(reveal_id))
+                .is_some_and(|(on, seen)| on && seen.saturating_add(1) >= now);
+        if self.password {
+            ctx.data_mut(|d| d.insert_temp(reveal_id, (revealed, now)));
+        }
 
         // The edit itself, in a frameless child over the reserved rect.
         let mut child = ui.new_child(
@@ -796,7 +804,7 @@ impl<'t> Core<'t> {
                     .id_salt(id.with("kit-field-reveal-button")),
             );
             if toggle.clicked() {
-                ctx.data_mut(|d| d.insert_temp(reveal_id, !revealed));
+                ctx.data_mut(|d| d.insert_temp(reveal_id, (!revealed, now)));
             }
             x = at.left() - theme::SM;
         }
@@ -1246,7 +1254,8 @@ struct NumberDraft {
 
 /// A number typed into a field, with − and + steppers at its trailing end: `NumberField::new(&mut
 /// page, 200.0..=50_000.0).step(100.0).name("Commits per page").show(ui)`. What is typed applies
-/// on Enter or when the field loses focus (clamped to the range), Esc restores the value, and
+/// on Enter or when the field loses focus (clamped to the range, and stored as the format shows
+/// it: a whole-number field rounds 12.7 to 13), Esc restores the value, and
 /// text that is not a number keeps the draft with an error until it is fixed. A click selects the
 /// whole value, so typing replaces it. Up and Down step while it is focused (Page Up and Page
 /// Down ten steps), and each stepper turns off at its end of the range. The response reports
@@ -1476,7 +1485,10 @@ impl<'v> NumberField<'v> {
             } else {
                 match parse(text.trim()) {
                     Some(v) if v.is_finite() => {
-                        *value = clamp(v);
+                        // Stored as the field shows it: a whole-number field keeps no fraction
+                        // it rounds away on screen.
+                        let v = clamp(v);
+                        *value = parse(&format(v)).filter(|s| s.is_finite()).map_or(v, clamp);
                         ui.data_mut(|d| d.remove::<NumberDraft>(draft_key));
                     }
                     _ => {
@@ -2214,6 +2226,15 @@ mod tests {
             "a click shows the secret"
         );
         assert_eq!(text, "hunter2", "the toggle never edits the text");
+        // RK-6: the next prompt with the same field starts hidden again.
+        frame(&ctx, Vec::new(), |_| {});
+        let nodes = spoken(&ctx, |ui| {
+            show(ui, &mut text);
+        });
+        assert!(
+            find(&nodes, "Show secret").is_some(),
+            "a field shown again after it was gone hides its secret"
+        );
     }
 
     #[test]
@@ -2370,6 +2391,51 @@ mod tests {
             _ => false,
         });
         assert!(said, "the error says what to type");
+    }
+
+    /// RK-12: a typed number is stored as the field shows it: a whole-number field never keeps
+    /// the fraction it rounds away on screen.
+    #[test]
+    fn a_typed_number_is_stored_as_it_is_shown() {
+        let ctx = testkit::ctx();
+        let mut v = 400.0;
+        let mut id = Id::NULL;
+        frame(&ctx, Vec::new(), |ui| id = number(ui, &mut v).id);
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(&ctx, Vec::new(), |ui| id = number(ui, &mut v).id);
+        let replace = |text: &str| {
+            let mut events = key_with(Key::A, Modifiers::COMMAND);
+            events.extend(type_text(text));
+            events
+        };
+        frame(&ctx, replace("512.7"), |ui| id = number(ui, &mut v).id);
+        frame(&ctx, key(Key::Enter), |ui| id = number(ui, &mut v).id);
+        assert!((v - 513.0).abs() < f64::EPSILON, "stored as shown: {v}");
+        let mut zoom = 1.0;
+        let percent = |ui: &mut Ui, z: &mut f64| {
+            NumberField::new(z, 0.5..=2.0)
+                .step(0.1)
+                .format(
+                    |z| format!("{:.0}%", z * 100.0),
+                    |t| {
+                        t.trim_end_matches('%')
+                            .parse::<f64>()
+                            .ok()
+                            .map(|p| p / 100.0)
+                    },
+                )
+                .id_salt("zoom")
+                .show(ui)
+        };
+        frame(&ctx, Vec::new(), |ui| id = percent(ui, &mut zoom).id);
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(&ctx, Vec::new(), |ui| id = percent(ui, &mut zoom).id);
+        frame(&ctx, replace("125%"), |ui| id = percent(ui, &mut zoom).id);
+        frame(&ctx, key(Key::Enter), |ui| id = percent(ui, &mut zoom).id);
+        assert!(
+            (zoom - 1.25).abs() < 1e-9,
+            "finer than the step when shown so: {zoom}"
+        );
     }
 
     #[test]
