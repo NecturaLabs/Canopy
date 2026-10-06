@@ -535,17 +535,38 @@ gives picture-led cards (the settings theme cards) `SM` padding instead of `card
 
 ### Document tabs
 
-`kit::tabs::DocTabs` are the repository tabs in the title bar (spec 4.8): 30 / 24 points tall,
-100 to 220 wide, padding 10 left and 6 right, 7 between icon, name, counts and close. The active
+`kit::tabs::DocTabs` are the repository tabs in the title bar (spec 4.8): 30 / 24 points tall, at
+least 100 wide, padding 10 left and 6 right, 7 between icon, name, counts and close. The active
 tab is the `tab` fill with its 1 pt `tab_edge` ring (and `Elevation::Tab` in Deeper); the others
 are transparent until hovered (`hover`, label to `text`). A folder icon (a spinner while the
-repository works), the name ellipsised, ahead/behind `↑n ↓n` in mono `accent`, and a close button
-on hover and on the active tab; a middle click closes too, and the tooltip gives the path and the
-switching shortcut. Tabs that need more room than they have scroll sideways (the wheel scrolls
-them) and fade 16 points into the deck at an edge that hides more; the active tab scrolls into view
-when it changes. A closed tab collapses to nothing over `TAB_CLOSE` while its neighbours slide in.
-AccessKit: a `TabList` named "Repositories", a `Tab` per tab with its selected state, and the close
-button named "Close <name>".
+repository works), the name, ahead/behind `↑n ↓n` in mono `accent`, and a close button on hover
+and on the active tab; a middle click closes too.
+
+Width follows the name, in three steps as the tabs outgrow the strip:
+
+1. Room: every tab is as wide as its whole name, counts and close button need. Nothing is
+   ellipsised and no tooltip repeats a name that is fully visible.
+2. Squeeze: the longest names give up width first, all down to one shared width (shorter names and
+   the active tab untouched; the active tab keeps at most 60 % of the strip), no tab below 120
+   points. A shortened name ends in "…" and its tooltip carries it whole. A tooltip shows only when
+   it adds something: the whole name of a shortened tab, the path and switching shortcut, or the
+   running job.
+3. Scroll: when 120 points each is still too much, scrolling makes the room, so the names are whole
+   again (a very long one stops at 280). The strip then carries its controls, only while it
+   overflows, left to right: a scroll button (`CARET_LEFT`, "Scroll tabs left"), the tabs, a scroll
+   button ("Scroll tabs right") and "All repositories" (`CARET_DOWN`), a menu of every open tab with
+   its icon, the active one checked and a scrolling body when the list is long (the same menu
+   surface as every other). The scroll buttons are small icon buttons (`Size::Sm`), disabled at the
+   ends (dimmed, out of the focus order), and move the tabs 70 % of the strip with the standard
+   scroll glide (a jump with reduced motion). The wheel scrolls the strip too, vertical notches
+   included. The edge that hides tabs fades 16 points into the deck.
+
+The active tab scrolls into view, past the fade, whenever it changes (switching by click, keys or
+the list), tabs open or close, or the strip is resized; a tab that takes keyboard focus does too.
+Widths glide over `FAST_OUT` when the squeeze changes. A closed tab collapses to nothing over
+`TAB_CLOSE` while its neighbours slide in. AccessKit: a `TabList` named "Repositories", a `Tab` per
+tab with its selected state, the close button named "Close <name>", and the controls named as
+above.
 
 ### Illustrations
 
