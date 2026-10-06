@@ -204,10 +204,7 @@ mod tests {
         let mut width = 0.0;
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(296.0, 600.0),
-                )),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(296.0, 600.0))),
                 ..Default::default()
             },
             |ui| {
@@ -246,7 +243,7 @@ mod tests {
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 300.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))),
                 ..Default::default()
             },
             |ui| {
