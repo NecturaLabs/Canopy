@@ -425,14 +425,16 @@ impl Deck {
                 );
             }
         } else {
+            // The bar that meets the content loses its seam in a theme that parts regions by
+            // tone; the tab strip above the action bar keeps it (both are the deck's fill).
             let strip = Rect::from_min_size(screen.min, vec2(screen.width(), m.tab_strip_height));
-            paint::deck_in(painter, strip, p, s, style);
+            paint::deck_bar(painter, strip, p, s, style, !self.action_bar);
             if self.action_bar {
                 let bar = Rect::from_min_size(
                     pos2(screen.left(), strip.bottom()),
                     vec2(screen.width(), m.action_bar_height),
                 );
-                paint::deck_in(painter, bar, p, s, style);
+                paint::deck_bar(painter, bar, p, s, style, true);
             }
         }
         deck
@@ -546,11 +548,14 @@ impl Card {
         if let Some(id) = self.id_salt {
             builder = builder.id_salt(id);
         }
+        // A disabled card's content sits in a disabled `Ui`, so the kit controls in it paint the
+        // disabled tokens and nothing in it answers a click (a disabled `Ui` is not faded twice).
+        let off = !enabled && self.interactive;
+        if off && ui.is_enabled() {
+            builder = builder.disabled();
+        }
         let pad = if self.compact { theme::SM } else { m.card_pad };
         let inner = ui.scope_builder(builder, |ui| {
-            if !enabled && ui.is_enabled() && self.interactive {
-                ui.multiply_opacity(theme::DISABLED_ALPHA);
-            }
             egui::Frame::new()
                 .inner_margin(Margin::same(crate::ui::points_i8(pad)))
                 .show(ui, |ui| {
@@ -574,7 +579,11 @@ impl Card {
             }
         };
         let radius = CornerRadius::same(m.card_radius);
-        let (base, rest_ring, level) = if style == Style::Deeper {
+        let (base, rest_ring, level) = if off {
+            // Disabled: the flat `disabled_fill` in its `disabled_edge` ring, like a disabled
+            // button; no elevation, selection or hover.
+            (s.disabled_fill, s.disabled_edge, None)
+        } else if style == Style::Deeper {
             (
                 s.pane,
                 s.pane_edge.unwrap_or(s.border),
@@ -583,8 +592,9 @@ impl Card {
         } else {
             (s.panel, s.border, None)
         };
+        let selected = self.selected && !off;
         let mut fill = base;
-        if self.selected {
+        if selected {
             fill = theme::over(p.accent_tint(), fill);
         }
         let lit = st.hover.max(st.press);
@@ -595,12 +605,12 @@ impl Card {
                 .gamma_multiply(lit);
             fill = theme::over(over, fill);
         }
-        let ring = match (self.selected, self.ring) {
+        let ring = match (selected, self.ring) {
             (true, _) => None,
-            (false, Some(t)) => Some(t.color(p)),
-            (false, None) => Some(rest_ring.lerp_to_gamma(s.edge, lit)),
+            (false, Some(t)) if !off => Some(t.color(p)),
+            (false, _) => Some(rest_ring.lerp_to_gamma(s.edge, lit)),
         };
-        let painter = ui.painter();
+        let painter = &super::content_painter(ui);
         let mut shapes = if let Some(level) = level {
             paint::surface_shapes(
                 painter,
@@ -624,18 +634,13 @@ impl Card {
             }
             v
         };
-        if self.selected {
+        if selected {
             shapes.push(Shape::rect_stroke(
                 rect,
                 radius,
                 Stroke::new(paint::INSET_FOCUS_WIDTH, p.focus),
                 egui::StrokeKind::Inside,
             ));
-        }
-        if !enabled && self.interactive {
-            for sh in &mut shapes {
-                multiply_shape(sh, theme::DISABLED_ALPHA);
-            }
         }
         painter.set(slot, Shape::Vec(shapes));
         if st.focus > 0.0 {
@@ -653,15 +658,13 @@ impl Card {
                 WidgetInfo::selected(WidgetType::Button, enabled, self.selected, &label)
             });
         }
-        let tip = if enabled {
-            self.tooltip
-        } else {
-            self.disabled_reason.or(self.tooltip)
-        };
-        let response = match tip {
-            Some(t) => response.on_hover_text(&t).on_disabled_hover_text(&t),
-            None => response,
-        };
+        let response = super::button::tip(
+            response,
+            enabled,
+            self.tooltip.as_deref(),
+            self.disabled_reason.as_deref(),
+            None,
+        );
         KitResponse {
             response,
             value: inner.inner,
@@ -672,19 +675,6 @@ impl Card {
 impl Default for Card {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Fades a painted shape (a disabled card's surface).
-fn multiply_shape(shape: &mut Shape, alpha: f32) {
-    match shape {
-        Shape::Rect(r) => {
-            r.fill = r.fill.gamma_multiply(alpha);
-            r.stroke.color = r.stroke.color.gamma_multiply(alpha);
-        }
-        Shape::LineSegment { stroke, .. } => stroke.color = stroke.color.gamma_multiply(alpha),
-        Shape::Vec(v) => v.iter_mut().for_each(|s| multiply_shape(s, alpha)),
-        _ => {}
     }
 }
 
@@ -1232,7 +1222,7 @@ impl EmptyState {
         child.add_space(theme::XS);
         child.label(
             egui::RichText::new(&self.title)
-                .font(FontId::new(m.subtitle_size, theme::semibold()))
+                .font(theme::heading(m.subtitle_size))
                 .color(p.text),
         );
         if let Some(body) = &self.body {
@@ -1321,7 +1311,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
     let card_body = |ui: &mut Ui, title: &str| {
         ui.label(
             egui::RichText::new(title)
-                .font(FontId::new(m.subtitle_size, theme::semibold()))
+                .font(theme::heading(m.subtitle_size))
                 .color(p.text),
         );
         ui.label(

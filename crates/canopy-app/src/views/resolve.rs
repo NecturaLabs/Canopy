@@ -84,8 +84,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         .color(p.success),
                 );
                 ui.label(
-                    RichText::new("No conflict markers left")
-                        .font(FontId::new(m.subtitle_size, theme::semibold())),
+                    RichText::new("No conflict markers left").font(theme::heading(m.subtitle_size)),
                 );
                 ui.label(
                     RichText::new("The file looks resolved. Mark it resolved to stage it.")
@@ -226,7 +225,7 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
         ui.label(RichText::new(icon::GIT_DIFF).size(m.icon_hero).color(p.warning));
-        ui.label(RichText::new(title).font(FontId::new(m.subtitle_size, theme::semibold())));
+        ui.label(RichText::new(title).font(theme::heading(m.subtitle_size)));
         if !body.is_empty() {
             ui.label(RichText::new(body).color(p.text_dim));
         }

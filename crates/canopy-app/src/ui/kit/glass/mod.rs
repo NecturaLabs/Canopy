@@ -423,10 +423,10 @@ pub fn backdrop_shapes(painter: &Painter, rect: Rect, radius: CornerRadius) -> O
     backdrop_shapes_with(painter, rect, radius, theme::appearance().glass)
 }
 
-/// The translucent overlay painted over a blurred backdrop.
+/// The translucent overlay painted over a blurred backdrop, leaning to the theme's light.
 pub fn glass_fill(ctx: &egui::Context) -> Color32 {
     let p = theme::palette(ctx);
-    Palette::tint(theme::surfaces(ctx).overlay, p.glass_alpha)
+    p.glass(theme::surfaces(ctx))
 }
 
 fn layer_fill_with(painter: &Painter, rect: Rect, radius: CornerRadius, wanted: bool) -> Color32 {

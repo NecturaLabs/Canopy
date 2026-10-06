@@ -35,14 +35,13 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use super::button::{spinner_due, tooltip_text};
+use super::button::{spinner_due, tip};
 use super::chip::Keycap;
-use super::overlay::TooltipExt;
 use super::toggle::{component_id, gallery_caption, remembered};
 use super::{ForceState, IconButton, KitResponse, Size, anim, paint};
 use crate::keymap::{self, Command};
 use crate::ui::motion;
-use crate::ui::theme::{self, Elevation, Palette, Style};
+use crate::ui::theme::{self, Elevation, FocusStyle, Palette, Style};
 
 /// The focus and error halo, drawn outside the edge (3 pt; focus at 26%, error at 18%).
 pub(crate) const HALO: f32 = 3.0;
@@ -164,15 +163,16 @@ pub(crate) fn look(p: &Palette, style: Style) -> FieldLook {
 /// A field's 1 pt edge inside `rect`: `side` around, turning to `base` over the bottom corners,
 /// so the bottom edge is the strong one.
 pub(crate) fn edge_shape(rect: Rect, radius: CornerRadius, side: Color32, base: Color32) -> Shape {
+    let width = paint::edge();
     let mut points = Vec::new();
     rounded_rectangle(
         &mut points,
-        rect.shrink(paint::SEAM / 2.0),
+        rect.shrink(width / 2.0),
         CornerRadiusF32::from(radius),
     );
     let ramp = f32::from(radius.sw.max(radius.se)).max(2.0);
     let from = rect.bottom() - ramp;
-    let stroke = PathStroke::new_uv(paint::SEAM, move |_bounds: Rect, at: egui::Pos2| {
+    let stroke = PathStroke::new_uv(width, move |_bounds: Rect, at: egui::Pos2| {
         side.lerp_to_gamma(base, ((at.y - from) / ramp).clamp(0.0, 1.0))
     });
     Shape::Path(PathShape {
@@ -184,7 +184,9 @@ pub(crate) fn edge_shape(rect: Rect, radius: CornerRadius, side: Color32, base: 
 }
 
 /// A field's box: the `fill` (a translucent well or an opaque disabled fill), the halo `(colour,
-/// alpha, strength)` outside, and the edge, `side` turning to `base` along the bottom.
+/// alpha, strength)` outside, and the edge (the theme's edge width), `side` turning to `base` along
+/// the bottom. The halo takes the theme's focus style (`Design::focus`): a tinted band (`Ring`), a
+/// soft glow (`Glow`), or a solid ring past a gap of the ground (`Double`, Contrast).
 pub(crate) fn paint_box(
     painter: &Painter,
     rect: Rect,
@@ -193,31 +195,45 @@ pub(crate) fn paint_box(
     halo: Option<(Color32, u8, f32)>,
 ) {
     if let Some((color, alpha, t)) = halo {
-        let w = HALO * t;
-        painter.rect_stroke(
-            rect.expand(w / 2.0),
-            radius + CornerRadius::same(crate::ui::saturate_u8((w / 2.0).round())),
-            Stroke::new(w, Palette::tint(color, alpha)),
-            StrokeKind::Middle,
-        );
+        let grow = |by: f32| radius + CornerRadius::same(crate::ui::saturate_u8(by.round()));
+        match theme::active().design().focus {
+            FocusStyle::Ring { .. } => {
+                let w = HALO * t;
+                painter.rect_stroke(
+                    rect.expand(w / 2.0),
+                    grow(w / 2.0),
+                    Stroke::new(w, Palette::tint(color, alpha)),
+                    StrokeKind::Middle,
+                );
+            }
+            FocusStyle::Glow { width } => paint::ring_glow(
+                painter,
+                rect,
+                radius,
+                color,
+                width,
+                f32::from(alpha) / 255.0 * 2.0 * t,
+            ),
+            FocusStyle::Double { width } => {
+                let w = width * t;
+                painter.rect_stroke(
+                    rect.expand(1.0 + w / 2.0),
+                    grow(1.0 + w / 2.0),
+                    Stroke::new(w, color),
+                    StrokeKind::Middle,
+                );
+            }
+        }
     }
     if edge.0 == edge.1 {
         painter.rect_stroke(
             rect,
             radius,
-            Stroke::new(paint::SEAM, edge.0),
+            Stroke::new(paint::edge(), edge.0),
             StrokeKind::Inside,
         );
     } else {
         painter.add(edge_shape(rect, radius, edge.0, edge.1));
-    }
-}
-
-/// A field's response with its kit tooltip.
-fn tooltip(response: Response, tip: Option<String>) -> Response {
-    match tip {
-        Some(t) => response.kit_tooltip(t).show(),
-        None => response,
     }
 }
 
@@ -310,16 +326,39 @@ impl<'t> Core<'t> {
     fn show(self, ui: &mut Ui) -> Shown {
         let enabled = self.enabled && ui.is_enabled();
         let id = self.id(ui);
-        ui.scope(|ui| {
-            // A disabled field is not `Ui::disable`d (that fades its text past reading): it
-            // paints in the theme's disabled tokens, and the edit stops taking input.
-            ui.spacing_mut().item_spacing.y = 0.0;
-            ui.with_layout(Layout::top_down(Align::Min), |ui| {
+        // Label, field and message stack in a slot of their own size that the parent's layout
+        // places (at the right of a right-to-left row, as a select's). The stack's height is last
+        // frame's; a change is measured and redrawn at once.
+        let m = theme::metrics();
+        let width = self
+            .width
+            .unwrap_or_else(|| ui.available_width())
+            .max(m.control * 2.0);
+        let height_id = id.with("kit-field-height");
+        let height = ui.data(|d| d.get_temp::<f32>(height_id)).unwrap_or(
+            if self.borderless && self.kind == Kind::Search {
+                m.palette_input_height
+            } else {
+                self.size.height()
+            },
+        );
+        let shown =
+            ui.allocate_ui_with_layout(vec2(width, height), Layout::top_down(Align::Min), |ui| {
+                // A disabled field is not `Ui::disable`d (that fades its text past reading): it
+                // paints in the theme's disabled tokens, and the edit stops taking input.
+                ui.spacing_mut().item_spacing.y = 0.0;
                 self.show_inner(ui, id, enabled)
-            })
-            .inner
-        })
-        .inner
+            });
+        let used = shown.response.rect.height();
+        if (used - height).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(height_id, used));
+            // A top-down parent places the slot at its cursor whatever its height (the usual
+            // case, and a growing text area's every frame), so only other layouts redraw.
+            if ui.layout().main_dir() != egui::Direction::TopDown {
+                ui.ctx().request_discard("field measured");
+            }
+        }
+        shown.inner
     }
 
     fn show_inner(self, ui: &mut Ui, id: Id, enabled: bool) -> Shown {
@@ -356,8 +395,12 @@ impl<'t> Core<'t> {
             r.id
         });
 
+        // The borderless search is the surface's own input (the command palette, the
+        // cheatsheet): the palette's input height and title-sized text.
+        let surface_input = self.borderless && self.kind == Kind::Search;
         let font = match self.kind {
             Kind::Code { .. } => FontId::new(m.mono_size, FontFamily::Monospace),
+            _ if surface_input => FontId::new(m.title_size, FontFamily::Proportional),
             _ => FontId::new(m.body_size, FontFamily::Proportional),
         };
         let line_h = ui.fonts_mut(|f| f.row_height(&font)) + ui.spacing().extra_text_line_spacing;
@@ -377,6 +420,7 @@ impl<'t> Core<'t> {
                 let target = content.clamp(min, max);
                 anim::ease_value(&ctx, id.with("kit-area-height"), target, motion::BASE)
             }
+            _ if surface_input => m.palette_input_height,
             _ => self.size.height(),
         };
         let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
@@ -758,7 +802,13 @@ impl<'t> Core<'t> {
         }
         if spinner_due(&ctx, id, self.loading) {
             let r = m.icon_md / 2.0;
-            paint::spinner(&painter, pos2(x - r, cy), r * 0.66, 1.6, p.text_faint);
+            paint::spinner(
+                &painter,
+                pos2(x - r, cy),
+                r * 0.66,
+                paint::SPINNER_WIDTH,
+                p.text_faint,
+            );
             x -= m.icon_md + theme::SM;
         }
         if let Some((g, color)) = counter {
@@ -830,14 +880,14 @@ impl<'t> Core<'t> {
                 n.set_invalid(Invalid::True);
             }
         });
-        let tip = tooltip_text(
-            enabled,
-            self.tooltip.as_deref(),
-            self.disabled_reason.as_deref(),
-            None,
-        );
         Shown {
-            response: tooltip(response, tip),
+            response: tip(
+                response,
+                enabled,
+                self.tooltip.as_deref(),
+                self.disabled_reason.as_deref(),
+                None,
+            ),
             submitted,
             stepped,
         }
@@ -1082,8 +1132,9 @@ impl<'t> SearchField<'t> {
         self.core.loading = loading;
         self
     }
-    /// No fill, edge or halo: the field is part of the surface around it (the command
-    /// palette's input over its seam).
+    /// No fill, edge or halo: the field is part of the surface around it, at the command
+    /// palette's input height with title-sized text (the palette's and cheatsheet's input over
+    /// their seam).
     pub fn borderless(mut self, borderless: bool) -> Self {
         self.core.borderless = borderless;
         self
@@ -2082,6 +2133,36 @@ mod tests {
         assert!(focused);
     }
 
+    /// KF-F9: a field placed straight into a right-to-left row (a settings row's control) sits
+    /// at the row's right at its own width, as a select does, with its label and message.
+    #[test]
+    fn a_field_in_a_right_to_left_row_sits_at_the_right() {
+        let ctx = testkit::ctx();
+        for labelled in [false, true] {
+            let mut text = "main".to_owned();
+            let (mut field, mut row) = (Rect::NOTHING, Rect::NOTHING);
+            for _ in 0..2 {
+                frame(&ctx, Vec::new(), |ui| {
+                    ui.set_width(600.0);
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        row = ui.max_rect();
+                        let mut f = TextField::new(&mut text).width(200.0).id_salt("rtl");
+                        if labelled {
+                            f = f.label("Branch").helper("The default branch");
+                        }
+                        field = f.show(ui).rect;
+                    });
+                });
+            }
+            assert!(
+                (field.right() - row.right()).abs() < 0.5,
+                "labelled {labelled}: the field ends at {} in a row ending at {}",
+                field.right(),
+                row.right()
+            );
+        }
+    }
+
     #[test]
     fn a_borderless_search_paints_no_field_or_border() {
         let ctx = testkit::ctx();
@@ -2186,6 +2267,44 @@ mod tests {
         assert!(
             painted.contains(&(halo, HALO)),
             "the focused field shows its whole halo on the first frame: {painted:?}"
+        );
+    }
+
+    /// A focused field's halo takes the theme's focus style: Contrast's solid ring past a gap,
+    /// Neon's glow (rings fading outwards), and the edges come in the theme's edge width.
+    #[test]
+    fn the_focus_halo_takes_the_themes_focus_style() {
+        let strokes = |theme: theme::ThemeId| {
+            let ctx = testkit::ctx_with(theme, Style::Standard, theme::Density::Comfortable);
+            let mut text = String::new();
+            let mut id = Id::NULL;
+            let _ = frame(&ctx, Vec::new(), |ui| {
+                id = TextField::new(&mut text).id_salt("h").show(ui).id;
+            });
+            ctx.memory_mut(|m| m.request_focus(id));
+            let shapes = frame(&ctx, Vec::new(), |ui| {
+                TextField::new(&mut text).id_salt("h").show(ui);
+            });
+            let p = theme.palette();
+            shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Rect(r) if r.stroke.width > 0.0 => {
+                        Some((r.stroke.color == p.focus, r.stroke.width))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let contrast = strokes(theme::ThemeId::Contrast);
+        assert!(
+            contrast.contains(&(true, 2.5)),
+            "a solid 2.5 pt focus ring: {contrast:?}"
+        );
+        let neon = strokes(theme::ThemeId::Neon);
+        assert!(
+            neon.iter().filter(|(_, w)| (*w - 1.0).abs() < 0.01).count() >= 4,
+            "a glow of thin rings: {neon:?}"
         );
     }
 

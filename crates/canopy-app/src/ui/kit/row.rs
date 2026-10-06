@@ -2,13 +2,14 @@
 //! [`SectionHeader`], and [`Selection`] for Shift and Ctrl clicks (design spec 4.16).
 //!
 //! Rows snap: selection changes at once and the hover ground follows the pointer within `FAST`.
-//! Selection is a translucent wash with no side bar; the keyboard cursor on an unselected row is
+//! Selection is a translucent wash with the theme's mark over it (`Design::selection`: a leading
+//! bar, a ring or an inner glow); the keyboard cursor on an unselected row is
 //! an inset 1.5 pt focus ring. Every row is focusable and activates with Enter or Space.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use egui::text::{LayoutJob, TextFormat};
+use egui::text::LayoutJob;
 use egui::{
     Align, Align2, Color32, CornerRadius, FontFamily, FontId, Id, Key, Layout, Modifiers, Painter,
     Rect, Response, Sense, Shape, Ui, UiBuilder, Widget, WidgetInfo, WidgetType, pos2, vec2,
@@ -239,9 +240,15 @@ fn frame(ui: &mut Ui, spec: &FrameSpec) -> Frame {
         if hover > 0.0 {
             let h = if strong { p.hover_strong() } else { p.hover() };
             painter.rect_filled(rect, radius, h.gamma_multiply(hover));
+            if !spec.selected {
+                paint::hover_mark(painter, rect, radius, p, p.s(), hover);
+            }
         }
         if pressed {
             painter.rect_filled(rect, radius, p.pressed());
+        }
+        if spec.selected {
+            paint::selection_mark(painter, rect, radius, p);
         }
     }
     let lit = hover.max(f32::from(u8::from(spec.selected)));
@@ -576,9 +583,11 @@ impl<'a> ListRow<'a> {
             let mut x = rc.content.left() + self.indent;
             let mut right = rc.content.right() - actions_w - widgets_w;
             if let Some(g) = &self.icon {
-                let glyph =
-                    f.painter
-                        .layout_no_wrap(g.clone(), FontId::proportional(m.icon_md), rc.icon);
+                let glyph = f.painter.layout_no_wrap(
+                    g.clone(),
+                    theme::icon_font(m.icon_md, rc.selected),
+                    rc.icon,
+                );
                 f.painter.galley(
                     pos2(x, cy - glyph.size().y / 2.0),
                     Arc::clone(&glyph),
@@ -932,9 +941,11 @@ impl<'a> TreeRow<'a> {
                     Some(t) if f.enabled => t.color(p),
                     _ => rc.icon,
                 };
-                let glyph =
-                    f.painter
-                        .layout_no_wrap(g.clone(), FontId::proportional(m.icon_md), color);
+                let glyph = f.painter.layout_no_wrap(
+                    g.clone(),
+                    theme::icon_font(m.icon_md, rc.selected),
+                    color,
+                );
                 f.painter.galley(
                     pos2(x, cy - glyph.size().y / 2.0),
                     Arc::clone(&glyph),
@@ -1364,22 +1375,10 @@ impl<'a> SectionHeader<'a> {
     }
 }
 
-/// An uppercase label at `micro_size` semibold with 0.07 em tracking (section headers, table
-/// column headers).
+/// A section label (section headers, table column headers) in the active theme's label style
+/// ([`theme::section_label`]: capitals or title case, its weight and tracking).
 pub fn caps_galley(ui: &Ui, text: &str, color: Color32) -> Arc<egui::Galley> {
-    let m = theme::metrics();
-    let mut job = LayoutJob::default();
-    job.append(
-        &text.to_uppercase(),
-        0.0,
-        TextFormat {
-            font_id: FontId::new(m.micro_size, theme::semibold()),
-            color,
-            extra_letter_spacing: m.micro_size * 0.07,
-            ..Default::default()
-        },
-    );
-    ui.painter().layout_job(job)
+    ui.painter().layout_job(theme::section_label(text, color))
 }
 
 // ---------------------------------------------------------------------------------- Selection

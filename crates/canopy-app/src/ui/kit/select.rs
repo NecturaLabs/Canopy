@@ -18,20 +18,20 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use super::button::tooltip_text;
-use super::overlay::{self, Entrance, ExitMotion, TooltipExt};
+use super::overlay::{self, Entrance, ExitMotion};
 use super::toggle::{component_id, gallery_caption, gallery_row, remembered};
-use super::{ForceState, Interact, Size, anim, field, glass, paint};
+use super::{ForceState, Interact, Size, anim, field, glass, menu, paint};
 use crate::ui::motion;
 use crate::ui::theme::{self, Elevation, Fill};
 
 /// The caret turns over in 0.25 s.
 const CARET_TURN: f32 = 0.25;
-/// The list: 6 below the trigger, 2 wider on each side, at most 8.5 rows tall.
-const LIST_GAP: f32 = 6.0;
+/// The list: a popover's gap below the trigger, 2 wider on each side, at most 8.5 rows tall,
+/// and at least a menu's width.
+const LIST_GAP: f32 = overlay::POPOVER_GAP;
 const LIST_OVERHANG: f32 = 2.0;
 const LIST_ROWS: f32 = 8.5;
-const LIST_MIN_WIDTH: f32 = 200.0;
+const LIST_MIN_WIDTH: f32 = menu::MIN_WIDTH;
 /// Menu items: inner padding and the gap before the check.
 const ITEM_PAD: f32 = theme::SM;
 /// Type-ahead: the buffer clears this long after the last key.
@@ -421,7 +421,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
                     &painter,
                     pos2(caret_x, rect.center().y),
                     m.icon_md * 0.33,
-                    1.6,
+                    paint::SPINNER_WIDTH,
                     faint,
                 );
             } else {
@@ -691,16 +691,13 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             ink.galley(pos2(row.left() + indent, row.top()), g, color);
         }
 
-        let tip = tooltip_text(
+        super::button::tip(
+            trigger,
             enabled,
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             None,
-        );
-        match tip {
-            Some(t) => trigger.kit_tooltip(t).show(),
-            None => trigger,
-        }
+        )
     }
 }
 

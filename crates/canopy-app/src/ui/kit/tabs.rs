@@ -1,6 +1,6 @@
 //! Document tabs (concept `.h-tab`, design spec 4.8): the repository tabs in the title bar.
 //!
-//! The active tab is the `tab` fill with its 1 pt `tab_edge` ring (and `Elevation::Tab` in Deeper),
+//! The active tab is marked in the theme's tab style ([`active_tab`]: lifted, underlined or ruled),
 //! the others transparent until hovered. A tab shows a folder icon (a spinner while its
 //! repository is busy), its name ellipsised, the ahead/behind counts in mono `accent`, and a close
 //! button on hover and on the active tab; a middle click closes too. When the tabs need more room
@@ -25,7 +25,7 @@ use super::overlay::TooltipExt;
 use super::progress::Spinner;
 use super::{ForceState, IconButton, Interact, KitResponse, Size, anim, paint};
 use crate::ui::motion;
-use crate::ui::theme::{self, Elevation, Fill, Style};
+use crate::ui::theme::{self, Elevation, Fill, Style, TabStyle};
 
 /// Padding inside a tab: left of the icon, right of the close button.
 const PAD_LEFT: f32 = 10.0;
@@ -45,6 +45,7 @@ const COUNT_SIZE: f32 = 11.5;
 pub struct DocTab<'a> {
     key: Id,
     name: &'a str,
+    icon: &'a str,
     tooltip: Option<String>,
     detail: Option<String>,
     ahead: usize,
@@ -58,12 +59,18 @@ impl<'a> DocTab<'a> {
         Self {
             key: Id::new(("kit-doc-tab", key)),
             name,
+            icon: icon::FOLDER_SIMPLE,
             tooltip: None,
             detail: None,
             ahead: 0,
             behind: 0,
             busy: false,
         }
+    }
+    /// The Phosphor glyph before the name (default: a folder), such as the repository's own icon.
+    pub fn icon(mut self, glyph: &'a str) -> Self {
+        self.icon = glyph;
+        self
     }
     /// The tooltip's first line (default: the name).
     pub fn tooltip(mut self, text: impl Into<String>) -> Self {
@@ -336,8 +343,6 @@ fn doc_tab(
 ) -> (Response, Option<TabEvent>) {
     let ctx = ui.ctx().clone();
     let p = theme::palette(&ctx);
-    let style = theme::style();
-    let s = p.surfaces(style);
     let m = theme::metrics();
     let counts = tab.counts().map(|text| {
         ui.painter().layout_no_wrap(
@@ -370,16 +375,7 @@ fn doc_tab(
     if ui.is_rect_visible(rect) {
         let painter = ui.painter().clone();
         if selected {
-            paint::surface(
-                &painter,
-                rect,
-                radius,
-                p,
-                style,
-                Elevation::Tab,
-                s.tab,
-                Some(s.tab_edge),
-            );
+            active_tab(&painter, rect, radius, hover);
         } else if hover > 0.0 {
             painter.rect_filled(rect, radius, p.hover().gamma_multiply(hover));
         }
@@ -402,8 +398,8 @@ fn doc_tab(
                 p.text_faint.lerp_to_gamma(p.text_dim, hover)
             };
             let g = painter.layout_no_wrap(
-                icon::FOLDER_SIMPLE.to_owned(),
-                FontId::proportional(m.icon_sm),
+                tab.icon.to_owned(),
+                theme::icon_font(m.icon_sm, selected),
                 color,
             );
             painter.galley(icon_rect.center() - g.size() / 2.0, g, color);
@@ -465,6 +461,72 @@ fn doc_tab(
     }
     let resp = tip.show();
     (resp, event)
+}
+
+/// The active tab's mark in the active theme's [`TabStyle`]: `Lifted` the `tab` fill with its
+/// `tab_edge` ring (and `Elevation::Tab` in Deeper); `Underline` no fill, a `focus` underline (lit
+/// in a theme with lit edges, the hover wash while hovered); `TopRule` the lifted tab with an
+/// `accent` rule along its top, like a bookmark.
+pub(crate) fn active_tab(painter: &egui::Painter, rect: Rect, radius: CornerRadius, hover: f32) {
+    let p = theme::palette(painter.ctx());
+    let style = theme::style();
+    let s = p.surfaces(style);
+    let lifted = || {
+        paint::surface(
+            painter,
+            rect,
+            radius,
+            p,
+            style,
+            Elevation::Tab,
+            s.tab,
+            Some(s.tab_edge),
+        );
+    };
+    match theme::active().design().active_tab {
+        TabStyle::Lifted => lifted(),
+        TabStyle::Underline { width } => {
+            if hover > 0.0 {
+                painter.rect_filled(rect, radius, p.hover().gamma_multiply(hover));
+            }
+            let inset = f32::from(radius.sw).max(theme::XS);
+            let bar = Rect::from_min_max(
+                pos2(rect.left() + inset, rect.bottom() - width),
+                pos2(rect.right() - inset, rect.bottom()),
+            );
+            let round = CornerRadius::same(crate::ui::saturate_u8((width / 2.0).round()));
+            if paint::lit() {
+                paint::ring_glow(
+                    painter,
+                    bar,
+                    round,
+                    p.focus,
+                    paint::LIT_GLOW,
+                    paint::LIT_GLOW_ALPHA,
+                );
+            }
+            painter.rect_filled(bar, round, p.focus);
+        }
+        TabStyle::TopRule { width } => {
+            lifted();
+            let r = f32::from(radius.nw.max(radius.ne));
+            let rule = Rect::from_min_max(
+                pos2(rect.left() + r / 2.0, rect.top()),
+                pos2(rect.right() - r / 2.0, rect.top() + width),
+            );
+            let corner = crate::ui::saturate_u8(r.min(width).round());
+            painter.rect_filled(
+                rule,
+                CornerRadius {
+                    nw: corner,
+                    ne: corner,
+                    sw: 0,
+                    se: 0,
+                },
+                p.accent,
+            );
+        }
+    }
 }
 
 /// The name on one line, ellipsised to `width`.
@@ -534,6 +596,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
             .busy(true)
             .detail("~/src/canopy · Ctrl+2"),
         DocTab::new("website", "website")
+            .icon(icon::GLOBE)
             .sync(0, 3)
             .detail("~/src/website · Ctrl+3"),
         DocTab::new("long", "a-repository-with-a-very-long-name")
@@ -666,6 +729,26 @@ mod tests {
             }
         }
         assert_eq!(got, vec![DocTabsEvent::Select(1), DocTabsEvent::Close(1)]);
+    }
+
+    #[test]
+    fn a_tab_paints_its_own_icon() {
+        let ctx = context();
+        let tabs = [
+            DocTab::new(1, "alpha").icon(icon::ROCKET_LAUNCH),
+            DocTab::new(2, "beta"),
+        ];
+        let out = frame(&ctx, 0.0, Vec::new(), |ui| {
+            let _ = DocTabs::new(&tabs, 0).show(ui);
+        });
+        assert!(
+            text_rect(&out, icon::ROCKET_LAUNCH).is_some(),
+            "chosen icon"
+        );
+        assert!(
+            text_rect(&out, icon::FOLDER_SIMPLE).is_some(),
+            "default folder"
+        );
     }
 
     #[test]

@@ -702,23 +702,11 @@ impl eframe::App for CanopyApp {
         let background = ctx.layer_painter(egui::LayerId::background());
         background.rect_filled(screen, egui::CornerRadius::ZERO, s.bg);
         if deeper {
-            if deck_height > m.tab_strip_height {
-                action_card(&background, screen, m, p);
-            }
-        } else {
-            let strip = egui::Rect::from_min_size(
-                screen.min,
-                egui::vec2(screen.width(), m.tab_strip_height),
-            );
-            crate::ui::kit::paint::deck(&background, strip, p, s);
-            if deck_height > m.tab_strip_height {
-                let bar = egui::Rect::from_min_size(
-                    egui::pos2(screen.left(), strip.bottom()),
-                    egui::vec2(screen.width(), m.action_bar_height),
-                );
-                crate::ui::kit::paint::deck(&background, bar, p, s);
-            }
+            // Deeper's gutter is open ground: the theme's ground treatment lies on it.
+            crate::ui::kit::paint::ground(&background, screen, 1.0);
         }
+        crate::ui::kit::surface::Deck::new(deck_height > m.tab_strip_height)
+            .paint(&background, screen);
         egui::Panel::top("tabs")
             .exact_size(m.tab_strip_height)
             .frame(egui::Frame::NONE)
@@ -764,11 +752,13 @@ impl eframe::App for CanopyApp {
                 if !deeper {
                     ui.painter()
                         .rect_filled(bar, egui::CornerRadius::ZERO, s.panel);
-                    crate::ui::kit::paint::seam_h(
+                    let seam = crate::ui::kit::paint::edge_seam(p, s.border, true);
+                    let w = seam.map_or(0.0, |st| st.width);
+                    crate::ui::kit::paint::seam_line_h(
                         ui.painter(),
                         bar.x_range(),
-                        bar.top() + 0.5,
-                        s.border,
+                        bar.top() + w * 0.5,
+                        seam,
                     );
                 }
                 if let Some(s) = &clone_status {
@@ -809,17 +799,19 @@ impl eframe::App for CanopyApp {
                     .show(ui, |ui| {
                         if !deeper {
                             let r = ui.max_rect().expand2(egui::vec2(m.sidebar_pad, 0.0));
-                            crate::ui::kit::paint::seam_v(
+                            let seam = crate::ui::kit::paint::pane_seam(p, s.border, true);
+                            let w = seam.map_or(0.0, |st| st.width);
+                            crate::ui::kit::paint::seam_line_v(
                                 ui.painter(),
-                                r.right() - 0.5,
+                                r.right() - w * 0.5,
                                 r.y_range(),
-                                s.border,
+                                seam,
                             );
                         }
                         sidebar::show(ui, tab, &mut actions);
                     });
             }
-            content_pane(ui, |ui| match tab.view {
+            content_pane(ui, true, |ui| match tab.view {
                 View::History => {
                     history::show(ui, tab, &self.settings, &mut actions);
                     history_split(ui.ctx(), tab)
@@ -832,7 +824,9 @@ impl eframe::App for CanopyApp {
                 }
             });
         } else {
-            content_pane(ui, |ui| {
+            // Nothing on the welcome screen holds the keyboard as a pane: no focused-pane edge.
+            content_pane(ui, false, |ui| {
+                crate::ui::art::backdrop(ui, ui.max_rect());
                 welcome::show(ui, &self.settings, &mut actions);
                 None
             });
@@ -1041,8 +1035,13 @@ fn resize_handle(panel: egui::Id) -> egui::Id {
 /// The central content pane: flush on the pane ground in Standard. In Deeper a floating card over
 /// the ground's gutters, or two when the view splits (`content` returns where: History's details
 /// below the table, a list beside its detail); the first card (the table or list, which holds
-/// the keyboard), or the only one, carries the focused-pane edge.
-fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui) -> Option<PaneSplit>) {
+/// the keyboard), or the only one, carries the focused-pane edge when `focus_edge` (a repository's
+/// views; the welcome screen has no pane that holds the keyboard).
+fn content_pane(
+    ui: &mut egui::Ui,
+    focus_edge: bool,
+    content: impl FnOnce(&mut egui::Ui) -> Option<PaneSplit>,
+) {
     let m = theme::metrics();
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
@@ -1099,7 +1098,9 @@ fn content_pane(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui) -> Option
             }
             // The card that holds the keyboard (the table or list) gets the focus edge and a lit
             // top.
-            focused_edge(&wide, cards[0], radius, p.focus);
+            if focus_edge {
+                focused_edge(&wide, cards[0], radius, p.focus);
+            }
         });
 }
 
@@ -1230,13 +1231,18 @@ fn corner_mask(
 }
 
 /// Deeper's focused-pane edge on `card`, its top edge lit at full strength so the pane that holds
-/// the keyboard (History's table) reads as the one in front.
+/// the keyboard (History's table) reads as the one in front. A theme with lit edges outlines the
+/// whole card in a glowing `focus` line instead.
 fn focused_edge(
     painter: &egui::Painter,
     card: egui::Rect,
     radius: egui::CornerRadius,
     focus: egui::Color32,
 ) {
+    if crate::ui::kit::paint::lit() {
+        crate::ui::kit::paint::lit_edge(painter, card, radius, focus, 0.7);
+        return;
+    }
     crate::ui::kit::paint::focus_edge(painter, card, radius, focus, 1.0);
     let r = f32::from(radius.nw);
     let width = 1.5;
@@ -1244,32 +1250,6 @@ fn focused_edge(
         (card.left() + r)..=(card.right() - r),
         card.top() + width / 2.0,
         egui::Stroke::new(width, theme::Palette::tint(focus, 210)),
-    );
-}
-
-/// Deeper's action bar: a lifted card (the deck's gradient, highlight and shadow, the panes' edge)
-/// inset by the pane gutter, so the tools float in line with the cards below.
-fn action_card(
-    painter: &egui::Painter,
-    screen: egui::Rect,
-    m: &theme::Metrics,
-    p: &theme::Palette,
-) {
-    let s = p.surfaces(theme::Style::Deeper);
-    let top = screen.top() + m.tab_strip_height;
-    let card = egui::Rect::from_min_max(
-        egui::pos2(screen.left() + m.pane_gutter, top),
-        egui::pos2(screen.right() - m.pane_gutter, top + m.action_bar_height),
-    );
-    crate::ui::kit::paint::surface(
-        painter,
-        card,
-        egui::CornerRadius::same(m.pane_radius),
-        p,
-        theme::Style::Deeper,
-        theme::Elevation::Deck,
-        s.deck,
-        s.pane_edge,
     );
 }
 
@@ -1390,7 +1370,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                content_pane(ui, |ui| {
+                content_pane(ui, true, |ui| {
                     card = ui.max_rect();
                     Some(PaneSplit {
                         split: Split::Vertical(at),

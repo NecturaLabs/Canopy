@@ -230,7 +230,6 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
         let seg_h = self.size.height() - 2.0;
         let inset = m.segment_track_pad + paint::SEAM;
         let font = FontId::new(m.body_size, theme::medium());
-        let icon_font = FontId::proportional(m.icon_md);
         let pad = if self.size == Size::Md {
             m.segment_pad
         } else {
@@ -246,7 +245,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                 let icon = glyph.map(|g| {
                     ui.painter().layout_no_wrap(
                         g.to_owned(),
-                        icon_font.clone(),
+                        theme::icon_font(m.icon_md, chosen == Some(i)),
                         Color32::PLACEHOLDER,
                     )
                 });
@@ -590,8 +589,8 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
         let list_id = component_id(ui, "kit-underline-tabs", self.id_salt);
         let h = m.underline_tab_height;
         let font = FontId::new(m.body_size, theme::medium());
-        let icon_font = FontId::proportional(m.icon_md);
         let close_side = Size::Xs.height();
+        let chosen_at = self.options.iter().position(|(v, _, _)| v == self.value);
         let pad_right = if self.closable {
             TAB_PAD_RIGHT_CLOSE
         } else {
@@ -606,7 +605,7 @@ impl<'a, T: PartialEq + Clone> UnderlineTabs<'a, T> {
                 let icon = glyph.map(|g| {
                     ui.painter().layout_no_wrap(
                         g.to_owned(),
-                        icon_font.clone(),
+                        theme::icon_font(m.icon_md, chosen_at == Some(i)),
                         Color32::PLACEHOLDER,
                     )
                 });

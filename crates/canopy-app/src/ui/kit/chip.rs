@@ -20,7 +20,7 @@ use super::overlay::TooltipExt;
 use super::{ForceState, Interact, Tone, paint};
 use crate::keymap::{self, Command};
 use crate::ui::motion;
-use crate::ui::theme::{self, Density, FULL, Fill, Palette};
+use crate::ui::theme::{self, FULL, Fill, Palette};
 use crate::ui::widgets;
 
 /// A radius that `FULL` turns into half the height.
@@ -43,9 +43,7 @@ const CHANGE_LETTER: f32 = 10.0;
 /// `KeyChord`: caps in a chord 3 apart, chords and alternatives 6 apart.
 const CHORD_GAP: f32 = 3.0;
 const SEQUENCE_GAP: f32 = 6.0;
-/// `StatusDot`: 8 pt (Dense 6) with a 2 pt ring of the surface behind.
-const DOT: f32 = 8.0;
-const DOT_DENSE: f32 = 6.0;
+/// `StatusDot`: a 2 pt ring of the surface behind (its diameter is `Metrics::status_dot`).
 const DOT_RING: f32 = 2.0;
 /// `DiffStat`: `+n` and `−n` 6 apart, then 6 before five 6 pt blocks 2 apart.
 const STAT_GAP: f32 = 6.0;
@@ -799,11 +797,7 @@ impl StatusDot {
 
     /// The dot's diameter: 8, 6 in Dense.
     pub fn diameter() -> f32 {
-        if theme::density() == Density::Dense {
-            DOT_DENSE
-        } else {
-            DOT
-        }
+        theme::metrics().status_dot
     }
 
     pub fn show(self, ui: &mut Ui) -> Response {
@@ -1081,12 +1075,17 @@ impl Chip {
         };
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let mut painter = ui.painter().clone();
-            if !enabled && ui.is_enabled() {
-                painter.multiply_opacity(theme::DISABLED_ALPHA);
-            }
+            // A disabled chip paints in the disabled tokens at full strength: a toned chip's tint
+            // gives way to `disabled_fill`, and the label reads in `disabled_text`.
+            let painter = super::content_painter(ui);
             let radius = radius_for(FULL, height);
-            let (fill, ink) = self.colors(p);
+            let (fill, ink) = match self.colors(p) {
+                (fill, _) if !enabled && fill.a() > 0 => {
+                    (p.surfaces(theme::style()).disabled_fill, p.disabled_text)
+                }
+                (fill, _) if !enabled => (fill, p.disabled_text),
+                colors => colors,
+            };
             if fill.a() > 0 {
                 painter.rect_filled(rect, radius, fill);
             }
@@ -1105,15 +1104,10 @@ impl Chip {
                     Color32::TRANSPARENT,
                 );
             }
-            let (painter, ink) = if !enabled {
-                (
-                    super::content_painter(ui),
-                    super::disabled_text(p, theme::style()),
-                )
-            } else if self.tone == Tone::Neutral {
-                (painter, ink.lerp_to_gamma(p.text, st.hover.max(st.press)))
+            let ink = if enabled && self.tone == Tone::Neutral {
+                ink.lerp_to_gamma(p.text, st.hover.max(st.press))
             } else {
-                (painter, ink)
+                ink
             };
             let mut x = rect.left() + theme::SM;
             let mut shapes: Vec<Shape> = Vec::new();
@@ -1435,7 +1429,7 @@ mod tests {
         for id in theme::ThemeId::ALL {
             let p = id.palette();
             for style in Style::ALL {
-                theme::with_look(style, Density::Comfortable, || {
+                theme::with_look(style, theme::Density::Comfortable, || {
                     let s = p.surfaces(style);
                     let grounds = [s.pane, s.panel];
                     for tone in Tone::ALL {
@@ -1501,10 +1495,33 @@ mod tests {
         }
     }
 
+    /// Spec 4.18: a status dot is 8 pt, 6 in Dense, from the density's metrics.
+    #[test]
+    fn the_status_dot_follows_the_density() {
+        let ctx = ctx();
+        for (density, d) in [
+            (theme::Density::Comfortable, 8.0),
+            (theme::Density::Dense, 6.0),
+        ] {
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                theme::Appearance {
+                    density,
+                    ..theme::Appearance::STILL
+                },
+            );
+            assert!(
+                (StatusDot::diameter() - d).abs() < f32::EPSILON,
+                "{density:?}"
+            );
+        }
+    }
+
     #[test]
     fn pills_follow_the_metrics_in_every_density() {
         let ctx = ctx();
-        for density in Density::ALL {
+        for density in theme::Density::ALL {
             for style in Style::ALL {
                 theme::apply(
                     &ctx,
@@ -1540,7 +1557,7 @@ mod tests {
     /// the `micro_size` mono, like the other pills' density.
     #[test]
     fn the_head_pill_takes_its_padding_and_size_from_the_density() {
-        for density in Density::ALL {
+        for density in theme::Density::ALL {
             let ctx =
                 super::super::testkit::ctx_with(theme::ThemeId::Midnight, Style::Standard, density);
             let m = theme::metrics();

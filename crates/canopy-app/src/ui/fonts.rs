@@ -1,9 +1,16 @@
-//! Bundled fonts: Inter for the interface, JetBrains Mono for code and ids, Phosphor for icons.
+//! Bundled fonts: Inter for the interface, JetBrains Mono for code and ids, Phosphor for icons
+//! (regular, and filled for themes that fill active icons), and two theme heading faces: Canopy
+//! Serif Bold (Paper) and Atkinson Hyperlegible Bold (Contrast).
 //! Licences: `crates/canopy-app/assets/fonts/README.md`.
 
 use std::sync::Arc;
 
 use egui::{FontData, FontDefinitions, FontFamily};
+
+use super::theme::HeadingFace;
+
+/// Font data and family name of Phosphor's filled glyphs.
+pub const FILL: &str = "phosphor-fill";
 
 /// Installs the fonts on `ctx`.
 pub fn install(ctx: &egui::Context) {
@@ -29,8 +36,24 @@ pub fn install(ctx: &egui::Context) {
         "jetbrains-mono",
         include_bytes!("../../assets/fonts/JetBrainsMono-Regular.ttf"),
     );
+    add(
+        "canopy-serif-bold",
+        include_bytes!("../../assets/fonts/CanopySerif-Bold.ttf"),
+    );
+    add(
+        "atkinson-hyperlegible-bold",
+        include_bytes!("../../assets/fonts/AtkinsonHyperlegible-Bold.ttf"),
+    );
 
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    // The filled glyphs share the regular ones' code points, so they get a family of their own
+    // (`theme::icon_fill`): themes with `IconWeight::FillAccents` draw active icons in it.
+    fonts.font_data.insert(
+        FILL.to_owned(),
+        Arc::new(FontData::from_static(
+            egui_phosphor::Variant::Fill.font_bytes(),
+        )),
+    );
 
     // Phosphor icons live in the Unicode private-use area. The bundled Inter files have their own
     // private-use mappings removed (see assets/fonts/README.md) and Phosphor comes straight after
@@ -58,6 +81,21 @@ pub fn install(ctx: &egui::Context) {
     fonts
         .families
         .insert(FontFamily::Name("semibold".into()), with("inter-semibold"));
+    // Theme heading faces cover Latin only: anything else falls back to Inter SemiBold, then the
+    // icons and egui's fonts.
+    for (face, data) in [
+        (HeadingFace::Serif, "canopy-serif-bold"),
+        (HeadingFace::Hyperlegible, "atkinson-hyperlegible-bold"),
+    ] {
+        let mut chain = vec![data.to_owned()];
+        chain.extend(with("inter-semibold"));
+        fonts.families.insert(face.family(), chain);
+    }
+    // Inter first (Phosphor maps letters to the blank glyphs its ligatures use), then the filled
+    // icons in place of the regular ones.
+    let mut fill = vec!["inter".to_owned(), FILL.to_owned()];
+    fill.extend(fallbacks.iter().cloned());
+    fonts.families.insert(FontFamily::Name(FILL.into()), fill);
     if let Some(mono) = fonts.families.get_mut(&FontFamily::Monospace) {
         // Icons inside monospace text (branch names in pills) come from Phosphor, ahead of the
         // default monospace font's own private-use glyphs.
@@ -66,4 +104,52 @@ pub fn install(ctx: &egui::Context) {
         mono.insert(1, "phosphor".to_owned());
     }
     ctx.set_fonts(fonts);
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::FontId;
+
+    use super::*;
+
+    /// The theme heading faces and the filled icons are registered as families of their own, so
+    /// Paper's and Contrast's titles and a filled icon draw in their own faces, not Inter's.
+    #[test]
+    fn theme_faces_and_filled_icons_are_installed() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let fill = FontFamily::Name(FILL.into());
+        let title = "Letterpress Signal";
+        let mut widths = Vec::new();
+        // Laying out text in a family that is not installed panics.
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let width = |text: &str, font: FontId| {
+                ui.painter()
+                    .layout_no_wrap(text.to_owned(), font, egui::Color32::WHITE)
+                    .size()
+                    .x
+            };
+            widths = vec![
+                width(title, FontId::new(20.0, HeadingFace::Ui.family())),
+                width(title, FontId::new(20.0, HeadingFace::Serif.family())),
+                width(title, FontId::new(20.0, HeadingFace::Hyperlegible.family())),
+                width(
+                    egui_phosphor::regular::STAR,
+                    FontId::new(20.0, fill.clone()),
+                ),
+                width("Fill", FontId::new(20.0, fill.clone())),
+                width("Fill", FontId::proportional(20.0)),
+            ];
+        });
+        out.textures_delta.clear();
+        let [inter, serif, hyper, star, fill_text, text] = widths[..] else {
+            panic!("{widths:?}");
+        };
+        for (face, w) in [("serif", serif), ("hyperlegible", hyper)] {
+            assert!(w > 0.0 && (w - inter).abs() > 1.0, "{face} draws as Inter");
+        }
+        assert!(star > 0.0);
+        // Text in the filled family stays Inter (Phosphor maps letters to blank ligature glyphs).
+        assert!((fill_text - text).abs() < 0.01);
+    }
 }

@@ -1,18 +1,21 @@
-//! The history graph row painter (design spec 4.23): circle nodes on a ring of the row's own
-//! background, hollow merges, the HEAD halo, a dashed WIP node, and edges that are straight
-//! within a lane and one vertical-tangent cubic between lanes.
+//! The history graph row painter (design spec 4.23): nodes on a ring of the row's own background,
+//! hollow merges, the HEAD halo, a dashed WIP node, and edges that are straight within a lane and
+//! leave and enter vertically between lanes. The theme's graph style (`Design::graph`) picks the
+//! node shape (dot, ring, square, diamond), scales nodes and lines, and draws the edges between
+//! lanes as cubics, metro corners or circuit diagonals.
 //!
 //! `views/history.rs` lays rows out with `canopy_core::graph::layout` and calls [`paint_row`] for
 //! each visible row with the row's composite background ([`super::row::ground`]). Nothing here
 //! animates: rows snap.
 
 use egui::emath::GuiRounding as _;
+use egui::epaint::RectShape;
 use egui::epaint::{CubicBezierShape, PathShape, PathStroke};
-use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, pos2};
+use egui::{Color32, CornerRadius, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, pos2};
 
 use canopy_core::{GraphRow, LineEnd};
 
-use crate::ui::theme::{self, Palette};
+use crate::ui::theme::{self, Curve, GraphStyle, NodeShape, Palette};
 
 /// The graph column never grows past this; more lanes than fit share the width.
 pub const MAX_WIDTH: f32 = 220.0;
@@ -103,19 +106,65 @@ pub fn edge_points(a: Pos2, b: Pos2) -> [Pos2; 4] {
     [a, pos2(a.x, my), pos2(b.x, my), b]
 }
 
-/// Points along a short dashed path between `a` and `b` (straight or the edge cubic).
-fn dashed(painter: &Painter, a: Pos2, b: Pos2, stroke: Stroke) {
-    let pts: Vec<Pos2> = if (a.x - b.x).abs() < 0.5 {
-        vec![a, b]
-    } else {
-        CubicBezierShape::from_points_stroke(
+/// The points of an edge from `a` to `b` in `curve`, for a theme whose lanes are `pitch` apart:
+/// straight within a lane; between lanes the cubic of [`edge_points`] (`Smooth`), vertical runs
+/// joined by a horizontal one with quarter-circle corners (`Rounded`, a metro map), or vertical
+/// stubs joined by one straight diagonal (`Angular`, a circuit trace).
+pub fn edge_path(a: Pos2, b: Pos2, curve: Curve, pitch: f32) -> Vec<Pos2> {
+    if (a.x - b.x).abs() < 0.5 {
+        return vec![a, b];
+    }
+    match curve {
+        Curve::Smooth => CubicBezierShape::from_points_stroke(
             edge_points(a, b),
             false,
             Color32::TRANSPARENT,
             Stroke::NONE,
         )
-        .flatten(Some(0.1))
-    };
+        .flatten(Some(0.1)),
+        Curve::Rounded if a.y > b.y => {
+            let mut up = edge_path(b, a, curve, pitch);
+            up.reverse();
+            up
+        }
+        Curve::Rounded => {
+            let my = f32::midpoint(a.y, b.y);
+            let dir = (b.x - a.x).signum();
+            let r = (pitch / 2.0)
+                .min((b.x - a.x).abs() / 2.0)
+                .min((b.y - a.y).abs() / 2.0)
+                .max(0.0);
+            let mut pts = vec![a];
+            // Down to the first corner, round it into the horizontal run.
+            let c1 = pos2(a.x + dir * r, my - r);
+            pts.extend(arc(c1, r, std::f32::consts::PI * (0.5 + 0.5 * dir), dir));
+            // Along to the second corner, round it down again.
+            let c2 = pos2(b.x - dir * r, my + r);
+            pts.extend(arc(c2, r, -std::f32::consts::FRAC_PI_2, -dir));
+            pts.push(b);
+            pts
+        }
+        Curve::Angular => {
+            let stub = (b.y - a.y) / 4.0;
+            vec![a, pos2(a.x, a.y + stub), pos2(b.x, b.y - stub), b]
+        }
+    }
+}
+
+/// A quarter circle of radius `r` around `c`, from angle `from`, turning clockwise on screen for
+/// `dir` -1 and anticlockwise for +1 (y grows downwards).
+fn arc(c: Pos2, r: f32, from: f32, dir: f32) -> Vec<Pos2> {
+    (0..=6)
+        .map(|i| {
+            let t = from - dir * crate::ui::int_f32(i) / 6.0 * std::f32::consts::FRAC_PI_2;
+            c + egui::vec2(t.cos(), t.sin()) * r
+        })
+        .collect()
+}
+
+/// Points along a short dashed path between `a` and `b` (straight or the theme's edge).
+fn dashed(painter: &Painter, a: Pos2, b: Pos2, stroke: Stroke, curve: Curve, pitch: f32) {
+    let pts = edge_path(a, b, curve, pitch);
     painter.extend(Shape::dashed_line(&pts, stroke, 3.0, 3.0));
 }
 
@@ -125,12 +174,14 @@ pub fn node_center(painter: &Painter, rect: Rect, lanes: Lanes, lane: u16) -> Po
     anchor(rect, lanes, lane, LineEnd::Mid).round_to_pixel_center(painter.pixels_per_point())
 }
 
-/// Paints one row of the graph: its edges, then its node.
+/// Paints one row of the graph in the active theme's graph style (`Design::graph`): its edges,
+/// then its node.
 pub fn paint_row(painter: &Painter, rect: Rect, lanes: Lanes, row: &GraphRow, marks: Marks) {
     let p = theme::palette(painter.ctx());
     let m = theme::metrics();
+    let style = theme::active().design().graph;
     let painter = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
-    let width = m.graph_edge;
+    let width = m.graph_edge * style.line_scale;
     let faint = Stroke::new(width, p.text_faint);
     let mut segments: Vec<_> = row.segments.iter().collect();
     segments.sort_by_key(|s| s.from_lane.min(s.to_lane));
@@ -144,22 +195,78 @@ pub fn paint_row(painter: &Painter, rect: Rect, lanes: Lanes, row: &GraphRow, ma
             && s.from_lane == row.lane
             && s.to_lane == row.lane;
         if from_wip || into_wip {
-            dashed(&painter, a, b, faint);
+            dashed(&painter, a, b, faint, style.curve, lanes.pitch);
             continue;
         }
         let color = p.lane(s.color);
         if s.from_lane == s.to_lane {
             painter.line_segment([a, b], Stroke::new(width, color));
-        } else {
+        } else if style.curve == Curve::Smooth {
             painter.add(CubicBezierShape::from_points_stroke(
                 edge_points(a, b),
                 false,
                 Color32::TRANSPARENT,
                 PathStroke::new(width, color),
             ));
+        } else {
+            painter.add(Shape::line(
+                edge_path(a, b, style.curve, lanes.pitch),
+                Stroke::new(width, color),
+            ));
         }
     }
-    paint_node(&painter, rect, lanes, row, marks, p);
+    paint_node(&painter, rect, lanes, row, marks, p, style);
+}
+
+/// The outline of a `shape` node of radius `r` around `c`, grown by `grow`: a square with its
+/// sides `2r` long, or a diamond whose half diagonal is `1.25r` (they read as large as a dot).
+fn polygon(shape: NodeShape, c: Pos2, r: f32, grow: f32) -> Vec<Pos2> {
+    if shape == NodeShape::Diamond {
+        let d = r * 1.25 + grow * std::f32::consts::SQRT_2;
+        return vec![
+            pos2(c.x, c.y - d),
+            pos2(c.x + d, c.y),
+            pos2(c.x, c.y + d),
+            pos2(c.x - d, c.y),
+        ];
+    }
+    let h = r + grow;
+    vec![
+        pos2(c.x - h, c.y - h),
+        pos2(c.x + h, c.y - h),
+        pos2(c.x + h, c.y + h),
+        pos2(c.x - h, c.y + h),
+    ]
+}
+
+/// A square node (rounded by `corner`) or a diamond of radius `r` around `c`, grown by `grow`.
+struct Polygon {
+    shape: NodeShape,
+    c: Pos2,
+    r: f32,
+    corner: f32,
+}
+
+impl Polygon {
+    /// Paints it grown by `grow`, in `fill` with `stroke` inside its edge.
+    fn paint(&self, painter: &Painter, grow: f32, fill: Color32, stroke: Stroke) {
+        if self.shape == NodeShape::Square {
+            let h = self.r + grow;
+            painter.add(RectShape::new(
+                Rect::from_center_size(self.c, egui::Vec2::splat(h * 2.0)),
+                CornerRadius::same(crate::ui::saturate_u8((self.corner + grow).round())),
+                fill,
+                stroke,
+                StrokeKind::Inside,
+            ));
+        } else {
+            painter.add(Shape::convex_polygon(
+                polygon(self.shape, self.c, self.r, grow),
+                fill,
+                stroke,
+            ));
+        }
+    }
 }
 
 fn paint_node(
@@ -169,21 +276,42 @@ fn paint_node(
     row: &GraphRow,
     marks: Marks,
     p: &Palette,
+    style: GraphStyle,
 ) {
     let m = theme::metrics();
     let c = node_center(painter, rect, lanes, row.lane);
-    let r = m.graph_node_r;
+    let r = m.graph_node_r * style.node_scale;
+    let line = m.graph_merge_stroke * style.line_scale;
     let color = p.lane(row.color);
     if marks.head {
         painter.circle_filled(
             c,
-            r + m.graph_head_halo,
+            r + m.graph_head_halo * style.node_scale,
             Palette::tint(color, m.graph_head_halo_alpha),
         );
     }
-    painter.circle_filled(c, r + m.graph_ring, marks.ground);
+    let shape = Polygon {
+        shape: style.node,
+        c,
+        r,
+        corner: f32::from(m.radius_sm) / 2.0,
+    };
+    match style.node {
+        NodeShape::Dot | NodeShape::Ring => {
+            painter.circle_filled(c, r + m.graph_ring, marks.ground);
+        }
+        NodeShape::Square | NodeShape::Diamond => {
+            shape.paint(painter, m.graph_ring, marks.ground, Stroke::NONE);
+        }
+    }
     if marks.wip {
         let stroke = Stroke::new(m.graph_merge_stroke, p.text_faint);
+        if matches!(style.node, NodeShape::Square | NodeShape::Diamond) {
+            let mut outline = polygon(style.node, c, r - 0.2, 0.0);
+            outline.push(outline[0]);
+            painter.extend(Shape::dashed_line(&outline, stroke, 2.5, 2.0));
+            return;
+        }
         // Four dashes, each two thirds of its quarter.
         for q in 0..4 {
             let start = crate::ui::int_f32(q) * std::f32::consts::FRAC_PI_2 + 0.26;
@@ -195,15 +323,27 @@ fn paint_node(
                 .collect();
             painter.add(Shape::Path(PathShape::line(points, stroke)));
         }
-    } else if row.is_merge {
-        painter.circle(
-            c,
-            r - 0.2,
-            marks.ground,
-            Stroke::new(m.graph_merge_stroke, color),
-        );
-    } else {
-        painter.circle_filled(c, r, color);
+        return;
+    }
+    match (style.node, row.is_merge) {
+        // A merge is hollow in every shape; a ring theme's commits are rings too, so its merges
+        // are the thinner, emptier ring.
+        (NodeShape::Dot, true) => {
+            painter.circle(c, r - 0.2, marks.ground, Stroke::new(line, color));
+        }
+        (NodeShape::Dot, false) => {
+            painter.circle_filled(c, r, color);
+        }
+        (NodeShape::Ring, merge) => {
+            let w = if merge {
+                line * 0.75
+            } else {
+                (r * 0.5).max(line)
+            };
+            painter.circle(c, r - w / 2.0, marks.ground, Stroke::new(w, color));
+        }
+        (_, true) => shape.paint(painter, 0.0, marks.ground, Stroke::new(line, color)),
+        (_, false) => shape.paint(painter, 0.0, color, Stroke::NONE),
     }
 }
 
@@ -415,6 +555,82 @@ mod tests {
         assert_eq!(head.len(), 3, "halo, ring, hollow node");
         assert!((head[0].0 - (4.2 + 5.2)).abs() < 1e-4);
         assert_eq!(head[0].1, Palette::tint(lane, 61));
+    }
+
+    /// Edges between lanes leave and enter vertically in every curve style, and keep to their
+    /// style: a metro edge is vertical, a quarter turn, horizontal, a quarter turn, vertical; a
+    /// circuit edge one straight diagonal between vertical stubs.
+    #[test]
+    fn edges_take_the_themes_curve() {
+        let (a, b) = (pos2(10.0, 0.0), pos2(38.0, 28.0));
+        for curve in [Curve::Smooth, Curve::Rounded, Curve::Angular] {
+            for (from, to) in [(a, b), (b, a)] {
+                let pts = edge_path(from, to, curve, 14.0);
+                assert_eq!((pts[0], pts[pts.len() - 1]), (from, to), "{curve:?}");
+                let steep = |d: egui::Vec2| d.x.abs() < d.y.abs() * 0.2;
+                assert!(steep(pts[1] - from), "{curve:?} leaves vertically");
+                assert!(
+                    steep(to - pts[pts.len() - 2]),
+                    "{curve:?} enters vertically"
+                );
+            }
+        }
+        let metro = edge_path(a, b, Curve::Rounded, 14.0);
+        let mid = metro.iter().filter(|p| (p.y - 14.0).abs() < 0.01).count();
+        assert!(mid >= 2, "a horizontal run at the middle: {metro:?}");
+        assert_eq!(edge_path(a, b, Curve::Angular, 14.0).len(), 4);
+        assert_eq!(
+            edge_path(a, pos2(10.0, 28.0), Curve::Rounded, 14.0).len(),
+            2
+        );
+    }
+
+    /// What one row's node paints in `theme`: (circles, rects, other paths).
+    fn node_shapes(theme: theme::ThemeId, merge: bool) -> (usize, usize, usize) {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme, theme::Appearance::STILL);
+        let row = GraphRow {
+            lane: 0,
+            color: 1,
+            segments: Vec::new(),
+            width: 1,
+            is_merge: merge,
+        };
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let rect = Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(76.0, 28.0));
+            paint_row(
+                ui.painter(),
+                rect,
+                Lanes::new(1),
+                &row,
+                Marks::new(Color32::BLACK),
+            );
+        });
+        out.textures_delta.clear();
+        let mut n = (0, 0, 0);
+        for c in &out.shapes {
+            match &c.shape {
+                Shape::Circle(_) => n.0 += 1,
+                Shape::Rect(_) => n.1 += 1,
+                Shape::Path(_) => n.2 += 1,
+                _ => {}
+            }
+        }
+        n
+    }
+
+    /// Each theme draws its own nodes: dots and rings as circles, Contrast's squares as rects,
+    /// Neon's diamonds as polygons, and a merge stays hollow in every shape.
+    #[test]
+    fn nodes_take_the_themes_shape() {
+        use theme::ThemeId as T;
+        assert_eq!(node_shapes(T::Midnight, false), (2, 0, 0));
+        assert_eq!(node_shapes(T::Paper, false), (2, 0, 0));
+        assert_eq!(node_shapes(T::Contrast, false), (0, 2, 0));
+        assert_eq!(node_shapes(T::Contrast, true), (0, 2, 0));
+        assert_eq!(node_shapes(T::Neon, false), (0, 0, 2));
+        assert_eq!(node_shapes(T::Neon, true), (0, 0, 2));
     }
 
     #[test]

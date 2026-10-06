@@ -30,7 +30,7 @@ use egui_phosphor::regular as icon;
 use super::{Button, ForceState, IconButton, Size, paint};
 use crate::keymap::{self, Command};
 use crate::ui::motion;
-use crate::ui::theme::{self, Elevation, Fill, Palette};
+use crate::ui::theme::{self, Elevation, Fill};
 
 /// Room kept between a dialog card and the window edges (both sides together).
 const DIALOG_MARGIN: f32 = 28.0;
@@ -38,7 +38,7 @@ const DIALOG_MARGIN: f32 = 28.0;
 const DISC: f32 = 30.0;
 /// Gap between a tooltip or popover and its anchor.
 const TOOLTIP_GAP: f32 = 8.0;
-const POPOVER_GAP: f32 = 6.0;
+pub(crate) const POPOVER_GAP: f32 = 6.0;
 /// Widest tooltip.
 const TOOLTIP_WIDTH: f32 = 260.0;
 /// A tooltip's shortcut keycaps (spec 4.11: `KeyChord` at 18 pt).
@@ -110,7 +110,7 @@ pub fn ground(ctx: &Context, layer: Layer) -> Color32 {
     if layer == Layer::Tooltip {
         s.tooltip.top
     } else if theme::appearance().glass && super::glass::available() && p.glass_alpha > 0 {
-        Palette::tint(s.overlay, p.glass_alpha)
+        p.glass(s)
     } else {
         s.overlay
     }
@@ -183,7 +183,7 @@ pub(crate) fn surface_shapes(painter: &Painter, rect: Rect, layer: Layer) -> Vec
                 // blurs what is behind the layer, not its shadow (G3), and drawn over the shadow.
                 shapes.insert(0, b.capture);
                 shapes.push(b.composite);
-                Fill::flat(Palette::tint(s.overlay, p.glass_alpha))
+                Fill::flat(p.glass(s))
             }
             None => Fill::flat(s.overlay),
         }
@@ -786,22 +786,15 @@ pub(crate) fn tooltip_body(
 /// A keycap inside a tooltip: 18 pt, the theme's keycap in dark themes; on the dark tooltip of a
 /// light theme, a dark cap stepped up from the tooltip with no bottom line.
 fn tooltip_keycap(ui: &mut Ui, key: &str) {
-    let ctx = ui.ctx().clone();
-    let p = theme::palette(&ctx);
-    let s = theme::surfaces(&ctx);
+    let s = theme::surfaces(ui.ctx());
     let m = theme::metrics();
     let font = FontId::new(m.chord_size, egui::FontFamily::Monospace);
-    let (fill, text, ring, bottom) = if p.dark {
-        (s.keycap.top, p.text_dim, s.edge, Some(s.keycap_edge))
-    } else {
-        let base = s.tooltip.top;
-        (
-            theme::mix(base, p.on_tooltip, 0.09),
-            theme::mix(p.on_tooltip_dim, p.on_tooltip, 0.5),
-            theme::mix(base, p.on_tooltip, 0.16),
-            None,
-        )
-    };
+    let (fill, text, ring, bottom) = (
+        s.tooltip_key,
+        s.on_tooltip_key,
+        s.tooltip_key_edge,
+        s.tooltip_key_base,
+    );
     let g = ui
         .painter()
         .layout_no_wrap(key.to_owned(), font, Color32::PLACEHOLDER);
@@ -1336,7 +1329,7 @@ impl<'a> Dialog<'a> {
                                 ui.add(
                                     egui::Label::new(
                                         RichText::new(&title)
-                                            .font(FontId::new(m.title_size, theme::semibold()))
+                                            .font(theme::heading(m.title_size))
                                             .color(p.text),
                                     )
                                     .wrap(),

@@ -74,7 +74,7 @@ impl Cheatsheet {
                                 );
                                 ui.label(
                                     RichText::new("Keyboard shortcuts")
-                                        .font(FontId::new(m.title_size, theme::semibold()))
+                                        .font(theme::heading(m.title_size))
                                         .color(p.text),
                                 );
                                 ui.with_layout(
@@ -105,7 +105,6 @@ impl Cheatsheet {
                         ui,
                         &mut self.query,
                         "Search shortcuts…",
-                        m.palette_input_height,
                     );
                     if self.just_opened {
                         edit.request_focus();
