@@ -81,6 +81,7 @@ pub const OVERLAYS: &[&str] = &[
     "new-tag",
     "stash",
     "add-remote",
+    "add-remote-refused",
     "publish",
     "new-request",
     "confirm",

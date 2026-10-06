@@ -116,6 +116,7 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "new-tag",
     "stash",
     "add-remote",
+    "add-remote-refused",
     "publish",
     "new-request",
     "confirm",
@@ -220,13 +221,20 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             message: String::new(),
             untracked: true,
         },
-        "add-remote" | "publish" => {
+        "add-remote" | "add-remote-refused" | "publish" => {
             let mut d = Dialog::add_remote(settings);
             if name == "publish" {
                 d = d.publishing();
             } else {
                 // As the app names it beside the fixture's own origin.
                 d.name_remote(&["origin".to_owned()]);
+            }
+            if name == "add-remote-refused"
+                && let Dialog::AddRemote { builder, .. } = &mut d
+            {
+                // A URL with a password in it, which Canopy refuses to save.
+                builder.source = dialogs::UrlSource::Url;
+                builder.url = "https://ada:hunter2@git.example.com/acme/tidepool.git".into();
             }
             d
         }
@@ -395,6 +403,25 @@ mod tests {
         };
         app.raw_input_hook(&ctx, &mut input);
         assert_eq!(input.events, [egui::Event::PointerMoved(at)]);
+    }
+
+    /// secfix2 F7: `--overlay add-remote-refused` shows Add remote with a URL Canopy refuses
+    /// (credentials in it), so the refusal can be checked in a picture.
+    #[test]
+    fn the_refused_add_remote_overlay_shows_the_refusal() {
+        let dialog = dialog_overlay("add-remote-refused", &Settings::default());
+        let Some(Dialog::AddRemote { builder, .. }) = dialog else {
+            panic!("--overlay add-remote-refused opens {dialog:?}");
+        };
+        assert!(builder.resolve().is_none());
+        assert!(
+            builder
+                .problem()
+                .is_some_and(|p| p.contains("password") || p.contains("credential")),
+            "{:?}",
+            builder.problem()
+        );
+        assert!(OVERLAYS.contains(&"add-remote-refused"));
     }
 
     #[test]

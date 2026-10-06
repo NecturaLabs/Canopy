@@ -46,7 +46,7 @@ use common::{
 use credential::credential;
 pub use stack::DialogStack;
 pub use start::Start;
-pub use url::UrlBuilder;
+pub use url::{UrlBuilder, UrlSource};
 
 /// Every dialog Canopy shows.
 #[derive(Debug, Clone)]
