@@ -9,8 +9,7 @@ use canopy_core::PullStrategy;
 use canopy_core::forge::ForgeKind;
 use canopy_hosting::{RequestState, RequestSummary, StateFilter};
 use egui::{
-    Align, FontId, Id, Layout, RichText, Sense, Stroke, Ui, Vec2, WidgetInfo, WidgetType, pos2,
-    vec2,
+    Align, Id, Layout, RichText, Sense, Stroke, Ui, Vec2, WidgetInfo, WidgetType, pos2, vec2,
 };
 use egui_phosphor::regular as icon;
 
@@ -47,7 +46,7 @@ pub fn tabs(
         art::show(ui, art::logo(), Vec2::splat(m.icon_xl));
         ui.label(
             RichText::new("Canopy")
-                .font(FontId::new(m.subtitle_size, theme::semibold()))
+                .font(theme::heading(m.subtitle_size))
                 .color(p.text),
         );
         ui.add_space(theme::MD);

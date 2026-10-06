@@ -891,7 +891,7 @@ fn detail(ui: &mut Ui, tab: &mut RepoTab, kind: ForgeKind, actions: &mut Vec<Act
                     ui.add_space(theme::XS);
                     ui.label(
                         RichText::new(&summary.title)
-                            .font(FontId::new(m.headline_size, theme::semibold()))
+                            .font(theme::heading(m.headline_size))
                             .color(p.text),
                     );
                     ui.add_space(theme::XS);

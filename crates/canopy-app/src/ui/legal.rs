@@ -240,7 +240,7 @@ pub fn show(ui: &mut Ui, doc: Document) -> Option<Link> {
     ui.add(
         egui::Label::new(
             egui::RichText::new(doc.title())
-                .font(FontId::new(m.display_size, theme::semibold()))
+                .font(theme::heading(m.display_size))
                 .color(p.text),
         )
         .wrap(),
@@ -267,7 +267,7 @@ pub fn show(ui: &mut Ui, doc: Document) -> Option<Link> {
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(text)
-                            .font(FontId::new(m.headline_size, theme::semibold()))
+                            .font(theme::heading(m.headline_size))
                             .color(p.text),
                     )
                     .wrap(),

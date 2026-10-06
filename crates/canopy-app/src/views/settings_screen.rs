@@ -789,7 +789,7 @@ fn result_header(ui: &mut Ui, section: Section, first: bool, jump: bool) {
             ui.label(RichText::new(glyph).size(m.icon_md).color(p.text_faint));
             ui.label(
                 RichText::new(label)
-                    .font(FontId::new(m.subtitle_size, theme::semibold()))
+                    .font(theme::heading(m.subtitle_size))
                     .color(p.text),
             );
         })
@@ -896,7 +896,7 @@ fn navigation(
         pos2(x + glyph.size().x + theme::SM, cy),
         Align2::LEFT_CENTER,
         "Settings",
-        FontId::new(m.body_size, theme::semibold()),
+        theme::heading(m.body_size),
         p.text,
     );
     egui::ScrollArea::vertical()
@@ -986,7 +986,7 @@ fn header_bar(
         };
         ui.label(
             RichText::new(title)
-                .font(FontId::new(m.body_size, theme::semibold()))
+                .font(theme::heading(m.body_size))
                 .color(p.text),
         );
     } else {
@@ -2727,7 +2727,7 @@ fn repo_header(ui: &mut Ui, path: &Path, look: &RepoLook) {
             ui.spacing_mut().item_spacing.y = theme::XS;
             ui.label(
                 RichText::new(name)
-                    .font(FontId::new(m.subtitle_size, theme::semibold()))
+                    .font(theme::heading(m.subtitle_size))
                     .color(p.text),
             );
             let shown = path.display().to_string();
@@ -3497,7 +3497,7 @@ fn accounts(
                 ui.spacing_mut().item_spacing.y = theme::SM;
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(forge_icon(kind)).size(m.icon_lg).color(p.text));
-                    ui.label(RichText::new(&host).font(FontId::new(m.subtitle_size, theme::semibold())).color(p.text));
+                    ui.label(RichText::new(&host).font(theme::heading(m.subtitle_size)).color(p.text));
                     let saved = tokens.get_for(&forge).is_some();
                     let env = canopy_hosting::token_from_env_for(kind, &forge.host, &settings.gitlab_host_list()).is_some();
                     let (status, color) = if saved {

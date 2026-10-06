@@ -1438,7 +1438,7 @@ fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
         art::show(ui, art::logo(), egui::Vec2::splat(64.0));
         ui.label(
             RichText::new("Canopy")
-                .font(FontId::new(m.display_size, theme::semibold()))
+                .font(theme::heading(m.display_size))
                 .color(p.text),
         );
         ui.label(RichText::new(crate::build_info::title_label()).color(p.text_dim));
