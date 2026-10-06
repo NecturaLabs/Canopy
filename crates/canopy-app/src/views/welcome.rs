@@ -106,7 +106,7 @@ pub fn show(ui: &mut Ui, settings: &Settings, actions: &mut Vec<Action>) {
                         if card(
                             ui,
                             icon::PLANT,
-                            "Init",
+                            "New",
                             "Start a new repository in a folder",
                             Command::Init,
                             card_w,
@@ -266,7 +266,7 @@ fn intro(ui: &mut Ui, width: f32, actions: &mut Vec<Action>) {
         egui::Layout::top_down(egui::Align::Min),
         |ui| {
             ui.set_width(width);
-            let shown = Callout::new(Tone::Accent, "Everything is a few keys away:")
+            let shown = Callout::new(Tone::Accent, "")
                 .title("Canopy is keyboard-first")
                 .icon(icon::LIGHTBULB)
                 .id_salt("welcome-intro")

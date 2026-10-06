@@ -289,7 +289,7 @@ impl CanopyApp {
                 self.dialogs.open(if d.diverged {
                     Dialog::Diverged {
                         mode: settings::PullMode::Rebase,
-                        remember: crate::action::Remember::No,
+                        remember: crate::action::Remember::Repository,
                         everywhere: !d.configured,
                         preview: d.preview,
                     }
@@ -393,7 +393,7 @@ impl CanopyApp {
                             ToastKind::Info,
                             Topic::Update,
                             format!("Canopy {v} is available"),
-                            "See what's new, then install it when it suits you.",
+                            "",
                             Offer::ReviewUpdate,
                         );
                     } else {

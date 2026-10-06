@@ -835,14 +835,16 @@ impl Callout {
                                     .color(p.text),
                             );
                         }
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(&self.text)
-                                    .size(m.body_size)
-                                    .color(p.text),
-                            )
-                            .wrap(),
-                        );
+                        if !self.text.is_empty() {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&self.text)
+                                        .size(m.body_size)
+                                        .color(p.text),
+                                )
+                                .wrap(),
+                            );
+                        }
                         if let Some(add) = content {
                             ui.add_space(theme::XS);
                             add(ui);

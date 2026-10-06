@@ -2053,7 +2053,7 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     row(
         ui,
         "Dates",
-        "How the history shows when a commit was made. The exact time is in the tooltip.",
+        "How the history shows when a commit was made.",
         |ui| {
             Segmented::new(
                 &mut s.relative_dates,
@@ -2636,13 +2636,12 @@ fn identity_group(
     row(
         ui,
         "Apply identity",
-        "Save these fields to Git configuration. Changes apply to future commits only; existing commits keep their authors. Environment variables or author settings may override this identity.",
+        "Applies to future commits only; existing commits keep their authors. Environment variables or git author settings may override it.",
         |ui| {
             // Right to left: the primary action is rightmost.
             if Button::new("Save identity")
                 .primary()
                 .enabled(can_save)
-                .tooltip("Write this identity to the selected Git configuration.")
                 .disabled_reason("Enter both a name and an email before saving.")
                 .show(ui)
                 .clicked()
@@ -3000,20 +2999,15 @@ fn git(
         },
     );
     heading(ui, "Diffs");
-    row(
-        ui,
-        "Layout",
-        "Unified shows old and new lines in one column; side by side puts the old file on the left and the new on the right.",
-        |ui| {
-            Segmented::new(
-                &mut s.split_diff,
-                &[(false, "Unified"), (true, "Side by side")],
-            )
-            .label("Diff layout")
-            .show(ui);
-            revert(ui, &mut s.split_diff, &DEFAULTS.split_diff, "Diff layout");
-        },
-    );
+    row(ui, "Layout", "", |ui| {
+        Segmented::new(
+            &mut s.split_diff,
+            &[(false, "Unified"), (true, "Side by side")],
+        )
+        .label("Diff layout")
+        .show(ui);
+        revert(ui, &mut s.split_diff, &DEFAULTS.split_diff, "Diff layout");
+    });
     row(
         ui,
         "Syntax highlighting",
@@ -3144,7 +3138,7 @@ fn repository(
     repo_row(
         ui,
         "Pull strategy",
-        "How a pull brings in the remote's commits; while it follows the git configuration, only where that sets none.",
+        "How a pull brings in the remote's commits; while it follows the git configuration, only where that sets none. Recommended: fast-forward only; when the branches diverged, Canopy asks how to combine them.",
         None,
         |ui| {
             override_select(
@@ -3161,7 +3155,7 @@ fn repository(
     repo_row(
         ui,
         "Prune on fetch",
-        "Remove remote-tracking branches that were deleted on the remote.",
+        "Remove remote-tracking branches that were deleted on the remote. Recommended: on.",
         facts
             .as_ref()
             .and_then(|f| prune_note(f, prune, s.follow_git_config))
@@ -3196,7 +3190,7 @@ fn repository(
     repo_row(
         ui,
         "Remote protocol",
-        "For remote URLs built from owner/repository when you add a remote or publish.",
+        "Used for remote URLs Canopy builds from owner/repository when you add a remote or publish.",
         None,
         |ui| {
             override_select(
@@ -3568,7 +3562,7 @@ fn signing_row(ui: &mut Ui, facts: &GitFacts) {
             if facts.signs_commits() { "signs commits" } else { "does not sign commits" },
             config_phrase(v)
         ),
-        None => "Git does not sign commits here (commit.gpgsign is not set). Canopy commits with git, so setting it in your git configuration applies.".to_owned(),
+        None => "Git does not sign commits here (commit.gpgsign is not set). To sign, set it in your git configuration.".to_owned(),
     };
     row(ui, "Commit signing", &help, |ui| {
         let on = facts.signs_commits();
@@ -3921,7 +3915,7 @@ fn integrations(
     default_row(
         ui,
         "Clone protocol",
-        "For URLs built from owner/repository when you clone, add a remote or publish. SSH needs a key added to your account.",
+        "Used for URLs Canopy builds from owner/repository when you clone, add a remote or publish. SSH needs a key added to your account.",
         None,
         |ui| {
             Segmented::new(
@@ -4389,7 +4383,7 @@ fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
         (
             Document::Terms,
             "Terms of Service",
-            "The agreement for using Canopy.",
+            "",
             status(&s.accepted_terms, TERMS_VERSION),
             icon::SCROLL,
             "read-terms",
@@ -4404,7 +4398,7 @@ fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
         ),
     ];
     for (document, title, about, state, glyph, salt) in documents {
-        row(ui, title, &format!("{about} {state}"), |ui| {
+        row(ui, title, format!("{about} {state}").trim_start(), |ui| {
             if Button::new("Read")
                 .icon(glyph)
                 .id_salt(salt)
@@ -4420,15 +4414,15 @@ fn consent(ui: &mut Ui, s: &Settings, actions: &mut Vec<Action>) {
         let mut on = s.crash_reports == Some(true);
         let answer = match s.crash_reports {
             None => "You have not answered yet, so nothing is sent.",
-            Some(true) => "Your answer: send them.",
-            Some(false) => "Your answer: do not send them.",
+            Some(_) => "",
         };
         row_more(
             ui,
             "Send crash reports",
-            &format!(
+            format!(
                 "When Canopy crashes, send the error and a stack trace to NecturaLabs. {answer}"
-            ),
+            )
+            .trim_end(),
             "Also sent: the Canopy version, your operating system and a short record of each session. Stored by Sentry in the EU and deleted after 90 days. Takes effect immediately.",
             |ui| {
                 switch(ui, &mut on, "Send crash reports");
@@ -4625,7 +4619,7 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
     row(
         ui,
         "Include beta builds",
-        "Also offer beta builds, which are tried out less before they are published.",
+        "Also offer beta builds, which are less tested than stable ones.",
         |ui| {
             switch(ui, &mut s.include_prereleases, "Include beta builds");
             revert(
@@ -4853,16 +4847,7 @@ fn keyboard(ui: &mut Ui) {
     ui.scope(|ui| {
         // Clear of the scrollbar, which floats over the list's right edge.
         ui.set_max_width(ui.available_width() - theme::MD);
-        help_label(
-            ui,
-            &format!(
-                "Press ? (or {}) anywhere for this list as an overlay. Single keys work when no text field has focus; Super is never used.",
-                crate::keymap::hint(Command::Cheatsheet)
-                    .split(" · ")
-                    .next()
-                    .unwrap_or_default()
-            ),
-        );
+        help_label(ui, "Single keys work when no text field has focus.");
     });
     ui.add_space(theme::MD);
     for section in KeySection::ALL {

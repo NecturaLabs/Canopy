@@ -269,7 +269,7 @@ pub const BINDINGS: &[Binding] = &[
         S::Anywhere,
         C::Init,
         &[ctrl_shift(Key::I)],
-        "Initialize a new repository",
+        "Create a new repository",
     ),
     b(
         S::Anywhere,

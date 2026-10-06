@@ -200,7 +200,7 @@ impl CanopyApp {
                                 ctx,
                                 ToastKind::Error,
                                 Topic::Error,
-                                "Could not open",
+                                "Could not open the log folder",
                                 e,
                             );
                         }
@@ -447,6 +447,21 @@ impl CanopyApp {
                         }
                     }
                 }
+                Action::DiffPrefsForEveryRepository => {
+                    if let Some(t) = self.tabs.get(self.active) {
+                        let prefs = t.diff_prefs;
+                        self.settings.repo_diff.remove(&t.path);
+                        self.settings.diff = prefs;
+                        for t in &mut self.tabs {
+                            if !self.settings.repo_diff.contains_key(&t.path)
+                                && t.diff_prefs != prefs
+                            {
+                                t.diff_prefs = prefs;
+                                t.reload_diff();
+                            }
+                        }
+                    }
+                }
                 Action::DismissIntro => self.settings.seen_intro = true,
                 Action::AcceptTerms => {
                     crate::ui::legal::TERMS_VERSION.clone_into(&mut self.settings.accepted_terms);
@@ -599,6 +614,26 @@ mod tests {
             (here.mode, here.follow_config),
             (everywhere.mode, everywhere.follow_config)
         );
+    }
+
+    /// A repository's diff options made every repository's default become the default, and the
+    /// repository no longer keeps its own.
+    #[test]
+    fn diff_options_become_every_repositorys() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_tab();
+        let path = app.tabs[0].path.clone();
+        let own = DiffPrefs {
+            context: 9,
+            ..DiffPrefs::default()
+        };
+        app.tabs[0].diff_prefs = own;
+        app.apply(&ctx, vec![Action::DiffPrefsChanged]);
+        assert_eq!(app.settings.repo_diff.get(&path), Some(&own));
+        app.apply(&ctx, vec![Action::DiffPrefsForEveryRepository]);
+        assert_eq!(app.settings.diff, own);
+        assert!(app.settings.repo_diff.is_empty());
+        assert_eq!(app.tabs[0].diff_prefs, own);
     }
 
     /// A repository's own diff options reach its tab; clearing them returns it to the default.

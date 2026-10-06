@@ -486,7 +486,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     if shown.value == Some(TreeNav::Parent) {
                         list.focus(ui.ctx(), remote_at);
                     }
-                    let resp = shown.response.kit_tooltip("Double-click to check out").extra(true).show();
+                    let resp = shown.response;
                     if resp.clicked()
                         && let Some(t) = b.target {
                             pick = Some(SidebarItem::RemoteBranch { remote: b.remote.clone(), branch: b.branch.clone() });

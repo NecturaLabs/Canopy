@@ -645,7 +645,7 @@ struct Outcome {
     /// When it ended, on the context's clock (`InputState::time`), as the kit's
     /// [`Operation::finished`] takes it.
     at: f64,
-    /// "Fetching — done", "Pushing failed".
+    /// "Fetched", "Could not push".
     tip: String,
 }
 
@@ -657,11 +657,7 @@ impl Outcome {
         if seconds >= motion::OUTCOME_HOLD {
             return None;
         }
-        let tip = if finished.ok {
-            format!("{} — done", finished.label)
-        } else {
-            format!("{} failed", finished.label)
-        };
+        let tip = crate::tab::outcome_title(&finished.label, finished.ok);
         Some(Self {
             tool,
             ok: finished.ok,
@@ -1163,7 +1159,7 @@ mod tests {
                 at: 10.0 - f64::from(motion::OUTCOME_HOLD / 2.0)
             }
         );
-        assert_eq!(held.tip, "Fetching — done");
+        assert_eq!(held.tip, "Fetched");
         assert!(
             Outcome::after(&done, motion::OUTCOME_HOLD, 10.0).is_none(),
             "gone"
@@ -1176,7 +1172,7 @@ mod tests {
         let shown = Outcome::after(&failed, 0.0, 3.0).expect("shown");
         assert_eq!(shown.tool, Tool::Push);
         assert_eq!(shown.operation(), Operation::Failed { at: 3.0 });
-        assert_eq!(shown.tip, "Pushing failed");
+        assert_eq!(shown.tip, "Could not push");
         let other = Finished {
             label: "Committing".into(),
             ok: true,

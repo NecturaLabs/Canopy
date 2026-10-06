@@ -110,7 +110,7 @@ impl Cheatsheet {
                             ui.add(
                                 egui::Label::new(
                                     RichText::new(
-                                        "Single keys work when no text field has focus. Capital letters mean Shift plus that key. Super is left to your window manager.",
+                                        "Single keys work when no text field has focus. Capital letters mean Shift plus that key.",
                                     )
                                     .size(m.meta_size)
                                     .color(p.text_dim),

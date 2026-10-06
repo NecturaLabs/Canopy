@@ -133,6 +133,8 @@ pub enum Action {
     CheckoutRequest(RequestSummary),
     /// Repository diff options changed: re-render the open diff.
     DiffPrefsChanged,
+    /// Make the active repository's diff context and whitespace every repository's default.
+    DiffPrefsForEveryRepository,
     /// The user saw the first-run tips.
     DismissIntro,
     /// Open the folder with Canopy's logs and crash reports.

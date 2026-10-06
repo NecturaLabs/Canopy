@@ -362,12 +362,9 @@ fn clean_home(
                 ui.label(RichText::new("Working tree clean").font(theme::heading(m.display_size)));
                 ui.add_space(2.0);
                 ui.label(
-                    RichText::new(format!(
-                        "Nothing to commit on {}. Edit some files and they show up here.",
-                        snap.head.label()
-                    ))
-                    .color(p.text_dim)
-                    .size(m.meta_size),
+                    RichText::new(format!("Nothing to commit on {}.", snap.head.label()))
+                        .color(p.text_dim)
+                        .size(m.meta_size),
                 );
                 ui.add_space(theme::LG);
                 let (status, next) = match (branch, snap.remotes.is_empty()) {
@@ -855,10 +852,7 @@ fn composer(
         vec!["Stage files to commit".to_owned(), "Stage files".to_owned()]
     };
     let warning = identity_notice(tab.identity.as_ref(), tab.identity_error.is_some());
-    let tip = warning.map_or_else(
-        || "Commit the staged changes".to_owned(),
-        |w| format!("{w} Open Settings → Git to correct it. Git's own error will appear if you commit without a usable identity."),
-    );
+    let tip = warning.map(|w| format!("{w} Open Settings → Git to correct it. Git's own error will appear if you commit without a usable identity."));
     let footer = |ui: &mut Ui, actions: &mut Vec<Action>| {
         if let Some(warning) = warning {
             ui.horizontal_wrapped(|ui| {
@@ -892,9 +886,11 @@ fn composer(
             .icon(icon::CHECK)
             .full_width()
             .enabled(can)
-            .tooltip(tip.as_str())
             .shortcut(Command::Commit)
             .show_shortcut(keys);
+        if let Some(tip) = &tip {
+            commit = commit.tooltip(tip.as_str());
+        }
         if let Some(reason) = blocker {
             commit = commit.disabled_reason(reason);
         }

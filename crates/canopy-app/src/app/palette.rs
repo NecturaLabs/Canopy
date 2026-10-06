@@ -129,12 +129,7 @@ impl CanopyApp {
                 Action::OpenDialog(Dialog::clone_default(&self.settings)),
             ),
             (
-                e(
-                    icon::PLANT,
-                    "Init new repository…",
-                    "Repository",
-                    Some(C::Init),
-                ),
+                e(icon::PLANT, "New repository…", "Repository", Some(C::Init)),
                 Action::OpenDialog(Dialog::new_repository(String::new())),
             ),
             (

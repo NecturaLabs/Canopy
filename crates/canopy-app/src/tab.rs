@@ -256,6 +256,61 @@ pub struct Notice {
     pub body: String,
 }
 
+/// The leading verbs of operation labels (`Op::label`, `HostJob`'s): as the label says it, as a
+/// finished title says it and as a failed one does.
+const VERBS: &[(&str, &str, &str)] = &[
+    ("Force pushing", "Force pushed", "force push"),
+    ("Aborting", "Aborted", "abort"),
+    ("Adding", "Added", "add"),
+    ("Amending", "Amended", "amend"),
+    ("Applying", "Applied", "apply"),
+    ("Approving", "Approved", "approve"),
+    ("Changing", "Changed", "change"),
+    ("Checking", "Checked", "check"),
+    ("Cherry-picking", "Cherry-picked", "cherry-pick"),
+    ("Closing", "Closed", "close"),
+    ("Commenting", "Commented", "comment"),
+    ("Committing", "Committed", "commit"),
+    ("Continuing", "Continued", "continue"),
+    ("Creating", "Created", "create"),
+    ("Deleting", "Deleted", "delete"),
+    ("Discarding", "Discarded", "discard"),
+    ("Dropping", "Dropped", "drop"),
+    ("Fetching", "Fetched", "fetch"),
+    ("Merging", "Merged", "merge"),
+    ("Popping", "Popped", "pop"),
+    ("Pulling", "Pulled", "pull"),
+    ("Pushing", "Pushed", "push"),
+    ("Rebasing", "Rebased", "rebase"),
+    ("Removing", "Removed", "remove"),
+    ("Renaming", "Renamed", "rename"),
+    ("Reopening", "Reopened", "reopen"),
+    ("Resolving", "Resolved", "resolve"),
+    ("Reverting", "Reverted", "revert"),
+    ("Saving", "Saved", "save"),
+    ("Squashing", "Squashed", "squash"),
+    ("Staging", "Staged", "stage"),
+    ("Stashing", "Stashed", "stash"),
+    ("Tagging", "Tagged", "tag"),
+    ("Taking", "Took", "take"),
+    ("Unstaging", "Unstaged", "unstage"),
+];
+
+/// A finished operation's notification title from its progress label: "Creating branch x"
+/// becomes "Created branch x", or "Could not create branch x" when it failed.
+pub fn outcome_title(label: &str, ok: bool) -> String {
+    let found = VERBS.iter().find_map(|&(doing, done, verb)| {
+        let rest = label.strip_prefix(doing)?;
+        (rest.is_empty() || rest.starts_with(' ')).then_some((done, verb, rest))
+    });
+    match (found, ok) {
+        (Some((done, _, rest)), true) => format!("{done}{rest}"),
+        (Some((_, verb, rest)), false) => format!("Could not {verb}{rest}"),
+        (None, true) => format!("{label} — done"),
+        (None, false) => format!("{label} failed"),
+    }
+}
+
 /// How the last announced operation ended, for the action bar to show on its tool for a moment.
 #[derive(Debug, Clone)]
 pub struct Finished {
@@ -424,6 +479,8 @@ pub struct RepoTab {
     pub pending_diff: Option<DiffKey>,
     /// Diff context and whitespace for this repository.
     pub diff_prefs: DiffPrefs,
+    /// Every repository's diff context and whitespace (Settings), kept current by the app.
+    pub diff_default: DiffPrefs,
     /// Syntax highlighting of `diff`.
     pub highlights: Option<Arc<Highlights>>,
     /// Lines picked in the diff for line-level staging.
@@ -528,6 +585,7 @@ impl RepoTab {
             diff_error: None,
             pending_diff: None,
             diff_prefs,
+            diff_default: diff_prefs,
             highlights: None,
             line_sel: None,
             resolver: None,
@@ -1338,7 +1396,7 @@ impl RepoTab {
                                 });
                                 notices.push(Notice {
                                     ok: true,
-                                    title: format!("{label} — done"),
+                                    title: outcome_title(&label, true),
                                     body: out.trim().to_owned(),
                                 });
                             }
@@ -1356,7 +1414,7 @@ impl RepoTab {
                                 });
                                 notices.push(Notice {
                                     ok: false,
-                                    title: format!("{label} failed"),
+                                    title: outcome_title(&label, false),
                                     body: e,
                                 });
                             }
@@ -1492,7 +1550,7 @@ impl RepoTab {
                             }
                             notices.push(Notice {
                                 ok: true,
-                                title: format!("{label} — done"),
+                                title: outcome_title(&label, true),
                                 body: String::new(),
                             });
                             if action == HostAction::Merge {
@@ -1505,7 +1563,7 @@ impl RepoTab {
                         }
                         Err(e) => notices.push(Notice {
                             ok: false,
-                            title: format!("{label} failed"),
+                            title: outcome_title(&label, false),
                             body: e,
                         }),
                     }
@@ -1552,6 +1610,38 @@ impl RepoTab {
 mod tests {
     use super::*;
     use canopy_core::{Choice, ConflictFile};
+
+    /// A notification says what happened in the past tense, or what could not be done.
+    #[test]
+    fn a_finished_operation_is_titled_by_what_happened() {
+        let cases = [
+            ("Pulling", "Pulled", "Could not pull"),
+            (
+                "Creating branch topic",
+                "Created branch topic",
+                "Could not create branch topic",
+            ),
+            ("Force pushing", "Force pushed", "Could not force push"),
+            (
+                "Checking out main",
+                "Checked out main",
+                "Could not check out main",
+            ),
+            (
+                "Commenting on PR #12",
+                "Commented on PR #12",
+                "Could not comment on PR #12",
+            ),
+            ("Pushing", "Pushed", "Could not push"),
+            ("Hard reset", "Hard reset — done", "Hard reset failed"),
+        ];
+        for (label, done, failed) in cases {
+            assert_eq!(outcome_title(label, true), done, "{label}");
+            assert_eq!(outcome_title(label, false), failed, "{label}");
+        }
+        // A verb counts only as a whole word.
+        assert_eq!(outcome_title("Pushingly", true), "Pushingly — done");
+    }
 
     /// The unstaged change to `a.rs`, open in the diff pane.
     fn open_unstaged_file() -> FileSelection {

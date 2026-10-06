@@ -77,7 +77,7 @@ pub fn show(
             ui,
             art::local_only(),
             &format!("{}s are turned off", cap(kind.request_noun())),
-            "Turn on pull and merge requests in Settings → Integrations to load them from the API.",
+            "Turn them on in Settings → Integrations.",
             Some((
                 format!("{}  Open on {}", forge_icon(kind), kind.name()),
                 Action::OpenUrl(format!(
@@ -1243,7 +1243,6 @@ fn action_bar(
                 .icon(icon::CHECK)
                 .icon_tone(Tone::Success)
                 .enabled(approve.is_some())
-                .tooltip("Approve this request")
                 .shortcut(Command::ApproveRequest)
                 .disabled_reason(approve_reason)
                 .show(ui)
@@ -1383,7 +1382,7 @@ pub(crate) fn merge_confirmation(
         String::new()
     } else {
         let said: Vec<&str> = risks.iter().map(|(_, text)| text.as_str()).collect();
-        format!("Heads up: {}. ", said.join("; "))
+        format!("{}. ", said.join("; "))
     };
     Some(Dialog::ConfirmHost {
         title: format!(
@@ -1564,8 +1563,6 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64, actions: &mut Vec<Action>) {
 
 /// The comment box under the conversation. Ctrl+Enter posts the comment.
 fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Action>) {
-    let p = palette(ui.ctx());
-    let m = theme::metrics();
     let submitted = TextArea::new(&mut tab.requests.comment)
         .name("Comment")
         .placeholder("Leave a comment (Markdown)…")
@@ -1579,12 +1576,7 @@ fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Ac
         let clicked = Button::new("Comment")
             .primary()
             .enabled(can)
-            .tooltip("Post this comment")
-            .disabled_reason(if empty {
-                "Write a comment to enable"
-            } else {
-                WAIT
-            })
+            .disabled_reason(if empty { "Write a comment first" } else { WAIT })
             .show(ui)
             .clicked();
         if (clicked || submitted) && can {
@@ -1592,13 +1584,6 @@ fn comment_box(ui: &mut Ui, tab: &mut RepoTab, number: u64, actions: &mut Vec<Ac
                 number,
                 tab.requests.comment.trim().to_owned(),
             )));
-        }
-        if empty {
-            ui.label(
-                RichText::new("Write a comment to enable")
-                    .size(m.small_size)
-                    .color(p.text_faint),
-            );
         }
     });
 }
@@ -2281,7 +2266,7 @@ mod tests {
         };
         assert_eq!(confirm, "Merge anyway");
         assert!(danger);
-        assert!(body.starts_with("Heads up: 1 of 2 checks failed"), "{body}");
+        assert!(body.starts_with("1 of 2 checks failed"), "{body}");
         let frame = render(theme::ThemeId::Midnight, SCREEN, |ui| {
             action_bar(
                 ui,

@@ -396,7 +396,7 @@ impl CanopyApp {
                     ToastKind::Info,
                     Topic::Update,
                     "Canopy 812 is available",
-                    "See what's new, then install it when it suits you.",
+                    "",
                     Offer::ReviewUpdate,
                 );
             }
@@ -427,7 +427,7 @@ impl CanopyApp {
                     ToastKind::Info,
                     Topic::Update,
                     "Canopy 812 is available",
-                    "See what's new, then install it when it suits you.",
+                    "",
                     Offer::ReviewUpdate,
                 );
             }
@@ -839,6 +839,9 @@ impl eframe::App for CanopyApp {
         let p = palette(&ctx);
         let compact = ctx.content_rect().width() < theme::COMPACT_WIDTH;
         self.poll(&ctx);
+        if let Some(t) = self.tabs.get_mut(self.active) {
+            t.diff_default = self.settings.diff;
+        }
         self.apply_repo_looks();
         self.auto_fetch(&ctx);
         let mut actions = Vec::new();

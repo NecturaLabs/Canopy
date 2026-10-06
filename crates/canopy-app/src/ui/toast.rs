@@ -79,7 +79,7 @@ impl Topic {
                 "An operation, the host or opening something failed, with the reason it gave."
             }
             Self::Attention => {
-                "ssh waits for your security key, or an installed update waits for a restart."
+                "SSH waits for your security key, or an installed update waits for a restart."
             }
             Self::Update => "A new Canopy build is out, or the result of checking for one.",
             Self::Finished => "A commit, push, pull, fetch, clone or other Git work finished.",
@@ -144,19 +144,19 @@ fn error_help(
         || lower.contains("bad credentials")
     {
         Some((
-            "The host did not accept your credentials. Check your account access and try again.",
+            "The host did not accept your credentials.",
             Some(Offer::Accounts),
         ))
     } else if lower.contains("could not resolve host")
         || lower.contains("could not resolve hostname")
     {
         Some((
-            "The host could not be reached. Check your connection and the remote address, then try again.",
+            "The host could not be reached. Check your connection and the remote address.",
             None,
         ))
     } else if lower.contains("permission denied (publickey)") {
         Some((
-            "SSH did not accept your key. Check the key's access to this repository, then try again.",
+            "SSH did not accept your key. Check the key's access to this repository.",
             None,
         ))
     } else {

@@ -327,14 +327,11 @@ pub fn show(
                 .icon(icon::IDENTIFICATION_CARD)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
-                .description("Git stores an author name and email in every new commit. Enter the details you want to use. Canopy will not guess them, and commits already made keep their authors.")
+                .description("Git records this name and email as the author of every new commit. Commits already made keep their authors.")
                 .body(|ui| {
                     field(ui, "Name", name, "e.g. Ada Lovelace", true);
                     field(ui, "Email", email, "e.g. ada@example.com", false);
-                    note(ui, "Saved to your global Git configuration, so every repository without its own identity uses it. You can change it later in Settings → Git.", p.text_dim);
-                    if !ok && !busy {
-                        note(ui, missing, p.text_faint);
-                    }
+                    note(ui, "Every repository without its own identity uses it. You can change it later in Settings → Git.", p.text_dim);
                 })
                 .footer(|f| {
                     confirm(f, "Save globally", ok, missing);
@@ -531,7 +528,7 @@ pub fn show(
                 .icon(icon::PLANT)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
-                .description("Canopy runs git init in the folder, creating it if it does not exist yet, and opens the new repository in a tab.")
+                .description("Runs git init in the folder, creating it if needed, and opens the repository in a tab.")
                 .body(|ui| {
                     let start = crate::settings::expand_home(path)
                         .parent()
@@ -624,7 +621,7 @@ pub fn show(
                 .icon(icon::PENCIL_SIMPLE)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
-                .description("Renames the local branch. A branch it tracks on a remote keeps its name there.")
+                .description("The remote branch it tracks keeps its name.")
                 .body(|ui| {
                     let error = (!new.trim().is_empty() && !valid_ref_name(new.trim()))
                         .then_some("Not a valid branch name");
@@ -703,7 +700,7 @@ pub fn show(
                 .icon(icon::ARCHIVE)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
-                .description("Puts your uncommitted changes aside and leaves the working tree clean. They wait under Stashes in the sidebar until you apply them.")
+                .description("Puts your uncommitted changes aside until you apply them from Stashes in the sidebar.")
                 .body(|ui| {
                     field(
                         ui,
@@ -863,9 +860,7 @@ pub fn show(
                         .disabled_reason("No other branches on the remote yet")
                         .id_salt("request-target");
                     if options.is_empty() {
-                        target = target.helper(
-                            "Canopy knows no other branch on the remote to merge into. Fetch, then try again.",
-                        );
+                        target = target.helper("Fetch to refresh the list.");
                     }
                     target.show(ui);
                     if pick != request.target && !pick.is_empty() {
@@ -943,13 +938,7 @@ pub fn show(
                     Some("Joins both lines with a merge commit; every commit keeps its ID."),
                 ),
             ];
-            let mut scopes = vec![
-                (Remember::No, "Ask next time"),
-                (Remember::Repository, "For this repository"),
-            ];
-            if *everywhere {
-                scopes.push((Remember::Everywhere, "For every repository"));
-            }
+
             let confirm = match mode {
                 PullMode::Rebase => "Pull with rebase",
                 _ => "Pull with merge",
@@ -958,17 +947,25 @@ pub fn show(
                 .title("Your branch and the remote have diverged")
                 .icon(icon::GIT_FORK)
                 .width(DialogWidth::Form)
-                .description("Both have commits the other does not.")
                 .body(|ui| {
                     RadioGroup::new(mode, &options)
                         .label("Combine them with")
                         .id_salt("diverged-mode")
                         .show(ui);
                     ui.add_space(theme::SM);
+                    let mut scopes = vec![
+                        (Remember::No, "Don't remember"),
+                        (Remember::Repository, "For this repository (recommended)"),
+                    ];
+                    if *everywhere {
+                        scopes.push((Remember::Everywhere, "For every repository"));
+                    }
                     Select::new(remember, &scopes)
-                        .label("Remember")
+                        .label("Remember my decision")
+                        .fit_to_options()
                         .id_salt("diverged-remember")
                         .show(ui);
+                    ui.add_space(theme::SM);
                     predicted_conflicts(ui, preview);
                 })
                 .footer(|f| {
@@ -1071,7 +1068,7 @@ pub fn show(
                             theme::surfaces(ui.ctx()).border,
                         );
                         ui.add_space(theme::XS);
-                        note(ui, format!("Trusting {} covers every repository inside it, including ones you clone later. Only do that for a folder that is entirely yours.", name(parent)), p.text_faint);
+                        note(ui, format!("Trusting {} covers every repository inside it, including ones you clone later.", name(parent)), p.text_faint);
                         if Button::new(format!("Trust everything in {}", name(parent)))
                             .ghost()
                             .size(Size::Sm)
@@ -1140,7 +1137,7 @@ pub fn show(
                 .title("Canopy closed unexpectedly")
                 .icon(icon::FIRST_AID_KIT)
                 .width(DialogWidth::Form)
-                .description("Sorry about that. A crash report was saved on this computer; nothing was sent anywhere. Sharing it with the developers helps fix the problem.")
+                .description("A crash report was saved on this computer. Nothing was sent.")
                 .body(|ui| {
                     if !report.message.is_empty() {
                         InsetBox::new().show(ui, |ui| {
@@ -1366,7 +1363,6 @@ fn merge_body(
         .label("Branch")
         .placeholder("Choose a branch…")
         .enabled(!options.is_empty())
-        .disabled_reason("No other branches yet")
         .id_salt("merge-target");
     if options.is_empty() {
         branch = branch.helper("This repository has no other branch to merge or rebase onto.");
@@ -1469,9 +1465,9 @@ fn consent(
                 .blocking()
                 .initial_focus(InitialFocus::Body)
                 .description(if updated {
-                    "Please read and accept the new Terms of Service and Privacy Policy to keep using Canopy."
+                    "Accept the new Terms of Service and Privacy Policy to keep using Canopy."
                 } else {
-                    "Before you start, please read and accept the Terms of Service and the Privacy Policy."
+                    "Accept the Terms of Service and the Privacy Policy to start."
                 })
                 .body(|ui| {
                     for (glyph, text) in [
