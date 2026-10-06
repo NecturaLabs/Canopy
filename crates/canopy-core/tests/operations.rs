@@ -40,7 +40,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// A repository with identity configured locally, so `Repo::commit` works without global config.
 /// `repo` making Canopy's own choices, whatever the git configuration of the developer running
 /// the tests sets; a test of the configuration deciding turns following back on.
 fn canopys_choices(repo: Repo) -> Repo {
@@ -51,6 +50,7 @@ fn canopys_choices(repo: Repo) -> Repo {
     repo
 }
 
+/// A repository with identity configured locally, so `Repo::commit` works without global config.
 fn fixture() -> (tempfile::TempDir, Repo) {
     let dir = tempfile::tempdir().expect("tempdir");
     let p = dir.path();
@@ -2896,6 +2896,137 @@ fn the_git_configuration_decides_what_it_sets_while_canopy_follows_it() {
         fs::write(copy.workdir().join("a.txt"), "dirty\n").expect("write");
         assert_eq!(copy.rebase("origin/main").is_ok(), runs, "{configured:?}");
     }
+
+    // Tags, per remote: remote.origin.pruneTags=true prunes them for origin.
+    {
+        let (_up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        git(copy.workdir(), &["config", "fetch.prune", "true"]);
+        git(
+            copy.workdir(),
+            &["config", "remote.origin.pruneTags", "true"],
+        );
+        git(copy.workdir(), &["tag", "local-only"]);
+        copy.fetch(Some("origin"), true, |_| {}).expect("fetch");
+        let tags = git(copy.workdir(), &["tag", "--list", "local-only"]);
+        assert!(tags.trim().is_empty(), "remote.origin.pruneTags: {tags:?}");
+    }
+
+    // Pruning branches: Canopy's choice applies to every remote whose own setting is unset;
+    // remote.origin.prune=false keeps origin's, another remote's setting does not.
+    for (key, kept) in [
+        (None, false),
+        (Some("remote.origin.prune"), true),
+        (Some("remote.mirror.prune"), false),
+    ] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        git(copy.workdir(), &["config", "--unset", "fetch.prune"]);
+        git(up_dir.path(), &["branch", "gone"]);
+        copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+        git(up_dir.path(), &["branch", "-D", "gone"]);
+        git(
+            copy.workdir(),
+            &["remote", "add", "mirror", &up_dir.path().to_string_lossy()],
+        );
+        if let Some(key) = key {
+            git(copy.workdir(), &["config", key, "false"]);
+        }
+        copy.fetch(Some("origin"), true, |_| {}).expect("fetch");
+        let left = git(copy.workdir(), &["branch", "-r", "--list", "origin/gone"]);
+        assert_eq!(!left.trim().is_empty(), kept, "{key:?}");
+    }
+
+    // Autostash for merges: Canopy's lets a merge run over changes; merge.autoStash=false
+    // refuses.
+    for (configured, runs) in [(None, true), (Some("false"), false)] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        if let Some(value) = configured {
+            git(copy.workdir(), &["config", "merge.autoStash", value]);
+        }
+        fs::write(up_dir.path().join("a.txt"), "upstream\n").expect("write");
+        git(up_dir.path(), &["commit", "-q", "-am", "feat: upstream"]);
+        copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+        fs::write(copy.workdir().join("a.txt"), "dirty\n").expect("write");
+        let pulled = copy.pull_fetched(PullStrategy::FastForwardOnly, |_| {});
+        assert_eq!(pulled.is_ok(), runs, "{configured:?}: {pulled:?}");
+    }
+
+    // Pushing: push.followTags=false keeps the tag back; push.default=upstream pushes to an
+    // upstream of another name, which Canopy's simple refuses.
+    for (key, value, tag_sent, pushed) in [
+        (None, "", true, false),
+        (Some("push.followTags"), "false", false, false),
+        (Some("push.default"), "upstream", true, true),
+    ] {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        let p = copy.workdir();
+        git(up_dir.path(), &["checkout", "-q", "--detach"]);
+        git(
+            p,
+            &["checkout", "-q", "-b", "topic", "--track", "origin/main"],
+        );
+        if let Some(key) = key {
+            git(p, &["config", key, value]);
+        }
+        fs::write(p.join("a.txt"), "tagged\n").expect("write");
+        git(p, &["commit", "-q", "-am", "feat: tagged"]);
+        git(p, &["tag", "-a", "v1.0.0", "-m", "First release"]);
+        let result = copy.push(false, |_| {});
+        assert_eq!(result.is_ok(), pushed, "{key:?}: {result:?}");
+        if pushed {
+            let tags = git(up_dir.path(), &["tag", "--list", "v1.0.0"]);
+            assert_eq!(!tags.trim().is_empty(), tag_sent, "{key:?}: {tags:?}");
+        }
+        if key.is_none() || key == Some("push.followTags") {
+            git(p, &["push", "-q", "origin", "topic"]);
+            git(p, &["branch", "-q", "--set-upstream-to", "origin/topic"]);
+            copy.push(false, |_| {}).expect("push to topic");
+            let tags = git(up_dir.path(), &["tag", "--list", "v1.0.0"]);
+            assert_eq!(!tags.trim().is_empty(), tag_sent, "{key:?}: {tags:?}");
+        }
+    }
+
+    // A force push sends the current branch alone, even under push.default=matching.
+    {
+        let (up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+        follow(&copy);
+        let p = copy.workdir();
+        git(up_dir.path(), &["checkout", "-q", "-b", "feature"]);
+        git(up_dir.path(), &["checkout", "-q", "--detach"]);
+        fs::write(up_dir.path().join("up.txt"), "upstream\n").expect("write");
+        git(up_dir.path(), &["add", "."]);
+        git(up_dir.path(), &["commit", "-q", "-m", "feat: upstream"]);
+        git(up_dir.path(), &["branch", "-q", "-f", "main"]);
+        let remote_main = git(up_dir.path(), &["rev-parse", "main"]);
+        copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+        git(p, &["config", "push.default", "matching"]);
+        git(
+            p,
+            &[
+                "checkout",
+                "-q",
+                "-b",
+                "feature",
+                "--track",
+                "origin/feature",
+            ],
+        );
+        fs::write(p.join("a.txt"), "rewritten\n").expect("write");
+        git(p, &["commit", "-q", "-am", "feat: rewritten"]);
+        copy.push(true, |_| {}).expect("force push");
+        assert_eq!(
+            git(up_dir.path(), &["rev-parse", "main"]),
+            remote_main,
+            "main on the remote was not rewound"
+        );
+        assert_eq!(
+            git(up_dir.path(), &["rev-parse", "feature"]),
+            git(p, &["rev-parse", "feature"])
+        );
+    }
 }
 
 /// With autostash on (the default) a rebase and a pull work over uncommitted changes, which come
@@ -3034,8 +3165,8 @@ fn an_autostash_that_conflicts_is_recognised() {
     );
 }
 
-/// Neither step of a pull deletes a tag that was never pushed, whatever `fetch.prune`,
-/// `fetch.pruneTags` and `remote.<name>.pruneTags` say.
+/// With Canopy's own choices, neither step of a pull deletes a tag that was never pushed,
+/// whatever `fetch.prune`, `fetch.pruneTags` and `remote.<name>.pruneTags` say.
 #[test]
 fn a_pull_never_prunes_local_tags() {
     for fetched in [false, true] {

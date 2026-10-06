@@ -677,19 +677,20 @@ impl Repo {
     }
 
     /// Fetches `remote`, or every remote when `None`, with tags. `prune` also deletes
-    /// remote-tracking branches whose branch no longer exists on the remote (`--prune`); without
-    /// it `--no-prune` is passed, so `fetch.prune` / `remote.<name>.prune` do not prune either.
-    /// Local tags are pruned only as [`crate::GitOptions::prune_tags`] says (by default never:
-    /// that would delete tags not pushed yet). Where Canopy follows the git configuration and it
-    /// sets either, it decides ([`Repo::prune_flags`]).
+    /// remote-tracking branches whose branch no longer exists on the remote; local tags are
+    /// pruned only as [`crate::GitOptions::prune_tags`] says (by default never: that would delete
+    /// tags not pushed yet). Where Canopy follows the git configuration and it sets either for a
+    /// remote, it decides for that remote ([`Repo::prune_args`]).
     pub fn fetch(
         &self,
         remote: Option<&str>,
         prune: bool,
         progress: impl FnMut(&str),
     ) -> Result<String> {
-        let mut args = vec!["fetch", "--progress", "--tags"];
-        args.extend(self.prune_flags(prune, remote));
+        let (config, flags) = self.prune_args(prune);
+        let mut args: Vec<&str> = config.iter().map(String::as_str).collect();
+        args.extend(["fetch", "--progress", "--tags"]);
+        args.extend(flags);
         match remote {
             Some(r) => args.extend(["--", r]),
             None => args.push("--all"),
@@ -778,7 +779,7 @@ impl Repo {
             .and_then(|b| b.upstream())
             .is_ok();
         // With an upstream this is a bare push: `push.default` decides where it goes.
-        let mut args = self.push_default_override();
+        let mut args = self.push_default_override(force);
         args.extend(["push".to_owned(), "--progress".to_owned()]);
         args.extend(self.follow_tags_flag().map(str::to_owned));
         if force {

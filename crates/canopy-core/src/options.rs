@@ -204,9 +204,20 @@ impl Repo {
         })
     }
 
-    /// The `-c push.default=…` override for a push without a destination.
-    pub(crate) fn push_default_override(&self) -> Vec<String> {
-        if self.config_decides(r"^push\.default$") {
+    /// The `-c push.default=…` override for a push without a destination. A `force` push follows
+    /// the configuration only where it sends the current branch alone (`simple`, `upstream`,
+    /// `current`): `matching` would force every branch the remote also has.
+    pub(crate) fn push_default_override(&self, force: bool) -> Vec<String> {
+        let decides = if force {
+            self.configured_value("push.default").is_some_and(|v| {
+                PushDefault::ALL
+                    .iter()
+                    .any(|d| v.eq_ignore_ascii_case(d.value()))
+            })
+        } else {
+            self.config_decides(r"^push\.default$")
+        };
+        if decides {
             return Vec::new();
         }
         vec![
@@ -220,37 +231,41 @@ impl Repo {
             .then(|| format!("--cleanup={}", self.options().cleanup.value()))
     }
 
-    /// A boolean the git configuration sets, as git reads it, while Canopy follows it.
-    fn configured_bool(&self, key: &str) -> Option<bool> {
+    /// The value the git configuration sets for `key`, while Canopy follows it.
+    fn configured_value(&self, key: &str) -> Option<String> {
         if !self.options().follow_config {
             return None;
         }
-        let out =
-            cli::run_unchecked(self.workdir(), &["config", "--type=bool", "--get", key]).ok()?;
-        match (out.code, String::from_utf8_lossy(&out.stdout).trim()) {
-            (Some(0), "true") => Some(true),
-            (Some(0), "false") => Some(false),
-            _ => None,
-        }
+        let out = cli::run_unchecked(self.workdir(), &["config", "--get", key]).ok()?;
+        (out.code == Some(0)).then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
     }
 
-    /// A fetch's pruning flags for `remote` (every remote when `None`): of remote-tracking
-    /// branches as `prune` says, left to `fetch.prune` / `remote.<name>.prune` where the
-    /// configuration decides; and of local tags as [`GitOptions::prune_tags`] says, or as
-    /// `remote.<name>.pruneTags`, else `fetch.pruneTags`, says while Canopy follows them (for
-    /// every remote, only `fetch.pruneTags`). The tags' value is passed even then: the `--tags`
-    /// a fetch always has would keep git from reading it.
-    pub(crate) fn prune_flags(&self, prune: bool, remote: Option<&str>) -> Vec<&'static str> {
-        let mut flags = Vec::new();
-        if !self.config_decides(r"^(fetch|remote\..*)\.prune$") {
-            flags.push(flag(prune, "--prune", "--no-prune"));
+    /// How a fetch prunes remote-tracking branches (`prune`) and local tags
+    /// ([`GitOptions::prune_tags`]), as the arguments that go before the sub-command and after
+    /// it. While Canopy follows the configuration its choices only stand in for an unset
+    /// `fetch.prune` / `fetch.pruneTags` (`-c`), so each remote's own `remote.<name>.prune` /
+    /// `pruneTags` still decides for that remote; otherwise flags decide for every remote.
+    pub(crate) fn prune_args(&self, prune: bool) -> (Vec<String>, Vec<&'static str>) {
+        let prune_tags = self.options().prune_tags;
+        if !self.options().follow_config {
+            return (
+                Vec::new(),
+                vec![
+                    flag(prune, "--prune", "--no-prune"),
+                    flag(prune_tags, "--prune-tags", "--no-prune-tags"),
+                ],
+            );
         }
-        let prune_tags = remote
-            .and_then(|r| self.configured_bool(&format!("remote.{r}.pruneTags")))
-            .or_else(|| self.configured_bool("fetch.pruneTags"))
-            .unwrap_or(self.options().prune_tags);
-        flags.push(flag(prune_tags, "--prune-tags", "--no-prune-tags"));
-        flags
+        let mut config = Vec::new();
+        for (key, pattern, on) in [
+            ("fetch.prune", r"^fetch\.prune$", prune),
+            ("fetch.pruneTags", r"^fetch\.prunetags$", prune_tags),
+        ] {
+            if !self.config_decides(pattern) {
+                config.extend(["-c".to_owned(), format!("{key}={on}")]);
+            }
+        }
+        (config, Vec::new())
     }
 }
 

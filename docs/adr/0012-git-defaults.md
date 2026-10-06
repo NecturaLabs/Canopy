@@ -25,18 +25,19 @@ change that introduced this ADR.
 ## Decision
 
 Follow my git config (Settings → Git, on by default): where the user's git configuration sets
-one of the choices below, it decides, and Canopy passes nothing for it (for tag pruning it passes
-the configured value, since the `--tags` of every fetch would keep git from reading it). Where the
-configuration sets nothing, or the switch is off, Canopy passes its own choice explicitly:
+one of the choices below, it decides, and Canopy passes nothing for it (for pruning, Canopy's
+choice stands in for an unset `fetch.prune` / `fetch.pruneTags`, so each remote's own setting still
+decides for that remote). Where the configuration sets nothing, or the switch is off, Canopy passes
+its own choice explicitly:
 
 | Choice | Canopy's default | Configuration that decides while followed | Passed as |
 |---|---|---|---|
 | Pull strategy | Fast-forward only; when the branches diverged Canopy asks Rebase or Merge (optionally remembered per repository) | `branch.<name>.rebase`, `pull.rebase`, `pull.ff` | strategy flags |
-| Prune on fetch | on | `fetch.prune`, `remote.<name>.prune` | `--prune` / `--no-prune` |
-| Prune tags too | off | `remote.<name>.pruneTags`, else `fetch.pruneTags` | `--prune-tags` / `--no-prune-tags` |
+| Prune on fetch | on | `remote.<name>.prune`, else `fetch.prune` | `-c fetch.prune=…` while following, else `--prune` / `--no-prune` |
+| Prune tags too | off | `remote.<name>.pruneTags`, else `fetch.pruneTags` | `-c fetch.pruneTags=…` while following, else `--prune-tags` / `--no-prune-tags` |
 | Autostash for pull and rebase | on | `rebase.autoStash` (rebases), `merge.autoStash` (merges) | `--autostash` / `--no-autostash` (merges: git 2.27 and later) |
 | Push annotated tags with their commits | on | `push.followTags` | `--follow-tags` / `--no-follow-tags` |
-| Push to | the branch's upstream, when the names match | `push.default` | `-c push.default=simple` (or upstream, current) |
+| Push to | the branch's upstream, when the names match | `push.default` (a force push follows only `simple`, `upstream` or `current`, so it never sends other branches) | `-c push.default=simple` (or upstream, current) |
 | Conflict style | both sides and the original, trimmed | `merge.conflictStyle` | `-c merge.conflictStyle=zdiff3` (`diff3` before git 2.35) |
 | First branch of a new repository | `main` | `init.defaultBranch` | `git init --initial-branch=<name>` (`symbolic-ref` before git 2.28) |
 | Message cleanup | trailing spaces and surrounding blank lines only | `commit.cleanup` | `--cleanup=whitespace` (or strip, verbatim) |
@@ -67,4 +68,3 @@ while that configuration decides.
 - `merge-tree --write-tree` needs git 2.38; with an older git the preview names only the files the
   incoming commits share with uncommitted changes. For a rebase the prediction merges the two
   tips: a rebase replays commit by commit and can still conflict in a commit between them.
-- A fetch of every remote reads only `fetch.pruneTags`, not each remote's own `pruneTags`.

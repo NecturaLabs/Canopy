@@ -123,8 +123,7 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] Git settings: where the user's git configuration sets one of Canopy's git choices it
       decides (Follow my git config, on by default), else Canopy passes its recommended choice
       (AGENTS.md, Git settings; ADR 0012). Left: report a configuration value that goes against
-      Canopy's recommendation in the notification center too (Settings shows it); a fetch of
-      every remote reads only `fetch.pruneTags`, not each `remote.<name>.pruneTags`. Whether
+      Canopy's recommendation in the notification center too (Settings shows it). Whether
       Canopy may override `commit.gpgsign` or `core.hooksPath` is the owner's call: ask first.
 - [ ] Wire canopy-2's core into the app: publish any branch, mode and type changes, collapsed
       untracked folders, ask before Stage all adds a nested repository; drop the compatibility
