@@ -123,6 +123,13 @@ pub struct Surfaces {
     pub tab: Fill,
     /// Tooltip (light themes use a dark tooltip).
     pub tooltip: Fill,
+    /// A keycap inside a tooltip (its shortcut): fill, 1 pt ring, inner bottom line (`None` for
+    /// a flat key) and label. Dark themes use their ordinary keycap; light themes, whose tooltip
+    /// is dark, a key a step lighter than the tooltip.
+    pub tooltip_key: Color32,
+    pub tooltip_key_edge: Color32,
+    pub tooltip_key_base: Option<Color32>,
+    pub on_tooltip_key: Color32,
     /// Switch thumb, on and off.
     pub knob: Fill,
     /// Primary button, checked checkbox and radio, switch on, slider range, accent count badge.
@@ -296,6 +303,10 @@ pub const MIDNIGHT: Palette = Palette {
         keycap: Fill::flat(hex(0x1A2131)),
         tab: Fill::flat(hex(0x161D2B)),
         tooltip: Fill::flat(hex(0x232B3E)),
+        tooltip_key: hex(0x1A2131),
+        tooltip_key_edge: hex(0x21293B),
+        tooltip_key_base: Some(hex(0x050914)),
+        on_tooltip_key: hex(0xB2B9C6),
         knob: Fill::flat(hex(0xFFFFFF)),
         primary: Fill::flat(hex(0x646CD6)),
         primary_hover: Fill::flat(hex(0x6067D1)),
@@ -361,6 +372,10 @@ pub const MIDNIGHT: Palette = Palette {
             top: hex(0x272F42),
             bottom: hex(0x21293C),
         },
+        tooltip_key: hex(0x222A3D),
+        tooltip_key_edge: hex(0x232B3E),
+        tooltip_key_base: Some(hex(0x02040E)),
+        on_tooltip_key: hex(0xB2B9C6),
         knob: Fill {
             top: hex(0xFFFFFF),
             bottom: hex(0xEDEEF1),
@@ -489,6 +504,10 @@ pub const DAYLIGHT: Palette = Palette {
         keycap: Fill::flat(hex(0xECF1F7)),
         tab: Fill::flat(hex(0xFFFFFF)),
         tooltip: Fill::flat(hex(0x181E29)),
+        tooltip_key: hex(0x2C313C),
+        tooltip_key_edge: hex(0x3B404A),
+        tooltip_key_base: None,
+        on_tooltip_key: hex(0xD1D3D9),
         knob: Fill::flat(hex(0xFFFFFF)),
         primary: Fill::flat(hex(0x2C5FDD)),
         primary_hover: Fill::flat(hex(0x2658D5)),
@@ -551,6 +570,10 @@ pub const DAYLIGHT: Palette = Palette {
             bottom: hex(0xF2F5FA),
         },
         tooltip: Fill::flat(hex(0x181E29)),
+        tooltip_key: hex(0x2C313C),
+        tooltip_key_edge: hex(0x3B404A),
+        tooltip_key_base: None,
+        on_tooltip_key: hex(0xD1D3D9),
         knob: Fill {
             top: hex(0xFFFFFF),
             bottom: hex(0xF3F5F8),
@@ -679,6 +702,10 @@ pub const AURORA: Palette = Palette {
         keycap: Fill::flat(hex(0x052E3E)),
         tab: Fill::flat(hex(0x032A38)),
         tooltip: Fill::flat(hex(0x0C3A4B)),
+        tooltip_key: hex(0x052E3E),
+        tooltip_key_edge: hex(0x093849),
+        tooltip_key_base: Some(hex(0x00131D)),
+        on_tooltip_key: hex(0xACC8D0),
         knob: Fill::flat(hex(0xFFFFFF)),
         primary: Fill::flat(hex(0x2BD7D6)),
         primary_hover: Fill::flat(hex(0x38DFDD)),
@@ -744,6 +771,10 @@ pub const AURORA: Palette = Palette {
             top: hex(0x123E50),
             bottom: hex(0x0A3849),
         },
+        tooltip_key: hex(0x0B394A),
+        tooltip_key_edge: hex(0x0D3A4B),
+        tooltip_key_base: Some(hex(0x000C13)),
+        on_tooltip_key: hex(0xACC8D0),
         knob: Fill {
             top: hex(0xFFFFFF),
             bottom: hex(0xECEFF0),
@@ -872,6 +903,10 @@ pub const EMBER: Palette = Palette {
         keycap: Fill::flat(hex(0x312219)),
         tab: Fill::flat(hex(0x2B1E16)),
         tooltip: Fill::flat(hex(0x3D2C20)),
+        tooltip_key: hex(0x312219),
+        tooltip_key_edge: hex(0x3B2A1F),
+        tooltip_key_base: Some(hex(0x140B05)),
+        on_tooltip_key: hex(0xCCBCAB),
         knob: Fill::flat(hex(0xFEF9F1)),
         primary: Fill::flat(hex(0xF69445)),
         primary_hover: Fill::flat(hex(0xFE9B4D)),
@@ -937,6 +972,10 @@ pub const EMBER: Palette = Palette {
             top: hex(0x423125),
             bottom: hex(0x3B2B1F),
         },
+        tooltip_key: hex(0x3D2C20),
+        tooltip_key_edge: hex(0x3E2D21),
+        tooltip_key_base: Some(hex(0x0E0501)),
+        on_tooltip_key: hex(0xCCBCAB),
         knob: Fill {
             top: hex(0xFEF9F1),
             bottom: hex(0xEEE8DE),
@@ -1065,6 +1104,10 @@ pub const NEON: Palette = Palette {
         keycap: Fill::flat(hex(0x221637)),
         tab: Fill::flat(hex(0x1D1330)),
         tooltip: Fill::flat(hex(0x2D1E47)),
+        tooltip_key: hex(0x221637),
+        tooltip_key_edge: hex(0x2B1C45),
+        tooltip_key_base: Some(hex(0x090316)),
+        on_tooltip_key: hex(0xC8BCD9),
         knob: Fill::flat(hex(0xFFFFFF)),
         primary: Fill::flat(hex(0xFD53BE)),
         primary_hover: Fill::flat(hex(0xFF63C2)),
@@ -1130,6 +1173,10 @@ pub const NEON: Palette = Palette {
             top: hex(0x31224C),
             bottom: hex(0x2B1C46),
         },
+        tooltip_key: hex(0x2C1D47),
+        tooltip_key_edge: hex(0x2D1E48),
+        tooltip_key_base: Some(hex(0x050011)),
+        on_tooltip_key: hex(0xC8BCD9),
         knob: Fill {
             top: hex(0xFFFFFF),
             bottom: hex(0xEFEEF1),
@@ -1258,6 +1305,10 @@ pub const FOREST: Palette = Palette {
         keycap: Fill::flat(hex(0x123020)),
         tab: Fill::flat(hex(0x0F2B1C)),
         tooltip: Fill::flat(hex(0x193B29)),
+        tooltip_key: hex(0x123020),
+        tooltip_key_edge: hex(0x173927),
+        tooltip_key_base: Some(hex(0x011509)),
+        on_tooltip_key: hex(0xC0C2AA),
         knob: Fill::flat(hex(0xFCFAF0)),
         primary: Fill::flat(hex(0xE6B441)),
         primary_hover: Fill::flat(hex(0xEEBB49)),
@@ -1323,6 +1374,10 @@ pub const FOREST: Palette = Palette {
             top: hex(0x1E402D),
             bottom: hex(0x183A28),
         },
+        tooltip_key: hex(0x193B29),
+        tooltip_key_edge: hex(0x1A3C2A),
+        tooltip_key_base: Some(hex(0x000D05)),
+        on_tooltip_key: hex(0xC0C2AA),
         knob: Fill {
             top: hex(0xFCFAF0),
             bottom: hex(0xECE9DE),
@@ -1451,6 +1506,10 @@ pub const PAPER: Palette = Palette {
         keycap: Fill::flat(hex(0xF1E9D9)),
         tab: Fill::flat(hex(0xFFF9EE)),
         tooltip: Fill::flat(hex(0x2C2017)),
+        tooltip_key: hex(0x3E332A),
+        tooltip_key_edge: hex(0x4C4239),
+        tooltip_key_base: None,
+        on_tooltip_key: hex(0xD9D4CB),
         knob: Fill::flat(hex(0xFFFEFD)),
         primary: Fill::flat(hex(0x125CA1)),
         primary_hover: Fill::flat(hex(0x07559A)),
@@ -1513,6 +1572,10 @@ pub const PAPER: Palette = Palette {
             bottom: hex(0xF5EEDF),
         },
         tooltip: Fill::flat(hex(0x2C2017)),
+        tooltip_key: hex(0x3E332A),
+        tooltip_key_edge: hex(0x4C4239),
+        tooltip_key_base: None,
+        on_tooltip_key: hex(0xD9D4CB),
         knob: Fill {
             top: hex(0xFFFEFD),
             bottom: hex(0xF6F4F0),
@@ -1641,6 +1704,10 @@ pub const CONTRAST: Palette = Palette {
         keycap: Fill::flat(hex(0x1E1E1E)),
         tab: Fill::flat(hex(0x1C1C1C)),
         tooltip: Fill::flat(hex(0x1E1E1E)),
+        tooltip_key: hex(0x1E1E1E),
+        tooltip_key_edge: hex(0x9A9A9A),
+        tooltip_key_base: Some(hex(0x767676)),
+        on_tooltip_key: hex(0xE9E9E9),
         knob: Fill::flat(hex(0xFFFFFF)),
         primary: Fill::flat(hex(0x71C8FF)),
         primary_hover: Fill::flat(hex(0x91D3FF)),
@@ -1706,6 +1773,10 @@ pub const CONTRAST: Palette = Palette {
             top: hex(0x282828),
             bottom: hex(0x1E1E1E),
         },
+        tooltip_key: hex(0x2C2C2C),
+        tooltip_key_edge: hex(0x9A9A9A),
+        tooltip_key_base: Some(hex(0x767676)),
+        on_tooltip_key: hex(0xE9E9E9),
         knob: Fill {
             top: hex(0xFFFFFF),
             bottom: hex(0xE8E8E8),
@@ -4482,6 +4553,13 @@ mod tests {
                     gate.need("on_tooltip", p.on_tooltip, "tooltip", c, text_min);
                     gate.need("on_tooltip_dim", p.on_tooltip_dim, "tooltip", c, dim_min);
                 }
+                gate.need(
+                    "on_tooltip_key",
+                    s.on_tooltip_key,
+                    "tooltip_key",
+                    s.tooltip_key,
+                    dim_min,
+                );
                 let mut focus_bgs: Vec<(String, Color32)> =
                     plain.iter().chain(&selrows).cloned().collect();
                 focus_bgs.extend([

@@ -786,22 +786,15 @@ pub(crate) fn tooltip_body(
 /// A keycap inside a tooltip: 18 pt, the theme's keycap in dark themes; on the dark tooltip of a
 /// light theme, a dark cap stepped up from the tooltip with no bottom line.
 fn tooltip_keycap(ui: &mut Ui, key: &str) {
-    let ctx = ui.ctx().clone();
-    let p = theme::palette(&ctx);
-    let s = theme::surfaces(&ctx);
+    let s = theme::surfaces(ui.ctx());
     let m = theme::metrics();
     let font = FontId::new(m.chord_size, egui::FontFamily::Monospace);
-    let (fill, text, ring, bottom) = if p.dark {
-        (s.keycap.top, p.text_dim, s.edge, Some(s.keycap_edge))
-    } else {
-        let base = s.tooltip.top;
-        (
-            theme::mix(base, p.on_tooltip, 0.09),
-            theme::mix(p.on_tooltip_dim, p.on_tooltip, 0.5),
-            theme::mix(base, p.on_tooltip, 0.16),
-            None,
-        )
-    };
+    let (fill, text, ring, bottom) = (
+        s.tooltip_key,
+        s.on_tooltip_key,
+        s.tooltip_key_edge,
+        s.tooltip_key_base,
+    );
     let g = ui
         .painter()
         .layout_no_wrap(key.to_owned(), font, Color32::PLACEHOLDER);
