@@ -352,6 +352,18 @@ impl Settings {
         if self.reduce_motion.take() == Some(true) {
             self.motion = MotionPref::Reduced;
         }
+        // Earlier builds saved a build skipped from the status bar as "build 412"; Skip this
+        // version stores the number.
+        if let Some(v) = self.skipped_version.as_mut() {
+            let lower = v.trim().to_ascii_lowercase();
+            if let Some(number) = lower
+                .strip_prefix("build")
+                .map(str::trim)
+                .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            {
+                number.clone_into(v);
+            }
+        }
         self.zoom = self.zoom.clamp(0.8, 1.6);
         self.commit_page = self.commit_page.clamp(200, 50_000);
         self.diff.context = self.diff.context.min(25);
@@ -607,6 +619,20 @@ mod tests {
             (back.style, back.density, back.translucent, back.motion),
             (Style::Deeper, Density::Dense, true, MotionPref::Full)
         );
+    }
+
+    /// secfix2 F6: a build skipped from the status bar by an earlier build was saved as
+    /// "build 412"; it reads as the build number Skip this version stores now.
+    #[test]
+    fn an_old_skipped_build_reads_as_its_number() {
+        for (saved, migrated) in [("build 412", "412"), ("412", "412"), ("Build  7", "7")] {
+            let mut s = Settings {
+                skipped_version: Some(saved.to_owned()),
+                ..Settings::default()
+            };
+            s.migrate();
+            assert_eq!(s.skipped_version.as_deref(), Some(migrated), "{saved}");
+        }
     }
 
     #[test]
