@@ -20,7 +20,7 @@ use crate::tab::{RepoTab, View};
 use crate::ui::cheatsheet::Cheatsheet;
 use crate::ui::palette::{CommandPalette, Entry};
 use crate::ui::theme::{self, ThemeId, palette};
-use crate::ui::toast::{ToastKind, Toasts};
+use crate::ui::toast::{ToastKind, Toasts, Topic};
 use crate::updater::{self, UpdateState, Updater};
 use crate::views::dialogs::{self, Dialog, DialogStack, Outcome, Start};
 use crate::views::settings_screen::{self, SettingsScreen};
@@ -69,6 +69,8 @@ pub const OVERLAYS: &[&str] = &[
     "settings-search",
     "about",
     "toasts",
+    "notifications",
+    "branch-selected",
     "gallery",
     "menu-remotes",
     "menu-branch",
@@ -356,16 +358,47 @@ impl CanopyApp {
                 app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Updates));
             }
             Some("about") => app.dialogs.open(Dialog::About),
+            Some("notifications") => {
+                // A notification of each kind, for the center the overlay opens.
+                let ctx = &cc.egui_ctx;
+                app.toasts.push(
+                    ctx,
+                    ToastKind::Success,
+                    Topic::Finished,
+                    "Pushed",
+                    "main to origin",
+                );
+                app.toasts.push(
+                    ctx,
+                    ToastKind::Info,
+                    Topic::Confirmation,
+                    "Copied",
+                    "3f9a2c1",
+                );
+                app.toasts.push(
+                    ctx,
+                    ToastKind::Error,
+                    Topic::Error,
+                    "Push failed",
+                    "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
+                );
+            }
             Some("toasts") => {
+                // Every type, so the stack shows a finished operation beside the error.
+                app.toasts.set_prefs(settings::NotificationPrefs {
+                    finished: true,
+                    ..Default::default()
+                });
                 app.toasts.push(
                     &cc.egui_ctx,
-                    ToastKind::Error,
+                    ToastKind::Error, Topic::Error,
                     "Push failed",
                     "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
                 );
                 app.toasts.push(
                     &cc.egui_ctx,
                     ToastKind::Success,
+                    Topic::Finished,
                     "Committed",
                     "docs: add API reference",
                 );
@@ -468,7 +501,7 @@ impl CanopyApp {
             Some(_) | None => {}
         }
         if git_version_missing(&app.git_version) {
-            app.toasts.push(&cc.egui_ctx, ToastKind::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
+            app.toasts.push(&cc.egui_ctx, ToastKind::Error, Topic::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
         }
         let mut notices = Vec::new();
         // A crash report from last time, offered once.
@@ -890,6 +923,7 @@ impl eframe::App for CanopyApp {
                         &self.git_version,
                         &self.updater.state,
                         &self.updater.install,
+                        &mut self.toasts,
                         &mut actions,
                     );
                 }

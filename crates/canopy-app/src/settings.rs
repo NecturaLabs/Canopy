@@ -15,6 +15,7 @@ use canopy_core::ops::PullStrategy;
 
 use crate::ui::motion::MotionPref;
 use crate::ui::theme::{Curve, CustomTheme, Density, NodeShape, Style, ThemeId};
+use crate::ui::toast::Topic;
 
 /// Storage key.
 pub const KEY: &str = "canopy-settings-v1";
@@ -208,6 +209,52 @@ where
     Ok(Option::<Known<T>>::deserialize(d)?.and_then(|k| k.0))
 }
 
+/// Which notifications show as cards in the bottom-right corner. Every notification still goes
+/// to the notification center, whatever these say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationPrefs {
+    /// Cards at all; off, the types below show none either.
+    pub cards: bool,
+    pub errors: bool,
+    pub attention: bool,
+    pub updates: bool,
+    pub finished: bool,
+    pub confirmations: bool,
+}
+
+impl Default for NotificationPrefs {
+    /// Only what needs the user: failures, questions waiting on them and new builds.
+    fn default() -> Self {
+        Self {
+            cards: true,
+            errors: true,
+            attention: true,
+            updates: true,
+            finished: false,
+            confirmations: false,
+        }
+    }
+}
+
+impl NotificationPrefs {
+    /// The switch for notifications of `topic`.
+    pub fn topic_mut(&mut self, topic: Topic) -> &mut bool {
+        match topic {
+            Topic::Error => &mut self.errors,
+            Topic::Attention => &mut self.attention,
+            Topic::Update => &mut self.updates,
+            Topic::Finished => &mut self.finished,
+            Topic::Confirmation => &mut self.confirmations,
+        }
+    }
+
+    /// Whether a notification of `topic` shows as a card.
+    pub fn shows(mut self, topic: Topic) -> bool {
+        self.cards && *self.topic_mut(topic)
+    }
+}
+
 /// User preferences and session state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -230,6 +277,8 @@ pub struct Settings {
     pub style: Style,
     /// Blurred translucent floating layers.
     pub translucent: bool,
+    /// Which notifications show as cards in the bottom-right corner.
+    pub notifications: NotificationPrefs,
     /// The chosen theme at high contrast: stronger text, lines and focus, outlines for shadows.
     pub high_contrast: bool,
     /// The custom theme's colours (Settings, Appearance, with the Custom theme chosen).
@@ -352,6 +401,7 @@ impl Default for Settings {
             download_avatars: true,
             style: Style::Standard,
             translucent: false,
+            notifications: NotificationPrefs::default(),
             high_contrast: false,
             custom_theme: CustomTheme::default(),
             density: Density::Comfortable,

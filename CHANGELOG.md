@@ -10,6 +10,19 @@ commits since the previous build.
 
 ### Added
 
+- A notification center: the bell at the right end of the status bar lists the last 100
+  notifications, whether or not they showed as a card, with copy, dismiss and clear all, and an
+  unread count for errors and other notices that need you. Settings → Appearance → Notifications
+  turns the bottom-right cards off or chooses them per type (errors, needs your attention,
+  updates, finished operations, confirmations); by default only the first three pop up.
+- Settings → Appearance → Tooltips: Helpful (the default) shows only what the screen does not
+  already say, such as an icon's name, why something is unavailable, cut-off text, shortcuts and
+  full dates; All adds descriptions and usage hints; Off keeps only why something is unavailable.
+  A Quick, Normal or Slow delay sets how soon they appear.
+- The sidebar marks the branch, remote branch, tag or stash you clicked while History shows its
+  commit, apart from the checked-out branch (accent check, bold name). A branch checked out in
+  another worktree shows a folder icon and that folder's name, and double-clicking it (or Open
+  worktree) opens that worktree instead of a checkout Git would refuse.
 - Pull and merge request lists show each request's checks and review without opening it, when
   Canopy has a token for the server: passed, failed or running checks, and approved, changes
   requested or (GitHub) review required. Loading the list sends one more request to the same

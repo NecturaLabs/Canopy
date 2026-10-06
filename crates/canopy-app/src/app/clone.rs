@@ -47,12 +47,16 @@ impl CanopyApp {
                 self.toasts.push(
                     ctx,
                     ToastKind::Success,
+                    Topic::Finished,
                     "Clone complete",
                     path.display().to_string(),
                 );
                 self.open_repo(ctx, path);
             }
-            Err(e) if !shown => self.toasts.push(ctx, ToastKind::Error, "Clone failed", e),
+            Err(e) if !shown => {
+                self.toasts
+                    .push(ctx, ToastKind::Error, Topic::Error, "Clone failed", e);
+            }
             Err(_) => {}
         }
     }

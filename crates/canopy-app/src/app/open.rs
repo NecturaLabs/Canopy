@@ -136,6 +136,7 @@ impl CanopyApp {
             self.toasts.push(
                 ctx,
                 ToastKind::Error,
+                Topic::Error,
                 if create {
                     "Could not create repository"
                 } else {
@@ -167,6 +168,7 @@ impl CanopyApp {
                         self.toasts.push(
                             ctx,
                             ToastKind::Success,
+                            Topic::Finished,
                             "Repository created",
                             root.display().to_string(),
                         );
@@ -177,6 +179,7 @@ impl CanopyApp {
                 Err(e) => self.toasts.push(
                     ctx,
                     ToastKind::Error,
+                    Topic::Error,
                     if request.create {
                         "Could not create repository"
                     } else {

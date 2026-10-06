@@ -199,7 +199,12 @@ impl CanopyApp {
                 } => {
                     settle_identity_dialog(&mut self.dialogs, result.is_ok());
                     let (kind, title, body) = changed_toast(cleared, scope, result, now.as_ref());
-                    self.toasts.push(ctx, kind, title, body);
+                    let topic = if kind == ToastKind::Error {
+                        Topic::Error
+                    } else {
+                        Topic::Confirmation
+                    };
+                    self.toasts.push(ctx, kind, topic, title, body);
                     for path in self.tabs.iter().map(|t| t.path.clone()).collect::<Vec<_>>() {
                         self.request_identity(IdentityJob::ReadRepo(path));
                     }
@@ -226,8 +231,13 @@ impl CanopyApp {
         while let Ok(prompt) = server.prompts.try_recv() {
             if prompt.kind == crate::askpass::PromptKind::Notice {
                 // ssh shows it while it waits (e.g. for a security key touch); nothing to answer.
-                self.toasts
-                    .push(ctx, ToastKind::Info, "SSH", prompt.text.clone());
+                self.toasts.push(
+                    ctx,
+                    ToastKind::Info,
+                    Topic::Attention,
+                    "SSH",
+                    prompt.text.clone(),
+                );
                 prompt.answer(Some(String::new()));
                 continue;
             }
@@ -237,6 +247,7 @@ impl CanopyApp {
     }
 
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
+        self.toasts.set_prefs(self.settings.notifications);
         // Also a backstop for any path that changed the list without publishing it.
         crate::trust::set(&self.settings.trusted_folders);
         let changes = crate::trust::changes();
@@ -260,17 +271,13 @@ impl CanopyApp {
         self.poll_identity(ctx);
         for tab in &mut self.tabs {
             for n in tab.poll(&self.gitlab_hosts) {
-                self.toasts.push_for(
-                    ctx,
-                    if n.ok {
-                        ToastKind::Success
-                    } else {
-                        ToastKind::Error
-                    },
-                    n.title,
-                    n.body,
-                    Some(&tab.path),
-                );
+                let (kind, topic) = if n.ok {
+                    (ToastKind::Success, Topic::Finished)
+                } else {
+                    (ToastKind::Error, Topic::Error)
+                };
+                self.toasts
+                    .push_for(ctx, kind, topic, n.title, n.body, Some(&tab.path));
             }
             // Taken after the poll that set it, so the dialog shows in this frame.
             if let Some(name) = tab.force_delete_offer.take() {
@@ -325,6 +332,7 @@ impl CanopyApp {
                 updater::InstallState::Done { build, installed } => self.toasts.push(
                     ctx,
                     ToastKind::Success,
+                    Topic::Attention,
                     format!("Canopy {} is installed", crate::build_info::name(build)),
                     if installed.exe.is_some() {
                         "Restart Canopy to use it.".to_owned()
@@ -336,6 +344,7 @@ impl CanopyApp {
                 updater::InstallState::Failed { error, .. } => self.toasts.push(
                     ctx,
                     ToastKind::Error,
+                    Topic::Error,
                     "Could not update Canopy",
                     error.clone(),
                 ),
@@ -354,6 +363,7 @@ impl CanopyApp {
                         self.toasts.push(
                             ctx,
                             ToastKind::Info,
+                            Topic::Update,
                             format!("Canopy {v} is available"),
                             "Click the update badge in the status bar for what's new.",
                         );
@@ -364,12 +374,14 @@ impl CanopyApp {
                 UpdateState::UpToDate if manual => self.toasts.push(
                     ctx,
                     ToastKind::Success,
+                    Topic::Update,
                     "Canopy is up to date",
                     format!("You have {}", crate::build_info::label()),
                 ),
                 UpdateState::Failed(e) if manual => self.toasts.push(
                     ctx,
                     ToastKind::Error,
+                    Topic::Error,
                     "Could not check for updates",
                     e.clone(),
                 ),

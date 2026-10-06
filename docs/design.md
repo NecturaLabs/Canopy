@@ -593,6 +593,17 @@ run only while the pointer is off the stack and the window has focus. The stack 
 notices, and a sixth pushes out the oldest one that is not an error; a card enters from the right and leaves to the right as it fades, and the cards above one
 that left slide into its place (`TOAST_SHIFT`, instant with reduced motion).
 
+Each notification has a topic (`ui::toast::Topic`: Errors, Needs your attention, Updates,
+Finished operations, Confirmations); Settings → Appearance → Notifications chooses which show as
+cards, and by default only the first three do. Every notification, card or not, goes to the
+notification center: the bell at the right end of the status bar (`BELL`, `BELL_SLASH` while
+cards are off) opens a 360-point popover listing the last 100, newest first, each with its kind's
+glyph and colour, title, relative time (exact in the tooltip), up to four lines of text (all of it
+in the tooltip) and Copy, Dismiss and any recovery action as links; a header holds Clear all and
+the settings gear. Notifications of a counting topic (errors, attention, updates) that showed no
+card raise a strong count badge on the bell, `danger` when one is an error, else `accent`; opening
+the center clears it, and while it is open new notifications go to its list instead of a card.
+
 ### Command palette
 
 Placed near the top of the window, up to 620 points wide, `radius-lg`, overlay elevation. Its

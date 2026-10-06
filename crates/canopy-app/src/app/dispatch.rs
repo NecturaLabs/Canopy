@@ -143,6 +143,7 @@ impl CanopyApp {
                     self.toasts.push(
                         ctx,
                         ToastKind::Info,
+                        Topic::Confirmation,
                         "Diagnostics copied",
                         "Check the text before you share it: it can name files and branches.",
                     );
@@ -155,12 +156,19 @@ impl CanopyApp {
                                 crate::platform::open_folder(&dir, &self.file_manager())
                             });
                         if let Err(e) = opened {
-                            self.toasts.push(ctx, ToastKind::Error, "Could not open", e);
+                            self.toasts.push(
+                                ctx,
+                                ToastKind::Error,
+                                Topic::Error,
+                                "Could not open",
+                                e,
+                            );
                         }
                     }
                     None => self.toasts.push(
                         ctx,
                         ToastKind::Error,
+                        Topic::Error,
                         "No log folder",
                         "This platform has no data folder for Canopy.",
                     ),
@@ -208,8 +216,13 @@ impl CanopyApp {
                 Action::NextTheme => {
                     let next = self.settings.theme.next();
                     self.set_theme(ctx, next);
-                    self.toasts
-                        .push(ctx, ToastKind::Info, format!("Theme: {}", next.name()), "");
+                    self.toasts.push(
+                        ctx,
+                        ToastKind::Info,
+                        Topic::Confirmation,
+                        format!("Theme: {}", next.name()),
+                        "",
+                    );
                 }
                 Action::Palette => self.palette.open(),
                 Action::Cheatsheet => self.cheatsheet.toggle(),
@@ -284,40 +297,66 @@ impl CanopyApp {
                     let shown = folder.display().to_string();
                     if crate::trust::add(&mut self.settings.trusted_folders, &folder) {
                         crate::trust::set(&self.settings.trusted_folders);
-                        self.toasts
-                            .push(ctx, ToastKind::Success, "Folder trusted", shown);
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Success,
+                            Topic::Confirmation,
+                            "Folder trusted",
+                            shown,
+                        );
                     }
                 }
                 Action::Copy(text) => {
                     ctx.copy_text(text.clone());
-                    self.toasts.push(ctx, ToastKind::Info, "Copied", text);
+                    self.toasts
+                        .push(ctx, ToastKind::Info, Topic::Confirmation, "Copied", text);
                 }
                 Action::OpenUrl(url) => {
                     if let Err(e) = crate::platform::open_url(&url) {
-                        self.toasts
-                            .push(ctx, ToastKind::Error, "Could not open the page", e);
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Error,
+                            Topic::Error,
+                            "Could not open the page",
+                            e,
+                        );
                     }
                 }
                 Action::OpenPath(dir) => {
                     if let Err(e) = crate::platform::open_folder(&dir, &self.file_manager()) {
-                        self.toasts
-                            .push(ctx, ToastKind::Error, "Could not open the folder", e);
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Error,
+                            Topic::Error,
+                            "Could not open the folder",
+                            e,
+                        );
                     }
                 }
                 Action::OpenInEditor(file) => {
                     if let Err(e) =
                         crate::platform::open_in_editor(&file, &self.launcher(Kind::Editor))
                     {
-                        self.toasts
-                            .push(ctx, ToastKind::Error, "Could not open the file", e);
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Error,
+                            Topic::Error,
+                            "Could not open the file",
+                            e,
+                        );
                     }
                 }
                 Action::OpenTerminal(p) => {
                     if let Err(e) =
                         crate::platform::open_terminal(&p, &self.launcher(Kind::Terminal))
                     {
-                        self.toasts
-                            .push(ctx, ToastKind::Error, "Could not open a terminal", e);
+                        self.toasts.push(
+                            ctx,
+                            ToastKind::Error,
+                            Topic::Error,
+                            "Could not open a terminal",
+                            e,
+                        );
                     }
                 }
                 Action::Command(c) => {

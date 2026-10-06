@@ -1949,6 +1949,39 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             );
         },
     );
+    notifications(ui, &mut s.notifications);
+}
+
+/// The notification cards: whether they show at all, and for which kinds of notification. The
+/// notification center lists every notification either way.
+fn notifications(ui: &mut Ui, n: &mut crate::settings::NotificationPrefs) {
+    group_gap(ui, theme::LG);
+    heading(ui, "Notifications");
+    row(
+        ui,
+        "Notification cards",
+        "Cards in the bottom-right corner when something happens. The bell in the status bar lists every notification, whatever is chosen here.",
+        |ui| {
+            switch(ui, &mut n.cards, "Notification cards");
+            revert(
+                ui,
+                &mut n.cards,
+                &DEFAULTS.notifications.cards,
+                "Notification cards",
+            );
+        },
+    );
+    let cards = n.cards;
+    for topic in crate::ui::toast::Topic::ALL {
+        let default = *DEFAULTS.notifications.clone().topic_mut(topic);
+        let on = n.topic_mut(topic);
+        ui.add_enabled_ui(cards, |ui| {
+            row(ui, topic.label(), topic.help(), |ui| {
+                switch(ui, on, topic.label());
+                revert(ui, on, &default, topic.label());
+            });
+        });
+    }
 }
 
 /// The theme cards, whole cards per row.

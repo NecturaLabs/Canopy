@@ -42,6 +42,8 @@ pub(super) struct MenuShot {
     name: &'static str,
     /// The view the widget is in.
     pub(super) view: View,
+    /// The click that opens it: secondary for a context menu, primary for a button's popover.
+    button: egui::PointerButton,
     /// Where the click goes once the widget is found, and how many of its two frames (press,
     /// then release) were sent.
     click: Option<(egui::Pos2, u8)>,
@@ -49,16 +51,20 @@ pub(super) struct MenuShot {
 
 impl MenuShot {
     fn of(overlay: &str) -> Option<Self> {
-        let (name, view) = match overlay {
-            "menu-remotes" => ("Remotes", View::History),
-            "menu-branch" => ("feature/auth", View::History),
-            "menu-commit" => ("Commit ", View::History),
-            "menu-file" => ("src/main.rs", View::Changes),
+        let secondary = egui::PointerButton::Secondary;
+        let (name, view, button) = match overlay {
+            "menu-remotes" => ("Remotes", View::History, secondary),
+            "menu-branch" => ("feature/auth", View::History, secondary),
+            "menu-commit" => ("Commit ", View::History, secondary),
+            "menu-file" => ("src/main.rs", View::Changes, secondary),
+            "notifications" => ("Notifications", View::History, egui::PointerButton::Primary),
+            "branch-selected" => ("feature/auth", View::History, egui::PointerButton::Primary),
             _ => return None,
         };
         Some(Self {
             name,
             view,
+            button,
             click: None,
         })
     }
@@ -410,14 +416,15 @@ impl CanopyApp {
             return;
         };
         without_pointer(input);
-        if let Some((at, sent)) = shot.menu.as_mut().and_then(|m| m.click.as_mut())
+        if let Some(menu) = shot.menu.as_mut()
+            && let Some((at, sent)) = menu.click.as_mut()
             && *sent < 2
         {
             input.events.retain(|e| *e != egui::Event::PointerGone);
             input.events.push(egui::Event::PointerMoved(*at));
             input.events.push(egui::Event::PointerButton {
                 pos: *at,
-                button: egui::PointerButton::Secondary,
+                button: menu.button,
                 pressed: *sent == 0,
                 modifiers: egui::Modifiers::NONE,
             });

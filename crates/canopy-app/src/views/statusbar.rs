@@ -10,9 +10,11 @@ use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::{Size, Tone, menu};
 use crate::ui::theme::{self, palette};
+use crate::ui::toast::Toasts;
 use crate::updater::{InstallState, UpdateState};
 use crate::views::commit_detail::without_icons;
 use crate::views::dialogs::Dialog;
+use crate::views::settings_screen::Section;
 
 /// Room between the status bar's items, and at its ends.
 const ITEM_GAP: f32 = 14.0;
@@ -38,6 +40,7 @@ pub fn show(
     git_version: &str,
     update: &UpdateState,
     install: &InstallState,
+    notifications: &mut Toasts,
     actions: &mut Vec<Action>,
 ) {
     let p = palette(ui.ctx());
@@ -151,6 +154,9 @@ pub fn show(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(END_PAD);
+            if notifications.bell(ui).value {
+                actions.push(Action::SettingsAt(Section::Appearance));
+            }
             if let InstallState::Running { build, .. } = install {
                 let name = crate::build_info::name(build);
                 ui.label(small(format!("Updating to {name}…"), p.accent));
@@ -257,6 +263,7 @@ mod tests {
                     "git: command not found",
                     &UpdateState::default(),
                     &InstallState::default(),
+                    &mut Toasts::default(),
                     &mut Vec::new(),
                 );
             });
