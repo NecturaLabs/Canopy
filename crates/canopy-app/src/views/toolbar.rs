@@ -141,6 +141,7 @@ fn doc_tabs(tabs: &[RepoTab]) -> Vec<DocTab<'_>> {
                 let _ = write!(detail, "  ·  {modifier}+{}", i + 1);
             }
             let doc = DocTab::new(&tab.path, &tab.name)
+                .icon(tab.icon)
                 .sync(ahead, behind)
                 .busy(tab.running.is_some())
                 .detail(detail);
@@ -1120,6 +1121,27 @@ mod tests {
         assert!(
             a.right() + 40.0 < b.left(),
             "the busy tab overlaps the next: {a:?} {b:?}"
+        );
+    }
+
+    /// A repository's tab shows the icon chosen for it in its settings, not always the folder.
+    #[test]
+    fn a_title_bar_tab_shows_the_repository_icon() {
+        let ctx = context();
+        let mut alpha = repo_tab("alpha");
+        alpha.icon = crate::tab::tab_icon(Some("code"));
+        let tabs = [alpha];
+        let mut actions = Vec::new();
+        let (shapes, _) = frame(&ctx, Vec::new(), |ui| {
+            super::tabs(ui, &tabs, 0, ThemeId::Midnight, &mut actions);
+        });
+        assert!(
+            text_rect(&shapes, egui_phosphor::regular::CODE).is_some(),
+            "the chosen icon"
+        );
+        assert!(
+            text_rect(&shapes, egui_phosphor::regular::FOLDER_SIMPLE).is_none(),
+            "the default folder instead of the chosen icon"
         );
     }
 
