@@ -337,6 +337,22 @@ impl HostWorker {
     pub fn context(&self) -> &egui::Context {
         &self.ctx
     }
+
+    /// A handle for `forge` with no thread behind it, so it cannot reach the network: a job sent
+    /// to it is dropped and no event ever comes back. `--demo-requests` (screenshots only) shows
+    /// invented requests through it.
+    pub fn offline(forge: Forge, ctx: egui::Context) -> Self {
+        // Both far ends are dropped at once: `send` fails quietly and `events` reads as closed.
+        let (jobs, _) = unbounded::<HostJob>();
+        let (_, events) = unbounded::<HostEvent>();
+        Self {
+            forge,
+            jobs,
+            events,
+            avatars_enabled: Arc::new(AtomicBool::new(false)),
+            ctx,
+        }
+    }
 }
 
 impl Drop for HostWorker {

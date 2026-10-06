@@ -4,9 +4,10 @@
 //! screenshot has none of the three (tools/screenshot.sh renders a local fixture, offline). This
 //! module puts a fixed, invented set of requests straight into the active tab instead:
 //!
-//! - nothing touches the network. No job is ever sent to the API thread this installs: the list
-//!   and the details are written into the tab's state, and the thread (whose only reason to
-//!   exist here is that the view expects one) sits idle on its job queue;
+//! - nothing touches the network, even if someone clicks in a hand-run screenshot. The view only
+//!   expects a handle to an API thread, so the tab gets [`HostWorker::offline`]: a handle with no
+//!   thread behind it, which drops every job and never answers. The list and the details are
+//!   written into the tab's state;
 //! - it exists only under `--screenshot`: `main.rs` refuses the flag without it, and the one
 //!   caller of [`Scenario::show`] is the screenshot driver;
 //! - it is deterministic: the data is a constant table, times are fixed offsets from the moment
@@ -25,10 +26,6 @@ use crate::tab::RepoTab;
 
 /// The scenario `--demo-requests` chose. Set once by `main.rs`, read by the screenshot driver.
 static CHOSEN: OnceLock<Scenario> = OnceLock::new();
-
-/// A placeholder handed to the idle API thread so it never looks for a real token (the
-/// environment, the git credential helper). It is never sent anywhere: no job is queued.
-const PLACEHOLDER_TOKEN: &str = "demo";
 
 /// What `--demo-requests` accepts, for `--help` and the error message.
 pub const SPECS: &str = "list, list-all, list-closed, <number>, busy, loading, details-loading, \
@@ -156,19 +153,21 @@ impl Scenario {
                 .first()
                 .is_some_and(|(remote, f)| remote == "origin" && *f == forge);
         if !installed {
-            tab.forges = vec![("origin".to_owned(), forge.clone())];
-            tab.host = Some(HostWorker::spawn(
-                forge,
-                Some(PLACEHOLDER_TOKEN.to_owned()),
-                Vec::new(),
-                ctx.clone(),
-            ));
-            self.fill(tab, now);
-            self.seed_signals(ctx, tab, now);
+            self.install(ctx, tab, now);
         }
-        // The idle thread reports the token it was given; the scenario decides what is known.
+        // No thread reports a token: the scenario decides what is known.
         tab.requests.token = Some((self.scene != Scene::NoToken).then_some(TokenSource::Saved));
         true
+    }
+
+    /// Gives `tab` the demo project and an offline handle in place of an API thread, and shows
+    /// the scene.
+    fn install(self, ctx: &egui::Context, tab: &mut RepoTab, now: i64) {
+        let forge = self.forge();
+        tab.forges = vec![("origin".to_owned(), forge.clone())];
+        tab.host = Some(HostWorker::offline(forge, ctx.clone()));
+        self.fill(tab, now);
+        self.seed_signals(ctx, tab, now);
     }
 
     /// Lets the list rows show every request's checks and reviews, as they do in a session where
@@ -969,6 +968,57 @@ mod tests {
         assert_eq!(SEP_09.at(0), unix(2026, 9, 9, 16, 5));
         assert_eq!(SEP_02.at(0), unix(2026, 9, 2, 11, 45));
         assert_eq!(AUG_27.at(0), unix(2026, 8, 27, 8, 10));
+    }
+
+    fn demo_tab(spec: &str) -> (RepoTab, egui::Context) {
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            "fixture".into(),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        let ctx = egui::Context::default();
+        Scenario::parse(spec)
+            .expect("a documented value")
+            .install(&ctx, &mut tab, NOW);
+        (tab, ctx)
+    }
+
+    /// Whether the tab's hosting handle has a thread behind it: only a running thread keeps the
+    /// events channel open, so a closed one means nothing can answer, or reach the network.
+    fn has_thread(tab: &RepoTab) -> bool {
+        let host = tab.host.as_ref().expect("the demo installs a handle");
+        !matches!(
+            host.events.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        )
+    }
+
+    /// Security pass N3: a click on Reload or a row in a hand-run `--screenshot` must not send a
+    /// request to the real host. The demo's handle has no thread, so none of its jobs can run.
+    #[test]
+    fn the_demo_has_no_api_thread_to_reach_the_network_with() {
+        for spec in ["list", "428", "gitlab:427", "loading", "error", "no-token"] {
+            let (mut tab, ctx) = demo_tab(spec);
+            assert!(!has_thread(&tab), "{spec} started an API thread");
+            // What the view does on a click, and on a repository refresh.
+            tab.load_requests();
+            tab.select_request(425);
+            tab.host_job(crate::hosting::HostJob::List(StateFilter::All));
+            tab.host_job(crate::hosting::HostJob::Details(425));
+            tab.ensure_host(&ctx, Some("not-a-token".into()), true);
+            assert!(!has_thread(&tab), "{spec}: a click started an API thread");
+            assert!(
+                tab.host
+                    .as_ref()
+                    .expect("still installed")
+                    .events
+                    .try_recv()
+                    .is_err(),
+                "{spec}: something answered"
+            );
+        }
     }
 
     #[test]
