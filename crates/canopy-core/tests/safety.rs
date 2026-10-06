@@ -503,6 +503,19 @@ fn embedded_repositories_are_listed_and_not_staged_by_stage_all() {
 
 use canopy_core::{IgnoreRule, IgnoreTarget};
 
+/// Whether two spellings name the same file, which need not exist yet. On Windows the work folder
+/// comes back from libgit2 with `/` and long names, the temporary folder in its 8.3 short form.
+#[track_caller]
+fn assert_same_file(actual: &Path, expected: &Path) {
+    let folder = |p: &Path| fs::canonicalize(p.parent().expect("a folder")).expect("canonical");
+    assert!(
+        actual.file_name() == expected.file_name() && folder(actual) == folder(expected),
+        "{} is not {}",
+        actual.display(),
+        expected.display()
+    );
+}
+
 #[test]
 fn ignore_a_file_at_the_root_and_ask_why() {
     let (dir, repo) = fixture();
@@ -515,7 +528,7 @@ fn ignore_a_file_at_the_root_and_ask_why() {
     let out = repo.add_ignore_rule(&rule, IgnoreTarget::Root).unwrap();
     assert!(out.added);
     assert_eq!(out.pattern, "/dir/#odd \\[1\\].txt");
-    assert_eq!(out.file, p.join(".gitignore"));
+    assert_same_file(&out.file, &p.join(".gitignore"));
     assert_eq!(
         fs::read(p.join(".gitignore")).unwrap(),
         b"# existing, no final newline\n/dir/#odd \\[1\\].txt\n"
@@ -553,7 +566,7 @@ fn nearest_gitignore_gets_a_pattern_relative_to_its_folder() {
     let dest = repo
         .ignore_destination(IgnoreTarget::Nearest, file.path())
         .unwrap();
-    assert_eq!(dest.file, p.join("sub").join(".gitignore"));
+    assert_same_file(&dest.file, &p.join("sub").join(".gitignore"));
     assert_eq!(dest.base, "sub");
     let out = repo.add_ignore_rule(&file, IgnoreTarget::Nearest).unwrap();
     assert_eq!(out.pattern, "/deep/x.log");
@@ -561,11 +574,12 @@ fn nearest_gitignore_gets_a_pattern_relative_to_its_folder() {
 
     // Without a closer file, the root one.
     let top = IgnoreRule::Folder("other/".into());
-    assert_eq!(
-        repo.ignore_destination(IgnoreTarget::Nearest, top.path())
+    assert_same_file(
+        &repo
+            .ignore_destination(IgnoreTarget::Nearest, top.path())
             .unwrap()
             .file,
-        p.join(".gitignore")
+        &p.join(".gitignore"),
     );
 }
 
@@ -582,7 +596,7 @@ fn repository_exclude_and_global_files() {
         .unwrap();
     assert_eq!(out.pattern, "*.tmp");
     let exclude = p.join(".git").join("info").join("exclude");
-    assert_eq!(out.file, exclude);
+    assert_same_file(&out.file, &exclude);
     assert!(fs::read_to_string(&exclude).unwrap().ends_with("*.tmp\n"));
     assert!(out.check.unwrap().source.ends_with("info/exclude"));
 
@@ -602,7 +616,7 @@ fn repository_exclude_and_global_files() {
             IgnoreTarget::Global,
         )
         .unwrap();
-    assert_eq!(out.file, global);
+    assert_same_file(&out.file, &global);
     assert_eq!(fs::read(&global).unwrap(), b"*.swp\n");
     assert!(out.check.is_some());
 }
