@@ -12,8 +12,8 @@ use std::process::Command;
 use canopy_core::identity::{self, Scope, Source};
 use canopy_core::ops::{HunkAction, MergeMode, ResetMode};
 use canopy_core::{
-    ChangeKind, Choice, ConflictFile, ConflictKind, ConflictRegion, DiffSource, LineKind,
-    MissingObjects, PullStrategy, RefKind, Repo, RepoState, Side, Whitespace,
+    ChangeKind, Choice, ConfigScope, ConflictFile, ConflictKind, ConflictRegion, DiffSource,
+    LineKind, MissingObjects, PullStrategy, RefKind, Repo, RepoState, Side, Whitespace,
 };
 
 #[expect(
@@ -1130,7 +1130,16 @@ fn whitespace_labels() {
 fn pull_strategy_labels() {
     assert_eq!(PullStrategy::default(), PullStrategy::Merge);
     let labels: Vec<&str> = PullStrategy::ALL.iter().map(|s| s.label()).collect();
-    assert_eq!(labels, ["Merge", "Rebase", "Fast-forward only"]);
+    assert_eq!(
+        labels,
+        [
+            "Merge",
+            "Merge, always with a merge commit",
+            "Rebase",
+            "Rebase, keeping merges",
+            "Fast-forward only"
+        ]
+    );
 }
 
 #[test]
@@ -1207,35 +1216,415 @@ fn pull_merge_creates_a_merge_commit() {
 }
 
 #[test]
-fn pull_reads_pull_rebase_as_git_does() {
-    // libgit2 sees pull.rebase=true in $HOME, git sees no setting: the strategy must apply.
+fn pull_passes_the_strategy_whatever_the_configuration_says() {
+    // The strategy Canopy was given decides: neither pull.rebase nor branch.<name>.rebase may
+    // turn a Merge into a rebase, nor the other way round.
+    for (key, value, strategy, parents) in [
+        ("pull.rebase", "true", PullStrategy::Merge, 2),
+        ("pull.rebase", "false", PullStrategy::Rebase, 1),
+        ("branch.main.rebase", "true", PullStrategy::Merge, 2),
+        ("branch.main.rebase", "false", PullStrategy::Rebase, 1),
+    ] {
+        let (up_dir, _up, _c, copy) = upstream_and_clone();
+        git(copy.workdir(), &["config", key, value]);
+        diverge(up_dir.path(), &copy);
+        copy.pull(strategy, |_| {}).expect("pull");
+        assert_eq!(
+            head_parents(&copy),
+            parents,
+            "{key}={value} with {strategy:?}"
+        );
+    }
+}
+
+/// What a pull did to the clone, judged from the repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pulled {
+    FastForward,
+    MergeCommit,
+    Rebased,
+    /// git refused; the branch, index and working tree are as they were.
+    Refused,
+}
+
+/// A clone one commit behind its upstream (`diverged` false) or one behind and one ahead, with
+/// each `key=value` of `config` set in the clone's own configuration.
+fn pull_scenario(config: &[&str], diverged: bool) -> (tempfile::TempDir, tempfile::TempDir, Repo) {
+    let (up_dir, _up, clone_dir, copy) = upstream_and_clone();
+    if diverged {
+        diverge(up_dir.path(), &copy);
+    } else {
+        fs::write(up_dir.path().join("up.txt"), "upstream\n").expect("write");
+        git(up_dir.path(), &["add", "."]);
+        git(up_dir.path(), &["commit", "-q", "-m", "feat: upstream"]);
+    }
+    for setting in config {
+        let (key, value) = setting.split_once('=').expect("key=value");
+        git(copy.workdir(), &["config", key, value]);
+    }
+    (up_dir, clone_dir, copy)
+}
+
+/// Classifies the result of a pull in `copy`, whose upstream is `up`, and checks that a refusal
+/// left the repository as it was.
+fn pulled(
+    up: &Path,
+    copy: &Repo,
+    before: Option<canopy_core::Oid>,
+    pull_succeeded: bool,
+) -> Pulled {
+    if !pull_succeeded {
+        let snap = copy.snapshot(10).expect("snapshot");
+        assert_eq!(snap.head.oid, before, "a refused pull moved HEAD");
+        assert_eq!(snap.state, RepoState::Clean);
+        assert!(snap.status.is_clean());
+        return Pulled::Refused;
+    }
+    let upstream_head = git(up, &["rev-parse", "HEAD"]);
+    if git(copy.workdir(), &["rev-parse", "HEAD"]) == upstream_head {
+        Pulled::FastForward
+    } else if head_parents(copy) == 2 {
+        Pulled::MergeCommit
+    } else {
+        Pulled::Rebased
+    }
+}
+
+/// Combinations of the settings that decide a pull, as `key=value` lists.
+const PULL_SETTINGS: &[&[&str]] = &[
+    &[],
+    &["pull.rebase=true"],
+    &["pull.rebase=false"],
+    &["pull.rebase=merges"],
+    &["pull.rebase=m"],
+    &["pull.rebase=interactive"],
+    &["pull.rebase=i"],
+    &["pull.rebase=yes"],
+    &["pull.rebase=2"],
+    &["pull.rebase=0"],
+    &["pull.rebase="],
+    &["pull.ff=only"],
+    &["pull.ff=false"],
+    &["pull.ff=true"],
+    &["pull.ff="],
+    &["merge.ff=false"],
+    &["merge.ff=only"],
+    &["pull.rebase=true", "pull.ff=only"],
+    &["pull.rebase=true", "pull.ff=false"],
+    &["pull.rebase=merges", "pull.ff=false"],
+    &["pull.rebase=false", "pull.ff=only"],
+    &["pull.rebase=false", "pull.ff=false"],
+    &["pull.rebase=false", "pull.ff=true", "merge.ff=false"],
+    &["pull.rebase=false", "merge.ff=false"],
+    &["pull.rebase=false", "merge.ff=only"],
+    &["pull.rebase=true", "merge.ff=only"],
+    &["pull.ff=false", "merge.ff=only"],
+    &["pull.ff=true", "merge.ff=only"],
+    &["pull.ff=true", "merge.ff=false"],
+    &["branch.main.rebase=true"],
+    &["branch.main.rebase=false"],
+    &["branch.main.rebase=merges"],
+    &["branch.main.rebase=true", "pull.rebase=false"],
+    &["branch.main.rebase=false", "pull.rebase=true"],
+    &["branch.main.rebase=merges", "pull.ff=false"],
+    &["branch.main.rebase=true", "pull.ff=only"],
+    &["branch.main.rebase=false", "merge.ff=only"],
+    &["branch.main.rebase=true", "pull.rebase=sometimes"],
+    &["branch.other.rebase=true"],
+    &["branch.other.rebase=true", "pull.rebase=false"],
+];
+
+#[test]
+fn pull_config_matches_what_git_pull_does() {
+    // For every combination of settings: a pull with the strategy the configuration asks for
+    // does what a bare `git pull` does, refusals included; and where it asks for nothing, git
+    // itself refuses diverged branches.
+    if !in_isolated_git_env("pull_config_matches_what_git_pull_does") {
+        return;
+    }
+    for settings in PULL_SETTINGS {
+        for diverged in [true, false] {
+            let (up_dir, _clone, copy) = pull_scenario(settings, diverged);
+            let before = copy.head().expect("head").oid;
+            let config = copy.pull_config().expect("pull_config");
+            let bare = pulled(
+                up_dir.path(),
+                &copy,
+                before,
+                canopy_core::cli::run(copy.workdir(), &["pull"]).is_ok(),
+            );
+            let what = format!("{settings:?} diverged={diverged}: {config:?}");
+            match config.strategy {
+                Some(strategy) => {
+                    let (up_dir, _clone, copy) = pull_scenario(settings, diverged);
+                    let before = copy.head().expect("head").oid;
+                    let ours = pulled(
+                        up_dir.path(),
+                        &copy,
+                        before,
+                        copy.pull(strategy, |_| {}).is_ok(),
+                    );
+                    assert_eq!(ours, bare, "{what} with {strategy:?}");
+                    assert!(!config.sources.is_empty(), "{what}: no source named");
+                }
+                None if diverged => {
+                    assert_eq!(bare, Pulled::Refused, "{what}: git pulled on its own");
+                    assert!(config.sources.is_empty(), "{what}");
+                }
+                None => {}
+            }
+        }
+    }
+}
+
+#[test]
+fn pull_passes_every_strategy_whatever_the_configuration_says() {
+    if !in_isolated_git_env("pull_passes_every_strategy_whatever_the_configuration_says") {
+        return;
+    }
+    // What each strategy does on a diverged and on a fast-forwardable clone.
+    let expected = [
+        (
+            PullStrategy::Merge,
+            Pulled::MergeCommit,
+            Pulled::FastForward,
+        ),
+        (
+            PullStrategy::MergeNoFastForward,
+            Pulled::MergeCommit,
+            Pulled::MergeCommit,
+        ),
+        (PullStrategy::Rebase, Pulled::Rebased, Pulled::FastForward),
+        (
+            PullStrategy::RebaseMerges,
+            Pulled::Rebased,
+            Pulled::FastForward,
+        ),
+        (
+            PullStrategy::FastForwardOnly,
+            Pulled::Refused,
+            Pulled::FastForward,
+        ),
+    ];
+    assert_eq!(expected.len(), PullStrategy::ALL.len());
+    for settings in PULL_SETTINGS {
+        for (strategy, on_diverged, on_behind) in expected {
+            for (diverged, want) in [(true, on_diverged), (false, on_behind)] {
+                let (up_dir, _clone, copy) = pull_scenario(settings, diverged);
+                let before = copy.head().expect("head").oid;
+                let got = pulled(
+                    up_dir.path(),
+                    &copy,
+                    before,
+                    copy.pull(strategy, |_| {}).is_ok(),
+                );
+                assert_eq!(
+                    got, want,
+                    "{strategy:?} with {settings:?} diverged={diverged}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn pull_ignores_a_value_git_rejects_when_the_strategy_is_given() {
+    // A bare `git pull` dies on pull.rebase=sometimes; a pull with a strategy does not read it,
+    // and the resolver reports it instead of guessing.
+    let (up_dir, _clone, copy) = pull_scenario(&["pull.rebase=sometimes"], true);
+    let config = copy.pull_config().expect("pull_config");
+    assert_eq!(config.strategy, None);
+    assert_eq!(config.invalid.len(), 1);
+    assert_eq!(config.invalid[0].key, "pull.rebase");
+    assert_eq!(config.invalid[0].value, "sometimes");
+    let err = canopy_core::cli::run(copy.workdir(), &["pull"]).expect_err("bare pull dies");
+    assert!(err.to_string().contains("pull.rebase"), "{err}");
+    copy.pull(PullStrategy::Rebase, |_| {}).expect("pull");
+    assert_eq!(head_parents(&copy), 1);
+    assert!(up_dir.path().join("up.txt").exists());
+}
+
+#[test]
+fn pull_config_names_the_setting_its_value_and_where_it_is_set() {
+    if !in_isolated_git_env("pull_config_names_the_setting_its_value_and_where_it_is_set") {
+        return;
+    }
+    let (_up, _clone, copy) = pull_scenario(&[], true);
+    let workdir = copy.workdir();
+
+    // Nothing set anywhere.
+    let config = copy.pull_config().expect("pull_config");
+    assert_eq!(config.strategy, None);
+    assert_eq!(config.describe(), None);
+
+    // The user's global configuration (the file GIT_CONFIG_GLOBAL names).
+    git(workdir, &["config", "--global", "pull.rebase", "merges"]);
+    let config = copy.pull_config().expect("pull_config");
+    assert_eq!(config.strategy, Some(PullStrategy::RebaseMerges));
+    let source = &config.sources[0];
+    assert_eq!(source.key, "pull.rebase");
+    assert_eq!(source.value, "merges");
+    assert_eq!(source.scope, ConfigScope::Global);
+    assert!(source.origin.starts_with("file:"), "{}", source.origin);
+    assert!(source.file.as_ref().is_some_and(|f| f.is_absolute()));
+    assert_eq!(
+        config.describe().as_deref(),
+        Some("pull.rebase=merges (your global git config)")
+    );
+
+    // The repository's own value is read after the global one and wins.
+    git(workdir, &["config", "pull.rebase", "false"]);
+    let config = copy.pull_config().expect("pull_config");
+    assert_eq!(config.strategy, Some(PullStrategy::Merge));
+    let source = &config.sources[0];
+    assert_eq!(source.scope, ConfigScope::Local);
+    assert_eq!(source.value, "false");
+    let file = source.file.as_ref().expect("a file");
+    assert!(file.is_absolute());
+    assert!(file.ends_with(".git/config"), "{}", file.display());
+    assert!(file.exists());
+
+    // A branch's own setting beats pull.rebase, wherever each is set.
+    git(workdir, &["config", "branch.main.rebase", "true"]);
+    let config = copy.pull_config().expect("pull_config");
+    assert_eq!(config.strategy, Some(PullStrategy::Rebase));
+    assert_eq!(config.sources[0].key, "branch.main.rebase");
+    assert_eq!(
+        config.describe().as_deref(),
+        Some("branch.main.rebase=true (repository)")
+    );
+    assert_eq!(
+        config
+            .contradicted_by(PullStrategy::Merge)
+            .map(|s| s.key.as_str()),
+        Some("branch.main.rebase")
+    );
+    assert_eq!(config.contradicted_by(PullStrategy::Rebase), None);
+}
+
+#[test]
+fn pull_config_follows_the_branch_it_is_asked_about() {
+    let (_up, _clone, copy) = pull_scenario(&["pull.rebase=false"], true);
+    let workdir = copy.workdir();
+    // Branch names with slashes and dots are subsections of the key as they are.
+    git(workdir, &["config", "branch.feature/a.b.rebase", "merges"]);
+    let on_main = copy.pull_config().expect("pull_config");
+    assert_eq!(on_main.strategy, Some(PullStrategy::Merge));
+    let other = copy
+        .pull_config_for(Some("feature/a.b"))
+        .expect("pull_config_for");
+    assert_eq!(other.strategy, Some(PullStrategy::RebaseMerges));
+    assert_eq!(other.sources[0].key, "branch.feature/a.b.rebase");
+    // Not on a branch: only pull.rebase applies.
+    let none = copy.pull_config_for(None).expect("pull_config_for");
+    assert_eq!(none.strategy, Some(PullStrategy::Merge));
+
+    git(workdir, &["checkout", "-q", "--detach"]);
+    git(workdir, &["config", "branch.main.rebase", "true"]);
+    let detached = copy.pull_config().expect("pull_config");
+    assert_eq!(detached.strategy, Some(PullStrategy::Merge));
+    assert_eq!(detached.sources[0].key, "pull.rebase");
+}
+
+#[test]
+fn pull_config_reads_a_key_without_a_value_and_included_files() {
+    let (_up, _clone, copy) = pull_scenario(&[], true);
+    let git_dir = copy.workdir().join(".git");
+    let mut config = fs::read_to_string(git_dir.join("config")).expect("read");
+    config.push_str("[include]\n\tpath = extra.cfg\n[branch \"main\"]\n\trebase\n");
+    fs::write(git_dir.join("config"), config).expect("write");
+    fs::write(git_dir.join("extra.cfg"), "[pull]\n\tff = only\n").expect("write");
+
+    // pull.ff=only (from the included file) ends every pull that cannot fast-forward ...
+    let with_include = copy.pull_config().expect("pull_config");
+    assert_eq!(with_include.strategy, Some(PullStrategy::FastForwardOnly));
+    let source = &with_include.sources[0];
+    assert_eq!(source.key, "pull.ff");
+    assert_eq!(source.scope, ConfigScope::Local);
+    assert!(
+        source
+            .file
+            .as_ref()
+            .is_some_and(|f| f.ends_with(".git/extra.cfg"))
+    );
+    // ... and without it, the valueless branch.main.rebase means true.
+    git(copy.workdir(), &["config", "--unset", "include.path"]);
+    let value_less = copy.pull_config().expect("pull_config");
+    assert_eq!(value_less.strategy, Some(PullStrategy::Rebase));
+    assert_eq!(value_less.sources[0].value, "true");
+}
+
+#[cfg(unix)]
+#[test]
+fn pull_config_names_a_file_that_is_not_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let (_up, _clone, copy) = pull_scenario(&[], true);
+    let git_dir = copy.workdir().join(".git");
+    let name = std::ffi::OsStr::from_bytes(b"caf\xe9.cfg");
+    let mut config = fs::read(git_dir.join("config")).expect("read");
+    config.extend_from_slice(b"[include]\n\tpath = caf\xe9.cfg\n");
+    fs::write(git_dir.join("config"), config).expect("write");
+    fs::write(git_dir.join(name), "[pull]\n\trebase = true\n").expect("write");
+
+    let config = copy.pull_config().expect("pull_config");
+    assert_eq!(config.strategy, Some(PullStrategy::Rebase));
+    let file = config.sources[0].file.as_ref().expect("a file");
+    assert_eq!(file, &git_dir.join(name));
+    assert!(file.exists());
+}
+
+#[test]
+fn pull_config_reads_through_git_not_libgit2() {
+    // libgit2 sees pull.rebase=true in $HOME, git (told to use another global file) does not.
     if !in_isolated_git_env_with_home_config(
-        "pull_reads_pull_rebase_as_git_does",
+        "pull_config_reads_through_git_not_libgit2",
         "[pull]\n\trebase = true\n",
     ) {
         return;
     }
-    let (up_dir, _up, _c, copy) = upstream_and_clone();
-    diverge(up_dir.path(), &copy);
-    copy.pull(PullStrategy::Merge, |_| {}).expect("pull");
-    assert_eq!(head_parents(&copy), 2);
+    let (_up, _clone, copy) = pull_scenario(&[], true);
+    assert_eq!(copy.pull_config().expect("pull_config").strategy, None);
 }
 
 #[test]
-fn pull_follows_configured_pull_rebase() {
-    // pull.rebase=true wins over a Merge strategy...
-    let (up_dir, _up, _c, copy) = upstream_and_clone();
-    git(copy.workdir(), &["config", "pull.rebase", "true"]);
-    diverge(up_dir.path(), &copy);
-    copy.pull(PullStrategy::Merge, |_| {}).expect("pull");
+fn pull_default_follows_the_configuration_else_the_fallback() {
+    if !in_isolated_git_env("pull_default_follows_the_configuration_else_the_fallback") {
+        return;
+    }
+    // pull.rebase=true asks for a rebase, whatever the fallback is ...
+    let (_up, _clone, copy) = pull_scenario(&["pull.rebase=true"], true);
+    copy.pull_default(PullStrategy::Merge, |_| {})
+        .expect("pull");
     assert_eq!(head_parents(&copy), 1);
 
-    // ...and pull.rebase=false over a Rebase strategy.
-    let (up_dir, _up, _c, copy) = upstream_and_clone();
-    git(copy.workdir(), &["config", "pull.rebase", "false"]);
-    diverge(up_dir.path(), &copy);
-    copy.pull(PullStrategy::Rebase, |_| {}).expect("pull");
+    // ... and with nothing configured the fallback is passed to git, so a diverged pull works
+    // where a bare `git pull` refuses.
+    let (_up, _clone, copy) = pull_scenario(&[], true);
+    copy.pull_default(PullStrategy::Merge, |_| {})
+        .expect("pull");
     assert_eq!(head_parents(&copy), 2);
+    let (_up, _clone, copy) = pull_scenario(&[], true);
+    copy.pull_default(PullStrategy::Rebase, |_| {})
+        .expect("pull");
+    assert_eq!(head_parents(&copy), 1);
+}
+
+#[test]
+fn pull_default_reports_git_s_own_error_for_a_broken_configuration() {
+    let (_up, _clone, copy) = pull_scenario(&[], true);
+    let path = copy.workdir().join(".git/config");
+    let mut config = fs::read_to_string(&path).expect("read");
+    config.push_str("[pull\n\trebase = true\n");
+    fs::write(&path, config).expect("write");
+    let before = copy.head().expect("head").oid;
+
+    copy.pull_config().expect_err("the resolver cannot read it");
+    let err = copy
+        .pull_default(PullStrategy::Merge, |_| {})
+        .expect_err("git refuses too");
+    assert!(err.to_string().contains("bad config"), "{err}");
+    assert_eq!(copy.head().expect("head").oid, before);
 }
 
 #[test]

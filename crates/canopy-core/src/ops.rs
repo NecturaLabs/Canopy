@@ -40,37 +40,57 @@ impl ResetMode {
     }
 }
 
-/// How `git pull` integrates the upstream branch when the repository does not configure
-/// `pull.rebase` itself.
+/// How `git pull` integrates the upstream branch.
+///
+/// Canopy always passes the chosen strategy to git (see [`PullStrategy::git_args`]), so `pull.rebase`, `branch.<name>.rebase`, `pull.ff` and
+/// `merge.ff` never decide what a pull does; [`Repo::pull_config`] reads them as the default a
+/// choice starts from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PullStrategy {
-    /// Merge the upstream branch (`--no-rebase`), fast-forwarding when possible.
+    /// Merge the upstream branch, fast-forwarding when possible (`--no-rebase --ff`).
     #[default]
     Merge,
+    /// Merge the upstream branch with a merge commit even when it could fast-forward
+    /// (`--no-rebase --no-ff`), as `pull.ff=false` does.
+    MergeNoFastForward,
     /// Rebase local commits onto the upstream branch (`--rebase`).
     Rebase,
-    /// Only fast-forward; fail when the branches have diverged (`--ff-only`).
+    /// Rebase local commits and keep the merge commits among them (`--rebase=merges`).
+    RebaseMerges,
+    /// Only fast-forward; fail when the branches have diverged (`--no-rebase --ff-only`).
     FastForwardOnly,
 }
 
 impl PullStrategy {
     /// Every strategy, in menu order.
-    pub const ALL: [Self; 3] = [Self::Merge, Self::Rebase, Self::FastForwardOnly];
+    pub const ALL: [Self; 5] = [
+        Self::Merge,
+        Self::MergeNoFastForward,
+        Self::Rebase,
+        Self::RebaseMerges,
+        Self::FastForwardOnly,
+    ];
 
     /// Display name.
     pub fn label(self) -> &'static str {
         match self {
             Self::Merge => "Merge",
+            Self::MergeNoFastForward => "Merge, always with a merge commit",
             Self::Rebase => "Rebase",
+            Self::RebaseMerges => "Rebase, keeping merges",
             Self::FastForwardOnly => "Fast-forward only",
         }
     }
 
-    fn flag(self) -> &'static str {
+    /// The options `git pull` gets for this strategy. Each leaves no configuration value to
+    /// decide how to integrate or whether to fast-forward.
+    pub fn git_args(self) -> &'static [&'static str] {
         match self {
-            Self::Merge => "--no-rebase",
-            Self::Rebase => "--rebase",
-            Self::FastForwardOnly => "--ff-only",
+            Self::Merge => &["--no-rebase", "--ff"],
+            Self::MergeNoFastForward => &["--no-rebase", "--no-ff"],
+            Self::Rebase => &["--rebase"],
+            Self::RebaseMerges => &["--rebase=merges"],
+            Self::FastForwardOnly => &["--no-rebase", "--ff-only"],
         }
     }
 }
@@ -548,22 +568,34 @@ impl Repo {
         cli::run_streaming(Some(self.workdir()), &args, progress)
     }
 
-    /// Pulls into the current branch. When the configuration sets `pull.rebase`, git follows it
-    /// and `strategy` is ignored; otherwise `strategy` picks `--no-rebase`, `--rebase` or
-    /// `--ff-only`. The setting is read through the same `git` that pulls, since libgit2 does not
-    /// honour `GIT_CONFIG_GLOBAL` and could see a value that git does not.
+    /// Pulls into the current branch with exactly `strategy`: its options are always passed to
+    /// git, so the user's `pull.rebase`, `branch.<name>.rebase`, `pull.ff` and `merge.ff` cannot
+    /// change what happens (a bare `git pull` also refuses diverged branches when none of the
+    /// first three is set). [`Repo::pull_config`] reads those settings for a caller that wants
+    /// them as the default.
     pub fn pull(&self, strategy: PullStrategy, progress: impl FnMut(&str)) -> Result<String> {
         let mut args = vec!["pull", "--progress"];
-        let (code, _) = cli::run_answer(
-            self.workdir(),
-            &["config", "--get", "pull.rebase"],
-            b"",
-            &[0, 1],
-        )?;
-        if code == 1 {
-            args.push(strategy.flag());
-        }
+        args.extend(strategy.git_args());
         cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
+    /// Pulls with the strategy the user's git configuration asks for ([`Repo::pull_config`]),
+    /// else with `fallback`; either way the strategy is passed to git explicitly. A configuration
+    /// that cannot be read (a git older than 2.26 has no `--show-scope`, or a broken config file)
+    /// counts as asking for nothing: the pull itself then reports git's own error if it has one.
+    pub fn pull_default(
+        &self,
+        fallback: PullStrategy,
+        progress: impl FnMut(&str),
+    ) -> Result<String> {
+        let strategy = match self.pull_config() {
+            Ok(config) => config.strategy.unwrap_or(fallback),
+            Err(e) => {
+                tracing::warn!(error = %e, "could not read the pull configuration");
+                fallback
+            }
+        };
+        self.pull(strategy, progress)
     }
 
     /// Pushes the current branch. Without an upstream, pushes to `origin` (or the only remote)
