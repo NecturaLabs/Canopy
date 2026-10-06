@@ -52,10 +52,6 @@ pub const ROW_MOVE: f32 = 0.2;
 pub const ROW_IN: f32 = 0.18;
 pub const ROW_OUT: f32 = 0.14;
 /// Seconds a tool shows how its operation ended before it fades; not scaled by reduced motion.
-#[expect(
-    dead_code,
-    reason = "views/toolbar.rs switches to it when the shell work merges"
-)]
 pub const OUTCOME_HOLD: f32 = 1.6;
 /// Loops (they run while visible and stop with reduced motion): one indeterminate sweep, one sweep
 /// of the line under search inputs and its wait before the first, one spinner turn, one skeleton
