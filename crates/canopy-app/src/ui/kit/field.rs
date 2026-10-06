@@ -42,7 +42,7 @@ use super::toggle::{component_id, gallery_caption, remembered};
 use super::{ForceState, IconButton, KitResponse, Size, anim, paint};
 use crate::keymap::{self, Command};
 use crate::ui::motion;
-use crate::ui::theme::{self, Elevation, Palette, Style};
+use crate::ui::theme::{self, Elevation, FocusStyle, Palette, Style};
 
 /// The focus and error halo, drawn outside the edge (3 pt; focus at 26%, error at 18%).
 pub(crate) const HALO: f32 = 3.0;
@@ -164,15 +164,16 @@ pub(crate) fn look(p: &Palette, style: Style) -> FieldLook {
 /// A field's 1 pt edge inside `rect`: `side` around, turning to `base` over the bottom corners,
 /// so the bottom edge is the strong one.
 pub(crate) fn edge_shape(rect: Rect, radius: CornerRadius, side: Color32, base: Color32) -> Shape {
+    let width = paint::edge();
     let mut points = Vec::new();
     rounded_rectangle(
         &mut points,
-        rect.shrink(paint::SEAM / 2.0),
+        rect.shrink(width / 2.0),
         CornerRadiusF32::from(radius),
     );
     let ramp = f32::from(radius.sw.max(radius.se)).max(2.0);
     let from = rect.bottom() - ramp;
-    let stroke = PathStroke::new_uv(paint::SEAM, move |_bounds: Rect, at: egui::Pos2| {
+    let stroke = PathStroke::new_uv(width, move |_bounds: Rect, at: egui::Pos2| {
         side.lerp_to_gamma(base, ((at.y - from) / ramp).clamp(0.0, 1.0))
     });
     Shape::Path(PathShape {
@@ -184,7 +185,9 @@ pub(crate) fn edge_shape(rect: Rect, radius: CornerRadius, side: Color32, base: 
 }
 
 /// A field's box: the `fill` (a translucent well or an opaque disabled fill), the halo `(colour,
-/// alpha, strength)` outside, and the edge, `side` turning to `base` along the bottom.
+/// alpha, strength)` outside, and the edge (the theme's edge width), `side` turning to `base` along
+/// the bottom. The halo takes the theme's focus style (`Design::focus`): a tinted band (`Ring`), a
+/// soft glow (`Glow`), or a solid ring past a gap of the ground (`Double`, Contrast).
 pub(crate) fn paint_box(
     painter: &Painter,
     rect: Rect,
@@ -193,19 +196,41 @@ pub(crate) fn paint_box(
     halo: Option<(Color32, u8, f32)>,
 ) {
     if let Some((color, alpha, t)) = halo {
-        let w = HALO * t;
-        painter.rect_stroke(
-            rect.expand(w / 2.0),
-            radius + CornerRadius::same(crate::ui::saturate_u8((w / 2.0).round())),
-            Stroke::new(w, Palette::tint(color, alpha)),
-            StrokeKind::Middle,
-        );
+        let grow = |by: f32| radius + CornerRadius::same(crate::ui::saturate_u8(by.round()));
+        match theme::active().design().focus {
+            FocusStyle::Ring { .. } => {
+                let w = HALO * t;
+                painter.rect_stroke(
+                    rect.expand(w / 2.0),
+                    grow(w / 2.0),
+                    Stroke::new(w, Palette::tint(color, alpha)),
+                    StrokeKind::Middle,
+                );
+            }
+            FocusStyle::Glow { width } => paint::ring_glow(
+                painter,
+                rect,
+                radius,
+                color,
+                width,
+                f32::from(alpha) / 255.0 * 2.0 * t,
+            ),
+            FocusStyle::Double { width } => {
+                let w = width * t;
+                painter.rect_stroke(
+                    rect.expand(1.0 + w / 2.0),
+                    grow(1.0 + w / 2.0),
+                    Stroke::new(w, color),
+                    StrokeKind::Middle,
+                );
+            }
+        }
     }
     if edge.0 == edge.1 {
         painter.rect_stroke(
             rect,
             radius,
-            Stroke::new(paint::SEAM, edge.0),
+            Stroke::new(paint::edge(), edge.0),
             StrokeKind::Inside,
         );
     } else {
@@ -2192,6 +2217,44 @@ mod tests {
         assert!(
             painted.contains(&(halo, HALO)),
             "the focused field shows its whole halo on the first frame: {painted:?}"
+        );
+    }
+
+    /// A focused field's halo takes the theme's focus style: Contrast's solid ring past a gap,
+    /// Neon's glow (rings fading outwards), and the edges come in the theme's edge width.
+    #[test]
+    fn the_focus_halo_takes_the_themes_focus_style() {
+        let strokes = |theme: theme::ThemeId| {
+            let ctx = testkit::ctx_with(theme, Style::Standard, theme::Density::Comfortable);
+            let mut text = String::new();
+            let mut id = Id::NULL;
+            let _ = frame(&ctx, Vec::new(), |ui| {
+                id = TextField::new(&mut text).id_salt("h").show(ui).id;
+            });
+            ctx.memory_mut(|m| m.request_focus(id));
+            let shapes = frame(&ctx, Vec::new(), |ui| {
+                TextField::new(&mut text).id_salt("h").show(ui);
+            });
+            let p = theme.palette();
+            shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Rect(r) if r.stroke.width > 0.0 => {
+                        Some((r.stroke.color == p.focus, r.stroke.width))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let contrast = strokes(theme::ThemeId::Contrast);
+        assert!(
+            contrast.contains(&(true, 2.5)),
+            "a solid 2.5 pt focus ring: {contrast:?}"
+        );
+        let neon = strokes(theme::ThemeId::Neon);
+        assert!(
+            neon.iter().filter(|(_, w)| (*w - 1.0).abs() < 0.01).count() >= 4,
+            "a glow of thin rings: {neon:?}"
         );
     }
 
