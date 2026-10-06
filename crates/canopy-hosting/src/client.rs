@@ -166,9 +166,15 @@ impl Client {
     /// redirect.
     ///
     /// GitHub: each pull request's status check rollup state, review decision and reviewers'
-    /// latest verdicts (GitHub's GraphQL API needs a token). GitLab: each merge request's head
-    /// pipeline status and whether it has an approval.
+    /// latest verdicts. GitLab: each merge request's head pipeline status and whether it has an
+    /// approval.
+    ///
+    /// Only with a token: without one it sends nothing and answers no rollups, whatever the
+    /// caller checked (GitHub's GraphQL API refuses anonymous calls anyway).
     pub fn rollup(&self, numbers: &[u64]) -> Result<Vec<(u64, crate::model::Rollup)>> {
+        if !self.has_token() {
+            return Ok(Vec::new());
+        }
         match self.kind {
             ForgeKind::GitHub => github::rollup(&self.http, &self.forge.path, numbers),
             ForgeKind::GitLab => gitlab::rollup(&self.http, &self.forge.path, numbers),

@@ -1480,7 +1480,7 @@ fn github_rollup_errors_and_empty_data() {
     );
     assert_eq!(rollup(200, &[], r#"{"data":{}}"#), Ok(Vec::new()));
 
-    // Without a token the query goes out without an authorization header (GitHub then refuses).
+    // Without a token nothing is sent at all.
     let anonymous = Server::start();
     anonymous.route(
         "POST",
@@ -1488,11 +1488,12 @@ fn github_rollup_errors_and_empty_data() {
         401,
         r#"{"message":"This endpoint requires you to be authenticated."}"#,
     );
-    assert!(matches!(
-        github(&anonymous, None).rollup(&[1]),
-        Err(Error::Unauthorized(_))
-    ));
-    rollup_request(&anonymous, "/graphql", None);
+    assert_eq!(github(&anonymous, None).rollup(&[1]), Ok(Vec::new()));
+    assert!(
+        anonymous.requests().is_empty(),
+        "{:?}",
+        anonymous.requests()
+    );
 }
 
 #[test]
@@ -1603,7 +1604,7 @@ fn gitlab_rollup_maps_a_page_in_one_query() {
     }
     assert_no_token_leak(&client);
 
-    // A public project read without a token: the same query, no authorization header.
+    // Without a token nothing is sent, even for a project anyone can read.
     let anonymous = Server::start();
     anonymous.route(
         "POST",
@@ -1612,7 +1613,11 @@ fn gitlab_rollup_maps_a_page_in_one_query() {
         r#"{"data":{"project":{"mergeRequests":{"nodes":[]}}}}"#,
     );
     assert_eq!(gitlab(&anonymous, None).rollup(&[4]), Ok(Vec::new()));
-    rollup_request(&anonymous, "/api/graphql", None);
+    assert!(
+        anonymous.requests().is_empty(),
+        "{:?}",
+        anonymous.requests()
+    );
 }
 
 #[test]
