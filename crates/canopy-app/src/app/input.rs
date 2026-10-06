@@ -229,11 +229,10 @@ impl CanopyApp {
                 if command == C::Discard {
                     if sel.source == canopy_core::DiffSource::Unstaged && !sel.conflicted {
                         actions.push(Action::Confirm {
-                            title: "Discard changes".into(),
-                            body: format!(
-                                "Throw away the unstaged changes to {path}? This cannot be undone."
-                            ),
-                            confirm: "Discard".into(),
+                            title: format!("Discard changes to {path}?"),
+                            body: "Its unstaged changes are thrown away. This cannot be undone."
+                                .into(),
+                            confirm: "Discard changes".into(),
                             danger: true,
                             op: Op::Discard(vec![sel.entry]),
                         });

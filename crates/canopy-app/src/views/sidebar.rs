@@ -244,7 +244,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                             actions.push(Action::Op(Op::Merge(name.clone(), MergeMode::Default)));
                         }
                         if m.item(icon::GIT_PULL_REQUEST, "Rebase current branch onto this").show(m.ui).clicked() {
-                            actions.push(Action::Confirm { title: "Rebase".into(), body: format!("Rebase the current branch onto {name}? This rewrites the current branch's commits."), confirm: "Rebase".into(), danger: false, op: Op::Rebase(name.clone()) });
+                            actions.push(Action::Confirm { title: format!("Rebase onto {name}?"), body: format!("The current branch's commits are rewritten on top of {name}."), confirm: "Rebase branch".into(), danger: false, op: Op::Rebase(name.clone()) });
                         }
                         m.separator();
                     }
@@ -263,10 +263,10 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     m.separator();
                     if is_head {
                         if m.item(icon::WARNING, "Force push (with lease)…").danger().show(m.ui).clicked() {
-                            actions.push(Action::Confirm { title: "Force push".into(), body: format!("Overwrite the remote copy of {name} with your local branch? --force-with-lease refuses if someone else pushed in the meantime."), confirm: "Force push".into(), danger: true, op: Op::Push { force: true } });
+                            actions.push(Action::Confirm { title: format!("Force push {name}?"), body: format!("The remote copy of {name} is overwritten with your local branch. --force-with-lease refuses if someone else pushed in the meantime."), confirm: "Force push branch".into(), danger: true, op: Op::Push { force: true } });
                         }
                     } else if m.item(icon::TRASH, "Delete…").danger().show(m.ui).clicked() {
-                        actions.push(Action::Confirm { title: "Delete branch".into(), body: format!("Delete the local branch {name}? If it has commits that are not merged, Git refuses and Canopy asks before forcing it."), confirm: "Delete".into(), danger: true, op: Op::DeleteBranch { name: name.clone(), force: false } });
+                        actions.push(Action::Confirm { title: format!("Delete branch {name}?"), body: "Only the local branch is deleted. If it has commits that are not merged, Git refuses and Canopy asks before forcing it.".into(), confirm: "Delete branch".into(), danger: true, op: Op::DeleteBranch { name: name.clone(), force: false } });
                     }
                 });
             });
@@ -333,7 +333,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                     m.separator();
                     if m.item(icon::TRASH, "Remove remote…").danger().show(m.ui).clicked() {
-                        actions.push(Action::Confirm { title: "Remove remote".into(), body: format!("Remove the remote {rname} and its remote-tracking branches?"), confirm: "Remove".into(), danger: true, op: Op::RemoveRemote(rname.clone()) });
+                        actions.push(Action::Confirm { title: format!("Remove remote {rname}?"), body: "Its remote-tracking branches go too. The repository on the server is not touched.".into(), confirm: "Remove remote".into(), danger: true, op: Op::RemoveRemote(rname.clone()) });
                     }
                 });
                 if !open {
@@ -373,7 +373,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         }
                         m.separator();
                         if m.item(icon::TRASH, "Delete on remote…").danger().show(m.ui).clicked() {
-                            actions.push(Action::Confirm { title: "Delete remote branch".into(), body: format!("Delete {branch} on {remote}? Everyone loses access to it."), confirm: "Delete".into(), danger: true, op: Op::DeleteRemoteBranch { remote: remote.clone(), branch: branch.clone() } });
+                            actions.push(Action::Confirm { title: format!("Delete {branch} on {remote}?"), body: "The branch is deleted on the server, and everyone loses access to it.".into(), confirm: "Delete remote branch".into(), danger: true, op: Op::DeleteRemoteBranch { remote: remote.clone(), branch: branch.clone() } });
                         }
                     });
                 });
@@ -413,7 +413,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                     m.separator();
                     if m.item(icon::TRASH, "Delete…").danger().show(m.ui).clicked() {
-                        actions.push(Action::Confirm { title: "Delete tag".into(), body: format!("Delete the local tag {name}?"), confirm: "Delete".into(), danger: true, op: Op::DeleteTag(name.clone()) });
+                        actions.push(Action::Confirm { title: format!("Delete tag {name}?"), body: "Only the local tag is deleted; a copy already pushed stays on the remote.".into(), confirm: "Delete tag".into(), danger: true, op: Op::DeleteTag(name.clone()) });
                     }
                 });
             });
@@ -438,7 +438,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     }
                     m.separator();
                     if m.item(icon::TRASH, "Drop…").danger().show(m.ui).clicked() {
-                        actions.push(Action::Confirm { title: "Drop stash".into(), body: format!("Drop stash@{{{index}}}? Its changes are lost."), confirm: "Drop".into(), danger: true, op: Op::StashDrop(index) });
+                        actions.push(Action::Confirm { title: format!("Drop stash@{{{index}}}?"), body: "Its changes are lost.".into(), confirm: "Drop stash".into(), danger: true, op: Op::StashDrop(index) });
                     }
                 });
             });
