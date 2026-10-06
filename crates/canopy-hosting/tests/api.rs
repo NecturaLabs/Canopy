@@ -1445,6 +1445,19 @@ fn github_rollup_errors_and_empty_data() {
         ),
         Err(Error::RateLimited { reset: Some(r6.0) })
     );
+    // The answer that took the last request still counts when it carries data beside an error
+    // that is not about the limit (GitHub's NOT_FOUND for a missing pull request).
+    assert_eq!(
+        rollup(
+            200,
+            &[
+                ("x-ratelimit-remaining", "0"),
+                ("x-ratelimit-reset", r6.1.as_str())
+            ],
+            r#"{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a PullRequest with the number of 1."}]}"#
+        ),
+        Ok(Vec::new())
+    );
     // A secondary limit: 200, a message saying so, and how long to wait.
     let before = chrono::Utc::now().timestamp();
     let secondary = rollup(
