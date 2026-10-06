@@ -16,6 +16,7 @@ impl CanopyApp {
             AppearanceChoice::Style(v) => s.style = v,
             AppearanceChoice::Density(v) => s.density = v,
             AppearanceChoice::Translucent(on) => s.translucent = on,
+            AppearanceChoice::HighContrast(on) => s.high_contrast = on,
             AppearanceChoice::Motion(v) => {
                 s.motion = v;
                 if v == MotionPref::System {
@@ -26,8 +27,8 @@ impl CanopyApp {
         self.apply_look(ctx);
     }
 
-    /// The palette's Appearance entries: Style, Density, Translucent surfaces and Motion (spec
-    /// 6.2). Turning translucency on is offered only where it can work.
+    /// The palette's Appearance entries: Style, Density, Translucent surfaces, High contrast and
+    /// Motion (spec 6.2). Turning translucency on is offered only where it can work.
     fn appearance_entries(&self) -> Vec<(Entry, Action)> {
         let e = |icon: &'static str, label: String, choice: AppearanceChoice| {
             (
@@ -68,6 +69,13 @@ impl CanopyApp {
                 icon::DROP_HALF,
                 format!("Translucent surfaces: {}", if on { "On" } else { "Off" }),
                 AppearanceChoice::Translucent(on),
+            ));
+        }
+        for on in [true, false] {
+            v.push(e(
+                icon::CIRCLE_HALF,
+                format!("High contrast: {}", if on { "On" } else { "Off" }),
+                AppearanceChoice::HighContrast(on),
             ));
         }
         for motion in MotionPref::ALL {
@@ -573,5 +581,8 @@ mod tests {
             assert!(all.contains(&label.as_str()), "{all:?}");
         }
         assert!(all.iter().any(|l| l.starts_with("Motion: ")), "{all:?}");
+        for label in ["High contrast: On", "High contrast: Off"] {
+            assert!(all.contains(&label), "{all:?}");
+        }
     }
 }

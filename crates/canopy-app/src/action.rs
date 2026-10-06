@@ -22,6 +22,7 @@ pub enum AppearanceChoice {
     Style(Style),
     Density(Density),
     Translucent(bool),
+    HighContrast(bool),
     Motion(MotionPref),
 }
 

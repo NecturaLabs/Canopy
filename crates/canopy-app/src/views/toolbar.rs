@@ -13,7 +13,7 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
-use crate::action::Action;
+use crate::action::{Action, AppearanceChoice};
 use crate::keymap::Command;
 use crate::tab::{Finished, RepoTab, View};
 use crate::ui::art;
@@ -93,8 +93,9 @@ pub fn tabs(
                 actions.push(Action::Settings);
             }
             let theme_button = IconButton::new(icon::PALETTE, "Theme").show(ui);
-            if let Some(Some(t)) = menu::menu(&theme_button, |m| theme_items(m, current_theme)) {
-                actions.push(Action::SetTheme(t));
+            if let Some(Some(action)) = menu::menu(&theme_button, |m| theme_items(m, current_theme))
+            {
+                actions.push(action);
             }
             // Search stays reachable when repository tabs take the available width.
             if compact {
@@ -153,8 +154,9 @@ fn doc_tabs(tabs: &[RepoTab]) -> Vec<DocTab<'_>> {
         .collect()
 }
 
-/// The theme menu: every theme with its swatch (ground and accent), the active one checked.
-fn theme_items(m: &mut menu::Menu<'_>, current: ThemeId) -> Option<ThemeId> {
+/// The theme menu: every theme with its swatch (ground and accent), the active one checked, then
+/// the High contrast switch.
+fn theme_items(m: &mut menu::Menu<'_>, current: ThemeId) -> Option<Action> {
     let metrics = theme::metrics();
     let s = theme::surfaces(m.ui.ctx());
     let mut picked = None;
@@ -175,8 +177,17 @@ fn theme_items(m: &mut menu::Menu<'_>, current: ThemeId) -> Option<ThemeId> {
             Stroke::new(paint::SEAM, s.edge),
         );
         if r.clicked() {
-            picked = Some(t);
+            picked = Some(Action::SetTheme(t));
         }
+    }
+    m.separator();
+    let on = theme::high_contrast();
+    if m.item(icon::CIRCLE_HALF, "High contrast")
+        .checked(on)
+        .show(m.ui)
+        .clicked()
+    {
+        picked = Some(Action::SetAppearance(AppearanceChoice::HighContrast(!on)));
     }
     picked
 }

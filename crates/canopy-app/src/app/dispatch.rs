@@ -558,4 +558,25 @@ mod tests {
             (Style::Deeper, Density::Dense, MotionPref::Reduced)
         );
     }
+
+    /// High contrast from the palette or the theme menu turns the switch on and the look follows
+    /// on the same frame; turning it off restores the theme's own colours.
+    #[test]
+    fn high_contrast_from_the_palette_changes_the_look() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.apply(
+            &ctx,
+            vec![Action::SetAppearance(AppearanceChoice::HighContrast(true))],
+        );
+        assert!(app.settings.high_contrast);
+        assert!(theme::high_contrast());
+        assert!(palette(&ctx).strict);
+        app.apply(
+            &ctx,
+            vec![Action::SetAppearance(AppearanceChoice::HighContrast(false))],
+        );
+        assert!(!theme::high_contrast());
+        assert!(!palette(&ctx).strict);
+    }
 }
