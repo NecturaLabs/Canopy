@@ -105,7 +105,6 @@ impl Cheatsheet {
                         ui,
                         &mut self.query,
                         "Search shortcuts…",
-                        m.palette_input_height,
                     );
                     if self.just_opened {
                         edit.request_focus();

@@ -1,9 +1,9 @@
 //! The command palette (Ctrl+K): fuzzy search over every command, branch and recent repository.
 
-use egui::{Align2, FontId, Id, Key, Order, RichText, Sense, vec2};
-use egui_phosphor::regular as icon;
+use egui::{Align2, FontId, Id, Key, Order, RichText, Sense};
 
 use super::kit::chip::Keycap;
+use super::kit::field::SearchField;
 use super::kit::overlay::{self, Layer};
 use super::kit::row::{ListRow, RowKind};
 use super::kit::{menu, paint};
@@ -259,7 +259,6 @@ impl<T: Clone> CommandPalette<T> {
                         ui,
                         &mut self.query,
                         "Type a command, branch or repository…",
-                        m.palette_input_height,
                     );
                     if self.just_opened {
                         edit.request_focus();
@@ -356,59 +355,22 @@ fn whole_rows_height<T>(
 /// Gap between a palette row's icon, label and detail, and before its keys.
 const ROW_GAP: f32 = 10.0;
 
-/// "The field that is the surface": the palette's and cheatsheet's search, with no ring and no
-/// border of its own, only a seam under it. A magnifier leads; `height` tall, full width.
+/// "The field that is the surface": the palette's and cheatsheet's search, the kit's borderless
+/// [`SearchField`] with only a seam under it, full width.
 pub(crate) fn surface_search(
     ui: &mut egui::Ui,
     text: &mut String,
     placeholder: &str,
-    height: f32,
 ) -> egui::Response {
-    let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
     let m = theme::metrics();
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
-    let left = m.field_pad_x + m.icon_md + ROW_GAP;
-    let glyph = ui.painter().layout_no_wrap(
-        icon::MAGNIFYING_GLASS.to_owned(),
-        FontId::proportional(m.icon_md),
-        p.text_faint,
-    );
-    ui.painter().galley(
-        egui::pos2(
-            rect.left() + m.field_pad_x + theme::XS,
-            rect.center().y - glyph.size().y / 2.0,
-        ),
-        glyph,
-        p.text_faint,
-    );
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(rect)
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    {
-        let v = child.visuals_mut();
-        v.weak_text_color = Some(p.text_faint);
-        v.selection.bg_fill = p.selected();
-    }
-    let edit = egui::TextEdit::singleline(text)
-        .hint_text(placeholder)
-        .font(FontId::proportional(m.title_size))
-        .text_color(p.text)
-        .frame(egui::Frame::NONE.inner_margin(egui::Margin {
-            left: crate::ui::points_i8(left + theme::XS),
-            right: crate::ui::points_i8(m.field_pad_x),
-            top: 0,
-            bottom: 0,
-        }))
-        .min_size(vec2(rect.width(), height))
-        .vertical_align(egui::Align::Center)
-        .desired_width(rect.width())
-        .show(&mut child)
-        .response
-        .response;
-    paint::seam_h(ui.painter(), rect.x_range(), rect.bottom() - 0.5, s.border);
+    let at = ui.available_rect_before_wrap();
+    let edit = SearchField::new(text)
+        .placeholder(placeholder)
+        .borderless(true)
+        .show(ui);
+    let bottom = at.top() + m.palette_input_height;
+    paint::seam_h(ui.painter(), at.x_range(), bottom - 0.5, s.border);
     edit
 }
 
@@ -489,6 +451,7 @@ fn entry_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::vec2;
 
     fn entry(label: &str, detail: &str) -> Entry {
         Entry {
@@ -571,6 +534,36 @@ mod tests {
         .drop_without_applying_deltas();
         assert_eq!(ran, Some(1), "the first entry for an empty query");
         assert!(!p.open);
+    }
+
+    /// KF-F7: the palette's and cheatsheet's input is the kit's borderless `SearchField`, and it
+    /// still takes focus on opening, so typing filters at once.
+    #[test]
+    fn typing_on_opening_fills_the_kit_search_field() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut p = CommandPalette::default();
+        p.open();
+        p.set_entries(1, items());
+        for events in [Vec::new(), vec![egui::Event::Text("psh".into())]] {
+            ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = p.show(ui.ctx());
+                },
+            )
+            .drop_without_applying_deltas();
+        }
+        assert_eq!(p.query, "psh");
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        for file in ["palette.rs", "cheatsheet.rs"] {
+            let text = std::fs::read_to_string(src.join(file)).expect("source");
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            assert!(!code.contains("TextEdit::"), "{file} builds its own input");
+        }
     }
 
     #[test]

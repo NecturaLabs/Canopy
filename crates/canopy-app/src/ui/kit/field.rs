@@ -372,8 +372,12 @@ impl<'t> Core<'t> {
             r.id
         });
 
+        // The borderless search is the surface's own input (the command palette, the
+        // cheatsheet): the palette's input height and title-sized text.
+        let surface_input = self.borderless && self.kind == Kind::Search;
         let font = match self.kind {
             Kind::Code { .. } => FontId::new(m.mono_size, FontFamily::Monospace),
+            _ if surface_input => FontId::new(m.title_size, FontFamily::Proportional),
             _ => FontId::new(m.body_size, FontFamily::Proportional),
         };
         let line_h = ui.fonts_mut(|f| f.row_height(&font)) + ui.spacing().extra_text_line_spacing;
@@ -393,6 +397,7 @@ impl<'t> Core<'t> {
                 let target = content.clamp(min, max);
                 anim::ease_value(&ctx, id.with("kit-area-height"), target, motion::BASE)
             }
+            _ if surface_input => m.palette_input_height,
             _ => self.size.height(),
         };
         let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
@@ -1104,8 +1109,9 @@ impl<'t> SearchField<'t> {
         self.core.loading = loading;
         self
     }
-    /// No fill, edge or halo: the field is part of the surface around it (the command
-    /// palette's input over its seam).
+    /// No fill, edge or halo: the field is part of the surface around it, at the command
+    /// palette's input height with title-sized text (the palette's and cheatsheet's input over
+    /// their seam).
     pub fn borderless(mut self, borderless: bool) -> Self {
         self.core.borderless = borderless;
         self
