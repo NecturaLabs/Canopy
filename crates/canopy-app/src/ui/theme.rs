@@ -145,12 +145,14 @@ pub struct Surfaces {
     pub removed_bg: Color32,
     pub added_gutter: Color32,
     pub removed_gutter: Color32,
-    /// The top deck: the repository tab strip and the action bar as one surface. Standard: flat
-    /// `panel` (concept 1's two-tone chrome). Deeper: a lifted gradient with its own highlight
-    /// and shadow, so it reads apart from the cards below.
+    /// The top bars ([`crate::ui::kit::surface::Deck`]). Standard: the flat `panel` chrome of
+    /// the repository tab strip and the action bar (concept 1's two-tone chrome). Deeper: the
+    /// action bar's floating card, a lifted gradient with its own highlight and shadow; the tab
+    /// strip stays on the window's ground.
     pub deck: Fill,
-    /// The deck's bottom edge: Standard's seam under the tab strip and action bar; Deeper's outer
-    /// line under the deck.
+    /// The deck's bottom edge: Standard's seam under the tab strip and the action bar (none over
+    /// the content where the theme parts panes by tone); Deeper's outer line under the action
+    /// bar's card.
     pub deck_edge: Color32,
     /// Header strip of a table pane (History's column header). Standard: the pane itself.
     /// Deeper: a lifted tone.
