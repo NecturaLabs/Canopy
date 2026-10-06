@@ -91,6 +91,12 @@ impl CanopyApp {
                 apply_zoom(ctx, self.settings.zoom);
             }
             C::Quit => actions.push(Action::Quit),
+            // Settings' own search, with or without a repository open.
+            C::Filter if self.settings_screen.is_some() => {
+                if let Some(screen) = self.settings_screen.as_mut() {
+                    screen.focus_search();
+                }
+            }
             _ if !has_tab => {}
             C::CloseTab => actions.push(Action::CloseTab(self.active)),
             C::NextTab => actions.push(Action::SwitchTab((self.active + 1) % self.tabs.len())),
@@ -123,11 +129,6 @@ impl CanopyApp {
             C::Commit => {
                 if view == Some(View::Changes) {
                     actions.push(Action::Commit);
-                }
-            }
-            C::Filter if self.settings_screen.is_some() => {
-                if let Some(screen) = self.settings_screen.as_mut() {
-                    screen.focus_search();
                 }
             }
             C::Filter => {
@@ -282,5 +283,56 @@ impl CanopyApp {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(app: &mut CanopyApp, command: Command) -> Vec<Action> {
+        let ctx = egui::Context::default();
+        let mut actions = Vec::new();
+        app.command(&ctx, command, 0, &mut actions);
+        actions
+    }
+
+    /// review-views-1: the find shortcut reaches Settings' search on the welcome screen too.
+    #[test]
+    fn settings_search_takes_the_find_shortcut_with_no_repository_open() {
+        let mut app = test_app();
+        app.settings_screen = Some(SettingsScreen::at(settings_screen::Section::Appearance));
+        let actions = run(&mut app, Command::Filter);
+        assert!(actions.is_empty(), "{actions:?}");
+        assert!(
+            app.settings_screen
+                .as_ref()
+                .is_some_and(SettingsScreen::search_focus_pending),
+            "the search field takes the caret"
+        );
+    }
+
+    /// Escape closes the topmost thing first: the cheatsheet, the palette, a dialog, then a
+    /// search in Settings, then Settings itself.
+    #[test]
+    fn escape_closes_the_topmost_overlay_first() {
+        let mut app = test_app();
+        app.settings_screen = Some(SettingsScreen::searching("theme"));
+        app.dialogs.open(Dialog::open());
+        app.palette.open = true;
+        app.cheatsheet.open = true;
+        run(&mut app, Command::Dismiss);
+        assert!(!app.cheatsheet.open && app.palette.open);
+        run(&mut app, Command::Dismiss);
+        assert!(!app.palette.open && app.dialogs.current().is_some());
+        run(&mut app, Command::Dismiss);
+        assert!(app.dialogs.current().is_none() && app.settings_screen.is_some());
+        run(&mut app, Command::Dismiss);
+        assert!(
+            app.settings_screen.is_some(),
+            "the first Escape in Settings clears its search"
+        );
+        run(&mut app, Command::Dismiss);
+        assert!(app.settings_screen.is_none());
     }
 }

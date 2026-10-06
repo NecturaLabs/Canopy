@@ -1315,6 +1315,40 @@ fn navigation_menu(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> eg
     button
 }
 
+/// An app with no window, threads or saved state, for tests of the app's own logic.
+#[cfg(test)]
+pub(super) fn test_app() -> CanopyApp {
+    CanopyApp {
+        settings: Settings::default(),
+        tabs: Vec::new(),
+        active: 0,
+        dialogs: DialogStack::default(),
+        settings_screen: None,
+        folder_picker: crate::ui::folder_picker::FolderPicker::default(),
+        palette: CommandPalette::default(),
+        cheatsheet: Cheatsheet::default(),
+        toasts: Toasts::default(),
+        screenshot: None,
+        initial_view: None,
+        clone: None,
+        opener: None,
+        pending_opens: 0,
+        git_version: String::new(),
+        tokens: TokenStore::default(),
+        updater: Updater::default(),
+        identity_worker: None,
+        global_identity: None,
+        global_identity_error: None,
+        gitlab_hosts: Vec::new(),
+        update_check_due: false,
+        askpass: None,
+        trust_seen: 0,
+        applied: None,
+        gallery: None,
+        glass_soak: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

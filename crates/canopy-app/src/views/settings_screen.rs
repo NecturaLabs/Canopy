@@ -310,6 +310,12 @@ impl SettingsScreen {
         self.search.focus = true;
     }
 
+    /// Whether the search field takes the caret on the next frame.
+    #[cfg(test)]
+    pub fn search_focus_pending(&self) -> bool {
+        self.search.focus
+    }
+
     /// Escape: clears the search and returns true, or returns false when nothing is searched for
     /// (Settings then closes).
     pub fn dismiss_search(&mut self) -> bool {
