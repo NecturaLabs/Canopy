@@ -19,11 +19,12 @@ use canopy_core::identity::{Field, Identity, Scope, Source};
 
 use crate::action::Action;
 use crate::hosting::{self, TokenStore};
-use crate::keymap::Section as KeySection;
+use crate::keymap::{Command, Section as KeySection};
 use crate::settings::{CloneProtocol, PullMode, Settings, WhitespaceMode};
 use crate::ui::kit::button::LinkButton;
+use crate::ui::kit::chip::Badge;
 use crate::ui::kit::choice::Segmented;
-use crate::ui::kit::field::TextField;
+use crate::ui::kit::field::{SearchField, TextField};
 use crate::ui::kit::overlay;
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::paint;
@@ -31,7 +32,7 @@ use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::range::Slider;
 use crate::ui::kit::row::{ListRow, RowKind};
 use crate::ui::kit::select::Select;
-use crate::ui::kit::surface::{Callout, Card, column_label};
+use crate::ui::kit::surface::{Callout, Card, EmptyAction, EmptyState, column_label};
 use crate::ui::kit::toggle::Switch;
 use crate::ui::kit::{Button, IconButton, Size, Tone};
 use crate::ui::motion::{self, MotionPref};
@@ -99,6 +100,39 @@ pub struct SettingsScreen {
     identity_name: String,
     identity_email: String,
     identity_scope: Scope,
+    search: Search,
+}
+
+/// The search over every section: what is typed, and what the last frame found.
+#[derive(Debug, Default)]
+struct Search {
+    query: String,
+    /// Put the caret in the search field on the next frame.
+    focus: bool,
+    /// Scroll the results to this section's header on the next frame.
+    jump: Option<Section>,
+    /// Move the focus from the search field to the first result's control on the next frame.
+    to_results: bool,
+    /// Matches per section in the last frame drawn, in section order.
+    counts: Vec<(Section, usize)>,
+}
+
+impl Search {
+    /// The query's words, lower case; empty when nothing is searched for.
+    fn words(&self) -> Vec<String> {
+        search_words(&self.query)
+    }
+
+    fn total(&self) -> usize {
+        self.counts.iter().map(|(_, n)| n).sum()
+    }
+
+    fn count(&self, section: Section) -> usize {
+        self.counts
+            .iter()
+            .find(|(s, _)| *s == section)
+            .map_or(0, |(_, n)| *n)
+    }
 }
 
 impl std::fmt::Debug for SettingsScreen {
@@ -110,6 +144,7 @@ impl std::fmt::Debug for SettingsScreen {
             .field("tests", &self.tests)
             .field("token_error", &self.token_error)
             .field("identity_scope", &self.identity_scope)
+            .field("search", &self.search)
             .finish_non_exhaustive()
     }
 }
@@ -121,6 +156,34 @@ impl SettingsScreen {
             section,
             ..Self::default()
         }
+    }
+
+    /// The screen showing what `query` finds (screenshots and tests).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "for the settings-search screenshot overlay the integrator adds (contracts/settings.md)"
+        )
+    )]
+    pub fn searching(query: &str) -> Self {
+        let mut screen = Self::default();
+        query.clone_into(&mut screen.search.query);
+        screen
+    }
+
+    /// Puts the caret in the search field (the find shortcut while Settings is open).
+    pub fn focus_search(&mut self) {
+        self.search.focus = true;
+    }
+
+    /// Escape: clears the search and returns true, or returns false when nothing is searched for
+    /// (Settings then closes).
+    pub fn dismiss_search(&mut self) -> bool {
+        let searching = !self.search.words().is_empty();
+        self.search.query.clear();
+        self.search.jump = None;
+        searching
     }
 }
 
@@ -205,7 +268,7 @@ pub fn show(
             ));
             let content = if sidebar {
                 let nav = Rect::from_min_size(shell.min, vec2(NAV_WIDTH, shell.height()));
-                navigation(ui, nav, r, &mut screen.section);
+                navigation(ui, nav, r, screen);
                 shell.with_min_x(nav.right())
             } else {
                 shell
@@ -218,7 +281,7 @@ pub fn show(
                 sw: 0,
                 se: 0,
             };
-            result.close |= header_bar(ui, header, corner, &mut screen.section, sidebar);
+            result.close |= header_bar(ui, header, corner, screen, sidebar);
             let body = content.with_min_y(header.bottom());
             let mut child = ui.new_child(
                 UiBuilder::new()
@@ -227,9 +290,11 @@ pub fn show(
                     .layout(Layout::top_down(Align::Min)),
             );
             child.set_clip_rect(body.intersect(ui.clip_rect()));
+            let words = screen.search.words();
+            let scroll_salt = words.is_empty().then_some(screen.section);
             overlay::scroll_body(
                 &mut child,
-                ("settings-content", screen.section),
+                ("settings-content", scroll_salt),
                 body.height(),
                 s.pane,
                 |ui| {
@@ -243,30 +308,21 @@ pub fn show(
                         .show(ui, |ui| {
                             ui.set_max_width(ui.available_width());
                             ui.spacing_mut().item_spacing.x = theme::SM;
-                            match screen.section {
-                                Section::Appearance => {
-                                    appearance(ui, settings, &mut screen.zoom_preview);
-                                }
-                                Section::Git => git(ui, screen, settings, &data.identity, actions),
-                                Section::Integrations => {
-                                    integrations(ui, settings, &mut screen.picker);
-                                }
-                                Section::Accounts => {
-                                    result.tokens_changed |= accounts(
-                                        ui,
-                                        screen,
-                                        settings,
-                                        tokens,
-                                        data.forges,
-                                        actions,
-                                    );
-                                }
-                                Section::Updates => updates(ui, settings, data.update, actions),
-                                Section::Privacy => {
-                                    privacy(ui, settings, actions, &mut screen.picker);
-                                }
-                                Section::Keyboard => keyboard(ui),
+                            let mut page = Page {
+                                screen,
+                                settings,
+                                tokens,
+                                data,
+                                actions,
+                                tokens_changed: false,
+                            };
+                            if words.is_empty() {
+                                Filter::set(ui.ctx(), Filter::default());
+                                page.section(ui, page.screen.section);
+                            } else {
+                                page.results(ui, &words, body.height());
                             }
+                            result.tokens_changed |= page.tokens_changed;
                         });
                 },
             );
@@ -305,8 +361,317 @@ pub fn show(
     result
 }
 
-/// The section list on the chrome: the screen's title, then one row per section.
-fn navigation(ui: &mut Ui, rect: Rect, radius: u8, current: &mut Section) {
+/// Everything a section's page draws from and writes to.
+struct Page<'a, 'd> {
+    screen: &'a mut SettingsScreen,
+    settings: &'a mut Settings,
+    tokens: &'a mut TokenStore,
+    data: &'a SettingsData<'d>,
+    actions: &'a mut Vec<Action>,
+    tokens_changed: bool,
+}
+
+impl Page<'_, '_> {
+    /// One section's rows (all of them, or while searching those that match).
+    fn section(&mut self, ui: &mut Ui, section: Section) {
+        let Self {
+            screen,
+            settings,
+            tokens,
+            data,
+            actions,
+            tokens_changed,
+        } = self;
+        match section {
+            Section::Appearance => appearance(ui, settings, &mut screen.zoom_preview),
+            Section::Git => git(ui, screen, settings, &data.identity, actions),
+            Section::Integrations => integrations(ui, settings, &mut screen.picker),
+            Section::Accounts => {
+                *tokens_changed |= accounts(ui, screen, settings, tokens, data.forges, actions);
+            }
+            Section::Updates => updates(ui, settings, data.update, actions),
+            Section::Privacy => privacy(ui, settings, actions, &mut screen.picker),
+            Section::Keyboard => keyboard(ui),
+        }
+    }
+
+    /// What the search finds: every section's matching rows in place, each section under its
+    /// own header, or an empty state. Records the matches per section for the navigation.
+    fn results(&mut self, ui: &mut Ui, words: &[String], height: f32) {
+        if std::mem::take(&mut self.screen.search.to_results) {
+            // egui hands focus on to the next control while the focused one registers: a
+            // focus stop at the top of the results, there for this frame only, passes it to
+            // the first control of the results.
+            let start = ui.id().with("settings-results-start");
+            ui.memory_mut(|m| {
+                m.request_focus(start);
+                m.move_focus(egui::FocusDirection::Next);
+            });
+            let at = Rect::from_min_size(ui.cursor().min, Vec2::ZERO);
+            ui.interact(at, start, Sense::focusable_noninteractive());
+        }
+        let mut counts = Vec::with_capacity(Section::ALL.len());
+        let jump = self.screen.search.jump.take();
+        for section in Section::ALL {
+            Filter::set(
+                ui.ctx(),
+                Filter {
+                    words: words.to_vec(),
+                    section: Some(section),
+                    header: true,
+                    jump: jump == Some(section),
+                    first: counts.iter().all(|&(_, n)| n == 0),
+                    ..Filter::default()
+                },
+            );
+            self.section(ui, section);
+            counts.push((section, Filter::get(ui.ctx()).count));
+        }
+        Filter::set(ui.ctx(), Filter::default());
+        if counts != self.screen.search.counts {
+            self.screen.search.counts = counts;
+            ui.ctx().request_repaint();
+        }
+        if self.screen.search.total() == 0 {
+            let query = self.screen.search.query.trim().to_owned();
+            // The body less its margins, so the empty state fills it without scrolling.
+            let room = (height - theme::LG - 2.0 * theme::XL).max(theme::XL * 4.0);
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), room),
+                Layout::top_down(Align::Center),
+                |ui| {
+                    let clicked = EmptyState::new(format!("No settings match “{query}”"))
+                        .icon(icon::MAGNIFYING_GLASS)
+                        .body(
+                            "Try fewer words, or another name for it: “theme”, “rebase”, “editor”.",
+                        )
+                        .action("Clear search")
+                        .id_salt("settings-no-match")
+                        .show(ui)
+                        .value;
+                    if clicked == Some(EmptyAction::Primary) {
+                        self.screen.search.query.clear();
+                        self.screen.search.focus = true;
+                    }
+                },
+            );
+        }
+    }
+}
+
+/// While searching: which rows a section draws. Kept in the context's memory for the frame, so
+/// the row helpers ([`row_layout`], [`heading`], [`block`]) can ask without new parameters.
+#[derive(Debug, Clone, Default)]
+struct Filter {
+    /// The query's lower-case words, all of which a row must contain; empty shows every row.
+    words: Vec<String>,
+    /// The section being drawn.
+    section: Option<Section>,
+    /// The section's header is still to be drawn, before its first match.
+    header: bool,
+    /// Scroll the results to this section's header once drawn.
+    jump: bool,
+    /// No earlier section had a match (its header needs no space above it).
+    first: bool,
+    /// The group heading over the next rows, still to be drawn, if any.
+    group: Option<String>,
+    /// The group heading itself matches, so its whole group does.
+    group_matches: bool,
+    /// Whether the last row was drawn (its seam and anything under it follow only then).
+    shown: bool,
+    /// Rows drawn in this section.
+    count: usize,
+}
+
+impl Filter {
+    fn id() -> egui::Id {
+        egui::Id::new("settings-filter")
+    }
+
+    fn get(ctx: &egui::Context) -> Self {
+        ctx.data(|d| d.get_temp::<Self>(Self::id()).unwrap_or_default())
+    }
+
+    fn set(ctx: &egui::Context, filter: Self) {
+        ctx.data_mut(|d| d.insert_temp(Self::id(), filter));
+    }
+
+    fn searching(ctx: &egui::Context) -> bool {
+        !Self::get(ctx).words.is_empty()
+    }
+}
+
+/// Lower-case words of a query.
+fn search_words(query: &str) -> Vec<String> {
+    query.split_whitespace().map(str::to_lowercase).collect()
+}
+
+/// Whether every word occurs in one of `texts` (case-insensitive).
+fn matches_all(words: &[String], texts: &[&str]) -> bool {
+    let haystack = texts.join("\n").to_lowercase();
+    words.iter().all(|w| haystack.contains(w.as_str()))
+}
+
+/// Other words people use for a setting, so a search finds it by them too.
+fn synonyms(title: &str) -> &'static str {
+    match title {
+        "Theme" => {
+            "colour color dark light mode midnight daylight aurora ember neon forest paper contrast"
+        }
+        "Style" => "standard deeper flat depth shadows look",
+        "Translucent surfaces" => "glass blur transparency transparent frosted",
+        "Density" => "compact dense comfortable spacing row height",
+        "Motion" => "animation animations reduce reduced motion",
+        "Zoom" => "scale size bigger smaller font text",
+        "Dates" | "Commit date format" => "time relative calendar iso",
+        "Author avatars" | "Download profile pictures" => {
+            "avatar picture photo gravatar image profile"
+        }
+        "Name" | "Email" | "Apply identity" | "Save to" | "Committer" => {
+            "identity user author git config user.name user.email"
+        }
+        "Pull strategy" => "pull rebase merge fast-forward ff only",
+        "Prune on fetch" => "prune stale remote branches delete",
+        "Fetch in the background" => "auto fetch automatic interval minutes",
+        "Add Signed-off-by" => "signoff sign-off dco trailer",
+        "Commits per page" => "history load more limit",
+        "Layout" => "diff side by side unified split",
+        "Syntax highlighting" => "colour color code language",
+        "Context lines" => "diff context unchanged lines",
+        "Whitespace" => "spaces tabs ignore diff",
+        "Default clone folder" => "clone directory path folder location",
+        "Clone protocol" => "ssh https url remote",
+        "Self-hosted GitLab" => "gitlab host enterprise server",
+        "Pull and merge requests" => "pr mr github gitlab api hosting offline",
+        "Terminal" => "console shell command line",
+        "Editor" => "ide vscode code zed sublime open file",
+        "Trusted folders" => "trust partial clone security",
+        "Send crash reports" => "crash sentry telemetry error report",
+        "Log detail" => "log logging debug verbose diagnostics",
+        "Logs and crash reports" => "log logs diagnostics folder copy",
+        "Privacy Policy" | "Terms of Service" => "legal privacy terms document",
+        "Check for updates" | "Include beta builds" => "update upgrade version release beta",
+        "Tokens" => "token account sign in personal access github gitlab api pat credential",
+        "Version" => "update upgrade version release check now what's new",
+        _ => "",
+    }
+}
+
+/// Whether a row (or block) titled `title` with `text` is drawn: always when not searching;
+/// while searching, when the query matches it, its group heading or its section. A match first
+/// draws the section header and group heading it sits under.
+fn reveal(ui: &mut Ui, title: &str, text: &[&str]) -> bool {
+    let mut f = Filter::get(ui.ctx());
+    if f.words.is_empty() {
+        return true;
+    }
+    let section = f.section.map_or("", |s| s.label().1);
+    let mut texts = vec![title, synonyms(title), section];
+    texts.extend_from_slice(text);
+    let shown = f.group_matches || matches_all(&f.words, &texts);
+    f.shown = shown;
+    if shown {
+        f.count += 1;
+        f = open_group(ui, f);
+    }
+    Filter::set(ui.ctx(), f);
+    shown
+}
+
+/// Counts `n` matches found by other means (the shortcut list) and draws what they sit under.
+fn reveal_rows(ui: &mut Ui, n: usize) {
+    let mut f = Filter::get(ui.ctx());
+    f.count += n;
+    f.shown = true;
+    let f = open_group(ui, f);
+    Filter::set(ui.ctx(), f);
+}
+
+/// Draws the section header and group heading a match sits under, the first time.
+fn open_group(ui: &mut Ui, mut f: Filter) -> Filter {
+    if f.header {
+        f.header = false;
+        if let Some(section) = f.section {
+            result_header(ui, section, f.first, f.jump);
+        }
+    }
+    if let Some(group) = f.group.take() {
+        heading_now(ui, &group);
+    }
+    f
+}
+
+/// A search result's section header: the section's icon and name.
+fn result_header(ui: &mut Ui, section: Section, first: bool, jump: bool) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    if !first {
+        ui.add_space(theme::XL);
+    }
+    let (glyph, label) = section.label();
+    let response = ui
+        .horizontal(|ui| {
+            ui.label(RichText::new(glyph).size(m.icon_md).color(p.text_faint));
+            ui.label(
+                RichText::new(label)
+                    .font(FontId::new(m.subtitle_size, theme::semibold()))
+                    .color(p.text),
+            );
+        })
+        .response;
+    if jump {
+        ui.scroll_to_rect(response.rect.expand(theme::LG), Some(Align::TOP));
+    }
+    ui.add_space(theme::MD);
+}
+
+/// `text` in `font` and `color`, with each occurrence of `words` in `hit` over `mark`.
+fn marked(
+    text: &str,
+    words: &[String],
+    font: &FontId,
+    color: Color32,
+    hit: Color32,
+    mark: Color32,
+) -> egui::text::LayoutJob {
+    let lower = text.to_lowercase();
+    // Which bytes of `text` a word covers. Lower-casing can change byte lengths outside ASCII;
+    // then nothing is marked.
+    let mut covered = vec![false; text.len()];
+    if lower.len() == text.len() {
+        for word in words.iter().filter(|w| !w.is_empty()) {
+            for (at, _) in lower.match_indices(word.as_str()) {
+                for b in covered.iter_mut().skip(at).take(word.len()) {
+                    *b = true;
+                }
+            }
+        }
+    }
+    let format = |marked: bool| egui::TextFormat {
+        font_id: font.clone(),
+        color: if marked { hit } else { color },
+        background: if marked { mark } else { Color32::TRANSPARENT },
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    let mut run = String::new();
+    let mut run_marked = false;
+    for (i, ch) in text.char_indices() {
+        let marked = covered.get(i).copied().unwrap_or(false);
+        if marked != run_marked && !run.is_empty() {
+            job.append(&run, 0.0, format(run_marked));
+            run.clear();
+        }
+        run_marked = marked;
+        run.push(ch);
+    }
+    job.append(&run, 0.0, format(run_marked));
+    job
+}
+
+/// The section list on the chrome: the screen's title, then one row per section. While
+/// searching, each row counts its section's matches and a click scrolls the results to it.
+fn navigation(ui: &mut Ui, rect: Rect, radius: u8, screen: &mut SettingsScreen) {
     let p = palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
     let m = theme::metrics();
@@ -357,29 +722,48 @@ fn navigation(ui: &mut Ui, rect: Rect, radius: u8, current: &mut Section) {
         .id_salt("settings-sections")
         .show(&mut ui, |ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
+            let searching = !screen.search.words().is_empty();
             for section in Section::ALL {
                 let (glyph, label) = section.label();
-                if ListRow::new(("settings-section", section))
+                let found = screen.search.count(section);
+                let mut row = ListRow::new(("settings-section", section))
                     .kind(RowKind::Sidebar)
                     .icon(glyph)
                     .label(label)
-                    .selected(*current == section)
-                    .show(ui)
-                    .clicked()
-                {
-                    *current = section;
+                    .selected(!searching && screen.section == section);
+                if searching {
+                    row = row.enabled(found > 0);
+                    if found > 0 {
+                        row = row.trailing_badge(Badge::new(found.to_string()));
+                    }
+                }
+                if row.show(ui).clicked() {
+                    screen.section = section;
+                    if searching {
+                        screen.search.jump = Some(section);
+                    }
                 }
             }
         });
 }
 
-/// The strip over the section: its name (or, in a narrow screen, the section select) and the
-/// close button. Returns whether close was clicked.
+/// The search field's widest and narrowest.
+const SEARCH_WIDTH: f32 = 280.0;
+const SEARCH_MIN_WIDTH: f32 = 140.0;
+
+/// The id of the settings search field.
+fn search_id() -> egui::Id {
+    egui::Id::new("settings-search")
+}
+
+/// The strip over the section: its name (or, in a narrow screen, the section select; while
+/// searching, the number of results), the search field and the close button. Returns whether
+/// close was clicked.
 fn header_bar(
     ui: &mut Ui,
     rect: Rect,
     corner: CornerRadius,
-    current: &mut Section,
+    screen: &mut SettingsScreen,
     sidebar: bool,
 ) -> bool {
     let p = palette(ui.ctx());
@@ -395,29 +779,87 @@ fn header_bar(
             .max_rect(rect.shrink2(vec2(theme::MD, 0.0)))
             .layout(Layout::left_to_right(Align::Center)),
     );
+    let searching = !screen.search.words().is_empty();
     if sidebar {
+        let title = if searching {
+            match screen.search.total() {
+                0 => "No results".to_owned(),
+                1 => "1 result".to_owned(),
+                n => format!("{n} results"),
+            }
+        } else {
+            screen.section.label().1.to_owned()
+        };
         ui.label(
-            RichText::new(current.label().1)
+            RichText::new(title)
                 .font(FontId::new(m.body_size, theme::semibold()))
                 .color(p.text),
         );
     } else {
         let options = Section::ALL.map(|s| (s, s.label().1));
-        Select::new(current, &options)
-            .width(SECTION_SELECT_WIDTH.min(ui.available_width()))
+        let before = screen.section;
+        Select::new(&mut screen.section, &options)
+            .width(SECTION_SELECT_WIDTH.min(ui.available_width() - SEARCH_MIN_WIDTH))
             .name("Settings section")
             .size(Size::Sm)
             .id_salt("settings-section")
             .show(&mut ui);
+        if searching && screen.section != before {
+            screen.search.jump = Some(screen.section);
+        }
     }
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        IconButton::new(icon::X, "Close settings (Esc)")
+        // Drawn before the search field, so Tab goes from the search straight to the results.
+        let close = IconButton::new(icon::X, "Close settings (Esc)")
             .size(Size::Sm)
             .id_salt("settings-close")
             .show(ui)
-            .clicked()
+            .clicked();
+        search_field(ui, screen);
+        close
     })
     .inner
+}
+
+/// The search field: the find shortcut puts the caret in it, Escape clears it (then closes
+/// Settings, through the Dismiss command), and Down or Enter moves on to the first result.
+fn search_field(ui: &mut Ui, screen: &mut SettingsScreen) {
+    let id = search_id();
+    if std::mem::take(&mut screen.search.focus) {
+        ui.memory_mut(|m| m.request_focus(crate::ui::kit::field::edit_id(id)));
+    }
+    let width = (ui.available_width() - theme::SM).clamp(SEARCH_MIN_WIDTH, SEARCH_WIDTH);
+    let before = screen.search.query.clone();
+    let response = ui
+        .allocate_ui_with_layout(
+            vec2(width, Size::Sm.height()),
+            Layout::top_down(Align::Min),
+            |ui| {
+                SearchField::new(&mut screen.search.query)
+                    .placeholder("Search settings")
+                    .shortcut(Command::Filter)
+                    .size(Size::Sm)
+                    .width(width)
+                    .name("Search settings")
+                    .id(id)
+                    .show(ui)
+            },
+        )
+        .inner;
+    if screen.search.query != before {
+        screen.search.jump = None;
+    }
+    let (down, enter) = ui.input(|i| {
+        (
+            i.key_pressed(egui::Key::ArrowDown),
+            i.key_pressed(egui::Key::Enter),
+        )
+    });
+    let leave = (response.has_focus() && down) || (response.lost_focus() && enter);
+    if leave && !screen.search.words().is_empty() && screen.search.total() > 0 {
+        screen.search.to_results = true;
+        ui.ctx().request_repaint();
+    }
 }
 
 /// The widest an explanation runs: a comfortable line length, however wide the column.
@@ -429,8 +871,11 @@ fn row(ui: &mut Ui, title: &str, help: &str, control: impl FnOnce(&mut Ui)) {
     row_end(ui);
 }
 
-/// The seam between two rows.
+/// The seam between two rows (nothing when the search left the row out).
 fn row_end(ui: &mut Ui) {
+    if !last_row_shown(ui) {
+        return;
+    }
     let s = theme::surfaces(ui.ctx());
     ui.add_space(theme::SM);
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), paint::SEAM), Sense::hover());
@@ -442,7 +887,16 @@ fn row_end(ui: &mut Ui) {
 fn help_label(ui: &mut Ui, text: &str) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
-    ui.add(egui::Label::new(RichText::new(text).size(m.meta_size).color(p.text_dim)).wrap());
+    let words = Filter::get(ui.ctx()).words;
+    let job = marked(
+        text,
+        &words,
+        &FontId::proportional(m.meta_size),
+        p.text_dim,
+        p.accent,
+        p.accent_tint(),
+    );
+    ui.add(egui::Label::new(job).wrap());
 }
 
 /// A row whose `help` is one sentence. A longer `detail` sits behind a "More" link and, once
@@ -453,19 +907,32 @@ fn row_more(ui: &mut Ui, title: &str, help: &str, detail: &str, control: impl Fn
             help_label(ui, help);
         }
     };
-    row_layout(ui, title, &help_text, detail, control);
+    row_layout(ui, title, help, &help_text, detail, control);
 }
 
-/// [`row_more`] with the help drawn by `help`.
+/// Whether the row drawn last was shown (a search can leave rows out); what belongs to a row
+/// beneath it (its seam, a list) is drawn only then.
+fn last_row_shown(ui: &Ui) -> bool {
+    let f = Filter::get(ui.ctx());
+    f.words.is_empty() || f.shown
+}
+
+/// [`row_more`] with the help drawn by `help`; `text` is what a search finds it by besides its
+/// title and detail. While searching, a row that does not match is not drawn at all.
 fn row_layout(
     ui: &mut Ui,
     title: &str,
+    text: &str,
     help: &dyn Fn(&mut Ui),
     detail: &str,
     control: impl FnOnce(&mut Ui),
 ) {
+    if !reveal(ui, title, &[text, detail]) {
+        return;
+    }
     let p = palette(ui.ctx());
     let m = theme::metrics();
+    let words = Filter::get(ui.ctx()).words;
     let width = ui.available_width();
     let more_id = ui.make_persistent_id(("settings-more", title));
     let mut open = !detail.is_empty()
@@ -475,11 +942,14 @@ fn row_layout(
             .unwrap_or(false);
     let label = |ui: &mut Ui, open: &mut bool| {
         ui.spacing_mut().item_spacing.y = theme::XS;
-        ui.label(
-            RichText::new(title)
-                .font(FontId::new(m.body_size, theme::semibold()))
-                .color(p.text),
-        );
+        ui.label(marked(
+            title,
+            &words,
+            &FontId::new(m.body_size, theme::semibold()),
+            p.text,
+            p.accent,
+            p.accent_tint(),
+        ));
         help(ui);
         if !detail.is_empty()
             && LinkButton::new(if *open { "Less" } else { "More" })
@@ -536,11 +1006,36 @@ fn row_layout(
     ui.ctx().data_mut(|d| d.insert_temp(more_id, open));
 }
 
-/// An uppercase group label over a few rows.
+/// An uppercase group label over a few rows. While searching it waits until a row under it
+/// matches (and when it matches the query itself, every row under it does).
 fn heading(ui: &mut Ui, text: &str) {
+    let mut f = Filter::get(ui.ctx());
+    if f.words.is_empty() {
+        heading_now(ui, text);
+        return;
+    }
+    f.group_matches = matches_all(&f.words, &[text]);
+    f.group = Some(text.to_owned());
+    Filter::set(ui.ctx(), f);
+}
+
+fn heading_now(ui: &mut Ui, text: &str) {
     ui.add_space(theme::XS);
     column_label(ui, text);
     ui.add_space(theme::MD);
+}
+
+/// Space before a group heading; none while searching, where the row above ends in a seam.
+fn group_gap(ui: &mut Ui, space: f32) {
+    if !Filter::searching(ui.ctx()) {
+        ui.add_space(space);
+    }
+}
+
+/// A part of a page that is not a row (theme cards, token cards, the version line): drawn
+/// always, or while searching when `title` or `text` matches.
+fn block(ui: &mut Ui, title: &str, text: &str) -> bool {
+    reveal(ui, title, &[text])
 }
 
 /// Lays `add` out in a `width`-wide column, so a kit field sits where a right-to-left row puts
@@ -671,29 +1166,11 @@ const COMMIT_PAGE: RangeInclusive<f64> = 200.0..=50_000.0;
 const COMMIT_PAGE_STEP: usize = 100;
 
 fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
-    let m = theme::metrics();
     heading(ui, "Theme");
-    // Whole cards per row, stretched to fill it, with a gutter clear of the scroll bar.
-    let gap = m.card_gap;
-    let usable = ui.available_width() - theme::LG;
-    let columns =
-        crate::ui::saturate_usize(((usable + gap) / (THEME_CARD_MIN + gap)).floor()).max(1);
-    let card_width = ((usable - gap * crate::ui::count_f32(columns - 1))
-        / crate::ui::count_f32(columns))
-    .clamp(THEME_CARD_MIN - 20.0, THEME_CARD_MAX);
-    ui.scope(|ui| {
-        ui.spacing_mut().item_spacing = vec2(gap, gap);
-        for themes in ThemeId::ALL.chunks(columns) {
-            ui.horizontal(|ui| {
-                for &t in themes {
-                    if theme_card(ui, t, s.theme == t, card_width).clicked() {
-                        s.theme = t;
-                    }
-                }
-            });
-        }
-    });
-    ui.add_space(theme::LG);
+    if block(ui, "Theme", "") {
+        theme_cards(ui, s);
+    }
+    group_gap(ui, theme::LG);
     heading(ui, "Look");
     row(
         ui,
@@ -752,15 +1229,15 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             .label("Motion")
             .show(ui);
     });
-    ui.add_space(theme::LG);
+    group_gap(ui, theme::LG);
     heading(ui, "Interface");
     row(
         ui,
         "Zoom",
         &format!(
             "Scales the whole interface. {} and {} also work.",
-            crate::keymap::hint(crate::keymap::Command::ZoomIn),
-            crate::keymap::hint(crate::keymap::Command::ZoomOut)
+            crate::keymap::hint(Command::ZoomIn),
+            crate::keymap::hint(Command::ZoomOut)
         ),
         |ui| {
             zoom_slider(ui, s, preview);
@@ -800,6 +1277,31 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             switch(ui, &mut s.show_avatars, "Author avatars");
         },
     );
+}
+
+/// The theme cards, whole cards per row.
+fn theme_cards(ui: &mut Ui, s: &mut Settings) {
+    let m = theme::metrics();
+    // Whole cards per row, stretched to fill it, with a gutter clear of the scroll bar.
+    let gap = m.card_gap;
+    let usable = ui.available_width() - theme::LG;
+    let columns =
+        crate::ui::saturate_usize(((usable + gap) / (THEME_CARD_MIN + gap)).floor()).max(1);
+    let card_width = ((usable - gap * crate::ui::count_f32(columns - 1))
+        / crate::ui::count_f32(columns))
+    .clamp(THEME_CARD_MIN - 20.0, THEME_CARD_MAX);
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing = vec2(gap, gap);
+        for themes in ThemeId::ALL.chunks(columns) {
+            ui.horizontal(|ui| {
+                for &t in themes {
+                    if theme_card(ui, t, s.theme == t, card_width).clicked() {
+                        s.theme = t;
+                    }
+                }
+            });
+        }
+    });
 }
 
 /// The zoom range and step.
@@ -1094,6 +1596,22 @@ const SELECT_WIDTH: f32 = 220.0;
 /// The width of the commits-per-page field between its steppers.
 const COUNT_FIELD_WIDTH: f32 = 96.0;
 
+/// What is wrong with the identity, or that it is still being read.
+fn identity_status(ui: &mut Ui, identity: Option<&Identity>, error: Option<&str>) {
+    let p = palette(ui.ctx());
+    if let Some(error) = error {
+        Callout::new(Tone::Warning, error).show(ui);
+        ui.add_space(theme::SM);
+    } else if let Some(identity) = identity {
+        if let Some(warning) = identity.warning() {
+            Callout::new(Tone::Warning, warning).show(ui);
+            ui.add_space(theme::SM);
+        }
+    } else {
+        ui.label(RichText::new("Reading Git identity…").color(p.text_dim));
+    }
+}
+
 fn identity_group(
     ui: &mut Ui,
     screen: &mut SettingsScreen,
@@ -1102,7 +1620,6 @@ fn identity_group(
     error: Option<&str>,
     actions: &mut Vec<Action>,
 ) {
-    let p = palette(ui.ctx());
     let repo_path = repo.map(Path::to_path_buf);
     if screen.identity_for != repo_path {
         screen.identity_scope = if repo.is_some() {
@@ -1128,16 +1645,9 @@ fn identity_group(
         screen.identity_email = identity.map_or_else(String::new, |i| chosen(&i.author.email));
     }
     heading(ui, "Identity for future commits");
-    if let Some(error) = error {
-        Callout::new(Tone::Warning, error).show(ui);
-        ui.add_space(theme::SM);
-    } else if let Some(identity) = identity {
-        if let Some(warning) = identity.warning() {
-            Callout::new(Tone::Warning, warning).show(ui);
-            ui.add_space(theme::SM);
-        }
-    } else {
-        ui.label(RichText::new("Reading Git identity…").color(p.text_dim));
+    // Status lines are not settings: a search shows only the rows.
+    if !Filter::searching(ui.ctx()) {
+        identity_status(ui, identity, error);
     }
     let current = |pick: fn(&Identity) -> &Field| {
         move |ui: &mut Ui| {
@@ -1146,7 +1656,7 @@ fn identity_group(
             }
         }
     };
-    row_layout(ui, "Name", &current(|i| &i.author.name), "", |ui| {
+    row_layout(ui, "Name", "", &current(|i| &i.author.name), "", |ui| {
         fixed_width(ui, FIELD_WIDTH, |ui| {
             TextField::new(&mut screen.identity_name)
                 .width(FIELD_WIDTH)
@@ -1156,7 +1666,7 @@ fn identity_group(
         });
     });
     row_end(ui);
-    row_layout(ui, "Email", &current(|i| &i.author.email), "", |ui| {
+    row_layout(ui, "Email", "", &current(|i| &i.author.email), "", |ui| {
         fixed_width(ui, FIELD_WIDTH, |ui| {
             TextField::new(&mut screen.identity_email)
                 .width(FIELD_WIDTH)
@@ -1250,7 +1760,7 @@ fn git(
         identity.error,
         actions,
     );
-    ui.add_space(theme::LG);
+    group_gap(ui, theme::LG);
     heading(ui, "Remote");
     row(
         ui,
@@ -1557,13 +2067,20 @@ fn accounts(
     forges: &[Forge],
     actions: &mut Vec<Action>,
 ) -> bool {
+    const ABOUT: &str = "Canopy uses a personal access token to list and act on pull/merge requests. Tokens are sent only to the host they belong to. Without one, Canopy falls back to GH_TOKEN / GITLAB_TOKEN and then to your git credential helper.";
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let mut changed = false;
-    help_label(
-        ui,
-        "Canopy uses a personal access token to list and act on pull/merge requests. Tokens are sent only to the host they belong to. Without one, Canopy falls back to GH_TOKEN / GITLAB_TOKEN and then to your git credential helper.",
-    );
+    let hosts_text = std::iter::once("github.com gitlab.com".to_owned())
+        .chain(settings.gitlab_host_list())
+        .chain(forges.iter().map(|f| f.host.clone()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // The page is one block: a search for any host or for tokens shows all of it.
+    if !block(ui, "Tokens", &format!("{ABOUT} {hosts_text}")) {
+        return false;
+    }
+    help_label(ui, ABOUT);
     if !settings.hosting_api {
         ui.add_space(theme::SM);
         Callout::new(
@@ -1735,7 +2252,6 @@ fn privacy(
 ) {
     use crate::ui::legal::Document;
     let p = palette(ui.ctx());
-    let m = theme::metrics();
     heading(ui, "Partial clones");
     row_more(
         ui,
@@ -1755,41 +2271,8 @@ fn privacy(
             }
         },
     );
-    ui.add_space(theme::XS);
-    let mut remove = None;
-    for (i, folder) in s.trusted_folders.iter().enumerate() {
-        ui.horizontal(|ui| {
-            if IconButton::new(icon::X, "Stop trusting this folder")
-                .size(Size::Sm)
-                .id_salt(("untrust-folder", i))
-                .show(ui)
-                .clicked()
-            {
-                remove = Some(i);
-            }
-            ui.add(
-                egui::Label::new(
-                    RichText::new(folder.display().to_string())
-                        .font(FontId::new(m.small_size, FontFamily::Monospace))
-                        .color(p.text_dim),
-                )
-                .truncate(),
-            )
-            .kit_tooltip(folder.display().to_string())
-            .show();
-        });
-    }
-    if let Some(i) = remove {
-        s.trusted_folders.remove(i);
-        // At once, not on the next frame: a download queued on a repository thread must see it.
-        crate::trust::set(&s.trusted_folders);
-    }
-    if s.trusted_folders.is_empty() {
-        ui.label(
-            RichText::new("No folder is trusted yet.")
-                .size(m.small_size)
-                .color(p.text_faint),
-        );
+    if last_row_shown(ui) {
+        trusted_folder_list(ui, s);
     }
     row_end(ui);
     heading(ui, "Profile pictures");
@@ -1820,7 +2303,11 @@ fn privacy(
         if before != Some(on) && (before.is_some() || on) {
             actions.push(Action::SetCrashReports(on));
         }
-    } else {
+    } else if block(
+        ui,
+        "Send crash reports",
+        "This build of Canopy cannot send crash reports.",
+    ) {
         ui.label(
             RichText::new("This build of Canopy cannot send crash reports.").color(p.text_dim),
         );
@@ -1908,7 +2395,77 @@ fn privacy(
     );
 }
 
+/// The trusted folders, each with a button that stops trusting it.
+fn trusted_folder_list(ui: &mut Ui, s: &mut Settings) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    ui.add_space(theme::XS);
+    let mut remove = None;
+    for (i, folder) in s.trusted_folders.iter().enumerate() {
+        ui.horizontal(|ui| {
+            if IconButton::new(icon::X, "Stop trusting this folder")
+                .size(Size::Sm)
+                .id_salt(("untrust-folder", i))
+                .show(ui)
+                .clicked()
+            {
+                remove = Some(i);
+            }
+            ui.add(
+                egui::Label::new(
+                    RichText::new(folder.display().to_string())
+                        .font(FontId::new(m.small_size, FontFamily::Monospace))
+                        .color(p.text_dim),
+                )
+                .truncate(),
+            )
+            .kit_tooltip(folder.display().to_string())
+            .show();
+        });
+    }
+    if let Some(i) = remove {
+        s.trusted_folders.remove(i);
+        // At once, not on the next frame: a download queued on a repository thread must see it.
+        crate::trust::set(&s.trusted_folders);
+    }
+    if s.trusted_folders.is_empty() {
+        ui.label(
+            RichText::new("No folder is trusted yet.")
+                .size(m.small_size)
+                .color(p.text_faint),
+        );
+    }
+}
+
 fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Vec<Action>) {
+    if block(ui, "Version", "Canopy") {
+        update_status(ui, s, update, actions);
+    }
+    if !Updater::enabled() {
+        return;
+    }
+    group_gap(ui, theme::XL);
+    heading(ui, "Preferences");
+    row(
+        ui,
+        "Check for updates",
+        "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
+        |ui| {
+            switch(ui, &mut s.check_updates, "Check for updates");
+        },
+    );
+    row(
+        ui,
+        "Include beta builds",
+        "Also offer beta builds, which are tried out less before they are published.",
+        |ui| {
+            switch(ui, &mut s.include_prereleases, "Include beta builds");
+        },
+    );
+}
+
+/// The running version, the last check's answer and the update actions.
+fn update_status(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     if !Updater::enabled() {
@@ -1986,27 +2543,37 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
             }
         });
     }
-    ui.add_space(theme::XL);
-    heading(ui, "Preferences");
-    row(
-        ui,
-        "Check for updates",
-        "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
-        |ui| {
-            switch(ui, &mut s.check_updates, "Check for updates");
-        },
-    );
-    row(
-        ui,
-        "Include beta builds",
-        "Also offer beta builds, which are tried out less before they are published.",
-        |ui| {
-            switch(ui, &mut s.include_prereleases, "Include beta builds");
-        },
-    );
+}
+
+/// How many rows the cheatsheet's list shows for `section` filtered by `query` (the same test
+/// `ui::cheatsheet` applies: the description or one of the keys contains the query).
+fn shortcut_matches(section: KeySection, query: &str) -> usize {
+    crate::keymap::BINDINGS
+        .iter()
+        .filter(|b| b.section == section && crate::keymap::listed_here(b))
+        .filter(|b| {
+            b.description.to_lowercase().contains(query)
+                || crate::keymap::all_keys(b.command)
+                    .iter()
+                    .any(|k| k.to_lowercase().contains(query))
+        })
+        .count()
 }
 
 fn keyboard(ui: &mut Ui) {
+    let words = Filter::get(ui.ctx()).words;
+    if !words.is_empty() {
+        // The shortcuts the cheatsheet's own filter finds for the whole query.
+        let query = words.join(" ");
+        for section in KeySection::ALL {
+            let found = shortcut_matches(section, &query);
+            if found > 0 {
+                reveal_rows(ui, found);
+                crate::ui::cheatsheet::rows(ui, section, &query);
+            }
+        }
+        return;
+    }
     ui.scope(|ui| {
         // Clear of the scrollbar, which floats over the list's right edge.
         ui.set_max_width(ui.available_width() - theme::MD);
@@ -2014,7 +2581,7 @@ fn keyboard(ui: &mut Ui) {
             ui,
             &format!(
                 "Press ? (or {}) anywhere for this list as an overlay. Single keys work when no text field has focus; Super is never used.",
-                crate::keymap::hint(crate::keymap::Command::Cheatsheet)
+                crate::keymap::hint(Command::Cheatsheet)
                     .split(" · ")
                     .next()
                     .unwrap_or_default()
@@ -2048,7 +2615,8 @@ mod tests {
                     row_layout(
                         ui,
                         "Name",
-                        &|ui| {
+                        "",
+                        &|ui: &mut Ui| {
                             help_bottom.set(ui.label("Used for future commits").rect.bottom());
                         },
                         "",
@@ -2222,6 +2790,124 @@ mod tests {
             );
         }
     }
+    /// Draws the whole screen for a few frames at 1280 x 800 and returns it.
+    fn draw_screen(mut screen: SettingsScreen, settings: &mut Settings) -> SettingsScreen {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let mut tokens = TokenStore::default();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(
+                        ui.ctx(),
+                        &mut screen,
+                        settings,
+                        &mut tokens,
+                        &SettingsData {
+                            forges: &[],
+                            update: &UpdateState::Idle,
+                            identity: IdentityView {
+                                repo: None,
+                                identity: None,
+                                error: None,
+                            },
+                        },
+                        &mut Vec::new(),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
+        screen
+    }
+
+    #[test]
+    fn a_search_finds_rows_by_title_help_synonym_and_section() {
+        let mut settings = Settings::default();
+        let found = |query: &str, settings: &mut Settings| {
+            draw_screen(SettingsScreen::searching(query), settings).search
+        };
+        // A synonym: nothing says "rebase" but the pull strategy and its shortcuts.
+        let rebase = found("rebase", &mut settings);
+        assert!(rebase.count(Section::Git) >= 1, "{rebase:?}");
+        assert_eq!(rebase.count(Section::Appearance), 0, "{rebase:?}");
+        // Help text, any case, words in any order.
+        let terminal = found("TERMINAL here", &mut settings);
+        assert_eq!(terminal.count(Section::Integrations), 1, "{terminal:?}");
+        // The theme cards are found by a theme's name.
+        let paper = found("paper", &mut settings);
+        assert_eq!(paper.count(Section::Appearance), 1, "{paper:?}");
+        // A section's name finds all of its rows.
+        let updates = found("updates", &mut settings);
+        assert!(updates.count(Section::Updates) >= 3, "{updates:?}");
+        // Shortcuts are searched like the cheatsheet does.
+        let push = found("push", &mut settings);
+        assert!(push.count(Section::Keyboard) >= 1, "{push:?}");
+        // Every word must match.
+        let none = found("theme rebase", &mut settings);
+        assert_eq!(none.total(), 0, "{none:?}");
+        assert_eq!(found("qqqzzz", &mut settings).total(), 0);
+    }
+
+    #[test]
+    fn escape_clears_a_search_before_it_closes_settings() {
+        let mut screen = SettingsScreen::searching("zoom");
+        assert!(
+            screen.dismiss_search(),
+            "the first Escape clears the search"
+        );
+        assert_eq!(screen.search.query, "");
+        assert!(
+            !screen.dismiss_search(),
+            "with nothing searched, Escape closes"
+        );
+        let mut blank = SettingsScreen::searching("   ");
+        assert!(!blank.dismiss_search(), "spaces are not a search");
+    }
+
+    #[test]
+    fn found_words_are_marked_in_titles() {
+        let font = FontId::proportional(13.0);
+        let mark = Color32::RED;
+        let job = marked(
+            "Pull strategy",
+            &search_words("PULL str"),
+            &font,
+            Color32::WHITE,
+            Color32::BLUE,
+            mark,
+        );
+        let parts: Vec<(&str, bool)> = job
+            .sections
+            .iter()
+            .map(|s| {
+                (
+                    job.text
+                        .get(s.byte_range.start.0..s.byte_range.end.0)
+                        .unwrap_or_default(),
+                    s.format.background == mark,
+                )
+            })
+            .collect();
+        assert_eq!(
+            parts,
+            [
+                ("Pull", true),
+                (" ", false),
+                ("str", true),
+                ("ategy", false)
+            ]
+        );
+        let none = marked("Zoom", &[], &font, Color32::WHITE, Color32::BLUE, mark);
+        assert_eq!(none.sections.len(), 1);
+        assert_eq!(none.text, "Zoom");
+    }
+
     /// qa-b F13: at 1024 x 700 the shell covered the title bar's tab strip and the status bar.
     #[test]
     fn the_shell_stays_clear_of_the_tab_strip_and_the_status_bar() {

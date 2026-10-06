@@ -8,6 +8,11 @@ impl CanopyApp {
         let modal =
             self.dialogs.current().is_some() || self.settings_screen.is_some() || self.palette.open;
         let overlay = modal || self.cheatsheet.open;
+        // Settings on top of everything: its search takes the find shortcut.
+        let settings_on_top = self.settings_screen.is_some()
+            && self.dialogs.current().is_none()
+            && !self.palette.open
+            && !self.cheatsheet.open;
         let search_open = self
             .tabs
             .get(self.active)
@@ -20,7 +25,9 @@ impl CanopyApp {
                 return overlay || search_open;
             }
             if modal {
-                return false;
+                return settings_on_top
+                    && b.command == Command::Filter
+                    && (!b.section.is_bare() || !typing);
             }
             if b.command == Command::CloseTab {
                 // Ctrl+W while typing a commit message must not throw the draft away.
@@ -58,13 +65,17 @@ impl CanopyApp {
                 } else if self.dialogs.current().is_some() {
                     // The consent stays (it must be answered); a credential prompt is declined.
                     self.dialogs.dismiss();
+                } else if let Some(screen) = self.settings_screen.as_mut() {
+                    // Settings covers the history search: a search in Settings is cleared
+                    // first, and the next Escape closes Settings.
+                    if !screen.dismiss_search() {
+                        self.settings_screen = None;
+                    }
                 } else if let Some(tab) = self.tab()
                     && tab.view == View::History
                     && tab.history_filter_open
                 {
                     tab.close_history_filter(ctx);
-                } else {
-                    self.settings_screen = None;
                 }
             }
             C::Open => actions.push(Action::OpenDialog(Dialog::open())),
@@ -114,6 +125,11 @@ impl CanopyApp {
             C::Commit => {
                 if view == Some(View::Changes) {
                     actions.push(Action::Commit);
+                }
+            }
+            C::Filter if self.settings_screen.is_some() => {
+                if let Some(screen) = self.settings_screen.as_mut() {
+                    screen.focus_search();
                 }
             }
             C::Filter => {
