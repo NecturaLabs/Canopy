@@ -56,12 +56,241 @@ impl Budget {
     }
 }
 
+/// How long lookups wait after the provider or picture host could not be reached.
+const RETRY_UNREACHABLE_SECS: i64 = 10 * 60;
+/// Commits of one author tried before giving up on them for the session, when the host has none
+/// of them (they were never pushed there).
+const MAX_UNKNOWN_COMMITS: u8 = 3;
+
+/// Why a repository's pictures stopped, when the cause is the repository or the token rather
+/// than any author. It holds until the tab's hosting thread restarts (a new token, a new remote,
+/// the next start), and no author is marked as having no picture because of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Blocked {
+    /// HTTP 404 for the repository itself. GitHub: private, and the token (or its absence) cannot
+    /// see it. GitLab: the server has no picture lookup.
+    NotFound,
+    /// HTTP 401, or a 403 that is not a rate limit, with the server's message.
+    Refused(String),
+    /// A redirect: the repository was renamed or moved, so the remote URL is out of date.
+    Moved,
+}
+
+/// What a finished lookup says about the repository rather than the author.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Note {
+    /// The host does not have the commit asked about; another commit by the author may work.
+    UnknownCommit,
+    Blocked(Blocked),
+    /// The provider or the picture host could not be reached, or answered with a server error.
+    Unreachable,
+}
+
+/// Why lookups are waiting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pause {
+    /// The provider's request limit, or the share of it pictures may use, is spent.
+    Limit,
+    Unreachable,
+}
+
+/// Where a tab's pictures stand, for telling the user why authors show initials.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "views adopt it: contracts/avatars.md")
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status<'a> {
+    /// Lookups run when an author is due (or nothing has been asked yet).
+    Working,
+    Blocked(&'a Blocked),
+    /// No lookup before `until` (unix seconds).
+    Paused {
+        why: Pause,
+        until: i64,
+    },
+}
+
+/// What decides whether the active repository's authors can have pictures.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "views adopt it: contracts/avatars.md")
+)]
+#[derive(Debug, Clone, Copy)]
+pub struct Situation<'a> {
+    /// Settings → Appearance → Author avatars. Off, no avatar is drawn and there is nothing to
+    /// explain.
+    pub show_avatars: bool,
+    /// Settings → Privacy → Download profile pictures.
+    pub download: bool,
+    /// Settings → Integrations → Pull and merge requests (pictures use the same API).
+    pub hosting_api: bool,
+    /// The Terms, the Privacy Policy and the crash question are answered.
+    pub consented: bool,
+    /// The provider of the repository's main GitHub or GitLab remote, if it has one.
+    pub forge: Option<canopy_core::forge::ForgeKind>,
+    /// Whether the hosting thread found a token; `None` until it has said.
+    pub token: Option<bool>,
+    pub status: Status<'a>,
+}
+
+/// Where in Settings the user can change what keeps pictures away.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "views adopt it: contracts/avatars.md")
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fix {
+    /// Add or replace the provider's token.
+    Accounts,
+    /// Turn Pull and merge requests on.
+    Integrations,
+    /// Turn Download profile pictures on.
+    Privacy,
+}
+
+/// Why authors show initials instead of pictures, in words for the user.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "views adopt it: contracts/avatars.md")
+)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Explanation {
+    /// A few words, for a tooltip's first line or a row label.
+    pub title: &'static str,
+    /// One or two sentences: the cause and what to do.
+    pub detail: String,
+    pub fix: Option<Fix>,
+}
+
+/// Why the active repository's authors show initials, or `None` when nothing keeps pictures
+/// away (they are loading, cached or the authors have none) or there is nothing to tell.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the views adopt it through contracts/avatars.md")
+)]
+pub fn explain(s: &Situation<'_>, now: i64) -> Option<Explanation> {
+    use canopy_core::forge::ForgeKind;
+    if !s.show_avatars || !s.consented {
+        return None;
+    }
+    let off = |detail: &str, fix| {
+        Some(Explanation {
+            title: "Profile pictures are off",
+            detail: detail.to_owned(),
+            fix: Some(fix),
+        })
+    };
+    if !s.hosting_api {
+        return off(
+            "Pictures come from the repository's GitHub or GitLab API, which is off in Settings → Integrations.",
+            Fix::Integrations,
+        );
+    }
+    if !s.download {
+        return off(
+            "Download profile pictures is off in Settings → Privacy.",
+            Fix::Privacy,
+        );
+    }
+    let Some(kind) = s.forge else {
+        return Some(Explanation {
+            title: "No GitHub or GitLab remote",
+            detail:
+                "Pictures come from GitHub or GitLab, and this repository has no remote on either."
+                    .into(),
+            fix: None,
+        });
+    };
+    let provider = kind.name();
+    let token = s.token == Some(true);
+    match s.status {
+        Status::Working => None,
+        Status::Blocked(Blocked::NotFound) if kind == ForgeKind::GitLab => Some(Explanation {
+            title: "No picture lookup on this server",
+            detail: "This GitLab server does not answer profile picture lookups.".into(),
+            fix: None,
+        }),
+        Status::Blocked(Blocked::NotFound) if token => Some(Explanation {
+            title: "Token can't see this repository",
+            detail: format!(
+                "The {provider} token Canopy uses cannot see this repository. Use a token with access to it in Settings → Accounts."
+            ),
+            fix: Some(Fix::Accounts),
+        }),
+        Status::Blocked(Blocked::NotFound) => Some(Explanation {
+            title: "Private repository",
+            detail: format!(
+                "{provider} shows who wrote these commits only to an account that can see this repository. Add a {provider} token in Settings → Accounts."
+            ),
+            fix: Some(Fix::Accounts),
+        }),
+        Status::Blocked(Blocked::Refused(message)) if !token => Some(Explanation {
+            title: "Sign-in required",
+            detail: format!(
+                "{provider} answered: {}. Add a {provider} token in Settings → Accounts.",
+                message.trim_end_matches('.')
+            ),
+            fix: Some(Fix::Accounts),
+        }),
+        Status::Blocked(Blocked::Refused(message)) => Some(Explanation {
+            title: "Token refused",
+            detail: format!(
+                "{provider} refused the token: {}. Replace it in Settings → Accounts.",
+                message.trim_end_matches('.')
+            ),
+            fix: Some(Fix::Accounts),
+        }),
+        Status::Blocked(Blocked::Moved) => Some(Explanation {
+            title: "Repository moved",
+            detail: format!(
+                "{provider} says this repository was renamed or moved. Update the remote's URL to show pictures."
+            ),
+            fix: None,
+        }),
+        Status::Paused { why, until } => {
+            let minutes = (until - now).max(60).div_euclid(60);
+            let when = if minutes <= 1 {
+                "in a minute".to_owned()
+            } else {
+                format!("in {minutes} minutes")
+            };
+            Some(match why {
+                Pause::Unreachable => Explanation {
+                    title: "Can't reach the picture service",
+                    detail: format!("Canopy will try again {when}."),
+                    fix: None,
+                },
+                Pause::Limit if !token => Explanation {
+                    title: "Picture lookups paused",
+                    detail: format!(
+                        "{provider}'s hourly request limit for pictures is used up; lookups resume {when}. A {provider} token in Settings → Accounts raises the limit."
+                    ),
+                    fix: Some(Fix::Accounts),
+                },
+                Pause::Limit => Explanation {
+                    title: "Picture lookups paused",
+                    detail: format!(
+                        "{provider}'s hourly request limit for pictures is used up; lookups resume {when}."
+                    ),
+                    fix: None,
+                },
+            })
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Avatars {
     pub enabled: bool,
     pictures: HashMap<String, Picture>,
     pending: Option<(Oid, String)>,
     retry_after: i64,
+    paused: Option<Pause>,
+    blocked: Option<Blocked>,
+    /// Commits the host does not have, and how many of each author's were tried.
+    unknown_commits: std::collections::HashSet<Oid>,
+    unknown_by_author: HashMap<String, u8>,
     /// Counts uses, to find the least recently shown picture.
     clock: Cell<u64>,
 }
@@ -114,12 +343,40 @@ impl Avatars {
 
     fn wants(&self, email: &str, now: i64) -> bool {
         self.enabled
+            && self.blocked.is_none()
             && now >= self.retry_after
             && self.pending.is_none()
+            && self
+                .unknown_by_author
+                .get(email)
+                .is_none_or(|tried| *tried < MAX_UNKNOWN_COMMITS)
             && !self
                 .pictures
                 .get(email)
                 .is_some_and(|p| fresh(p.checked_at, now))
+    }
+
+    /// Where this tab's pictures stand, for explaining missing ones ([`explain`]).
+    #[expect(dead_code, reason = "the views adopt it through contracts/avatars.md")]
+    pub fn status(&self) -> Status<'_> {
+        self.status_at(chrono::Utc::now().timestamp())
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "views adopt it: contracts/avatars.md")
+    )]
+    fn status_at(&self, now: i64) -> Status<'_> {
+        if let Some(blocked) = &self.blocked {
+            return Status::Blocked(blocked);
+        }
+        match self.paused {
+            Some(why) if now < self.retry_after => Status::Paused {
+                why,
+                until: self.retry_after,
+            },
+            _ => Status::Working,
+        }
     }
 
     pub fn request(&mut self, oid: Oid, email: &str) -> bool {
@@ -127,7 +384,7 @@ impl Avatars {
     }
 
     fn request_at(&mut self, oid: Oid, email: &str, now: i64) -> bool {
-        if !self.wants(email, now) {
+        if !self.wants(email, now) || self.unknown_commits.contains(&oid) {
             return false;
         }
         self.pending = Some((oid, email.to_owned()));
@@ -141,6 +398,22 @@ impl Avatars {
         self.pending = None;
         if let Some(at) = result.retry_at {
             self.retry_after = at;
+        }
+        self.paused = result.retry_at.map(|_| {
+            if result.note == Some(Note::Unreachable) {
+                Pause::Unreachable
+            } else {
+                Pause::Limit
+            }
+        });
+        match result.note {
+            Some(Note::UnknownCommit) => {
+                self.unknown_commits.insert(oid);
+                let tried = self.unknown_by_author.entry(email.clone()).or_default();
+                *tried = tried.saturating_add(1);
+            }
+            Some(Note::Blocked(blocked)) => self.blocked = Some(blocked),
+            Some(Note::Unreachable) | None => {}
         }
         if !self.pictures.contains_key(&email) && self.pictures.len() >= MAX_PICTURES {
             let oldest = self
@@ -185,8 +458,10 @@ pub struct Cached {
     pub image: Option<ColorImage>,
     pub checked_at: i64,
     /// Do not ask a provider again before this time (unix seconds): its limit, or the share of
-    /// it pictures may use, is spent.
+    /// it pictures may use, is spent, or it could not be reached.
     pub retry_at: Option<i64>,
+    /// What the lookup found out about the repository rather than the author.
+    pub note: Option<Note>,
 }
 
 /// The answer for a lookup that could not even be handed to a picture thread.
@@ -195,6 +470,7 @@ pub fn unavailable(now: i64) -> Cached {
         image: None,
         checked_at: 0,
         retry_at: Some(now + HOUR_SECS),
+        note: None,
     }
 }
 
@@ -235,6 +511,9 @@ fn write_record(path: &Path, record: &Record) -> std::io::Result<()> {
 enum Miss {
     /// Nothing was asked: pictures were switched off, or the tab went to the background.
     Skipped,
+    /// The answer was about the repository or the commit, not the author ([`Note`]): the record
+    /// is left as it was.
+    Kept,
     Failed,
     /// The provider's limit, or the share of it pictures may use, is spent until this time. The
     /// author is not at fault, so the record is left as it was and stays due.
@@ -299,7 +578,9 @@ fn load_at(
     let now = chrono::Utc::now().timestamp();
     let old = path.as_deref().and_then(read_record);
     let due = old.as_ref().is_none_or(|r| !fresh(r.checked_at, now));
+    let mut note = None;
     let (record, retry_at) = refresh(old, now, || {
+        use canopy_hosting::Error;
         if !enabled.load(Ordering::SeqCst) {
             return Err(Miss::Skipped);
         }
@@ -308,26 +589,58 @@ fn load_at(
         } else {
             LOOKUPS_PER_HOUR_ANONYMOUS
         };
-        BUDGET
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take(now, limit)
-            .map_err(Miss::Later)?;
-        let avatar = client
-            .author_avatar(&oid.to_string(), email)
-            .map_err(|e| match e {
-                canopy_hosting::Error::RateLimited { reset } => Miss::Later(
+        let take = || {
+            BUDGET
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take(now, limit)
+        };
+        take().map_err(Miss::Later)?;
+        let unreachable = |note: &mut Option<Note>| {
+            *note = Some(Note::Unreachable);
+            Miss::Later(now + RETRY_UNREACHABLE_SECS)
+        };
+        let avatar = client.author_avatar(&oid.to_string(), email).map_err(|e| {
+            if matches!(e, Error::NotFound(_)) || canopy_hosting::avatars::is_unknown_commit(&e) {
+                // GitHub asked for the repository too, to tell these apart.
+                let _ = take();
+            }
+            match e {
+                Error::RateLimited { reset } => Miss::Later(
                     reset.map_or(now + HOUR_SECS, |at| at.clamp(now + 60, now + CACHE_SECS)),
                 ),
-                _ => Miss::Failed,
-            })?;
+                Error::Network(_) => unreachable(&mut note),
+                Error::Api { status, .. } if status >= 500 => unreachable(&mut note),
+                e if canopy_hosting::avatars::is_unknown_commit(&e) => {
+                    note = Some(Note::UnknownCommit);
+                    Miss::Kept
+                }
+                Error::NotFound(_) => {
+                    note = Some(Note::Blocked(Blocked::NotFound));
+                    Miss::Kept
+                }
+                Error::Unauthorized(message) => {
+                    note = Some(Note::Blocked(Blocked::Refused(message)));
+                    Miss::Kept
+                }
+                Error::Api { status, .. } if (300..400).contains(&status) => {
+                    note = Some(Note::Blocked(Blocked::Moved));
+                    Miss::Kept
+                }
+                Error::Api { .. } | Error::Parse(_) => Miss::Failed,
+            }
+        })?;
         if !enabled.load(Ordering::SeqCst) {
             return Err(Miss::Skipped);
         }
         let Some(avatar) = avatar else {
             return Err(Miss::Failed);
         };
-        let bytes = avatar.download().map_err(|_| Miss::Failed)?;
+        let bytes = avatar.download().map_err(|e| match e {
+            Error::Network(_) => unreachable(&mut note),
+            Error::Api { status, .. } if status >= 500 => unreachable(&mut note),
+            _ => Miss::Failed,
+        })?;
         let image = decode(&bytes).map_err(|_| Miss::Failed)?;
         Ok(image
             .pixels
@@ -349,11 +662,12 @@ fn load_at(
             .map(|pixels| ColorImage::from_rgba_premultiplied([64, 64], &pixels)),
         checked_at: record.checked_at,
         retry_at,
+        note,
     }
 }
 
-/// The record after one due refresh, and when to ask a provider again if it was out of requests.
-/// A skipped or postponed refresh changes nothing, so the author stays due.
+/// The record after one due refresh, and when to ask a provider again if it was out of requests
+/// or unreachable. A skipped, kept or postponed refresh changes nothing, so the author stays due.
 fn refresh(
     old: Option<Record>,
     now: i64,
@@ -369,7 +683,7 @@ fn refresh(
             record.checked_at = now;
             (record, None)
         }
-        Err(Miss::Skipped) => (record, None),
+        Err(Miss::Skipped | Miss::Kept) => (record, None),
         Err(Miss::Later(at)) => (record, Some(at)),
         Err(Miss::Failed) => {
             record.checked_at = now;
@@ -460,6 +774,7 @@ mod tests {
                 image: None,
                 checked_at: 100,
                 retry_at: None,
+                note: None,
             },
         );
         assert!(!pictures.request_at(oid, "a@example.com", 100 + CACHE_SECS - 1));
@@ -547,6 +862,7 @@ mod tests {
                 image: None,
                 checked_at: 0,
                 retry_at: Some(now + 5000),
+                note: None,
             },
         );
         assert!(!pictures.wants("a@example.com", now + 4999));
@@ -569,6 +885,7 @@ mod tests {
                     image: None,
                     checked_at: 100,
                     retry_at: None,
+                    note: None,
                 },
             );
         };
@@ -635,5 +952,516 @@ mod tests {
             .unwrap();
         decode(bytes.get_ref()).unwrap_err();
         decode(&vec![0; 2 * 1024 * 1024 + 1]).unwrap_err();
+    }
+
+    /// A stand-in for GitHub's API and picture host on 127.0.0.1: answers each request from a
+    /// table keyed by the exact target, else by its path, else 404 like GitHub.
+    struct Stub {
+        base: String,
+        routes: Routes,
+    }
+
+    /// Canned answers by request target: status and body.
+    type Routes = std::sync::Arc<Mutex<HashMap<String, (u16, Vec<u8>)>>>;
+
+    impl Stub {
+        fn start() -> Self {
+            use std::io::{BufRead, BufReader, Write};
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let routes = Routes::default();
+            let table = std::sync::Arc::clone(&routes);
+            std::thread::spawn(move || {
+                for stream in listener.incoming().flatten() {
+                    let mut reader = BufReader::new(&stream);
+                    let mut line = String::new();
+                    let _ = reader.read_line(&mut line);
+                    let target = line
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or_default()
+                        .to_owned();
+                    loop {
+                        let mut header = String::new();
+                        if reader.read_line(&mut header).unwrap_or(0) == 0
+                            || header.trim().is_empty()
+                        {
+                            break;
+                        }
+                    }
+                    let path = target.split('?').next().unwrap_or_default();
+                    let (status, body) = {
+                        let table = table.lock().unwrap();
+                        table
+                            .get(&target)
+                            .or_else(|| table.get(path))
+                            .cloned()
+                            .unwrap_or((404, br#"{"message":"Not Found"}"#.to_vec()))
+                    };
+                    let mut out = &stream;
+                    let _ = write!(
+                        out,
+                        "HTTP/1.1 {status} Stub\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = out.write_all(&body);
+                }
+            });
+            Self { base, routes }
+        }
+
+        fn route(&self, target: &str, status: u16, body: impl Into<Vec<u8>>) {
+            self.routes
+                .lock()
+                .unwrap()
+                .insert(target.to_owned(), (status, body.into()));
+        }
+
+        fn client(&self, token: Option<&str>) -> canopy_hosting::Client {
+            let forge = canopy_core::forge::Forge::parse("https://github.com/octo/hello", &[])
+                .expect("github forge");
+            canopy_hosting::Client::with_api_base(&forge, token.map(str::to_owned), &self.base)
+        }
+
+        /// Serves a real PNG at `/picture.png` as `sha`'s author picture.
+        fn picture_for(&self, sha: &str) {
+            let mut png = Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(8, 8)
+                .write_to(&mut png, image::ImageFormat::Png)
+                .unwrap();
+            self.route("/picture.png", 200, png.into_inner());
+            let commits = serde_json::json!([{
+                "sha": sha,
+                "author": {"avatar_url": format!("{}/picture.png", self.base)},
+            }]);
+            self.route(
+                &format!("/repos/octo/hello/commits?sha={sha}&per_page=1"),
+                200,
+                commits.to_string(),
+            );
+        }
+    }
+
+    const PUSHED: &str = "1111111111111111111111111111111111111111";
+    const UNPUSHED: &str = "2222222222222222222222222222222222222222";
+
+    #[test]
+    fn a_repository_hidden_without_a_token_marks_no_author_and_a_token_brings_pictures() {
+        let stub = Stub::start();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("picture.json");
+        let oid = Oid::from_str(PUSHED).unwrap();
+        let on = AtomicBool::new(true);
+        // A private repository without a token: GitHub answers 404 for the repository itself.
+        let hidden = load_at(
+            Some(path.clone()),
+            &stub.client(None),
+            oid,
+            "a@example.com",
+            &on,
+        );
+        assert!(hidden.image.is_none());
+        assert!(
+            !path.exists(),
+            "the author is not at fault, so no 12-hour negative record is written"
+        );
+
+        // With a token that can see it, the same author's picture arrives at once.
+        stub.route("/repos/octo/hello", 200, "{}");
+        stub.picture_for(PUSHED);
+        let shown = load_at(
+            Some(path),
+            &stub.client(Some("t")),
+            oid,
+            "a@example.com",
+            &on,
+        );
+        assert!(shown.image.is_some());
+    }
+
+    #[test]
+    fn a_commit_not_pushed_yet_does_not_hide_its_authors_picture() {
+        let stub = Stub::start();
+        stub.route("/repos/octo/hello", 200, "{}");
+        stub.picture_for(PUSHED);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("picture.json");
+        let on = AtomicBool::new(true);
+        let client = stub.client(Some("t"));
+        let unpushed = load_at(
+            Some(path.clone()),
+            &client,
+            Oid::from_str(UNPUSHED).unwrap(),
+            "me@example.com",
+            &on,
+        );
+        assert!(unpushed.image.is_none());
+        assert!(
+            !path.exists(),
+            "an unknown commit says nothing about its author"
+        );
+        let pushed = load_at(
+            Some(path),
+            &client,
+            Oid::from_str(PUSHED).unwrap(),
+            "me@example.com",
+            &on,
+        );
+        assert!(
+            pushed.image.is_some(),
+            "the author's pushed commit finds the picture"
+        );
+    }
+
+    #[test]
+    fn being_offline_postpones_lookups_instead_of_caching_a_failure() {
+        // A port nothing listens on: the connection is refused.
+        let closed = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://{}", listener.local_addr().unwrap())
+        };
+        let forge = canopy_core::forge::Forge::parse("https://github.com/octo/hello", &[])
+            .expect("github forge");
+        let client = canopy_hosting::Client::with_api_base(&forge, Some("t".into()), &closed);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("picture.json");
+        let offline = load_at(
+            Some(path.clone()),
+            &client,
+            Oid::from_str(PUSHED).unwrap(),
+            "a@example.com",
+            &AtomicBool::new(true),
+        );
+        assert!(offline.image.is_none());
+        assert!(
+            !path.exists(),
+            "nothing was looked up, so nothing is cached"
+        );
+        assert!(
+            offline.retry_at.is_some(),
+            "the tab waits before it asks again instead of asking every frame"
+        );
+        assert_eq!(offline.note, Some(Note::Unreachable));
+    }
+
+    #[test]
+    fn the_lookup_says_whether_the_repository_or_the_commit_is_at_fault() {
+        let stub = Stub::start();
+        let on = AtomicBool::new(true);
+        let dir = tempfile::tempdir().unwrap();
+        let oid = Oid::from_str(UNPUSHED).unwrap();
+        let note = |client: &canopy_hosting::Client| {
+            load_at(
+                Some(dir.path().join("p.json")),
+                client,
+                oid,
+                "a@example.com",
+                &on,
+            )
+            .note
+        };
+        assert_eq!(
+            note(&stub.client(None)),
+            Some(Note::Blocked(Blocked::NotFound))
+        );
+        stub.route(
+            "/repos/octo/hello/commits",
+            401,
+            r#"{"message":"Bad credentials"}"#,
+        );
+        assert_eq!(
+            note(&stub.client(Some("t"))),
+            Some(Note::Blocked(Blocked::Refused("Bad credentials".into())))
+        );
+        stub.route(
+            "/repos/octo/hello/commits",
+            301,
+            r#"{"message":"Moved Permanently"}"#,
+        );
+        assert_eq!(
+            note(&stub.client(Some("t"))),
+            Some(Note::Blocked(Blocked::Moved))
+        );
+        stub.route("/repos/octo/hello/commits", 502, "Bad gateway");
+        assert_eq!(note(&stub.client(Some("t"))), Some(Note::Unreachable));
+        stub.route(
+            "/repos/octo/hello/commits",
+            404,
+            r#"{"message":"Not Found"}"#,
+        );
+        stub.route("/repos/octo/hello", 200, "{}");
+        assert_eq!(note(&stub.client(Some("t"))), Some(Note::UnknownCommit));
+        // An author without an account is the author's own answer: cached, with no note.
+        stub.route(
+            "/repos/octo/hello/commits",
+            200,
+            format!(r#"[{{"sha":"{UNPUSHED}","author":null}}]"#),
+        );
+        let path = dir.path().join("p.json");
+        let none = load_at(
+            Some(path.clone()),
+            &stub.client(Some("t")),
+            oid,
+            "a@example.com",
+            &on,
+        );
+        assert_eq!(none.note, None);
+        assert!(
+            none.image.is_none() && path.exists(),
+            "a real miss is cached for 12 hours"
+        );
+    }
+
+    fn finish_with(pictures: &mut Avatars, oid: Oid, email: &str, now: i64, result: Cached) {
+        assert!(pictures.request_at(oid, email, now), "{email} is due");
+        pictures.finish(&egui::Context::default(), oid, email.to_owned(), result);
+    }
+
+    fn kept(note: Note, retry_at: Option<i64>) -> Cached {
+        Cached {
+            image: None,
+            checked_at: 0,
+            retry_at,
+            note: Some(note),
+        }
+    }
+
+    /// A realistic time: the tab state treats a never-checked author (checked at 0) as due.
+    const T0: i64 = 1_800_000_000;
+
+    #[test]
+    fn a_blocked_repository_stops_every_lookup_until_the_thread_restarts() {
+        let mut pictures = Avatars::default();
+        pictures.set_enabled(true);
+        let oid = Oid::from_str(PUSHED).unwrap();
+        assert_eq!(pictures.status_at(T0), Status::Working);
+        finish_with(
+            &mut pictures,
+            oid,
+            "a@example.com",
+            T0,
+            kept(Note::Blocked(Blocked::NotFound), None),
+        );
+        assert_eq!(pictures.status_at(T0), Status::Blocked(&Blocked::NotFound));
+        assert!(!pictures.wants("b@example.com", T0));
+        assert!(!pictures.wants("a@example.com", T0 + 2 * CACHE_SECS));
+        // A new token or remote restarts the hosting thread with a fresh tab state
+        // (`RepoTab::ensure_host`), and lookups start again.
+        let mut pictures = Avatars::default();
+        pictures.set_enabled(true);
+        assert!(pictures.wants("a@example.com", T0));
+    }
+
+    #[test]
+    fn an_unknown_commit_is_skipped_and_the_authors_next_commit_is_tried() {
+        let mut pictures = Avatars::default();
+        pictures.set_enabled(true);
+        let commit = |n: u8| Oid::from_str(&format!("{n:02x}").repeat(20)).unwrap();
+        finish_with(
+            &mut pictures,
+            commit(1),
+            "me@example.com",
+            T0,
+            kept(Note::UnknownCommit, None),
+        );
+        assert_eq!(pictures.status_at(T0), Status::Working);
+        assert!(
+            !pictures.request_at(commit(1), "me@example.com", T0 + 1),
+            "the same commit is not asked about again"
+        );
+        assert!(
+            pictures.wants("other@example.com", T0 + 1),
+            "other authors carry on"
+        );
+        finish_with(
+            &mut pictures,
+            commit(2),
+            "me@example.com",
+            T0 + 1,
+            kept(Note::UnknownCommit, None),
+        );
+        finish_with(
+            &mut pictures,
+            commit(3),
+            "me@example.com",
+            T0 + 2,
+            kept(Note::UnknownCommit, None),
+        );
+        assert!(
+            !pictures.wants("me@example.com", T0 + 3),
+            "after {MAX_UNKNOWN_COMMITS} unpushed commits the author waits for the next session"
+        );
+        assert!(pictures.wants("other@example.com", T0 + 3));
+    }
+
+    #[test]
+    fn an_unreachable_service_pauses_lookups_and_a_success_resumes_them() {
+        let mut pictures = Avatars::default();
+        pictures.set_enabled(true);
+        let oid = Oid::from_str(PUSHED).unwrap();
+        let until = T0 + RETRY_UNREACHABLE_SECS;
+        finish_with(
+            &mut pictures,
+            oid,
+            "a@example.com",
+            T0,
+            kept(Note::Unreachable, Some(until)),
+        );
+        assert_eq!(
+            pictures.status_at(T0),
+            Status::Paused {
+                why: Pause::Unreachable,
+                until
+            }
+        );
+        assert!(!pictures.wants("a@example.com", until - 1));
+        assert_eq!(pictures.status_at(until), Status::Working);
+        finish_with(
+            &mut pictures,
+            oid,
+            "a@example.com",
+            until,
+            Cached {
+                image: Some(ColorImage::new([64, 64], vec![egui::Color32::RED; 64 * 64])),
+                checked_at: until,
+                retry_at: None,
+                note: None,
+            },
+        );
+        assert_eq!(pictures.status_at(until), Status::Working);
+        assert!(pictures.get("a@example.com").is_some());
+    }
+
+    #[test]
+    fn missing_pictures_are_explained_with_the_setting_that_brings_them() {
+        use canopy_core::forge::ForgeKind;
+        let refused = Blocked::Refused("Bad credentials.".into());
+        let base = Situation {
+            show_avatars: true,
+            download: true,
+            hosting_api: true,
+            consented: true,
+            forge: Some(ForgeKind::GitHub),
+            token: Some(false),
+            status: Status::Working,
+        };
+        let why = |s: Situation<'_>| explain(&s, 1000).map(|e| (e.title, e.fix));
+        assert_eq!(why(base), None, "working: nothing to explain");
+        assert_eq!(
+            why(Situation {
+                show_avatars: false,
+                hosting_api: false,
+                ..base
+            }),
+            None
+        );
+        assert_eq!(
+            why(Situation {
+                consented: false,
+                ..base
+            }),
+            None
+        );
+        assert_eq!(
+            why(Situation {
+                hosting_api: false,
+                ..base
+            }),
+            Some(("Profile pictures are off", Some(Fix::Integrations)))
+        );
+        assert_eq!(
+            why(Situation {
+                download: false,
+                ..base
+            }),
+            Some(("Profile pictures are off", Some(Fix::Privacy)))
+        );
+        assert_eq!(
+            why(Situation {
+                forge: None,
+                ..base
+            }),
+            Some(("No GitHub or GitLab remote", None))
+        );
+        let hidden = Situation {
+            status: Status::Blocked(&Blocked::NotFound),
+            ..base
+        };
+        assert_eq!(
+            why(hidden),
+            Some(("Private repository", Some(Fix::Accounts)))
+        );
+        assert_eq!(
+            why(Situation {
+                token: Some(true),
+                ..hidden
+            }),
+            Some(("Token can't see this repository", Some(Fix::Accounts)))
+        );
+        assert_eq!(
+            why(Situation {
+                forge: Some(ForgeKind::GitLab),
+                ..hidden
+            }),
+            Some(("No picture lookup on this server", None))
+        );
+        let refused = Situation {
+            status: Status::Blocked(&refused),
+            ..base
+        };
+        assert_eq!(
+            why(refused),
+            Some(("Sign-in required", Some(Fix::Accounts))),
+            "a server that wants a token before it answers"
+        );
+        let token = explain(
+            &Situation {
+                token: Some(true),
+                ..refused
+            },
+            1000,
+        )
+        .unwrap();
+        assert_eq!(token.title, "Token refused");
+        assert_eq!(token.fix, Some(Fix::Accounts));
+        assert!(
+            token
+                .detail
+                .contains("refused the token: Bad credentials. Replace"),
+            "{}",
+            token.detail
+        );
+        let limit = Situation {
+            status: Status::Paused {
+                why: Pause::Limit,
+                until: 1000 + 25 * 60,
+            },
+            ..base
+        };
+        let paused = explain(&limit, 1000).unwrap();
+        assert!(paused.detail.contains("in 25 minutes"), "{}", paused.detail);
+        assert_eq!(paused.fix, Some(Fix::Accounts), "a token raises the limit");
+        assert_eq!(
+            why(Situation {
+                token: Some(true),
+                ..limit
+            })
+            .unwrap()
+            .1,
+            None
+        );
+        let offline = Situation {
+            status: Status::Paused {
+                why: Pause::Unreachable,
+                until: 1030,
+            },
+            ..base
+        };
+        assert!(
+            explain(&offline, 1000)
+                .unwrap()
+                .detail
+                .contains("in a minute")
+        );
     }
 }

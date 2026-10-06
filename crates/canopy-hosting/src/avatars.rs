@@ -149,7 +149,11 @@ pub(crate) fn lookup(
             // The list endpoint, not `commits/<sha>`: that one carries the changed files and, for a
             // large commit, outgrows the lookup's size limit.
             let commits: Vec<Commit> =
-                http.avatar_json(&format!("{project}/commits?sha={commit}&per_page=1"))?;
+                match http.avatar_json(&format!("{project}/commits?sha={commit}&per_page=1")) {
+                    Ok(commits) => commits,
+                    Err(Error::NotFound(_)) => return Err(not_found(http, project, commit)),
+                    Err(e) => return Err(e),
+                };
             commits
                 .into_iter()
                 .next()
@@ -167,6 +171,27 @@ pub(crate) fn lookup(
         }
     };
     Ok(url.and_then(|u| validate(&u, forge, http.base())))
+}
+
+/// The status of [`unknown_commit`]'s error, as GitHub's own `commits/<sha>` endpoint answers.
+const UNKNOWN_COMMIT: u16 = 422;
+
+/// Whether a lookup failed only because the host does not have that commit (it was never pushed
+/// there): the author may still be found through another of their commits.
+pub fn is_unknown_commit(error: &Error) -> bool {
+    matches!(error, Error::Api { status, .. } if *status == UNKNOWN_COMMIT)
+}
+
+/// GitHub answers 404 both for a commit it does not have and for a repository it will not show
+/// (private, without a token that can see it). Asking for the repository itself tells them apart.
+fn not_found(http: &Http, project: &str, commit: &str) -> Error {
+    match http.avatar_json::<serde::de::IgnoredAny>(project) {
+        Ok(_) => Error::Api {
+            status: UNKNOWN_COMMIT,
+            message: format!("No commit found for SHA: {commit}"),
+        },
+        Err(e) => e,
+    }
 }
 
 #[cfg(test)]
