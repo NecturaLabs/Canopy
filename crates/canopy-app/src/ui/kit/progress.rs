@@ -90,19 +90,29 @@ fn forward(ctx: &egui::Context, id: Id, target: f32) -> f32 {
 }
 
 /// Whether a loading indicator should show: only after `LOADING_DELAY` of loading, and then for
-/// at least `LOADING_MIN` even if loading ends sooner (no flash). `id` keeps the state.
+/// at least `LOADING_MIN` even if loading ends sooner (no flash). `id` keeps the state. An
+/// indicator that is drawn only while something loads (not asked at all once it has loaded)
+/// starts a new wait the next time it is asked after a pass without it.
 pub fn loading_visible(ctx: &egui::Context, id: Id, loading: bool) -> bool {
     #[derive(Clone, Copy, Default)]
     struct Gate {
         since: Option<f64>,
         shown_at: Option<f64>,
+        /// The pass that last asked.
+        pass: Option<u64>,
     }
     let key = id.with("kit-loading-gate");
     let now = ctx.input(|i| i.time);
+    let pass = ctx.cumulative_pass_nr();
     let delay = f64::from(motion::time(motion::LOADING_DELAY));
     let min = f64::from(motion::time(motion::LOADING_MIN));
     let (visible, wake) = ctx.data_mut(|d| {
         let g = d.get_temp_mut_or_default::<Gate>(key);
+        if g.pass.is_some_and(|last| last + 1 < pass) {
+            g.since = None;
+            g.shown_at = None;
+        }
+        g.pass = Some(pass);
         if loading {
             let since = *g.since.get_or_insert(now);
             if now - since >= delay {
@@ -1021,6 +1031,30 @@ mod tests {
         assert!(at(0.3, false), "kept for LOADING_MIN");
         assert!(!at(0.7, false), "then gone");
         assert!(!at(0.8, true), "a new wait starts over");
+        motion::set_reduced(true);
+    }
+
+    /// A view that draws its spinner only while it waits (the diff, the commit details) never
+    /// passes `loading: false`; its next wait must still start over, or every later load would
+    /// flash the spinner at once (O2).
+    #[test]
+    fn an_indicator_drawn_only_while_loading_waits_again() {
+        let ctx = egui::Context::default();
+        motion::set_reduced(false);
+        let id = Id::new("load");
+        let at = |t: f64| {
+            let mut v = false;
+            let _ = frame(&ctx, t, |ui| v = loading_visible(ui.ctx(), id, true));
+            v
+        };
+        assert!(!at(0.0), "not before the delay");
+        assert!(at(0.2), "after LOADING_DELAY");
+        // Loaded: the view stops drawing the indicator.
+        let _ = frame(&ctx, 0.3, |_| {});
+        let _ = frame(&ctx, 0.4, |_| {});
+        assert!(!at(5.0), "the next load waits again");
+        assert!(!at(5.1));
+        assert!(at(5.2), "and shows after LOADING_DELAY");
         motion::set_reduced(true);
     }
 
