@@ -720,6 +720,17 @@ pub struct IconButton {
     force: Option<ForceState>,
 }
 
+/// The side of a square [`IconButton`] of `size`, for layouts that make room for one.
+pub(crate) fn icon_button_side(size: Size) -> f32 {
+    let m = theme::metrics();
+    match size {
+        Size::Xs => 20.0,
+        Size::Sm => m.control_sm + 2.0,
+        Size::Md => m.control,
+        Size::Lg => m.control_lg,
+    }
+}
+
 impl IconButton {
     pub fn new(glyph: &str, label: impl Into<String>) -> Self {
         Self {
@@ -782,11 +793,11 @@ impl IconButton {
         let p = theme::palette(&ctx);
         let m = theme::metrics();
         let enabled = self.enabled && ui.is_enabled();
-        let (side, radius, glyph_size) = match self.size {
-            Size::Xs => (20.0, m.radius_sm, 13.0),
-            Size::Sm => (m.control_sm + 2.0, m.radius, m.icon_md),
-            Size::Md => (m.control, m.radius, m.icon_md),
-            Size::Lg => (m.control_lg, m.radius, m.icon_lg),
+        let side = icon_button_side(self.size);
+        let (radius, glyph_size) = match self.size {
+            Size::Xs => (m.radius_sm, 13.0),
+            Size::Sm | Size::Md => (m.radius, m.icon_md),
+            Size::Lg => (m.radius, m.icon_lg),
         };
         let sense = if !enabled {
             Sense::hover()

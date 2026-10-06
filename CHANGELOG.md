@@ -121,6 +121,11 @@ commits since the previous build.
   as soon as the pointer leaves their item on the way to them.
 - The pull and merge request list refreshes by itself after a fetch, pull or push, and when you
   open it after a minute away, instead of only when you press Refresh.
+- Repository tabs show each name in full for as long as the title bar has room, instead of
+  cutting names at a fixed width. When the tabs outgrow the bar the longest names give up width
+  first (the active tab keeps its name), and when that is not enough the tabs scroll: scroll
+  buttons at both ends (dimmed at the ends), a list of every open repository, the mouse wheel,
+  and the active tab always kept in view. A tab's tooltip shows only when it adds something.
 - A saved theme or option this build no longer has, such as a removed theme, now reads as its
   default instead of resetting every setting. Settings the build no longer has are dropped at the
   first save after launch (Canopy saves every 30 seconds).
