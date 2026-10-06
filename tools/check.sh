@@ -3,10 +3,10 @@
 #
 # The local part of CI: formatting check, clippy with warnings denied, the unsafe-code policy
 # (only crates/canopy-app/src/ui/kit/glass/gl.rs may contain unsafe code), the full test suite, the
-# release tooling's self-test, the licence notices check, the documentation check, the
-# vendored-crate check, the hidden-window stall check (Linux, when its tools are installed), the
-# installer test (Linux and macOS), and ShellCheck and cargo-deny when they are installed. CI also
-# tests on macOS and Windows; nothing in CI runs install.ps1.
+# release tooling's self-test, the licence notices check, the documentation check, the site
+# check, the vendored-crate check, the hidden-window stall check (Linux, when its tools are
+# installed), the installer test (Linux and macOS), and ShellCheck and cargo-deny when they are
+# installed. CI also tests on macOS and Windows; nothing in CI runs install.ps1.
 # Run it before every commit; it must pass before a change is considered done.
 set -euo pipefail
 
@@ -45,6 +45,9 @@ python3 tools/notices.py --check
 
 step "tools/check-docs.py"
 python3 tools/check-docs.py
+
+step "tools/check-site.py"
+python3 tools/check-site.py
 
 # vendor/eframe must be the published crate plus vendor/eframe.patch (downloads the crate).
 step "tools/vendor-eframe.sh --check"

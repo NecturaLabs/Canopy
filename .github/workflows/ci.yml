@@ -36,10 +36,10 @@ env:
 
 jobs:
   # A push or pull request that changes only documentation (docs/ other than docs/legal/, and
-  # Markdown other than CHANGELOG.md, both of which the app embeds) runs only the documentation
-  # check. The run still exists and passes, which is what a release checks for. When the changed
-  # files cannot be listed (no passing run on the branch yet, or one a force-push left behind),
-  # everything runs.
+  # Markdown other than CHANGELOG.md, both of which the app embeds) or the landing site (site/,
+  # which site.yml checks and deploys) runs only the documentation and site checks. The run still
+  # exists and passes, which is what a release checks for. When the changed files cannot be listed
+  # (no passing run on the branch yet, or one a force-push left behind), everything runs.
   changes:
     name: What changed
     runs-on: ${{ (vars.USE_SELF_HOSTED == '0' || github.event_name != 'push' || github.actor == 'dependabot[bot]' || github.triggering_actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref || github.ref_name, 'dependabot/')) && 'ubuntu-latest' || fromJSON('["self-hosted", "linux", "wsl"]') }}
@@ -95,7 +95,7 @@ jobs:
               while IFS= read -r f; do
                 case $f in
                   docs/legal/* | CHANGELOG.md) code=true ;;
-                  docs/* | *.md) ;;
+                  docs/* | *.md | site/*) ;;
                   *) code=true ;;
                 esac
               done <<<"$files"
@@ -204,6 +204,11 @@ jobs:
       - name: Documentation check
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 tools/check-docs.py
+      # Files the landing site names exist, its addresses keep to its content security policy and
+      # its scripts parse.
+      - name: Site check
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 tools/check-site.py
       - name: Release tooling self-test
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' && needs.changes.outputs.code == 'true' }}
         run: python3 tools/release.py selftest

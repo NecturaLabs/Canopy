@@ -1,0 +1,57 @@
+name: Site
+
+# The landing site in site/ (https://canopy.necturalabs.com): a push to main that changes it is
+# checked and deployed to Netlify as it is, with no build step. Pull requests and other branches
+# are only checked. "Run workflow" on main deploys again by hand.
+#
+# NETLIFY_AUTH_TOKEN is the organisation's secret; NETLIFY_SITE_ID is this repository's variable.
+# Cloudflare serves the domain: a proxied CNAME to canopy-necturalabs.netlify.app.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "tools/check-site.py"
+      - ".github/workflows/site.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - "tools/check-site.py"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+# One deploy at a time, in push order; a deploy is never cancelled halfway.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  site:
+    name: Check and deploy
+    # GitHub-hosted: the deploy token never reaches the shared self-hosted machine, and the job
+    # builds nothing.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      # Every file the pages name exists, addresses keep to the content security policy and the
+      # scripts parse.
+      - name: Site check
+        run: python3 tools/check-site.py
+      - name: Deploy to Netlify
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        working-directory: site
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ vars.NETLIFY_SITE_ID }}
+          MESSAGE: Deploy from ${{ github.ref_name }} @ ${{ github.sha }}
+        run: npx --yes netlify-cli@27.11.2 deploy --dir=. --prod --no-build --message="$MESSAGE"
