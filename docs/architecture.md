@@ -137,7 +137,7 @@ thread.
 | `ui/kit/graph.rs` | The history row painter: circle nodes, hollow merges, the HEAD halo, a dashed WIP node and lane spacing by density. |
 | `ui/kit/split.rs` | Placeholder for `SplitHandle` (custom split handles), not built yet. |
 | `ui/kit/testkit.rs` | Test-only helpers for the kit's tests: a themed context, frames with input events and the AccessKit nodes a frame produced. |
-| `ui/fonts.rs` | Registers the bundled Inter, JetBrains Mono and Phosphor fonts. |
+| `ui/fonts.rs` | Registers the bundled fonts: Inter, JetBrains Mono NL, Phosphor, the theme heading faces and the Canopy CJK fallback. |
 | `ui/art.rs` | The illustrations (logo mark, welcome canopy, empty-state spots) drawn with the painter in the active theme's colours; each grows in once when it appears. |
 | `ui/widgets.rs` | Ref pills, avatars, badges, segmented controls, switches, checkboxes, and the older button helpers, which now draw `ui::kit` buttons. |
 | `ui/folder_picker.rs` | Native folder selection on a background thread; a bounded result channel and requesting-field lifetime keep the event loop responsive. |

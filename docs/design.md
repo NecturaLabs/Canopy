@@ -52,7 +52,9 @@ rather than beige, khaki or lilac; text and the status colour stay readable on e
 fills the danger button. Light themes ring the switch knob in `knob_edge`. Disabled controls use
 `Palette::disabled_text` on `Surfaces::disabled_fill` with a `disabled_edge` ring, flat in both
 styles and never dimmed again with `DISABLED_ALPHA` (`disabled_tokens_are_readable`: at least
-3:1, 4.5:1 in Contrast).
+3:1, 4.5:1 in Contrast). A banner's or callout's action can be disabled too, so disabled text
+also keeps 3:1 on every status wash and 3.5:1 on the washes of the grounds banners sit on
+(`disabled_actions_read_on_banners`; Contrast 4.5:1 throughout).
 
 Each theme has one idea, carried by its ladder, signature, selection and status colours:
 
@@ -64,8 +66,14 @@ Each theme has one idea, carried by its ladder, signature, selection and status 
 | Ember | Forge at dusk | warm charcoal and cream type, a copper signature, steel-blue links, an apricot selection glow |
 | Neon | Night city | black-violet, electric cyan with a hot magenta second voice, a true green for success |
 | Forest | Evergreen at dusk | deep green shade, a sunlit-gold signature, a lake-blue selection |
-| Paper | Letterpress | warm cream stock with whiter fields and sheets, Prussian ink, a sepia highlighter selection |
-| Contrast | Signal | pure black, white type, strong outlines, a yellow focus ring, a neutral white selection |
+| Paper | Letterpress | warm cream stock on a kraft desk, whiter fields and sheets, Prussian ink, sepia links underlined like print, a yellow highlighter selection |
+| Contrast | Signal | pure black, white type, strong outlines, a yellow focus ring, links underlined at rest, a neutral white selection |
+
+Link buttons are `accent2` and underlined on hover and focus; where the link colour alone does
+not set a link apart from body text, the theme's `Design::link_underline` underlines them at rest
+too (Paper, whose sepia shares the ink's hue family, and Contrast, for low vision;
+`links_are_underlined_at_rest_in_paper_and_contrast`). Inline links in the legal texts still
+underline only on hover and focus.
 
 Every pairing (text on every surface and state, labels on every fill end, focus, outlines, lanes,
 syntax, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme
@@ -93,7 +101,12 @@ Avatar backgrounds are picked from the same ten colours by a stable hash of the 
 ## Typography
 
 Inter for interface text, JetBrains Mono for SHAs, diffs, paths in diffs and anything that must
-align. Both are bundled (SIL OFL 1.1), so metrics are consistent on Linux, macOS and Windows.
+align. Both are bundled (SIL OFL 1.1), so metrics are consistent on Linux, macOS and Windows. The
+mono face is JetBrains Mono NL, the build without programming ligatures: a version-control client
+shows exact text, so `->`, `!=` or `::` draw as the characters typed and look like what copying
+them gives (`fonts::tests::code_text_has_no_ligatures`). Every family ends in Canopy CJK, a
+subset of Noto Sans CJK (everyday Han, kana and Hangul, 5.7 MB), so CJK file names, branches and
+messages draw in a matching sans instead of missing-glyph boxes.
 Inter Regular, Medium and SemiBold distinguish body text, controls and headings; monospace is
 reserved for code and identifiers. Sizes scale with the interface zoom and display density.
 
@@ -215,7 +228,8 @@ Curves are cubic Béziers (`EASE_OUT` by default); springs (`SWITCH`, `PRESS`, t
 pair) use the exact damped solution and repaint only while moving. Buttons scale their content
 to 0.97 while pressed. Settings → Appearance → Motion offers Match system (the default), Reduced
 and Full; the system answer comes from `platform::prefers_reduced_motion` on a background thread.
-Reduced makes every duration zero, lands every spring at once, turns the press scale off and
+Reduced makes every duration zero, lands every spring at once, turns the press scale off,
+stops egui's scroll glide (`motion::scroll_animation`: a wheel step or a scroll-to jumps) and
 stills the welcome screen. Only spinners and skeletons repaint continuously, and only while shown.
 
 ## Iconography

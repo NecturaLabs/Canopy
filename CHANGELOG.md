@@ -20,7 +20,8 @@ commits since the previous build.
   shadows only under menus and dialogs. Settings → Appearance adds Style (Standard, or Deeper,
   where the action bar and panes float as cards, History splits into a commit card and a details
   card, and the focused pane is lit along its top), Density (Comfortable, or Dense with 24-point rows and a one-row toolbar) and
-  Motion (match the system, reduced or full), which replaces the Reduce motion switch; an earlier
+  Motion (match the system, reduced or full; reduced also makes scrolling jump instead of glide),
+  which replaces the Reduce motion switch; an earlier
   "reduce motion" choice carries over as Reduced.
 - Translucent surfaces in Settings → Appearance: the command palette blurs what is behind it.
   Off by default; unavailable with the Contrast theme, when the system asks for reduced

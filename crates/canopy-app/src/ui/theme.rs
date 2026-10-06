@@ -424,7 +424,7 @@ pub const MIDNIGHT: Palette = Palette {
     text: hex(0xEAEDF2),
     text_dim: hex(0xB2B9C6),
     text_faint: hex(0x9FA6B4),
-    disabled_text: hex(0x7C828E),
+    disabled_text: hex(0x7E8490),
     accent: hex(0xA3ABFF),
     accent2: hex(0x90D9F2),
     focus: hex(0x7F89FF),
@@ -622,7 +622,7 @@ pub const DAYLIGHT: Palette = Palette {
     text: hex(0x131720),
     text_dim: hex(0x4E5767),
     text_faint: hex(0x515A67),
-    disabled_text: hex(0x6A7384),
+    disabled_text: hex(0x626A7A),
     accent: hex(0x1C4BC1),
     accent2: hex(0x006273),
     focus: hex(0x386BE2),
@@ -823,7 +823,7 @@ pub const AURORA: Palette = Palette {
     text: hex(0xE6F3F5),
     text_dim: hex(0xACC8D0),
     text_faint: hex(0x97B5BF),
-    disabled_text: hex(0x758E95),
+    disabled_text: hex(0x7B959C),
     accent: hex(0x56E3E1),
     accent2: hex(0xCBACFC),
     focus: hex(0x49E1DC),
@@ -1024,7 +1024,7 @@ pub const EMBER: Palette = Palette {
     text: hex(0xF4EDE1),
     text_dim: hex(0xCCBCAB),
     text_faint: hex(0xBAA796),
-    disabled_text: hex(0x908272),
+    disabled_text: hex(0x9A8B7A),
     accent: hex(0xFBA156),
     accent2: hex(0x94C3E1),
     focus: hex(0xFF9B4E),
@@ -1225,7 +1225,7 @@ pub const NEON: Palette = Palette {
     text: hex(0xF3F0FB),
     text_dim: hex(0xC8BCD9),
     text_faint: hex(0xB4A7C7),
-    disabled_text: hex(0x81798C),
+    disabled_text: hex(0x8D849A),
     accent: hex(0xFF6EC5),
     accent2: hex(0x39F3FC),
     focus: hex(0x39F3FC),
@@ -1426,7 +1426,7 @@ pub const FOREST: Palette = Palette {
     text: hex(0xF2EDDB),
     text_dim: hex(0xC0C2AA),
     text_faint: hex(0xA6AF99),
-    disabled_text: hex(0x888A75),
+    disabled_text: hex(0x8E917C),
     accent: hex(0xEDC15A),
     accent2: hex(0x83C7E4),
     focus: hex(0xEDC15A),
@@ -1624,7 +1624,7 @@ pub const PAPER: Palette = Palette {
     text: hex(0x2A1F17),
     text_dim: hex(0x615246),
     text_faint: hex(0x635547),
-    disabled_text: hex(0x7C6C5F),
+    disabled_text: hex(0x736356),
     accent: hex(0x005393),
     accent2: hex(0x764627),
     focus: hex(0x1D6CB8),
@@ -1825,7 +1825,7 @@ pub const CONTRAST: Palette = Palette {
     text: hex(0xFFFFFF),
     text_dim: hex(0xE9E9E9),
     text_faint: hex(0xD6D6D6),
-    disabled_text: hex(0x9C9C9C),
+    disabled_text: hex(0xA1A1A1),
     accent: hex(0x7ECFFF),
     accent2: hex(0xFDEA4C),
     focus: hex(0xFDEA4C),
@@ -2511,6 +2511,9 @@ mod design {
         pub hover: HoverStyle,
         /// The active repository tab and the active view tab.
         pub active_tab: TabStyle,
+        /// Links are underlined at rest, not only when hovered or focused: where the link colour
+        /// alone does not set a link apart from body text (Paper) or for low vision (Contrast).
+        pub link_underline: bool,
         /// Section labels (sidebar sections, settings groups, table headers, menu headings).
         pub labels: LabelStyle,
         /// Face of titles and headlines; body text stays Inter.
@@ -2889,6 +2892,7 @@ mod design {
         },
         hover: HoverStyle::Tint,
         active_tab: TabStyle::Lifted,
+        link_underline: false,
         labels: labels(LabelCase::Upper, 0.07, Weight::Semibold),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Dot, 1.0, 1.0, Curve::Smooth),
@@ -2914,6 +2918,7 @@ mod design {
         },
         hover: HoverStyle::Tint,
         active_tab: TabStyle::Underline { width: 2.0 },
+        link_underline: false,
         labels: labels(LabelCase::Title, 0.0, Weight::Semibold),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Ring, 1.05, 0.85, Curve::Rounded),
@@ -2942,6 +2947,7 @@ mod design {
         focus: FocusStyle::Glow { width: 4.0 },
         hover: HoverStyle::Tint,
         active_tab: TabStyle::Underline { width: 2.0 },
+        link_underline: false,
         labels: labels(LabelCase::Upper, 0.09, Weight::Medium),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Ring, 1.05, 1.1, Curve::Smooth),
@@ -2969,6 +2975,7 @@ mod design {
         focus: FocusStyle::Glow { width: 4.0 },
         hover: HoverStyle::Lift,
         active_tab: TabStyle::Lifted,
+        link_underline: false,
         labels: labels(LabelCase::Title, 0.01, Weight::Semibold),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Dot, 1.1, 1.2, Curve::Smooth),
@@ -2996,6 +3003,7 @@ mod design {
         focus: FocusStyle::Glow { width: 5.0 },
         hover: HoverStyle::Edge,
         active_tab: TabStyle::Underline { width: 2.0 },
+        link_underline: false,
         labels: labels(LabelCase::Upper, 0.14, Weight::Semibold),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Diamond, 1.1, 1.0, Curve::Angular),
@@ -3025,6 +3033,7 @@ mod design {
         },
         hover: HoverStyle::Tint,
         active_tab: TabStyle::Lifted,
+        link_underline: false,
         labels: labels(LabelCase::Title, 0.02, Weight::Medium),
         heading: HeadingFace::Ui,
         graph: graph(NodeShape::Dot, 1.0, 1.3, Curve::Smooth),
@@ -3054,6 +3063,7 @@ mod design {
         },
         hover: HoverStyle::Tint,
         active_tab: TabStyle::TopRule { width: 2.0 },
+        link_underline: true,
         labels: labels(LabelCase::Upper, 0.11, Weight::Semibold),
         heading: HeadingFace::Serif,
         graph: graph(NodeShape::Ring, 1.0, 0.9, Curve::Smooth),
@@ -3077,6 +3087,7 @@ mod design {
         focus: FocusStyle::Double { width: 2.5 },
         hover: HoverStyle::Edge,
         active_tab: TabStyle::Underline { width: 3.0 },
+        link_underline: true,
         labels: labels(LabelCase::Upper, 0.06, Weight::Semibold),
         heading: HeadingFace::Hyperlegible,
         graph: graph(NodeShape::Square, 1.15, 1.25, Curve::Rounded),
@@ -4334,6 +4345,7 @@ pub fn apply(ctx: &egui::Context, id: ThemeId, look: Appearance) {
     style.interaction.tooltip_delay = super::motion::TOOLTIP_DELAY;
     style.interaction.tooltip_grace_time = super::motion::TOOLTIP_SKIP;
     style.animation_time = super::motion::time(super::motion::BASE);
+    style.scroll_animation = super::motion::scroll_animation();
     ctx.set_style_of(theme, style);
     ctx.set_theme(theme);
 }
@@ -4901,6 +4913,79 @@ mod tests {
                             text_min,
                         );
                         gate.need(name, fg, &format!("its wash over {on}"), b, 4.5);
+                    }
+                }
+                failures.extend(gate.failures);
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// Paper's sepia links share body text's hue family and Contrast serves low vision, so there a
+    /// link carries a cue beyond colour: it is underlined at rest (QV2-3, WCAG 1.4.1). Elsewhere
+    /// the underline appears on hover.
+    #[test]
+    fn links_are_underlined_at_rest_in_paper_and_contrast() {
+        use crate::ui::kit::button::LinkButton;
+        for id in ThemeId::ALL {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            apply(&ctx, id, Appearance::STILL);
+            let mut text = egui::Rect::NOTHING;
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                text = LinkButton::new("Create a token").show(ui).rect;
+            });
+            out.textures_delta.clear();
+            let p = id.palette();
+            let underlined = out.shapes.iter().any(|c| match &c.shape {
+                egui::Shape::LineSegment { points, stroke } => {
+                    stroke.color == p.accent2
+                        && (points[0].y - points[1].y).abs() < 0.01
+                        && points[0].y > text.center().y
+                        && points[0].y <= text.bottom() + 2.0
+                }
+                _ => false,
+            });
+            let want = matches!(id, ThemeId::Paper | ThemeId::Contrast);
+            assert_eq!(underlined, want, "{id:?}");
+            assert_eq!(id.design().link_underline, want, "{id:?}");
+        }
+    }
+
+    /// A banner's or callout's action can be disabled ("Continue" while conflicts remain): disabled
+    /// text keeps the 3:1 floor on every status wash over every ground, and a clear margin, 3.5:1,
+    /// on the grounds banners sit on (pane, panel, Deeper's window ground), so it still reads as
+    /// the step that will come (QV2-9: Ember was 3.16:1; washes over dialogs were down to 2.71:1).
+    /// Contrast keeps 4.5:1 everywhere.
+    #[test]
+    fn disabled_actions_read_on_banners() {
+        let mut failures = Vec::new();
+        for id in ThemeId::ALL {
+            let p = id.palette();
+            let floor = if p.strict { 4.5 } else { 3.0 };
+            let banner = if p.strict { 4.5 } else { 3.5 };
+            for style in Style::ALL {
+                let s = p.surfaces(style);
+                let mut gate = Gate::new(p, style);
+                for (name, wash) in [
+                    ("accent", p.accent_tint()),
+                    ("success", p.success_tint()),
+                    ("warning", p.warning_tint()),
+                    ("danger", p.danger_tint()),
+                ] {
+                    for (on, bg) in grounds(s, style) {
+                        let min = if matches!(on.as_str(), "pane" | "panel" | "deeper ground") {
+                            banner
+                        } else {
+                            floor
+                        };
+                        gate.need(
+                            "disabled_text",
+                            p.disabled_text,
+                            &format!("{name} wash over {on}"),
+                            over(wash, bg),
+                            min,
+                        );
                     }
                 }
                 failures.extend(gate.failures);

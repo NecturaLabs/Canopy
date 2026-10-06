@@ -1138,7 +1138,8 @@ pub fn tool_divider(ui: &mut Ui) {
 
 // --------------------------------------------------------------------------------- LinkButton
 
-/// Text that opens something: `accent2`, underlined on hover. External links append "↗" (open
+/// Text that opens something: `accent2`, underlined on hover (at rest too where the theme's
+/// `Design::link_underline` asks). External links append "↗" (open
 /// web addresses through `platform.rs`).
 #[derive(Debug)]
 #[must_use = "call .show(ui) or ui.add(..)"]
@@ -1206,7 +1207,7 @@ impl LinkButton {
             let ink = if enabled { p.accent2 } else { p.disabled_text };
             let baseline = rect.top() + g.rows.first().map_or(rect.height(), |r| r.rect().bottom());
             painter.galley(rect.min, g, ink);
-            if st.hover > 0.5 {
+            if st.hover > 0.5 || theme::design(&ctx).link_underline {
                 paint::seam_h(painter, rect.x_range(), baseline + 1.0, ink);
             }
         }
