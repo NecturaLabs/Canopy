@@ -61,6 +61,8 @@ const RETRY_UNREACHABLE_SECS: i64 = 10 * 60;
 /// Commits of one author tried before giving up on them for the session, when the host has none
 /// of them (they were never pushed there).
 const MAX_UNKNOWN_COMMITS: u8 = 3;
+/// Longest server message kept for a refusal, in characters.
+const MAX_SERVER_TEXT: usize = 160;
 
 /// Why a repository's pictures stopped, when the cause is the repository or the token rather
 /// than any author. It holds until the tab's hosting thread restarts (a new token, a new remote,
@@ -70,7 +72,8 @@ pub enum Blocked {
     /// HTTP 404 for the repository itself. GitHub: private, and the token (or its absence) cannot
     /// see it. GitLab: the server has no picture lookup.
     NotFound,
-    /// HTTP 401, or a 403 that is not a rate limit, with the server's message.
+    /// HTTP 401, or a 403 that is not a rate limit, with the server's message as plain text
+    /// (`server_text`).
     Refused(String),
     /// A redirect: the repository was renamed or moved, so the remote URL is out of date.
     Moved,
@@ -681,12 +684,56 @@ fn miss(error: canopy_hosting::Error, now: i64, note: &mut Option<Note>) -> Miss
         Error::Api { status, .. } if status >= 500 => pause_unreachable(now, note),
         e if canopy_hosting::avatars::is_unknown_commit(&e) => kept(Note::UnknownCommit),
         Error::NotFound(_) => kept(Note::Blocked(Blocked::NotFound)),
-        Error::Unauthorized(message) => kept(Note::Blocked(Blocked::Refused(message))),
+        Error::Unauthorized(message) => {
+            kept(Note::Blocked(Blocked::Refused(server_text(&message))))
+        }
         Error::Api { status, .. } if (300..400).contains(&status) => {
             kept(Note::Blocked(Blocked::Moved))
         }
         Error::Api { .. } | Error::Parse(_) => Miss::Failed,
     }
+}
+
+/// A server's own words made safe to show among Canopy's and to log: control characters become
+/// spaces, characters that reorder or hide text (bidirectional controls, zero-width and other
+/// invisible formatting) are dropped, whitespace collapses, and the length is capped.
+fn server_text(message: &str) -> String {
+    let hides = |c: char| {
+        matches!(
+            c,
+            '\u{00AD}'
+                | '\u{034F}'
+                | '\u{061C}'
+                | '\u{115F}'
+                | '\u{1160}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{3164}'
+                | '\u{FE00}'..='\u{FE0F}'
+                | '\u{FEFF}'
+                | '\u{FFA0}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E0FFF}'
+        )
+    };
+    let visible: String = message
+        .chars()
+        .filter(|c| !hides(*c))
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let words = visible.split_whitespace().collect::<Vec<_>>().join(" ");
+    if words.is_empty() {
+        return "no reason given".to_owned();
+    }
+    if words.chars().count() <= MAX_SERVER_TEXT {
+        return words;
+    }
+    let mut short: String = words.chars().take(MAX_SERVER_TEXT).collect();
+    short.truncate(short.trim_end().len());
+    short.push('…');
+    short
 }
 
 fn pause_unreachable(now: i64, note: &mut Option<Note>) -> Miss {
@@ -1293,6 +1340,70 @@ mod tests {
         );
         assert_eq!(skipped.note, None);
         assert!(skipped.image.is_none() && !path.exists());
+    }
+
+    #[test]
+    fn a_refusal_from_the_server_reaches_the_explanation_and_the_log_as_plain_text() {
+        let stub = Stub::start();
+        // A hostile server dresses a lure up as Canopy's own text: bidirectional overrides and
+        // isolates, invisible characters, control characters and a long tail.
+        let lure = format!(
+            "Bad\u{202E}credentials\u{2066}\u{200B}\u{FEFF}\n\u{7}\r\tpaste token {}",
+            "x".repeat(500)
+        );
+        stub.route(
+            "/repos/octo/hello/commits",
+            401,
+            serde_json::json!({ "message": lure }).to_string(),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let note = load_at(
+            Some(dir.path().join("p.json")),
+            &stub.client(Some("t")),
+            Oid::from_str(PUSHED).unwrap(),
+            "a@example.com",
+            &AtomicBool::new(true),
+        )
+        .note;
+        let Some(Note::Blocked(Blocked::Refused(message))) = note else {
+            panic!("a 401 refuses the repository: {note:?}");
+        };
+        let hidden = |c: char| {
+            c.is_control()
+                || matches!(
+                    c,
+                    '\u{061C}'
+                        | '\u{200B}'..='\u{200F}'
+                        | '\u{202A}'..='\u{202E}'
+                        | '\u{2066}'..='\u{2069}'
+                        | '\u{FEFF}'
+                )
+        };
+        assert!(
+            message.starts_with("Badcredentials paste token xxx"),
+            "{message:?}"
+        );
+        assert!(!message.chars().any(hidden), "{message:?}");
+        assert!(
+            message.chars().count() <= MAX_SERVER_TEXT + 1,
+            "{} characters",
+            message.chars().count()
+        );
+        let refused = Blocked::Refused(message);
+        let shown = explain(
+            &Situation {
+                show_avatars: true,
+                download: true,
+                hosting_api: true,
+                consented: true,
+                forge: Some(canopy_core::forge::ForgeKind::GitHub),
+                token: Some(true),
+                status: Status::Blocked(&refused),
+            },
+            T0,
+        )
+        .unwrap();
+        assert!(!shown.detail.chars().any(hidden), "{:?}", shown.detail);
     }
 
     #[test]
