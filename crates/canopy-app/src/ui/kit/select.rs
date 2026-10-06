@@ -61,6 +61,7 @@ pub struct Select<'a, T: PartialEq + Clone> {
     helper: Option<String>,
     error: Option<String>,
     width: Option<f32>,
+    fit: bool,
     size: Size,
     enabled: bool,
     loading: bool,
@@ -82,6 +83,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             helper: None,
             error: None,
             width: None,
+            fit: false,
             size: Size::Md,
             enabled: true,
             loading: false,
@@ -120,6 +122,11 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
     /// Trigger width; the available width by default.
     pub fn width(mut self, width: f32) -> Self {
         self.width = Some(width);
+        self
+    }
+    /// The trigger is as wide as its longest option (or placeholder) needs, no wider ([`fit_width`]).
+    pub fn fit_to_options(mut self) -> Self {
+        self.fit = true;
         self
     }
     pub fn size(mut self, size: Size) -> Self {
@@ -186,7 +193,17 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             .unwrap_or_else(|| component_id(ui, "kit-select", self.id_salt));
         let popup_id = id.with("kit-select-list");
         let state_id = id.with("kit-select-state");
-        let width = self.width.unwrap_or_else(|| ui.available_width());
+        let width = match self.width {
+            Some(w) => w,
+            None if self.fit => fit_width(
+                ui,
+                self.options
+                    .iter()
+                    .map(|(_, l)| *l)
+                    .chain([self.placeholder.as_str()]),
+            ),
+            None => ui.available_width(),
+        };
         let chosen = self.options.iter().position(|(v, _)| v == self.value);
 
         // Labels and text paint at full strength even in a disabled `Ui` (in disabled tokens).
@@ -692,6 +709,24 @@ fn caret_room(m: &theme::Metrics) -> f32 {
     theme::SM + m.icon_md + theme::SM
 }
 
+/// The trigger width that shows each of `labels` whole: the widest one plus the trigger's padding
+/// and caret. For a row that sizes a select before showing it; [`Select::fit_to_options`] does
+/// this for the select's own options.
+pub fn fit_width<'l>(ui: &Ui, labels: impl IntoIterator<Item = &'l str>) -> f32 {
+    let m = theme::metrics();
+    let font = FontId::new(m.body_size, FontFamily::Proportional);
+    let widest = labels
+        .into_iter()
+        .map(|l| {
+            ui.painter()
+                .layout_no_wrap(l.to_owned(), font.clone(), Color32::PLACEHOLDER)
+                .size()
+                .x
+        })
+        .fold(0.0, f32::max);
+    (m.field_pad_x + widest + caret_room(m)).ceil()
+}
+
 // ------------------------------------------------------------------------------------- gallery
 
 const STRATEGIES: [(u8, &str); 3] = [
@@ -749,7 +784,10 @@ pub(crate) fn gallery(ui: &mut Ui) {
             .show(ui);
     });
     ui.add_space(theme::SM);
-    gallery_caption(ui, "Loading, a placeholder, small");
+    gallery_caption(
+        ui,
+        "Loading, a placeholder (as wide as its longest option), small",
+    );
     gallery_row(ui, |ui| {
         Select::new(&mut 1_u8, &STRATEGIES)
             .width(w)
@@ -757,7 +795,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
             .id_salt("g-sel4")
             .show(ui);
         Select::new(&mut 9_u8, &STRATEGIES)
-            .width(w)
+            .fit_to_options()
             .placeholder("Choose a strategy…")
             .name("Strategy")
             .id_salt("g-sel5")
@@ -809,6 +847,37 @@ mod tests {
             });
         }
         assert!(focused);
+    }
+
+    #[test]
+    fn a_select_fitted_to_its_options_shows_the_longest_whole_and_no_more() {
+        let ctx = testkit::ctx();
+        let mut v = 0_u8;
+        let mut fit = 0.0;
+        let mut trigger = egui::Rect::NOTHING;
+        let shapes = frame(&ctx, Vec::new(), |ui| {
+            ui.set_width(600.0);
+            fit = fit_width(ui, STRATEGIES.iter().map(|(_, l)| *l));
+            trigger = Select::new(&mut v, &STRATEGIES)
+                .fit_to_options()
+                .id_salt("fit")
+                .show(ui)
+                .rect;
+        });
+        assert!(
+            (trigger.width() - fit).abs() < 0.5,
+            "{} vs {fit}",
+            trigger.width()
+        );
+        assert!(fit < 600.0, "no wider than it needs");
+        let longest = STRATEGIES[0].1;
+        assert!(
+            shapes.iter().any(|c| match &c.shape {
+                egui::Shape::Text(t) => t.galley.text() == longest,
+                _ => false,
+            }),
+            "the longest option is not cut short"
+        );
     }
 
     fn show(ui: &mut Ui, v: &mut u8) -> Response {
