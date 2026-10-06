@@ -3374,7 +3374,7 @@ fn integrations(
         Launcher {
             title: "Terminal",
             help: "What \"Open terminal here\" runs, in the repository folder.",
-            command_help: "Runs in the repository folder; %d stands for the folder.",
+            command_help: "Runs in the repository folder; %d, as a word of its own, stands for the folder.",
             kind: Kind::Terminal,
         },
         &mut s.terminal,
@@ -3386,7 +3386,7 @@ fn integrations(
         Launcher {
             title: "Editor",
             help: "What \"Open in editor\" opens files with.",
-            command_help: "%f stands for the file; without it the file is added at the end. Quote a path with spaces.",
+            command_help: "%f, as a word of its own, stands for the file; without it the file is added at the end. Quote a path with spaces.",
             kind: Kind::Editor,
         },
         &mut s.editor,
@@ -3398,7 +3398,7 @@ fn integrations(
         Launcher {
             title: "File manager",
             help: "What \"Show in file manager\" opens folders with.",
-            command_help: "%d stands for the folder; without it the folder is added at the end.",
+            command_help: "%d, as a word of its own, stands for the folder; without it the folder is added at the end.",
             kind: Kind::FileManager,
         },
         &mut s.file_manager,
