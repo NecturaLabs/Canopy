@@ -907,9 +907,7 @@ impl eframe::App for CanopyApp {
                 View::Changes => changes::show(ui, tab, &mut actions)
                     .and_then(|(list, handle)| PaneSplit::beside(list, handle)),
                 View::Requests => requests::show(ui, tab, self.settings.hosting_api, &mut actions)
-                    .and_then(|list| {
-                        PaneSplit::beside(list, resize_handle(requests::LIST_PANEL.into()))
-                    }),
+                    .and_then(|(list, handle)| PaneSplit::beside(list, handle)),
             });
         } else {
             // Nothing on the welcome screen holds the keyboard as a pane: no focused-pane edge.
@@ -1110,12 +1108,6 @@ impl PaneSplit {
             handle: Some(handle),
         })
     }
-}
-
-/// The resize handle egui registers for a resizable panel: the panel id with "__resize", centred
-/// on its inner edge, each frame the panel is shown.
-fn resize_handle(panel: egui::Id) -> egui::Id {
-    panel.with("__resize")
 }
 
 /// The central content pane: flush on the pane ground in Standard. In Deeper a floating card over
