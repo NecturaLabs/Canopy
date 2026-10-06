@@ -745,6 +745,23 @@ fn line_cell(
         ui.interact(rect, ui.id().with(("line", id)), Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand)
     });
+    // The code is painted, so each visible line is also a node a screen reader reads: a line
+    // that can be picked as a toggle (picked or not), the others as text.
+    match &resp {
+        Some(r) => r.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                true,
+                picked,
+                spoken_line(line, marker),
+            )
+        }),
+        None => ui
+            .interact(rect, ui.id().with(("line", id)), Sense::hover())
+            .widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, spoken_line(line, marker))
+            }),
+    }
     let painter = ui.painter();
     if let Some(bg) = bg {
         // The line numbers sit on the stronger gutter tint. A whole new or deleted file keeps
@@ -838,6 +855,22 @@ fn line_cell(
     None
 }
 
+/// What a screen reader says for a diff line: how it changed, its number and its text.
+fn spoken_line(line: &DiffLine, marker: bool) -> String {
+    let text = if line.text.trim().is_empty() {
+        "blank"
+    } else {
+        line.text.as_str()
+    };
+    let number = |n: Option<u32>| n.map_or_else(String::new, |n| format!(" {n}"));
+    match line.kind {
+        _ if marker => format!("Conflict marker: {text}"),
+        LineKind::Added => format!("Added line{}: {text}", number(line.new_no)),
+        LineKind::Removed => format!("Removed line{}: {text}", number(line.old_no)),
+        LineKind::Context => format!("Line{}: {text}", number(line.new_no.or(line.old_no))),
+    }
+}
+
 /// Width of the mark at the left of a picked line.
 const PICKED_MARK: f32 = 4.0;
 
@@ -874,6 +907,15 @@ fn hunk_header(
     let m = theme::metrics();
     let hunk = &d.hunks[h];
     let band = rect;
+    // The header is painted: its text reaches a screen reader through a node of its own.
+    ui.interact(band, ui.id().with(("hunk-header", h)), Sense::hover())
+        .widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Label,
+                true,
+                format!("Hunk {}: {}", h + 1, hunk.header),
+            )
+        });
     // Concept 1's `.hunk`: the accent at about 7%.
     ui.painter().rect_filled(
         band,
@@ -1302,6 +1344,104 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
+    }
+
+    /// A11Y-1: the diff's text reaches assistive technology. Each visible line is a node that
+    /// says how it changed and what it says; no line a user can pick is unnamed.
+    #[test]
+    fn diff_lines_are_spoken() {
+        use egui::accesskit::{Action as AkAction, Role};
+        let ctx = themed();
+        ctx.enable_accesskit();
+        let line = |kind, old_no, new_no, text: &str| DiffLine {
+            kind,
+            old_no,
+            new_no,
+            text: text.into(),
+        };
+        let d = Arc::new(FileDiff {
+            path: "src/main.rs".into(),
+            kind: Some(ChangeKind::Modified),
+            hunks: vec![Hunk {
+                header: "@@ -1,2 +1,2 @@".into(),
+                old_start: 1,
+                old_lines: 2,
+                new_start: 1,
+                new_lines: 2,
+                lines: vec![
+                    line(LineKind::Context, Some(1), Some(1), "fn main() {"),
+                    line(LineKind::Removed, Some(2), None, "    old_call();"),
+                    line(LineKind::Added, None, Some(2), "    new_call();"),
+                ],
+            }],
+            additions: 1,
+            deletions: 1,
+            ..FileDiff::default()
+        });
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.file = Some(crate::tab::FileSelection {
+            source: DiffSource::Unstaged,
+            entry: canopy_core::FileEntry {
+                path: "src/main.rs".into(),
+                old_path: None,
+                kind: ChangeKind::Modified,
+                additions: 1,
+                deletions: 1,
+                lfs: false,
+                old_mode: None,
+                new_mode: None,
+            },
+            conflicted: false,
+        });
+        tab.diff = Some(d);
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default()
+                        .show(ui, |ui| show(ui, &mut tab, &mut Vec::new()));
+                },
+            );
+            out.textures_delta.clear();
+            nodes = out
+                .platform_output
+                .accesskit_update
+                .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect())
+                .unwrap_or_default();
+        }
+        let spoken: Vec<String> = nodes
+            .iter()
+            .filter_map(|n| n.label().or_else(|| n.value()).map(str::to_owned))
+            .collect();
+        for wanted in [
+            "Line 1: fn main() {",
+            "Removed line 2:     old_call();",
+            "Added line 2:     new_call();",
+            "Hunk 1: @@ -1,2 +1,2 @@",
+        ] {
+            assert!(
+                spoken.iter().any(|s| s == wanted),
+                "{wanted:?} not in {spoken:#?}"
+            );
+        }
+        let unnamed: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.supports_action(AkAction::Click) || n.supports_action(AkAction::Focus))
+            .filter(|n| !matches!(n.role(), Role::Window | Role::GenericContainer))
+            .filter(|n| n.label().is_none_or(str::is_empty) && n.value().is_none())
+            .map(|n| format!("{:?}", n.role()))
+            .collect();
+        assert!(unnamed.is_empty(), "unnamed operable nodes: {unnamed:?}");
     }
 
     #[test]
