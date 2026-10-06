@@ -536,11 +536,15 @@ pub(super) fn component_id(ui: &Ui, kind: &str, salt: Option<Id>) -> Id {
     }
 }
 
-/// Reports `id` (covering `rect`) as an AccessKit radio group named `label`.
-pub(super) fn group_node(ui: &Ui, id: Id, rect: Rect, label: &str, enabled: bool) -> Response {
-    let response = ui.interact(rect, id, Sense::hover());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::RadioGroup, enabled, label));
-    response
+/// Marks `options`, the `Ui` that holds a group's options, as an AccessKit group of `role` named
+/// `label`, so the options are its parts (a node made beside them would be an empty group).
+pub(super) fn group_node(options: &Ui, role: Role, label: &str, enabled: bool) {
+    super::a11y::group(options, role, label);
+    if !enabled {
+        options
+            .ctx()
+            .accesskit_node_builder(options.unique_id(), egui::accesskit::Node::set_disabled);
+    }
 }
 
 /// Mutually exclusive options with optional descriptions; arrow keys move the choice.
@@ -606,60 +610,55 @@ impl<'a, T: PartialEq + Clone> RadioGroup<'a, T> {
         } else {
             egui::Layout::top_down(egui::Align::Min)
         };
-        let inner = ui.scope_builder(
-            UiBuilder::new()
-                .layout(layout)
-                .accessibility_parent(group_id),
-            |ui| {
-                ui.spacing_mut().item_spacing = if self.horizontal {
-                    vec2(theme::LG, theme::SM)
-                } else {
-                    vec2(theme::SM, theme::SM)
-                };
-                for (i, (_, label, description)) in self.options.iter().enumerate() {
-                    let radio = Radio::new(chosen == Some(i), *label)
-                        .enabled(enabled)
-                        .tab_stop(chosen.unwrap_or(0) == i)
-                        .id_salt((group_id, i));
-                    let force = self.force.filter(|(at, _)| *at == i).map(|(_, f)| f);
-                    let r = match description {
-                        Some(d) => {
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 0.0;
-                                let r = match force {
-                                    Some(f) => radio.show_forced(ui, f),
-                                    None => radio.show(ui),
+        let inner = ui.scope_builder(UiBuilder::new().layout(layout), |ui| {
+            group_node(ui, Role::RadioGroup, &self.label, enabled);
+            ui.spacing_mut().item_spacing = if self.horizontal {
+                vec2(theme::LG, theme::SM)
+            } else {
+                vec2(theme::SM, theme::SM)
+            };
+            for (i, (_, label, description)) in self.options.iter().enumerate() {
+                let radio = Radio::new(chosen == Some(i), *label)
+                    .enabled(enabled)
+                    .tab_stop(chosen.unwrap_or(0) == i)
+                    .id_salt((group_id, i));
+                let force = self.force.filter(|(at, _)| *at == i).map(|(_, f)| f);
+                let r = match description {
+                    Some(d) => {
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let r = match force {
+                                Some(f) => radio.show_forced(ui, f),
+                                None => radio.show(ui),
+                            };
+                            ui.horizontal(|ui| {
+                                ui.add_space(m.radio + LABEL_GAP);
+                                let (painter, color) = if enabled {
+                                    (ui.painter().clone(), p.text_dim)
+                                } else {
+                                    (super::content_painter(ui), p.disabled_text)
                                 };
-                                ui.horizontal(|ui| {
-                                    ui.add_space(m.radio + LABEL_GAP);
-                                    let (painter, color) = if enabled {
-                                        (ui.painter().clone(), p.text_dim)
-                                    } else {
-                                        (super::content_painter(ui), p.disabled_text)
-                                    };
-                                    let g = painter.layout(
-                                        (*d).to_owned(),
-                                        FontId::new(m.meta_size, FontFamily::Proportional),
-                                        color,
-                                        ui.available_width().max(1.0),
-                                    );
-                                    let (rect, _) =
-                                        ui.allocate_exact_size(g.size(), Sense::hover());
-                                    painter.galley(rect.min, g, color);
-                                });
-                                r
-                            })
-                            .inner
-                        }
-                        None => match force {
-                            Some(f) => radio.show_forced(ui, f),
-                            None => radio.show(ui),
-                        },
-                    };
-                    responses.push(r);
-                }
-            },
-        );
+                                let g = painter.layout(
+                                    (*d).to_owned(),
+                                    FontId::new(m.meta_size, FontFamily::Proportional),
+                                    color,
+                                    ui.available_width().max(1.0),
+                                );
+                                let (rect, _) = ui.allocate_exact_size(g.size(), Sense::hover());
+                                painter.galley(rect.min, g, color);
+                            });
+                            r
+                        })
+                        .inner
+                    }
+                    None => match force {
+                        Some(f) => radio.show_forced(ui, f),
+                        None => radio.show(ui),
+                    },
+                };
+                responses.push(r);
+            }
+        });
         let mut changed = false;
         for (i, r) in responses.iter().enumerate() {
             if r.clicked() && chosen != Some(i) {
@@ -679,7 +678,7 @@ impl<'a, T: PartialEq + Clone> RadioGroup<'a, T> {
             responses[next].request_focus();
             changed = true;
         }
-        let mut group = group_node(ui, group_id, inner.response.rect, &self.label, enabled);
+        let mut group = ui.interact(inner.response.rect, group_id, Sense::hover());
         if changed {
             group.mark_changed();
         }
@@ -1161,6 +1160,18 @@ mod tests {
         let n = find(&nodes, "Prune").expect("spoken");
         assert_eq!(n.role, Role::Switch);
         assert_eq!(n.toggled, Some(Toggled::True));
+    }
+
+    /// A11Y-4: a radio group holds its options (it was an empty group beside them).
+    #[test]
+    fn a_radio_group_holds_its_options() {
+        let ctx = testkit::ctx();
+        let options = [(1_u8, "One", None), (2, "Two", Some("The second"))];
+        let mut v = 1_u8;
+        let parts = testkit::parts(&ctx, "Count", |ui| {
+            RadioGroup::new(&mut v, &options).label("Count").show(ui);
+        });
+        assert_eq!(parts, ["One", "Two"]);
     }
 
     #[test]
