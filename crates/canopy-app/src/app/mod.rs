@@ -1137,6 +1137,7 @@ impl eframe::App for CanopyApp {
         }
         self.apply(&ctx, actions);
         self.handle_screenshot(&ctx);
+        crate::ui::kit::a11y::keep_focus_in_tree(&ctx);
     }
 
     #[expect(
