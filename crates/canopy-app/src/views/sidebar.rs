@@ -1,16 +1,17 @@
 //! The left sidebar: branches, remotes, tags and stashes.
 
-use egui::{FontFamily, FontId, Rect, RichText, Ui, pos2};
+use egui::{FontId, RichText, Ui};
 use egui_phosphor::regular as icon;
 
 use crate::action::Action;
 use crate::keymap::Command;
 use crate::tab::RepoTab;
+use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::overlay::TooltipExt;
-use crate::ui::kit::progress::Spinner;
+use crate::ui::kit::progress::Skeleton;
 use crate::ui::kit::row::{ListRow, RowKind, SectionHeader, TreeRow};
-use crate::ui::kit::{Button, Size, Tone, menu, paint};
+use crate::ui::kit::{KitResponse, Tone, menu};
 use crate::ui::theme::{self, palette};
 use crate::ui::widgets::forge_icon;
 use crate::views::commit_detail::virtual_rows;
@@ -31,19 +32,83 @@ fn section(
     count: usize,
     first: bool,
 ) -> bool {
+    section_with_action(ui, tab, key, title, glyph, count, first, None).0
+}
+
+/// [`section`] with an icon button (glyph, tooltip) that shows on hover and focus; also returns
+/// the header's response (for its context menu) and whether the button was clicked.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a section header needs its tab, key, title, glyph, count, place and action"
+)]
+fn section_with_action(
+    ui: &mut Ui,
+    tab: &mut RepoTab,
+    key: &str,
+    title: &str,
+    glyph: &str,
+    count: usize,
+    first: bool,
+    action: Option<(&str, &str)>,
+) -> (bool, KitResponse<bool>) {
     let mut open = !tab.collapsed.contains(key);
-    SectionHeader::new(title)
+    let mut header = SectionHeader::new(title)
         .icon(glyph)
         .count(count)
         .open(&mut open)
-        .first(first)
-        .show(ui);
+        .first(first);
+    if let Some((glyph, label)) = action {
+        header = header.action(glyph, label);
+    }
+    let shown = header.show(ui);
     if open {
         tab.collapsed.remove(key);
     } else {
         tab.collapsed.insert(key.to_owned());
     }
-    open
+    (open, shown)
+}
+
+/// The Remotes section of a repository with none: says so, and offers to publish it or add one.
+fn no_remotes(ui: &mut Ui, actions: &mut Vec<Action>) {
+    let p = palette(ui.ctx());
+    let m = theme::metrics();
+    ui.add_space(theme::XS);
+    ui.horizontal(|ui| {
+        ui.add_space(theme::MD);
+        ui.label(
+            RichText::new(format!("{}  Local only — no remote", icon::HARD_DRIVES))
+                .size(m.meta_size)
+                .color(p.text_faint),
+        )
+        .kit_tooltip("Everything stays on this computer until you publish it or add a remote")
+        .show();
+    });
+    ui.add_space(theme::XS);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = theme::SM;
+        ui.add_space(theme::MD);
+        if LinkButton::new("Publish…")
+            .text_size(m.meta_size)
+            .show(ui)
+            .kit_tooltip("Create a repository on GitHub or GitLab and push this one to it")
+            .show()
+            .clicked()
+        {
+            actions.push(Action::Publish);
+        }
+        ui.label(RichText::new("·").size(m.meta_size).color(p.text_faint));
+        if LinkButton::new("Add remote…")
+            .text_size(m.meta_size)
+            .show(ui)
+            .kit_tooltip("Connect a repository that already exists elsewhere")
+            .show()
+            .clicked()
+        {
+            actions.push(Action::AddRemoteDialog);
+        }
+    });
+    ui.add_space(theme::XS);
 }
 
 struct Row<'a> {
@@ -62,12 +127,15 @@ struct Row<'a> {
 /// badges at the right.
 fn row(ui: &mut Ui, r: &Row<'_>) -> egui::Response {
     let m = theme::metrics();
-    let badges: Vec<(String, Tone)> =
-        [(r.ahead, "↑", Tone::Accent), (r.behind, "↓", Tone::Neutral)]
-            .into_iter()
-            .filter(|(n, _, _)| *n > 0)
-            .map(|(n, arrow, tone)| (format!("{arrow}{n}"), tone))
-            .collect();
+    let badges: Vec<Badge> = [(r.ahead, "↑", Tone::Accent), (r.behind, "↓", Tone::Neutral)]
+        .into_iter()
+        .filter(|(n, _, _)| *n > 0)
+        .map(|(n, arrow, tone)| Badge::new(format!("{arrow}{n}")).tone(tone).mono())
+        .collect();
+    let badges_w = badges
+        .iter()
+        .map(|b| b.measure(ui).x + BADGE_GAP)
+        .sum::<f32>();
     // A shortened name is shown in full on hover.
     let label_w = ui
         .painter()
@@ -79,10 +147,10 @@ fn row(ui: &mut Ui, r: &Row<'_>) -> egui::Response {
         .size()
         .x;
     let room = ui.available_width() - 2.0 * theme::MD - m.icon_md - theme::SM;
-    let tip = r.hint.map(str::to_owned).or_else(|| {
-        let badges_w = crate::ui::count_f32(badges.len()) * (m.badge_height + 2.0 * BADGE_GAP);
-        (label_w > room - badges_w).then(|| r.label.to_owned())
-    });
+    let tip = r
+        .hint
+        .map(str::to_owned)
+        .or_else(|| (label_w > room - badges_w).then(|| r.label.to_owned()));
     let mut row = ListRow::new(r.id)
         .kind(RowKind::Sidebar)
         .selected(r.current)
@@ -91,50 +159,31 @@ fn row(ui: &mut Ui, r: &Row<'_>) -> egui::Response {
     if let Some(t) = tip {
         row = row.tooltip(t);
     }
-    row.show_with(ui, |rc, painter| {
-        if badges.is_empty() {
-            return;
-        }
-        let p = palette(painter.ctx());
-        let font = FontId::new(m.micro_size, FontFamily::Monospace);
-        let cy = rc.rect.center().y;
-        let mut right = rc.content.right();
-        let mut shapes = Vec::new();
-        for (text, tone) in badges.iter().rev() {
-            let (fill, ink) = Badge::new(text.clone()).tone(*tone).mono().colors(p);
-            let g = painter.layout_no_wrap(text.clone(), font.clone(), ink);
-            let w = (g.size().x + 10.0).max(m.badge_height);
-            let rect = Rect::from_min_max(
-                pos2(right - w, cy - m.badge_height / 2.0),
-                pos2(right, cy + m.badge_height / 2.0),
-            );
-            shapes.push((rect, fill, g, ink));
-            right = rect.left() - BADGE_GAP;
-        }
-        // The badges sit over the end of a long label: cover it with the row's own ground.
-        painter.rect_filled(
-            Rect::from_min_max(
-                pos2(right, rc.rect.top()),
-                pos2(rc.content.right(), rc.rect.bottom()),
-            ),
-            0.0,
-            rc.ground,
-        );
-        for (rect, fill, g, ink) in shapes {
-            paint::fill(painter, rect, egui::CornerRadius::same(9), fill);
-            painter.galley(rect.center() - g.size() / 2.0, g, ink);
-        }
-    })
+    if !badges.is_empty() {
+        // Right to left: the behind count at the edge, the ahead count before it.
+        row = row.trailing_ui(badges_w, move |ui| {
+            ui.spacing_mut().item_spacing.x = BADGE_GAP;
+            for b in badges.into_iter().rev() {
+                b.show(ui);
+            }
+        });
+    }
+    row.show(ui)
 }
 
 /// Draws the sidebar.
 pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
-    let p = palette(ui.ctx());
-    let m = theme::metrics();
     let row_h = RowKind::Sidebar.height();
     let Some(snap) = tab.snap.clone() else {
-        ui.add_space(theme::LG);
-        ui.vertical_centered(|ui| Spinner::new().label("the repository").show(ui));
+        // The first load: placeholder rows, after a moment so a quick load never flashes them.
+        ui.add_space(theme::XS);
+        Skeleton::rows(8)
+            .row_height(row_h)
+            .id_salt("sidebar-loading")
+            .show(ui)
+            .widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Loading the repository")
+            });
         return;
     };
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -223,18 +272,28 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             });
         }
 
-        // Remotes.
-        if section(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len(), false) {
-            if snap.remotes.is_empty() {
-                ui.horizontal(|ui| {
-                    ui.add_space(theme::MD);
-                    ui.label(RichText::new(format!("{}  Local only — no remote", icon::HARD_DRIVES)).size(m.meta_size).color(p.text_faint))
-                        .kit_tooltip("Everything stays on this computer. Publish to GitHub or GitLab to share it.").show();
-                });
-                ui.add_space(theme::XS);
-                if Button::new("Publish…").icon(icon::CLOUD_ARROW_UP).size(Size::Sm).show(ui).clicked() {
+        // Remotes: "+" on the header (hover or focus) and its context menu add one; a
+        // repository with none says so and offers to publish it.
+        let local_only = snap.remotes.is_empty();
+        let (open, header) = section_with_action(ui, tab, "remotes", "Remotes", icon::CLOUD, snap.remotes.len(), false, Some((icon::PLUS, "Add remote…")));
+        if header.value {
+            actions.push(Action::AddRemoteDialog);
+        }
+        menu::context(&header.response, |m| {
+            if m.item(icon::PLUS, "Add remote…").show(m.ui).clicked() {
+                actions.push(Action::AddRemoteDialog);
+            }
+            if local_only {
+                if m.item(icon::CLOUD_ARROW_UP, "Publish…").show(m.ui).clicked() {
                     actions.push(Action::Publish);
                 }
+            } else if m.item(icon::ARROWS_CLOCKWISE, "Fetch all remotes").shortcut(Command::Fetch).show(m.ui).clicked() {
+                actions.push(Action::Fetch);
+            }
+        });
+        if open {
+            if local_only {
+                no_remotes(ui, actions);
             }
             for (ri, r) in snap.remotes.iter().enumerate() {
                 let key = format!("remote:{}", r.name);
@@ -317,10 +376,6 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         }
                     });
                 });
-            }
-            ui.add_space(theme::XS);
-            if Button::new("Add remote…").icon(icon::PLUS).size(Size::Sm).show(ui).clicked() {
-                actions.push(Action::AddRemoteDialog);
             }
         }
 
@@ -431,5 +486,150 @@ mod tests {
             );
         });
         assert!(labels.iter().any(|l| l == "feature/auth"), "{labels:?}");
+    }
+
+    fn tab_with(remotes: Vec<canopy_core::RemoteInfo>) -> RepoTab {
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
+            remotes,
+            ..Default::default()
+        }));
+        tab
+    }
+
+    fn origin() -> canopy_core::RemoteInfo {
+        canopy_core::RemoteInfo {
+            name: "origin".into(),
+            url: Some("https://example.com/r.git".into()),
+            default_branch: None,
+        }
+    }
+
+    /// One frame of the sidebar with `events`: the AccessKit nodes it reported.
+    fn sidebar_frame(
+        ctx: &egui::Context,
+        tab: &mut RepoTab,
+        events: Vec<egui::Event>,
+        actions: &mut Vec<Action>,
+    ) -> Vec<egui::accesskit::Node> {
+        sidebar_frame_focus(ctx, tab, events, actions).0
+    }
+
+    /// [`sidebar_frame`], and the label of the node that has keyboard focus.
+    fn sidebar_frame_focus(
+        ctx: &egui::Context,
+        tab: &mut RepoTab,
+        events: Vec<egui::Event>,
+        actions: &mut Vec<Action>,
+    ) -> (Vec<egui::accesskit::Node>, Option<String>) {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(260.0, 700.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| show(ui, tab, actions),
+        );
+        out.textures_delta.clear();
+        out.platform_output
+            .accesskit_update
+            .map(|u| {
+                let focused = u
+                    .nodes
+                    .iter()
+                    .find(|(id, _)| *id == u.focus)
+                    .and_then(|(_, n)| n.label().map(str::to_owned));
+                (u.nodes.into_iter().map(|(_, n)| n).collect(), focused)
+            })
+            .unwrap_or_default()
+    }
+
+    fn center(n: &egui::accesskit::Node) -> egui::Pos2 {
+        let b = n.bounds().expect("bounds");
+        egui::pos2(
+            crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+            crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+        )
+    }
+
+    fn click(at: egui::Pos2) -> Vec<egui::Event> {
+        let mut events = vec![egui::Event::PointerMoved(at)];
+        for pressed in [true, false] {
+            events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            });
+        }
+        events
+    }
+
+    fn named<'a>(
+        nodes: &'a [egui::accesskit::Node],
+        label: &str,
+    ) -> Option<&'a egui::accesskit::Node> {
+        nodes.iter().find(|n| n.label() == Some(label))
+    }
+
+    /// O9: a repository with no remote offers Publish and Add remote as quiet links, not
+    /// full-width buttons.
+    #[test]
+    fn a_repository_without_remotes_offers_publish_and_add_remote_links() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        let mut tab = tab_with(Vec::new());
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        for label in ["Publish…", "Add remote…"] {
+            let n = named(&nodes, label).unwrap_or_else(|| panic!("{label}"));
+            assert_eq!(n.role(), egui::accesskit::Role::Link, "{label}");
+        }
+        let at = center(named(&nodes, "Publish…").expect("publish"));
+        let _ = sidebar_frame(&ctx, &mut tab, click(at), &mut actions);
+        assert!(
+            matches!(actions.as_slice(), [Action::Publish]),
+            "{actions:?}"
+        );
+    }
+
+    /// O9: with remotes there is no "Add remote…" button at rest; hovering the Remotes header
+    /// shows its "+" and a click on it opens the dialog.
+    #[test]
+    fn the_remotes_header_adds_a_remote_from_its_hover_button() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = tab_with(vec![origin()]);
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        assert!(
+            named(&nodes, "Add remote…").is_none(),
+            "no add button at rest"
+        );
+        let header = center(named(&nodes, "Remotes").expect("remotes header"));
+        let hover = vec![egui::Event::PointerMoved(header)];
+        let _ = sidebar_frame(&ctx, &mut tab, hover.clone(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, hover, &mut actions);
+        let add = center(named(&nodes, "Add remote…").expect("the header's + on hover"));
+        let _ = sidebar_frame(&ctx, &mut tab, click(add), &mut actions);
+        crate::ui::motion::set_reduced(false);
+        assert!(
+            matches!(actions.as_slice(), [Action::AddRemoteDialog]),
+            "{actions:?}"
+        );
     }
 }
