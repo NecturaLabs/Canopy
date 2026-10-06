@@ -21,7 +21,7 @@ function setTheme(choice) {
   store("canopy-theme", choice === "auto" ? null : choice);
   $$('meta[name="theme-color"]').forEach((m) => {
     m.dataset.scheme ??= m.content;
-    m.content = choice === "auto" ? m.dataset.scheme : choice === "light" ? "#FFFFFF" : "#0F1012";
+    m.content = choice === "auto" ? m.dataset.scheme : choice === "light" ? "#FBFBFC" : "#09090B";
   });
   themeButtons.forEach((b) => {
     const on = b.dataset.themeChoice === choice;
@@ -51,7 +51,7 @@ function detect() {
   if (/iPhone|iPad|iPod/i.test(ua) || touchMac) return "phone";
   if (/Win/i.test(platform) || /Windows/.test(ua)) return "windows-x86_64";
   if (/Mac/i.test(platform) || /Mac OS X/.test(ua)) return "macos";
-  if (/Linux/i.test(platform) || /Linux/.test(ua)) return /aarch64|arm64/i.test(platform + " " + ua) ? "linux-aarch64" : "linux-x86_64";
+  if (/Linux/i.test(platform) || /Linux/.test(ua)) return /aarch64|arm64/i.test(navigator.platform + " " + platform + " " + ua) ? "linux-aarch64" : "linux-x86_64";
   return "unknown";
 }
 const system = detect();
@@ -230,6 +230,32 @@ $$("[data-compare]").forEach((fig) => {
   frame.addEventListener("pointermove", (e) => { if (dragging) at(e.clientX); });
   frame.addEventListener("pointerup", () => { dragging = false; });
   frame.addEventListener("pointercancel", () => { dragging = false; });
+
+  // Standard or Deeper: the same two renders in the other style
+  const styles = $$("[data-style]", fig);
+  const images = $$("[data-standard]", frame);
+  const setStyle = (style) => {
+    styles.forEach((b) => {
+      const on = b.dataset.style === style;
+      b.setAttribute("aria-checked", String(on));
+      b.tabIndex = on ? 0 : -1;
+    });
+    images.forEach((img) => {
+      img.src = img.dataset[style];
+      img.alt = img.alt.replace(/(Standard|Deeper) style/, style === "deeper" ? "Deeper style" : "Standard style");
+    });
+  };
+  styles.forEach((b, i) => {
+    b.addEventListener("click", () => setStyle(b.dataset.style));
+    b.addEventListener("keydown", (e) => {
+      const d = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+      if (!d) return;
+      const next = styles[(i + d + styles.length) % styles.length];
+      setStyle(next.dataset.style);
+      next.focus();
+      e.preventDefault();
+    });
+  });
 });
 
 /* The palette. With a keyboard and a mouse it is a command palette; on touch screens it stays the
@@ -348,7 +374,7 @@ input.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowUp") { active = (active - 1 + n) % n; render(); e.preventDefault(); }
   else if (e.key === "Home" && !input.value) { active = 0; render(); e.preventDefault(); }
   else if (e.key === "End" && !input.value) { active = n - 1; render(); e.preventDefault(); }
-  else if (e.key === "Enter") { run(); e.preventDefault(); }
+  else if (e.key === "Enter" && !(e.ctrlKey || e.metaKey)) { run(); e.preventDefault(); }
   else if (e.key === "Escape") { input.value = ""; active = 0; render(); input.blur(); e.preventDefault(); }
 });
 

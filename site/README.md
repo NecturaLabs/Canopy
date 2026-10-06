@@ -1,10 +1,22 @@
 # Canopy website
 
-The landing page for Canopy: one static page in the app's own look (Midnight and Daylight, Inter
-and JetBrains Mono, the indigo primary), led by the keyboard. Its first screen is the History view
-with a working command palette beside it, and each section names the keys that do the job. There
-is no build step and no framework: `index.html`, `styles.css`, `app.js` and `theme.js` are the
-source and the output.
+The landing page for Canopy: one static page, led by the keyboard. Its first screen is the
+headline and the install command beside a working command palette, with the History view below
+them, and each section names the keys that do the job. There is no build step and no framework:
+`index.html`, `styles.css`, `app.js` and `theme.js` are the source and the output.
+
+## How it looks
+
+The site has its own palette, set in the tokens at the top of `styles.css`: a near-black ground
+(`#09090B`, light `#FBFBFC`), a white pill for the one call to action (near-black in light), one
+blue accent (`#4C82FF`) for links, focus and selection, and a green only for Copied. The
+screenshots keep the app's own Midnight and Daylight. Headings are Inter Display, text is Inter,
+and keys, commands and paths are JetBrains Mono. Surfaces follow the app's Deeper style: panes sit
+on the ground with layered soft shadows, controls and keycaps are lit from the top, and every
+screenshot sits in a window frame. Each section is a plain heading, a sentence or two and the keys
+that do the job; the download section is set apart on its own band. Only the palette moves on
+load, and reduced motion stops that. No glows, gradient text or lines, glass, badges or decorative
+icons, and no copy that is not a fact about the app.
 
 ## Run it locally
 
@@ -33,6 +45,8 @@ exceptions. It also holds the two installer addresses: `/install` and `/install.
 redirects to `canopy/install.sh` and `canopy/install.ps1` in NecturaLabs/app-updates, so the
 script that runs is always the published one and this site never serves a copy. The canonical
 address, `og:url` and `og:image` in `index.html` use `https://canopy.necturalabs.com`.
+`og:image` is `./assets/og-image.png`, a 1200 by 630 PNG crop of a real History render, since some
+link previews do not read WebP.
 
 ## How the page behaves
 
@@ -45,7 +59,8 @@ address, `og:url` and `og:image` in `index.html` use `https://canopy.necturalabs
   `Ctrl+Enter` goes to the downloads, and `J` and `K` move between sections when no text field
   has focus. On touch screens, on phones and tablets (whatever their pointer reports) and in
   narrow windows it stays the plain list of section links written into the page, placed under the
-  screenshot: one column on phones, two on tablets, every row at least 48 px tall.
+  screenshot: one column on phones, two on tablets, every row at least 48 px tall. On wide windows
+  it sits beside the headline; below 960 px it moves under the screenshot.
 - **Install command.** The main download is one command, chosen from the visitor's system:
   `curl -fsSL https://canopy.necturalabs.com/install | sh` on Linux and
   `irm https://canopy.necturalabs.com/install.ps1 | iex` on Windows. A switch shows the other
@@ -53,10 +68,11 @@ address, `og:url` and `og:image` in `index.html` use `https://canopy.necturalabs
   iPad visitors get no command up front: the page says Canopy is a desktop app for Linux (x86_64
   and arm64) and Windows (x86_64) with no mobile app yet, offers to copy the page's link to open
   on a computer, and keeps the commands behind Show the install commands. The header's Download
-  button is hidden for them. Unrecognised systems see that Canopy runs on Linux and Windows, and
+  button and the archive downloads are hidden for them: there is nothing to install on a phone.
+  Unrecognised systems see that Canopy runs on Linux and Windows, and
   macOS visitors that there is no macOS build yet (`install.sh` supports macOS, but no macOS
   archive is published); both lines stay available to them. The archives remain listed below the
-  command, with the visitor's own build marked.
+  command as one card per build, the visitor's own marked with the white button.
 - **Phones.** Below 720 px each full-window screenshot is replaced by a crop of the same render
   (`*-crop.webp`, `*-changes-hunk.webp`). Below 600 px the crops sit in a taller frame
   (`object-fit: cover`, anchored top left) so they show at about three quarters of their real size
@@ -64,7 +80,8 @@ address, `og:url` and `og:image` in `index.html` use `https://canopy.necturalabs
   the shortcuts sheet is left out, since the rules beside it say the same. Phones and tablets
   (detected, or any coarse pointer) get controls at least 44 px tall, and the header, page edges
   and footer keep clear of notches through `viewport-fit=cover` and `env(safe-area-inset-*)`.
-  Tablets from 721 to 960 px keep the five steps to a commit on one row.
+- **Themes.** The Midnight and Daylight slider has a Standard and Deeper switch that swaps both
+  renders for the same view in the other style (`m-deeper`, `d-deeper`).
 - **Words and pictures.** Copy names the real thing: the key, the feature, the exact behaviour.
   No superlatives, taglines or claims the sources under Keeping it true do not make. Every picture
   is a render of the app or one of its own controls, with no decorative gradients, glows or icon
@@ -91,7 +108,8 @@ the release-asset pattern in `app.js` before the page uses it.
 - The themes section names Midnight, Daylight, Observatory, the Custom theme and the High
   contrast switch, from the Unreleased rows in `docs/features.md`. Midnight, Daylight and Custom
   (`m-custom`, `d-custom`: accent hue 150, tint 40 at hue 150, built from Midnight and from
-  Daylight) have screenshots; do not show Observatory or High contrast until there are real
+  Daylight) have screenshots, as has the Deeper style (`m-deeper`, `d-deeper`, `--style deeper`);
+  do not show Observatory or High contrast until there are real
   renders.
 - The screenshots in `./assets/shots/` are real renders from `tools/screenshot.sh` on demo
   repositories made by `tools/mkfixture.sh`, at 1440 by 900, converted to WebP at quality 80
@@ -106,10 +124,13 @@ the release-asset pattern in `app.js` before the page uses it.
 | File | Font | Licence |
 |---|---|---|
 | `fonts/Inter-*.woff2` | Inter (Regular, Medium, SemiBold), Latin subset | SIL OFL 1.1, `fonts/OFL-Inter.txt` |
+| `fonts/InterDisplay-SemiBold.woff2` | Inter Display SemiBold from Inter 4.1, cut to the same code points as the Inter files | SIL OFL 1.1, `fonts/OFL-Inter.txt` |
 | `fonts/JetBrainsMonoNL-Regular.woff2` | JetBrains Mono NL, Latin subset | SIL OFL 1.1, `fonts/OFL-JetBrainsMono.txt` |
-| `fonts/Phosphor.woff2` | Phosphor Regular from the `egui-phosphor` crate, only the icons the page uses | MIT, `fonts/LICENSE-Phosphor-MIT.txt` |
+| `fonts/Phosphor-2.woff2` | Phosphor Regular from the `egui-phosphor` crate, only the icons the page uses | MIT, `fonts/LICENSE-Phosphor-MIT.txt` |
 
 A new icon on the page needs the Phosphor subset made again with `pyftsubset` (fontTools) from the
 crate's `res/Phosphor.ttf`, listing every code point that `index.html` and `app.js` use (today
-E182, E18C, E1CA, E1E0, E20C, E27A, E27C, E280, E282, E2D8, E30C, E330, E40C, E472, E516,
-E560, E5B8, E692 and EB02), with `--flavor=woff2`.
+E06C, E182, E18C, E1CA, E1E0, E20C, E27A, E27C, E280, E282, E2D8, E30C, E330, E40C, E472,
+E516, E560, E5B8, E692 and EB02), with `--flavor=woff2`. Give the new subset a new file name
+(`Phosphor-3.woff2`, and so on) and update `styles.css`: `fonts/` is served with a one-year
+`immutable` cache, so a file changed in place stays stale for returning visitors.

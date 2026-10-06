@@ -16,6 +16,15 @@
         ],
         "createdAt": "2026-10-06T10:15:06.542Z",
         "reason": "Agent: .sec bands have no side padding by design; the inner .wrap insets the text (clamp() padding); rendered scans at 320/390/768/1440 do not flag it"
+      },
+      {
+        "rule": "nested-cards",
+        "value": "*",
+        "files": [
+          "site/index.html"
+        ],
+        "createdAt": "2026-10-06T15:33:40.390Z",
+        "reason": "The only bordered containers inside a card are form controls (the OS segmented control and the command field inside the download install card), not cards; checked in rendered screenshots"
       }
     ]
   }

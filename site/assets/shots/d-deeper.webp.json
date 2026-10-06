@@ -1,0 +1,4 @@
+{
+  "prompt": "Origin: real screenshot of Canopy (History view, Daylight, Deeper style), options: --style deeper --light; rendered headlessly (Xvfb) by tools/screenshot.sh with a release build of the working tree at commit badb8bc (reports build 706), 1440x900, on a demo repository made by tools/mkfixture.sh (showcase), converted to WebP (quality 80). Not generated.",
+  "createdAt": "2026-10-06T15:21:28.000Z"
+}
