@@ -467,7 +467,7 @@ const MAX_RETRY_AFTER: i64 = 86_400;
 
 /// When a rate limit resets, in unix seconds between now and [`MAX_RETRY_AFTER`] ahead: the
 /// provider's reset header (unix seconds), else `Retry-After` (seconds from now).
-fn rate_limit_reset(headers: &HeaderMap) -> Option<i64> {
+pub(crate) fn rate_limit_reset(headers: &HeaderMap) -> Option<i64> {
     let now = chrono::Utc::now().timestamp();
     let latest = now.saturating_add(MAX_RETRY_AFTER);
     header_i64(headers, "x-ratelimit-reset")

@@ -672,13 +672,22 @@ fn fetch(
     let Some(avatar) = avatar else {
         return Err(Miss::Failed);
     };
+    // Only the picture host's "no picture" is about the author; its limit, a refusal or a
+    // redirect (never followed) pause lookups and leave the author's record as it was.
     let bytes = avatar.download().map_err(|e| match e {
-        Error::Network(_) => pause_unreachable(now, note),
-        Error::Api { status, .. } if status >= 500 => pause_unreachable(now, note),
         Error::Api {
             status: 404 | 410, ..
         } => Miss::NoPicture,
-        _ => Miss::Failed,
+        Error::Network(_) => pause_unreachable(now, note),
+        Error::Api { status, .. } if status >= 500 => pause_unreachable(now, note),
+        Error::RateLimited { reset } => {
+            Miss::Later(reset.map_or(now + HOUR_SECS, |at| at.clamp(now + 60, now + CACHE_SECS)))
+        }
+        Error::Stopped => Miss::Skipped,
+        Error::Api { .. } | Error::Unauthorized(_) | Error::NotFound(_) => {
+            Miss::Later(now + HOUR_SECS)
+        }
+        Error::Parse(_) => Miss::Failed,
     })?;
     let image = decode(&bytes).map_err(|_| Miss::Failed)?;
     Ok(image
@@ -1336,6 +1345,45 @@ mod tests {
         let record = read_record(&path).unwrap();
         assert!(record.pixels.is_none());
         assert!(record.checked_at > 100, "no picture is cached for 12 hours");
+    }
+
+    /// A picture host's limit, refusal or redirect says nothing about the author (AGENTS.md,
+    /// Network): nothing is cached for the author, the old picture stays, and lookups pause.
+    #[test]
+    fn a_picture_host_s_limit_or_refusal_is_not_cached_for_the_author() {
+        for status in [429, 403, 302, 400] {
+            let stub = Stub::start();
+            stub.picture_for(PUSHED);
+            stub.route("/picture.png", status, "");
+            let dir = tempfile::tempdir().unwrap();
+            let empty = dir.path().join("empty.json");
+            let paused = load_at(
+                Some(empty.clone()),
+                &stub.client(Some("t")),
+                Oid::from_str(PUSHED).unwrap(),
+                "a@example.com",
+                &AtomicBool::new(true),
+            );
+            assert!(paused.retry_at.is_some(), "{status}: lookups pause");
+            assert_eq!(paused.checked_at, 0, "{status}");
+            assert!(!empty.exists(), "{status}: nothing cached for the author");
+
+            let cached = dir.path().join("cached.json");
+            let old = Record {
+                checked_at: 100,
+                pixels: Some(vec![7; PIXEL_BYTES]),
+            };
+            write_record(&cached, &old).unwrap();
+            let kept = load_at(
+                Some(cached.clone()),
+                &stub.client(Some("t")),
+                Oid::from_str(PUSHED).unwrap(),
+                "a@example.com",
+                &AtomicBool::new(true),
+            );
+            assert!(kept.image.is_some(), "{status}: the old picture stays");
+            assert_eq!(read_record(&cached).unwrap().checked_at, 100, "{status}");
+        }
     }
 
     #[test]

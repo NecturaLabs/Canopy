@@ -69,6 +69,11 @@ impl Avatar {
             .call()
             .map_err(|_| Error::Network("Could not download the profile picture".into()))?;
         let status = response.status().as_u16();
+        if status == 429 {
+            return Err(Error::RateLimited {
+                reset: crate::http::rate_limit_reset(response.headers()),
+            });
+        }
         if !(200..300).contains(&status) {
             return Err(Error::Api {
                 status,
