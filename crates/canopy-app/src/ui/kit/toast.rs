@@ -1,16 +1,13 @@
 //! The toast card (concept `.k-toast`, design spec 4.15): the overlay surface `toast_width` wide,
-//! a leading icon in the kind's colour, a semibold title, a dim body, optional actions and a
-//! details disclosure, a progress bar for running work, and the dismiss button. The queue, its
+//! a leading icon in the kind's colour, a semibold title, a dim body, optional actions, a progress
+//! bar for running work, and the dismiss button. The queue, its
 //! timers and recovery actions stay in `ui/toast.rs`, which lays the cards out as a stack.
 //!
 //! Cards slide in from the right while they grow and fade in (the second of two arriving together
 //! a little later) and slide out to the right as they fade when they leave. Reduced motion shows
 //! and hides them at once.
 
-use egui::{
-    Align, CornerRadius, FontFamily, FontId, Id, Layout, Margin, Response, RichText, Sense, Stroke,
-    Ui, UiBuilder, Vec2, vec2,
-};
+use egui::{Align, FontId, Id, Layout, Response, RichText, Sense, Ui, UiBuilder, Vec2, vec2};
 use egui_phosphor::regular as icon;
 
 use super::overlay::{self, Entrance, ExitMotion, Layer};
@@ -60,7 +57,6 @@ pub struct ToastCard<'a> {
     body: Option<&'a str>,
     body_strong: bool,
     actions: Vec<(&'a str, Option<&'a str>)>,
-    details: Option<&'a str>,
     #[expect(
         clippy::option_option,
         reason = "no bar, an indeterminate bar or a fraction, as `progress` takes them"
@@ -84,7 +80,6 @@ impl<'a> ToastCard<'a> {
             body: None,
             body_strong: false,
             actions: Vec::new(),
-            details: None,
             progress: None,
             dismiss: if tone == Tone::Danger {
                 Dismiss::Always
@@ -112,11 +107,6 @@ impl<'a> ToastCard<'a> {
         self.actions.push((label, glyph));
         self
     }
-    /// Output behind a "Details" disclosure, in a read-only block with a Copy button.
-    pub fn details(mut self, text: &'a str) -> Self {
-        self.details = Some(text);
-        self
-    }
     /// A progress bar under the body: `Some(f)` determinate, `None` indeterminate.
     pub fn progress(mut self, fraction: Option<f32>) -> Self {
         self.progress = Some(fraction);
@@ -137,16 +127,11 @@ impl<'a> ToastCard<'a> {
         self.stagger = index;
         self
     }
-    /// Shows the card with forced states (`OPEN` opens the details, `HOVER` shows the dismiss
-    /// button, `progress` fixes the entrance; the gallery and tests only).
+    /// Shows the card with forced states (`HOVER` shows the dismiss button, `progress` fixes the
+    /// entrance; the gallery and tests only).
     pub(crate) fn show_forced(mut self, ui: &mut Ui, force: ForceState) -> ToastOutput {
         self.force = Some(force);
         self.show(ui)
-    }
-
-    /// The details disclosure's state key.
-    fn open_id(id: Id) -> Id {
-        id.with("kit-toast-details")
     }
 
     pub fn show(self, ui: &mut Ui) -> ToastOutput {
@@ -162,8 +147,6 @@ impl<'a> ToastCard<'a> {
             Tone::Accent | Tone::Neutral => (icon::INFO, p.accent),
         };
         let force = self.force.unwrap_or_default();
-        let open_key = Self::open_id(id);
-        let mut open = force.open || ctx.data(|d| d.get_temp::<bool>(open_key).unwrap_or(false));
         let hover_key = id.with("kit-toast-hovered");
         let hovered_before =
             force.hover || ctx.data(|d| d.get_temp::<bool>(hover_key).unwrap_or(false));
@@ -247,7 +230,7 @@ impl<'a> ToastCard<'a> {
                                 };
                                 bar.width(text_w).id_salt(id.with("progress")).show(ui);
                             }
-                            if self.details.is_some() || !self.actions.is_empty() {
+                            if !self.actions.is_empty() {
                                 ui.add_space(ACTIONS_GAP - TITLE_GAP);
                                 // Ghost buttons pulled left so their labels line up with the text.
                                 let mut row = ui.available_rect_before_wrap();
@@ -259,22 +242,6 @@ impl<'a> ToastCard<'a> {
                                         .layout(Layout::left_to_right(Align::Center)),
                                     |ui| {
                                         ui.spacing_mut().item_spacing.x = 2.0;
-                                        if self.details.is_some() {
-                                            let caret = if open {
-                                                icon::CARET_DOWN
-                                            } else {
-                                                icon::CARET_RIGHT
-                                            };
-                                            let b = Button::new("Details")
-                                                .ghost()
-                                                .size(Size::Sm)
-                                                .icon(caret)
-                                                .id_salt(id.with("details"));
-                                            if b.show(ui).clicked() {
-                                                open = !open;
-                                                ctx.data_mut(|d| d.insert_temp(open_key, open));
-                                            }
-                                        }
                                         for (i, (label, glyph)) in self.actions.iter().enumerate() {
                                             let mut b = Button::new(*label)
                                                 .ghost()
@@ -289,10 +256,6 @@ impl<'a> ToastCard<'a> {
                                         }
                                     },
                                 );
-                            }
-                            if open && let Some(d) = self.details {
-                                ui.add_space(ACTIONS_GAP - TITLE_GAP);
-                                details_block(ui, id, d);
                             }
                         },
                     );
@@ -368,56 +331,6 @@ impl<'a> ToastCard<'a> {
     }
 }
 
-/// The read-only output block behind "Details": `field` fill, a 1 pt seam ring, mono text that
-/// scrolls past `TOAST_DETAILS_HEIGHT`, and a Copy button.
-fn details_block(ui: &mut Ui, id: Id, text: &str) {
-    let ctx = ui.ctx().clone();
-    let p = theme::palette(&ctx);
-    let s = theme::surfaces(&ctx);
-    let m = theme::metrics();
-    egui::Frame::new()
-        .fill(s.field)
-        .stroke(Stroke::new(1.0, s.border))
-        .corner_radius(CornerRadius::same(m.radius_sm))
-        .inner_margin(Margin::symmetric(10, 8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            egui::ScrollArea::vertical()
-                .id_salt(id.with("details-scroll"))
-                .max_height(theme::TOAST_DETAILS_HEIGHT)
-                .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(text)
-                                .font(FontId::new(m.small_size, FontFamily::Monospace))
-                                .color(p.text_dim),
-                        )
-                        .wrap(),
-                    );
-                });
-        });
-    let mut row = ui.available_rect_before_wrap();
-    row.min.x -= m.button_pad_x_sm - 2.0;
-    row.set_height(Size::Sm.height());
-    ui.scope_builder(
-        UiBuilder::new()
-            .max_rect(row)
-            .layout(Layout::left_to_right(Align::Center)),
-        |ui| {
-            if Button::new("Copy output")
-                .ghost()
-                .size(Size::Sm)
-                .icon(icon::COPY)
-                .id_salt(id.with("copy"))
-                .show(ui)
-                .clicked()
-            {
-                ctx.copy_text(text.to_owned());
-            }
-        },
-    );
-}
-
 // ------------------------------------------------------------------------------------- gallery
 
 /// The gallery's toasts: info, success, warning, an error with its details open and an action,
@@ -449,7 +362,6 @@ pub(crate) fn gallery(ui: &mut Ui) {
         ToastCard::new(id.with(3), Tone::Danger, "Push failed")
             .body("The remote has commits you do not have yet. Pull, resolve any conflicts, then push again.")
             .action("Pull", Some(icon::ARROW_DOWN))
-            .details(" ! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'")
             .show_forced(ui, ForceState::OPEN);
         ToastCard::new(id.with(4), Tone::Accent, "Fetching origin")
             .body("Receiving objects")

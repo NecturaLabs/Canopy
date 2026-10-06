@@ -621,9 +621,9 @@ the last picture, and an author without a picture keeps initials (never a genera
 Overlay cards (glass with Translucent surfaces on) share a bounded bottom-right scroll stack, at
 most 408 points wide, so five errors remain reachable even in a compact zoomed window. Newest
 notices lead the stack. Titles truncate without displacing Close. Errors stay until dismissed,
-offer Close and Copy, and keep raw output in a scrollable monospace Details disclosure. Known
-failures lead with a plain explanation; any other error shows git's first line under its title,
-and Details only when git said more. Screen readers hear an error as an alert with its message. A
+offer Close and Copy, with no disclosure on the card: known failures lead with a plain
+explanation, any other error shows git's first line under its title, and git's full output is in
+the notification center (its tooltip and Copy), which says the same as the card. Screen readers hear an error as an alert with its message. A
 rejected push offers Pull for its originating repository;
 account failures offer Accounts. Other toasts dismiss on a card click or after four seconds, which
 run only while the pointer is off the stack and the window has focus. The stack retains five

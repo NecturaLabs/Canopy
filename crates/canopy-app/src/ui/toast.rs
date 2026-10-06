@@ -149,28 +149,30 @@ struct CardText<'a> {
     details: Option<&'a str>,
 }
 
-fn card_text(t: &Toast) -> CardText<'_> {
-    if t.kind != ToastKind::Error {
+/// What a notification of `kind` with `body` (and, for an error, its `help`) says under its
+/// title, on its card and in the center alike.
+fn card_text<'a>(kind: ToastKind, body: &'a str, help: Option<&'static str>) -> CardText<'a> {
+    if kind != ToastKind::Error {
         return CardText {
-            body: Some(t.body.as_str()).filter(|b| !b.is_empty()),
+            body: Some(body).filter(|b| !b.is_empty()),
             strong: false,
             details: None,
         };
     }
-    if t.help.is_some() {
+    if help.is_some() {
         return CardText {
-            body: t.help,
+            body: help,
             strong: true,
-            details: Some(t.body.as_str()),
+            details: Some(body),
         };
     }
     // No hint: git's own first line says why, and Details holds the rest.
-    let first = t.body.lines().map(str::trim).find(|l| !l.is_empty());
-    let more = first.is_some_and(|f| t.body.trim() != f);
+    let first = body.lines().map(str::trim).find(|l| !l.is_empty());
+    let more = first.is_some_and(|f| body.trim() != f);
     CardText {
         body: first,
         strong: false,
-        details: more.then_some(t.body.as_str()),
+        details: more.then_some(body),
     }
 }
 
@@ -207,6 +209,8 @@ struct Entry {
     body: String,
     /// When it arrived, in Unix seconds.
     at: i64,
+    /// What an error means, before git's own words.
+    help: Option<&'static str>,
     recovery: Option<Recovery>,
 }
 
@@ -304,6 +308,7 @@ impl Toasts {
             title: title.clone(),
             body: body.clone(),
             at: chrono::Utc::now().timestamp(),
+            help,
             recovery: recovery.clone(),
         });
         self.history.truncate(HISTORY);
@@ -413,7 +418,7 @@ impl Toasts {
                                     .born(t.born)
                                     .stagger(u8::try_from(stagger).unwrap_or(u8::MAX))
                                     .clickable(t.kind != ToastKind::Error);
-                            let text = card_text(t);
+                            let text = card_text(t.kind, &t.body, t.help);
                             if let Some(body) = text.body {
                                 card = card.body(body).body_strong(text.strong);
                             }
@@ -423,9 +428,6 @@ impl Toasts {
                                     Recovery::Accounts => "Open Accounts",
                                 };
                                 card = card.action(label, None);
-                            }
-                            if let Some(details) = text.details {
-                                card = card.details(details);
                             }
                             let layer = ui.layer_id();
                             let start = overlay::next_shape(ctx, layer);
@@ -681,8 +683,12 @@ impl Toasts {
                                     );
                                 });
                                 let body = e.body.trim();
-                                if !body.is_empty() {
-                                    let lines: Vec<&str> = body.lines().collect();
+                                // What the card says (a hint before git's own words), the full
+                                // output in the tooltip.
+                                let said = card_text(e.kind, &e.body, e.help);
+                                let text = said.body.map_or("", str::trim);
+                                if !text.is_empty() {
+                                    let lines: Vec<&str> = text.lines().collect();
                                     let shown = lines
                                         .iter()
                                         .take(CENTER_BODY_LINES)
@@ -697,7 +703,7 @@ impl Toasts {
                                         )
                                         .wrap(),
                                     );
-                                    if lines.len() > CENTER_BODY_LINES {
+                                    if lines.len() > CENTER_BODY_LINES || said.details.is_some() {
                                         label.kit_tooltip(body).show();
                                     }
                                 }
@@ -828,7 +834,11 @@ mod tests {
             "Push failed",
             rejected,
         );
-        let text: Vec<CardText<'_>> = toasts.items.iter().map(card_text).collect();
+        let text: Vec<CardText<'_>> = toasts
+            .items
+            .iter()
+            .map(|t| card_text(t.kind, &t.body, t.help))
+            .collect();
         assert_eq!(
             text[0],
             CardText {
@@ -1012,77 +1022,6 @@ mod tests {
         assert!(
             toasts.items.is_empty(),
             "clicking a non-error card must dismiss it"
-        );
-    }
-
-    #[test]
-    fn expanded_notification_details_survive_a_new_arrival() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
-        let mut toasts = Toasts::default();
-        toasts.push(
-            &ctx,
-            ToastKind::Error,
-            Topic::Error,
-            "Original error",
-            "error: original\nOriginal output",
-        );
-        let mut pointer = egui::Pos2::ZERO;
-        let mut detail_visible = false;
-        for frame in 0..9 {
-            if frame == 6 {
-                assert!(detail_visible, "details must open before testing arrival");
-                toasts.push(
-                    &ctx,
-                    ToastKind::Error,
-                    Topic::Error,
-                    "New error",
-                    "error: new\nNew output",
-                );
-            }
-            let mut events = vec![egui::Event::PointerMoved(pointer)];
-            if matches!(frame, 3 | 4) {
-                events.push(egui::Event::PointerButton {
-                    pos: pointer,
-                    button: egui::PointerButton::Primary,
-                    pressed: frame == 3,
-                    modifiers: egui::Modifiers::default(),
-                });
-            }
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(1024.0, 640.0),
-                    )),
-                    time: Some(0.4 + f64::from(frame) * 0.01),
-                    events,
-                    ..Default::default()
-                },
-                |_| {
-                    toasts.show(&ctx);
-                },
-            );
-            output.textures_delta.clear();
-            detail_visible = output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "error: original\nOriginal output"));
-
-            if frame == 2 {
-                pointer = output
-                    .shapes
-                    .iter()
-                    .find_map(|shape| match &shape.shape {
-                        egui::Shape::Text(text) if text.galley.text() == "Details" => {
-                            Some(text.visual_bounding_rect().center())
-                        }
-                        _ => None,
-                    })
-                    .expect("details disclosure");
-            }
-        }
-        assert!(
-            detail_visible,
-            "a new card must not reset another card's disclosure"
         );
     }
 
@@ -1404,6 +1343,48 @@ mod tests {
         toasts.push(&ctx, ToastKind::Error, Topic::Error, "Push failed", "no");
         assert!(toasts.items.is_empty(), "no card while the center is open");
         assert_eq!(toasts.history.len(), 2);
+    }
+
+    /// The center says what the card says: a known git failure as its hint, git's own output in
+    /// the tooltip and the copy, not as the text.
+    #[test]
+    fn the_center_explains_a_failure_like_its_card() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        motion::set_reduced(true);
+        let mut toasts = Toasts::default();
+        let raw = "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs";
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Push failed", raw);
+        let e = &toasts.history[0];
+        let hint = card_text(e.kind, &e.body, e.help)
+            .body
+            .expect("a hint")
+            .to_owned();
+        assert_ne!(hint, raw.lines().next().unwrap_or_default());
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let _ = toasts.center(ui);
+            });
+            out.textures_delta.clear();
+            labels = out
+                .platform_output
+                .accesskit_update
+                .map(|u| {
+                    u.nodes
+                        .into_iter()
+                        .filter_map(|(_, n)| n.label().or(n.value()).map(str::to_owned))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+        }
+        motion::set_reduced(false);
+        assert!(labels.contains(&hint), "{labels:?}");
+        assert!(
+            !labels.iter().any(|l| l.contains("[rejected]")),
+            "{labels:?}"
+        );
     }
 
     #[test]

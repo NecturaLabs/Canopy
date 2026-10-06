@@ -241,6 +241,8 @@ commits since the previous build.
 
 ### Changed
 
+- Notification cards no longer have an expandable Details section, and the notification center
+  explains a failure the same way its card does, with git's full output in its tooltip and Copy.
 - Primary and destructive buttons are tonal instead of solid: a ground tinted with the accent (or
   red), a fine edge in the same colour and a bold label in it, so the main action stands out
   without a heavy block of colour.

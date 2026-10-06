@@ -48,8 +48,6 @@ pub(super) const TONE_ALPHA: u8 = 41;
 pub const MIN_WINDOW_SIZE: egui::Vec2 = vec2(900.0, 560.0);
 /// Shared control geometry, in logical points before interface zoom.
 pub const CONTROL_INSET: f32 = 2.0;
-/// Tallest raw-output viewport of a notification card.
-pub const TOAST_DETAILS_HEIGHT: f32 = 140.0;
 
 /// Two ends of a vertical fill, top first. Standard surfaces are flat (`top == bottom`) and paint
 /// as one rect; Deeper's are painted with `kit::paint::fill` (a ramp texture brush).
