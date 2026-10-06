@@ -1241,10 +1241,7 @@ impl<'a> SectionHeader<'a> {
         } else {
             Sense::hover()
         };
-        let id = ui.id().with(("kit-section", &self.title));
-        // Focus as the frame began: a Tab read by `interact` below passes it on at once.
-        let had_focus = ctx.memory(|m| m.has_focus(id));
-        let mut response = ui.interact(rect, id, sense);
+        let mut response = ui.interact(rect, ui.id().with(("kit-section", &self.title)), sense);
         let f = self.force.unwrap_or_default();
         let hovered = f.hover || ui.rect_contains_pointer(rect);
         let hover = match self.force {
@@ -1314,16 +1311,15 @@ impl<'a> SectionHeader<'a> {
         if focused {
             paint::inset_ring(&painter, rect, CornerRadius::same(m.radius_sm), p.focus);
         }
-        let mut acted = false;
-        if let Some((glyph, label)) = &self.action {
-            // The action stays in the focus order while the header or the action itself has
-            // focus, so Tab from the header lands on it, and it shows fully while it is focused.
+        let acted = if let Some((glyph, label)) = &self.action {
+            // The action is always there for the keyboard and AccessKit, right after the header
+            // in the focus order (Tab and Shift+Tab reach it); it shows while the header is
+            // hovered or focused, and fully while the action itself has focus.
             let action_key = response.id.with("kit-section-action-id");
             let action_focused = ctx
                 .data(|d| d.get_temp::<Id>(action_key))
                 .is_some_and(|id| ctx.memory(|m| m.has_focus(id)));
-            let keyboard = had_focus || response.has_focus() || action_focused;
-            let shown = hovered || focused || (keyboard && focus_visible(&ctx));
+            let shown = hovered || focused || action_focused;
             let reveal = match self.force {
                 Some(_) => f32::from(u8::from(shown)),
                 None => anim::ease_bool(
@@ -1334,29 +1330,25 @@ impl<'a> SectionHeader<'a> {
                     motion::FAST,
                 ),
             };
-            if reveal > 0.0 || keyboard {
-                let area = Rect::from_min_max(
-                    pos2(rect.right() - action_w - 2.0, rect.top()),
-                    pos2(rect.right() - 2.0, rect.bottom()),
-                );
-                let mut child = ui.new_child(
-                    UiBuilder::new()
-                        .max_rect(area)
-                        .layout(Layout::right_to_left(Align::Center)),
-                );
-                child.multiply_opacity(if action_focused { 1.0 } else { reveal });
-                let action = IconButton::new(glyph, label.clone())
-                    .size(Size::Xs)
-                    .id_salt(("kit-section-action", &self.title))
-                    .show(&mut child);
-                ctx.data_mut(|d| d.insert_temp(action_key, action.id));
-                acted = action.clicked();
-            } else {
-                // The child above takes one automatic id: take it while hidden too, so the
-                // widgets after the header keep their ids (and focus) as the action comes and goes.
-                ui.skip_ahead_auto_ids(1);
-            }
-        }
+            let area = Rect::from_min_max(
+                pos2(rect.right() - action_w - 2.0, rect.top()),
+                pos2(rect.right() - 2.0, rect.bottom()),
+            );
+            let mut child = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(area)
+                    .layout(Layout::right_to_left(Align::Center)),
+            );
+            child.multiply_opacity(if action_focused { 1.0 } else { reveal });
+            let action = IconButton::new(glyph, label.clone())
+                .size(Size::Xs)
+                .id_salt(("kit-section-action", &self.title))
+                .show(&mut child);
+            ctx.data_mut(|d| d.insert_temp(action_key, action.id));
+            action.clicked()
+        } else {
+            false
+        };
         if collapsible {
             response.widget_info(|| {
                 WidgetInfo::labeled(WidgetType::CollapsingHeader, true, &self.title)
@@ -2124,8 +2116,8 @@ mod tests {
     }
 
     /// Override O2 (shell F1): Tab from a section header lands on its action ("+" Add remote…),
-    /// which stays shown while it has focus, and the next Tab leaves it; with full and reduced
-    /// motion.
+    /// which stays shown while it has focus, the next Tab leaves it and Shift+Tab comes back to
+    /// it; with full and reduced motion.
     #[test]
     fn tab_reaches_a_section_headers_action() {
         let ctx = ctx();
@@ -2164,9 +2156,16 @@ mod tests {
             };
             let _ = frame(Vec::new());
             let mut focused = Vec::new();
-            for _ in 0..3 {
+            let back = egui::Event::Key {
+                key: Key::Tab,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::SHIFT,
+            };
+            for step in [key(Key::Tab), key(Key::Tab), key(Key::Tab), back] {
                 // Focus moves at the end of the frame that read the Tab.
-                let _ = frame(vec![key(Key::Tab)]);
+                let _ = frame(vec![step]);
                 focused.push(frame(Vec::new()).0);
                 // A few quiet frames: the action must not vanish once the header lost focus.
                 for _ in 0..3 {
@@ -2183,7 +2182,8 @@ mod tests {
                 [
                     Some(format!("Remotes {reduced}").as_str()),
                     Some("Add remote…"),
-                    Some("After")
+                    Some("After"),
+                    Some("Add remote…")
                 ],
                 "reduced {reduced}"
             );
