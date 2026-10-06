@@ -4,9 +4,9 @@
 //! anchor side, and exits that fade out what the layer showed last. Design spec 4.11, 4.13, 4.14.
 //!
 //! **Glass.** [`backdrop`] is the one place the backdrop blur plugs in: every floating layer except
-//! tooltips asks it for the blurred backdrop between its shadow and its fill, and paints the
-//! translucent overlay over it when it gets one. With Translucent surfaces off, or the blur
-//! unavailable, it returns `None` and the layer is opaque.
+//! tooltips asks it for the blurred backdrop, copies it before its shadow and draws it between
+//! the shadow and its fill, and paints the translucent overlay over it when it gets one. With
+//! Translucent surfaces off, or the blur unavailable, it returns `None` and the layer is opaque.
 //!
 //! **Exits.** A floating layer records what it painted each frame it is open ([`record_exit`]);
 //! the frame it is no longer shown, an egui plugin keeps painting that snapshot as it fades (and
@@ -41,6 +41,8 @@ const TOOLTIP_GAP: f32 = 8.0;
 const POPOVER_GAP: f32 = 6.0;
 /// Widest tooltip.
 const TOOLTIP_WIDTH: f32 = 260.0;
+/// A tooltip's shortcut keycaps (spec 4.11: `KeyChord` at 18 pt).
+const TOOLTIP_KEYCAP: f32 = 18.0;
 /// Pointer-opened popups grow from this scale and drop this far from the anchor edge.
 pub(crate) const POPUP_SCALE: f32 = 0.95;
 const POPUP_DROP: f32 = 4.0;
@@ -83,12 +85,17 @@ impl Layer {
 
 // --------------------------------------------------------------------------- surface and glass
 
-/// The glass hook: what the backdrop blur paints under a floating layer at `rect`, between the
-/// layer's shadow and its fill (design spec 7.4: a `Shape::Callback` into `glass/gl.rs`), or
-/// `None` for an opaque layer (Translucent surfaces off, the blur unavailable, or the frame's
-/// glass layers used up).
-pub(crate) fn backdrop(painter: &Painter, rect: Rect, radius: CornerRadius) -> Option<Shape> {
-    super::glass::backdrop_shape(painter, rect, radius)
+/// The glass hook: what the backdrop blur paints under a floating layer at `rect` (design spec
+/// 7.4: `Shape::Callback`s into `glass/gl.rs`), its capture to go before the layer's shadow and
+/// its composite after it, before the fill, so the layer never blurs its own shadow; or `None`
+/// for an opaque layer (Translucent surfaces off, the blur unavailable, or the frame's glass
+/// layers used up).
+pub(crate) fn backdrop(
+    painter: &Painter,
+    rect: Rect,
+    radius: CornerRadius,
+) -> Option<super::glass::Backdrop> {
+    super::glass::backdrop_shapes(painter, rect, radius)
 }
 
 /// What a floating layer of `layer` is filled with this frame: the overlay at the theme's glass
@@ -172,7 +179,10 @@ pub(crate) fn surface_shapes(painter: &Painter, rect: Rect, layer: Layer) -> Vec
             .flatten();
         match glass {
             Some(b) => {
-                shapes.push(b);
+                // The backdrop is copied before the layer's own shadow is painted, so the glass
+                // blurs what is behind the layer, not its shadow (G3), and drawn over the shadow.
+                shapes.insert(0, b.capture);
+                shapes.push(b.composite);
                 Fill::flat(Palette::tint(s.overlay, p.glass_alpha))
             }
             None => Fill::flat(s.overlay),
@@ -553,6 +563,7 @@ impl TooltipExt for Response {
             text: text.into(),
             detail: None,
             shortcut: None,
+            at_pointer: false,
         }
     }
 }
@@ -560,7 +571,8 @@ impl TooltipExt for Response {
 /// A tooltip (concept `.k-tip`): the `tooltip` surface, 12 pt medium text, an optional dim second
 /// line and the shortcut as keycaps. Shown after `TOOLTIP_DELAY` (at once within `TOOLTIP_SKIP` of
 /// another), above the control and flipped to stay in the window, for enabled and disabled
-/// controls alike (a disabled one says why).
+/// controls alike (a disabled one says why). [`Tooltip::at_pointer`] places it by the pointer on
+/// a wide control instead.
 #[derive(Debug)]
 #[must_use = "call .show()"]
 pub struct Tooltip {
@@ -568,6 +580,28 @@ pub struct Tooltip {
     text: String,
     detail: Option<String>,
     shortcut: Option<Command>,
+    at_pointer: bool,
+}
+
+/// How far above and below the pointer a pointer-placed tooltip may still sit against the control
+/// (a row is shorter than this, so its tooltip clears the whole row).
+const POINTER_REACH: f32 = 24.0;
+
+/// What a pointer-placed tooltip on `control` is placed against: the control's column under the
+/// pointer, cut to `POINTER_REACH` above and below it (the control itself without a pointer).
+fn pointer_anchor(control: Rect, pointer: Option<Pos2>) -> Rect {
+    let Some(at) = pointer else {
+        return control;
+    };
+    let reach = Rangef::new(at.y - POINTER_REACH, at.y + POINTER_REACH);
+    let y = control.y_range().intersection(reach);
+    let y = if y.span() >= 0.0 {
+        y
+    } else {
+        Rangef::point(at.y)
+    };
+    let x = at.x.clamp(control.left(), control.right());
+    Rect::from_x_y_ranges(Rangef::point(x), y)
 }
 
 /// Above first, then below, then the sides.
@@ -589,6 +623,14 @@ impl Tooltip {
         self.shortcut = Some(command);
         self
     }
+    /// Placed by the pointer: above (or below) the control in the pointer's column, following it
+    /// along the control, for wide rows where a tooltip centred on the whole control lands far
+    /// from the pointer. On a control taller than a row it sits within `POINTER_REACH` of the
+    /// pointer.
+    pub fn at_pointer(mut self) -> Self {
+        self.at_pointer = true;
+        self
+    }
 
     pub fn show(self) -> Response {
         let Self {
@@ -596,6 +638,7 @@ impl Tooltip {
             text,
             detail,
             shortcut,
+            at_pointer,
         } = self;
         let mut tip = if response.enabled() {
             egui::containers::Tooltip::for_enabled(&response)
@@ -609,7 +652,17 @@ impl Tooltip {
             .align(RectAlign::TOP)
             .align_alternatives(&TOOLTIP_ALIGNS)
             .width(TOOLTIP_WIDTH);
-        let anchor = response.rect;
+        if at_pointer {
+            // In window coordinates, like egui's own anchor (the control's layer may be moving,
+            // such as a dialog growing in).
+            let control = response
+                .ctx
+                .layer_transform_to_global(response.layer_id)
+                .map_or(response.interact_rect, |t| t * response.interact_rect);
+            let pointer = response.ctx.pointer_hover_pos();
+            tip.popup = tip.popup.anchor(pointer_anchor(control, pointer));
+        }
+        let anchor = tip.popup.get_anchor_rect().unwrap_or(response.rect);
         let id = response.id.with("kit-tooltip");
         tip.show(|ui| {
             let layer = ui.layer_id();
@@ -692,16 +745,18 @@ pub(crate) fn tooltip_body(
         let p = theme::palette(ui.ctx());
         ui.set_max_width(TOOLTIP_WIDTH - f32::from(pad.left + pad.right));
         ui.spacing_mut().item_spacing = vec2(theme::SM, 2.0);
-        ui.horizontal(|ui| {
+        let font = FontId::new(m.tooltip_size, theme::medium());
+        // The keycaps sit on the first line's centre: the text drops by half the difference.
+        let line = ui.fonts_mut(|f| f.row_height(&font));
+        let drop = if keys.is_empty() {
+            0.0
+        } else {
+            ((TOOLTIP_KEYCAP - line) / 2.0).max(0.0)
+        };
+        ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
             ui.vertical(|ui| {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(text)
-                            .font(FontId::new(m.tooltip_size, theme::medium()))
-                            .color(p.on_tooltip),
-                    )
-                    .wrap(),
-                );
+                ui.add_space(drop);
+                ui.add(egui::Label::new(RichText::new(text).font(font).color(p.on_tooltip)).wrap());
                 if let Some(d) = detail {
                     ui.add(
                         egui::Label::new(
@@ -714,7 +769,9 @@ pub(crate) fn tooltip_body(
                 }
             });
             if !keys.is_empty() {
-                ui.horizontal(|ui| {
+                // Top-aligned like the text (a stock `horizontal` would centre the caps in a
+                // control-high row, below the first line).
+                ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 3.0;
                     for k in &keys {
                         tooltip_keycap(ui, k);
@@ -748,7 +805,7 @@ fn tooltip_keycap(ui: &mut Ui, key: &str) {
     let g = ui
         .painter()
         .layout_no_wrap(key.to_owned(), font, Color32::PLACEHOLDER);
-    let h = 18.0;
+    let h = TOOLTIP_KEYCAP;
     let w = (g.size().x + 10.0).max(h);
     let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
     let radius = CornerRadius::same(m.keycap_radius.min(4));
@@ -902,22 +959,45 @@ pub(crate) fn popup_origin(rect: Rect, anchor: Rect) -> (Pos2, Vec2) {
 
 // ---------------------------------------------------------------------------------- dialog
 
-/// A dialog's width: confirmations or forms (spec 2.5).
+/// A dialog's width: confirmations or forms (spec 2.5), or a document to read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DialogWidth {
     #[default]
     Confirm,
     Form,
+    /// A document (the terms, the privacy policy): its text at the [`reading_measure`] inside
+    /// the dialog's padding, never wider than the [`modal_room`].
+    Reading,
 }
 
 impl DialogWidth {
-    pub fn points(self) -> f32 {
+    /// The card's width in points, before a small window narrows it further.
+    pub fn points(self, ctx: &Context) -> f32 {
         let m = theme::metrics();
         match self {
             Self::Confirm => m.dialog_width,
             Self::Form => m.dialog_width_form,
+            Self::Reading => {
+                (reading_measure(ctx) + 2.0 * m.dialog_pad).min(modal_room(ctx).width())
+            }
         }
     }
+}
+
+/// How many characters of prose a line at the reading measure holds.
+pub const READING_CHARS: f32 = 70.0;
+
+/// The width of a line of document text (`subtitle_size`) holding [`READING_CHARS`] characters
+/// of ordinary prose, measured on a sample sentence rather than one glyph.
+pub fn reading_measure(ctx: &Context) -> f32 {
+    const SAMPLE: &str = "Canopy sends crash data only if you agree, and asks before it sends.";
+    let font = FontId::proportional(theme::metrics().subtitle_size);
+    let width = ctx.fonts_mut(|f| {
+        f.layout_no_wrap(SAMPLE.to_owned(), font, Color32::PLACEHOLDER)
+            .size()
+            .x
+    });
+    (width / crate::ui::count_f32(SAMPLE.chars().count()) * READING_CHARS).round()
 }
 
 /// What the user did with a dialog this frame.
@@ -1196,7 +1276,7 @@ impl<'a> Dialog<'a> {
         let m = theme::metrics();
         let screen = ctx.content_rect();
         let w = width
-            .points()
+            .points(&ctx)
             .min(screen.width() - DIALOG_MARGIN)
             .min(ui.available_width().max(DISC * 4.0));
         let pad = m.dialog_pad;
@@ -1614,6 +1694,43 @@ pub(crate) fn gallery(ui: &mut Ui) {
                 .show(ui.ctx());
             if result != DialogResult::Open {
                 ui.ctx().data_mut(|d| d.remove::<bool>(open_key));
+            }
+        }
+        let read_key = ui.id().with("g-live-reading-open");
+        if Button::new("Open document")
+            .id_salt("g-live-reading")
+            .show(ui)
+            .clicked()
+        {
+            ui.ctx().data_mut(|d| d.insert_temp(read_key, true));
+        }
+        if ui
+            .ctx()
+            .data(|d| d.get_temp::<bool>(read_key).unwrap_or(false))
+        {
+            let result = Dialog::new(read_key)
+                .title("Privacy Policy")
+                .closable()
+                .width(DialogWidth::Reading)
+                .body(|ui| {
+                    for text in [
+                        "Canopy runs on your machine. It talks to the git executable for your \
+                         repositories and, only when you use those features, to GitHub or \
+                         GitLab for pull requests and author pictures.",
+                        "A reading dialog sets its text at the reading measure, about seventy \
+                         characters a line, so a long document reads comfortably at any \
+                         window width.",
+                    ] {
+                        ui.label(RichText::new(text).size(m.subtitle_size).color(p.text));
+                        ui.add_space(theme::SM);
+                    }
+                })
+                .footer(|f| {
+                    f.confirm("Close");
+                })
+                .show(ui.ctx());
+            if result != DialogResult::Open {
+                ui.ctx().data_mut(|d| d.remove::<bool>(read_key));
             }
         }
     });
@@ -2201,6 +2318,86 @@ mod tests {
         );
     }
 
+    /// Override O3: a reading dialog is the reading measure plus its padding wide, the measure
+    /// holds about `READING_CHARS` characters of prose, and a narrow window keeps the card
+    /// inside the modal room.
+    #[test]
+    fn a_reading_dialog_sets_its_text_at_the_measure_within_the_modal_room() {
+        let ctx = context();
+        let m = theme::metrics();
+        let card_at = |screen: Rect| {
+            let mut card = Rect::NOTHING;
+            for frame in 0..4 {
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        time: Some(f64::from(frame)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let _ = Dialog::new("reading")
+                            .title("Privacy Policy")
+                            .width(DialogWidth::Reading)
+                            .body(|ui| {
+                                ui.label("What leaves your machine, and when.");
+                            })
+                            .footer(|f| {
+                                f.confirm("Close");
+                            })
+                            .show(ui.ctx());
+                    },
+                );
+                out.textures_delta.clear();
+                for c in &out.shapes {
+                    if let Shape::Vec(v) = &c.shape {
+                        for s in v {
+                            if let Shape::Rect(r) = s
+                                && r.stroke.width > 0.0
+                                && r.corner_radius == CornerRadius::same(m.radius_lg)
+                            {
+                                card = r.rect;
+                            }
+                        }
+                    }
+                }
+            }
+            card
+        };
+        let wide = card_at(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0)));
+        let measure = reading_measure(&ctx);
+        assert!(
+            (wide.width() - (measure + 2.0 * m.dialog_pad)).abs() < 1.0,
+            "{wide:?} for a measure of {measure}"
+        );
+        // A different 70-character sentence fills the measure to within a tenth.
+        let line = "Pictures are cached for twelve hours, and failures are remembered too.";
+        assert_eq!(line.chars().count(), 70);
+        let prose = ctx.fonts_mut(|f| {
+            f.layout_no_wrap(
+                line.to_owned(),
+                FontId::proportional(m.subtitle_size),
+                Color32::PLACEHOLDER,
+            )
+            .size()
+            .x
+        });
+        assert!((prose / measure - 1.0).abs() < 0.1, "{prose} vs {measure}");
+        let narrow = Rect::from_min_size(Pos2::ZERO, vec2(560.0, 600.0));
+        let card = card_at(narrow);
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(narrow),
+                time: Some(9.0),
+                ..Default::default()
+            },
+            |ui| {
+                let room = modal_room(ui.ctx());
+                assert!(card.is_positive() && card.width() <= room.width() + 0.5);
+                assert!(card.left() >= room.left() - 0.5 && card.right() <= room.right() + 0.5);
+            },
+        );
+    }
+
     #[test]
     fn light_themes_get_the_dark_opaque_tooltip() {
         for id in [theme::ThemeId::Daylight, theme::ThemeId::Paper] {
@@ -2288,5 +2485,167 @@ mod tests {
             "Tab reaches the left answer first: {focused:?}"
         );
         assert!(focused[1].contains(send), "then the right one: {focused:?}");
+    }
+
+    #[test]
+    fn a_pointer_anchor_is_the_rows_column_under_the_pointer() {
+        let row = Rect::from_min_size(pos2(0.0, 100.0), vec2(1200.0, 28.0));
+        let a = pointer_anchor(row, Some(pos2(1000.0, 110.0)));
+        assert_eq!(a.x_range(), Rangef::point(1000.0));
+        assert_eq!(a.y_range(), row.y_range(), "a row is cleared whole");
+        let tall = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 600.0));
+        let a = pointer_anchor(tall, Some(pos2(50.0, 300.0)));
+        assert_eq!(
+            a.y_range(),
+            Rangef::new(300.0 - POINTER_REACH, 300.0 + POINTER_REACH)
+        );
+        assert_eq!(pointer_anchor(row, None), row);
+        let outside = pointer_anchor(row, Some(pos2(1300.0, 110.0)));
+        assert_eq!(
+            outside.x_range(),
+            Rangef::point(row.right()),
+            "kept on the row"
+        );
+    }
+
+    /// Where the tooltip text `text` was painted, once the pointer has rested at `pointer` over a
+    /// 1000 pt wide row for longer than the tooltip delay.
+    fn tooltip_over_wide_row(at_pointer: bool, pointer: Pos2) -> (Rect, Option<Rect>) {
+        let ctx = context();
+        let text = "Fix the parser";
+        let mut row = Rect::NOTHING;
+        let mut found = None;
+        for i in 0..10 {
+            let events = if i == 1 {
+                vec![egui::Event::PointerMoved(pointer)]
+            } else {
+                Vec::new()
+            };
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 640.0))),
+                    time: Some(f64::from(i) * 0.2),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.add_space(200.0);
+                    let r = ui.allocate_response(vec2(1000.0, 28.0), Sense::hover());
+                    row = r.rect;
+                    let t = r.kit_tooltip(text);
+                    let _ = if at_pointer { t.at_pointer() } else { t }.show();
+                },
+            );
+            out.textures_delta.clear();
+            found = out.shapes.iter().find_map(|c| match &c.shape {
+                Shape::Text(t) if t.galley.text() == text => Some(t.visual_bounding_rect()),
+                _ => None,
+            });
+        }
+        (row, found)
+    }
+
+    /// views-1 F4: on a wide row the kit tooltip can sit by the pointer, above the row, instead
+    /// of centred over the whole row far from the pointer.
+    #[test]
+    fn a_pointer_placed_tooltip_sits_by_the_pointer_above_the_row() {
+        let pointer = pos2(900.0, 214.0);
+        let (row, tip) = tooltip_over_wide_row(true, pointer);
+        let tip = tip.expect("the tooltip shows");
+        assert!(
+            (tip.center().x - pointer.x).abs() < 120.0,
+            "by the pointer: {tip:?}"
+        );
+        assert!(tip.bottom() <= row.top(), "above the row: {tip:?} {row:?}");
+        let (row, tip) = tooltip_over_wide_row(false, pointer);
+        let tip = tip.expect("the tooltip shows");
+        assert!(
+            (tip.center().x - row.center().x).abs() < 120.0,
+            "without it, centred on the control: {tip:?}"
+        );
+    }
+
+    /// A tooltip's shortcut keycaps sit on its first line, not above it.
+    #[test]
+    fn tooltip_keycaps_centre_on_the_first_line() {
+        let ctx = context();
+        let out = run(&ctx, Vec::new(), |ui| {
+            tooltip_body(ui, "Fetch all remotes", None, Some(Command::Fetch));
+            tooltip_body(
+                ui,
+                "Push main",
+                Some("2 commits ahead"),
+                Some(Command::Fetch),
+            );
+        });
+        let shapes: Vec<Shape> = out
+            .shapes
+            .iter()
+            .flat_map(|c| match &c.shape {
+                Shape::Vec(v) => v.clone(),
+                other => vec![other.clone()],
+            })
+            .collect();
+        // The first line's centre: the galley's first row, where it was placed.
+        let line = |text: &str| {
+            shapes
+                .iter()
+                .find_map(|s| match s {
+                    Shape::Text(t) if t.galley.text() == text => {
+                        let row = t
+                            .galley
+                            .rows
+                            .first()
+                            .map(egui::epaint::text::PlacedRow::rect)?;
+                        Some(t.pos.y + row.center().y)
+                    }
+                    _ => None,
+                })
+                .expect(text)
+        };
+        let mut caps: Vec<f32> = shapes
+            .iter()
+            .filter_map(|s| match s {
+                Shape::Rect(r) if (r.rect.height() - TOOLTIP_KEYCAP).abs() < 0.01 => {
+                    Some(r.rect.center().y)
+                }
+                _ => None,
+            })
+            .collect();
+        // A keycap is a fill and a ring.
+        caps.dedup();
+        assert_eq!(caps.len(), 2, "{caps:?}");
+        for (label, cap) in [("Fetch all remotes", caps[0]), ("Push main", caps[1])] {
+            let d = (line(label) - cap).abs();
+            assert!(d <= 1.0, "{label}: {d} pt off the keycap's centre");
+        }
+    }
+
+    /// H15: in a light theme a tooltip over rows has a visible edge: its dark fill stands at least
+    /// 3:1 from every row ground it can cover (the pane, the panel, zebra, hover and selection).
+    #[test]
+    fn light_theme_tooltips_stand_out_from_every_row() {
+        for id in theme::ThemeId::ALL {
+            let p = id.palette();
+            if p.dark {
+                continue;
+            }
+            for style in theme::Style::ALL {
+                let s = p.surfaces(style);
+                for base in [s.pane, s.panel, s.elevated] {
+                    for wash in [
+                        Color32::TRANSPARENT,
+                        p.zebra(),
+                        p.hover(),
+                        p.hover_strong(),
+                        p.selected(),
+                    ] {
+                        let ground = theme::over(wash, base);
+                        let k = theme::contrast(s.tooltip.top, ground);
+                        assert!(k >= 3.0, "{id:?} {style:?}: {k:.2}:1 on {ground:?}");
+                    }
+                }
+            }
+        }
     }
 }

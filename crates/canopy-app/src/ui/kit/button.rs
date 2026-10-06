@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use egui::emath::TSTransform;
+use egui::epaint::TextShape;
 use egui::{
     Align2, Color32, CornerRadius, FontFamily, FontId, FontSelection, Galley, Id, Painter, Pos2,
     Rect, Response, Sense, Shape, Stroke, TextWrapMode, Ui, Vec2, Widget, WidgetInfo, WidgetText,
@@ -16,6 +17,7 @@ use egui::{
 };
 use egui_phosphor::regular as icon;
 
+use super::overlay::TooltipExt;
 use super::{ForceState, Interact, Size, Tone, anim, paint};
 use crate::keymap::{self, Command};
 use crate::ui::motion;
@@ -68,7 +70,8 @@ pub(super) fn disabled_painter(ui: &Ui, enabled: bool, alpha: f32) -> Painter {
     painter
 }
 
-/// The tooltip a control shows: why it is disabled, else its tooltip, with the shortcut's chord.
+/// The tooltip a control shows: why it is disabled, else its tooltip, with the shortcut's chord
+/// as text. Prefer [`tip`], which shows the chord as keycaps.
 pub(super) fn tooltip_text(
     enabled: bool,
     tooltip: Option<&str>,
@@ -82,10 +85,28 @@ pub(super) fn tooltip_text(
     })
 }
 
+/// `tip` as the control's kit tooltip (for enabled and disabled controls alike).
 pub(super) fn with_tooltip(response: Response, tip: Option<String>) -> Response {
     match tip {
-        Some(t) => response.on_hover_text(&t).on_disabled_hover_text(&t),
+        Some(t) => response.kit_tooltip(t).show(),
         None => response,
+    }
+}
+
+/// A control's kit tooltip: why it is disabled, else `tooltip` with the shortcut's keys as
+/// keycaps; nothing when there is no text.
+pub(super) fn tip(
+    response: Response,
+    enabled: bool,
+    tooltip: Option<&str>,
+    reason: Option<&str>,
+    shortcut: Option<Command>,
+) -> Response {
+    let text = if enabled { tooltip } else { reason.or(tooltip) };
+    match (text, shortcut) {
+        (None, _) => response,
+        (Some(t), Some(c)) if enabled => response.kit_tooltip(t).shortcut(c).show(),
+        (Some(t), _) => response.kit_tooltip(t).show(),
     }
 }
 
@@ -147,6 +168,188 @@ pub(super) fn spinner_due(ctx: &egui::Context, id: Id, loading: bool) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------------- Operation
+
+/// How long a finished operation's outcome shows on its button, in seconds (reduced motion too).
+pub const OUTCOME_HOLD: f32 = 1.6;
+/// A failed operation's shake: how long it lasts, how far it swings and how many times.
+const SHAKE: f32 = 0.32;
+const SHAKE_REACH: f32 = 2.5;
+const SHAKE_SWINGS: f32 = 3.0;
+/// The outcome mark's size as it pops in, against its full size.
+const POP_FROM: f32 = 0.6;
+
+/// What the operation a button starts is doing, shown in the button's icon place:
+/// `ToolButton::new(icon::ARROW_DOWN, "Fetch").operation(op)`. Pass it every frame.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Operation {
+    /// At rest: the button's own icon.
+    #[default]
+    Idle,
+    /// Running: a spinner after `LOADING_DELAY`; clicks are ignored, focus stays.
+    Running,
+    /// Finished at `at` (`ctx.input(|i| i.time)` when the result arrived): a check in `success`
+    /// for [`OUTCOME_HOLD`], then the icon again.
+    Succeeded { at: f64 },
+    /// Failed at `at`: a warning mark in `danger` that shakes once, for [`OUTCOME_HOLD`]. The
+    /// error itself goes to a toast as usual.
+    Failed { at: f64 },
+}
+
+impl Operation {
+    /// The outcome of an operation that finished at `at`.
+    pub fn finished(ok: bool, at: f64) -> Self {
+        if ok {
+            Self::Succeeded { at }
+        } else {
+            Self::Failed { at }
+        }
+    }
+
+    fn running(self) -> bool {
+        self == Self::Running
+    }
+}
+
+/// What a button shows in its icon's place this frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Mark {
+    Icon,
+    Spinner,
+    /// An outcome's mark at `show` strength (0..=1: popping in, then fading back to the icon),
+    /// shifted `dx` sideways by the failure shake.
+    Outcome {
+        ok: bool,
+        show: f32,
+        dx: f32,
+    },
+}
+
+/// What `operation` shows on the button `id` now, asking for the repaints that move it on.
+fn mark(ctx: &egui::Context, id: Id, operation: Operation) -> Mark {
+    let (ok, at) = match operation {
+        Operation::Idle => {
+            spinner_due(ctx, id, false);
+            return Mark::Icon;
+        }
+        Operation::Running => {
+            return if spinner_due(ctx, id, true) {
+                Mark::Spinner
+            } else {
+                Mark::Icon
+            };
+        }
+        Operation::Succeeded { at } => (true, at),
+        Operation::Failed { at } => (false, at),
+    };
+    spinner_due(ctx, id, false);
+    let age = crate::ui::to_f32(ctx.input(|i| i.time) - at).max(0.0);
+    if age >= OUTCOME_HOLD {
+        return Mark::Icon;
+    }
+    if motion::reduced() {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f32(OUTCOME_HOLD - age));
+        return Mark::Outcome {
+            ok,
+            show: 1.0,
+            dx: 0.0,
+        };
+    }
+    let fade = motion::BASE;
+    let show = (age / fade)
+        .min((OUTCOME_HOLD - age) / fade)
+        .clamp(0.0, 1.0);
+    let dx = if ok || age >= SHAKE {
+        0.0
+    } else {
+        let t = age / SHAKE;
+        (t * SHAKE_SWINGS * std::f32::consts::TAU).sin() * SHAKE_REACH * (1.0 - t)
+    };
+    let still_until = OUTCOME_HOLD - fade;
+    if show < 1.0 || dx != 0.0 || age < SHAKE.max(fade) || age >= still_until {
+        ctx.request_repaint();
+    } else {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f32(still_until - age));
+    }
+    Mark::Outcome {
+        ok,
+        show: motion::EASE_OUT.at(show),
+        dx,
+    }
+}
+
+/// Paints `mark` centred on `center`: the `icon` (if any) in `color`, the spinner of `spin`
+/// radius, or the outcome glyph at `size` in `outcome` (success, danger), crossfading with the
+/// icon.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one paint step shared by three buttons"
+)]
+fn paint_mark(
+    painter: &Painter,
+    shapes: &mut Vec<Shape>,
+    mark: Mark,
+    icon: Option<&Arc<Galley>>,
+    center: Pos2,
+    size: f32,
+    spin: f32,
+    color: Color32,
+    outcome: (Color32, Color32),
+) {
+    let icon_at = |shapes: &mut Vec<Shape>, alpha: f32| {
+        if let Some(g) = icon {
+            let text = TextShape::new(center - g.size() / 2.0, Arc::clone(g), color);
+            shapes.push(text.with_opacity_factor(alpha).into());
+        }
+    };
+    match mark {
+        Mark::Icon => icon_at(shapes, 1.0),
+        Mark::Spinner => paint::spinner(painter, center, spin, 1.6, color),
+        Mark::Outcome { ok, show, dx } => {
+            if show < 1.0 {
+                icon_at(shapes, 1.0 - show);
+            }
+            let (glyph, tint) = if ok {
+                (icon::CHECK, outcome.0)
+            } else {
+                (icon::WARNING_CIRCLE, outcome.1)
+            };
+            let g = painter.layout_no_wrap(glyph.to_owned(), FontId::proportional(size), tint);
+            let at = center + vec2(dx, 0.0);
+            let mut s: Shape = TextShape::new(at - g.size() / 2.0, g, tint)
+                .with_opacity_factor(show)
+                .into();
+            let scale = POP_FROM + (1.0 - POP_FROM) * show;
+            if scale < 1.0 {
+                let p = at.to_vec2();
+                s.transform(
+                    TSTransform::from_translation(p)
+                        * TSTransform::from_scaling(scale)
+                        * TSTransform::from_translation(-p),
+                );
+            }
+            shapes.push(s);
+        }
+    }
+}
+
+/// The outcome marks' colours on a button whose label is `label`: `success` and `danger`, or
+/// the label's own colour on a filled accent or danger button (and a disabled one).
+fn outcome_colors(p: &Palette, label: Color32, on_fill: bool) -> (Color32, Color32) {
+    if on_fill {
+        (label, label)
+    } else {
+        (p.success, p.danger)
+    }
+}
+
+/// Reports a running operation to AccessKit as busy.
+fn report_busy(ctx: &egui::Context, id: Id, operation: Operation) {
+    if operation.running() {
+        ctx.accesskit_node_builder(id, egui::accesskit::Node::set_busy);
+    }
+}
+
 // ------------------------------------------------------------------------------------- Button
 
 /// A labelled button. `Button::new("Fetch").primary().icon(icon::ARROW_DOWN).show(ui)`.
@@ -161,6 +364,7 @@ pub struct Button {
     trailing: Option<&'static str>,
     enabled: bool,
     loading: bool,
+    operation: Option<Operation>,
     tooltip: Option<String>,
     disabled_reason: Option<String>,
     shortcut: Option<Command>,
@@ -192,6 +396,7 @@ impl Button {
             trailing: None,
             enabled: true,
             loading: false,
+            operation: None,
             tooltip: None,
             disabled_reason: None,
             shortcut: None,
@@ -246,6 +451,12 @@ impl Button {
     /// width are kept.
     pub fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
+        self
+    }
+    /// The operation this button runs: a spinner while it runs, then its outcome, in the icon's
+    /// place (an icon slot is kept even without an icon, so the width never changes).
+    pub fn operation(mut self, operation: Operation) -> Self {
+        self.operation = Some(operation);
         self
     }
     pub fn tooltip(mut self, text: impl Into<String>) -> Self {
@@ -303,7 +514,12 @@ impl Button {
         let accessible = self.text.text().to_owned();
         let text = galley(ui, self.text, font.clone());
         let icon_font = FontId::proportional(m.icon_md);
-        let spinner_slot = self.icon.is_none() && self.loading;
+        let operation = if self.loading {
+            Operation::Running
+        } else {
+            self.operation.unwrap_or_default()
+        };
+        let spinner_slot = self.icon.is_none() && (self.loading || self.operation.is_some());
         let icon = self.icon.map(|g| {
             ui.painter()
                 .layout_no_wrap(g, icon_font.clone(), Color32::PLACEHOLDER)
@@ -337,7 +553,7 @@ impl Button {
         if self.full_width {
             width = width.max(ui.available_width());
         }
-        let sense = if self.loading && enabled {
+        let sense = if operation.running() && enabled {
             Sense::focusable_noninteractive()
         } else if enabled {
             Sense::click()
@@ -354,27 +570,23 @@ impl Button {
         };
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
-            let ink_painter = if enabled {
-                painter.clone()
-            } else {
-                super::content_painter(ui)
-            };
+            // A disabled button paints its own dimmed tokens at full strength, also in a disabled
+            // `Ui` (whose fade `content_painter` takes back off).
+            let painter = super::content_painter(ui);
+            let ink_painter = painter.clone();
             let radius = CornerRadius::same(m.radius);
             let (fill, ring, level, label, focus) = match self.kind {
                 // Disabled: no accent or danger fill (a dimmed one reads as a muddy, half-lit
-                // button), the neutral raised surface with its ring, dimmed and flat, and a label
-                // that stays readable.
+                // button) but the flat, neutral `disabled_fill` in its `disabled_edge` ring, and
+                // a label in `disabled_text`.
                 ButtonKind::Primary | ButtonKind::Danger | ButtonKind::Secondary if !enabled => (
-                    Some(s.raised),
-                    Some(s.raised_edge),
+                    Some(Fill::flat(s.disabled_fill)),
+                    Some(s.disabled_edge),
                     None,
-                    super::disabled_text(p, style),
+                    p.disabled_text,
                     p.focus,
                 ),
-                ButtonKind::Ghost if !enabled => {
-                    (None, None, None, super::disabled_text(p, style), p.focus)
-                }
+                ButtonKind::Ghost if !enabled => (None, None, None, p.disabled_text, p.focus),
                 ButtonKind::Primary => (
                     Some(blend(
                         blend(s.primary, s.primary_hover, st.hover),
@@ -448,21 +660,23 @@ impl Button {
             let mut x = rect.center().x - content / 2.0;
             let cy = rect.center().y;
             if let Some(w) = icon_w {
-                let spinning = spinner_due(&ctx, response.id, self.loading);
                 let icon_color = match self.icon_tone {
                     Some(t) if enabled => t.color(p),
                     _ => label,
                 };
-                if spinning {
-                    let center = pos2(x + w / 2.0, cy);
-                    paint::spinner(&painter, center, m.icon_md * 0.38, 1.6, icon_color);
-                } else if let Some(g) = &icon {
-                    shapes.push(Shape::galley(
-                        pos2(x, cy - g.size().y / 2.0),
-                        Arc::clone(g),
-                        icon_color,
-                    ));
-                }
+                let on_fill =
+                    !enabled || matches!(self.kind, ButtonKind::Primary | ButtonKind::Danger);
+                paint_mark(
+                    &painter,
+                    &mut shapes,
+                    mark(&ctx, response.id, operation),
+                    icon.as_ref(),
+                    pos2(x + w / 2.0, cy),
+                    m.icon_md,
+                    m.icon_md * 0.38,
+                    icon_color,
+                    outcome_colors(p, label, on_fill),
+                );
                 x += w + if text.is_empty() { 0.0 } else { m.button_gap };
             }
             shapes.push(Shape::galley(
@@ -497,13 +711,14 @@ impl Button {
             paint_scaled(&painter, shapes, rect.center(), scale);
         }
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &accessible));
-        let tip = tooltip_text(
+        report_busy(&ctx, response.id, operation);
+        response = tip(
+            response,
             enabled,
             self.tooltip.as_deref(),
             self.disabled_reason.as_deref(),
             self.shortcut,
         );
-        response = with_tooltip(response, tip);
         response
     }
 }
@@ -526,6 +741,7 @@ pub struct IconButton {
     tone: Option<Tone>,
     active: bool,
     enabled: bool,
+    operation: Operation,
     disabled_reason: Option<String>,
     shortcut: Option<Command>,
     id_salt: Option<Id>,
@@ -541,6 +757,7 @@ impl IconButton {
             tone: None,
             active: false,
             enabled: true,
+            operation: Operation::Idle,
             disabled_reason: None,
             shortcut: None,
             id_salt: None,
@@ -559,6 +776,12 @@ impl IconButton {
     /// Toggled on: the icon in `accent`.
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
+        self
+    }
+    /// The operation this button runs: a spinner while it runs, then its outcome, in place of
+    /// the icon.
+    pub fn operation(mut self, operation: Operation) -> Self {
+        self.operation = operation;
         self
     }
     pub fn enabled(mut self, enabled: bool) -> Self {
@@ -593,10 +816,12 @@ impl IconButton {
             Size::Md => (m.control, m.radius, m.icon_md),
             Size::Lg => (m.control_lg, m.radius, m.icon_lg),
         };
-        let sense = if enabled {
-            Sense::click()
-        } else {
+        let sense = if !enabled {
             Sense::hover()
+        } else if self.operation.running() {
+            Sense::focusable_noninteractive()
+        } else {
+            Sense::click()
         };
         let (rect, response) = match self.id_salt {
             Some(id) => {
@@ -607,7 +832,7 @@ impl IconButton {
         };
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ICON_ALPHA);
+            let painter = super::content_painter(ui);
             let radius = CornerRadius::same(radius);
             let ground = Color32::TRANSPARENT
                 .lerp_to_gamma(p.hover_strong(), st.hover)
@@ -625,7 +850,7 @@ impl IconButton {
                 );
             }
             let rest = if !enabled {
-                super::disabled_text(p, theme::style())
+                p.disabled_text
             } else if self.active {
                 p.accent
             } else {
@@ -636,30 +861,32 @@ impl IconButton {
             } else {
                 rest.lerp_to_gamma(p.text, st.hover.max(st.press))
             };
-            let painter = if enabled {
-                painter
-            } else {
-                super::content_painter(ui)
-            };
             let scale = anim::press_scale(&ctx, response.id, st.held, 0.94);
             let g = painter.layout_no_wrap(self.glyph, FontId::proportional(glyph_size), color);
-            let pos = rect.center() - g.size() / 2.0;
-            paint_scaled(
+            let mut shapes = Vec::new();
+            paint_mark(
                 &painter,
-                vec![Shape::galley(pos, g, color)],
+                &mut shapes,
+                mark(&ctx, response.id, self.operation),
+                Some(&g),
                 rect.center(),
-                scale,
+                glyph_size,
+                glyph_size * 0.38,
+                color,
+                outcome_colors(p, color, !enabled),
             );
+            paint_scaled(&painter, shapes, rect.center(), scale);
         }
         let label = self.label;
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &label));
-        let tip = tooltip_text(
+        report_busy(&ctx, response.id, self.operation);
+        tip(
+            response,
             enabled,
             Some(&label),
             self.disabled_reason.as_deref(),
             self.shortcut,
-        );
-        with_tooltip(response, tip)
+        )
     }
 }
 
@@ -680,7 +907,7 @@ pub struct ToolButton {
     tooltip: Option<String>,
     badge: Option<String>,
     toggled: bool,
-    running: bool,
+    operation: Operation,
     enabled: bool,
     disabled_reason: Option<String>,
     shortcut: Option<Command>,
@@ -697,7 +924,7 @@ impl ToolButton {
             tooltip: None,
             badge: None,
             toggled: false,
-            running: false,
+            operation: Operation::Idle,
             enabled: true,
             disabled_reason: None,
             shortcut: None,
@@ -719,9 +946,18 @@ impl ToolButton {
         self.toggled = on;
         self
     }
-    /// The tool's operation is running: a spinner replaces the icon.
+    /// The tool's operation is running: a spinner replaces the icon (`operation(Running)`).
     pub fn running(mut self, running: bool) -> Self {
-        self.running = running;
+        self.operation = if running {
+            Operation::Running
+        } else {
+            Operation::Idle
+        };
+        self
+    }
+    /// The tool's operation: a spinner while it runs, then its outcome, in place of the icon.
+    pub fn operation(mut self, operation: Operation) -> Self {
+        self.operation = operation;
         self
     }
     pub fn enabled(mut self, enabled: bool) -> Self {
@@ -791,18 +1027,26 @@ impl ToolButton {
             glyph.size().x + badge_w + gap + caption.size().x + 2.0 * t.tool_pad
         };
         let size = vec2(width.max(self.min_width), t.tool_height);
-        let sense = if enabled {
-            Sense::click()
-        } else {
+        let sense = if !enabled {
             Sense::hover()
+        } else if self.operation.running() {
+            Sense::focusable_noninteractive()
+        } else {
+            Sense::click()
         };
         let (rect, response) = ui.allocate_exact_size(size, sense);
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let painter = super::content_painter(ui);
             let radius = CornerRadius::same(m.radius);
             if self.toggled {
-                painter.rect_filled(rect, radius, p.accent_tint());
+                // A disabled toggled tool keeps its state on the neutral disabled fill.
+                let ground = if enabled {
+                    p.accent_tint()
+                } else {
+                    s.disabled_fill
+                };
+                painter.rect_filled(rect, radius, ground);
             }
             let lit = st.hover.max(st.press);
             if lit > 0.0 && !self.toggled {
@@ -830,10 +1074,10 @@ impl ToolButton {
             if st.focus > 0.0 {
                 paint::inset_ring(&painter, rect, radius, p.focus.gamma_multiply(st.focus));
             }
-            let (painter, text_color) = if enabled {
-                (painter, p.text_dim.lerp_to_gamma(p.text, lit))
+            let text_color = if enabled {
+                p.text_dim.lerp_to_gamma(p.text, lit)
             } else {
-                (super::content_painter(ui), super::disabled_text(p, style))
+                p.disabled_text
             };
             let icon_color = if self.toggled && enabled {
                 p.accent
@@ -863,12 +1107,17 @@ impl ToolButton {
                     ),
                 )
             };
-            if self.running {
-                let c = icon_pos + glyph.size() / 2.0;
-                paint::spinner(&painter, c, icon_size * 0.36, 1.6, icon_color);
-            } else {
-                shapes.push(Shape::galley(icon_pos, Arc::clone(&glyph), icon_color));
-            }
+            paint_mark(
+                &painter,
+                &mut shapes,
+                mark(&ctx, response.id, self.operation),
+                Some(&glyph),
+                icon_pos + glyph.size() / 2.0,
+                icon_size,
+                icon_size * 0.36,
+                icon_color,
+                outcome_colors(p, icon_color, !enabled),
+            );
             if let Some(b) = &badge {
                 let at = pos2(
                     icon_pos.x + glyph.size().x + 3.0,
@@ -883,13 +1132,14 @@ impl ToolButton {
         let name = self.label;
         response
             .widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, self.toggled, &name));
-        let tip = tooltip_text(
+        report_busy(&ctx, response.id, self.operation);
+        tip(
+            response,
             enabled,
             Some(self.tooltip.as_deref().unwrap_or(&name)),
             self.disabled_reason.as_deref(),
             self.shortcut,
-        );
-        with_tooltip(response, tip)
+        )
     }
 }
 
@@ -902,11 +1152,9 @@ impl Widget for ToolButton {
 /// The 1 pt divider between tool button groups (`tool_divider`).
 pub fn tool_divider(ui: &mut Ui) {
     let m = theme::metrics();
-    let p = theme::palette(ui.ctx());
     let s = theme::surfaces(ui.ctx());
     let width = 2.0 * m.tool_divider_margin + paint::SEAM;
     let (rect, _) = ui.allocate_exact_size(vec2(width, m.tool_divider_height), Sense::hover());
-    let _ = p;
     paint::seam_v(ui.painter(), rect.center().x, rect.y_range(), s.border);
 }
 
@@ -967,7 +1215,7 @@ impl LinkButton {
         let (rect, response) = ui.allocate_exact_size(g.size(), sense);
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
+            let painter = &super::content_painter(ui);
             if st.focus > 0.0 {
                 paint::focus_ring(
                     painter,
@@ -977,13 +1225,18 @@ impl LinkButton {
                     Color32::TRANSPARENT,
                 );
             }
+            let ink = if enabled { p.accent2 } else { p.disabled_text };
             let baseline = rect.top() + g.rows.first().map_or(rect.height(), |r| r.rect().bottom());
-            painter.galley(rect.min, g, p.accent2);
+            painter.galley(rect.min, g, ink);
             if st.hover > 0.5 {
-                paint::seam_h(painter, rect.x_range(), baseline + 1.0, p.accent2);
+                paint::seam_h(painter, rect.x_range(), baseline + 1.0, ink);
             }
         }
-        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let response = if enabled {
+            response.on_hover_cursor(egui::CursorIcon::PointingHand)
+        } else {
+            response
+        };
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Link, enabled, &self.text));
         response
     }
@@ -1116,19 +1369,19 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
         let (rest, hover, pressed, on) = if enabled {
             (rest, hover, pressed, on)
         } else {
-            // Disabled like a Button: the neutral raised surface, dimmed and flat.
-            let label = super::disabled_text(p, style);
-            (s.raised, s.raised, s.raised, label)
+            // Disabled like a Button: the flat, neutral disabled fill.
+            let off = Fill::flat(s.disabled_fill);
+            (off, off, off, p.disabled_text)
         };
         if ui.is_rect_visible(rect) {
-            let painter = disabled_painter(ui, enabled, theme::DISABLED_ALPHA);
+            let painter = super::content_painter(ui);
             let radius = CornerRadius::same(m.radius);
             let ring = (!enabled || self.kind != ButtonKind::Primary).then_some(s.raised_edge);
             if enabled {
                 paint::surface(&painter, rect, radius, p, style, level, rest, ring);
             } else {
                 paint::fill(&painter, rect, radius, rest);
-                paint::rim(&painter, rect, radius, s.raised_edge);
+                paint::rim(&painter, rect, radius, s.disabled_edge);
             }
             for (half, st, corners) in [
                 (
@@ -1169,11 +1422,10 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                     );
                 }
             }
-            let seam = Palette::tint(on, 64);
-            let painter = if enabled {
-                painter
+            let seam = if enabled {
+                Palette::tint(on, 64)
             } else {
-                super::content_painter(ui)
+                s.disabled_edge
             };
             painter.vline(
                 caret_rect.left(),
@@ -1205,28 +1457,28 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                 on,
             );
         }
+        // The options as a kit menu under the whole button, at least as wide, the chosen one
+        // checked. Forced open (the gallery) it opens to the right, clear of what follows.
+        let forced_open = force.is_some_and(|f| f.open) && ui.is_rect_visible(rect);
         let popup = egui::Popup::menu(&caret)
             .id(id.with("menu"))
             .width(rect.width())
             .anchor(rect)
-            .align(egui::RectAlign::BOTTOM_START);
-        let popup = if force.is_some_and(|f| f.open) && ui.is_rect_visible(rect) {
-            popup.open(true)
-        } else {
-            popup
-        };
+            .align(if forced_open {
+                egui::RectAlign::RIGHT_START
+            } else {
+                egui::RectAlign::BOTTOM_START
+            })
+            .align_alternatives(&[egui::RectAlign::TOP_START]);
+        let popup = if forced_open { popup.open(true) } else { popup };
         let value = self.value;
         let options = self.options;
-        popup.show(|ui| {
+        super::menu::menu_in(&caret, popup, |m| {
             for (v, l) in options {
                 let chosen = *v == *value;
-                let mut row = Button::new(*l).ghost().full_width();
-                if chosen {
-                    row = row.icon(icon::CHECK);
-                }
-                if row.show(ui).clicked() {
+                if m.item("", *l).checked(chosen).show(m.ui).clicked() {
                     *value = v.clone();
-                    ui.close();
+                    m.ui.close();
                 }
             }
         });
@@ -1359,6 +1611,8 @@ pub(crate) fn gallery(ui: &mut Ui) {
         });
     }
     ui.add_space(theme::XS);
+    gallery_operations(ui, &small);
+    ui.add_space(theme::XS);
     small(ui, "Links");
     ui.horizontal_wrapped(|ui| {
         LinkButton::new("Release notes").show(ui);
@@ -1391,6 +1645,70 @@ pub(crate) fn gallery(ui: &mut Ui) {
     // Room for the open split button's menu.
     ui.add_space(64.0);
     ui.ctx().data_mut(|d| d.insert_temp(id, choice));
+}
+
+/// How long the gallery's Fetch runs before it finishes.
+const GALLERY_RUN: f64 = 1.2;
+
+/// The gallery's operation states, held mid-outcome, and a Fetch that runs one when clicked
+/// (every other run fails).
+fn gallery_operations(ui: &mut Ui, small: &impl Fn(&mut Ui, &str)) {
+    small(
+        ui,
+        "Operations: running, succeeded, failed; Fetch runs one (every other run fails)",
+    );
+    let now = ui.input(|i| i.time);
+    // Half way through the hold: past the pop-in and the shake, before the fade back.
+    let shown = now - f64::from(OUTCOME_HOLD / 2.0);
+    let id = ui.id().with("gallery-operation");
+    let (started, runs) = ui
+        .ctx()
+        .data(|d| d.get_temp::<(Option<f64>, u32)>(id))
+        .unwrap_or((None, 0));
+    let live = match started {
+        None => Operation::Idle,
+        Some(t) if now - t < GALLERY_RUN => {
+            ui.ctx().request_repaint();
+            Operation::Running
+        }
+        Some(t) => Operation::finished(runs % 2 == 1, t + GALLERY_RUN),
+    };
+    let mut clicked = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(theme::SM, theme::SM);
+        for (i, op) in [
+            Operation::Running,
+            Operation::Succeeded { at: shown },
+            Operation::Failed { at: shown },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            Button::new("Push")
+                .primary()
+                .icon(icon::ARROW_UP)
+                .operation(op)
+                .id_salt(("gallery-op", i))
+                .show(ui);
+            Button::new("Pull")
+                .operation(op)
+                .id_salt(("gallery-op-plain", i))
+                .show(ui);
+            IconButton::new(icon::ARROWS_CLOCKWISE, "Refresh")
+                .operation(op)
+                .id_salt(("gallery-op-icon", i))
+                .show(ui);
+        }
+        clicked = ToolButton::new(icon::ARROWS_CLOCKWISE, "Fetch")
+            .layout(ToolLayout::Inline)
+            .operation(live)
+            .show(ui)
+            .clicked();
+    });
+    if clicked {
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(id, (Some(now), runs + 1)));
+    }
 }
 
 #[cfg(test)]
@@ -1545,40 +1863,305 @@ mod tests {
         }
     }
 
+    /// A disabled filled button sits on the flat, neutral `disabled_fill` inside its
+    /// `disabled_edge` ring (theme-design "Disabled tokens"), with no shadow and no dimmed accent,
+    /// in every theme and style, disabled itself or inside a disabled `Ui`.
     #[test]
-    fn disabled_filled_buttons_dim_to_the_neutral_surface() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
-        let p = theme::palette(&ctx);
-        let fills = |kind: ButtonKind, enabled: bool| {
-            let shapes = frame(&ctx, Vec::new(), |ui| {
-                Button::new("Commit").kind(kind).enabled(enabled).show(ui);
-            });
-            shapes
-                .iter()
-                .filter_map(|c| match &c.shape {
-                    Shape::Rect(r) if r.blur_width == 0.0 => Some(r.fill),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        };
-        assert!(fills(ButtonKind::Primary, true).contains(&p.standard.primary.top));
-        let dimmed = p.standard.raised.top.gamma_multiply(theme::DISABLED_ALPHA);
-        for kind in [
-            ButtonKind::Primary,
-            ButtonKind::Danger,
-            ButtonKind::Secondary,
-        ] {
-            let dim = fills(kind, false);
-            assert!(dim.contains(&dimmed), "{kind:?}: {dim:?}");
-            for accent in [p.standard.primary.top, p.standard.danger_solid.top] {
-                let muddy = accent.gamma_multiply(theme::DISABLED_ALPHA);
-                assert!(
-                    !dim.contains(&muddy),
-                    "{kind:?} keeps a dimmed accent: {dim:?}"
-                );
+    fn disabled_filled_buttons_use_the_neutral_disabled_fill() {
+        for id in theme::ThemeId::ALL {
+            for style in Style::ALL {
+                let ctx = super::super::testkit::ctx_with(id, style, theme::Density::Comfortable);
+                let p = id.palette();
+                let s = p.surfaces(style);
+                let paint = |kind: ButtonKind, enabled: bool, in_disabled_ui: bool| {
+                    let shapes = frame(&ctx, Vec::new(), |ui| {
+                        ui.add_enabled_ui(!in_disabled_ui, |ui| {
+                            Button::new("Commit").kind(kind).enabled(enabled).show(ui);
+                        });
+                    });
+                    let mut fills = Vec::new();
+                    let mut rings = Vec::new();
+                    let mut shadow = false;
+                    for c in &shapes {
+                        if let Shape::Rect(r) = &c.shape {
+                            if r.blur_width > 0.0 {
+                                shadow = true;
+                            } else {
+                                fills.push(r.fill);
+                                rings.push(r.stroke.color);
+                            }
+                        }
+                    }
+                    (fills, rings, shadow)
+                };
+                if style == Style::Standard {
+                    assert!(
+                        paint(ButtonKind::Primary, true, false)
+                            .0
+                            .contains(&s.primary.top)
+                    );
+                }
+                for kind in [
+                    ButtonKind::Primary,
+                    ButtonKind::Danger,
+                    ButtonKind::Secondary,
+                ] {
+                    for (enabled, in_disabled_ui) in [(false, false), (true, true)] {
+                        let (fills, rings, shadow) = paint(kind, enabled, in_disabled_ui);
+                        let at =
+                            format!("{id:?} {style:?} {kind:?} (disabled Ui: {in_disabled_ui})");
+                        assert!(fills.contains(&s.disabled_fill), "{at}: {fills:?}");
+                        assert!(rings.contains(&s.disabled_edge), "{at}: {rings:?}");
+                        assert!(!shadow, "{at}: a disabled button casts a shadow");
+                        for accent in [s.primary.top, s.danger_solid.top] {
+                            let muddy = accent.gamma_multiply(theme::DISABLED_ALPHA);
+                            assert!(
+                                !fills.contains(&muddy) && !fills.contains(&accent),
+                                "{at} keeps an accent: {fills:?}"
+                            );
+                        }
+                    }
+                }
             }
         }
+    }
+
+    /// One frame at `time` seconds with `events`; returns what it painted.
+    fn frame_at(
+        ctx: &egui::Context,
+        time: f64,
+        events: Vec<egui::Event>,
+        mut f: impl FnMut(&mut Ui),
+    ) -> Vec<egui::epaint::ClippedShape> {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| f(ui),
+        );
+        out.textures_delta.clear();
+        out.shapes
+    }
+
+    /// Every glyph a frame painted: its text, colour, opacity and centre.
+    fn glyphs(shapes: &[egui::epaint::ClippedShape]) -> Vec<(String, Color32, f32, Pos2)> {
+        fn walk(shape: &Shape, out: &mut Vec<(String, Color32, f32, Pos2)>) {
+            match shape {
+                Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                Shape::Text(t) => out.push((
+                    t.galley.text().to_owned(),
+                    t.fallback_color,
+                    t.opacity_factor,
+                    t.visual_bounding_rect().center(),
+                )),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for c in shapes {
+            walk(&c.shape, &mut out);
+        }
+        out
+    }
+
+    /// Whether a frame painted a spinner (its faint circle).
+    fn spun(shapes: &[egui::epaint::ClippedShape]) -> bool {
+        shapes.iter().any(|c| matches!(c.shape, Shape::Circle(_)))
+    }
+
+    /// The operation buttons, each showing `op`; returns their responses.
+    fn operation_buttons(ui: &mut Ui, op: Operation) -> [Response; 4] {
+        [
+            Button::new("Push")
+                .primary()
+                .icon(icon::ARROW_UP)
+                .operation(op)
+                .show(ui),
+            Button::new("Pull").operation(op).show(ui),
+            IconButton::new(icon::ARROWS_CLOCKWISE, "Refresh")
+                .operation(op)
+                .show(ui),
+            ToolButton::new(icon::ARROW_DOWN, "Fetch")
+                .operation(op)
+                .show(ui),
+        ]
+    }
+
+    /// Override O1: busy, success and failure never change a button's size, also a button with
+    /// no icon of its own.
+    #[test]
+    fn operation_buttons_keep_their_size_in_every_state() {
+        let ctx = super::super::testkit::ctx();
+        let sizes = |op: Operation, t: f64| {
+            let mut rects = [Rect::NOTHING; 4];
+            for _ in 0..2 {
+                let _ = frame_at(&ctx, t, Vec::new(), |ui| {
+                    rects = operation_buttons(ui, op).map(|r| r.rect);
+                });
+            }
+            rects.map(|r| r.size())
+        };
+        let rest = sizes(Operation::Idle, 10.0);
+        for (op, t) in [
+            (Operation::Running, 10.0),
+            (Operation::Running, 11.0),
+            (Operation::Succeeded { at: 11.0 }, 11.5),
+            (Operation::Failed { at: 11.0 }, 11.1),
+        ] {
+            assert_eq!(sizes(op, t), rest, "{op:?}");
+        }
+    }
+
+    /// A running operation's button keeps focus but ignores clicks, as a loading button does.
+    #[test]
+    fn a_running_operation_ignores_clicks() {
+        let ctx = super::super::testkit::ctx();
+        let mut clock = 1.0;
+        for op in [Operation::Idle, Operation::Running] {
+            let mut rects = [Rect::NOTHING; 4];
+            let mut clicked = [false; 4];
+            let mut show = |ui: &mut Ui, rects: &mut [Rect; 4]| {
+                for (i, r) in operation_buttons(ui, op).iter().enumerate() {
+                    rects[i] = r.rect;
+                    clicked[i] |= r.clicked();
+                }
+            };
+            let mut tick = || {
+                clock += 0.1;
+                clock
+            };
+            let _ = frame_at(&ctx, tick(), Vec::new(), |ui| show(ui, &mut rects));
+            for i in 0..4 {
+                let at = rects[i].center();
+                let _ = frame_at(&ctx, tick(), super::super::testkit::press(at), |ui| {
+                    show(ui, &mut rects);
+                });
+                let _ = frame_at(&ctx, tick(), super::super::testkit::release(at), |ui| {
+                    show(ui, &mut rects);
+                });
+            }
+            assert_eq!(clicked, [op == Operation::Idle; 4], "{op:?}");
+        }
+    }
+
+    /// Running shows the spinner (after the loading delay); success then shows a check in
+    /// `success`, failure a warning mark in `danger` (the label colour on a filled button), each
+    /// for `OUTCOME_HOLD`, and then the icon is back.
+    #[test]
+    fn an_operation_shows_its_spinner_then_its_outcome_then_the_icon() {
+        let ctx = super::super::testkit::ctx();
+        theme::apply(
+            &ctx,
+            theme::ThemeId::Midnight,
+            theme::Appearance {
+                reduce_motion: false,
+                ..theme::Appearance::STILL
+            },
+        );
+        let p = *theme::palette(&ctx);
+        let tool = |op: Operation, t: f64| {
+            frame_at(&ctx, t, Vec::new(), |ui| {
+                ToolButton::new(icon::ARROW_DOWN, "Fetch")
+                    .operation(op)
+                    .show(ui);
+            })
+        };
+        let _ = tool(Operation::Idle, 1.0);
+        assert!(!spun(&tool(Operation::Running, 2.0)), "no spinner at once");
+        assert!(
+            spun(&tool(Operation::Running, 2.5)),
+            "a spinner once it runs"
+        );
+        let has = |shapes: &[egui::epaint::ClippedShape], glyph: &str| {
+            glyphs(shapes)
+                .into_iter()
+                .find(|(t, _, o, _)| t == glyph && *o > 0.0)
+                .map(|(_, c, o, _)| (c, o))
+        };
+        let done = 3.0;
+        let mid = done + f64::from(OUTCOME_HOLD / 2.0);
+        let after = done + f64::from(OUTCOME_HOLD) + 0.01;
+        let ok = tool(Operation::Succeeded { at: done }, mid);
+        assert_eq!(has(&ok, icon::CHECK), Some((p.success, 1.0)));
+        assert_eq!(
+            has(&ok, icon::ARROW_DOWN),
+            None,
+            "the check replaces the icon"
+        );
+        let failed = tool(Operation::Failed { at: done }, mid);
+        assert_eq!(has(&failed, icon::WARNING_CIRCLE), Some((p.danger, 1.0)));
+        for op in [
+            Operation::Succeeded { at: done },
+            Operation::Failed { at: done },
+        ] {
+            let rest = tool(op, after);
+            assert_eq!(
+                has(&rest, icon::ARROW_DOWN),
+                Some((p.text_dim, 1.0)),
+                "{op:?}"
+            );
+            assert_eq!(has(&rest, icon::CHECK), None);
+            assert_eq!(has(&rest, icon::WARNING_CIRCLE), None);
+        }
+        let primary = frame_at(&ctx, after + 1.0, Vec::new(), |ui| {
+            Button::new("Push")
+                .primary()
+                .icon(icon::ARROW_UP)
+                .operation(Operation::Succeeded { at: after })
+                .show(ui);
+        });
+        assert_eq!(has(&primary, icon::CHECK), Some((p.on_accent, 1.0)));
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+    }
+
+    /// The outcome pops in and the failure mark shakes sideways at first; with reduced motion it
+    /// shows at full strength and in place from the first frame to the end of the hold.
+    #[test]
+    fn reduced_motion_shows_outcomes_without_a_pop_or_a_shake() {
+        let ctx = super::super::testkit::ctx();
+        let mark_at = |op: Operation, t: f64| {
+            let marked = frame_at(&ctx, t, Vec::new(), |ui| {
+                IconButton::new(icon::ARROWS_CLOCKWISE, "Refresh")
+                    .operation(op)
+                    .show(ui);
+            });
+            let rest = frame_at(&ctx, t, Vec::new(), |ui| {
+                IconButton::new(icon::ARROWS_CLOCKWISE, "Refresh").show(ui);
+            });
+            let icon_x = glyphs(&rest)[0].3.x;
+            glyphs(&marked)
+                .into_iter()
+                .find(|(g, ..)| g == icon::WARNING_CIRCLE)
+                .map(|(_, _, o, c)| (o, c.x - icon_x))
+        };
+        let failed = Operation::Failed { at: 5.0 };
+        for reduced in [false, true] {
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                theme::Appearance {
+                    reduce_motion: reduced,
+                    ..theme::Appearance::STILL
+                },
+            );
+            let (o, _) = mark_at(failed, 5.02).expect("a mark on the first frames");
+            let (_, dx) = mark_at(failed, 5.0 + f64::from(SHAKE) / 4.0).expect("a mark");
+            if reduced {
+                assert!((o - 1.0).abs() < f32::EPSILON, "full strength at once: {o}");
+                assert!(dx.abs() < 0.01, "no shake: {dx}");
+            } else {
+                assert!(o < 1.0, "pops in: {o}");
+                assert!(dx.abs() > 0.5, "shakes: {dx}");
+            }
+            let (o, dx) = mark_at(failed, 5.0 + f64::from(OUTCOME_HOLD) - 0.02).expect("held");
+            assert_eq!(
+                (o < 1.0, dx.abs() < 0.01),
+                (!reduced, true),
+                "end of the hold"
+            );
+        }
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
     }
 }

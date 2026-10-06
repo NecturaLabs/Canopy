@@ -17,6 +17,7 @@ use egui_phosphor::regular as icon;
 
 use super::button::IconButton;
 use super::chip::Badge;
+use super::overlay::TooltipExt;
 use super::{ForceState, KitResponse, Size, Tone, anim, focus_visible, paint};
 use crate::ui::motion;
 use crate::ui::theme::{self, Palette};
@@ -137,6 +138,14 @@ pub struct RowCtx {
 const PAD: f32 = 10.0;
 /// Gap between a row's icon, label, detail and trailing text.
 const GAP: f32 = 8.0;
+/// A disclosure chevron's column: its inset from the row's left edge, its width, and the gap
+/// after it in a tree row (a disclosure's body starts at their sum, under the header's icon or,
+/// without one, its label).
+const CHEVRON_INSET: f32 = 6.0;
+const CHEVRON_WIDTH: f32 = 12.0;
+const CHEVRON_GAP: f32 = 4.0;
+/// The gap after a section header's chevron.
+const SECTION_CHEVRON_GAP: f32 = 6.0;
 
 /// Everything rows share up to their content: allocation, interaction, the ground layers.
 struct Frame {
@@ -258,7 +267,7 @@ fn frame(ui: &mut Ui, spec: &FrameSpec) -> Frame {
             },
         }
     } else {
-        let off = super::disabled_text(p, theme::style());
+        let off = p.disabled_text;
         RowCtx {
             rect,
             content: rect.shrink2(vec2(PAD, 0.0)),
@@ -340,8 +349,9 @@ fn with_tip(
     reason: Option<&str>,
 ) -> Response {
     let tip = if enabled { tooltip } else { reason.or(tooltip) };
+    // A row can be as wide as the window: its tooltip follows the pointer along it.
     match tip {
-        Some(t) => response.on_hover_text(t).on_disabled_hover_text(t),
+        Some(t) => response.kit_tooltip(t).at_pointer().show(),
         None => response,
     }
 }
@@ -833,9 +843,10 @@ impl<'a> TreeRow<'a> {
         let id = f.response.id;
         let has_children = self.open.is_some();
         let mut open_now = self.open.as_deref().copied().unwrap_or(false);
-        let chevron_x = f.rect.left() + 6.0 + crate::ui::count_f32(self.depth) * m.tree_indent;
+        let chevron_x =
+            f.rect.left() + CHEVRON_INSET + crate::ui::count_f32(self.depth) * m.tree_indent;
         let chevron = Rect::from_center_size(
-            pos2(chevron_x + 6.0, f.rect.center().y),
+            pos2(chevron_x + CHEVRON_WIDTH / 2.0, f.rect.center().y),
             vec2(16.0, f.rect.height()),
         );
         let mut toggled = false;
@@ -915,7 +926,7 @@ impl<'a> TreeRow<'a> {
                 };
                 paint_chevron(&f.painter, chevron.center(), turn, color);
             }
-            let mut x = chevron_x + 12.0 + 4.0;
+            let mut x = chevron_x + CHEVRON_WIDTH + CHEVRON_GAP;
             if let Some(g) = &self.icon {
                 let color = match self.icon_tone {
                     Some(t) if f.enabled => t.color(p),
@@ -1137,7 +1148,7 @@ impl<'a> Disclosure<'a> {
             ui.add_space(theme::XS);
             let r = ui
                 .horizontal(|ui| {
-                    ui.add_space(6.0 + 12.0 + 4.0);
+                    ui.add_space(CHEVRON_INSET + CHEVRON_WIDTH + CHEVRON_GAP);
                     ui.vertical(body).inner
                 })
                 .inner;
@@ -1255,7 +1266,7 @@ impl<'a> SectionHeader<'a> {
         let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
         let cy = rect.center().y;
         let label_color = p.text_faint.lerp_to_gamma(p.text_dim, hover);
-        let mut x = rect.left() + 6.0;
+        let mut x = rect.left() + CHEVRON_INSET;
         if collapsible {
             let turn = anim::ease_bool(
                 &ctx,
@@ -1264,8 +1275,13 @@ impl<'a> SectionHeader<'a> {
                 motion::BASE,
                 motion::BASE,
             );
-            paint_chevron(&painter, pos2(x + 6.0, cy), turn, label_color);
-            x += 12.0 + 6.0;
+            paint_chevron(
+                &painter,
+                pos2(x + CHEVRON_WIDTH / 2.0, cy),
+                turn,
+                label_color,
+            );
+            x += CHEVRON_WIDTH + SECTION_CHEVRON_GAP;
         }
         if let Some(g) = &self.icon {
             let glyph = painter.layout_no_wrap(g.clone(), FontId::proportional(13.0), p.text_faint);
@@ -1295,36 +1311,44 @@ impl<'a> SectionHeader<'a> {
         if focused {
             paint::inset_ring(&painter, rect, CornerRadius::same(m.radius_sm), p.focus);
         }
-        let mut acted = false;
-        if let Some((glyph, label)) = &self.action {
+        let acted = if let Some((glyph, label)) = &self.action {
+            // The action is always there for the keyboard and AccessKit, right after the header
+            // in the focus order (Tab and Shift+Tab reach it); it shows while the header is
+            // hovered or focused, and fully while the action itself has focus.
+            let action_key = response.id.with("kit-section-action-id");
+            let action_focused = ctx
+                .data(|d| d.get_temp::<Id>(action_key))
+                .is_some_and(|id| ctx.memory(|m| m.has_focus(id)));
+            let shown = hovered || focused || action_focused;
             let reveal = match self.force {
-                Some(_) => f32::from(u8::from(hovered || focused)),
+                Some(_) => f32::from(u8::from(shown)),
                 None => anim::ease_bool(
                     &ctx,
                     response.id.with("kit-section-action"),
-                    hovered || focused,
+                    shown,
                     motion::FAST,
                     motion::FAST,
                 ),
             };
-            if reveal > 0.0 {
-                let area = Rect::from_min_max(
-                    pos2(rect.right() - action_w - 2.0, rect.top()),
-                    pos2(rect.right() - 2.0, rect.bottom()),
-                );
-                let mut child = ui.new_child(
-                    UiBuilder::new()
-                        .max_rect(area)
-                        .layout(Layout::right_to_left(Align::Center)),
-                );
-                child.multiply_opacity(reveal);
-                acted = IconButton::new(glyph, label.clone())
-                    .size(Size::Xs)
-                    .id_salt(("kit-section-action", &self.title))
-                    .show(&mut child)
-                    .clicked();
-            }
-        }
+            let area = Rect::from_min_max(
+                pos2(rect.right() - action_w - 2.0, rect.top()),
+                pos2(rect.right() - 2.0, rect.bottom()),
+            );
+            let mut child = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(area)
+                    .layout(Layout::right_to_left(Align::Center)),
+            );
+            child.multiply_opacity(if action_focused { 1.0 } else { reveal });
+            let action = IconButton::new(glyph, label.clone())
+                .size(Size::Xs)
+                .id_salt(("kit-section-action", &self.title))
+                .show(&mut child);
+            ctx.data_mut(|d| d.insert_temp(action_key, action.id));
+            action.clicked()
+        } else {
+            false
+        };
         if collapsible {
             response.widget_info(|| {
                 WidgetInfo::labeled(WidgetType::CollapsingHeader, true, &self.title)
@@ -2089,5 +2113,108 @@ mod tests {
         });
         let p = theme::palette(&ctx);
         assert_eq!(grounds, vec![p.standard.pane]);
+    }
+
+    /// Override O2 (shell F1): Tab from a section header lands on its action ("+" Add remote…),
+    /// which stays shown while it has focus, the next Tab leaves it and Shift+Tab comes back to
+    /// it; with full and reduced motion.
+    #[test]
+    fn tab_reaches_a_section_headers_action() {
+        let ctx = ctx();
+        ctx.enable_accesskit();
+        for reduced in [true, false] {
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                theme::Appearance {
+                    reduce_motion: reduced,
+                    ..theme::Appearance::STILL
+                },
+            );
+            let mut open = true;
+            // One frame: the focused node's label, and whether the action's glyph was painted.
+            let mut frame = |events: Vec<egui::Event>| {
+                let out = run(&ctx, events, |ui| {
+                    let _ = SectionHeader::new(format!("Remotes {reduced}"))
+                        .count(1)
+                        .open(&mut open)
+                        .action(icon::PLUS, "Add remote…")
+                        .show(ui);
+                    let _ = super::super::button::Button::new("After").show(ui);
+                });
+                let painted = out
+                    .shapes
+                    .iter()
+                    .any(|c| matches!(&c.shape, Shape::Text(t) if t.galley.text() == icon::PLUS));
+                let update = out.platform_output.accesskit_update.expect("accesskit");
+                let label = update
+                    .nodes
+                    .iter()
+                    .find(|(id, _)| *id == update.focus)
+                    .and_then(|(_, n)| n.label().map(str::to_owned));
+                (label, painted)
+            };
+            let _ = frame(Vec::new());
+            let mut focused = Vec::new();
+            let back = egui::Event::Key {
+                key: Key::Tab,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::SHIFT,
+            };
+            for step in [key(Key::Tab), key(Key::Tab), key(Key::Tab), back] {
+                // Focus moves at the end of the frame that read the Tab.
+                let _ = frame(vec![step]);
+                focused.push(frame(Vec::new()).0);
+                // A few quiet frames: the action must not vanish once the header lost focus.
+                for _ in 0..3 {
+                    let (still, painted) = frame(Vec::new());
+                    assert_eq!(&still, focused.last().unwrap(), "focus moved by itself");
+                    if still.as_deref() == Some("Add remote…") {
+                        assert!(painted, "the focused action is painted (reduced {reduced})");
+                    }
+                }
+            }
+            let labels: Vec<_> = focused.iter().map(|l| l.as_deref()).collect();
+            assert_eq!(
+                labels,
+                [
+                    Some(format!("Remotes {reduced}").as_str()),
+                    Some("Add remote…"),
+                    Some("After"),
+                    Some("Add remote…")
+                ],
+                "reduced {reduced}"
+            );
+        }
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+    }
+
+    /// V22: a disclosure's header icon takes its tone (the checks header's red, amber or green).
+    #[test]
+    fn a_disclosure_header_icon_keeps_its_tone() {
+        let ctx = ctx();
+        let p = *theme::palette(&ctx);
+        for (tone, color) in [
+            (Tone::Danger, p.danger),
+            (Tone::Warning, p.warning),
+            (Tone::Success, p.success),
+        ] {
+            let out = run(&ctx, Vec::new(), |ui| {
+                let mut open = false;
+                let _ = Disclosure::new("checks", "2 checks failed", &mut open)
+                    .icon(egui_phosphor::regular::X_CIRCLE)
+                    .icon_tone(tone)
+                    .show(ui, |_| ());
+            });
+            let icon = out.shapes.iter().find_map(|c| match &c.shape {
+                Shape::Text(t) if t.galley.text() == egui_phosphor::regular::X_CIRCLE => {
+                    Some(t.fallback_color)
+                }
+                _ => None,
+            });
+            assert_eq!(icon, Some(color), "{tone:?}");
+        }
     }
 }

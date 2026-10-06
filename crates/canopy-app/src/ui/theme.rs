@@ -36,8 +36,6 @@ pub const SETTINGS_MAX_HEIGHT: f32 = 900.0;
 pub const MEASURE: f32 = 920.0;
 /// A disabled control's opacity (the whole control, label included).
 pub const DISABLED_ALPHA: f32 = 0.42;
-/// A disabled icon-only button's opacity.
-pub const DISABLED_ICON_ALPHA: f32 = 0.40;
 /// Opacity of the status washes over their [`Tones`] (16%).
 const TONE_ALPHA: u8 = 41;
 
@@ -156,22 +154,8 @@ pub struct Surfaces {
     pub knob_edge: Option<Color32>,
     /// Fill of a disabled primary, danger or secondary button: a flat, neutral, dimmed step (no
     /// gradient, highlight, glow or shadow), labelled in [`Palette::disabled_text`].
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the disabled-state tests read it until the kit's disabled controls paint with it"
-        )
-    )]
     pub disabled_fill: Color32,
     /// 1 pt ring around `disabled_fill`, so a disabled button keeps its shape on any surface.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the disabled-state tests read it until the kit's disabled controls paint with it"
-        )
-    )]
     pub disabled_edge: Color32,
 }
 
@@ -209,13 +193,6 @@ pub struct Palette {
     /// Label and icon of a disabled control: 3:1 (4.5:1 in Contrast) on `disabled_fill`, every
     /// `raised*` fill, the grounds and their hover tints, dimmer than `text_faint`. Controls drawn
     /// with it are not also faded by [`DISABLED_ALPHA`].
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the disabled-state tests read it until the kit's disabled controls paint with it"
-        )
-    )]
     pub disabled_text: Color32,
     /// Text-grade accent: selected SHA, active icons, checkmarks, matched characters, counts.
     pub accent: Color32,

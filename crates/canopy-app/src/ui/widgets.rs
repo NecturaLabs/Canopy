@@ -262,44 +262,6 @@ mod tests {
         }
     }
 
-    /// Design spec 2.4: a disabled button is the whole control at `DISABLED_ALPHA`, never the
-    /// enabled fill at full strength.
-    #[test]
-    fn disabled_primary_controls_do_not_use_the_enabled_fill() {
-        let ctx = egui::Context::default();
-        crate::ui::fonts::install(&ctx);
-        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
-        for frame in 0..3 {
-            let mut button_rect = egui::Rect::NOTHING;
-            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                ui.add_enabled_ui(false, |ui| {
-                    button_rect = kit::Button::new("Commit")
-                        .primary()
-                        .min_width(120.0)
-                        .show(ui)
-                        .rect;
-                });
-            });
-            if frame == 2 {
-                let rectangle = output
-                    .shapes
-                    .iter()
-                    .find_map(|shape| match &shape.shape {
-                        egui::Shape::Rect(rect) if rect.rect == button_rect => Some(rect),
-                        _ => None,
-                    })
-                    .expect("painted disabled primary");
-                let limit = crate::ui::saturate_u8((255.0 * theme::DISABLED_ALPHA).ceil());
-                assert!(
-                    rectangle.fill.a() > 0 && rectangle.fill.a() <= limit,
-                    "a disabled primary is faded to the disabled opacity, got {:?}",
-                    rectangle.fill
-                );
-            }
-            output.drop_without_applying_deltas();
-        }
-    }
-
     #[test]
     fn segmented_dims_the_options_that_are_not_selected() {
         let ctx = egui::Context::default();
