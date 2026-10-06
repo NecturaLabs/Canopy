@@ -928,6 +928,7 @@ mod tests {
             (
                 Op::Pull {
                     strategy: PullStrategy::default(),
+                    follow_config: true,
                 },
                 Some(Tool::Pull),
             ),
