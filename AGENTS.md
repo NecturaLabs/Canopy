@@ -121,6 +121,9 @@ adding a dependency.
 - Before declaring work done: `tools/check.sh` passes and the `canopy-review` agent has reviewed
   the diff (brief it per the `independent-review` skill); fix or answer every Blocking finding.
   Only a typo or formatting-only change skips this.
+- Before every release, after all planned changes: the user simulation review (`tools/usersim.sh`,
+  `docs/playbook.md`), Canopy driven like a user in an isolated environment; every finding is
+  fixed before the release is cut.
 
 ## Conventions
 

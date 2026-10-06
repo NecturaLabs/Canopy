@@ -53,7 +53,9 @@ next build is released as stable.
    rewriting `main`.
 4. The README images in `docs/screenshots/` match the UI (`screenshot` skill) and the legal
    documents match what the build sends (`docs/legal/`).
-5. Settings the workflows need: secret `APP_UPDATES_TOKEN` (Contents read/write on
+5. The user simulation review ran after the release's last planned change and every finding is
+   fixed (`tools/usersim.sh`, `docs/playbook.md`).
+6. Settings the workflows need: secret `APP_UPDATES_TOKEN` (Contents read/write on
    `NecturaLabs/app-updates` only; without it the release is published but the feed step is
    skipped with a warning and running copies are not offered the update); `RELEASE_TOKEN` only if
    tags are protected against creation by the workflow's own token; variable `CANOPY_SENTRY_DSN` overrides the built-in

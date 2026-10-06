@@ -65,6 +65,30 @@ ImageMagick's `import` do the rest, and `tools/screenshot.sh` already prefers `x
 Never `pkill -f` a pattern that appears in your own command line: it kills the shell. Use
 `pgrep -x canopy` to see whether the app is still running.
 
+## User simulation review (before every release)
+
+A standing review: once every change planned for a release is in, and before the release is cut,
+use Canopy as a user would and fix every finding before releasing. It complements the
+screenshot checks and unit tests, which cannot see hover, timing, focus, menus that open and close,
+or how flows feel end to end.
+
+1. `tools/usersim.sh start [--kind showcase|conflict|linear|big] [--size WxH]` builds the release
+   binary and launches it on a private Xvfb display with its own home, XDG folders and Git
+   configuration in a scratch folder, on a fixture with a local bare `origin`: never the owner's
+   repositories, never their Canopy settings, never the desktop session.
+2. Drive it with `tools/usersim.sh x ...` (xdotool: `x search --name Canopy windowfocus`, then
+   `x mousemove X Y click 1`, `x key ctrl+k`, `x type --delay 40 -- TEXT`) and look with
+   `tools/usersim.sh shot out.png` after every step that changes the screen.
+3. Walk the first launch (terms, crash question, identity), then every change in the release, then
+   the core flows around it: browse and select in History and the sidebar, context menus and
+   their submenus, stage and commit, fetch, pull and push against the bare `origin`, a conflict
+   (`--kind conflict`), Settings changes taking effect, notifications and the notification center,
+   tooltips on hover, many tabs. Use the keyboard as well as the pointer. `restart` checks that
+   settings survive a relaunch.
+4. Write each finding down as it is found (what, where, a screenshot), fix it with a test where one
+   can catch it, and walk the affected flow again. The release waits until every finding is fixed.
+5. `tools/usersim.sh stop` quits, stops Xvfb and deletes the scratch folder.
+
 ## Testing an update end to end, locally
 
 1. Build two binaries with different numbers and a local feed: `CANOPY_BUILD_NUMBER=1000
