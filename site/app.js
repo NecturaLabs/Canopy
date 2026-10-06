@@ -55,8 +55,6 @@ function detect() {
   return "unknown";
 }
 const system = detect();
-const assetUrl = {};
-$$("[data-platform] [data-href]").forEach((a) => { assetUrl[a.closest("[data-platform]").dataset.platform] = a.href; });
 const suggested = $('[data-platform="' + system + '"]');
 if (suggested) suggested.classList.add("is-suggested");
 
@@ -179,27 +177,18 @@ if (system === "phone") {
   });
 }
 
-/* The newest build from the public update feed; the links written into the page stay if it fails */
+/* Direct links to the newest build from the public update feed; the releases page links stay if it fails */
 function applyManifest(m) {
   if (!m || !/^\d+$/.test(String(m.version)) || typeof m.platforms !== "object" || m.platforms === null) return;
   const urls = {};
   for (const [key, asset] of Object.entries(m.platforms)) {
     if (asset && typeof asset.url === "string" && ASSET.test(asset.url)) urls[key] = asset.url;
   }
-  $$("[data-build]").forEach((el) => { el.textContent = m.version; });
-  if (m.pub_date) {
-    const d = new Date(m.pub_date);
-    if (!isNaN(d)) {
-      const text = d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
-      $$("[data-build-date]").forEach((el) => { el.textContent = text; });
-    }
-  }
   $$("[data-platform]").forEach((row) => {
     const url = urls[row.dataset.platform];
     const a = $("[data-href]", row);
     if (url && a) {
       a.href = url;
-      assetUrl[row.dataset.platform] = url;
     }
   });
 }

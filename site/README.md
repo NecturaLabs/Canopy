@@ -92,8 +92,8 @@ link previews do not read WebP.
 Everything is served from this folder: no third-party fonts, scripts, analytics or cookies. The one
 request elsewhere is the public update manifest,
 `https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/latest.json`, which the page
-reads to show the newest build number, date and download links. The links written into the page
-(build 690) stay in place if that request fails, and every link the manifest returns must match
+reads to point the download buttons straight at the newest archives. The page shows no build number;
+the links written into it go to the latest releases page and stay in place if that request fails, and every link the manifest returns must match
 the release-asset pattern in `app.js` before the page uses it.
 
 ## Keeping it true
