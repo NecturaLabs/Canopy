@@ -1669,16 +1669,6 @@ impl Palette {
             .unwrap_or(self.text)
     }
 
-    /// Fill of a ref pill in colour `c` (24%); the current branch is stronger (34%).
-    pub const fn pill_fill(c: Color32, current: bool) -> Color32 {
-        Self::tint(c, if current { 87 } else { 61 })
-    }
-
-    /// The ring of a ref pill (60%), the same for the current branch.
-    pub const fn pill_border(c: Color32) -> Color32 {
-        Self::tint(c, 153)
-    }
-
     /// Fill of an initials avatar in colour `c` (24%).
     pub const fn avatar_fill(c: Color32) -> Color32 {
         Self::tint(c, 61)
@@ -3523,7 +3513,7 @@ mod tests {
             green.palette,
         ];
         let base = ThemeId::Midnight.palette();
-        let (fg, fill) = (base.lane(3), Palette::pill_fill(base.text_faint, true));
+        let (fg, fill) = (base.lane(3), Palette::tint(base.text_faint, 87));
         let fresh: Vec<Color32> = palettes
             .iter()
             .map(|p| p.ink_on(p.surfaces(style()), fg, fill))
@@ -4050,8 +4040,7 @@ mod tests {
                 ]);
                 for c in colours {
                     let mut fills = vec![
-                        Palette::pill_fill(c, false),
-                        Palette::pill_fill(c, true),
+                        s.badge,
                         Palette::avatar_fill(c),
                         Palette::badge_fill(c),
                         Palette::change_fill(c),

@@ -2089,10 +2089,11 @@ mod tests {
     }
 
     /// The history's ref pills keep their labels readable on every surface a row can have, in
-    /// every theme and lane colour: a branch or tag label in its pill's own colour, lifted toward
-    /// the text colour only as far as 4.5:1 needs, and detached HEAD in the dim neutral one.
+    /// every theme and lane colour: the current branch's label on its solid lane colour, the
+    /// other branches' and tags' in the text colour on their neutral pill (dim on a remote
+    /// branch's outline; their glyph carries the lane), and detached HEAD in the dim neutral one.
     #[test]
-    fn rendered_ref_pills_label_in_their_own_colour_in_every_theme() {
+    fn rendered_ref_pills_label_readably_in_every_theme() {
         use canopy_core::{RefKind, RefLabel};
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
@@ -2144,12 +2145,24 @@ mod tests {
                     );
                     if kind == RefKind::Head {
                         assert_eq!(actual, p.text_dim, "{}: HEAD stays neutral", p.name);
+                    } else if kind == RefKind::CurrentBranch {
+                        assert_eq!(
+                            fill.a(),
+                            255,
+                            "{} lane {lane}: the current branch is solid",
+                            p.name
+                        );
                     } else {
-                        let own = pill.color(p);
+                        // A remote branch is the quieter outline, in the dim text colour.
+                        let text = if kind == RefKind::RemoteBranch {
+                            p.text_dim
+                        } else {
+                            p.text
+                        };
                         assert_eq!(
                             actual,
-                            p.ink(own, fill),
-                            "{} {kind:?} lane {lane}: the label is the pill's own colour, lifted only for contrast",
+                            p.ink(text, fill),
+                            "{} {kind:?} lane {lane}: the label is in the text colour",
                             p.name
                         );
                     }

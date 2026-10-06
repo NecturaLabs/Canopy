@@ -229,9 +229,9 @@ commits since the previous build.
 
 ### Changed
 
-- Branch and tag pills are brighter and easier to read: a 24% fill of the pill's own colour (34%
-  for the current branch), a 60% ring, and a label in that colour adjusted to read at 4.5:1.
-  Remote branches have a ring only; HEAD and stash stay neutral.
+- Branch and tag pills in History are redesigned: only the current branch is a solid pill in its
+  lane's colour; other branches, tags and stashes are quiet neutral pills whose icon carries the
+  lane's colour, and remote branches are a hairline outline.
 - Settings rows now keep their controls in one aligned column.
 - Releases are numbered builds, named by `git rev-list --count` of their commit on `main` and its
   short hash (`build 412 (a1b2c3d)`), instead of semantic versions. The number is shown in About,

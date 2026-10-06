@@ -475,10 +475,13 @@ never takes focus; Tab does.
 ### Ref pill
 
 Rounded rectangle (10-point radius, height 19px, horizontal padding 7px) with a Small Medium label and a
-leading icon. A branch pill takes its lane's colour (a tag `warning`): a 24% fill (34% for the
-current branch) and a 60% ring, and a remote branch only the ring. The label is the pill's own
-colour, lifted toward `text` only as far as 4.5:1 needs against the pill's fill over every
-surface (`Palette::ink`); HEAD and stash pills stay neutral.
+leading icon. Colour marks one thing, the current branch: its pill is solid in its lane's
+colour, labelled in `text` or the pane colour, whichever reads better, with the fill nudged away
+from that ink until it reads at 4.5:1. Every other branch, tag and stash pill is a quiet neutral
+`badge` surface with its label in `text`; a remote branch is only a hairline `edge` outline with
+its label in `text_dim`. Their glyphs carry the lane's colour (a tag's `warning`), lifted toward
+`text` only as far as 4.5:1 on the pill needs (`Palette::ink`), so each pill still ties to its
+lane in the graph; HEAD stays neutral.
 When a local branch and its upstream point to the same commit they merge into one pill showing
 both icons. Pills that do not fit collapse to a `+N` badge with a tooltip.
 

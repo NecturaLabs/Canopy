@@ -377,29 +377,37 @@ impl RefPill {
         }
     }
 
-    /// Fill, ring and label colours.
+    /// Fill, ring and label colours. Only the current branch is solid, in its lane's colour;
+    /// the other pills are quiet neutral surfaces with the label in the text colour, and their
+    /// lane or tag colour on the glyph ([`RefPill::glyph_color`]) ties them to the graph.
     pub fn colors(&self, p: &Palette) -> (Color32, Color32, Color32) {
         let s = p.s();
-        let c = self.color(p);
         match self.kind {
             RefKind::Head => (s.elevated, s.edge, p.text_dim),
-            RefKind::Stash => {
-                let fill = Palette::pill_fill(c, false);
-                (fill, Palette::pill_border(c), p.ink(p.text, fill))
+            RefKind::CurrentBranch => {
+                let (fill, ink) = solid_pill(p, self.color(p));
+                (fill, Color32::TRANSPARENT, ink)
             }
-            // Labels take the pill's own colour, lifted toward `text` only as far as 4.5:1 needs.
             RefKind::RemoteBranch => (
                 Color32::TRANSPARENT,
-                Palette::pill_border(c),
-                p.ink(c, Color32::TRANSPARENT),
+                s.edge,
+                p.ink(p.text_dim, Color32::TRANSPARENT),
             ),
-            RefKind::CurrentBranch => {
-                let fill = Palette::pill_fill(c, true);
-                (fill, Palette::pill_border(c), p.ink(c, fill))
+            RefKind::LocalBranch | RefKind::Tag | RefKind::Stash => {
+                (s.badge, Color32::TRANSPARENT, p.ink(p.text, s.badge))
             }
-            RefKind::LocalBranch | RefKind::Tag => {
-                let fill = Palette::pill_fill(c, false);
-                (fill, Palette::pill_border(c), p.ink(c, fill))
+        }
+    }
+
+    /// The glyphs' colour: the lane's (a tag's `warning`), lifted toward `text` only as far as
+    /// 4.5:1 on the pill needs; the label's on the solid current branch, `text_dim` on a stash.
+    pub fn glyph_color(&self, p: &Palette) -> Color32 {
+        let (fill, _, ink) = self.colors(p);
+        match self.kind {
+            RefKind::Head | RefKind::CurrentBranch => ink,
+            RefKind::Stash => p.ink(p.text_dim, fill),
+            RefKind::LocalBranch | RefKind::RemoteBranch | RefKind::Tag => {
+                p.ink(self.color(p), fill)
             }
         }
     }
@@ -478,7 +486,7 @@ impl RefPill {
             } else {
                 m.ref_pill_pad_icon
             };
-        let c = self.color(p);
+        let c = self.glyph_color(p);
         for glyph in glyphs {
             let gg = painter.layout_no_wrap(glyph.to_owned(), FontId::proportional(m.icon_xs), c);
             painter.galley(pos2(x, cy - gg.size().y / 2.0), Arc::clone(&gg), c);
@@ -538,6 +546,21 @@ impl RefPill {
             label_response(response, &spoken, self.tooltip.as_deref())
         }
     }
+}
+
+/// The current branch's solid pill in lane colour `c`: of `text` and the pane colour, the ink that
+/// reads better on `c`, and `c` moved away from that ink until it reads at 4.5:1.
+fn solid_pill(p: &Palette, c: Color32) -> (Color32, Color32) {
+    let pane = p.s().pane;
+    let (ink, away) = if theme::contrast(p.text, c) >= theme::contrast(pane, c) {
+        (p.text, pane)
+    } else {
+        (pane, p.text)
+    };
+    (0..=20)
+        .map(|step| theme::mix(c, away, crate::ui::int_f32(step) / 40.0))
+        .find(|fill| theme::contrast(ink, *fill) >= 4.5)
+        .map_or((away, ink), |fill| (fill, ink))
 }
 
 impl Widget for RefPill {
@@ -1492,8 +1515,13 @@ mod tests {
                 assert_eq!(remote.color(p), local.color(p), "{} lane {lane}", p.name);
                 let (fill, ring, ink) = remote.colors(p);
                 assert_eq!(fill, Color32::TRANSPARENT, "a remote pill is outlined");
-                assert_eq!(ring, Palette::pill_border(p.lane(lane)));
-                assert_eq!(ink, p.ink(p.lane(lane), Color32::TRANSPARENT));
+                assert_eq!(ring, p.s().edge);
+                assert_eq!(ink, p.ink(p.text_dim, Color32::TRANSPARENT));
+                assert_eq!(
+                    remote.glyph_color(p),
+                    p.ink(p.lane(lane), Color32::TRANSPARENT),
+                    "its cloud carries the lane"
+                );
             }
             let tag = RefPill::new("v1.0.0", RefKind::Tag).lane(3);
             assert_eq!(
@@ -1502,6 +1530,37 @@ mod tests {
                 "{}: tags keep the tag colour",
                 p.name
             );
+        }
+    }
+
+    /// The current branch is the one solid pill, its label at 4.5:1 on its lane colour; every
+    /// other pill's glyph keeps its lane or tag colour at 4.5:1 on the pill wherever it sits.
+    #[test]
+    fn the_current_branch_is_solid_and_every_glyph_reads() {
+        for id in theme::ThemeId::ALL {
+            for contrast in [false, true] {
+                let p = id.shown_palette(contrast);
+                for lane in (0_u16..).take(p.lanes.len()) {
+                    let current = RefPill::new("main", RefKind::CurrentBranch).lane(lane);
+                    let (fill, _, ink) = current.colors(p);
+                    assert_eq!(fill.a(), 255, "{} lane {lane}: solid", p.name);
+                    assert!(
+                        theme::contrast(ink, fill) >= 4.5,
+                        "{} lane {lane}: {:.2}:1",
+                        p.name,
+                        theme::contrast(ink, fill)
+                    );
+                    for kind in [RefKind::LocalBranch, RefKind::RemoteBranch, RefKind::Tag] {
+                        let pill = RefPill::new("x", kind).lane(lane);
+                        let (fill, _, _) = pill.colors(p);
+                        let glyph = pill.glyph_color(p);
+                        for bg in p.component_surfaces(p.s()) {
+                            let r = theme::contrast(glyph, theme::over(fill, bg));
+                            assert!(r >= 4.5, "{} {kind:?} lane {lane}: {r:.2}:1", p.name);
+                        }
+                    }
+                }
+            }
         }
     }
 
