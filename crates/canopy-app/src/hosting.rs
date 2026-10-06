@@ -395,6 +395,10 @@ fn run(
                 while let Ok((oid, email)) = job_rx.recv() {
                     let result =
                         crate::avatars::load(&client, &forge, oid, &email, &avatars_enabled);
+                    // The author's email stays out of the log; the reason is about the repository.
+                    if let Some(crate::avatars::Note::Blocked(why)) = &result.note {
+                        tracing::info!(host = %forge.host, reason = ?why, "author pictures stopped for this repository");
+                    }
                     let _ = events.send(HostEvent::Avatar { oid, email, result });
                     ctx.request_repaint();
                 }

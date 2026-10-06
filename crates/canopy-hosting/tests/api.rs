@@ -1395,3 +1395,48 @@ fn author_picture_missing_accounts_errors_and_limits_keep_the_fallback() {
         .download()
         .unwrap_err();
 }
+
+#[test]
+fn author_picture_lookups_tell_an_unpushed_commit_from_a_hidden_repository() {
+    use canopy_hosting::avatars::is_unknown_commit;
+    let server = Server::start();
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let list = format!("/repos/octo/hello/commits?sha={sha}&per_page=1");
+    let client = github(&server, None);
+    // GitHub answers 404 on the list both for a commit it does not have and for a repository it
+    // will not show; only the repository itself tells them apart.
+    let hidden = client.author_avatar(sha, "a@example.com").unwrap_err();
+    assert!(matches!(hidden, Error::NotFound(_)), "{hidden:?}");
+    assert!(!is_unknown_commit(&hidden));
+    server.route("GET", "/repos/octo/hello", 200, r#"{"id":1}"#);
+    let unknown = client.author_avatar(sha, "a@example.com").unwrap_err();
+    assert!(is_unknown_commit(&unknown), "{unknown:?}");
+    let targets: Vec<String> = server.requests().into_iter().map(|r| r.target).collect();
+    assert_eq!(
+        targets,
+        [
+            list.as_str(),
+            "/repos/octo/hello",
+            &list,
+            "/repos/octo/hello"
+        ]
+    );
+    // Only a 404 asks about the repository; any other refusal is reported as it came.
+    server.route(
+        "GET",
+        "/repos/octo/hello/commits",
+        401,
+        r#"{"message":"Bad credentials"}"#,
+    );
+    assert!(matches!(
+        client.author_avatar(sha, "a@example.com"),
+        Err(Error::Unauthorized(_))
+    ));
+    assert_eq!(server.requests().len(), 5);
+    // GitLab looks authors up by email, with no commit to be missing.
+    let gitlab_miss = gitlab(&server, None)
+        .author_avatar(sha, "a@example.com")
+        .unwrap_err();
+    assert!(matches!(gitlab_miss, Error::NotFound(_)));
+    assert_eq!(server.requests().len(), 6);
+}
