@@ -198,6 +198,34 @@ fn a_plan_accepts_canopys_own_release_and_nothing_else() {
     Plan::from_manifest(&semver, base).unwrap_err();
 }
 
+/// A refused download address reaches the update screen and the log as plain, short text: the
+/// feed cannot reorder or hide what the error says, or fill the screen with it.
+#[test]
+fn a_refused_download_address_is_shown_as_plain_short_text() {
+    let key = updates::platform_key();
+    let sha = "a".repeat(64);
+    let url = format!("https://evil.test/\u{202E}{}\u{3164}", "a".repeat(5000));
+    let manifest = UpdateManifest::parse(
+        format!(
+            r#"{{"version":"412","platforms":{{"{key}":{{"url":"{url}","sha256":"{sha}"}}}}}}"#
+        )
+        .as_bytes(),
+    )
+    .expect("manifest");
+    let Err(error) = Plan::from_manifest(&manifest, "https://example.test/dl") else {
+        panic!("a foreign address was accepted");
+    };
+    assert!(
+        !error.contains('\u{202E}') && !error.contains('\u{3164}'),
+        "{error:?}"
+    );
+    assert!(
+        error.chars().count() <= 400,
+        "{} chars",
+        error.chars().count()
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Desktop entry
 

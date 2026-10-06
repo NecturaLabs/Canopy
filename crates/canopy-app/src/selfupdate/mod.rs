@@ -172,7 +172,7 @@ impl Plan {
         if artifact.url != archive_url {
             return Err(format!(
                 "the manifest points outside Canopy's releases: {}",
-                canopy_core::cli::redact_url(&artifact.url)
+                canopy_hosting::plain_text(&canopy_core::cli::redact_url(&artifact.url), 200)
             ));
         }
         let sha256 = artifact.sha256.clone().unwrap_or_default();
