@@ -1296,11 +1296,6 @@ fn confirmation<'a>(
         .body(extra)
         .footer(|f| {
             f.cancel().confirm(confirm);
-            // Only a destructive question says how to leave it, as Enter does not answer it; on
-            // an ordinary one a hint would crowd a long confirming label at this width.
-            if danger {
-                f.hint("Esc cancels");
-            }
         });
     d = if danger {
         d.destructive().icon(icon::WARNING)

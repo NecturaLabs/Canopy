@@ -1133,7 +1133,7 @@ pub enum InitialFocus {
     Body,
 }
 
-/// The footer's buttons and hint, set inside [`Dialog::footer`].
+/// The footer's buttons, set inside [`Dialog::footer`].
 #[derive(Debug, Default)]
 pub struct Footer {
     cancel: Option<String>,
@@ -1142,7 +1142,6 @@ pub struct Footer {
     confirm_enabled: bool,
     confirm_loading: bool,
     confirm_reason: Option<String>,
-    hint: Option<String>,
     /// Two equal choices ([`Footer::choice`]): both Secondary, and Enter picks neither.
     neutral: bool,
 }
@@ -1179,11 +1178,6 @@ impl Footer {
     /// The confirmed operation is running.
     pub fn confirm_loading(&mut self, loading: bool) -> &mut Self {
         self.confirm_loading = loading;
-        self
-    }
-    /// A short left-aligned hint ("Esc cancels").
-    pub fn hint(&mut self, text: impl Into<String>) -> &mut Self {
-        self.hint = Some(text.into());
         self
     }
     /// Two equal answers to a question with no safe default (consent): both Secondary, the same
@@ -1337,7 +1331,7 @@ impl<'a> Dialog<'a> {
         self.scroll_salt = Some(Id::new(salt));
         self
     }
-    /// The footer row is `add`'s, left to right, in place of [`Self::footer`]'s buttons and hint
+    /// The footer row is `add`'s, left to right, in place of [`Self::footer`]'s buttons
     /// (the reader's Back beside the consent's answers). What it returns answers the dialog, as
     /// the buttons would: `Open` keeps it open, and focus returns to its trigger otherwise. No
     /// control takes focus when it opens unless `add` asks for it.
@@ -1652,15 +1646,6 @@ impl<'a> Dialog<'a> {
                             result = answer;
                         }
                     } else {
-                        if let Some(h) = &footer.hint {
-                            ui.painter().text(
-                                row.left_center(),
-                                Align2::LEFT_CENTER,
-                                h,
-                                FontId::proportional(m.meta_size),
-                                p.text_faint,
-                            );
-                        }
                         // The buttons sit at the right but are made left to right, Cancel first,
                         // so Tab meets them in reading order (the row is placed by its width last
                         // frame).
@@ -1878,8 +1863,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
                         .footer(|f| {
                             f.cancel()
                                 .confirm("Delete branch")
-                                .confirm_icon(icon::TRASH)
-                                .hint("Esc cancels");
+                                .confirm_icon(icon::TRASH);
                         })
                 } else {
                     Dialog::new(("g-dialog", i))
@@ -1951,9 +1935,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
                 })
                 .initial_focus(InitialFocus::Confirm)
                 .footer(|f| {
-                    f.cancel_label("Not now")
-                        .confirm("Create tag")
-                        .hint("Esc cancels");
+                    f.cancel_label("Not now").confirm("Create tag");
                 })
                 .show(ui.ctx());
             if result != DialogResult::Open {
