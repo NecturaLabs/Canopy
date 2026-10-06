@@ -20,7 +20,7 @@ use crate::tab::{RepoTab, View};
 use crate::ui::cheatsheet::Cheatsheet;
 use crate::ui::palette::{CommandPalette, Entry};
 use crate::ui::theme::{self, ThemeId, palette};
-use crate::ui::toast::{ToastKind, Toasts, Topic};
+use crate::ui::toast::{Offer, ToastKind, Toasts, Topic};
 use crate::updater::{self, UpdateState, Updater};
 use crate::views::dialogs::{self, Dialog, DialogStack, Outcome, Start};
 use crate::views::settings_screen::{self, SettingsScreen};
@@ -324,7 +324,7 @@ impl CanopyApp {
         let restore = if launch.paths.is_empty() && !shooting {
             app.settings.open_tabs.clone()
         } else {
-            launch.paths
+            launch.paths.clone()
         };
         for (i, path) in restore.into_iter().enumerate() {
             let request = open::OpenRequest {
@@ -382,6 +382,14 @@ impl CanopyApp {
                     "Push failed",
                     "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
                 );
+                app.toasts.push_offer(
+                    ctx,
+                    ToastKind::Info,
+                    Topic::Update,
+                    "Canopy 812 is available",
+                    "See what's new, then install it when it suits you.",
+                    Offer::ReviewUpdate,
+                );
             }
             Some("toasts") => {
                 // Every type, so the stack shows a finished operation beside the error.
@@ -389,11 +397,14 @@ impl CanopyApp {
                     finished: true,
                     ..Default::default()
                 });
-                app.toasts.push(
+                // A known failure in a repository, so its card offers the pull.
+                app.toasts.push_for(
                     &cc.egui_ctx,
-                    ToastKind::Error, Topic::Error,
+                    ToastKind::Error,
+                    Topic::Error,
                     "Push failed",
                     "! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
+                    launch.paths.first().map(PathBuf::as_path),
                 );
                 app.toasts.push(
                     &cc.egui_ctx,
@@ -401,6 +412,14 @@ impl CanopyApp {
                     Topic::Finished,
                     "Committed",
                     "docs: add API reference",
+                );
+                app.toasts.push_offer(
+                    &cc.egui_ctx,
+                    ToastKind::Info,
+                    Topic::Update,
+                    "Canopy 812 is available",
+                    "See what's new, then install it when it suits you.",
+                    Offer::ReviewUpdate,
                 );
             }
             Some("settings-keyboard") => {
@@ -1076,9 +1095,9 @@ impl eframe::App for CanopyApp {
             crate::ui::widgets::dismiss_underlying_tooltips(&ctx);
         }
         self.cheatsheet.show(&ctx);
-        for recovery in self.toasts.show(&ctx) {
-            match recovery {
-                crate::ui::toast::Recovery::Pull(path) => {
+        for offer in self.toasts.show(&ctx) {
+            match offer {
+                Offer::Pull(path) => {
                     if let Some(index) = self
                         .tabs
                         .iter()
@@ -1088,9 +1107,15 @@ impl eframe::App for CanopyApp {
                         actions.push(Action::Pull);
                     }
                 }
-                crate::ui::toast::Recovery::Accounts => {
+                Offer::Accounts => {
                     self.open_settings(SettingsScreen::at(settings_screen::Section::Accounts));
                 }
+                Offer::ReviewUpdate => {
+                    if let UpdateState::Available(a) = &self.updater.state {
+                        self.dialogs.open(Dialog::Update(a.clone()));
+                    }
+                }
+                Offer::Restart(exe) => actions.push(Action::RestartInto(exe)),
             }
         }
         if let Some(page) = self.gallery {

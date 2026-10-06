@@ -620,26 +620,45 @@ the last picture, and an author without a picture keeps initials (never a genera
 
 Overlay cards (glass with Translucent surfaces on) share a bounded bottom-right scroll stack, at
 most 408 points wide, so five errors remain reachable even in a compact zoomed window. Newest
-notices lead the stack. Titles truncate without displacing Close. Errors stay until dismissed,
-offer Close and Copy, with no disclosure on the card: known failures lead with a plain
+notices lead the stack. Every card has one layout in every theme: the kind's glyph (`icon_toast`,
+centred on the title's line), a semibold title that truncates, the body in `text_dim` at
+`meta_size` with 1.45 leading 4 points below it, and, only when the notification asks for a
+decision, a row of two buttons 10 points lower. A card has no close button: it goes on a click
+(when it asks for nothing), on its buttons or on its timer. Known failures lead with a plain
 explanation, any other error shows git's first line under its title, and git's full output is in
-the notification center (its tooltip and Copy), which says the same as the card. Screen readers hear an error as an alert with its message. A
-rejected push offers Pull for its originating repository;
-account failures offer Accounts. Other toasts dismiss on a card click or after four seconds, which
-run only while the pointer is off the stack and the window has focus. The stack retains five
-notices, and a sixth pushes out the oldest one that is not an error; a card enters from the right and leaves to the right as it fades, and the cards above one
-that left slide into its place (`TOAST_SHIFT`, instant with reduced motion).
+the notification center (its tooltip and Copy). Screen readers hear an error as an alert with its
+message.
+
+A decision (`ui::toast::Offer`) is labelled for what it does, with a tonal Primary Sm button and a
+Ghost Sm one beside it: a rejected push offers Pull / Not now for its repository, refused
+credentials Open Accounts / Not now, a new build Review update / Later, an installed one Restart
+now / Later. Taking it closes the card and removes it from the center; declining only closes the
+card, and the center offers it until it is taken or cleared.
+
+A card lasts as long as its words take to read: two seconds to notice it plus a quarter second a
+word, within 5 to 10 seconds for information and success and 8 to 15 for an error; a decision
+stays 15 seconds, then waits in the center and counts on the bell. Design systems settle on these
+ranges (Atlassian flags 5 to 15 s, Canva 5 s up to 10, SAP Fiori 4 to 10), and as WCAG 2.2.1 asks,
+the timers run only while the pointer is off the stack, no card button has keyboard focus and the
+window has focus. The stack retains five notices; a sixth pushes out the oldest routine one, then
+the oldest error, and a pending decision last. A card enters from the right and leaves to the
+right as it fades, and the cards above one that left slide into its place (`TOAST_SHIFT`, instant
+with reduced motion).
 
 Each notification has a topic (`ui::toast::Topic`: Errors, Needs your attention, Updates,
 Finished operations, Confirmations); Settings → Appearance → Notifications chooses which show as
 cards, and by default only the first three do. Every notification, card or not, goes to the
 notification center: the bell at the right end of the status bar (`BELL`, `BELL_SLASH` while
-cards are off) opens a 360-point popover listing the last 100, newest first, each with its kind's
-glyph and colour, title, relative time (exact in the tooltip), up to four lines of text (all of it
-in the tooltip) and its actions as Xs buttons, their labels lined up with the text: any recovery
-action Secondary, Copy (failures only, whose output is worth keeping) and Dismiss Ghost; a header holds a Ghost Clear all and the settings gear. Notifications of a counting topic (errors, attention, updates) that showed no
-card raise a strong count badge on the bell, `danger` when one is an error, else `accent`; opening
-the center clears it, and while it is open new notifications go to its list instead of a card.
+cards are off) opens a 360-point popover listing the last 100, newest first. Each row is laid out
+like its card (the same glyph, title, body and gaps), with its relative time at the right of the
+title (exact in the tooltip), up to four lines of text (all of it in the tooltip), and buttons
+only for what can be done: a decision's own two as Xs (tonal Primary and Ghost), and Copy (Ghost)
+on a failure, whose output is worth keeping; their labels line up with the text. Rows part by
+`SM` space and a hairline at 8% of the text colour over the surface, the same in every theme. A
+header holds a Ghost Clear all and the settings gear. Notifications of a counting topic (errors,
+attention, updates) that showed no card, and decisions whose card ran out, raise a strong count
+badge on the bell, `danger` when one is an error, else `accent`; opening the center clears it,
+and while it is open new notifications go to its list instead of a card.
 
 ### Command palette
 
@@ -751,8 +770,8 @@ a blocking overlay opens.
 
 Update progress and completion dialogs keep their action buttons in a content-height horizontal row, immediately below the status text, rather than expanding to fill the viewport.
 
-Narrow Settings controls occupy a content-height row below their help. Notification dismiss
-controls also use bounded rows so successive frames cannot grow the notification beyond the viewport.
+Narrow Settings controls occupy a content-height row below their help. A notification's choice
+buttons also use a bounded row so successive frames cannot grow the card beyond the viewport.
 
 ### Screen readers
 

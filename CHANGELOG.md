@@ -11,7 +11,7 @@ commits since the previous build.
 ### Added
 
 - A notification center: the bell at the right end of the status bar lists the last 100
-  notifications, whether or not they showed as a card, with copy, dismiss and clear all, and an
+  notifications, whether or not they showed as a card, with copy and clear all, and an
   unread count for errors and other notices that need you. Settings → Appearance → Notifications
   turns the bottom-right cards off or chooses them per type (errors, needs your attention,
   updates, finished operations, confirmations); by default only the first three pop up.
@@ -243,6 +243,12 @@ commits since the previous build.
 
 - Notification cards no longer have an expandable Details section, and the notification center
   explains a failure the same way its card does, with git's full output in its tooltip and Copy.
+- Notifications look the same in every theme and have no close button: one that asks for a
+  decision says so with two buttons named for it (Pull or Not now, Review update or Later,
+  Restart now or Later, Open Accounts or Not now), and the notification center offers it until it
+  is taken. A new build and an installed update now ask this way. Cards stay as long as their
+  words take to read, 5 to 10 seconds (8 to 15 for an error, 15 for a decision, which then waits
+  in the notification center and counts on the bell), and pause while you point at them.
 - Primary and destructive buttons are tonal instead of solid: a ground tinted with the accent (or
   red), a fine edge in the same colour and a bold label in it, so the main action stands out
   without a heavy block of colour.

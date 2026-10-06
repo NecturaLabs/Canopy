@@ -334,18 +334,26 @@ impl CanopyApp {
         self.poll_prompts(ctx);
         if self.updater.poll_install() {
             match &self.updater.install {
-                updater::InstallState::Done { build, installed } => self.toasts.push(
-                    ctx,
-                    ToastKind::Success,
-                    Topic::Attention,
-                    format!("Canopy {} is installed", crate::build_info::name(build)),
-                    if installed.exe.is_some() {
-                        "Restart Canopy to use it.".to_owned()
-                    } else {
-                        "Start it from your launcher; this window still runs the old build."
-                            .to_owned()
-                    },
-                ),
+                updater::InstallState::Done { build, installed } => {
+                    let title = format!("Canopy {} is installed", crate::build_info::name(build));
+                    match &installed.exe {
+                        Some(exe) => self.toasts.push_offer(
+                            ctx,
+                            ToastKind::Success,
+                            Topic::Attention,
+                            title,
+                            "Restart Canopy to use it.",
+                            Offer::Restart(exe.clone()),
+                        ),
+                        None => self.toasts.push(
+                            ctx,
+                            ToastKind::Success,
+                            Topic::Attention,
+                            title,
+                            "Start it from your launcher; this window still runs the old build.",
+                        ),
+                    }
+                }
                 updater::InstallState::Failed { error, .. } => self.toasts.push(
                     ctx,
                     ToastKind::Error,
@@ -365,12 +373,13 @@ impl CanopyApp {
                     if manual {
                         self.dialogs.open(Dialog::Update(a.clone()));
                     } else if !skipped {
-                        self.toasts.push(
+                        self.toasts.push_offer(
                             ctx,
                             ToastKind::Info,
                             Topic::Update,
                             format!("Canopy {v} is available"),
-                            "Click the update badge in the status bar for what's new.",
+                            "See what's new, then install it when it suits you.",
+                            Offer::ReviewUpdate,
                         );
                     } else {
                         self.updater.state = UpdateState::UpToDate;
