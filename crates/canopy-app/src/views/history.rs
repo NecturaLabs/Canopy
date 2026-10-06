@@ -39,6 +39,9 @@ const GRAPH_LABEL_X: f32 = 12.0;
 const PILL_GAP: f32 = 6.0;
 /// Gap between an author's avatar and name.
 const AVATAR_GAP: f32 = 8.0;
+/// The shortest the details pane gets below the table; a window without room for it and the
+/// table shows one of them at a time.
+const DETAIL_MIN: f32 = 260.0;
 /// The id `RepoTab::filter_history` focuses; the filter field takes focus from it.
 const FILTER_ID: &str = "history-filter";
 
@@ -79,8 +82,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
         compact_table_min
     };
     let table_required = table_preferred - row_h * 4.0;
-    let compact = h < 260.0 + table_required;
-    let table_min = table_preferred.min((h - 260.0).max(table_required));
+    let compact = h < DETAIL_MIN + table_required;
+    let table_min = table_preferred.min((h - DETAIL_MIN).max(table_required));
     tab.history_layout.compact = compact;
     let mut layout = tab.history_layout;
     let selected = tab.selected_commit.is_some();
@@ -146,17 +149,19 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut V
             });
     } else {
         let detail_max = (h - table_min).min(h * 0.70);
-        let detail_min = 260.0_f32.min(detail_max);
+        let detail_min = DETAIL_MIN.min(detail_max);
         let panel_id = egui::Id::new("details");
         let automatic_id = panel_id.with("automatic-height");
         let previous_default = ui.ctx().data_mut(|d| d.get_persisted::<f32>(automatic_id));
-        let fallback = (h * 0.40).max(260.0).min(detail_max);
+        // Sized by the app, the pane is at least tall enough for the commit's information.
+        let natural = commit_detail::natural_height(ui, tab.details.as_deref()).max(DETAIL_MIN);
+        let fallback = (h * 0.40).max(natural).min(detail_max);
         // Fitted to the open diff. Without one (the selected commit's details or diff still on
         // their way, a commit with no files, an error) the pane keeps the height it has: a click
         // must not show the pane at another height for the frames before the diff arrives.
         let default_height = match &tab.diff {
             Some(d) => diff::inspector_height(d, fallback)
-                .max(260.0)
+                .max(natural)
                 .min(detail_max),
             None => {
                 previous_default.map_or(fallback, |previous| previous.clamp(detail_min, detail_max))
@@ -1060,6 +1065,44 @@ mod tests {
         }
     }
 
+    /// H17: at 1440x900 a commit with several files shows its commit information beside the two
+    /// file rows, in every density and style: the pane sizes itself for both.
+    #[test]
+    fn commit_information_shows_beside_two_files_at_the_natural_pane_height() {
+        for style in [theme::Style::Standard, theme::Style::Deeper] {
+            for density in [theme::Density::Comfortable, theme::Density::Dense] {
+                let ctx = egui::Context::default();
+                crate::ui::fonts::install(&ctx);
+                theme::apply(
+                    &ctx,
+                    theme::ThemeId::Midnight,
+                    theme::Appearance {
+                        style,
+                        density,
+                        ..theme::Appearance::STILL
+                    },
+                );
+                let (mut tab, _dir) = populated_tab(&ctx);
+                let mut details = (**tab.details.as_ref().expect("fixture details")).clone();
+                let mut other = details.files[0].clone();
+                other.path = "other.rs".into();
+                details.files.push(other);
+                let date = widgets::full_date(details.author.time, details.author.offset_minutes);
+                tab.details = Some(std::sync::Arc::new(details));
+                let mut diff = (**tab.diff.as_ref().expect("fixture diff")).clone();
+                diff.hunks[0].lines.truncate(7);
+                tab.diff = Some(std::sync::Arc::new(diff));
+                let visible = visible_details(&ctx, &mut tab, vec2(1440.0, 900.0));
+                for text in ["author@example.com", date.as_str(), "file.rs", "other.rs"] {
+                    assert!(
+                        visible.iter().any(|t| t == text),
+                        "{style:?} {density:?}: {text} must show whole: {visible:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn filtering_returns_from_full_details_and_focuses_the_filter() {
         for size in [vec2(562.5, 350.0), vec2(1440.0, 900.0)] {
@@ -1303,7 +1346,7 @@ mod tests {
     /// reads as resized by hand and stops following the diff).
     #[test]
     fn the_automatic_inspector_height_survives_a_restart() {
-        let size = vec2(1440.0, 900.0);
+        let size = vec2(2560.0, 1440.0);
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);

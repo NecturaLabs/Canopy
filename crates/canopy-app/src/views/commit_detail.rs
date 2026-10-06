@@ -106,11 +106,11 @@ pub fn show(
                 .show();
             });
             // Up to two whole file rows, the "N files changed" line above them (as tall as it
-            // was last frame) and the gaps between them.
+            // was last frame, at first one line of its text) and the gaps between them.
             let stats_key = ui.id().with("commit-file-stats-height");
             let stats_h = ui
                 .data(|data| data.get_temp::<f32>(stats_key))
-                .unwrap_or(ui.spacing().interact_size.y);
+                .unwrap_or_else(|| text_row(ui, m.meta_size));
             let files_min = file_row_height() * crate::ui::count_f32(d.files.len().min(2))
                 + stats_h
                 + theme::XS * 2.0
@@ -134,6 +134,8 @@ pub fn show(
             };
             let first_line = ui.fonts_mut(|f| f.row_height(&first_line));
             information(ui, &mut open, info_room, first_line, |ui| {
+                // Metadata rows as tall as their text, like a list of facts.
+                ui.spacing_mut().interact_size.y = 0.0;
                 if message(ui, &d, summary) {
                     ui.add_space(theme::XS);
                 }
@@ -165,6 +167,71 @@ pub fn show(
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(s.pane))
         .show(ui, |ui| diff::show(ui, tab, actions));
+}
+
+/// Lines of a commit message's body a details pane that sizes itself keeps room for; a longer
+/// body scrolls in its block.
+const BODY_LINES: usize = 2;
+
+/// The least height History gives the details pane when it sizes the pane itself: the pane header
+/// and the commit column as [`show`] lays it out for `d` (any commit while it loads): the author
+/// and SHA rows, the "Commit information" row and its body (the first lines of the message, the
+/// email, the date, the committer and the parents), the changed-files line and the file rows it
+/// keeps in view. So the commit's information shows at the pane's natural size in every density;
+/// a pane made shorter by hand shuts the block and says why.
+pub fn natural_height(ui: &Ui, d: Option<&CommitDetails>) -> f32 {
+    let m = theme::metrics();
+    let gap = theme::XS;
+    let row = ui.spacing().interact_size.y;
+    let author = row.max(m.avatar_detail);
+    let sha = row.max(Size::Xs.height());
+    let disclosure = RowKind::List.height() + theme::XS * 2.0 + gap * 2.0;
+    let fact = text_row(ui, m.meta_size);
+    // The email and the date always; the committer and the parents when the commit has them;
+    // the body's first lines when the message has one.
+    let (facts, body_lines, files) = d.map_or((3, 0, 2), |d| {
+        let committer = d.committer.email != d.author.email || d.committer.name != d.author.name;
+        let body = d
+            .message
+            .trim()
+            .lines()
+            .skip(1)
+            .filter(|l| !l.trim().is_empty());
+        (
+            1 + usize::from(committer) + usize::from(!d.parents.is_empty()),
+            body.count().min(BODY_LINES),
+            d.files.len().min(2),
+        )
+    });
+    let body = if body_lines > 0 {
+        crate::ui::count_f32(body_lines) * fact + theme::XS + gap
+    } else {
+        0.0
+    };
+    let information =
+        text_row(ui, m.small_size) + crate::ui::count_f32(facts) * (fact + gap) + body;
+    let files = file_row_height() * crate::ui::count_f32(files)
+        + text_row(ui, m.meta_size)
+        + theme::XS * 2.0
+        + gap * 3.0;
+    m.pane_header_height
+        + m.detail_pad.y * 2.0
+        + author
+        + gap
+        + sha
+        + gap
+        + disclosure
+        + information
+        + files
+}
+
+/// The height of one line of text at `size` (an icon row of the same size included).
+fn text_row(ui: &Ui, size: f32) -> f32 {
+    let m = theme::metrics();
+    ui.fonts_mut(|f| {
+        f.row_height(&FontId::proportional(size))
+            .max(f.row_height(&FontId::proportional(m.icon_sm)))
+    })
 }
 
 /// Pane navigation belongs to the commit, including when its files have not loaded: the commit's
