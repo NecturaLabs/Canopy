@@ -460,7 +460,10 @@ mod tests {
         assert_eq!(scrub_text("no url: a@b", ""), "no url: a@b");
         // Spellings git and libcurl accept: extra slashes before the authority.
         assert_eq!(
-            scrub_text("fatal: 'https:///ada:s3cret@github.com/o/r' and http:////x:y@h/", ""),
+            scrub_text(
+                "fatal: 'https:///ada:s3cret@github.com/o/r' and http:////x:y@h/",
+                ""
+            ),
             "fatal: 'https:///<redacted>@github.com/o/r' and http:////<redacted>@h/"
         );
     }
