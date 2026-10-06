@@ -146,7 +146,9 @@ pub(super) fn update(
                     }
                     note(ui, how, p.text_faint);
                     if let InstallState::Failed { error, .. } = state {
-                        note(ui, format!("{}  {error}", icon::WARNING), p.danger);
+                        Callout::new(Tone::Danger, error.as_str())
+                            .title("The update did not install")
+                            .show(ui);
                     }
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = theme::MD;

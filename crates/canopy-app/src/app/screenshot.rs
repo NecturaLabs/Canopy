@@ -109,6 +109,7 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "open-error",
     "clone",
     "clone-running",
+    "clone-error",
     "init",
     "new-branch",
     "rename",
@@ -120,6 +121,7 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "confirm",
     "confirm-danger",
     "confirm-host",
+    "confirm-merge-risky",
     "whats-new",
     "crash",
     "update-available",
@@ -184,17 +186,21 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
                 not_a_repository: true,
             }),
         },
-        "clone" | "clone-running" => {
+        "clone" | "clone-running" | "clone-error" => {
             let mut d = Dialog::clone_default(settings);
             if let Dialog::Clone {
                 builder,
                 parent,
                 pending,
+                error,
             } = &mut d
             {
                 builder.project = "rust-lang/rustlings".into();
                 *parent = "~/src".into();
                 *pending = name == "clone-running";
+                if name == "clone-error" {
+                    *error = Some("fatal: destination path 'rustlings' already exists and is not an empty directory.".into());
+                }
             }
             d
         }
@@ -215,8 +221,16 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             message: String::new(),
             untracked: true,
         },
-        "add-remote" => Dialog::add_remote(settings),
-        "publish" => Dialog::add_remote(settings).publishing(),
+        "add-remote" | "publish" => {
+            let mut d = Dialog::add_remote(settings);
+            if name == "publish" {
+                d = d.publishing();
+            } else {
+                // As the app names it beside the fixture's own origin.
+                d.name_remote(&["origin".to_owned()]);
+            }
+            d
+        }
         "new-request" => Dialog::NewRequest {
             kind: ForgeKind::GitHub,
             request: NewRequest {
@@ -251,6 +265,13 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             confirm: "Approve".into(),
             danger: false,
             job: HostJob::Approve(428),
+        },
+        "confirm-merge-risky" => Dialog::ConfirmHost {
+            title: "Merge pull request #428 anyway?".into(),
+            body: "Checks failed on Add settings search and a reviewer requested changes. Merging now puts it on main as it is.".into(),
+            confirm: "Merge anyway".into(),
+            danger: true,
+            job: HostJob::Merge(428, canopy_hosting::MergeMethod::Merge, None),
         },
         "whats-new" => Dialog::WhatsNew {
             version: "build 1001".into(),

@@ -22,7 +22,7 @@ use crate::ui::kit::overlay::{
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{Disclosure, ListRow};
 use crate::ui::kit::select::Select;
-use crate::ui::kit::surface::InsetBox;
+use crate::ui::kit::surface::{Callout, InsetBox};
 use crate::ui::kit::toggle::{Checkbox, RadioGroup};
 use crate::ui::kit::{Button, Size, Tone, paint};
 use crate::ui::legal::{Document, Pending};
@@ -63,6 +63,8 @@ pub enum Dialog {
         builder: UrlBuilder,
         parent: String,
         pending: bool,
+        /// Why the last clone from this form failed, in git's words.
+        error: Option<String>,
     },
     /// How callers ask for the new-repository dialog: [`show`] turns it into
     /// [`Dialog::NewRepository`], which keeps the dialog's state.
@@ -223,6 +225,7 @@ impl Dialog {
             builder: UrlBuilder::new(settings),
             parent: settings.clone_parent(),
             pending: false,
+            error: None,
         }
     }
 
@@ -425,6 +428,7 @@ pub fn show(
             builder,
             parent,
             pending,
+            error,
         } => {
             let busy = *pending;
             let mut target: Option<(String, std::path::PathBuf)> = None;
@@ -460,6 +464,15 @@ pub fn show(
                         );
                         target = clone_target(builder, parent);
                     });
+                    // A changed repository or folder clears what was said about the last try.
+                    if target != resolved {
+                        *error = None;
+                    }
+                    if let Some(message) = error.as_deref() {
+                        Callout::new(Tone::Danger, message)
+                            .title("The clone failed")
+                            .show(ui);
+                    }
                     if busy {
                         working(ui, "Cloning repository…");
                     }
@@ -484,6 +497,7 @@ pub fn show(
             answer(result, || match target {
                 Some((url, dest)) if !*pending && !clone_running => {
                     *pending = true;
+                    *error = None;
                     Outcome::RunKeep(vec![Action::Clone { url, dest }])
                 }
                 _ => Outcome::Keep,
@@ -819,11 +833,6 @@ pub fn show(
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
                 .body(|ui| {
-                    note(
-                        ui,
-                        format!("{}  {}  →", icon::GIT_BRANCH, request.source),
-                        p.text_dim,
-                    );
                     let options: Vec<(&str, &str)> = branches
                         .iter()
                         .filter(|b| **b != request.source)
@@ -834,10 +843,19 @@ pub fn show(
                         .find(|(b, _)| *b == request.target)
                         .map_or("", |(b, _)| *b);
                     Select::new(&mut pick, &options)
-                        .name("Target branch")
+                        .label(format!("Merge {} into", request.source))
                         .placeholder("Choose a branch…")
+                        .enabled(!options.is_empty())
+                        .disabled_reason("No other branches on the remote yet")
                         .id_salt("request-target")
                         .show(ui);
+                    if options.is_empty() {
+                        note(
+                            ui,
+                            "Canopy knows no other branch on the remote to merge into. Fetch, then try again.",
+                            p.text_faint,
+                        );
+                    }
                     if pick != request.target && !pick.is_empty() {
                         pick.clone_into(&mut request.target);
                     }
@@ -1142,11 +1160,12 @@ fn confirmation<'a>(
         .description(body)
         .body(extra)
         .footer(|f| {
-            f.cancel().confirm(confirm).hint(if danger {
-                "Esc cancels"
-            } else {
-                "Enter confirms · Esc cancels"
-            });
+            f.cancel().confirm(confirm);
+            // Only a destructive question says how to leave it, as Enter does not answer it; on
+            // an ordinary one a hint would crowd a long confirming label at this width.
+            if danger {
+                f.hint("Esc cancels");
+            }
         });
     d = if danger {
         d.destructive().icon(icon::WARNING)
@@ -1214,7 +1233,7 @@ fn merge_body(
         .find(|n| *n == target)
         .map_or("", String::as_str);
     Select::new(&mut pick, &options)
-        .name("Branch")
+        .label("Branch")
         .placeholder("Choose a branch…")
         .id_salt("merge-target")
         .show(ui);
@@ -1863,6 +1882,66 @@ mod tests {
         }
     }
 
+    /// A risky merge's confirmation ("Merge anyway", danger) keeps both answers on one line
+    /// and in view at the confirmation width, down to the smallest window.
+    #[test]
+    fn risky_merge_answers_never_wrap_or_clip() {
+        for (w, h) in [(1440.0, 900.0), (562.5, 350.0)] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            let mut dialog = Dialog::ConfirmHost {
+                title: "Merge pull request #428 anyway?".into(),
+                body: "Checks failed and a reviewer requested changes.".into(),
+                confirm: "Merge anyway".into(),
+                danger: true,
+                job: crate::hosting::HostJob::Merge(428, canopy_hosting::MergeMethod::Squash, None),
+            };
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+            let mut picker = crate::ui::folder_picker::FolderPicker::default();
+            let mut seen = Vec::new();
+            for _ in 0..4 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |_| {
+                        super::show(
+                            &ctx,
+                            &mut dialog,
+                            None,
+                            &mut picker,
+                            false,
+                            &crate::updater::Updater::default(),
+                            "git version 2.55.0",
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                seen = output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Text(t)
+                            if ["Merge anyway", "Cancel"].contains(&t.galley.text()) =>
+                        {
+                            let r = t.visual_bounding_rect();
+                            Some((
+                                t.galley.text().to_owned(),
+                                t.galley.rows.len() == 1
+                                    && screen.contains_rect(r)
+                                    && s.clip_rect.contains_rect(r),
+                            ))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+            }
+            assert_eq!(seen.len(), 2, "both answers drawn at {w}x{h}: {seen:?}");
+            assert!(seen.iter().all(|(_, ok)| *ok), "{w}x{h}: {seen:?}");
+        }
+    }
+
     #[test]
     fn ref_names() {
         assert!(valid_ref_name("feature/login"));
@@ -1935,6 +2014,7 @@ mod tests {
             builder,
             parent,
             pending,
+            ..
         } = &mut pending
         {
             builder.project = "example/repository".into();
@@ -1946,7 +2026,7 @@ mod tests {
         stack.finish_clone(false);
         stack.close();
         assert!(
-            matches!(stack.current(), Some(Dialog::Clone { builder, parent, pending: false }) if builder.project == "example/repository" && parent == "chosen-parent")
+            matches!(stack.current(), Some(Dialog::Clone { builder, parent, pending: false, .. }) if builder.project == "example/repository" && parent == "chosen-parent")
         );
         if let Some(Dialog::Clone { pending, .. }) = stack.current_mut() {
             *pending = true;
@@ -1957,6 +2037,33 @@ mod tests {
         assert!(
             stack.current().is_none(),
             "only the completed pending form closes"
+        );
+    }
+    #[test]
+    fn a_failed_clone_says_why_in_its_own_form() {
+        let mut stack = DialogStack::default();
+        assert!(
+            !stack.finish_clone_with(Err("fatal: no form")),
+            "with no form waiting the caller reports the failure"
+        );
+        let mut form = Dialog::clone_default(&crate::settings::Settings::default());
+        if let Dialog::Clone { pending, .. } = &mut form {
+            *pending = true;
+        }
+        stack.open(form);
+        let message = "fatal: repository 'https://github.com/example/missing/' not found";
+        assert!(stack.finish_clone_with(Err(message)));
+        assert!(matches!(
+            stack.current(),
+            Some(Dialog::Clone { pending: false, error: Some(e), .. }) if e == message
+        ));
+        if let Some(Dialog::Clone { pending, .. }) = stack.current_mut() {
+            *pending = true;
+        }
+        assert!(stack.finish_clone_with(Ok(())));
+        assert!(
+            stack.current().is_none(),
+            "a successful clone closes its form"
         );
     }
     #[test]
