@@ -1367,6 +1367,11 @@ pub(crate) fn gallery(ui: &mut Ui) {
             Margin::same(crate::ui::points_i8(theme::SM)),
             |ui| empty.show(ui).value,
         );
+        // Standard's flush panes part only where they meet; here each sits apart, so its seams
+        // run all the way round.
+        if theme::style() == Style::Standard {
+            paint::rim(ui.painter(), r, CornerRadius::ZERO, s.border);
+        }
         if let Some(action) = shown {
             ui.ctx()
                 .data_mut(|d| d.insert_temp(last_id, format!("{action:?} in pane {i}")));
