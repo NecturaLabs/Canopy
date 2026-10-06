@@ -87,8 +87,13 @@ pub fn show(ui: &mut Ui, art: Art, size: Vec2) -> egui::Response {
                 let c = to_screen(*center);
                 let r = radius * scale * (0.6 + 0.4 * ease_out(local));
                 let color = item.ink.resolve(p, c.y, origin.y, scene.size.y * scale);
+                // A glow fades out on its own: it may spill past the picture's box (Embers' forge
+                // light under the tree) rather than end in a hard edge where the box does.
+                let spill = ui.painter().with_clip_rect(
+                    Rect::from_center_size(c, Vec2::splat(2.0 * r)).intersect(ui.clip_rect()),
+                );
                 super::kit::paint::glow(
-                    &painter,
+                    &spill,
                     c,
                     r,
                     Palette::tint(
@@ -242,7 +247,9 @@ pub fn backdrop(ui: &Ui, rect: Rect) {
             }
         }
         ArtMotif::NeonGrid => {
-            let horizon = rect.top() + rect.height() * 0.74;
+            // The floor lies below the welcome's hints, its far lines faint and its near ones
+            // bright, as a lit grid recedes into the night.
+            let horizon = rect.top() + rect.height() * 0.82;
             let cx = rect.center().x;
             let floor = rect.bottom() - horizon;
             let line = Stroke::new(1.0, faint(p.accent2, 0.1));
@@ -261,7 +268,7 @@ pub fn backdrop(ui: &Ui, rect: Rect) {
                 painter.hline(
                     rect.x_range(),
                     y,
-                    Stroke::new(1.0, faint(p.accent, 0.08 + 0.1 * (1.0 - d))),
+                    Stroke::new(1.0, faint(p.accent, 0.05 + 0.13 * d)),
                 );
             }
         }
@@ -831,8 +838,13 @@ fn motif_marks(motif: ArtMotif, wide: bool, size: Vec2) -> Vec<Item> {
                     ),
                 ]
             };
+            // Each curtain is a soft band: a wide faint veil, a body and a bright core, so its
+            // edges blur into the night instead of reading as a painted stripe.
             for (i, (d, ink, width, alpha)) in curtains.iter().enumerate() {
-                out.push(path(d, *ink, *width, 0.05 * crate::ui::count_f32(i), 0.6).alpha(*alpha));
+                let at = 0.05 * crate::ui::count_f32(i);
+                for (w, a) in [(1.0, 0.3), (0.55, 0.4), (0.18, 0.55)] {
+                    out.push(path(d, *ink, width * w, at, 0.6).alpha(alpha * a));
+                }
             }
         }
         ArtMotif::Embers => {
