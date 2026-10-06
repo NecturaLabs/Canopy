@@ -119,6 +119,8 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Delete with `git branch -d`, forcing only after Git refuses and you confirm | Unreleased | ? | ? | ? |
 | Checkout remote branch as tracking branch | Done | Yes | Yes | Yes |
 | Ahead/behind badges | Done | Yes | Yes | Yes |
+| Sidebar marks the branch, remote branch, tag or stash you clicked while History shows its commit, apart from the checked-out branch (accent check, semibold) | Unreleased | Yes | Yes | Yes |
+| Branches checked out in another worktree show a folder icon and that folder's name; double-click or Open worktree opens it in a tab instead of a checkout Git would refuse | Unreleased | Yes | Yes | ? |
 | Merge into current | Done | Yes | Yes | Yes |
 | Rebase current onto | Done | Yes | Yes | Yes |
 | Merge, rebase, cherry-pick in progress: continue and abort | Done | Yes | Yes | Yes |

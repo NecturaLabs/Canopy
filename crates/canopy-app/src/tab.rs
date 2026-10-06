@@ -25,6 +25,15 @@ pub enum View {
     Requests,
 }
 
+/// A sidebar row the user picked: it shows selected while History shows the commit it points at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SidebarItem {
+    Branch(String),
+    RemoteBranch { remote: String, branch: String },
+    Tag(String),
+    Stash(Oid),
+}
+
 /// How the history list and selected commit share the content area.
 #[derive(Debug, Clone, Copy)]
 pub struct HistoryLayout {
@@ -445,6 +454,8 @@ pub struct RepoTab {
     /// Scroll just enough to show the selected commit next frame.
     pub reveal_selected: bool,
     pub collapsed: HashSet<String>,
+    /// The sidebar row last clicked ([`RepoTab::sidebar_shows`]).
+    pub sidebar_pick: Option<SidebarItem>,
     /// GitHub and GitLab remotes: (remote name, forge).
     pub forges: Vec<(String, Forge)>,
     /// The API thread for the main forge remote.
@@ -531,6 +542,7 @@ impl RepoTab {
             scroll_to_selected: false,
             reveal_selected: false,
             collapsed: HashSet::new(),
+            sidebar_pick: None,
             forges: Vec::new(),
             host: None,
             trusted_gitlab_hosts: Vec::new(),
@@ -722,6 +734,20 @@ impl RepoTab {
     }
 
     /// Selects a commit and loads its details.
+    /// Whether the sidebar row `item`, pointing at `target`, shows selected: it is the row last
+    /// clicked and History still shows its commit (selecting another commit, or a branch moving,
+    /// lets go of it).
+    pub fn sidebar_shows(
+        &self,
+        item: impl FnOnce(&SidebarItem) -> bool,
+        target: Option<Oid>,
+    ) -> bool {
+        self.view == View::History
+            && target.is_some()
+            && self.selected_commit == target
+            && self.sidebar_pick.as_ref().is_some_and(item)
+    }
+
     pub fn select_commit(&mut self, oid: Oid) {
         if self.selected_commit == Some(oid) {
             return;
@@ -2184,6 +2210,7 @@ mod perf {
                     upstream: Some(format!("origin/b{i}")),
                     ahead: i % 3,
                     behind: i % 2,
+                    worktree: None,
                 })
                 .collect(),
             remote_branches: (0..5_000)

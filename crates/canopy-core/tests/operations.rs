@@ -2602,3 +2602,57 @@ fn stage_unstage_and_discard_treat_paths_literally() {
     assert!(!p.join("[ab].txt").exists());
     assert!(p.join("b.txt").exists(), "discard must not delete b.txt");
 }
+
+#[test]
+fn branches_checked_out_in_another_worktree_name_its_folder() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    git(p, &["branch", "feature"]);
+    git(p, &["branch", "idle"]);
+    let linked = tempfile::tempdir().expect("tempdir");
+    let wt = linked.path().join("wt");
+    git(
+        p,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            wt.to_str().expect("utf-8"),
+            "feature",
+        ],
+    );
+    let canonical = |path: &Path| fs::canonicalize(path).expect("canonical");
+
+    let snap = repo.snapshot(100).expect("snapshot");
+    let by_name = |name: &str| {
+        snap.branches
+            .iter()
+            .find(|b| b.name == name)
+            .unwrap_or_else(|| panic!("{name}"))
+            .clone()
+    };
+    assert!(by_name("main").is_head);
+    assert_eq!(by_name("main").worktree, None, "checked out here");
+    assert_eq!(
+        by_name("feature").worktree.as_deref().map(canonical),
+        Some(canonical(&wt))
+    );
+    assert_eq!(by_name("idle").worktree, None);
+
+    // From the linked folder, main is the one checked out elsewhere.
+    let from_linked = Repo::open(&wt).expect("open the linked worktree");
+    let snap = from_linked.snapshot(100).expect("snapshot");
+    let main = snap
+        .branches
+        .iter()
+        .find(|b| b.name == "main")
+        .expect("main");
+    assert_eq!(main.worktree.as_deref().map(canonical), Some(canonical(p)));
+    let feature = snap
+        .branches
+        .iter()
+        .find(|b| b.name == "feature")
+        .expect("feature");
+    assert!(feature.is_head);
+    assert_eq!(feature.worktree, None);
+}

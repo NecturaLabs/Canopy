@@ -245,6 +245,7 @@ mod tests {
             ahead: 2,
             behind: 1,
             target: None,
+            worktree: None,
         });
         tab.snap = Some(Arc::new(snap));
         let mut spoken = Vec::new();

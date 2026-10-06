@@ -92,6 +92,9 @@ pub struct BranchInfo {
     pub ahead: usize,
     /// Commits on the upstream that this branch lacks.
     pub behind: usize,
+    /// The other working folder (`git worktree`) the branch is checked out in, where git
+    /// refuses to check it out here too.
+    pub worktree: Option<PathBuf>,
 }
 
 /// A remote-tracking branch, e.g. `origin/main`.

@@ -6,7 +6,7 @@ use egui_phosphor::regular as icon;
 
 use crate::action::Action;
 use crate::keymap::Command;
-use crate::tab::RepoTab;
+use crate::tab::{RepoTab, SidebarItem};
 use crate::ui::kit::button::LinkButton;
 use crate::ui::kit::chip::Badge;
 use crate::ui::kit::overlay::TooltipExt;
@@ -117,15 +117,22 @@ struct Row<'a> {
     id: egui::Id,
     glyph: &'a str,
     label: &'a str,
-    /// The checked-out branch: shown selected, its icon in the accent.
+    /// The row last clicked, while History shows its commit.
+    selected: bool,
+    /// The checked-out branch: its icon in the accent and its label semibold.
     current: bool,
     ahead: usize,
     behind: usize,
     hint: Option<&'a str>,
+    /// Dim text after the label (the folder of a branch checked out in another worktree).
+    detail: Option<&'a str>,
+    /// What screen readers call the row when the label alone says too little.
+    spoken: Option<&'a str>,
 }
 
-/// A sidebar item: icon and label, the checked-out branch selected, ahead and behind counts as
-/// badges at the right; row `index` of `list` when its section is one Tab stop.
+/// A sidebar item: icon and label, the picked row selected and the checked-out branch marked,
+/// ahead and behind counts as badges at the right; row `index` of `list` when its section is one
+/// Tab stop.
 fn row(ui: &mut Ui, r: &Row<'_>, list: Option<(Roving, usize)>) -> egui::Response {
     let m = theme::metrics();
     let badges: Vec<Badge> = [(r.ahead, "↑", Tone::Accent), (r.behind, "↓", Tone::Neutral)]
@@ -154,9 +161,16 @@ fn row(ui: &mut Ui, r: &Row<'_>, list: Option<(Roving, usize)>) -> egui::Respons
         .or_else(|| (label_w > room - badges_w).then(|| r.label.to_owned()));
     let mut row = ListRow::new(r.id)
         .kind(RowKind::Sidebar)
-        .selected(r.current)
+        .selected(r.selected)
+        .current(r.current)
         .icon(r.glyph)
         .label(r.label);
+    if let Some(d) = r.detail {
+        row = row.detail(d);
+    }
+    if let Some(name) = r.spoken {
+        row = row.accessible_name(name);
+    }
     if let Some(t) = tip {
         row = row.tooltip(t);
     }
@@ -190,6 +204,8 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             });
         return;
     };
+    // The row clicked this frame, picked once the sections are drawn.
+    let mut pick = None;
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         ui.add_space(theme::XS);
@@ -215,22 +231,36 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             if snap.branches.len() + first > 0 { a11y::group(ui, Role::List, "Branches"); }
             if let Some(name) = unborn {
                 let label = format!("{name} (no commits yet)");
-                let _ = row(ui, &Row { id: ui.id().with("unborn-branch"), glyph: icon::CHECK_CIRCLE, label: &label, current: true, ahead: 0, behind: 0, hint: Some("Current branch; make the first commit to create it") }, Some((list, 0)));
+                let _ = row(ui, &Row { id: ui.id().with("unborn-branch"), glyph: icon::CHECK_CIRCLE, label: &label, selected: false, current: true, ahead: 0, behind: 0, hint: Some("Current branch; make the first commit to create it"), detail: None, spoken: None }, Some((list, 0)));
             }
             virtual_rows(ui, snap.branches.len(), row_h, |ui, i| {
                 let b = &snap.branches[i];
-                let glyph = if b.is_head { icon::CHECK_CIRCLE } else { icon::GIT_BRANCH };
-                let hint = b.upstream.as_ref().map_or_else(|| "No upstream".to_owned(), |u| format!("Tracks {u}"));
-                let resp = row(ui, &Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, current: b.is_head, ahead: b.ahead, behind: b.behind, hint: Some(&hint) }, Some((list, i + first)));
+                // A branch checked out in another worktree lives there: git refuses to check it
+                // out here, so it shows its folder and opens it instead.
+                let worktree = b.worktree.as_ref().filter(|_| !b.is_head);
+                let folder = worktree.map(|w| w.file_name().unwrap_or(w.as_os_str()).to_string_lossy().into_owned());
+                let glyph = if b.is_head { icon::CHECK_CIRCLE } else if worktree.is_some() { icon::FOLDER_SIMPLE } else { icon::GIT_BRANCH };
+                let mut hint = b.upstream.as_ref().map_or_else(|| "No upstream".to_owned(), |u| format!("Tracks {u}"));
+                if let Some(w) = worktree {
+                    hint = format!("Checked out in the worktree at {} · {hint}", w.display());
+                }
+                let spoken = folder.as_ref().map(|f| format!("{}, checked out in worktree {f}", b.name));
+                let selected = tab.sidebar_shows(|p| matches!(p, SidebarItem::Branch(n) if *n == b.name), b.target);
+                let resp = row(ui, &Row { id: ui.id().with(("branch", &b.name)), glyph, label: &b.name, selected, current: b.is_head, ahead: b.ahead, behind: b.behind, hint: Some(&hint), detail: folder.as_deref(), spoken: spoken.as_deref() }, Some((list, i + first)));
                 if resp.clicked()
                     && let Some(t) = b.target {
+                        pick = Some(SidebarItem::Branch(b.name.clone()));
                         actions.push(Action::Reveal(t));
                     }
                 if resp.double_clicked() && !b.is_head {
-                    actions.push(Action::Op(Op::Checkout(b.name.clone())));
+                    actions.push(match worktree {
+                        Some(w) => Action::OpenRepo(w.clone()),
+                        None => Action::Op(Op::Checkout(b.name.clone())),
+                    });
                 }
                 let name = b.name.clone();
                 let is_head = b.is_head;
+                let worktree = worktree.cloned();
                 // The branch's page on GitHub/GitLab, through its upstream remote.
                 let upstream_forge = b.upstream.as_deref().and_then(|u| {
                     let (remote, rest) = u.split_once('/')?;
@@ -247,7 +277,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         m.separator();
                     }
                     if !is_head {
-                        if m.item(icon::CHECK, "Check out").show(m.ui).clicked() {
+                        if let Some(w) = &worktree {
+                            if m.item(icon::FOLDER_OPEN, "Open worktree").show(m.ui).clicked() {
+                                actions.push(Action::OpenRepo(w.clone()));
+                            }
+                        } else if m.item(icon::CHECK, "Check out").show(m.ui).clicked() {
                             actions.push(Action::Op(Op::Checkout(name.clone())));
                         }
                         if m.item(icon::GIT_MERGE, "Merge into current branch").show(m.ui).clicked() {
@@ -275,7 +309,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                         if m.item(icon::WARNING, "Force push (with lease)…").danger().show(m.ui).clicked() {
                             actions.push(Action::Confirm { title: format!("Force push {name}?"), body: format!("The remote copy of {name} is overwritten with your local branch. --force-with-lease refuses if someone else pushed in the meantime."), confirm: "Force push branch".into(), danger: true, op: Op::Push { force: true } });
                         }
-                    } else if m.item(icon::TRASH, "Delete…").danger().show(m.ui).clicked() {
+                    } else if worktree.is_none() && m.item(icon::TRASH, "Delete…").danger().show(m.ui).clicked() {
                         actions.push(Action::Confirm { title: format!("Delete branch {name}?"), body: "Only the local branch is deleted. If it has commits that are not merged, Git refuses and Canopy asks before forcing it.".into(), confirm: "Delete branch".into(), danger: true, op: Op::DeleteBranch { name: name.clone(), force: false } });
                     }
                 });
@@ -371,9 +405,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 at += branches.len();
                 virtual_rows(ui, branches.len(), row_h, |ui, i| {
                     let b = &snap.remote_branches[branches[i]];
+                    let selected = tab.sidebar_shows(|p| matches!(p, SidebarItem::RemoteBranch { remote, branch } if *remote == b.remote && *branch == b.branch), b.target);
                     let shown = TreeRow::new(("remote-branch", &b.remote, &b.branch), 1)
                         .icon(icon::GIT_BRANCH)
                         .label(b.branch.clone())
+                        .selected(selected)
                         .roving(list, base + i)
                         .show(ui);
                     // Left goes back up to the remote.
@@ -383,6 +419,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     let resp = shown.response.kit_tooltip("Double-click to check out").show();
                     if resp.clicked()
                         && let Some(t) = b.target {
+                            pick = Some(SidebarItem::RemoteBranch { remote: b.remote.clone(), branch: b.branch.clone() });
                             actions.push(Action::Reveal(t));
                         }
                     let (remote, branch) = (b.remote.clone(), b.branch.clone());
@@ -423,9 +460,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             if !snap.tags.is_empty() { a11y::group(ui, Role::List, "Tags"); }
             virtual_rows(ui, snap.tags.len(), row_h, |ui, i| {
                 let t = &snap.tags[i];
-                let resp = row(ui, &Row { id: ui.id().with(("tag", &t.name)), glyph: icon::TAG, label: &t.name, current: false, ahead: 0, behind: 0, hint: t.message.as_deref() }, Some((list, i)));
+                let selected = tab.sidebar_shows(|p| matches!(p, SidebarItem::Tag(n) if *n == t.name), t.target);
+                let resp = row(ui, &Row { id: ui.id().with(("tag", &t.name)), glyph: icon::TAG, label: &t.name, selected, current: false, ahead: 0, behind: 0, hint: t.message.as_deref(), detail: None, spoken: None }, Some((list, i)));
                 if resp.clicked()
                     && let Some(target) = t.target {
+                        pick = Some(SidebarItem::Tag(t.name.clone()));
                         actions.push(Action::Reveal(target));
                     }
                 let name = t.name.clone();
@@ -465,9 +504,11 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
             virtual_rows(ui, snap.stashes.len(), row_h, |ui, i| {
                 let s = &snap.stashes[i];
                 let label = s.message.trim_start_matches("On ").to_owned();
-                let resp = row(ui, &Row { id: ui.id().with(("stash", s.oid)), glyph: icon::ARCHIVE, label: &label, current: false, ahead: 0, behind: 0, hint: Some(&s.message) }, Some((list, i)));
+                let selected = tab.sidebar_shows(|p| *p == SidebarItem::Stash(s.oid), Some(s.oid));
+                let resp = row(ui, &Row { id: ui.id().with(("stash", s.oid)), glyph: icon::ARCHIVE, label: &label, selected, current: false, ahead: 0, behind: 0, hint: Some(&s.message), detail: None, spoken: None }, Some((list, i)));
                 let oid = s.oid;
                 if resp.clicked() {
+                    pick = Some(SidebarItem::Stash(oid));
                     actions.push(Action::Reveal(oid));
                 }
                 // By the stash's commit, never its place in the list, which can change before
@@ -489,6 +530,9 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
         }
         ui.add_space(theme::LG);
     });
+    if pick.is_some() {
+        tab.sidebar_pick = pick;
+    }
 }
 
 /// The confirmation for dropping `stash`: it names the stash by its message and drops it by its
@@ -541,10 +585,13 @@ mod tests {
                     id: egui::Id::new("row"),
                     glyph: icon::GIT_BRANCH,
                     label: "feature/auth",
+                    selected: false,
                     current: false,
                     ahead: 2,
                     behind: 1,
                     hint: None,
+                    detail: None,
+                    spoken: None,
                 },
                 None,
             );
@@ -770,6 +817,7 @@ mod tests {
             upstream: None,
             ahead: 0,
             behind: 0,
+            worktree: None,
         };
         let tag = |name: &str| canopy_core::TagInfo {
             name: name.into(),
@@ -840,6 +888,107 @@ mod tests {
             "{path:?}"
         );
         assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    fn oid(n: u8) -> canopy_core::Oid {
+        canopy_core::Oid::from_bytes(&[n; 20]).expect("oid")
+    }
+
+    /// A tab whose branches are main (checked out), feature and wt (checked out in another
+    /// worktree), each at its own commit.
+    fn branch_tab() -> RepoTab {
+        let mut tab = tab_with(Vec::new());
+        let branch =
+            |name: &str, n: u8, is_head: bool, worktree: Option<&str>| canopy_core::BranchInfo {
+                name: name.into(),
+                target: Some(oid(n)),
+                is_head,
+                upstream: None,
+                ahead: 0,
+                behind: 0,
+                worktree: worktree.map(std::path::PathBuf::from),
+            };
+        tab.snap = Some(std::sync::Arc::new(canopy_core::RepoSnapshot {
+            branches: vec![
+                branch("main", 1, true, None),
+                branch("feature", 2, false, None),
+                branch("wt", 3, false, Some("/work/canopy-wt")),
+            ],
+            ..Default::default()
+        }));
+        tab
+    }
+
+    /// The selected state of the row named `label`, and whether it is announced as current.
+    fn row_state(nodes: &[egui::accesskit::Node], label: &str) -> (Option<bool>, bool) {
+        let n = named(nodes, label).unwrap_or_else(|| panic!("{label}"));
+        (n.is_selected(), n.aria_current().is_some())
+    }
+
+    /// The branch clicked shows selected while History shows its commit; the checked-out branch
+    /// is announced as current, not as selected.
+    #[test]
+    fn a_clicked_branch_shows_selected_apart_from_the_checked_out_one() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = branch_tab();
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        assert_eq!(row_state(&nodes, "main"), (Some(false), true));
+        assert_eq!(row_state(&nodes, "feature"), (Some(false), false));
+
+        let at = center(named(&nodes, "feature").expect("feature"));
+        let _ = sidebar_frame(&ctx, &mut tab, click(at), &mut actions);
+        assert!(
+            matches!(actions.as_slice(), [Action::Reveal(o)] if *o == oid(2)),
+            "{actions:?}"
+        );
+        // What the app does with the Reveal.
+        tab.select_commit(oid(2));
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        assert_eq!(row_state(&nodes, "feature"), (Some(true), false));
+        assert_eq!(row_state(&nodes, "main"), (Some(false), true));
+
+        // Another commit chosen in History lets go of the branch.
+        tab.select_commit(oid(9));
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        crate::ui::motion::set_reduced(false);
+        assert_eq!(row_state(&nodes, "feature"), (Some(false), false));
+    }
+
+    /// A branch checked out in another worktree says so and opens that worktree on a double
+    /// click instead of trying a checkout git would refuse.
+    #[test]
+    fn a_branch_in_another_worktree_opens_it() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::motion::set_reduced(true);
+        let mut tab = branch_tab();
+        let mut actions = Vec::new();
+        let _ = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let nodes = sidebar_frame(&ctx, &mut tab, Vec::new(), &mut actions);
+        let spoken = "wt, checked out in worktree canopy-wt";
+        let at = center(named(&nodes, spoken).expect("the worktree branch names its folder"));
+        let mut events = click(at);
+        events.extend(click(at));
+        let _ = sidebar_frame(&ctx, &mut tab, events, &mut actions);
+        crate::ui::motion::set_reduced(false);
+        assert!(
+            actions.iter().any(
+                |a| matches!(a, Action::OpenRepo(p) if p == std::path::Path::new("/work/canopy-wt"))
+            ),
+            "{actions:?}"
+        );
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, Action::Op(Op::Checkout(_)))),
+            "{actions:?}"
+        );
     }
 
     /// review-views-3: Drop names the stash and acts on its commit, not its place in the list.

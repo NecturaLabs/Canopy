@@ -447,6 +447,10 @@ use. `tools/screenshot.sh <repo> out.png --overlay gallery [--style deeper] [--d
 [--gallery-page N]` renders every component in every state; a page past the end shows the last,
 and a strip under the content numbers each page from 1 ("Page 4 of 19" for `--gallery-page 3`).
 
+Rows separate selection from being current: `ListRow::selected` is the selection wash and mark
+(the sidebar row last clicked, while History shows its commit), `ListRow::current` the checked-out
+branch's accent icon and semibold label, announced as current rather than selected.
+
 Keyboard and screen readers (`kit::a11y`): a list is one Tab stop (`kit::row::Roving`, used by
 History's commits, each sidebar section and card grids): Tab lands on the row last visited (else the
 selected or checked-out one), the arrows move inside (Left and Right too in a grid), and the next

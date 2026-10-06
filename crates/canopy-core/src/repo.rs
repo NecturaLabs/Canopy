@@ -122,6 +122,7 @@ impl Repo {
 
     /// Local branches, the checked-out one first.
     pub fn branches(&self) -> Result<Vec<BranchInfo>> {
+        let mut elsewhere = self.other_worktree_branches();
         let mut out = Vec::new();
         for item in self.git.branches(Some(BranchType::Local))? {
             let (branch, _) = item?;
@@ -138,6 +139,7 @@ impl Repo {
                 _ => (0, 0),
             };
             out.push(BranchInfo {
+                worktree: elsewhere.remove(&name),
                 name,
                 target,
                 is_head: branch.is_head(),
@@ -148,6 +150,44 @@ impl Repo {
         }
         out.sort_by(|a, b| b.is_head.cmp(&a.is_head).then_with(|| a.name.cmp(&b.name)));
         Ok(out)
+    }
+
+    /// The branches checked out in the repository's other working folders (the main one and
+    /// those `git worktree add` made), by name, with the folder of each. A folder that cannot be
+    /// read (moved, deleted, owned by someone else) is left out.
+    fn other_worktree_branches(&self) -> HashMap<String, PathBuf> {
+        let mut out = HashMap::new();
+        let mut note = |repo: &Repository| {
+            if repo.path() == self.git.path() {
+                return;
+            }
+            let Some(dir) = repo.workdir() else { return };
+            if let Ok(head) = repo.find_reference("HEAD")
+                && let Some(name) = head
+                    .symbolic_target()
+                    .ok()
+                    .flatten()
+                    .and_then(|t| t.strip_prefix("refs/heads/"))
+            {
+                out.insert(name.to_owned(), dir.to_path_buf());
+            }
+        };
+        if self.git.is_worktree()
+            && let Ok(main) = Repository::open(self.git.commondir())
+        {
+            note(&main);
+        }
+        if let Ok(names) = self.git.worktrees() {
+            for name in names.iter().flatten().flatten() {
+                if let Ok(worktree) = self.git.find_worktree(name)
+                    && worktree.validate().is_ok()
+                    && let Ok(repo) = Repository::open_from_worktree(&worktree)
+                {
+                    note(&repo);
+                }
+            }
+        }
+        out
     }
 
     fn remote_branches(&self) -> Result<Vec<RemoteBranchInfo>> {
