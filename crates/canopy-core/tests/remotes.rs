@@ -56,9 +56,12 @@ fn a_remote_url_changes_as_git_remote_set_url_changes_it() {
         git(dir.path(), &["remote", "get-url", "--push", "origin"]),
         "git@github.com:o/r.git"
     );
-    // A URL that looks like an option is still a URL.
-    repo.set_remote_url("origin", "-oops").expect("set-url");
-    assert_eq!(git(dir.path(), &["remote", "get-url", "origin"]), "-oops");
+    // A URL that looks like an option is refused, and nothing changes.
+    repo.set_remote_url("origin", "-oops").expect_err("refused");
+    assert_eq!(
+        git(dir.path(), &["remote", "get-url", "origin"]),
+        "git@github.com:o/r.git"
+    );
 }
 
 #[test]
@@ -94,6 +97,45 @@ fn credentials_never_reach_the_configuration() {
             .is_err()
     );
     assert!(repo.set_remote_url("origin", "   ").is_err());
+}
+
+#[test]
+fn a_new_remote_takes_neither_credentials_nor_options() {
+    let (dir, repo) = repository();
+    let err = repo
+        .add_remote("mine", "https://user:secret@github.com/o/r.git")
+        .expect_err("credentials refused");
+    assert!(err.to_string().contains("user name and password"), "{err}");
+    assert!(!err.to_string().contains("secret"), "{err}");
+    for (name, url) in [
+        ("-t", "https://github.com/o/r.git"),
+        ("mine", "--mirror=push"),
+        ("", "https://github.com/o/r.git"),
+        ("mine", "  "),
+    ] {
+        repo.add_remote(name, url)
+            .expect_err(&format!("{name:?} {url:?} refused"));
+    }
+    assert_eq!(git(dir.path(), &["remote"]), "origin", "nothing was added");
+    repo.add_remote("mine", " https://github.com/me/r.git ")
+        .expect("add");
+    assert_eq!(
+        git(dir.path(), &["remote", "get-url", "mine"]),
+        "https://github.com/me/r.git"
+    );
+    repo.remove_remote("mine").expect("remove");
+    assert_eq!(git(dir.path(), &["remote"]), "origin");
+}
+
+#[test]
+fn a_clone_url_with_credentials_is_refused_before_git_runs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let dest = dir.path().join("r");
+    let err = canopy_core::ops::clone("https://user:secret@127.0.0.1:9/o/r.git", &dest, |_| {})
+        .expect_err("credentials refused");
+    assert!(err.to_string().contains("user name and password"), "{err}");
+    assert!(!err.to_string().contains("secret"), "{err}");
+    assert!(!dest.exists());
 }
 
 #[test]

@@ -1676,6 +1676,22 @@ fn fetch_without_prune_keeps_branches_even_when_the_config_prunes() {
     assert!(!has("refs/remotes/origin/doomed"), "pruned when asked");
 }
 
+/// A remote name that looks like an option stays a name: it cannot turn pruning back on.
+#[test]
+fn fetch_takes_the_remote_as_a_name_never_an_option() {
+    let (up_dir, _up, _c, copy) = upstream_and_clone();
+    let up = up_dir.path();
+    git(up, &["branch", "doomed"]);
+    copy.fetch(Some("origin"), false, |_| {}).expect("fetch");
+    git(up, &["branch", "-D", "doomed"]);
+    let has = |name: &str| copy.git().find_reference(name).is_ok();
+    let _ = copy.fetch(Some("--prune"), false, |_| {});
+    assert!(
+        has("refs/remotes/origin/doomed"),
+        "the remote argument became --prune"
+    );
+}
+
 #[test]
 fn remotes_report_the_default_branch() {
     let (up_dir, _up, _c, copy) = upstream_and_clone();

@@ -176,8 +176,13 @@ impl HunkAction {
     }
 }
 
-/// Clones `url` into `dest`, reporting progress lines.
+/// Clones `url` into `dest`, reporting progress lines. A URL with credentials is refused
+/// ([`remote_url_problem`]): the clone would keep it as its `origin`.
 pub fn clone(url: &str, dest: &Path, progress: impl FnMut(&str)) -> Result<()> {
+    let url = url.trim();
+    if let Some(problem) = remote_url_problem(url) {
+        return Err(Error::Invalid(problem.into()));
+    }
     let dest_str = dest.to_string_lossy();
     cli::run_streaming(
         None,
@@ -211,6 +216,46 @@ pub fn url_has_credentials(url: &str) -> bool {
         "http" | "https" | "ftp" | "ftps"
     );
     web || rest[user].contains(':')
+}
+
+/// Why `url` (trimmed) cannot be a remote's URL, or `None`.
+///
+/// A URL carrying credentials
+/// ([`url_has_credentials`]) would be stored in `.git/config` and shown wherever the URL is,
+/// while git asks for credentials through the credential helper anyway; one starting with `-`
+/// could be read as an option.
+pub fn remote_url_problem(url: &str) -> Option<&'static str> {
+    let url = url.trim();
+    if url.is_empty() {
+        Some("Enter the remote's URL.")
+    } else if url.starts_with('-') {
+        Some("A remote's URL cannot start with \"-\".")
+    } else if url_has_credentials(url) {
+        Some(
+            "Remove the user name and password from the URL: git asks for them when it needs them.",
+        )
+    } else {
+        None
+    }
+}
+
+/// The name's or else the URL's problem as an error.
+fn check_remote(name: &str, url: &str) -> Result<()> {
+    match remote_name_problem(name).or_else(|| remote_url_problem(url)) {
+        Some(problem) => Err(Error::Invalid(problem.into())),
+        None => Ok(()),
+    }
+}
+
+/// Why `name` cannot name a remote, or `None`: empty, or starting with `-` like an option.
+pub fn remote_name_problem(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        Some("Enter a name for the remote.")
+    } else if name.starts_with('-') {
+        Some("A remote's name cannot start with \"-\".")
+    } else {
+        None
+    }
 }
 
 /// Where [`Repo::checkout_request`] keeps the head of `remote_ref` (a full ref such as
@@ -564,33 +609,25 @@ impl Repo {
         self.git_cmd(&["stash", "drop", "-q", &r]).map(drop)
     }
 
-    /// Adds a remote.
+    /// Adds the remote `name` fetching from `url` (trimmed). A name or URL that
+    /// [`remote_name_problem`] or [`remote_url_problem`] refuses, such as a URL with credentials,
+    /// is refused before git runs.
     pub fn add_remote(&self, name: &str, url: &str) -> Result<()> {
-        self.git_cmd(&["remote", "add", name, url]).map(drop)
+        let url = url.trim();
+        check_remote(name, url)?;
+        self.git_cmd(&["remote", "add", "--", name, url]).map(drop)
     }
 
     /// Removes a remote and its remote-tracking branches.
     pub fn remove_remote(&self, name: &str) -> Result<()> {
-        self.git_cmd(&["remote", "remove", name]).map(drop)
+        self.git_cmd(&["remote", "remove", "--", name]).map(drop)
     }
 
-    /// Points the remote `name` at `url` (`git remote set-url`). A URL carrying credentials
-    /// ([`url_has_credentials`]) is refused: it would be stored in `.git/config` and shown
-    /// wherever the URL is, while git asks for credentials through the credential helper anyway.
+    /// Points the remote `name` at `url` (`git remote set-url`), refused as for
+    /// [`Repo::add_remote`].
     pub fn set_remote_url(&self, name: &str, url: &str) -> Result<()> {
         let url = url.trim();
-        if name.is_empty() || name.starts_with('-') {
-            return Err(Error::Invalid(format!("{name:?} is not a remote name.")));
-        }
-        if url.is_empty() {
-            return Err(Error::Invalid("Enter the remote's URL.".into()));
-        }
-        if url_has_credentials(url) {
-            return Err(Error::Invalid(
-                "Remove the user name and password from the URL: git asks for them when it needs them."
-                    .into(),
-            ));
-        }
+        check_remote(name, url)?;
         self.git_cmd(&["remote", "set-url", "--", name, url])
             .map(drop)
     }
@@ -608,7 +645,7 @@ impl Repo {
         let mut args = vec!["fetch", "--progress", "--tags"];
         args.push(if prune { "--prune" } else { "--no-prune" });
         match remote {
-            Some(r) => args.push(r),
+            Some(r) => args.extend(["--", r]),
             None => args.push("--all"),
         }
         cli::run_streaming(Some(self.workdir()), &args, progress)
