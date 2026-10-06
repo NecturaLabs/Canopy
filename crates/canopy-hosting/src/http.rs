@@ -250,7 +250,7 @@ impl Http {
             .get("x-ratelimit-remaining")
             .or_else(|| response.headers().get("ratelimit-remaining"))
             .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
+            .and_then(|v| v.trim().parse::<u64>().ok());
         tracing::debug!(method = method.as_str(), path, status, ms, rate_limit_remaining = ?remaining, "hosting request");
         let bytes = response
             .body_mut()
