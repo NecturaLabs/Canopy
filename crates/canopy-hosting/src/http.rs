@@ -151,12 +151,16 @@ impl Http {
         &self.base
     }
 
-    /// Profile lookup: no redirects, bounded JSON, and no author email in logs.
+    /// Profile lookup: no redirects, bounded JSON, and no author email in logs. Sends nothing
+    /// while the switch is off.
     #[expect(
         clippy::map_err_ignore,
         reason = "kept as it was; docs/backlog.md has the entry to carry the transport's message"
     )]
     pub(crate) fn avatar_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        if self.stopped() {
+            return Err(Error::Stopped);
+        }
         let mut response = self
             .headers(self.agent.get(format!("{}{}", self.base, path)))
             .config()
@@ -228,8 +232,16 @@ impl Http {
     ) -> Result<(HeaderMap, Vec<u8>)> {
         let mut response = result.map_err(|e| {
             let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-            tracing::warn!(method = method.as_str(), path, ms, error = %e, "hosting request failed");
-            Error::Network(e.to_string())
+            // The transport's message can quote the server (a malformed redirect target).
+            let error = shorten(&e.to_string());
+            tracing::warn!(
+                method = method.as_str(),
+                path,
+                ms,
+                error,
+                "hosting request failed"
+            );
+            Error::Network(error)
         })?;
         let status = response.status().as_u16();
         let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -245,7 +257,7 @@ impl Http {
             .with_config()
             .limit(MAX_BODY)
             .read_to_vec()
-            .map_err(|e| Error::Network(e.to_string()))?;
+            .map_err(|e| Error::Network(shorten(&e.to_string())))?;
         if (200..300).contains(&status) {
             Ok((response.headers().clone(), bytes))
         } else {
@@ -400,8 +412,10 @@ pub fn is_loopback_base(url: &str) -> bool {
     port_ok && matches!(host, "127.0.0.1" | "localhost" | "[::1]")
 }
 
+/// Parses a JSON response. The parser's message can quote the server's own text (a string where
+/// a number belongs), so it is cleaned like any server message.
 pub(crate) fn parse<T: DeserializeOwned>(bytes: &[u8], what: &str) -> Result<T> {
-    serde_json::from_slice(bytes).map_err(|e| Error::Parse(format!("{what}: {e}")))
+    serde_json::from_slice(bytes).map_err(|e| Error::Parse(shorten(&format!("{what}: {e}"))))
 }
 
 /// A GraphQL response: `data`, `errors`, or both.
@@ -425,20 +439,20 @@ fn header_i64(headers: &HeaderMap, name: &str) -> Option<i64> {
     headers.get(name)?.to_str().ok()?.trim().parse::<i64>().ok()
 }
 
-/// The longest `Retry-After` taken at its word: a day.
+/// The longest wait for a rate limit taken at the server's word: a day.
 const MAX_RETRY_AFTER: i64 = 86_400;
 
-/// When a rate limit resets: the provider's reset header (unix seconds), else `Retry-After`
-/// (seconds from now, between none and [`MAX_RETRY_AFTER`]).
+/// When a rate limit resets, in unix seconds between now and [`MAX_RETRY_AFTER`] ahead: the
+/// provider's reset header (unix seconds), else `Retry-After` (seconds from now).
 fn rate_limit_reset(headers: &HeaderMap) -> Option<i64> {
+    let now = chrono::Utc::now().timestamp();
+    let latest = now.saturating_add(MAX_RETRY_AFTER);
     header_i64(headers, "x-ratelimit-reset")
         .or_else(|| header_i64(headers, "ratelimit-reset"))
+        .map(|at| at.clamp(now, latest))
         .or_else(|| {
-            header_i64(headers, "retry-after").map(|secs| {
-                chrono::Utc::now()
-                    .timestamp()
-                    .saturating_add(secs.clamp(0, MAX_RETRY_AFTER))
-            })
+            header_i64(headers, "retry-after")
+                .map(|secs| now.saturating_add(secs.clamp(0, MAX_RETRY_AFTER)))
         })
 }
 
@@ -541,7 +555,8 @@ fn flatten(v: &Value, field: Option<&str>, out: &mut Vec<String>) {
     }
 }
 
-fn shorten(s: &str) -> String {
+/// Server-derived text as an error carries it: [`plain_text`], at most 300 characters.
+pub(crate) fn shorten(s: &str) -> String {
     plain_text(s, MAX_MESSAGE)
 }
 
@@ -693,6 +708,27 @@ mod tests {
         );
         let reset = rate_limit_reset(&headers).expect("a reset");
         assert!((now..=now + 60).contains(&reset), "{reset}");
+    }
+
+    #[test]
+    fn reset_times_are_kept_between_now_and_a_day_ahead() {
+        let now = chrono::Utc::now().timestamp();
+        for name in ["x-ratelimit-reset", "ratelimit-reset"] {
+            let reset = |value: &'static str| {
+                let mut headers = HeaderMap::new();
+                headers.insert(name, HeaderValue::from_static(value));
+                rate_limit_reset(&headers).expect("a reset")
+            };
+            let far = reset("9223372036854775807");
+            assert!((now..=now + 86_400 + 60).contains(&far), "{name}: {far}");
+            let past = reset("-9223372036854775808");
+            assert!((now..=now + 60).contains(&past), "{name}: {past}");
+            assert!((now..=now + 60).contains(&reset("0")), "{name}");
+            let soon = now + 600;
+            let mut headers = HeaderMap::new();
+            headers.insert(name, HeaderValue::from(soon));
+            assert_eq!(rate_limit_reset(&headers), Some(soon), "{name}");
+        }
     }
 
     #[test]
@@ -876,19 +912,18 @@ mod tests {
             Error::Unauthorized("Forbidden".into())
         );
         h.insert("x-ratelimit-remaining", HeaderValue::from_static("0"));
-        h.insert("x-ratelimit-reset", HeaderValue::from_static("1800000000"));
+        let soon = chrono::Utc::now().timestamp() + 600;
+        h.insert("x-ratelimit-reset", HeaderValue::from(soon));
         assert_eq!(
             map_status(403, &h, b"", ForgeKind::GitHub),
-            Error::RateLimited {
-                reset: Some(1_800_000_000)
-            }
+            Error::RateLimited { reset: Some(soon) }
         );
         let mut gl = HeaderMap::new();
-        gl.insert("ratelimit-reset", HeaderValue::from_static("1800000001"));
+        gl.insert("ratelimit-reset", HeaderValue::from(soon + 1));
         assert_eq!(
             map_status(429, &gl, b"Retry later", ForgeKind::GitLab),
             Error::RateLimited {
-                reset: Some(1_800_000_001)
+                reset: Some(soon + 1)
             }
         );
         assert_eq!(

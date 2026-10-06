@@ -283,6 +283,13 @@ fn gl_mr(iid: u64, state: &str, updated: &str) -> Value {
     })
 }
 
+/// A rate limit's reset ten minutes and `offset` seconds from now, as unix seconds and as its
+/// header text (a reset is kept within a day of now).
+fn reset_soon(offset: i64) -> (i64, String) {
+    let at = chrono::Utc::now().timestamp() + 600 + offset;
+    (at, at.to_string())
+}
+
 fn assert_no_token_leak(client: &Client) {
     let dbg = format!("{client:?}");
     assert!(!dbg.contains(TOKEN), "token in Debug output: {dbg}");
@@ -611,6 +618,7 @@ fn github_writes() {
 #[test]
 fn github_error_mapping() {
     let server = Server::start();
+    let r0 = reset_soon(0);
     server.route(
         "GET",
         "/user",
@@ -623,7 +631,7 @@ fn github_error_mapping() {
         403,
         &[
             ("x-ratelimit-remaining", "0"),
-            ("x-ratelimit-reset", "1800000000"),
+            ("x-ratelimit-reset", r0.1.as_str()),
         ],
         r#"{"message":"API rate limit exceeded for user ID 1."}"#,
     );
@@ -656,9 +664,7 @@ fn github_error_mapping() {
         client
             .list(StateFilter::Open, 10)
             .expect_err("rate limited"),
-        Error::RateLimited {
-            reset: Some(1_800_000_000)
-        }
+        Error::RateLimited { reset: Some(r0.0) }
     );
     let err = client.merge(3, MergeMethod::Merge, None).expect_err("405");
     assert_eq!(
@@ -1181,6 +1187,7 @@ fn gitlab_rebase_merge_checks_the_head_before_rebasing() {
 #[test]
 fn gitlab_error_mapping() {
     let server = Server::start();
+    let r123 = reset_soon(123);
     server.route(
         "GET",
         "/api/v4/user",
@@ -1191,7 +1198,7 @@ fn gitlab_error_mapping() {
         "GET",
         &format!("{GL}/merge_requests"),
         429,
-        &[("ratelimit-reset", "1800000123")],
+        &[("ratelimit-reset", r123.1.as_str())],
         "Retry later",
     );
     server.route(
@@ -1220,7 +1227,7 @@ fn gitlab_error_mapping() {
     assert_eq!(
         client.list(StateFilter::All, 5).expect_err("429"),
         Error::RateLimited {
-            reset: Some(1_800_000_123)
+            reset: Some(r123.0)
         }
     );
     let err = client
@@ -1396,6 +1403,7 @@ fn github_rollup_maps_a_page_in_one_query() {
 #[test]
 fn github_rollup_errors_and_empty_data() {
     let server = Server::start();
+    let (r0, r5, r6) = (reset_soon(0), reset_soon(5), reset_soon(6));
     let client = github(&server, Some(TOKEN));
     let rollup = |status: u16, headers: &[(&str, &str)], body: &str| {
         server.route_with_headers("POST", "/graphql", status, headers, body);
@@ -1410,24 +1418,20 @@ fn github_rollup_errors_and_empty_data() {
             403,
             &[
                 ("x-ratelimit-remaining", "0"),
-                ("x-ratelimit-reset", "1800000000")
+                ("x-ratelimit-reset", r0.1.as_str())
             ],
             r#"{"message":"API rate limit exceeded"}"#
         ),
-        Err(Error::RateLimited {
-            reset: Some(1_800_000_000)
-        })
+        Err(Error::RateLimited { reset: Some(r0.0) })
     );
     // GitHub can also answer an exhausted GraphQL quota with 200 and a typed error.
     assert_eq!(
         rollup(
             200,
-            &[("x-ratelimit-reset", "1800000005")],
+            &[("x-ratelimit-reset", r5.1.as_str())],
             r#"{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded for user ID 1."}]}"#
         ),
-        Err(Error::RateLimited {
-            reset: Some(1_800_000_005)
-        })
+        Err(Error::RateLimited { reset: Some(r5.0) })
     );
     // …or with any error and no requests left (GitHub's documented primary-limit answer).
     assert_eq!(
@@ -1435,13 +1439,11 @@ fn github_rollup_errors_and_empty_data() {
             200,
             &[
                 ("x-ratelimit-remaining", "0"),
-                ("x-ratelimit-reset", "1800000006")
+                ("x-ratelimit-reset", r6.1.as_str())
             ],
             r#"{"data":null,"errors":[{"message":"Something went wrong."}]}"#
         ),
-        Err(Error::RateLimited {
-            reset: Some(1_800_000_006)
-        })
+        Err(Error::RateLimited { reset: Some(r6.0) })
     );
     // A secondary limit: 200, a message saying so, and how long to wait.
     let before = chrono::Utc::now().timestamp();
@@ -1562,6 +1564,81 @@ fn rollup_redirects_are_never_followed() {
     assert!(other.requests().is_empty(), "{:?}", other.requests());
 }
 
+/// Whether an error's server-derived text is fit to show and log: at most 300 characters, with no
+/// control character and nothing that hides or reorders text.
+fn is_plain_server_text(text: &str) -> bool {
+    text.chars().count() <= 300
+        && !text.chars().any(|c| {
+            c.is_control() || matches!(c, '\u{200B}' | '\u{202A}'..='\u{202E}' | '\u{3164}')
+        })
+}
+
+#[test]
+fn a_gitlab_rebase_failure_shows_its_reason_as_plain_text() {
+    let server = Server::start();
+    let mut mr = gl_mr(8, "opened", "2024-02-03T00:00:00Z");
+    mr["sha"] = json!("unchanged");
+    mr["rebase_in_progress"] = json!(false);
+    mr["merge_error"] = json!(format!("x\u{202E}y\n{}", "z".repeat(1_000)));
+    server.route(
+        "GET",
+        &format!("{GL}/merge_requests/8"),
+        200,
+        &mr.to_string(),
+    );
+    server.route(
+        "PUT",
+        &format!("{GL}/merge_requests/8/rebase"),
+        202,
+        r#"{"rebase_in_progress":true}"#,
+    );
+    match gitlab(&server, Some(TOKEN)).merge(8, MergeMethod::Rebase, None) {
+        Err(Error::Api {
+            status: 409,
+            message,
+        }) => {
+            assert!(is_plain_server_text(&message), "{message:?}");
+            assert!(message.contains("xy z"), "{message:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_malformed_redirect_is_reported_as_plain_text() {
+    // The server's redirect target, quoted by the transport's error, hides and reorders text.
+    let server = Server::start();
+    let location = format!("/a\u{202E}b{}", "c".repeat(2_000));
+    server.route_with_headers(
+        "GET",
+        "/repos/octo/hello/pulls",
+        301,
+        &[("Location", &location)],
+        "",
+    );
+    match github(&server, Some(TOKEN)).list(StateFilter::Open, 10) {
+        Err(Error::Network(message)) => assert!(is_plain_server_text(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn an_unexpected_answer_quotes_the_server_as_plain_text() {
+    // A field of the wrong type: the parser quotes the server's whole string.
+    let server = Server::start();
+    let filler = "\u{3164}".repeat(100_000);
+    server.route(
+        "GET",
+        "/repos/octo/hello/pulls",
+        200,
+        &json!([{ "number": filler }]).to_string(),
+    );
+    match github(&server, Some(TOKEN)).list(StateFilter::Open, 10) {
+        Err(Error::Parse(message)) => assert!(is_plain_server_text(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+}
+
 /// The rollup reads no more of a response than any other request does (under 10 MiB).
 #[test]
 fn rollup_bodies_are_bounded() {
@@ -1673,6 +1750,7 @@ fn gitlab_rollup_maps_a_page_in_one_query() {
 #[test]
 fn gitlab_rollup_errors_and_empty_data() {
     let server = Server::start();
+    let r1 = reset_soon(1);
     let client = gitlab(&server, Some(TOKEN));
     let rollup = |status: u16, headers: &[(&str, &str)], body: &str| {
         server.route_with_headers("POST", "/api/graphql", status, headers, body);
@@ -1683,10 +1761,8 @@ fn gitlab_rollup_errors_and_empty_data() {
         Err(Error::Unauthorized("401 Unauthorized".into()))
     );
     assert_eq!(
-        rollup(429, &[("ratelimit-reset", "1800000001")], "Retry later"),
-        Err(Error::RateLimited {
-            reset: Some(1_800_000_001)
-        })
+        rollup(429, &[("ratelimit-reset", r1.1.as_str())], "Retry later"),
+        Err(Error::RateLimited { reset: Some(r1.0) })
     );
     assert_eq!(
         rollup(
@@ -1788,6 +1864,49 @@ fn author_pictures_resolve_both_providers_and_download_without_tokens() {
         assert!(request.header("cookie").is_none());
         assert_eq!(request.target, "/picture.png");
     }
+}
+
+#[test]
+fn a_switched_off_client_looks_up_no_author() {
+    let server = Server::start();
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let picture = format!("{}/picture.png", server.base);
+    server.route(
+        "GET",
+        "/repos/octo/hello/commits",
+        200,
+        &json!([{"sha": sha, "author": {"avatar_url": picture}}]).to_string(),
+    );
+    server.route("GET", "/repos/octo/hello", 200, r#"{"id":1}"#);
+    server.route(
+        "GET",
+        "/api/v4/avatar",
+        200,
+        &json!({"avatar_url": picture}).to_string(),
+    );
+    let on = Arc::new(AtomicBool::new(true));
+    let client = github(&server, Some(TOKEN)).with_switch(Arc::clone(&on));
+    client
+        .author_avatar(sha, "a@example.com")
+        .expect("lookup")
+        .expect("a picture");
+    // The tab lets the thread go: profile lookups stop like every other request.
+    on.store(false, Ordering::SeqCst);
+    assert!(matches!(
+        client.author_avatar(sha, "a@example.com"),
+        Err(Error::Stopped)
+    ));
+    assert_eq!(client.author_repository(), Err(Error::Stopped));
+    let gitlab = gitlab(&server, Some(TOKEN)).with_switch(Arc::clone(&on));
+    assert!(matches!(
+        gitlab.author_avatar(sha, "a@example.com"),
+        Err(Error::Stopped)
+    ));
+    let sent: Vec<String> = server.requests().into_iter().map(|r| r.target).collect();
+    assert_eq!(
+        sent,
+        [format!("/repos/octo/hello/commits?sha={sha}&per_page=1")]
+    );
 }
 
 #[test]

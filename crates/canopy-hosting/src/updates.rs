@@ -31,6 +31,7 @@ use sha2::{Digest, Sha256};
 use ureq::tls::{RootCerts, TlsConfig};
 
 use crate::error::{Error, Result};
+use crate::http::{plain_text, shorten};
 
 /// One downloadable build.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -59,7 +60,8 @@ pub struct UpdateManifest {
 impl UpdateManifest {
     /// Parses a manifest.
     pub fn parse(json: &[u8]) -> Result<Self> {
-        serde_json::from_slice(json).map_err(|e| Error::Parse(format!("update manifest: {e}")))
+        serde_json::from_slice(json)
+            .map_err(|e| Error::Parse(shorten(&format!("update manifest: {e}"))))
     }
 
     /// The build number, when `version` is one.
@@ -107,20 +109,20 @@ pub fn fetch_manifest(url: &str) -> Result<UpdateManifest> {
         .get(url)
         .header("Accept", "application/json")
         .call()
-        .map_err(|e| Error::Network(e.to_string()))?;
+        .map_err(|e| Error::Network(shorten(&e.to_string())))?;
     let status = response.status().as_u16();
     let bytes = response
         .body_mut()
         .with_config()
         .limit(1024 * 1024)
         .read_to_vec()
-        .map_err(|e| Error::Network(e.to_string()))?;
+        .map_err(|e| Error::Network(shorten(&e.to_string())))?;
     match status {
         200..=299 => UpdateManifest::parse(&bytes),
         404 => Err(Error::NotFound(format!("no update manifest at {url}"))),
         _ => Err(Error::Api {
             status,
-            message: String::from_utf8_lossy(&bytes).chars().take(200).collect(),
+            message: plain_text(&String::from_utf8_lossy(&bytes), 200),
         }),
     }
 }
@@ -206,15 +208,16 @@ fn get(
     let mut current = url.to_owned();
     for _ in 0..=MAX_REDIRECTS {
         if !current.starts_with("https://") && !is_loopback_url(&current) {
-            return Err(Error::Network(format!(
+            // After a redirect, the address is the server's choice.
+            return Err(Error::Network(shorten(&format!(
                 "refusing a download that is not over HTTPS: {}",
                 canopy_core::cli::redact_url(&current)
-            )));
+            ))));
         }
         let mut response = agent
             .get(&current)
             .call()
-            .map_err(|e| Error::Network(e.to_string()))?;
+            .map_err(|e| Error::Network(shorten(&e.to_string())))?;
         let status = response.status().as_u16();
         if matches!(status, 301 | 302 | 303 | 307 | 308) {
             let location = response
@@ -238,7 +241,7 @@ fn get(
                     .unwrap_or_default();
                 return Err(Error::Api {
                     status,
-                    message: String::from_utf8_lossy(&body).chars().take(200).collect(),
+                    message: plain_text(&String::from_utf8_lossy(&body), 200),
                 });
             }
         }
@@ -259,7 +262,7 @@ fn get(
         loop {
             let n = reader
                 .read(&mut buf)
-                .map_err(|e| Error::Network(e.to_string()))?;
+                .map_err(|e| Error::Network(shorten(&e.to_string())))?;
             if n == 0 {
                 break;
             }
@@ -518,6 +521,43 @@ mod tests {
         let base = serve_routes(vec![("/loop", redirect("/loop"))], 6);
         let err = download_bytes(&format!("{base}/loop"), 5).expect_err("loop");
         assert!(err.to_string().contains("redirects"), "{err}");
+    }
+
+    #[test]
+    fn the_feed_servers_words_are_reported_as_plain_text() {
+        let plain = |e: &Error| {
+            let text = e.to_string();
+            text.chars().count() <= 400
+                && !text
+                    .chars()
+                    .any(|c| c.is_control() || matches!(c, '\u{202E}' | '\u{3164}'))
+        };
+        let dirty = format!("x\u{202E}y\n{}", "z".repeat(1_000));
+        // A refusal's body, a malformed redirect target, and a manifest field of the wrong type.
+        let failed = format!(
+            "HTTP/1.1 500 Oops\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{dirty}",
+            dirty.len()
+        );
+        let moved = format!(
+            "HTTP/1.1 301 Moved\r\nLocation: /a\u{202E}b{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            "c".repeat(1_000)
+        );
+        let base = serve_routes(vec![("/failed", failed), ("/moved", moved)], 2);
+        for path in ["/failed", "/moved"] {
+            let err = fetch_manifest(&format!("{base}{path}")).expect_err(path);
+            assert!(plain(&err), "{path}: {err:?}");
+        }
+        let wrong = format!(
+            r#"{{"version":"1","platforms":"{}"}}"#,
+            "\u{3164}".repeat(10_000)
+        );
+        let err = UpdateManifest::parse(wrong.as_bytes()).expect_err("wrong type");
+        assert!(plain(&err), "{err:?}");
+        // A redirect to plain HTTP names its target, which the server chose.
+        let far = format!("http://example.invalid/{}", "a".repeat(5_000));
+        let base = serve_routes(vec![("/a", redirect(&far))], 1);
+        let err = download_bytes(&format!("{base}/a"), 5).expect_err("downgrade");
+        assert!(plain(&err), "{err:?}");
     }
 
     #[test]

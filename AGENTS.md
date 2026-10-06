@@ -16,10 +16,10 @@ These come from the owner and override anything else in the repository.
 - **Network**: Canopy contacts the local `git` executable for Git traffic; the repository's own
   GitHub or GitLab API for pull/merge requests and author profile lookup: REST, plus, with a
   token, one GraphQL query per request-list refresh on the same host (`api.github.com/graphql`,
-  `https://<host>/api/graphql`) for the rows' checks and reviews (ADR 0011); profile pictures
-  on that host, GitHub's `avatars.githubusercontent.com`, and exact Gravatar/Libravatar image
-  hosts returned by GitLab (`canopy-hosting::avatars`, ADR 0008); Canopy's update check and its
-  download only when the user chooses Update; opt-in, scrubbed crash reports to Sentry.
+  `https://<host>[:port]/api/graphql`) for the rows' checks and reviews (ADR 0011); profile
+  pictures on that host, GitHub's `avatars.githubusercontent.com`, and exact Gravatar/Libravatar
+  image hosts returned by GitLab (`canopy-hosting::avatars`, ADR 0008); Canopy's update check and
+  its download only when the user chooses Update; opt-in, scrubbed crash reports to Sentry.
   Every HTTP feature has an off switch and sends nothing before the user accepted the Terms and
   Privacy Policy and answered the crash question. Pictures are cached locally for 12 hours,
   including authors without one; a failed refresh keeps the previous picture. A failure that is

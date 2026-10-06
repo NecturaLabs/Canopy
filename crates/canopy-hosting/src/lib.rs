@@ -5,10 +5,11 @@
 //! deliberately narrow:
 //!
 //! - It talks only to the API of the host the repository's own remote points at:
-//!   `api.github.com` for github.com, `https://<host>/api/v4` for gitlab.com and self-hosted
-//!   GitLab, and the GraphQL endpoint on that same host (`api.github.com/graphql`,
-//!   `https://<host>/api/graphql`). The host comes from a [`canopy_core::forge::Forge`] recognised from a remote URL;
-//!   author pictures also use validated image hosts ([`avatars`]), without credentials.
+//!   `api.github.com` for github.com, `https://<host>[:port]/api/v4` for gitlab.com and
+//!   self-hosted GitLab, and the GraphQL endpoint on that same host (`api.github.com/graphql`,
+//!   `https://<host>[:port]/api/graphql`). The host comes from a [`canopy_core::forge::Forge`]
+//!   recognised from a remote URL; author pictures also use validated image hosts
+//!   ([`avatars`]), without credentials.
 //!   Canopy's own update manifest ([`updates`]) is fetched anonymously from the public
 //!   `NecturaLabs/app-updates` repository.
 //! - It authenticates only with a token the user supplied: an environment variable
