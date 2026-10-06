@@ -570,7 +570,8 @@ impl Repo {
     }
 
     /// Resolves `path` by taking one side's whole version, like
-    /// `git checkout --ours -- path && git add -- path`. When the chosen side deleted the file
+    /// `git checkout --ours -- path && git add -- path`, except that the chosen side's executable
+    /// bit is staged even with core.fileMode off. When the chosen side deleted the file
     /// (for example [`Side::Theirs`] on [`ConflictKind::DeletedByThem`]) the path is removed with
     /// `git rm`. Any edits in the working copy are replaced.
     ///
