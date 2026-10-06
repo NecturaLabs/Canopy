@@ -1755,6 +1755,34 @@ mod tests {
         assert!(remote_name_problem("upstream", &["origin"]).is_none());
     }
 
+    /// Add remote and Clone take no URL with credentials, and none that git could read as an
+    /// option.
+    #[test]
+    fn a_typed_url_with_credentials_or_a_leading_dash_is_refused() {
+        use super::url::{UrlBuilder, UrlSource};
+        let mut b = UrlBuilder::new(&crate::settings::Settings::default());
+        b.source = UrlSource::Url;
+        for url in [
+            "https://user:secret@github.com/o/r.git",
+            "https:///ghp_secret@github.com/o/r.git",
+            "--mirror=push",
+        ] {
+            b.url = url.to_owned();
+            assert_eq!(b.resolve(), None, "{url}");
+        }
+        b.url = " git@github.com:o/r.git ".to_owned();
+        assert_eq!(b.resolve().as_deref(), Some("git@github.com:o/r.git"));
+        // A GitLab host typed with a user name and password never builds a URL carrying them.
+        b.source = UrlSource::GitLab;
+        b.host = "user:secret@gitlab.example.com".to_owned();
+        b.project = "g/p".to_owned();
+        assert!(
+            b.resolve().is_none_or(|u| !u.contains("secret")),
+            "{:?}",
+            b.resolve()
+        );
+    }
+
     /// The legal documents read in a card that fills most of the room a modal has (O1), at the
     /// reading measure, in both the plain dialog and the consent.
     #[test]

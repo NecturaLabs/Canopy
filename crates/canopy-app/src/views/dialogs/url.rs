@@ -32,8 +32,20 @@ impl UrlBuilder {
         }
     }
 
-    /// The URL to use, if complete.
+    /// The URL to use, if complete and acceptable ([`UrlBuilder::problem`]).
     pub fn resolve(&self) -> Option<String> {
+        self.built()
+            .filter(|u| canopy_core::ops::remote_url_problem(u).is_none())
+    }
+
+    /// Why the URL typed or built cannot be used, such as credentials in it.
+    pub fn problem(&self) -> Option<&'static str> {
+        self.built()
+            .and_then(|u| canopy_core::ops::remote_url_problem(&u))
+    }
+
+    /// The URL as typed or built, before it is checked.
+    fn built(&self) -> Option<String> {
         let kind = match self.source {
             UrlSource::Url => {
                 let u = self.url.trim();
@@ -64,10 +76,12 @@ impl UrlBuilder {
         .show(ui);
         match self.source {
             UrlSource::Url => {
+                let problem = self.problem();
                 let r = TextField::new(&mut self.url)
                     .label("Repository URL")
                     .placeholder("https://host/owner/repo.git or git@host:owner/repo.git")
                     .helper("Copy it from the repository's Clone button on its host.")
+                    .error(problem)
                     .id_salt(("dialog-field", "Repository URL"))
                     .show(ui);
                 take_focus(ui, &r, focus);
@@ -87,8 +101,10 @@ impl UrlBuilder {
                 } else {
                     "group/subgroup/project"
                 };
-                let error = (self.resolve().is_none() && !self.project.trim().is_empty())
-                    .then(|| format!("Use the form {form}"));
+                let error = self.problem().map(str::to_owned).or_else(|| {
+                    (self.built().is_none() && !self.project.trim().is_empty())
+                        .then(|| format!("Use the form {form}"))
+                });
                 let helper = if self.ssh {
                     "SSH: your SSH key signs you in."
                 } else {
