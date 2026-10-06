@@ -425,26 +425,46 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                 let s = &snap.stashes[i];
                 let label = s.message.trim_start_matches("On ").to_owned();
                 let resp = row(ui, &Row { id: ui.id().with(("stash", s.oid)), glyph: icon::ARCHIVE, label: &label, current: false, ahead: 0, behind: 0, hint: Some(&s.message) });
-                let index = s.index;
+                let oid = s.oid;
                 if resp.clicked() {
-                    actions.push(Action::Reveal(s.oid));
+                    actions.push(Action::Reveal(oid));
                 }
+                // By the stash's commit, never its place in the list, which can change before
+                // the operation runs.
                 menu::context(&resp, |m| {
                     if m.item(icon::TRAY_ARROW_DOWN, "Apply").show(m.ui).clicked() {
-                        actions.push(Action::Op(Op::StashApply { index, pop: false }));
+                        actions.push(Action::Op(Op::StashApplyCommit { oid, pop: false }));
                     }
                     if m.item(icon::TRAY_ARROW_UP, "Pop").show(m.ui).clicked() {
-                        actions.push(Action::Op(Op::StashApply { index, pop: true }));
+                        actions.push(Action::Op(Op::StashApplyCommit { oid, pop: true }));
                     }
                     m.separator();
                     if m.item(icon::TRASH, "Drop…").danger().show(m.ui).clicked() {
-                        actions.push(Action::Confirm { title: format!("Drop stash@{{{index}}}?"), body: "Its changes are lost.".into(), confirm: "Drop stash".into(), danger: true, op: Op::StashDrop(index) });
+                        actions.push(drop_stash(s));
                     }
                 });
             });
         }
         ui.add_space(theme::LG);
     });
+}
+
+/// The confirmation for dropping `stash`: it names the stash by its message and drops it by its
+/// commit.
+fn drop_stash(stash: &canopy_core::StashInfo) -> Action {
+    Action::Confirm {
+        title: format!(
+            "Drop stash \u{201c}{}\u{201d}?",
+            stash.message.trim_start_matches("On ")
+        ),
+        body: format!(
+            "Its changes are lost. The stash is commit {}.",
+            canopy_core::short_id(stash.oid)
+        ),
+        confirm: "Drop stash".into(),
+        danger: true,
+        op: Op::StashDrop(stash.oid),
+    }
 }
 
 #[cfg(test)]
@@ -688,5 +708,25 @@ mod tests {
             "Shift+Tab goes back to the header: {back:?}"
         );
         assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    /// review-views-3: Drop names the stash and acts on its commit, not its place in the list.
+    #[test]
+    fn dropping_a_stash_names_it_and_acts_on_its_commit() {
+        let oid = canopy_core::Oid::from_bytes(&[7; 20]).expect("oid");
+        let stash = canopy_core::StashInfo {
+            index: 0,
+            message: "On main: wip login".into(),
+            oid,
+        };
+        let Action::Confirm {
+            title, body, op, ..
+        } = drop_stash(&stash)
+        else {
+            panic!("a confirmation");
+        };
+        assert!(title.contains("main: wip login"), "{title}");
+        assert!(body.contains(&canopy_core::short_id(oid)), "{body}");
+        assert!(matches!(op, Op::StashDrop(o) if o == oid), "{op:?}");
     }
 }

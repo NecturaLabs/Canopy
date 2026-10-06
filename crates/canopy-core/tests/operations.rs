@@ -439,6 +439,55 @@ fn hunk_staging_handles_unusual_paths() {
     assert_eq!(index_blob(p, name), "x\n");
 }
 
+/// A stash is acted on by its commit: one pushed after the user chose it does not shift the
+/// choice onto another.
+#[test]
+fn the_stash_chosen_is_the_one_dropped_or_applied() {
+    let (dir, repo) = fixture();
+    let p = dir.path();
+    let stash = |text: &str| {
+        fs::write(p.join("a.txt"), text).expect("write");
+        repo.stash_save(Some(text.trim()), false).expect("stash");
+    };
+    stash("first\n");
+    stash("second\n");
+    let snap = repo.snapshot(10).expect("snapshot");
+    let first = snap.stashes[1].clone();
+    assert!(first.message.contains("first"), "{first:?}");
+    // Meanwhile a third stash is pushed (a terminal, a refresh): `first` is now stash@{2}.
+    stash("third\n");
+    repo.stash_drop_commit(first.oid).expect("drop");
+    let messages = || -> Vec<String> {
+        repo.snapshot(10)
+            .expect("snapshot")
+            .stashes
+            .iter()
+            .map(|s| s.message.clone())
+            .collect()
+    };
+    let left = messages();
+    assert_eq!(left.len(), 2, "{left:?}");
+    assert!(
+        !left.iter().any(|m| m.contains("first")),
+        "the stash chosen survived: {left:?}"
+    );
+    let err = repo.stash_drop_commit(first.oid).expect_err("gone");
+    assert!(err.to_string().contains("no longer"), "{err}");
+
+    // Popping the older one applies its change and leaves the newer.
+    let second = repo.snapshot(10).expect("snapshot").stashes[1].clone();
+    assert!(second.message.contains("second"), "{second:?}");
+    fs::write(p.join("a.txt"), "x\n").expect("write");
+    git(p, &["checkout", "--", "a.txt"]);
+    repo.stash_apply_commit(second.oid, true).expect("pop");
+    assert_eq!(
+        fs::read_to_string(p.join("a.txt")).expect("read"),
+        "second\n"
+    );
+    let left = messages();
+    assert!(left.len() == 1 && left[0].contains("third"), "{left:?}");
+}
+
 #[test]
 fn branches_tags_stash_reset() {
     let (dir, repo) = fixture();

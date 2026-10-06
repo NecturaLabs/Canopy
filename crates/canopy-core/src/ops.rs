@@ -609,6 +609,33 @@ impl Repo {
         self.git_cmd(&["stash", "drop", "-q", &r]).map(drop)
     }
 
+    /// Applies the stash whose commit is `oid`, wherever it now is in the list; `pop` also drops
+    /// it when it applied cleanly. A stash pushed or dropped since the user chose it cannot
+    /// shift the choice onto another.
+    pub fn stash_apply_commit(&self, oid: Oid, pop: bool) -> Result<()> {
+        let r = self.stash_ref(oid)?;
+        self.git_cmd(&["stash", if pop { "pop" } else { "apply" }, "-q", &r])
+            .map(drop)
+    }
+
+    /// Deletes the stash whose commit is `oid`, wherever it now is in the list.
+    pub fn stash_drop_commit(&self, oid: Oid) -> Result<()> {
+        let r = self.stash_ref(oid)?;
+        self.git_cmd(&["stash", "drop", "-q", &r]).map(drop)
+    }
+
+    /// `stash@{n}` for the stash whose commit is `oid` now, or an error when it is gone.
+    fn stash_ref(&self, oid: Oid) -> Result<String> {
+        let wanted = oid.to_string();
+        self.git_cmd(&["stash", "list", "--format=%H"])?
+            .lines()
+            .position(|line| line.trim() == wanted)
+            .map(|index| format!("stash@{{{index}}}"))
+            .ok_or_else(|| {
+                Error::invalid("That stash is no longer in the stash list. Refresh and try again.")
+            })
+    }
+
     /// Adds the remote `name` fetching from `url` (trimmed). A name or URL that
     /// [`remote_name_problem`] or [`remote_url_problem`] refuses, such as a URL with credentials,
     /// is refused before git runs.
