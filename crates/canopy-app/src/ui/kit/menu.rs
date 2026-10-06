@@ -35,7 +35,7 @@ use crate::ui::motion;
 use crate::ui::theme;
 
 /// Narrowest and widest menu surface.
-const MIN_WIDTH: f32 = 200.0;
+pub(crate) const MIN_WIDTH: f32 = 200.0;
 const MAX_WIDTH: f32 = 360.0;
 /// Item insets, the icon column and the gap after it.
 const ITEM_PAD: f32 = 8.0;

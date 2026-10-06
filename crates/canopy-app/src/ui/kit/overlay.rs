@@ -38,7 +38,7 @@ const DIALOG_MARGIN: f32 = 28.0;
 const DISC: f32 = 30.0;
 /// Gap between a tooltip or popover and its anchor.
 const TOOLTIP_GAP: f32 = 8.0;
-const POPOVER_GAP: f32 = 6.0;
+pub(crate) const POPOVER_GAP: f32 = 6.0;
 /// Widest tooltip.
 const TOOLTIP_WIDTH: f32 = 260.0;
 /// A tooltip's shortcut keycaps (spec 4.11: `KeyChord` at 18 pt).
