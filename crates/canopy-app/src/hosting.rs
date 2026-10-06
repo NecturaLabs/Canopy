@@ -280,6 +280,9 @@ pub struct HostWorker {
     jobs: Sender<HostJob>,
     pub events: Receiver<HostEvent>,
     avatars_enabled: Arc<AtomicBool>,
+    /// On while this handle lives: the thread's requests check it right before they are sent, so
+    /// a job under way when the tab lets the thread go sends nothing more.
+    on: Arc<AtomicBool>,
     ctx: egui::Context,
 }
 
@@ -295,7 +298,11 @@ impl HostWorker {
         let (tx, events) = unbounded::<HostEvent>();
         let thread_forge = forge.clone();
         let avatars_enabled = Arc::new(AtomicBool::new(false));
-        let thread_avatars = Arc::clone(&avatars_enabled);
+        let on = Arc::new(AtomicBool::new(true));
+        let switches = Switches {
+            avatars: Arc::clone(&avatars_enabled),
+            on: Arc::clone(&on),
+        };
         let thread_ctx = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name(format!("hosting:{}", forge.host))
@@ -307,7 +314,7 @@ impl HostWorker {
                     job_rx,
                     tx,
                     thread_ctx,
-                    thread_avatars,
+                    switches,
                 );
             });
         if let Err(e) = &spawned {
@@ -318,6 +325,7 @@ impl HostWorker {
             jobs,
             events,
             avatars_enabled,
+            on,
             ctx,
         }
     }
@@ -350,6 +358,7 @@ impl HostWorker {
             jobs,
             events,
             avatars_enabled: Arc::new(AtomicBool::new(false)),
+            on: Arc::new(AtomicBool::new(false)),
             ctx,
         }
     }
@@ -358,7 +367,16 @@ impl HostWorker {
 impl Drop for HostWorker {
     fn drop(&mut self) {
         self.set_avatars_enabled(false);
+        self.on.store(false, Ordering::SeqCst);
     }
+}
+
+/// The flags a [`HostWorker`] shares with its thread.
+struct Switches {
+    /// Author pictures may be looked up ([`HostWorker::set_avatars_enabled`]).
+    avatars: Arc<AtomicBool>,
+    /// The tab still holds the handle; off once it lets the thread go.
+    on: Arc<AtomicBool>,
 }
 
 #[expect(
@@ -372,11 +390,16 @@ fn run(
     jobs: Receiver<HostJob>,
     events: Sender<HostEvent>,
     ctx: egui::Context,
-    avatars_enabled: Arc<AtomicBool>,
+    switches: Switches,
 ) {
+    let Switches {
+        avatars: avatars_enabled,
+        on,
+    } = switches;
     let emit = |e: HostEvent| {
-        let _ = events.send(e);
+        let delivered = events.send(e).is_ok();
         ctx.request_repaint();
+        delivered
     };
     // The credential helper can be slow; resolve once, lazily, on this thread.
     let token = resolve_token(&forge, saved, trusted_gitlab_hosts, true);
@@ -398,7 +421,7 @@ fn run(
         }
         Err(_) => Client::new(&forge, token),
     };
-    let client = build_client(token.clone());
+    let client = build_client(token.clone()).with_switch(on);
     // Author pictures have a thread of their own: a slow or black-holed picture host (a request
     // can take tens of seconds) must not hold up a pull or merge request action queued behind it.
     let avatar_jobs = {
@@ -424,6 +447,21 @@ fn run(
         }
         jobs
     };
+    serve(&client, &forge, &jobs, &avatar_jobs, &emit);
+}
+
+/// Runs `jobs` against `client` until the tab drops its end of the queue. `emit` reports an event
+/// to the tab and says whether it got there; author pictures go to `avatar_jobs`.
+fn serve(
+    client: &Client,
+    forge: &Forge,
+    jobs: &Receiver<HostJob>,
+    avatar_jobs: &Sender<(canopy_core::Oid, String)>,
+    emit: &dyn Fn(HostEvent) -> bool,
+) {
+    let send = |e: HostEvent| {
+        emit(e);
+    };
     // Until when (unix seconds) the list goes without checks and reviews after a rate limit.
     let mut rollup_paused = 0;
     while let Ok(job) = jobs.recv() {
@@ -436,48 +474,51 @@ fn run(
                     // No picture thread: end the request so the tab does not wait for it.
                     let (oid, email) = unsent.into_inner();
                     let result = crate::avatars::unavailable(chrono::Utc::now().timestamp());
-                    emit(HostEvent::Avatar { oid, email, result });
+                    send(HostEvent::Avatar { oid, email, result });
                 }
             }
             HostJob::List(filter) => match client.list(filter, 100) {
                 Ok(mut list) => {
                     // The list shows at once; its checks and reviews follow in a second event
-                    // for the same filter, which replaces it (the selection stays).
-                    emit(HostEvent::List(filter, Ok(list.clone())));
+                    // for the same filter, which replaces it (the selection stays). A list the
+                    // tab no longer takes was let go with its thread: nothing more is asked.
+                    if !emit(HostEvent::List(filter, Ok(list.clone()))) {
+                        continue;
+                    }
                     let now = chrono::Utc::now().timestamp();
                     let has_token = client.has_token();
                     if add_rollup(&mut list, has_token, &mut rollup_paused, now, |n| {
                         client.rollup(n)
                     }) {
-                        emit(HostEvent::List(filter, Ok(list)));
+                        send(HostEvent::List(filter, Ok(list)));
                     }
                 }
-                Err(e) => emit(HostEvent::List(filter, Err(s(e)))),
+                Err(e) => send(HostEvent::List(filter, Err(s(e)))),
             },
-            HostJob::Details(n) => emit(HostEvent::Details(
+            HostJob::Details(n) => send(HostEvent::Details(
                 n,
                 Box::new(client.details(n).map_err(s)),
             )),
-            HostJob::Create(req) => emit(HostEvent::Created(client.create(&req).map_err(s))),
-            HostJob::Merge(n, method, head) => emit(HostEvent::Done {
+            HostJob::Create(req) => send(HostEvent::Created(client.create(&req).map_err(s))),
+            HostJob::Merge(n, method, head) => send(HostEvent::Done {
                 label,
                 action: HostAction::Merge,
                 number: Some(n),
                 result: client.merge(n, method, head.as_deref()).map_err(s),
             }),
-            HostJob::SetOpen(n, open) => emit(HostEvent::Done {
+            HostJob::SetOpen(n, open) => send(HostEvent::Done {
                 label,
                 action: HostAction::SetOpen,
                 number: Some(n),
                 result: client.set_open(n, open).map_err(s),
             }),
-            HostJob::Comment(n, body) => emit(HostEvent::Done {
+            HostJob::Comment(n, body) => send(HostEvent::Done {
                 label,
                 action: HostAction::Comment,
                 number: Some(n),
                 result: client.comment(n, &body).map_err(s),
             }),
-            HostJob::Approve(n) => emit(HostEvent::Done {
+            HostJob::Approve(n) => send(HostEvent::Done {
                 label,
                 action: HostAction::Approve,
                 number: Some(n),
@@ -726,6 +767,132 @@ mod tests {
             });
         }
         assert_eq!(other, 2);
+    }
+
+    type Answer = Box<dyn Fn(&str) -> String + Send>;
+
+    /// A loopback stand-in for GitHub's API: one request per connection, answered with 200 and
+    /// `answer(target)`. Returns its base URL and the `METHOD target` lines it received, in order.
+    fn stub(answer: Answer) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let base = format!("http://{}", listener.local_addr().expect("address"));
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&log);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { continue };
+                let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    continue;
+                }
+                let mut length = 0;
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = header.split_once(':')
+                        && name.eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0; length];
+                let _ = reader.read_exact(&mut body);
+                let mut parts = line.split_whitespace();
+                let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+                seen.lock().expect("log").push(format!("{method} {target}"));
+                let reply = answer(target);
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                    reply.len()
+                );
+            }
+        });
+        (base, log)
+    }
+
+    fn pulls(numbers: &[u64]) -> String {
+        let rows: Vec<_> = numbers
+            .iter()
+            .map(|n| {
+                serde_json::json!({
+                    "number": n,
+                    "title": format!("PR {n}"),
+                    "user": { "login": "ann" },
+                    "state": "open",
+                    "head": { "ref": "topic", "sha": "abc", "repo": { "full_name": "o/r" } },
+                    "base": { "ref": "main", "sha": "def", "repo": { "full_name": "o/r" } },
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-01T00:00:00Z",
+                    "html_url": format!("https://github.com/o/r/pull/{n}"),
+                })
+            })
+            .collect();
+        serde_json::Value::Array(rows).to_string()
+    }
+
+    const ROLLUP_ANSWER: &str = r#"{"data":{"repository":{"p1":{"number":1,"statusCheckRollup":{"state":"SUCCESS"},"reviewDecision":"APPROVED"}}}}"#;
+
+    /// A hosting thread for `github.com/o/r` with a token, served by the stub at `base`, as the
+    /// tab holds it.
+    fn worker_for(base: &str) -> (HostWorker, std::thread::JoinHandle<()>) {
+        let forge = Forge {
+            kind: ForgeKind::GitHub,
+            host: "github.com".into(),
+            port: None,
+            path: "o/r".into(),
+        };
+        let (jobs, job_rx) = unbounded::<HostJob>();
+        let (tx, events) = unbounded::<HostEvent>();
+        let on = Arc::new(AtomicBool::new(true));
+        let client = Client::with_api_base(&forge, Some("tok-secret".into()), base)
+            .with_switch(Arc::clone(&on));
+        let thread_forge = forge.clone();
+        let thread = std::thread::spawn(move || {
+            let (avatar_jobs, _) = unbounded();
+            serve(&client, &thread_forge, &job_rx, &avatar_jobs, &|e| {
+                tx.send(e).is_ok()
+            });
+        });
+        let worker = HostWorker {
+            forge,
+            jobs,
+            events,
+            avatars_enabled: Arc::new(AtomicBool::new(false)),
+            on,
+            ctx: egui::Context::default(),
+        };
+        (worker, thread)
+    }
+
+    #[test]
+    fn a_list_sends_no_query_once_its_worker_is_gone() {
+        // The tab drops its worker (integration switched off, token changed, other remote) while
+        // the list is on its way: the thread finishes that request but sends nothing more.
+        let held: Arc<std::sync::Mutex<Option<HostWorker>>> = Arc::default();
+        let dropped = Arc::clone(&held);
+        let (base, log) = stub(Box::new(move |target| {
+            if target.starts_with("/repos/o/r/pulls?") {
+                drop(dropped.lock().expect("worker").take());
+                pulls(&[1])
+            } else {
+                ROLLUP_ANSWER.to_owned()
+            }
+        }));
+        let (worker, thread) = worker_for(&base);
+        {
+            let mut slot = held.lock().expect("worker");
+            slot.insert(worker).send(HostJob::List(StateFilter::Open));
+        }
+        thread.join().expect("hosting thread");
+        let log = log.lock().expect("log").clone();
+        assert_eq!(log.len(), 1, "only the list was sent: {log:?}");
+        assert!(log[0].starts_with("GET /repos/o/r/pulls?"), "{log:?}");
     }
 
     #[test]

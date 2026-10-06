@@ -704,6 +704,7 @@ fn miss(error: canopy_hosting::Error, now: i64, note: &mut Option<Note>) -> Miss
         Miss::Kept
     };
     match error {
+        Error::Stopped => Miss::Skipped,
         Error::RateLimited { reset } => {
             Miss::Later(reset.map_or(now + HOUR_SECS, |at| at.clamp(now + 60, now + CACHE_SECS)))
         }

@@ -36,6 +36,9 @@ pub enum Error {
     /// The response was not the JSON Canopy expected.
     #[error("Unexpected response from the server: {0}")]
     Parse(String),
+    /// Not sent: the client's switch ([`crate::Client::with_switch`]) was off.
+    #[error("Not sent: pull and merge requests were turned off or reconnected")]
+    Stopped,
 }
 
 /// Result alias for hosting API calls.

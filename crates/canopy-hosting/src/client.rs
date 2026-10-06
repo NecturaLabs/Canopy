@@ -1,6 +1,8 @@
 //! [`Client`]: the provider-neutral entry point.
 
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use canopy_core::forge::{Forge, ForgeKind};
 
@@ -95,6 +97,17 @@ impl Client {
             kind: forge.kind,
             project,
         }
+    }
+
+    /// Sends requests only while `on` holds `true`. Once it is `false`, every call fails with
+    /// [`crate::Error::Stopped`] before anything is sent, including the parts of a
+    /// [`Client::details`] still to come. The hosting thread passes the switch its tab turns off
+    /// when it lets the thread go (pull and merge requests turned off, the token changed, another
+    /// remote), so a job already under way sends nothing more.
+    #[must_use]
+    pub fn with_switch(mut self, on: Arc<AtomicBool>) -> Self {
+        self.http.set_switch(on);
+        self
     }
 
     /// Which provider this client talks to.

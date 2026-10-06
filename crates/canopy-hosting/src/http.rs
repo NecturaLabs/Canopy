@@ -3,7 +3,8 @@
 
 use std::fmt;
 use std::fmt::Write as _;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use canopy_core::forge::ForgeKind;
@@ -67,6 +68,8 @@ pub(crate) struct Http {
     /// API root without a trailing slash, e.g. `https://api.github.com`.
     base: String,
     token: Option<String>,
+    /// While this holds `false`, nothing is sent ([`Self::set_switch`]).
+    switch: Option<Arc<AtomicBool>>,
 }
 
 /// Never prints the token, nor credentials embedded in the API root (see [`redact_userinfo`]).
@@ -123,7 +126,21 @@ impl Http {
             kind,
             base,
             token,
+            switch: None,
         }
+    }
+
+    /// From now on, sends a request only while `on` holds `true`; otherwise the call fails with
+    /// [`Error::Stopped`] and nothing leaves the machine.
+    pub(crate) fn set_switch(&mut self, on: Arc<AtomicBool>) {
+        self.switch = Some(on);
+    }
+
+    /// Whether the switch is off, so nothing may be sent.
+    fn stopped(&self) -> bool {
+        self.switch
+            .as_ref()
+            .is_some_and(|on| !on.load(Ordering::SeqCst))
     }
 
     pub(crate) fn has_token(&self) -> bool {
@@ -179,8 +196,11 @@ impl Http {
     }
 
     /// Sends `method path` (path relative to the API root, query included) and returns the body
-    /// of a 2xx response, or the mapped error.
+    /// of a 2xx response, or the mapped error. Sends nothing while the switch is off.
     fn send(&self, method: Method, path: &str, body: Option<&Value>) -> Result<Vec<u8>> {
+        if self.stopped() {
+            return Err(Error::Stopped);
+        }
         let url = format!("{}{}", self.base, path);
         let payload = match body {
             Some(v) => Some(serde_json::to_vec(v).map_err(|e| Error::Parse(e.to_string()))?),
@@ -260,7 +280,7 @@ impl Http {
     /// successful response, errors that come with no requests left, a `retry-after`, or a
     /// message or type saying a rate limit was hit become [`Error::RateLimited`]; other errors
     /// fail the call only when no `data` came back (GitHub answers a missing pull request with
-    /// an error beside the rest of the data).
+    /// an error beside the rest of the data). Sends nothing while the switch is off.
     pub(crate) fn graphql<T: DeserializeOwned>(&self, query: &str, variables: &Value) -> Result<T> {
         let (url, path) = self.graphql_endpoint();
         let payload = serde_json::to_vec(&serde_json::json!({
@@ -275,6 +295,9 @@ impl Http {
             .header("Content-Type", "application/json");
         if let Some(token) = &self.token {
             req = req.header("Authorization", format!("Bearer {token}"));
+        }
+        if self.stopped() {
+            return Err(Error::Stopped);
         }
         let started = std::time::Instant::now();
         let result = req.config().max_redirects(0).build().send(&*payload);

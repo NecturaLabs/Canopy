@@ -12,6 +12,8 @@ use canopy_hosting::{
     StateFilter,
 };
 use serde_json::{Value, json};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 mod server {
     //! A tiny HTTP/1.1 server: one request per connection, responses keyed by method and target.
@@ -53,12 +55,21 @@ mod server {
     }
 
     type Routes = Arc<Mutex<HashMap<(String, String), Canned>>>;
+    type Hooks = Arc<Mutex<HashMap<(String, String), Box<dyn Fn() + Send>>>>;
 
-    #[derive(Debug)]
     pub struct Server {
         pub base: String,
         routes: Routes,
+        hooks: Hooks,
         log: Arc<Mutex<Vec<Recorded>>>,
+    }
+
+    impl std::fmt::Debug for Server {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("Server")
+                .field("base", &self.base)
+                .finish_non_exhaustive()
+        }
     }
 
     impl Server {
@@ -66,15 +77,29 @@ mod server {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
             let base = format!("http://{}", listener.local_addr().expect("addr"));
             let routes: Routes = Arc::default();
+            let hooks: Hooks = Arc::default();
             let log: Arc<Mutex<Vec<Recorded>>> = Arc::default();
-            let (r, l) = (Arc::clone(&routes), Arc::clone(&log));
+            let (r, h, l) = (Arc::clone(&routes), Arc::clone(&hooks), Arc::clone(&log));
             std::thread::spawn(move || {
                 for stream in listener.incoming() {
                     let Ok(stream) = stream else { continue };
-                    handle(stream, &r, &l);
+                    handle(stream, &r, &h, &l);
                 }
             });
-            Self { base, routes, log }
+            Self {
+                base,
+                routes,
+                hooks,
+                log,
+            }
+        }
+
+        /// Runs `hook` whenever `method path` (query ignored) arrives, before it is answered.
+        pub fn on(&self, method: &str, path: &str, hook: impl Fn() + Send + 'static) {
+            self.hooks
+                .lock()
+                .expect("hooks")
+                .insert((method.to_owned(), path.to_owned()), Box::new(hook));
         }
 
         /// Answers `method target` with `status` and a JSON body. A target without `?` matches
@@ -117,7 +142,7 @@ mod server {
         }
     }
 
-    fn handle(stream: TcpStream, routes: &Routes, log: &Arc<Mutex<Vec<Recorded>>>) {
+    fn handle(stream: TcpStream, routes: &Routes, hooks: &Hooks, log: &Arc<Mutex<Vec<Recorded>>>) {
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
         let mut line = String::new();
         if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -155,6 +180,13 @@ mod server {
         });
 
         let path = target.split('?').next().unwrap_or_default().to_owned();
+        if let Some(hook) = hooks
+            .lock()
+            .expect("hooks")
+            .get(&(method.clone(), path.clone()))
+        {
+            hook();
+        }
         let canned = {
             let routes = routes.lock().expect("routes");
             routes
@@ -478,6 +510,29 @@ fn github_details_main_request_failure_is_an_error() {
     let err = github(&server, Some(TOKEN)).details(77).expect_err("404");
     assert_eq!(err, Error::NotFound("Not Found".into()));
     assert!(err.to_string().contains("token cannot see this repository"));
+}
+
+#[test]
+fn a_switched_off_client_sends_nothing_more() {
+    // The tab drops its hosting thread (pull and merge requests turned off, the token changed)
+    // while a request's details load: the parts still to come are not asked for, nor anything
+    // after them.
+    let server = Server::start();
+    let pull = gh_pull(5, "open", false, "2024-01-05T00:00:00Z").to_string();
+    server.route("GET", "/repos/octo/hello/pulls/5", 200, &pull);
+    let on = Arc::new(AtomicBool::new(true));
+    let off = Arc::clone(&on);
+    server.on("GET", "/repos/octo/hello/pulls/5", move || {
+        off.store(false, Ordering::SeqCst);
+    });
+    let client = github(&server, Some(TOKEN)).with_switch(on);
+    let _ = client.details(5);
+    let sent: Vec<String> = server.requests().into_iter().map(|r| r.target).collect();
+    assert_eq!(sent, ["/repos/octo/hello/pulls/5"]);
+    assert_eq!(client.rollup(&[5]), Err(Error::Stopped));
+    assert_eq!(client.list(StateFilter::Open, 10), Err(Error::Stopped));
+    assert_eq!(client.comment(5, "late"), Err(Error::Stopped));
+    assert_eq!(server.requests().len(), 1, "nothing more was sent");
 }
 
 #[test]
