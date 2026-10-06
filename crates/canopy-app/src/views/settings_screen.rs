@@ -463,7 +463,7 @@ pub fn show(
             child.set_clip_rect(body.intersect(ui.clip_rect()));
             let words = screen.search.words();
             let scroll_salt = words.is_empty().then_some(screen.section);
-            overlay::scroll_body(
+            let page = overlay::scroll_body(
                 &mut child,
                 ("settings-content", scroll_salt),
                 body.height(),
@@ -498,6 +498,7 @@ pub fn show(
                         });
                 },
             );
+            page_fade(&child, &page, s.pane);
             // The ring goes over the chrome painted inside the card.
             paint::rim(
                 ui.painter(),
@@ -531,6 +532,34 @@ pub fn show(
     screen.picker.end_frame();
     result.close |= modal.should_close();
     result
+}
+
+/// How far a Settings page fades into the card at an edge where more of it lies: a full line of
+/// row text, so the line the card's edge cuts through is never left legible but half drawn (the
+/// kit's 12-point scroll fade suits short lists, not a page of paragraphs).
+const PAGE_FADE: f32 = theme::XL + theme::XS;
+
+/// Fades the page into `ground` at its top and bottom where more of it lies beyond, over the
+/// kit's own scroll fade.
+fn page_fade<R>(ui: &Ui, page: &egui::scroll_area::ScrollAreaOutput<R>, ground: Color32) {
+    let rect = page.inner_rect;
+    let above = page.state.offset.y;
+    let below = page.content_size.y - rect.height() - page.state.offset.y;
+    let painter = ui.painter_at(rect);
+    for (hidden, edge) in [
+        (above, paint::FadeEdge::Top),
+        (below, paint::FadeEdge::Bottom),
+    ] {
+        if hidden > 1.0 {
+            painter.add(paint::edge_fade(
+                rect,
+                edge,
+                PAGE_FADE.min(hidden),
+                Fill::flat(ground),
+                1.0,
+            ));
+        }
+    }
 }
 
 /// Scrolls the page to a control of it that just took keyboard focus out of sight (Tab onto a
