@@ -2,8 +2,6 @@
 
 use std::sync::Arc;
 
-use egui::accesskit::Role;
-
 use super::*;
 
 #[derive(Debug)]
@@ -36,11 +34,11 @@ impl Screenshot {
 }
 
 /// `--overlay menu-*`: a context menu opened for the picture by a right click on the top-most
-/// (then left-most) widget whose AccessKit role and name match, once the window has settled.
-/// Found by what a screen reader hears, so the picture does not depend on any view's ids.
+/// (then left-most) widget whose AccessKit name starts with `name`, once the window has settled.
+/// Found by what a screen reader hears (not by role, which the kit may refine), so the picture
+/// does not depend on any view's ids.
 #[derive(Debug)]
 pub(super) struct MenuShot {
-    role: Option<Role>,
     name: &'static str,
     /// The view the widget is in.
     pub(super) view: View,
@@ -51,15 +49,14 @@ pub(super) struct MenuShot {
 
 impl MenuShot {
     fn of(overlay: &str) -> Option<Self> {
-        let (role, name, view) = match overlay {
-            "menu-remotes" => (None, "Remotes", View::History),
-            "menu-branch" => (Some(Role::ListItem), "feature/auth", View::History),
-            "menu-commit" => (None, "Commit ", View::History),
-            "menu-file" => (Some(Role::ListItem), "src/main.rs", View::Changes),
+        let (name, view) = match overlay {
+            "menu-remotes" => ("Remotes", View::History),
+            "menu-branch" => ("feature/auth", View::History),
+            "menu-commit" => ("Commit ", View::History),
+            "menu-file" => ("src/main.rs", View::Changes),
             _ => return None,
         };
         Some(Self {
-            role,
             name,
             view,
             click: None,
@@ -76,10 +73,7 @@ impl MenuShot {
             let nodes = &v.this_pass.accesskit_state.as_ref()?.nodes;
             nodes
                 .iter()
-                .filter(|(_, n)| {
-                    self.role.is_none_or(|r| n.role() == r)
-                        && n.label().is_some_and(|l| l.starts_with(self.name))
-                })
+                .filter(|(_, n)| n.label().is_some_and(|l| l.starts_with(self.name)))
                 .filter_map(|(id, _)| v.this_pass.widgets.get(*id).map(|w| w.rect))
                 .filter(egui::Rect::is_positive)
                 .min_by(|a, b| {
