@@ -854,13 +854,15 @@ impl eframe::App for CanopyApp {
             }
             content_pane(ui, true, |ui| match tab.view {
                 View::History => {
-                    history::show(ui, tab, &self.settings, &mut actions);
-                    history_split(ui.ctx(), tab)
+                    let handle = history::show(ui, tab, &self.settings, &mut actions);
+                    history_split(ui.ctx(), tab, handle)
                 }
                 View::Changes => changes::show(ui, tab, &mut actions)
-                    .and_then(|list| PaneSplit::beside(list, changes::LIST_PANEL)),
+                    .and_then(|(list, handle)| PaneSplit::beside(list, handle)),
                 View::Requests => requests::show(ui, tab, self.settings.hosting_api, &mut actions)
-                    .and_then(|list| PaneSplit::beside(list, requests::LIST_PANEL)),
+                    .and_then(|list| {
+                        PaneSplit::beside(list, resize_handle(requests::LIST_PANEL.into()))
+                    }),
             });
         } else {
             // Nothing on the welcome screen holds the keyboard as a pane: no focused-pane edge.
@@ -1054,13 +1056,13 @@ pub struct PaneSplit {
 }
 
 impl PaneSplit {
-    /// Two cards side by side: `list` is the rectangle `egui::Panel::left(panel)` gave the list
-    /// this frame (`InnerResponse::response.rect`); the cards meet at its right edge. `None` in
-    /// Standard, which paints one flush pane.
-    pub fn beside(list: egui::Rect, panel: impl Into<egui::Id>) -> Option<Self> {
+    /// Two cards side by side: `list` is the rectangle the list's panel had this frame
+    /// (`InnerResponse::response.rect`), and `handle` the id of the handle that resizes it; the
+    /// cards meet at its right edge. `None` in Standard, which paints one flush pane.
+    pub fn beside(list: egui::Rect, handle: egui::Id) -> Option<Self> {
         (theme::style() == theme::Style::Deeper).then(|| Self {
             split: Split::Vertical(list.right()),
-            handle: Some(resize_handle(panel.into())),
+            handle: Some(handle),
         })
     }
 }
@@ -1143,25 +1145,23 @@ fn content_pane(
         });
 }
 
-/// Where History's details meet the table, when they sit below it as their own card (Deeper).
-fn history_split(ctx: &egui::Context, tab: &RepoTab) -> Option<PaneSplit> {
+/// Where History's details meet the table, when they sit below it as their own card (Deeper):
+/// at `handle`, the split handle `history::show` returned, which is centred on the details' top
+/// edge.
+fn history_split(
+    ctx: &egui::Context,
+    tab: &RepoTab,
+    handle: Option<egui::Id>,
+) -> Option<PaneSplit> {
     let below = theme::style() == theme::Style::Deeper
         && !tab.history_layout.compact
         && !tab.history_layout.expanded
         && tab.snap.as_ref().is_some_and(|s| !s.commits.is_empty());
-    below
-        .then(|| ctx.read_response(details_handle()))
-        .flatten()
-        .map(|r| PaneSplit {
-            split: Split::Horizontal(r.rect.center().y),
-            handle: Some(details_handle()),
-        })
-}
-
-/// The resize handle of History's details panel (`Panel::bottom("details")`), centred on the
-/// panel's top edge.
-fn details_handle() -> egui::Id {
-    resize_handle(egui::Id::new("details"))
+    let handle = handle.filter(|_| below)?;
+    ctx.read_response(handle).map(|r| PaneSplit {
+        split: Split::Horizontal(r.rect.center().y),
+        handle: Some(handle),
+    })
 }
 
 /// The gutter between two cards, painted over the content that runs under it: the ground, the
@@ -1208,7 +1208,7 @@ fn split_gutter(
     if split.handle.is_some_and(|handle| {
         ui.ctx()
             .read_response(handle)
-            .is_some_and(|r| r.hovered() || r.dragged())
+            .is_some_and(|r| r.hovered() || r.dragged() || r.has_focus())
     }) {
         let stroke = egui::Stroke::new(2.0, theme::Palette::tint(p.focus, 150));
         match split.split {
@@ -1318,35 +1318,6 @@ fn navigation_menu(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> eg
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Deeper's History split reads where the details begin from the details panel's resize
-    /// handle; this pins the egui behaviour it relies on (the handle's id and its place).
-    #[test]
-    fn the_details_handle_marks_the_top_of_the_details_panel() {
-        let ctx = egui::Context::default();
-        let (mut top, mut handle) = (None, None);
-        for _ in 0..2 {
-            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                egui::CentralPanel::default().show(ui, |ui| {
-                    let details = egui::Panel::bottom("details")
-                        .resizable(true)
-                        .default_size(200.0)
-                        .show(ui, |ui| ui.label("details"));
-                    top = Some(details.response.rect.top());
-                    handle = ui
-                        .ctx()
-                        .read_response(details_handle())
-                        .map(|r| r.rect.center().y);
-                });
-            });
-            output.textures_delta.clear();
-        }
-        let (top, handle) = (top.unwrap_or(f32::NAN), handle.unwrap_or(f32::NAN));
-        assert!(
-            (top - handle).abs() < 1.0,
-            "panel top {top}, handle {handle}"
-        );
-    }
 
     /// Each mask fans over the part of a card's square corner outside its rounded arc: the arc's
     /// middle points from its centre straight at the corner, for cards above each other and side

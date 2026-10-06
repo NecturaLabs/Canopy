@@ -128,6 +128,12 @@ impl<'a> SplitHandle<'a> {
         self
     }
 
+    /// The id [`Self::show`] gives the handle made with `id_salt` when it is shown in `ui`, to
+    /// read it before it is shown ([`dragged_size`], `Context::read_response`).
+    pub fn id_in(ui: &Ui, id_salt: impl std::hash::Hash + std::fmt::Debug) -> Id {
+        ui.id().with(Id::new(("kit-split", id_salt)))
+    }
+
     /// Forces hover, press (dragging) or focus (the gallery and tests).
     pub(crate) fn force(mut self, force: ForceState) -> Self {
         self.force = Some(force);
@@ -230,6 +236,30 @@ impl<'a> SplitHandle<'a> {
         });
         response
     }
+}
+
+/// Where a drag of the handle `id` ([`SplitHandle::id_in`]) puts its pane this frame, read before
+/// the panes are laid out so they follow the pointer instead of a frame behind it; `None` while it
+/// is not being dragged. `after` and `range` are the handle's own.
+pub fn dragged_size(
+    ctx: &Context,
+    id: Id,
+    axis: SplitAxis,
+    after: bool,
+    range: RangeInclusive<f32>,
+) -> Option<f32> {
+    if !ctx.read_response(id)?.dragged() {
+        return None;
+    }
+    let (from, start) = ctx.data(|d| d.get_temp::<(f32, f32)>(id.with("grab")))?;
+    let p = ctx.input(|i| i.pointer.interact_pos())?;
+    let along = match axis {
+        SplitAxis::Columns => p.x,
+        SplitAxis::Rows => p.y,
+    };
+    let sign = if after { -1.0 } else { 1.0 };
+    let lo = *range.start();
+    Some((start + (along - from) * sign).clamp(lo, range.end().max(lo)))
 }
 
 /// The arrows (Shift: a larger step), Home and End, while the handle has keyboard focus.
@@ -629,6 +659,67 @@ mod tests {
                 .collect();
             assert_eq!(fills, vec![Palette::tint(p.focus, alpha)], "{force:?}");
         }
+    }
+
+    /// A view can lay its panes out where the pointer has dragged the seam before it shows the
+    /// handle, so the panes do not trail the pointer by a frame.
+    #[test]
+    fn a_drag_is_known_before_the_handle_is_shown_again() {
+        let ctx = testkit::ctx();
+        let mut size = 200.0;
+        let mut id = None;
+        let mut before = None;
+        let mut t = 0.0;
+        let mut step = |events: Vec<Event>, size: &mut f32, before: &mut Option<f32>| {
+            t += 0.05;
+            frame(&ctx, t, events, |ui| {
+                let handle = SplitHandle::id_in(ui, "t");
+                *before = dragged_size(ui.ctx(), handle, SplitAxis::Columns, false, 100.0..=400.0);
+                id = Some(handle);
+                let at = *size;
+                let _ = SplitHandle::new("t", size, SplitAxis::Columns)
+                    .range(100.0..=400.0)
+                    .show(ui, at, Rangef::new(0.0, 300.0));
+            });
+        };
+        step(
+            vec![Event::PointerMoved(pos2(200.0, 50.0))],
+            &mut size,
+            &mut before,
+        );
+        assert_eq!(before, None, "not dragged");
+        step(testkit::press(pos2(200.0, 50.0)), &mut size, &mut before);
+        step(
+            vec![Event::PointerMoved(pos2(230.0, 50.0))],
+            &mut size,
+            &mut before,
+        );
+        step(
+            vec![Event::PointerMoved(pos2(260.0, 50.0))],
+            &mut size,
+            &mut before,
+        );
+        assert_eq!(
+            before,
+            Some(260.0),
+            "the drag, read before the handle is shown"
+        );
+        assert!((size - 260.0).abs() < 0.01, "{size}");
+        step(
+            vec![Event::PointerMoved(pos2(900.0, 50.0))],
+            &mut size,
+            &mut before,
+        );
+        assert_eq!(before, Some(400.0), "within the range");
+        step(testkit::release(pos2(900.0, 50.0)), &mut size, &mut before);
+        step(Vec::new(), &mut size, &mut before);
+        assert_eq!(before, None, "released");
+        let shown = id.expect("shown");
+        assert_eq!(
+            ctx.read_response(shown).map(|r| r.id),
+            Some(shown),
+            "id_in is the id the handle is shown with"
+        );
     }
 
     /// Passing over the handle does not light it: only resting on it for `HOVER_DELAY` does.

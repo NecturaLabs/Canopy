@@ -14,6 +14,7 @@ use crate::ui::kit::chip::CountBadge;
 use crate::ui::kit::field::{TextArea, TextField};
 use crate::ui::kit::progress::Spinner;
 use crate::ui::kit::row::{RowKind, SectionHeader, caps_galley};
+use crate::ui::kit::split::{self, SplitAxis, SplitHandle};
 use crate::ui::kit::toggle::Checkbox;
 use crate::ui::kit::{Button, IconButton, Size, Tone, menu, paint};
 use crate::ui::theme::{self, palette};
@@ -28,12 +29,15 @@ enum List {
     Staged,
 }
 
-/// The id of the file lists' panel, beside the diff.
-pub const LIST_PANEL: &str = "changes-list";
+/// The id of the file lists' panel, beside the diff (its size is kept under it).
+const LIST_PANEL: &str = "changes-list";
+/// The salt of the handle between the file lists and the diff.
+const LIST_SPLIT: &str = "changes-list";
 
-/// Draws the changes view. Returns the file lists' panel rectangle when it showed one (Deeper
-/// gives the lists and the diff a card each).
-pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option<Rect> {
+/// Draws the changes view. Returns the file lists' panel rectangle and the id of the handle
+/// between them and the diff when it showed them (Deeper gives the lists and the diff a card
+/// each).
+pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option<(Rect, egui::Id)> {
     let s = theme::surfaces(ui.ctx());
     let Some(snap) = tab.snap.clone() else {
         ui.centered_and_justified(|ui| Spinner::new().label("changes").show(ui));
@@ -69,11 +73,23 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
     }
 
     let pane_max = (ui.available_width() * 0.4).max(160.0);
-    let list = egui::Panel::left(LIST_PANEL)
-        .resizable(true)
-        .default_size(pane_max.min(400.0))
-        .min_size(pane_max.min(220.0))
-        .max_size(pane_max.min(700.0))
+    let (lo, hi, default_width) = (
+        pane_max.min(220.0),
+        pane_max.min(700.0),
+        pane_max.min(400.0),
+    );
+    // The lists' width: where their handle is being dragged to, else the panel's own (kept across
+    // restarts).
+    let panel_id = egui::Id::new(LIST_PANEL);
+    let handle_id = SplitHandle::id_in(ui, LIST_SPLIT);
+    let stored = egui::containers::panel::PanelState::load(ui.ctx(), panel_id)
+        .map_or(default_width, |state| state.size().x);
+    let mut width = split::dragged_size(ui.ctx(), handle_id, SplitAxis::Columns, false, lo..=hi)
+        .unwrap_or(stored)
+        .clamp(lo, hi);
+    let list = egui::Panel::left(panel_id)
+        .resizable(false)
+        .exact_size(width)
         .frame(egui::Frame::new().fill(s.pane))
         .show(ui, |ui| {
             // The seam to the diff; the pane's other edges are the card's or the window's.
@@ -151,7 +167,23 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) -> Option
                 diff::show(ui, tab, actions);
             }
         });
-    Some(list.response.rect)
+    // Shown over both panes, so their scrolling cannot take the drag from it.
+    let rect = list.response.rect;
+    let handle = SplitHandle::new(LIST_SPLIT, &mut width, SplitAxis::Columns)
+        .range(lo..=hi)
+        .default_size(default_width)
+        .label("Resize the file lists")
+        .seam(false)
+        .show(ui, rect.right(), rect.y_range());
+    if handle.changed()
+        && let Some(mut state) = egui::containers::panel::PanelState::load(ui.ctx(), panel_id)
+    {
+        state.outer_rect.max.x = state.outer_rect.min.x + width;
+        ui.ctx()
+            .data_mut(|data| data.insert_persisted(panel_id, state));
+        ui.ctx().request_repaint();
+    }
+    Some((rect, handle.id))
 }
 
 /// Gap between the last list and the composer when the composer follows the lists.
@@ -1063,6 +1095,72 @@ mod tests {
         let mut snap = canopy_core::RepoSnapshot::default();
         snap.status.unstaged = vec![entry("src/main.rs")];
         snap
+    }
+
+    /// KP-F7: the file lists are resized with the kit's split handle. A width kept from an
+    /// earlier run is the one shown, the handle sits on the lists' edge, moves from the keyboard
+    /// and keeps the new width in the panel's persisted state.
+    #[test]
+    fn the_list_split_handle_keeps_a_saved_width_and_resizes_from_the_keyboard() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let dir = tempfile::tempdir().expect("temporary tab");
+        let mut tab = RepoTab::new(
+            dir.path().into(),
+            &ctx,
+            100,
+            crate::settings::DiffPrefs::default(),
+        );
+        tab.snap = Some(std::sync::Arc::new(unstaged_snapshot()));
+        let panel = egui::Id::new(LIST_PANEL);
+        // Saved by an earlier run: 300 points wide.
+        ctx.data_mut(|d| {
+            d.insert_persisted(
+                panel,
+                egui::containers::panel::PanelState {
+                    outer_rect: Rect::from_min_size(egui::Pos2::ZERO, vec2(300.0, 600.0)),
+                },
+            );
+        });
+        let mut t = 0.0;
+        let mut frame = |events: Vec<egui::Event>, tab: &mut RepoTab| {
+            t += 0.05;
+            let mut shown = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 700.0))),
+                    time: Some(t),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    shown = show(ui, tab, &mut Vec::new())
+                        .map(|(list, handle)| (list, ui.ctx().read_response(handle)));
+                },
+            );
+            output.textures_delta.clear();
+            shown.expect("the lists are shown")
+        };
+        let (list, handle) = frame(Vec::new(), &mut tab);
+        assert!((list.width() - 300.0).abs() < 1.0, "{list:?}");
+        let handle = handle.expect("the handle is shown");
+        assert!((handle.rect.center().x - list.right()).abs() < 1.0);
+
+        ctx.memory_mut(|m| m.request_focus(handle.id));
+        let right = vec![egui::Event::Key {
+            key: egui::Key::ArrowRight,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }];
+        frame(right, &mut tab);
+        let (list, _) = frame(Vec::new(), &mut tab);
+        let wanted = 300.0 + split::KEY_STEP;
+        assert!((list.width() - wanted).abs() < 1.0, "{list:?}");
+        let saved = egui::containers::panel::PanelState::load(&ctx, panel).expect("saved");
+        assert!((saved.size().x - wanted).abs() < 1.0, "{saved:?}");
     }
 
     #[test]
