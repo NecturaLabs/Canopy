@@ -90,18 +90,30 @@ impl CanopyApp {
     }
 
     pub(super) fn request_open(&mut self, ctx: &egui::Context, request: OpenRequest) {
+        let (path, create) = (request.path.clone(), request.create);
         let sent = self
             .opener
             .as_ref()
             .is_some_and(|(tx, _)| tx.send(request).is_ok());
         if sent {
             self.pending_opens += 1;
-        } else {
+            return;
+        }
+        // The form that asked says why and takes input again; otherwise a toast says it.
+        let failure = dialogs::OpenFailure {
+            not_a_repository: false,
+            message: "Canopy could not start the thread that opens repositories.".to_owned(),
+        };
+        if !self.dialogs.finish_open(&path, create, Err(&failure)) {
             self.toasts.push(
                 ctx,
                 ToastKind::Error,
-                "Could not open repository",
-                "Canopy could not start the thread that opens repositories.",
+                if create {
+                    "Could not create repository"
+                } else {
+                    "Could not open repository"
+                },
+                failure.message,
             );
         }
     }
@@ -169,5 +181,44 @@ impl CanopyApp {
         let identity_path = root.clone();
         self.settings.touch_recent(root);
         self.request_identity(IdentityJob::ReadRepo(identity_path));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// review-views-6: when the opener thread is gone, the Open form that asked says so and
+    /// takes input again instead of waiting on "Opening…" for ever.
+    #[test]
+    fn an_open_the_opener_cannot_take_frees_its_form() {
+        let ctx = egui::Context::default();
+        let path = PathBuf::from("/home/ada/src/tidepool");
+        let mut app = test_app();
+        let mut form = Dialog::open();
+        if let Dialog::Open { pending, .. } = &mut form {
+            *pending = Some(path.clone());
+        }
+        app.dialogs.open(form);
+        app.open_repo(&ctx, path);
+        assert!(
+            matches!(
+                app.dialogs.current(),
+                Some(Dialog::Open { pending: None, error: Some(e), .. })
+                    if e.message.contains("could not start")
+            ),
+            "{:?}",
+            app.dialogs.current()
+        );
+        assert_eq!(app.pending_opens, 0);
+        assert!(
+            !format!("{:?}", app.toasts).contains("Could not open"),
+            "the form says it; no toast as well"
+        );
+
+        // With no form waiting, a toast says it.
+        let mut alone = test_app();
+        alone.open_repo(&ctx, PathBuf::from("/home/ada/src/other"));
+        assert!(format!("{:?}", alone.toasts).contains("Could not open repository"));
     }
 }
