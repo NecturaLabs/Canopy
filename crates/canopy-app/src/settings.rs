@@ -1,6 +1,9 @@
 //! Preferences persisted between runs through eframe's storage
 //! (`~/.local/share/canopy/` on Linux). Every field has a default (`#[serde(default)]`), so
-//! settings written by an older version load with the new fields at their defaults.
+//! settings written by an older version load with the new fields at their defaults. A saved
+//! theme or option this build no longer has reads as its default, and a setting it no longer has
+//! is ignored; the first save after launch (eframe saves every 30 seconds) writes the file again
+//! without either.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -109,6 +112,7 @@ pub const MAX_TAB_NAME: usize = 60;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RepoSettings {
+    #[serde(deserialize_with = "known_option")]
     pub pull_mode: Option<PullMode>,
     pub pull_follow_config: Option<bool>,
     pub prune_on_fetch: Option<bool>,
@@ -116,6 +120,7 @@ pub struct RepoSettings {
     pub auto_fetch_minutes: Option<u32>,
     pub signoff: Option<bool>,
     /// Protocol of remote URLs built from `owner/repo` (Add remote, Publish).
+    #[serde(deserialize_with = "known_option")]
     pub protocol: Option<CloneProtocol>,
     /// The name its tab shows instead of the folder's.
     pub display_name: Option<String>,
@@ -161,6 +166,7 @@ impl WhitespaceMode {
 pub struct DiffPrefs {
     /// Unchanged lines around each change (0–25).
     pub context: u32,
+    #[serde(deserialize_with = "known")]
     pub whitespace: WhitespaceMode,
 }
 
@@ -173,11 +179,41 @@ impl Default for DiffPrefs {
     }
 }
 
+/// A choice this build may no longer offer: a saved theme or option that has since been removed
+/// reads as `None` instead of failing the whole file. The name is read in full before it is
+/// refused, so the rest of the file goes on decoding.
+struct Known<T>(Option<T>);
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Known<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(Self(T::deserialize(d).ok()))
+    }
+}
+
+/// A choice, or its default when the saved one no longer exists.
+fn known<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Known::deserialize(d)?.0.unwrap_or_default())
+}
+
+/// An optional choice, or none when the saved one no longer exists.
+fn known_option<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Known<T>>::deserialize(d)?.and_then(|k| k.0))
+}
+
 /// User preferences and session state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     // Appearance.
+    #[serde(deserialize_with = "known")]
     pub theme: ThemeId,
     /// Interface zoom (0.8–1.6).
     pub zoom: f32,
@@ -190,6 +226,7 @@ pub struct Settings {
     /// Fetch account pictures after consent; initials remain when disabled.
     pub download_avatars: bool,
     /// Standard (concept 1) or Deeper (concept 4) surfaces and geometry.
+    #[serde(deserialize_with = "known")]
     pub style: Style,
     /// Blurred translucent floating layers.
     pub translucent: bool,
@@ -198,12 +235,16 @@ pub struct Settings {
     /// The custom theme's colours (Settings, Appearance, with the Custom theme chosen).
     pub custom_theme: CustomTheme,
     /// Row heights, radii, toolbar layout and type size.
+    #[serde(deserialize_with = "known")]
     pub density: Density,
     /// The history graph's commit nodes.
+    #[serde(deserialize_with = "known")]
     pub graph_node: NodeShape,
     /// The history graph's lines between lanes.
+    #[serde(deserialize_with = "known")]
     pub graph_curve: Curve,
     /// Match the system, always reduce, or always animate.
+    #[serde(deserialize_with = "known")]
     pub motion: MotionPref,
     /// Pre-0.3 switch, read once by `migrate` and never written again.
     #[serde(skip_serializing)]
@@ -212,6 +253,7 @@ pub struct Settings {
     // Git.
     /// Canopy's pull strategy; while `pull_follow_config` is on, only where the git
     /// configuration sets none.
+    #[serde(deserialize_with = "known")]
     pub pull_mode: PullMode,
     /// Follow my git config: a pull strategy the git configuration sets wins over `pull_mode`.
     /// On by default, and for settings saved before it existed (pulls then already followed
@@ -241,6 +283,7 @@ pub struct Settings {
     // Integrations.
     /// Where clones go by default.
     pub clone_dir: String,
+    #[serde(deserialize_with = "known")]
     pub clone_protocol: CloneProtocol,
     /// Self-hosted GitLab hosts, comma-separated.
     pub gitlab_hosts: String,
@@ -280,6 +323,7 @@ pub struct Settings {
     /// The `crash_reports::DATA_VERSION` the answer was given for.
     pub crash_reports_version: u32,
     /// How much the local log records.
+    #[serde(deserialize_with = "known")]
     pub log_level: crate::logging::LogLevel,
 
     // Session.
@@ -553,6 +597,8 @@ fn expand_home_in(typed: &str, home: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use eframe::Storage as _;
+
     use super::*;
 
     #[test]
@@ -567,6 +613,87 @@ mod tests {
         let mut old_dark: Settings = serde_json::from_str(r#"{"dark": true}"#).expect("parse");
         old_dark.migrate();
         assert_eq!(old_dark.theme, ThemeId::Midnight);
+    }
+
+    /// Settings as eframe keeps them: RON under [`KEY`].
+    #[derive(Default)]
+    struct Stored(HashMap<String, String>);
+
+    impl eframe::Storage for Stored {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_owned(), value);
+        }
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+        fn flush(&mut self) {}
+    }
+
+    #[test]
+    fn choices_that_no_longer_exist_fall_back_and_keep_the_rest() {
+        // Removed themes and options are not migrated: each reads as its default, a setting the
+        // build no longer has is dropped, and every other setting in the file survives.
+        let repo = std::env::temp_dir().join("canopy-settings-test");
+        let mut s = Settings {
+            zoom: 1.2,
+            style: Style::Deeper,
+            accepted_terms: "2026-09-01".to_owned(),
+            ..Settings::default()
+        };
+        s.repos.insert(
+            repo.clone(),
+            RepoSettings {
+                pull_mode: Some(PullMode::Rebase),
+                signoff: Some(true),
+                ..RepoSettings::default()
+            },
+        );
+        let mut stored = Stored::default();
+        eframe::set_value(&mut stored, KEY, &s);
+        let saved = stored.get_string(KEY).expect("saved");
+        let edited = saved
+            .replacen("Midnight", "Aurora", 1)
+            .replacen("Comfortable", "Spacious", 1)
+            .replacen("Rebase", "Octopus", 1)
+            .replacen('(', "(retired_switch: true, ", 1);
+        assert_ne!(saved, edited);
+        stored.set_string(KEY, edited);
+        let back: Settings = eframe::get_value(&stored, KEY).expect("the rest still loads");
+        assert_eq!(back.theme, ThemeId::Midnight);
+        assert_eq!(back.density, Density::Comfortable);
+        assert_eq!(back.style, Style::Deeper);
+        assert!((back.zoom - 1.2).abs() < f32::EPSILON);
+        assert_eq!(back.accepted_terms, "2026-09-01");
+        let r = back.repos.get(&repo).expect("the repository's choices");
+        assert_eq!((r.pull_mode, r.signoff), (None, Some(true)));
+        // The next save writes only what this build knows.
+        eframe::set_value(&mut stored, KEY, &back);
+        let clean = stored.get_string(KEY).expect("saved");
+        assert!(!clean.contains("Aurora") && !clean.contains("retired_switch"));
+
+        // A settings file being imported reads the same way.
+        let imported: Settings =
+            serde_json::from_str(r#"{"theme": "Aurora", "zoom": 1.2}"#).expect("parse");
+        assert_eq!(imported.theme, ThemeId::Midnight);
+        assert!((imported.zoom - 1.2).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn each_choice_falls_back_to_the_default_settings_use() {
+        let d = Settings::default();
+        assert_eq!(d.theme, ThemeId::default());
+        assert_eq!(d.style, Style::default());
+        assert_eq!(d.density, Density::default());
+        assert_eq!(d.graph_node, NodeShape::default());
+        assert_eq!(d.graph_curve, Curve::default());
+        assert_eq!(d.motion, MotionPref::default());
+        assert_eq!(d.pull_mode, PullMode::default());
+        assert_eq!(d.clone_protocol, CloneProtocol::default());
+        assert_eq!(d.log_level, crate::logging::LogLevel::default());
+        assert_eq!(d.diff.whitespace, WhitespaceMode::default());
     }
 
     #[test]
