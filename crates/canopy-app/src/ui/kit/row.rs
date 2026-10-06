@@ -1241,7 +1241,10 @@ impl<'a> SectionHeader<'a> {
         } else {
             Sense::hover()
         };
-        let mut response = ui.interact(rect, ui.id().with(("kit-section", &self.title)), sense);
+        let id = ui.id().with(("kit-section", &self.title));
+        // Focus as the frame began: a Tab read by `interact` below passes it on at once.
+        let had_focus = ctx.memory(|m| m.has_focus(id));
+        let mut response = ui.interact(rect, id, sense);
         let f = self.force.unwrap_or_default();
         let hovered = f.hover || ui.rect_contains_pointer(rect);
         let hover = match self.force {
@@ -1313,17 +1316,25 @@ impl<'a> SectionHeader<'a> {
         }
         let mut acted = false;
         if let Some((glyph, label)) = &self.action {
+            // The action stays in the focus order while the header or the action itself has
+            // focus, so Tab from the header lands on it, and it shows fully while it is focused.
+            let action_key = response.id.with("kit-section-action-id");
+            let action_focused = ctx
+                .data(|d| d.get_temp::<Id>(action_key))
+                .is_some_and(|id| ctx.memory(|m| m.has_focus(id)));
+            let keyboard = had_focus || response.has_focus() || action_focused;
+            let shown = hovered || focused || (keyboard && focus_visible(&ctx));
             let reveal = match self.force {
-                Some(_) => f32::from(u8::from(hovered || focused)),
+                Some(_) => f32::from(u8::from(shown)),
                 None => anim::ease_bool(
                     &ctx,
                     response.id.with("kit-section-action"),
-                    hovered || focused,
+                    shown,
                     motion::FAST,
                     motion::FAST,
                 ),
             };
-            if reveal > 0.0 {
+            if reveal > 0.0 || keyboard {
                 let area = Rect::from_min_max(
                     pos2(rect.right() - action_w - 2.0, rect.top()),
                     pos2(rect.right() - 2.0, rect.bottom()),
@@ -1333,12 +1344,17 @@ impl<'a> SectionHeader<'a> {
                         .max_rect(area)
                         .layout(Layout::right_to_left(Align::Center)),
                 );
-                child.multiply_opacity(reveal);
-                acted = IconButton::new(glyph, label.clone())
+                child.multiply_opacity(if action_focused { 1.0 } else { reveal });
+                let action = IconButton::new(glyph, label.clone())
                     .size(Size::Xs)
                     .id_salt(("kit-section-action", &self.title))
-                    .show(&mut child)
-                    .clicked();
+                    .show(&mut child);
+                ctx.data_mut(|d| d.insert_temp(action_key, action.id));
+                acted = action.clicked();
+            } else {
+                // The child above takes one automatic id: take it while hidden too, so the
+                // widgets after the header keep their ids (and focus) as the action comes and goes.
+                ui.skip_ahead_auto_ids(1);
             }
         }
         if collapsible {
@@ -2105,6 +2121,74 @@ mod tests {
         });
         let p = theme::palette(&ctx);
         assert_eq!(grounds, vec![p.standard.pane]);
+    }
+
+    /// Override O2 (shell F1): Tab from a section header lands on its action ("+" Add remote…),
+    /// which stays shown while it has focus, and the next Tab leaves it; with full and reduced
+    /// motion.
+    #[test]
+    fn tab_reaches_a_section_headers_action() {
+        let ctx = ctx();
+        ctx.enable_accesskit();
+        for reduced in [true, false] {
+            theme::apply(
+                &ctx,
+                theme::ThemeId::Midnight,
+                theme::Appearance {
+                    reduce_motion: reduced,
+                    ..theme::Appearance::STILL
+                },
+            );
+            let mut open = true;
+            // One frame: the focused node's label, and whether the action's glyph was painted.
+            let mut frame = |events: Vec<egui::Event>| {
+                let out = run(&ctx, events, |ui| {
+                    let _ = SectionHeader::new(format!("Remotes {reduced}"))
+                        .count(1)
+                        .open(&mut open)
+                        .action(icon::PLUS, "Add remote…")
+                        .show(ui);
+                    let _ = super::super::button::Button::new("After").show(ui);
+                });
+                let painted = out
+                    .shapes
+                    .iter()
+                    .any(|c| matches!(&c.shape, Shape::Text(t) if t.galley.text() == icon::PLUS));
+                let update = out.platform_output.accesskit_update.expect("accesskit");
+                let label = update
+                    .nodes
+                    .iter()
+                    .find(|(id, _)| *id == update.focus)
+                    .and_then(|(_, n)| n.label().map(str::to_owned));
+                (label, painted)
+            };
+            let _ = frame(Vec::new());
+            let mut focused = Vec::new();
+            for _ in 0..3 {
+                // Focus moves at the end of the frame that read the Tab.
+                let _ = frame(vec![key(Key::Tab)]);
+                focused.push(frame(Vec::new()).0);
+                // A few quiet frames: the action must not vanish once the header lost focus.
+                for _ in 0..3 {
+                    let (still, painted) = frame(Vec::new());
+                    assert_eq!(&still, focused.last().unwrap(), "focus moved by itself");
+                    if still.as_deref() == Some("Add remote…") {
+                        assert!(painted, "the focused action is painted (reduced {reduced})");
+                    }
+                }
+            }
+            let labels: Vec<_> = focused.iter().map(|l| l.as_deref()).collect();
+            assert_eq!(
+                labels,
+                [
+                    Some(format!("Remotes {reduced}").as_str()),
+                    Some("Add remote…"),
+                    Some("After")
+                ],
+                "reduced {reduced}"
+            );
+        }
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
     }
 
     /// V22: a disclosure's header icon takes its tone (the checks header's red, amber or green).
