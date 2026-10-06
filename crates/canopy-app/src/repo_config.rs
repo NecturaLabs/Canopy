@@ -2,8 +2,8 @@
 //! a pull integrates, whether a fetch prunes branches and tags, whether commits are signed,
 //! autostash, tags on push, where a push goes, the conflict style, message cleanup and a new
 //! repository's first branch) and where each value is set, so Settings can show them beside
-//! Canopy's own choice and say which one applies (AGENTS.md, "Git settings"). Read through the same `git` that runs the operations, on a thread of its own:
-//! the UI thread never runs git.
+//! Canopy's own choice and say which one applies (AGENTS.md, "Git settings"). Read through the
+//! same `git` that runs the operations, on a thread of its own: the UI thread never runs git.
 
 use std::path::{Path, PathBuf};
 
@@ -80,6 +80,8 @@ pub struct GitFacts {
     /// `init.defaultBranch`.
     pub initial_branch: Option<ConfigValue>,
     pub remotes: Vec<Remote>,
+    /// The installed git's major and minor version, for the values Canopy would pass.
+    pub git: Option<(u32, u32)>,
     /// Why the configuration could not be read (git missing, not a repository).
     pub error: Option<String>,
 }
@@ -129,7 +131,10 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
         &["--global"]
     };
     let get = |key: &str| get_value(dir, scope, key);
-    let mut facts = GitFacts::default();
+    let mut facts = GitFacts {
+        git: canopy_core::cli::version_number(),
+        ..GitFacts::default()
+    };
     match get_bool(dir, scope, "fetch.prune") {
         Ok(v) => facts.fetch_prune = v,
         Err(e) => {

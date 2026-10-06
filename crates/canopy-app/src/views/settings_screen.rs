@@ -1414,6 +1414,34 @@ fn prune_tags_note(facts: &GitFacts, prune_tags: bool, follow: bool) -> Option<N
     )
 }
 
+/// What git's configuration says about autostash: `rebase.autoStash` decides rebases and
+/// `merge.autoStash` merges, so with only one set Canopy's switch still decides the other kind.
+fn autostash_note(facts: &GitFacts, autostash: bool, follow: bool) -> Option<Note> {
+    let values: Vec<&ConfigValue> = facts.autostash.iter().collect();
+    let mut note = config_note(
+        &values,
+        follow,
+        |v| v.as_bool() == Some(autostash),
+        |v| v.as_bool() == Some(true),
+        "on",
+        if autostash {
+            "--autostash"
+        } else {
+            "--no-autostash"
+        },
+        "pulls and rebases",
+    )?;
+    if let (true, [only]) = (follow, values.as_slice()) {
+        let rest = if only.key.eq_ignore_ascii_case("rebase.autoStash") {
+            "merges"
+        } else {
+            "rebases"
+        };
+        note.text = format!("{} Canopy's switch decides {rest}.", note.text);
+    }
+    Some(note)
+}
+
 /// What git's configuration says about one of Canopy's choices, set in `values`:
 /// - while Canopy follows it (`follow`), that it decides, with Canopy's `recommendation` where a
 ///   value is not `recommended`;
@@ -2741,23 +2769,8 @@ fn git(
         ui,
         "Autostash",
         "Pull and rebase even with uncommitted changes: git puts them aside first and back afterwards (--autostash). Recommended: on.",
-        f.and_then(|f| {
-            let values: Vec<&ConfigValue> = f.autostash.iter().collect();
-            config_note(
-                &values,
-                follow,
-                |v| v.as_bool() == Some(s.autostash),
-                |v| v.as_bool() == Some(true),
-                "on",
-                if s.autostash {
-                    "--autostash"
-                } else {
-                    "--no-autostash"
-                },
-                "pulls and rebases",
-            )
-        })
-        .as_ref(),
+        f.and_then(|f| autostash_note(f, s.autostash, follow))
+            .as_ref(),
         |ui| {
             // Each key decides only its own kind of operation: rebases or merges.
             let set = f.is_some_and(|f| f.autostash.len() == 2);
@@ -2855,8 +2868,6 @@ fn git(
         },
     );
     heading(ui, "Conflicts");
-    // The style git reads when Canopy passes it: zdiff3 needs git 2.35.
-    let git = canopy_core::cli::version_number();
     row_with_note(
         ui,
         "Conflict style",
@@ -2872,7 +2883,8 @@ fn git(
                         == Some(canopy_core::ConflictStyle::Zdiff3)
                 },
                 "both sides and the original, trimmed (zdiff3)",
-                &format!("merge.conflictStyle={}", ours.value(git)),
+                // The style git reads when Canopy passes it: zdiff3 needs git 2.35.
+                &format!("merge.conflictStyle={}", ours.value(f.git)),
                 "merges, rebases, cherry-picks, reverts and stashes",
             )
         })
@@ -5522,6 +5534,24 @@ mod tests {
             "{}",
             replaced.text
         );
+    }
+
+    /// With only one of the two autostash keys set, the note says which kind of operation
+    /// Canopy's switch still decides.
+    #[test]
+    fn the_autostash_note_names_what_canopys_switch_still_decides() {
+        let mut facts = GitFacts {
+            autostash: vec![fact("rebase.autoStash", "false")],
+            ..GitFacts::default()
+        };
+        let note = autostash_note(&facts, true, true).expect("a note");
+        assert!(note.text.ends_with("decides merges."), "{}", note.text);
+        facts.autostash = vec![fact("merge.autoStash", "true")];
+        let note = autostash_note(&facts, true, true).expect("a note");
+        assert!(note.text.ends_with("decides rebases."), "{}", note.text);
+        facts.autostash.push(fact("rebase.autoStash", "true"));
+        let note = autostash_note(&facts, true, true).expect("a note");
+        assert!(!note.text.contains("switch"), "{}", note.text);
     }
 
     /// When Canopy does not follow the git configuration it passes its pruning choice, so a

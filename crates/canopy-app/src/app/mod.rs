@@ -353,7 +353,7 @@ impl CanopyApp {
             Some("settings-git-commits") => {
                 app.settings_screen = Some(SettingsScreen::at_group(
                     settings_screen::Section::Git,
-                    "Conflicts",
+                    "Commits",
                 ));
             }
             Some("settings-integrations") => {
