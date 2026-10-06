@@ -103,7 +103,10 @@ impl CanopyApp {
                 Action::Pull => {
                     let strategy = self.settings.pull_mode.strategy();
                     if let Some(t) = self.tab() {
-                        t.op(Op::Pull { strategy });
+                        t.op(Op::Pull {
+                            strategy,
+                            follow_config: true,
+                        });
                     }
                 }
                 Action::Push => {
