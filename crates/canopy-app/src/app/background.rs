@@ -347,8 +347,7 @@ impl CanopyApp {
             match &self.updater.state {
                 UpdateState::Available(a) => {
                     let v = a.label();
-                    let skipped = self.settings.skipped_version.as_deref()
-                        == Some(a.build.to_string().as_str());
+                    let skipped = a.is_skipped(self.settings.skipped_version.as_deref());
                     if manual {
                         self.dialogs.open(Dialog::Update(a.clone()));
                     } else if !skipped {
