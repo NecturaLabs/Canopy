@@ -305,6 +305,9 @@ fn main() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport,
         persist_window: launch.screenshot.is_none() && launch.glass_soak.is_none(),
+        // Gradients and glows band without it; spelled out so a changed default cannot bring
+        // the bands back.
+        dithering: true,
         ..Default::default()
     };
     let result = eframe::run_native(
