@@ -232,6 +232,9 @@ impl CanopyApp {
                 Action::Cheatsheet => self.cheatsheet.toggle(),
                 Action::Settings => self.open_settings(SettingsScreen::default()),
                 Action::SettingsAt(section) => self.open_settings(SettingsScreen::at(section)),
+                Action::SettingsGroup(section, group) => {
+                    self.open_settings(SettingsScreen::at_group(section, group));
+                }
                 Action::RepositorySettings(path) => {
                     if let Some(i) = self.tabs.iter().position(|t| t.path == path) {
                         self.active = i;

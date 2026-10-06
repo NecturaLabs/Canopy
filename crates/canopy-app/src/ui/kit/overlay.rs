@@ -956,6 +956,10 @@ impl<'a> Popover<'a> {
             force: None,
         }
     }
+    /// The id to close it by ([`egui::Popup::close_id`]).
+    pub fn id(&self) -> Id {
+        self.id
+    }
     /// The content width (default: the content's own, at least the anchor's).
     pub fn width(mut self, width: f32) -> Self {
         self.width = Some(width);

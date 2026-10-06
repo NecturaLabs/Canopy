@@ -138,6 +138,8 @@ pub struct SettingsScreen {
     /// Remote URLs being edited on the repository page, by remote name, for this repository.
     remote_drafts_for: Option<PathBuf>,
     remote_drafts: HashMap<String, String>,
+    /// Scroll the page to this group heading on the next frame.
+    reveal: Option<&'static str>,
     /// The URL last saved for a remote, and when, until the configuration shows it.
     remote_saved: Option<(String, String, Instant)>,
     /// An export or import waiting on its file chooser.
@@ -290,6 +292,15 @@ impl SettingsScreen {
     pub fn at(section: Section) -> Self {
         Self {
             section,
+            ..Self::default()
+        }
+    }
+
+    /// The screen opened at `section`, scrolled to its group headed `group`.
+    pub fn at_group(section: Section, group: &'static str) -> Self {
+        Self {
+            section,
+            reveal: Some(group),
             ..Self::default()
         }
     }
@@ -490,7 +501,13 @@ pub fn show(
                                 tokens_changed: false,
                             };
                             if words.is_empty() {
-                                Filter::set(ui.ctx(), Filter::default());
+                                Filter::set(
+                                    ui.ctx(),
+                                    Filter {
+                                        reveal: page.screen.reveal.take(),
+                                        ..Filter::default()
+                                    },
+                                );
                                 page.section(ui, page.screen.section);
                             } else {
                                 page.results(ui, &words, body.height());
@@ -740,6 +757,8 @@ struct Filter {
     shown: bool,
     /// Rows drawn in this section.
     count: usize,
+    /// The group heading to scroll to once drawn.
+    reveal: Option<&'static str>,
 }
 
 impl Filter {
@@ -1584,7 +1603,10 @@ fn heading(ui: &mut Ui, text: &str) {
 
 fn heading_now(ui: &mut Ui, text: &str) {
     ui.add_space(theme::XS);
-    column_label(ui, text);
+    let label = column_label(ui, text);
+    if Filter::get(ui.ctx()).reveal == Some(text) {
+        label.scroll_to_me_animation(Some(Align::TOP), egui::style::ScrollAnimation::none());
+    }
     ui.add_space(theme::MD);
 }
 
@@ -4849,6 +4871,71 @@ mod tests {
             output.textures_delta.clear();
         }
         (screen, actions)
+    }
+
+    /// Where the group heading `group` is drawn, top edge, after opening `screen`.
+    fn heading_top(mut screen: SettingsScreen, group: &str) -> f64 {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let mut settings = Settings::default();
+        let mut tokens = TokenStore::default();
+        let mut actions = Vec::new();
+        let mut top = None;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(
+                        ui.ctx(),
+                        &mut screen,
+                        &mut settings,
+                        &mut tokens,
+                        &SettingsData {
+                            tabs: &[],
+                            update: &UpdateState::Idle,
+                            identity: IdentityView {
+                                repo: None,
+                                identity: None,
+                                error: None,
+                            },
+                        },
+                        &mut actions,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            top = output
+                .platform_output
+                .accesskit_update
+                .and_then(|u| {
+                    u.nodes
+                        .into_iter()
+                        .map(|(_, n)| n)
+                        .find(|n| n.label().or(n.value()) == Some(group))
+                })
+                .and_then(|n| n.bounds())
+                .map(|b| b.y0);
+        }
+        top.expect("the heading is drawn")
+    }
+
+    #[test]
+    fn settings_opened_at_a_group_shows_its_heading() {
+        let plain = heading_top(SettingsScreen::at(Section::Appearance), "Notifications");
+        assert!(plain > 800.0, "below the fold by default: {plain}");
+        let revealed = heading_top(
+            SettingsScreen::at_group(Section::Appearance, "Notifications"),
+            "Notifications",
+        );
+        assert!(
+            (0.0..400.0).contains(&revealed),
+            "scrolled to the top of the page: {revealed}"
+        );
     }
 
     fn fact(key: &str, value: &str) -> ConfigValue {

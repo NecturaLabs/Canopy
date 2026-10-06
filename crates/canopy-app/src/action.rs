@@ -68,6 +68,8 @@ pub enum Action {
     Settings,
     /// Settings, opened on one section.
     SettingsAt(Section),
+    /// Settings, opened on one section scrolled to the group with this heading.
+    SettingsGroup(Section, &'static str),
     /// Settings → This repository for the open repository at this path (made the active tab).
     RepositorySettings(PathBuf),
     /// A repository's own diff options (`None`: follow the defaults in Settings again).

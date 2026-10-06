@@ -559,10 +559,16 @@ impl Toasts {
             badge.paint(ui, egui::Rect::from_min_size(at, size));
         }
         let mut settings = false;
-        let shown = Popover::new("notification-center", &response)
-            .width(CENTER_WIDTH)
-            .show(|ui| settings = self.center(ui));
-        self.center_open = shown.is_some();
+        let popover = Popover::new("notification-center", &response).width(CENTER_WIDTH);
+        let popover_id = popover.id();
+        let chosen = self.chosen.len();
+        let shown = popover.show(|ui| settings = self.center(ui));
+        // What these open (Settings, a pull) takes over; the center would linger behind it.
+        let leave = settings || self.chosen.len() > chosen;
+        if leave {
+            egui::Popup::close_id(ui.ctx(), popover_id);
+        }
+        self.center_open = shown.is_some() && !leave;
         if self.center_open {
             self.unread = 0;
             // What is open in the center needs no card as well.
@@ -1390,5 +1396,76 @@ mod tests {
         toasts.push(&ctx, ToastKind::Error, Topic::Error, "Push failed", "no");
         assert!(toasts.items.is_empty(), "no card while the center is open");
         assert_eq!(toasts.history.len(), 2);
+    }
+
+    #[test]
+    fn the_center_closes_when_its_settings_link_opens_settings() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        motion::set_reduced(true);
+        let mut toasts = Toasts::default();
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Fetch failed", "no");
+        let frame = |toasts: &mut Toasts, events: Vec<egui::Event>| {
+            let mut settings = false;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(800.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
+                        settings = toasts.bell(ui).value;
+                    });
+                },
+            );
+            out.textures_delta.clear();
+            let nodes = out
+                .platform_output
+                .accesskit_update
+                .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect::<Vec<_>>())
+                .unwrap_or_default();
+            (nodes, settings)
+        };
+        let click = |nodes: &[egui::accesskit::Node], label: &str| {
+            let b = nodes
+                .iter()
+                .find(|n| n.label() == Some(label))
+                .and_then(egui::accesskit::Node::bounds)
+                .unwrap_or_else(|| panic!("{label} is drawn"));
+            let at = egui::pos2(
+                crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+                crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+            );
+            let mut events = vec![egui::Event::PointerMoved(at)];
+            for pressed in [true, false] {
+                events.push(egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+            }
+            events
+        };
+        let (nodes, _) = frame(&mut toasts, Vec::new());
+        let (_, _) = frame(&mut toasts, click(&nodes, "Notifications"));
+        let (nodes, _) = frame(&mut toasts, Vec::new());
+        assert!(toasts.center_open, "the click opened the center");
+        let (_, settings) = frame(&mut toasts, click(&nodes, "Notification settings"));
+        let (nodes, _) = frame(&mut toasts, Vec::new());
+        motion::set_reduced(false);
+        assert!(settings, "the link asks for Settings");
+        assert!(!toasts.center_open, "the center closed for it");
+        assert!(
+            !nodes
+                .iter()
+                .any(|n| n.label() == Some("Notification settings")),
+            "and is no longer drawn"
+        );
     }
 }
