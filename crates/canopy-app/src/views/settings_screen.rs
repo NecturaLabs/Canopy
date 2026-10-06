@@ -494,6 +494,7 @@ pub fn show(
                                 page.results(ui, &words, body.height());
                             }
                             result.tokens_changed |= page.tokens_changed;
+                            reveal_focus(ui);
                         });
                 },
             );
@@ -530,6 +531,33 @@ pub fn show(
     screen.picker.end_frame();
     result.close |= modal.should_close();
     result
+}
+
+/// Scrolls the page to a control of it that just took keyboard focus out of sight (Tab onto a
+/// row below the fold), so the focus ring is never hidden. Runs inside the page's scroll area.
+fn reveal_focus(ui: &Ui) {
+    let key = egui::Id::new("settings-revealed-focus");
+    let focused = ui.ctx().memory(egui::Memory::focused);
+    let seen = ui
+        .ctx()
+        .data(|d| d.get_temp::<Option<egui::Id>>(key))
+        .flatten();
+    if focused == seen {
+        return;
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(key, focused));
+    let Some(rect) = focused
+        .and_then(|id| ui.ctx().read_response(id))
+        .map(|r| r.rect)
+    else {
+        return;
+    };
+    let page = ui.min_rect();
+    let inside =
+        page.x_range().contains(rect.center().x) && page.y_range().contains(rect.center().y);
+    if inside && !ui.clip_rect().contains_rect(rect) {
+        ui.scroll_to_rect(rect.expand(theme::LG), None);
+    }
 }
 
 /// Everything a section's page draws from and writes to.
@@ -4369,6 +4397,91 @@ mod tests {
             modifiers: egui::Modifiers::default(),
         }]);
         assert_eq!(zoom, 1.5, "Enter must apply the complete percentage");
+    }
+
+    /// A11Y-12: Tab onto a control below the visible part of a page scrolls the page to it, so
+    /// keyboard focus is never out of sight.
+    #[test]
+    fn tab_scrolls_the_page_to_the_focused_control() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 560.0));
+        let mut settings = Settings::default();
+        let mut tokens = TokenStore::default();
+        let mut screen = SettingsScreen::at(Section::Appearance);
+        // The clock moves a second a frame, so a scroll's glide ends between frames.
+        let mut time = 0.0;
+        let mut frame = |events: Vec<egui::Event>| {
+            time += 1.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(bounds),
+                    events,
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(
+                        ui.ctx(),
+                        &mut screen,
+                        &mut settings,
+                        &mut tokens,
+                        &SettingsData {
+                            tabs: &[],
+                            update: &UpdateState::Idle,
+                            identity: IdentityView {
+                                repo: None,
+                                identity: None,
+                                error: None,
+                            },
+                        },
+                        &mut Vec::new(),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        };
+        for _ in 0..3 {
+            frame(Vec::new());
+        }
+        let tab = |pressed| egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut checked = 0;
+        for _ in 0..60 {
+            frame(vec![tab(true), tab(false)]);
+            // The scroll starts the frame after it is asked for and is read a frame later.
+            for _ in 0..4 {
+                frame(Vec::new());
+            }
+            let Some(id) = ctx.memory(egui::Memory::focused) else {
+                continue;
+            };
+            let (Some(focused), Some(body)) = (
+                ctx.read_response(id),
+                ctx.memory(|m| m.area_rect(egui::Id::new("settings"))),
+            ) else {
+                continue;
+            };
+            // Only controls of the page body (right of the navigation, under the header).
+            if focused.rect.left() < body.left() + NAV_WIDTH
+                || focused.rect.top() < body.top() + theme::metrics().pane_header_height - 1.0
+            {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                focused.rect.bottom() <= body.bottom() + 0.5,
+                "focused {id:?} at {:?} is below the card {body:?}",
+                focused.rect
+            );
+        }
+        assert!(checked > 10, "Tab reached only {checked} page controls");
     }
 
     #[test]
