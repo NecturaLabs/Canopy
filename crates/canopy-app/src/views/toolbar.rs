@@ -407,9 +407,12 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
                     .tooltip(pop_tip)
                     .enabled(latest.is_some() && !busy)
                     .disabled_reason(if busy { busy_reason } else { "No stashes" });
-                if running.show(ui, pop, Tool::Pop, Some(Command::PopStash)) {
-                    actions.push(Action::Op(Op::StashApply {
-                        index: 0,
+                if running.show(ui, pop, Tool::Pop, Some(Command::PopStash))
+                    && let Some(st) = latest
+                {
+                    // By its commit: the stash the tooltip named, even if the list changed.
+                    actions.push(Action::Op(Op::StashApplyCommit {
+                        oid: st.oid,
                         pop: true,
                     }));
                 }
@@ -471,7 +474,29 @@ pub fn actions_bar(ui: &mut Ui, tab: &RepoTab, actions: &mut Vec<Action>) {
     } else {
         theme::Fill::flat(s.deck.top)
     };
-    paint::scroll_fade_x(ui, &output, ground);
+    tool_fade(ui, &output, ground);
+}
+
+/// How far tools hidden past an edge of the bar fade into it: about one tool's width, so a tool
+/// the edge cuts through dissolves instead of reading as a clipped word (the kit's 16-point side
+/// fade suits the narrower tab strip).
+const TOOL_FADE: f32 = theme::XXL + theme::LG;
+
+/// Fades the bar into `ground` at each side where tools lie beyond it, opaque at the edge.
+fn tool_fade<R>(ui: &Ui, bar: &egui::scroll_area::ScrollAreaOutput<R>, ground: theme::Fill) {
+    let rect = bar.inner_rect;
+    let left = bar.state.offset.x;
+    let right = bar.content_size.x - rect.width() - bar.state.offset.x;
+    let painter = ui.painter_at(rect);
+    for (hidden, edge) in [
+        (left, paint::FadeEdge::Left),
+        (right, paint::FadeEdge::Right),
+    ] {
+        if hidden > 0.5 {
+            let band = TOOL_FADE.min(hidden).min(rect.width() / 4.0);
+            painter.add(paint::edge_fade(rect, edge, band, ground, 1.0));
+        }
+    }
 }
 
 /// The caret beside Pull: a menu of every pull strategy, the one the Pull tool uses checked and
@@ -598,6 +623,22 @@ fn open_in_list(
         (StateFilter::All, l) => Some(l.iter().filter(|r| r.state == RequestState::Open).count()),
         (StateFilter::Closed, _) => None,
     }
+}
+
+/// The operation that pops the latest stash, as the keyboard and the palette run it: by the
+/// stash's commit, so a stash list that changed since the snapshot never pops another stash. With
+/// no stash known, plain `git stash pop`, so git says why nothing happened.
+pub fn pop_latest(tab: &RepoTab) -> Option<Op> {
+    Some(match tab.snap.as_ref()?.stashes.first() {
+        Some(latest) => Op::StashApplyCommit {
+            oid: latest.oid,
+            pop: true,
+        },
+        None => Op::StashApply {
+            index: 0,
+            pop: true,
+        },
+    })
 }
 
 /// The count on the Requests view: what the list says, else the last count it gave for this
@@ -1015,6 +1056,20 @@ mod tests {
                 None,
             ),
             (
+                Op::StashApplyCommit {
+                    oid: canopy_core::Oid::ZERO_SHA1,
+                    pop: true,
+                },
+                Some(Tool::Pop),
+            ),
+            (
+                Op::StashApplyCommit {
+                    oid: canopy_core::Oid::ZERO_SHA1,
+                    pop: false,
+                },
+                None,
+            ),
+            (
                 Op::Merge("topic".into(), MergeMode::Default),
                 Some(Tool::Merge),
             ),
@@ -1334,6 +1389,50 @@ mod tests {
             ),
             "{actions:?}"
         );
+    }
+
+    /// QVIS-4: tools the bar hides past its right edge fade out over about a tool's width, opaque
+    /// at the edge, so a tool cut mid-word never reads as a whole label (16 points at 85% left
+    /// "Mer" of Merge legible at 960x600).
+    #[test]
+    fn a_tool_cut_at_the_bar_edge_fades_out() {
+        let ctx = context();
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let mut tab = repo_tab("alpha");
+        tab.snap = Some(Arc::new(canopy_core::RepoSnapshot::default()));
+        let width = 400.0;
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame(&ctx, Vec::new(), |ui| {
+                let slot = Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 60.0));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                    actions_bar(ui, &tab, &mut Vec::new());
+                });
+            })
+            .0;
+        }
+        let fade = shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Mesh(mesh) => Some(mesh),
+                _ => None,
+            })
+            .find(|mesh| {
+                let r = mesh.calc_bounds();
+                (r.right() - width).abs() < 0.5
+                    && r.height() > 20.0
+                    && mesh.vertices.iter().any(|v| v.color.a() == 0)
+            })
+            .expect("a fade at the bar's right edge");
+        let band = fade.calc_bounds().width();
+        assert!(band >= 40.0, "the fade is only {band} points wide");
+        let edge = fade
+            .vertices
+            .iter()
+            .filter(|v| (v.pos.x - width).abs() < 0.5)
+            .map(|v| v.color.a())
+            .min();
+        assert_eq!(edge, Some(255), "the fade is not opaque at the edge");
     }
 
     /// Override O2: an action bar too narrow for every tool names only the active view and drops

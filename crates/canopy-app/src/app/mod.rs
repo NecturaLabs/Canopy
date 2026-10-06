@@ -70,6 +70,10 @@ pub const OVERLAYS: &[&str] = &[
     "about",
     "toasts",
     "gallery",
+    "menu-remotes",
+    "menu-branch",
+    "menu-commit",
+    "menu-file",
     "open",
     "open-error",
     "clone",
@@ -81,6 +85,7 @@ pub const OVERLAYS: &[&str] = &[
     "new-tag",
     "stash",
     "add-remote",
+    "add-remote-refused",
     "publish",
     "new-request",
     "confirm",
@@ -275,15 +280,9 @@ impl CanopyApp {
             palette: CommandPalette::default(),
             cheatsheet: Cheatsheet::default(),
             toasts: Toasts::default(),
-            screenshot: launch.screenshot.map(|path| Screenshot {
-                path,
-                ready_frames: 0,
-                ready_since: None,
-                requested: false,
-                started: 0.0,
-                popup: (launch.overlay.as_deref() == Some("diff-options"))
-                    .then(|| egui::Id::new(crate::views::diff::OPTIONS_POPUP)),
-            }),
+            screenshot: launch
+                .screenshot
+                .map(|path| Screenshot::new(path, launch.overlay.as_deref())),
             initial_view: launch.view,
             clone: None,
             opener: open::start(&cc.egui_ctx),
@@ -327,6 +326,11 @@ impl CanopyApp {
         }
         if !shooting && !app.settings.identity_asked {
             app.request_identity(IdentityJob::ReadGlobal);
+        }
+        if let Some(menu) = app.screenshot.as_ref().and_then(|s| s.menu.as_ref()) {
+            // The menu's widget is found by what a screen reader hears.
+            cc.egui_ctx.enable_accesskit();
+            app.initial_view.get_or_insert(menu.view);
         }
         match launch.overlay.as_deref() {
             Some("settings") => app.settings_screen = Some(SettingsScreen::default()),
@@ -451,8 +455,9 @@ impl CanopyApp {
                 repo: None,
                 scope: canopy_core::identity::Scope::Global,
             }),
-            Some(other) => app.open_dialog_overlay(other),
-            None => {}
+            // A menu (screenshot::MenuShot) opens by a right click once the window has settled.
+            Some(other) if !other.starts_with("menu-") => app.open_dialog_overlay(other),
+            Some(_) | None => {}
         }
         if git_version_missing(&app.git_version) {
             app.toasts.push(&cc.egui_ctx, ToastKind::Error, "git was not found", "Canopy runs the git executable for changes and network operations. Install git and make sure it is on PATH.");
@@ -602,7 +607,7 @@ impl CanopyApp {
     }
 
     /// Applies settings that changed in the settings screen.
-    fn settings_changed(&mut self, ctx: &egui::Context, before: &Settings) {
+    fn settings_changed(&mut self, ctx: &egui::Context, before: Watched) {
         let s = &self.settings;
         if s.motion == crate::ui::motion::MotionPref::System
             && before.motion != crate::ui::motion::MotionPref::System
@@ -614,7 +619,7 @@ impl CanopyApp {
         if (ctx.zoom_factor() - s.zoom).abs() > f32::EPSILON {
             apply_zoom(ctx, s.zoom);
         }
-        if s.gitlab_hosts != before.gitlab_hosts {
+        if Watched::hash(&s.gitlab_hosts) != before.gitlab_hosts {
             self.gitlab_hosts = s.gitlab_host_list();
             for t in &mut self.tabs {
                 t.update_forges(&self.gitlab_hosts);
@@ -647,6 +652,46 @@ impl CanopyApp {
                 t.restart_host(ctx, saved, enabled);
             }
         }
+    }
+}
+
+/// Names the window for assistive technology: the active repository and the app, as a window
+/// title reads ("showcase — Canopy"), or just "Canopy" with none open.
+fn name_window(ctx: &egui::Context, repository: Option<&str>) {
+    let name = repository.map_or_else(|| "Canopy".to_owned(), |r| format!("{r} — Canopy"));
+    ctx.accesskit_node_builder(egui::accesskit_root_id(), |node| node.set_label(name));
+}
+
+/// The settings whose change needs more than a repaint, as they were before Settings drew a
+/// frame: compared after it, without copying the whole settings every frame Settings is open.
+#[derive(Debug, Clone, Copy)]
+struct Watched {
+    motion: crate::ui::motion::MotionPref,
+    diff: settings::DiffPrefs,
+    split_diff: bool,
+    syntax_highlight: bool,
+    hosting_api: bool,
+    /// A hash of the GitLab hosts text.
+    gitlab_hosts: u64,
+}
+
+impl Watched {
+    fn of(s: &Settings) -> Self {
+        Self {
+            motion: s.motion,
+            diff: s.diff,
+            split_diff: s.split_diff,
+            syntax_highlight: s.syntax_highlight,
+            hosting_api: s.hosting_api,
+            gitlab_hosts: Self::hash(&s.gitlab_hosts),
+        }
+    }
+
+    fn hash(text: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        h.finish()
     }
 }
 
@@ -702,11 +747,13 @@ fn start_askpass(ctx: &egui::Context) -> Option<crate::askpass::Server> {
 impl eframe::App for CanopyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        name_window(&ctx, self.tabs.get(self.active).map(|t| t.name.as_str()));
         update_window_minimum(&ctx);
         self.apply_look(&ctx);
         let p = palette(&ctx);
         let compact = ctx.content_rect().width() < theme::COMPACT_WIDTH;
         self.poll(&ctx);
+        self.apply_repo_looks();
         self.auto_fetch(&ctx);
         let mut actions = Vec::new();
         self.keyboard(&ctx, &mut actions);
@@ -860,9 +907,7 @@ impl eframe::App for CanopyApp {
                 View::Changes => changes::show(ui, tab, &mut actions)
                     .and_then(|(list, handle)| PaneSplit::beside(list, handle)),
                 View::Requests => requests::show(ui, tab, self.settings.hosting_api, &mut actions)
-                    .and_then(|list| {
-                        PaneSplit::beside(list, resize_handle(requests::LIST_PANEL.into()))
-                    }),
+                    .and_then(|(list, handle)| PaneSplit::beside(list, handle)),
             });
         } else {
             // Nothing on the welcome screen holds the keyboard as a pane: no focused-pane edge.
@@ -883,13 +928,8 @@ impl eframe::App for CanopyApp {
         }
         self.folder_picker.begin_frame();
         if let Some(screen) = &mut self.settings_screen {
-            let before = self.settings.clone();
+            let before = Watched::of(&self.settings);
             let active_tab = self.tabs.get(self.active);
-            let forges: Vec<canopy_core::forge::Forge> = self
-                .tabs
-                .iter()
-                .flat_map(|t| t.forges.iter().map(|(_, f)| f.clone()))
-                .collect();
             screen.set_picture_note(active_tab.and_then(|tab| {
                 crate::avatars::explain_tab(&self.settings, tab)
                     .map(settings_screen::PictureNote::from)
@@ -900,7 +940,7 @@ impl eframe::App for CanopyApp {
                 &mut self.settings,
                 &mut self.tokens,
                 &settings_screen::SettingsData {
-                    forges: &forges,
+                    tabs: &self.tabs,
                     update: &self.updater.state,
                     identity: settings_screen::IdentityView {
                         repo: active_tab.map(|t| t.path.as_path()),
@@ -927,7 +967,7 @@ impl eframe::App for CanopyApp {
                 self.folder_picker.cancel();
                 self.settings_screen = None;
             }
-            self.settings_changed(&ctx, &before);
+            self.settings_changed(&ctx, before);
         }
         // Dialogs draw above the settings screen (the Privacy Policy opens from there).
         if let Some(d) = self.dialogs.current_mut() {
@@ -990,8 +1030,7 @@ impl eframe::App for CanopyApp {
                     }
                 }
                 crate::ui::toast::Recovery::Accounts => {
-                    self.settings_screen =
-                        Some(SettingsScreen::at(settings_screen::Section::Accounts));
+                    self.open_settings(SettingsScreen::at(settings_screen::Section::Accounts));
                 }
             }
         }
@@ -1016,6 +1055,10 @@ impl eframe::App for CanopyApp {
         if let Some(soak) = &self.glass_soak {
             println!("{}", soak.report());
         }
+    }
+
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.screenshot_input(raw_input);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1065,12 +1108,6 @@ impl PaneSplit {
             handle: Some(handle),
         })
     }
-}
-
-/// The resize handle egui registers for a resizable panel: the panel id with "__resize", centred
-/// on its inner edge, each frame the panel is shown.
-fn resize_handle(panel: egui::Id) -> egui::Id {
-    panel.with("__resize")
 }
 
 /// The central content pane: flush on the pane ground in Standard. In Deeper a floating card over
@@ -1315,9 +1352,95 @@ fn navigation_menu(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) -> eg
     button
 }
 
+/// An app with no window, threads or saved state, for tests of the app's own logic.
+#[cfg(test)]
+pub(super) fn test_app() -> CanopyApp {
+    CanopyApp {
+        settings: Settings::default(),
+        tabs: Vec::new(),
+        active: 0,
+        dialogs: DialogStack::default(),
+        settings_screen: None,
+        folder_picker: crate::ui::folder_picker::FolderPicker::default(),
+        palette: CommandPalette::default(),
+        cheatsheet: Cheatsheet::default(),
+        toasts: Toasts::default(),
+        screenshot: None,
+        initial_view: None,
+        clone: None,
+        opener: None,
+        pending_opens: 0,
+        git_version: String::new(),
+        tokens: TokenStore::default(),
+        updater: Updater::default(),
+        identity_worker: None,
+        global_identity: None,
+        global_identity_error: None,
+        gitlab_hosts: Vec::new(),
+        update_check_due: false,
+        askpass: None,
+        trust_seen: 0,
+        applied: None,
+        gallery: None,
+        glass_soak: None,
+    }
+}
+
+/// A tab on no real repository (its worker answers nothing) showing `snap`.
+#[cfg(test)]
+pub(super) fn test_tab(snap: canopy_core::RepoSnapshot) -> RepoTab {
+    let (worker, _, _) = crate::worker::Worker::detached();
+    let mut tab = RepoTab::with_worker(
+        PathBuf::from("fixture"),
+        100,
+        settings::DiffPrefs::default(),
+        worker,
+    );
+    tab.snap = Some(std::sync::Arc::new(snap));
+    tab
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A11Y-13: the window has an accessible name, with the repository it shows.
+    #[test]
+    fn the_window_is_named_for_screen_readers() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let root = |repository: Option<&str>| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                name_window(ui.ctx(), repository);
+            });
+            out.textures_delta.clear();
+            let update = out.platform_output.accesskit_update.expect("a tree");
+            let root = update.tree.expect("its root").root;
+            update
+                .nodes
+                .into_iter()
+                .find(|(id, _)| *id == root)
+                .and_then(|(_, n)| n.label().map(str::to_owned))
+        };
+        assert_eq!(root(None).as_deref(), Some("Canopy"));
+        assert_eq!(root(Some("showcase")).as_deref(), Some("showcase — Canopy"));
+    }
+
+    /// review-views-9: Settings is compared by the few values whose change needs work, not by a
+    /// copy of every setting each frame; a changed GitLab host list still reaches the tabs.
+    #[test]
+    fn a_settings_change_is_seen_without_copying_the_settings() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let before = Watched::of(&app.settings);
+        app.settings.split_diff = !app.settings.split_diff;
+        "git.example.com".clone_into(&mut app.settings.gitlab_hosts);
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        app.settings_changed(&ctx, before);
+        assert_eq!(app.gitlab_hosts, ["git.example.com"]);
+        assert_eq!(app.tabs[0].split_diff, app.settings.split_diff);
+    }
 
     /// Each mask fans over the part of a card's square corner outside its rounded arc: the arc's
     /// middle points from its centre straight at the corner, for cards above each other and side

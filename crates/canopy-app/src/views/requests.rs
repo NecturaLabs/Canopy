@@ -32,6 +32,7 @@ use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::{Skeleton, Spinner};
 use crate::ui::kit::row::{Disclosure, ListRow, RowKind, SectionHeader};
 use crate::ui::kit::select::{self, Select};
+use crate::ui::kit::split::{self, SplitAxis, SplitHandle};
 use crate::ui::kit::surface::{Callout, EmptyAction, EmptyState, InsetBox, NoticeAction};
 use crate::ui::kit::{self, Button, IconButton, Size, Tone, paint};
 use crate::ui::theme::{self, Style, palette};
@@ -47,14 +48,15 @@ const LOADING: &str = "Loading the request…";
 const DETAILS_FAILED: &str = "The request's details could not be loaded";
 /// The widest a branch pill in the request header grows before it is cut.
 const BRANCH_PILL_MAX: f32 = 240.0;
-/// Shows the requests view. Returns the list panel's rectangle when the list and the details sit
-/// side by side, for the content pane's two cards (`app::PaneSplit::beside`).
+/// Shows the requests view. Returns the list panel's rectangle and the id of the handle between
+/// it and the details when they sit side by side, for the content pane's two cards
+/// (`app::PaneSplit::beside`).
 pub fn show(
     ui: &mut Ui,
     tab: &mut RepoTab,
     api_enabled: bool,
     actions: &mut Vec<Action>,
-) -> Option<Rect> {
+) -> Option<(Rect, Id)> {
     state_banner::show(ui, tab, actions);
     let Some((_, forge)) = tab.forge().cloned() else {
         let local = tab.snap.as_ref().is_some_and(|s| s.remotes.is_empty());
@@ -104,11 +106,23 @@ pub fn show(
         0
     };
     let pane_max = (ui.available_width() * 0.4).max(160.0);
-    let list_panel = egui::Panel::left(LIST_PANEL)
-        .resizable(true)
-        .default_size(pane_max.min(380.0))
-        .min_size(pane_max.min(220.0))
-        .max_size(pane_max.min(640.0))
+    let (lo, hi, default_width) = (
+        pane_max.min(220.0),
+        pane_max.min(640.0),
+        pane_max.min(380.0),
+    );
+    // The list's width: where its handle is being dragged to, else the panel's own (kept across
+    // restarts).
+    let panel_id = Id::new(LIST_PANEL);
+    let handle_id = SplitHandle::id_in(ui, LIST_SPLIT);
+    let stored = egui::containers::panel::PanelState::load(ui.ctx(), panel_id)
+        .map_or(default_width, |state| state.size().x);
+    let mut width = split::dragged_size(ui.ctx(), handle_id, SplitAxis::Columns, false, lo..=hi)
+        .unwrap_or(stored)
+        .clamp(lo, hi);
+    let list_panel = egui::Panel::left(panel_id)
+        .resizable(false)
+        .exact_size(width)
         .frame(egui::Frame::new().fill(list_ground).inner_margin(Margin {
             right: half_gutter,
             ..Margin::ZERO
@@ -126,11 +140,29 @@ pub fn show(
             ..Margin::ZERO
         }))
         .show(ui, |ui| detail(ui, tab, kind, actions));
-    Some(list_panel.response.rect)
+    // Shown over both panes, so their scrolling cannot take the drag from it.
+    let rect = list_panel.response.rect;
+    let handle = SplitHandle::new(LIST_SPLIT, &mut width, SplitAxis::Columns)
+        .range(lo..=hi)
+        .default_size(default_width)
+        .label("Resize the request list")
+        .seam(false)
+        .show(ui, rect.right(), rect.y_range());
+    if handle.changed()
+        && let Some(mut state) = egui::containers::panel::PanelState::load(ui.ctx(), panel_id)
+    {
+        state.outer_rect.max.x = state.outer_rect.min.x + width;
+        ui.ctx()
+            .data_mut(|data| data.insert_persisted(panel_id, state));
+        ui.ctx().request_repaint();
+    }
+    Some((rect, handle.id))
 }
 
-/// The list panel's id: its resize handle, `<id>/__resize`, marks the seam between the two cards.
-pub const LIST_PANEL: &str = "requests-list";
+/// The id of the request list's panel, beside the details (its width is kept under it).
+const LIST_PANEL: &str = "requests-list";
+/// The salt of the handle between the request list and the details.
+const LIST_SPLIT: &str = "requests-list";
 
 /// The checks' disclosure line, its glyph and its tone (V22): red when any failed, amber while
 /// any run, green when all passed.
@@ -1282,10 +1314,12 @@ fn action_bar(
     if let Some(Some(source)) = tab.requests.token
         && source != TokenSource::Saved
     {
-        ui.label(
-            RichText::new(format!("{}  Using the token {}", icon::KEY, source.label()))
-                .size(m.small_size)
-                .color(p.text_faint),
+        commit_detail::without_icons(
+            ui.label(
+                RichText::new(format!("{}  Using the token {}", icon::KEY, source.label()))
+                    .size(m.small_size)
+                    .color(p.text_faint),
+            ),
         );
     }
 }
@@ -2279,32 +2313,65 @@ mod tests {
         assert_eq!(checks_summary(0, 0, 4).2, "All 4 checks passed");
     }
 
-    /// Deeper's seam between the cards follows the list panel's resize handle: egui registers
-    /// it under `<panel id>/__resize`, centred on the panel's inner edge.
+    /// polish F1: the request list is resized by the kit's split handle, like every other pane
+    /// split: it sits on the list's edge (where Deeper's cards meet), keeps a saved width, and
+    /// moves with the arrow keys.
     #[test]
-    fn the_list_handle_marks_the_edge_of_the_list_panel() {
+    fn the_list_split_handle_keeps_a_saved_width_and_resizes_from_the_keyboard() {
         let ctx = egui::Context::default();
-        let (mut edge, mut handle) = (None, None);
-        for _ in 0..2 {
-            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                egui::CentralPanel::default().show(ui, |ui| {
-                    let list = egui::Panel::left(LIST_PANEL)
-                        .resizable(true)
-                        .default_size(200.0)
-                        .show(ui, |ui| ui.label("list"));
-                    edge = Some(list.response.rect.right());
-                    handle = ui
-                        .ctx()
-                        .read_response(Id::new(LIST_PANEL).with("__resize"))
-                        .map(|r| r.rect.center().x);
-                });
-            });
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut tab = test_tab();
+        let forge = canopy_core::forge::Forge::parse("https://github.com/acme/widgets.git", &[])
+            .expect("a GitHub remote");
+        tab.forges = vec![("origin".to_owned(), forge)];
+        let panel = Id::new(LIST_PANEL);
+        // Saved by an earlier run: 300 points wide.
+        ctx.data_mut(|d| {
+            d.insert_persisted(
+                panel,
+                egui::containers::panel::PanelState {
+                    outer_rect: Rect::from_min_size(egui::Pos2::ZERO, vec2(300.0, 600.0)),
+                },
+            );
+        });
+        let mut t = 0.0;
+        let mut frame = |events: Vec<egui::Event>, tab: &mut RepoTab| {
+            t += 0.05;
+            let mut shown = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 700.0))),
+                    time: Some(t),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    shown = show(ui, tab, true, &mut Vec::new())
+                        .map(|(list, handle)| (list, ui.ctx().read_response(handle)));
+                },
+            );
             output.textures_delta.clear();
-        }
-        let (edge, handle) = (edge.unwrap_or(f32::NAN), handle.unwrap_or(f32::NAN));
-        assert!(
-            (edge - handle).abs() < 1.0,
-            "panel edge {edge}, handle {handle}"
-        );
+            shown.expect("the list is shown")
+        };
+        let (list, handle) = frame(Vec::new(), &mut tab);
+        assert!((list.width() - 300.0).abs() < 1.0, "{list:?}");
+        let handle = handle.expect("the handle is shown");
+        assert!((handle.rect.center().x - list.right()).abs() < 1.0);
+
+        ctx.memory_mut(|m| m.request_focus(handle.id));
+        let right = vec![egui::Event::Key {
+            key: egui::Key::ArrowRight,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }];
+        frame(right, &mut tab);
+        let (list, _) = frame(Vec::new(), &mut tab);
+        let wanted = 300.0 + split::KEY_STEP;
+        assert!((list.width() - wanted).abs() < 1.0, "{list:?}");
+        let saved = egui::containers::panel::PanelState::load(&ctx, panel).expect("saved");
+        assert!((saved.size().x - wanted).abs() < 1.0, "{saved:?}");
     }
 }

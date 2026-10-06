@@ -145,6 +145,9 @@ pub struct SettingsScreen {
     /// Stay on This repository until a repository is open (the screenshot overlay opens
     /// Settings before its repository's tab); cleared once one is.
     awaiting_repository: bool,
+    /// Where clones go when no folder is chosen (~/src when it exists, else home), looked up
+    /// once while the screen is open rather than every frame.
+    default_clone_parent: Option<String>,
 }
 
 /// Why the active repository's authors show initials instead of pictures
@@ -181,7 +184,8 @@ struct FactsSlot {
     asked: bool,
     path: Option<PathBuf>,
     rx: Option<Receiver<GitFacts>>,
-    facts: Option<GitFacts>,
+    /// Shared, so a page can hold them while it changes the screen without copying them.
+    facts: Option<Arc<GitFacts>>,
     /// When the last read ended.
     read_at: Option<Instant>,
 }
@@ -198,7 +202,7 @@ impl FactsSlot {
     }
 
     /// The facts for `path`, starting a read the first time and when `path` changes.
-    fn get(&mut self, ctx: &egui::Context, path: Option<&Path>) -> Option<&GitFacts> {
+    fn get(&mut self, ctx: &egui::Context, path: Option<&Path>) -> Option<&Arc<GitFacts>> {
         let path = path.map(Path::to_path_buf);
         if !self.asked || self.path != path {
             if self.path != path {
@@ -210,7 +214,7 @@ impl FactsSlot {
             self.path = path;
         }
         if let Some(facts) = self.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
-            self.facts = Some(facts);
+            self.facts = Some(Arc::new(facts));
             self.rx = None;
             self.read_at = Some(Instant::now());
         }
@@ -219,11 +223,11 @@ impl FactsSlot {
 }
 
 impl FactsCache {
-    fn global(&mut self, ctx: &egui::Context) -> Option<&GitFacts> {
+    fn global(&mut self, ctx: &egui::Context) -> Option<&Arc<GitFacts>> {
         self.global.get(ctx, None)
     }
 
-    fn repo(&mut self, ctx: &egui::Context, path: &Path) -> Option<&GitFacts> {
+    fn repo(&mut self, ctx: &egui::Context, path: &Path) -> Option<&Arc<GitFacts>> {
         self.repo.get(ctx, Some(path))
     }
 }
@@ -310,6 +314,24 @@ impl SettingsScreen {
         self.search.focus = true;
     }
 
+    /// Where clones go: the chosen folder, else the default, whose folder check runs once per
+    /// opening of the screen.
+    fn clone_parent(&mut self, s: &Settings) -> String {
+        if s.clone_dir.trim().is_empty() {
+            self.default_clone_parent
+                .get_or_insert_with(|| Settings::default().clone_parent())
+                .clone()
+        } else {
+            s.clone_parent()
+        }
+    }
+
+    /// Whether the search field takes the caret on the next frame.
+    #[cfg(test)]
+    pub fn search_focus_pending(&self) -> bool {
+        self.search.focus
+    }
+
     /// Escape: clears the search and returns true, or returns false when nothing is searched for
     /// (Settings then closes).
     pub fn dismiss_search(&mut self) -> bool {
@@ -334,7 +356,8 @@ pub struct IdentityView<'a> {
 }
 
 pub struct SettingsData<'a> {
-    pub forges: &'a [Forge],
+    /// The open repositories' tabs: Accounts lists the hosts of their GitHub/GitLab remotes.
+    pub tabs: &'a [crate::tab::RepoTab],
     pub update: &'a UpdateState,
     pub identity: IdentityView<'a>,
 }
@@ -440,7 +463,7 @@ pub fn show(
             child.set_clip_rect(body.intersect(ui.clip_rect()));
             let words = screen.search.words();
             let scroll_salt = words.is_empty().then_some(screen.section);
-            overlay::scroll_body(
+            let page = overlay::scroll_body(
                 &mut child,
                 ("settings-content", scroll_salt),
                 body.height(),
@@ -471,9 +494,11 @@ pub fn show(
                                 page.results(ui, &words, body.height());
                             }
                             result.tokens_changed |= page.tokens_changed;
+                            reveal_focus(ui);
                         });
                 },
             );
+            page_fade(&child, &page, s.pane);
             // The ring goes over the chrome painted inside the card.
             paint::rim(
                 ui.painter(),
@@ -509,6 +534,61 @@ pub fn show(
     result
 }
 
+/// How far a Settings page fades into the card at an edge where more of it lies: a full line of
+/// row text, so the line the card's edge cuts through is never left legible but half drawn (the
+/// kit's 12-point scroll fade suits short lists, not a page of paragraphs).
+const PAGE_FADE: f32 = theme::XL + theme::XS;
+
+/// Fades the page into `ground` at its top and bottom where more of it lies beyond, over the
+/// kit's own scroll fade.
+fn page_fade<R>(ui: &Ui, page: &egui::scroll_area::ScrollAreaOutput<R>, ground: Color32) {
+    let rect = page.inner_rect;
+    let above = page.state.offset.y;
+    let below = page.content_size.y - rect.height() - page.state.offset.y;
+    let painter = ui.painter_at(rect);
+    for (hidden, edge) in [
+        (above, paint::FadeEdge::Top),
+        (below, paint::FadeEdge::Bottom),
+    ] {
+        if hidden > 1.0 {
+            painter.add(paint::edge_fade(
+                rect,
+                edge,
+                PAGE_FADE.min(hidden),
+                Fill::flat(ground),
+                1.0,
+            ));
+        }
+    }
+}
+
+/// Scrolls the page to a control of it that just took keyboard focus out of sight (Tab onto a
+/// row below the fold), so the focus ring is never hidden. Runs inside the page's scroll area.
+fn reveal_focus(ui: &Ui) {
+    let key = egui::Id::new("settings-revealed-focus");
+    let focused = ui.ctx().memory(egui::Memory::focused);
+    let seen = ui
+        .ctx()
+        .data(|d| d.get_temp::<Option<egui::Id>>(key))
+        .flatten();
+    if focused == seen {
+        return;
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(key, focused));
+    let Some(rect) = focused
+        .and_then(|id| ui.ctx().read_response(id))
+        .map(|r| r.rect)
+    else {
+        return;
+    };
+    let page = ui.min_rect();
+    let inside =
+        page.x_range().contains(rect.center().x) && page.y_range().contains(rect.center().y);
+    if inside && !ui.clip_rect().contains_rect(rect) {
+        ui.scroll_to_rect(rect.expand(theme::LG), None);
+    }
+}
+
 /// Everything a section's page draws from and writes to.
 struct Page<'a, 'd> {
     screen: &'a mut SettingsScreen,
@@ -533,23 +613,33 @@ impl Page<'_, '_> {
         match section {
             Section::Appearance => appearance(ui, settings, &mut screen.zoom_preview),
             Section::Git => git(ui, screen, settings, &data.identity, actions),
-            Section::Integrations => integrations(
-                ui,
-                settings,
-                &mut screen.picker,
-                &mut screen.custom_launchers,
-            ),
+            Section::Integrations => {
+                let parent = screen.clone_parent(settings);
+                integrations(
+                    ui,
+                    settings,
+                    &mut screen.picker,
+                    &mut screen.custom_launchers,
+                    &parent,
+                );
+            }
             Section::Accounts => {
-                *tokens_changed |= accounts(ui, screen, settings, tokens, data.forges, actions);
+                let forges = data
+                    .tabs
+                    .iter()
+                    .flat_map(|t| t.forges.iter().map(|(_, f)| f));
+                *tokens_changed |= accounts(ui, screen, settings, tokens, forges, actions);
             }
             Section::Updates => updates(ui, settings, data.update, actions),
             Section::Privacy => {
+                let parent = screen.clone_parent(settings);
                 let open_accounts = privacy(
                     ui,
                     settings,
                     actions,
                     &mut screen.picker,
                     screen.picture_note.as_ref(),
+                    &parent,
                 );
                 if open_accounts {
                     screen.section = Section::Accounts;
@@ -2209,7 +2299,7 @@ fn git(
     group_gap(ui, theme::LG);
     let facts = screen.facts.global(ui.ctx()).cloned();
     heading(ui, "Remote");
-    facts_error(ui, facts.as_ref());
+    facts_error(ui, facts.as_deref());
     default_row(
         ui,
         "Follow my git config",
@@ -2426,10 +2516,10 @@ fn repository(
     let facts = screen.facts.repo(ui.ctx(), path).cloned();
     if block(ui, "This repository", &path.display().to_string()) {
         repo_header(ui, path, &RepoLook::of(s, path));
-        facts_error(ui, facts.as_ref());
+        facts_error(ui, facts.as_deref());
     }
     repo_tab(ui, s, path);
-    repo_remotes(ui, screen, path, facts.as_ref(), actions);
+    repo_remotes(ui, screen, path, facts.as_deref(), actions);
     repo_identity(ui, screen, path, &data.identity, actions);
 
     let mut own = s.repo(path);
@@ -2550,7 +2640,7 @@ fn repository(
         "Pull and merge requests",
         "hosting account token github gitlab",
     ) {
-        hosting_account(ui, screen, s, tokens, facts.as_ref());
+        hosting_account(ui, screen, s, tokens, facts.as_deref());
     }
 }
 
@@ -3190,6 +3280,7 @@ fn integrations(
     s: &mut Settings,
     picker: &mut crate::ui::folder_picker::FolderPicker,
     custom: &mut HashSet<Kind>,
+    clone_parent: &str,
 ) {
     heading(ui, "Cloning");
     row(
@@ -3208,7 +3299,7 @@ fn integrations(
             // The button and the field together are as wide as the other fields, so every
             // field starts at the same edge.
             let button = right - ui.cursor().max.x;
-            let default = s.clone_parent();
+            let default = clone_parent.to_owned();
             let width = (FIELD_WIDTH - button).max(80.0);
             fixed_width(ui, width, |ui| {
                 TextField::new(&mut s.clone_dir)
@@ -3283,7 +3374,7 @@ fn integrations(
         Launcher {
             title: "Terminal",
             help: "What \"Open terminal here\" runs, in the repository folder.",
-            command_help: "Runs in the repository folder; %d stands for the folder.",
+            command_help: "Runs in the repository folder; %d, as a word of its own, stands for the folder.",
             kind: Kind::Terminal,
         },
         &mut s.terminal,
@@ -3295,7 +3386,7 @@ fn integrations(
         Launcher {
             title: "Editor",
             help: "What \"Open in editor\" opens files with.",
-            command_help: "%f stands for the file; without it the file is added at the end. Quote a path with spaces.",
+            command_help: "%f, as a word of its own, stands for the file; without it the file is added at the end. Quote a path with spaces.",
             kind: Kind::Editor,
         },
         &mut s.editor,
@@ -3307,7 +3398,7 @@ fn integrations(
         Launcher {
             title: "File manager",
             help: "What \"Show in file manager\" opens folders with.",
-            command_help: "%d stands for the folder; without it the folder is added at the end.",
+            command_help: "%d, as a word of its own, stands for the folder; without it the folder is added at the end.",
             kind: Kind::FileManager,
         },
         &mut s.file_manager,
@@ -3453,12 +3544,12 @@ fn launcher_row(
 }
 
 /// Returns true when a token was saved or removed.
-fn accounts(
+fn accounts<'f>(
     ui: &mut Ui,
     screen: &mut SettingsScreen,
     settings: &Settings,
     tokens: &mut TokenStore,
-    forges: &[Forge],
+    forges: impl Iterator<Item = &'f Forge> + Clone,
     actions: &mut Vec<Action>,
 ) -> bool {
     const ABOUT: &str = "Canopy uses a personal access token to list and act on pull/merge requests. Tokens are sent only to the host they belong to. Without one, Canopy falls back to GH_TOKEN / GITLAB_TOKEN and then to your git credential helper.";
@@ -3467,7 +3558,7 @@ fn accounts(
     let mut changed = false;
     let hosts_text = std::iter::once("github.com gitlab.com".to_owned())
         .chain(settings.gitlab_host_list())
-        .chain(forges.iter().map(|f| f.host.clone()))
+        .chain(forges.clone().map(|f| f.host.clone()))
         .collect::<Vec<_>>()
         .join(" ");
     // The page is one block: a search for any host or for tokens shows all of it.
@@ -3763,6 +3854,7 @@ fn privacy(
     actions: &mut Vec<Action>,
     picker: &mut crate::ui::folder_picker::FolderPicker,
     pictures: Option<&PictureNote>,
+    clone_parent: &str,
 ) -> bool {
     consent(ui, s, actions);
     heading(ui, "Partial clones");
@@ -3775,7 +3867,7 @@ fn privacy(
             if let Some(dir) = picker.show_labelled(
                 ui,
                 "trusted-folder",
-                &crate::settings::expand_home(&s.clone_parent()),
+                &crate::settings::expand_home(clone_parent),
                 "Add folder…",
             ) && crate::trust::add(&mut s.trusted_folders, &dir)
             {
@@ -4180,6 +4272,19 @@ fn keyboard(ui: &mut Ui) {
 mod tests {
     use super::*;
 
+    /// review-views-9: the default clone folder is looked up once while Settings is open, not
+    /// on every frame of Integrations or Privacy; a chosen folder is used as typed.
+    #[test]
+    fn the_default_clone_folder_is_looked_up_once() {
+        let mut screen = SettingsScreen::default();
+        let mut s = Settings::default();
+        assert!(screen.default_clone_parent.is_none());
+        let first = screen.clone_parent(&s);
+        assert_eq!(screen.default_clone_parent.as_deref(), Some(first.as_str()));
+        "  /home/ada/code ".clone_into(&mut s.clone_dir);
+        assert_eq!(screen.clone_parent(&s), "/home/ada/code");
+    }
+
     #[test]
     fn narrow_setting_controls_stay_beside_their_help() {
         let ctx = egui::Context::default();
@@ -4323,6 +4428,91 @@ mod tests {
         assert_eq!(zoom, 1.5, "Enter must apply the complete percentage");
     }
 
+    /// A11Y-12: Tab onto a control below the visible part of a page scrolls the page to it, so
+    /// keyboard focus is never out of sight.
+    #[test]
+    fn tab_scrolls_the_page_to_the_focused_control() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 560.0));
+        let mut settings = Settings::default();
+        let mut tokens = TokenStore::default();
+        let mut screen = SettingsScreen::at(Section::Appearance);
+        // The clock moves a second a frame, so a scroll's glide ends between frames.
+        let mut time = 0.0;
+        let mut frame = |events: Vec<egui::Event>| {
+            time += 1.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(bounds),
+                    events,
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(
+                        ui.ctx(),
+                        &mut screen,
+                        &mut settings,
+                        &mut tokens,
+                        &SettingsData {
+                            tabs: &[],
+                            update: &UpdateState::Idle,
+                            identity: IdentityView {
+                                repo: None,
+                                identity: None,
+                                error: None,
+                            },
+                        },
+                        &mut Vec::new(),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        };
+        for _ in 0..3 {
+            frame(Vec::new());
+        }
+        let tab = |pressed| egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut checked = 0;
+        for _ in 0..60 {
+            frame(vec![tab(true), tab(false)]);
+            // The scroll starts the frame after it is asked for and is read a frame later.
+            for _ in 0..4 {
+                frame(Vec::new());
+            }
+            let Some(id) = ctx.memory(egui::Memory::focused) else {
+                continue;
+            };
+            let (Some(focused), Some(body)) = (
+                ctx.read_response(id),
+                ctx.memory(|m| m.area_rect(egui::Id::new("settings"))),
+            ) else {
+                continue;
+            };
+            // Only controls of the page body (right of the navigation, under the header).
+            if focused.rect.left() < body.left() + NAV_WIDTH
+                || focused.rect.top() < body.top() + theme::metrics().pane_header_height - 1.0
+            {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                focused.rect.bottom() <= body.bottom() + 0.5,
+                "focused {id:?} at {:?} is below the card {body:?}",
+                focused.rect
+            );
+        }
+        assert!(checked > 10, "Tab reached only {checked} page controls");
+    }
+
     #[test]
     fn settings_fit_a_compact_zoomed_window() {
         let ctx = egui::Context::default();
@@ -4346,7 +4536,7 @@ mod tests {
                             &mut settings,
                             &mut tokens,
                             &SettingsData {
-                                forges: &[],
+                                tabs: &[],
                                 update: &UpdateState::Idle,
                                 identity: IdentityView {
                                     repo: None,
@@ -4402,7 +4592,7 @@ mod tests {
                         settings,
                         &mut tokens,
                         &SettingsData {
-                            forges: &[],
+                            tabs: &[],
                             update: &UpdateState::Idle,
                             identity: IdentityView {
                                 repo,
@@ -4827,7 +5017,7 @@ mod tests {
                             &mut settings,
                             &mut tokens,
                             &SettingsData {
-                                forges: &[],
+                                tabs: &[],
                                 update: &UpdateState::Idle,
                                 identity: IdentityView {
                                     repo: None,

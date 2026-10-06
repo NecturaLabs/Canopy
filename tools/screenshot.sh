@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Usage: tools/screenshot.sh <repo> <out.png> [--light] [--split] [--theme NAME] [--view history|changes|requests]
-#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-search|about|toasts|gallery|<dialog>]
+#                            [--overlay settings|privacy|cheatsheet|palette|consent|crash-consent|legal|credential|host-key|merge|identity|settings-git|clear-identity|update-installed|update-running|trust-folder|diff-options|settings-integrations|settings-accounts|settings-updates|settings-keyboard|settings-backup|settings-repository|settings-search|about|toasts|gallery|menu-remotes|menu-branch|menu-commit|menu-file|<dialog>]
 #                            [--style standard|deeper] [--density comfortable|dense] [--translucent on|off]
 #                            [--motion system|reduced|full] [--gallery-page N]
 #                            [--demo-requests SCENARIO] [--size WxH] [--zoom 0.8..1.6]
 #
 # <dialog> is any dialog overlay the app lists in its own --help (open, clone-error, confirm, terms,
 # approve, ...).
+#
+# menu-* opens a context menu by a right click once the window has settled: the Remotes header's,
+# the feature/auth branch row's, the top commit row's or the src/main.rs changed file row's (the
+# showcase fixture's names).
 #
 # <repo> may be "-" to render the welcome screen with no repository open.
 #
@@ -21,8 +25,9 @@
 # path. Builds the release binary first (a no-op when it is up to date); set CANOPY_BIN to use a
 # different binary and skip the build. Uses Xvfb when available, else a native Hyprland window
 # on CANOPY_WORKSPACE (default 3). Output and native-run temporary files stay beside <out.png>.
-# On Xvfb the app gets private home, data, config and cache folders and a fixed Git identity, so the
-# image never depends on your own Canopy state or Git configuration.
+# On Xvfb the app gets private home, data, config and cache folders, a fixed Git identity and no
+# TERMINAL, EDITOR or VISUAL, so the image never depends on your own Canopy state, Git
+# configuration or programs; a screenshot also ignores the pointer (no hover, no tooltip).
 set -euo pipefail
 
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; }
@@ -75,15 +80,16 @@ out_abs="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
 rm -f "$out_abs"
 
 if command -v xvfb-run >/dev/null; then
-  # Private home, data, config and cache folders and a fixed Git identity: the image must not
-  # depend on (or write to) your own Canopy state, such as its saved window size, or your Git
-  # configuration, and a path under "~" must not show your own home folder.
+  # Private home, data, config and cache folders, a fixed Git identity and no TERMINAL, EDITOR or
+  # VISUAL: the image must not depend on (or write to) your own Canopy state, such as its saved
+  # window size, your Git configuration or your programs (Settings > Integrations names them),
+  # and a path under "~" must not show your own home folder.
   isolated=$(mktemp -d)
   trap 'rm -rf "$isolated"' EXIT
   mkdir -p "$isolated/home"
   printf '[user]\n\tname = Showcase Author\n\temail = author@example.com\n' > "$isolated/gitconfig"
   # Force X11 inside Xvfb even when called from a Wayland session.
-  env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 HOME="$isolated/home" \
+  env -u WAYLAND_DISPLAY -u TERMINAL -u EDITOR -u VISUAL LIBGL_ALWAYS_SOFTWARE=1 HOME="$isolated/home" \
     XDG_DATA_HOME="$isolated/data" XDG_CONFIG_HOME="$isolated/config" XDG_CACHE_HOME="$isolated/cache" \
     GIT_CONFIG_GLOBAL="$isolated/gitconfig" GIT_CONFIG_NOSYSTEM=1 \
     timeout 60 xvfb-run -a -s "-screen 0 ${size}x24" \

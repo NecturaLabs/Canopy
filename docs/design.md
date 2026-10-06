@@ -279,7 +279,9 @@ in the density's metrics:
   window, has no header). History prefers six visible rows and can retain the split with two rows in a short
   window. Automatic inspector height adapts when the diff arrives; a manual resize takes precedence.
 - Commit metadata, the Changes file list, and the request list take at most 40% of their
-  available width, leaving the rest for the diff or request details. Pane limits follow the
+  available width, leaving the rest for the diff or request details. The Changes file list and the
+  request list are resized with `kit::split::SplitHandle` (drag, the arrow keys while it has focus,
+  a double-click resets it) and keep their width across restarts. Pane limits follow the
   current viewport. Read-only diff headers share a wrapping row at short heights to keep more
   changed lines visible without reducing text size.
 - Draft requests use a dim pencil icon in the list, distinct from the green open request icon;
@@ -298,8 +300,8 @@ in the density's metrics:
   shortcut, Esc or the close button hides it and clears the query. The commit count does not
   occupy the table header; an in-progress operation banner remains visible without search.
 - The action toolbar uses `ACTION_BAR_HEIGHT` (52 points), with 40-point tools, body-size captions
-  and room for its horizontal scrollbar. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has a visible
-  scrollbar. The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
+  and room for its horizontal scrollbar. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has no
+  scroll bar and fades out at the edge it hides behind (Scroll edges). The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
   panes.
 - When there is no remote, the toolbar says "Local only" as dim status text with an explanatory
@@ -330,7 +332,13 @@ in the density's metrics:
   one column without the empty line-number column (the layout switch shows disabled on Unified,
   its tooltip saying why), and
   its lines keep the full added/removed tint only in the gutter, with a quiet wash over the code.
-  A line wider than the pane fades out at the edge.
+  A line wider than the pane fades out at the edge. The hint "Click lines to pick part of a hunk"
+  shows on a hunk header only when it fits beside the whole hunk title; otherwise the title shows
+  alone, so the two never overlap.
+- Conflict side previews (no line numbers) drop the indentation their lines share, and a line
+  too long for the card is cut back to a word or number boundary before its ellipsis, so a number
+  is never cut in two, unless that would lose more than a quarter of what fits. A file both sides
+  deleted offers one "Delete it", not one per side.
 - The shared operation banner (merge, rebase, cherry-pick) leads History, Changes and Requests,
   drawn the same way in all three (`views/state_banner.rs`): the kit warning `Banner` with
   Continue and Abort as ghost buttons at its right end.
@@ -344,6 +352,9 @@ in the density's metrics:
 - The disabled primary button is flat with a hairline outline and faint text in every theme, never
   the primary fill. When the commit button is disabled for a reason its label does not give, a line
   above it says so ("Write a summary to commit", "Resolve the conflicts to commit").
+- The commit button never cuts its label in a narrow column (a small window at a large zoom): it
+  drops its keys first (they stay in its tooltip), then the branch, then the file count ("Commit
+  2 files to main", "Commit 2 files", "Commit"); screen readers still hear the whole label.
 - The commit composer follows the file lists while both fit the column, under a hairline, and
   pins to the bottom with the lists scrolling above it only when they would crowd it (about
   260 points of composer). Row actions (stage, unstage, mark resolved) show on the selected row
@@ -429,6 +440,14 @@ A scrollbar's handle is never shorter than 32 points, so a long document's stays
 grab. Scroll bars are a 4-point handle in the text colour: floating ones appear at 45% while the
 area is hovered; code, diff and detail boxes (`theme::solid_scroll`) keep theirs visible at 45%,
 with its own 8-point lane beside the content, and every handle goes to 75% while hovered or dragged.
+The commit composer's fields use the solid bars too, never egui's full-colour slab.
+
+Two edges fade further, at full strength, because what they cut is larger than a list row: a
+Settings page fades into its card over 28 points (`XL + XS`, a line of row text) where more of the
+page lies beyond, so the line the card's edge cuts through never reads half drawn; and the action
+bar, which scrolls sideways with no scroll bar, fades tools hidden past an edge over 48 points
+(`XXL + LG`, about a tool), opaque at the edge, so a cut tool dissolves instead of reading as a
+clipped word ("Mer").
 
 ### Banner and callout
 
@@ -522,6 +541,10 @@ has focus. A choice that is riskier than the main one (trusting a whole folder) 
 destinations (About: What's new, Releases, the legal texts) are text links in `accent`, with one
 primary button for the real action.
 
+The legal reader (`views/dialogs/reader.rs`) opens each document at the top every time it opens,
+the first-start consent included; while it stays open, each document keeps its place as you
+switch between the Terms and the Privacy Policy.
+
 The merge dialog explains every merge mode beside its radio choice so they can be compared before
 selection. The sentence below the choices still names the exact branches affected by the selected
 mode.
@@ -594,3 +617,19 @@ Update progress and completion dialogs keep their action buttons in a content-he
 
 Narrow Settings controls occupy a content-height row below their help. Notification dismiss
 controls also use bounded rows so successive frames cannot grow the notification beyond the viewport.
+
+### Screen readers
+
+What AccessKit reports is part of each component, checked by tests that read a frame's nodes.
+A control is named by what it does, once: a card or row names itself and hides the text drawn
+inside it (the welcome quick actions give their help as the description and their keys as the
+keyboard shortcut). Icon glyphs are never spoken (`commit_detail::without_icons` strips the
+private-use characters and hides a label that is only a glyph); counts read as words ("2 ahead,
+1 behind origin/main"). A disabled button adds ", unavailable" to its name and its reason as the
+description (`commit_detail::say_unavailable`), because the Linux AT-SPI adapter reports every
+button as enabled. Diff lines read as "Added line 12: …", "Removed line 4: …" or "Line 7: …"
+(pickable ones as selectable, with their picked state), hunk headers as "Hunk 2: @@ … @@", and
+the resolver's code blocks by name (Current version, Incoming version, Ancestor, Result,
+Unchanged lines 4 to 9) with their first 100 lines as the value. The window is named
+"<repository> — Canopy". Keyboard focus is never out of sight: a Settings page scrolls to the
+control Tab moves onto.

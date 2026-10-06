@@ -46,7 +46,7 @@ use common::{
 use credential::credential;
 pub use stack::DialogStack;
 pub use start::Start;
-pub use url::UrlBuilder;
+pub use url::{UrlBuilder, UrlSource};
 
 /// Every dialog Canopy shows.
 #[derive(Debug, Clone)]
@@ -167,6 +167,9 @@ pub enum Dialog {
     Credential {
         prompt: Prompt,
         answer: String,
+        /// This prompt among every prompt so far: its answer field is its own, so a secret
+        /// shown in one prompt is hidden again in the next.
+        serial: u64,
     },
 }
 
@@ -189,9 +192,11 @@ pub enum Outcome {
 impl Dialog {
     /// The dialog answering a credential prompt.
     pub fn credential(prompt: Prompt) -> Self {
+        static PROMPTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self::Credential {
             prompt,
             answer: String::new(),
+            serial: PROMPTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 
@@ -1003,7 +1008,11 @@ pub fn show(
                 .show(ctx);
             answer(result, || Outcome::Run(vec![Action::Host(job.clone())]))
         }
-        Dialog::Credential { prompt, answer } => credential(ctx, salt, prompt, answer),
+        Dialog::Credential {
+            prompt,
+            answer,
+            serial,
+        } => credential(ctx, salt, prompt, answer, *serial),
         Dialog::Update(a) => update::update(ctx, salt, a, updater),
         Dialog::WhatsNew { version, notes } => {
             let result = KitDialog::new(salt)
@@ -1658,6 +1667,110 @@ mod tests {
         );
         assert_eq!(queued_answers.try_recv().ok(), Some(None));
         assert_eq!(shown(&s), "Password: ");
+    }
+
+    /// One frame of `dialog` with `events`: the text it painted and where its "Show secret"
+    /// button is.
+    fn credential_frame(
+        ctx: &egui::Context,
+        dialog: &mut Dialog,
+        events: Vec<egui::Event>,
+    ) -> (String, Option<egui::Pos2>) {
+        fn walk(shape: &egui::Shape, into: &mut String) {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, into)),
+                egui::Shape::Text(t) => {
+                    into.push_str(t.galley.text());
+                    into.push('\n');
+                }
+                _ => {}
+            }
+        }
+        let mut picker = crate::ui::folder_picker::FolderPicker::default();
+        let updater = crate::updater::Updater::default();
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 800.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let _ = super::show(ui.ctx(), dialog, None, &mut picker, false, &updater, "");
+            },
+        );
+        out.textures_delta.clear();
+        let mut painted = String::new();
+        for c in &out.shapes {
+            walk(&c.shape, &mut painted);
+        }
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "AccessKit bounds are points on a 1200 x 800 screen"
+        )]
+        let reveal = out.platform_output.accesskit_update.and_then(|u| {
+            u.nodes
+                .iter()
+                .find(|(_, n)| n.label() == Some("Show secret"))
+                .and_then(|(_, n)| n.bounds())
+                .map(|b| {
+                    egui::pos2(
+                        f64::midpoint(b.x0, b.x1) as f32,
+                        f64::midpoint(b.y0, b.y1) as f32,
+                    )
+                })
+        });
+        (painted, reveal)
+    }
+
+    /// review-views-7: a password shown in one prompt is hidden again in the next one.
+    #[test]
+    fn each_credential_prompt_starts_with_its_secret_hidden() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        crate::ui::theme::apply(
+            &ctx,
+            crate::ui::theme::ThemeId::Midnight,
+            crate::ui::theme::Appearance::STILL,
+        );
+        ctx.enable_accesskit();
+        let (mut first, _first_answers) = credential("Password for 'https://example.com': ");
+        if let Dialog::Credential { answer, .. } = &mut first {
+            "hunter2".clone_into(answer);
+        }
+        let mut reveal = None;
+        for _ in 0..3 {
+            reveal = credential_frame(&ctx, &mut first, Vec::new()).1;
+        }
+        let at = reveal.expect("a Show secret button");
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        credential_frame(
+            &ctx,
+            &mut first,
+            vec![egui::Event::PointerMoved(at), button(true)],
+        );
+        credential_frame(&ctx, &mut first, vec![button(false)]);
+        let (painted, _) = credential_frame(&ctx, &mut first, Vec::new());
+        assert!(painted.contains("hunter2"), "revealed: {painted}");
+
+        let (mut second, _second_answers) = credential("Password for 'https://example.com': ");
+        if let Dialog::Credential { answer, .. } = &mut second {
+            "s3cret".clone_into(answer);
+        }
+        for _ in 0..2 {
+            let (painted, _) = credential_frame(&ctx, &mut second, Vec::new());
+            assert!(
+                !painted.contains("s3cret"),
+                "the next prompt shows: {painted}"
+            );
+        }
     }
 
     #[test]

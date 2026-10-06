@@ -151,6 +151,38 @@ commits since the previous build.
   least 4.5:1 on their own fill, which they were not in the light themes.
 - Syntax highlighting restarts at every hunk, so a hunk that begins inside a block comment or
   string no longer colours the hunks after it.
+- Screen readers: the window is named after the open repository ("tidepool — Canopy"); diff
+  lines are read with their kind and number ("Added line 12: …") and hunk headers by number;
+  conflict code blocks are named (Current version, Incoming version, Result) and read; the status
+  bar, commit details and Changes no longer read icon glyphs, and ahead/behind reads "2 ahead,
+  1 behind origin/main"; Commit, Continue, Abort and the resolver's Save buttons say when they are
+  unavailable and why; each welcome action is read once, with its help and its keys; and Tab in
+  Settings scrolls the page to the control it reaches.
+- A file both sides deleted offers one "Delete it" instead of two. Conflict side previews drop the
+  indentation their lines share and never cut a number in two.
+- Ctrl+F opens Settings search when no repository is open.
+- Pop, on the toolbar, its shortcut and the palette, pops the stash the toolbar names, even when
+  the stash list changed since.
+- The Open and New repository forms show an error and stay usable when Canopy cannot start
+  opening the folder, instead of waiting forever.
+- Each password or passphrase prompt starts with its answer hidden, even after you showed the
+  previous one's.
+- Closing a tab keeps its unsent commit message until you open the repository again in the same
+  session.
+- A build skipped in the update dialog by an earlier version stays skipped.
+- The Accounts link in a toast opens Settings the same way the Settings button does, and Open logs
+  folder says when the folder cannot be created.
+- The diff's "Click lines to pick part of a hunk" hint no longer covers a long hunk title.
+- In a small window or at a large zoom, the commit button drops its keys, then the branch, then the
+  file count instead of cutting its label; the action bar fades out a tool it cuts at its edge;
+  and a Settings page fades into its card where it continues instead of cutting a line in half.
+- The commit composer's scroll bar is a thin handle like the others, not a black bar in light
+  themes.
+- The request list can be resized from the keyboard and reset with a double-click, like the other
+  panes.
+- The Terms and the Privacy Policy open at the top, also on first start after a restart.
+- The help for a custom editor, terminal or file manager command says that `%f` or `%d` must be a
+  word of its own.
 
 ### Changed
 

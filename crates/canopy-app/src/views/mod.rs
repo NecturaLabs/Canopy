@@ -61,7 +61,11 @@ mod tests {
         let mut found = Vec::new();
         for path in files {
             let src = std::fs::read_to_string(&path).expect("view source");
-            let code = src.split("#[cfg(test)]").next().unwrap_or_default();
+            // The file up to its test module; a test-only helper above it is still scanned.
+            let code = src
+                .split("\n#[cfg(test)]\nmod tests")
+                .next()
+                .unwrap_or_default();
             for (i, line) in code.lines().enumerate() {
                 if line.trim_start().starts_with("//") {
                     continue;

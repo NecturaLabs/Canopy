@@ -745,6 +745,23 @@ fn line_cell(
         ui.interact(rect, ui.id().with(("line", id)), Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand)
     });
+    // The code is painted, so each visible line is also a node a screen reader reads: a line
+    // that can be picked as a toggle (picked or not), the others as text.
+    match &resp {
+        Some(r) => r.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                true,
+                picked,
+                spoken_line(line, marker),
+            )
+        }),
+        None => ui
+            .interact(rect, ui.id().with(("line", id)), Sense::hover())
+            .widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, spoken_line(line, marker))
+            }),
+    }
     let painter = ui.painter();
     if let Some(bg) = bg {
         // The line numbers sit on the stronger gutter tint. A whole new or deleted file keeps
@@ -838,6 +855,25 @@ fn line_cell(
     None
 }
 
+/// What a screen reader says for a diff line: how it changed, its number and its text.
+fn spoken_line(line: &DiffLine, marker: bool) -> String {
+    let text = if line.text.trim().is_empty() {
+        "blank"
+    } else {
+        line.text.as_str()
+    };
+    let number = |n: Option<u32>| n.map_or_else(String::new, |n| format!(" {n}"));
+    match line.kind {
+        _ if marker => format!("Conflict marker: {text}"),
+        LineKind::Added => format!("Added line{}: {text}", number(line.new_no)),
+        LineKind::Removed => format!("Removed line{}: {text}", number(line.old_no)),
+        LineKind::Context => format!("Line{}: {text}", number(line.new_no.or(line.old_no))),
+    }
+}
+
+/// The first hunk's note on picking lines.
+const PICK_HINT: &str = "Click lines to pick part of a hunk";
+
 /// Width of the mark at the left of a picked line.
 const PICKED_MARK: f32 = 4.0;
 
@@ -874,6 +910,15 @@ fn hunk_header(
     let m = theme::metrics();
     let hunk = &d.hunks[h];
     let band = rect;
+    // The header is painted: its text reaches a screen reader through a node of its own.
+    ui.interact(band, ui.id().with(("hunk-header", h)), Sense::hover())
+        .widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Label,
+                true,
+                format!("Hunk {}: {}", h + 1, hunk.header),
+            )
+        });
     // Concept 1's `.hunk`: the accent at about 7%.
     ui.painter().rect_filled(
         band,
@@ -1072,24 +1117,42 @@ fn hunk_header(
     } else {
         row.min_rect().left()
     };
+    let title_left = visible_left + 12.0;
+    let title_room = bx - theme::SM - title_left;
+    // The first hunk explains line picking, but only where the whole title leaves room for it:
+    // the hint never paints over the title.
+    let hint = (n == 0 && h == 0)
+        .then(|| {
+            ui.painter()
+                .layout_no_wrap(PICK_HINT.to_owned(), note_font.clone(), p.text_faint)
+        })
+        .filter(|hint| {
+            let title_w = ui
+                .painter()
+                .layout_no_wrap(hunk.header.clone(), coordinates.clone(), p.text_faint)
+                .size()
+                .x;
+            title_w + theme::LG + hint.size().x <= title_room
+        });
     let header = widgets::single_line_galley(
         ui,
         hunk.header.clone(),
         coordinates,
         p.text_faint,
-        bx - theme::SM - (visible_left + 12.0),
+        title_room,
     );
     ui.painter().galley(
-        pos2(visible_left + 12.0, band.center().y - header.size().y / 2.0),
+        pos2(title_left, band.center().y - header.size().y / 2.0),
         header,
         p.text_faint,
     );
-    if n == 0 && h == 0 && bx - visible_left > 360.0 {
-        ui.painter().text(
-            pos2(bx - 6.0, band.center().y),
-            Align2::RIGHT_CENTER,
-            "Click lines to pick part of a hunk",
-            note_font,
+    if let Some(hint) = hint {
+        ui.painter().galley(
+            pos2(
+                bx - 6.0 - hint.size().x,
+                band.center().y - hint.size().y / 2.0,
+            ),
+            hint,
             p.text_faint,
         );
     }
@@ -1302,6 +1365,178 @@ mod tests {
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
         ctx
+    }
+
+    /// A11Y-1: the diff's text reaches assistive technology. Each visible line is a node that
+    /// says how it changed and what it says; no line a user can pick is unnamed.
+    #[test]
+    fn diff_lines_are_spoken() {
+        use egui::accesskit::{Action as AkAction, Role};
+        let ctx = themed();
+        ctx.enable_accesskit();
+        let line = |kind, old_no, new_no, text: &str| DiffLine {
+            kind,
+            old_no,
+            new_no,
+            text: text.into(),
+        };
+        let d = Arc::new(FileDiff {
+            path: "src/main.rs".into(),
+            kind: Some(ChangeKind::Modified),
+            hunks: vec![Hunk {
+                header: "@@ -1,2 +1,2 @@".into(),
+                old_start: 1,
+                old_lines: 2,
+                new_start: 1,
+                new_lines: 2,
+                lines: vec![
+                    line(LineKind::Context, Some(1), Some(1), "fn main() {"),
+                    line(LineKind::Removed, Some(2), None, "    old_call();"),
+                    line(LineKind::Added, None, Some(2), "    new_call();"),
+                ],
+            }],
+            additions: 1,
+            deletions: 1,
+            ..FileDiff::default()
+        });
+        let (worker, _, _) = crate::worker::Worker::detached();
+        let mut tab = RepoTab::with_worker(
+            std::path::PathBuf::from("fixture"),
+            100,
+            crate::settings::DiffPrefs::default(),
+            worker,
+        );
+        tab.file = Some(crate::tab::FileSelection {
+            source: DiffSource::Unstaged,
+            entry: canopy_core::FileEntry {
+                path: "src/main.rs".into(),
+                old_path: None,
+                kind: ChangeKind::Modified,
+                additions: 1,
+                deletions: 1,
+                lfs: false,
+                old_mode: None,
+                new_mode: None,
+            },
+            conflicted: false,
+        });
+        tab.diff = Some(d);
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default()
+                        .show(ui, |ui| show(ui, &mut tab, &mut Vec::new()));
+                },
+            );
+            out.textures_delta.clear();
+            nodes = out
+                .platform_output
+                .accesskit_update
+                .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect())
+                .unwrap_or_default();
+        }
+        let spoken: Vec<String> = nodes
+            .iter()
+            .filter_map(|n| n.label().or_else(|| n.value()).map(str::to_owned))
+            .collect();
+        for wanted in [
+            "Line 1: fn main() {",
+            "Removed line 2:     old_call();",
+            "Added line 2:     new_call();",
+            "Hunk 1: @@ -1,2 +1,2 @@",
+        ] {
+            assert!(
+                spoken.iter().any(|s| s == wanted),
+                "{wanted:?} not in {spoken:#?}"
+            );
+        }
+        let unnamed: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.supports_action(AkAction::Click) || n.supports_action(AkAction::Focus))
+            .filter(|n| !matches!(n.role(), Role::Window | Role::GenericContainer))
+            .filter(|n| n.label().is_none_or(str::is_empty) && n.value().is_none())
+            .map(|n| format!("{:?}", n.role()))
+            .collect();
+        assert!(unnamed.is_empty(), "unnamed operable nodes: {unnamed:?}");
+    }
+
+    /// QVIS-1: the "Click lines" hint never paints over a long hunk title; it shows only where
+    /// the whole title leaves room for it.
+    #[test]
+    fn the_pick_hint_never_overlaps_the_hunk_title() {
+        let ctx = themed();
+        for (header, hint_expected) in [
+            ("@@ -1,2 +1,2 @@", true),
+            (
+                "@@ -15,3 +15,4 @@ Set TIDEPOOL_DATA to choose where pastes are stored (default: ./data).",
+                false,
+            ),
+        ] {
+            let d = FileDiff {
+                hunks: vec![Hunk {
+                    header: header.into(),
+                    ..hunk(" +")
+                }],
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let cx = Ctx {
+                    p: palette(ui.ctx()),
+                    source: &DiffSource::Unstaged,
+                    path: "file.rs",
+                    conflicted: false,
+                    one_sided: false,
+                    editable: true,
+                    context: 3,
+                    highlights: None,
+                    mono: FontId::monospace(theme::metrics().mono_size),
+                };
+                let rect = Rect::from_min_size(pos2(0.0, 40.0), vec2(900.0, row_heights().1));
+                hunk_header(
+                    ui,
+                    &cx,
+                    &d,
+                    0,
+                    rect,
+                    egui::Pos2::ZERO,
+                    rect,
+                    &mut None,
+                    &mut Vec::new(),
+                );
+            });
+            output.textures_delta.clear();
+            let texts: Vec<(String, Rect)> = output
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Text(t) => {
+                        Some((t.galley.text().to_owned(), t.visual_bounding_rect()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let title = texts
+                .iter()
+                .find(|(t, _)| t.starts_with("@@"))
+                .map(|(_, r)| *r)
+                .expect("the hunk title");
+            let hint = texts
+                .iter()
+                .find(|(t, _)| t.starts_with("Click lines"))
+                .map(|(_, r)| *r);
+            assert_eq!(hint.is_some(), hint_expected, "{header}: {texts:?}");
+            if let Some(hint) = hint {
+                assert!(
+                    title.right() < hint.left(),
+                    "title {title:?} overlaps hint {hint:?}"
+                );
+            }
+        }
     }
 
     #[test]

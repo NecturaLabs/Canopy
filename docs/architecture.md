@@ -81,14 +81,14 @@ thread.
 |---|---|
 | `main.rs` | Argument parsing, logging, eframe launch; also the entry point of the askpass client (the same executable, started by git or ssh). |
 | `action.rs` | `Action`: what the user asked for during a frame. Views emit actions and never import `app`. |
-| `app/mod.rs` | `CanopyApp`: state, start-up, the frame (`eframe::App::ui`), opening repositories, theme. |
+| `app/mod.rs` | `CanopyApp`: state, start-up, the frame (`eframe::App::ui`), opening repositories, theme. The window's AccessKit name ("<repository> — Canopy"); `Watched`, the copy of the settings whose change reloads diffs or forges, compared each frame instead of cloning `Settings`; and, for the app's tests, `test_app()` and `test_tab()`, a `CanopyApp` and a `RepoTab` with no threads. |
 | `app/input.rs` | Keyboard: bare keys, chords and the commands they run. |
 | `app/palette.rs` | The command palette's entries. |
 | `app/dispatch.rs` | Applies the actions a frame collected. |
 | `app/background.rs` | Polled every frame: worker and hosting events, credential prompts, the update check, auto-fetch. |
 | `app/open.rs` | The opener thread: opens and creates repositories in request order, off the UI thread. |
 | `app/clone.rs`, `app/request_flow.rs` | Cloning on a background thread; creating and checking out pull and merge requests. |
-| `app/screenshot.rs` | Headless screenshots for `--screenshot`. |
+| `app/screenshot.rs` | Headless screenshots for `--screenshot`: waits until the window is final, keeps the pointer out of the picture (`raw_input_hook` drops pointer input), opens the dialog overlays and, for `--overlay menu-*`, a context menu by a synthetic right click on the widget it finds by its AccessKit name. |
 | `app/demo_requests.rs` | Invented pull and merge requests the requests view shows under `--screenshot --demo-requests`, each row carrying a rollup as with a token; never reachable in a normal run, no network. |
 | `tab.rs` | `RepoTab`: one open repository's snapshot, selections, in-flight work and the state a failed or superseded job leaves behind. |
 | `worker.rs` | Reads Git's pending merge message off the UI thread, applied only to an empty composer still in a merge. One background thread per open repository; `Job` in, `Event` out over crossbeam channels; queued refreshes are coalesced, and of the queued `Job::Details` and `Job::Diff` only the last runs; debounced file watcher. In a partial clone a `Details`, `Diff`, `RefreshStatus` or `Refresh` job may download objects on this thread (network), with an `Event::Progress` line around it, but only in a trusted folder; elsewhere it sends `Event::DownloadsRefused` and fails the read with a message that says why. |
@@ -150,7 +150,7 @@ thread.
 | `views/toolbar.rs` | Tab strip and top toolbar: fetch, pull, push, branch, stash, view switch. |
 | `views/sidebar.rs` | Branches, remotes, tags and stashes. |
 | `views/history.rs` | Virtualised commit-graph table. |
-| `views/commit_detail.rs` | Selected commit: metadata, parents, changed files, diff. |
+| `views/commit_detail.rs` | Selected commit: metadata, parents, changed files, diff. Also the views' shared file rows and screen-reader helpers: `without_icons` (keeps icon glyphs out of a label's spoken name) and `say_unavailable` (a disabled button says ", unavailable" and why, which the Linux AT-SPI adapter does not). |
 | `views/changes.rs` | Staging area and commit composer. |
 | `views/diff.rs` | Unified and side-by-side diff viewer with line numbers, hunk and line actions; row layout cached per diff. |
 | `views/resolve.rs` | Conflict resolver; off-screen cards skipped by measured height. |
@@ -158,7 +158,7 @@ thread.
 | `views/settings_screen.rs` | The settings screen: appearance, Git, integrations, accounts, updates, privacy, keyboard, backup and reset, and this repository; settings search. |
 | `views/dialogs/mod.rs` | `Dialog` and `show`: the modal dialogs (clone, new branch, confirmations, consent, ...). |
 | `views/dialogs/stack.rs` | `DialogStack`: credentials in front, the consent never replaced, a closed prompt always answered. |
-| `views/dialogs/reader.rs` | The full-size reading modal for the Terms of Service and Privacy Policy, used by the consent too: a measured column with headings, lists and kit links, scrolling with fades. |
+| `views/dialogs/reader.rs` | The full-size reading modal for the Terms of Service and Privacy Policy, used by the consent too: a measured column with headings, lists and kit links, scrolling with fades; each document starts at the top when the reader opens. |
 | `views/dialogs/{url,start,credential,update,common}.rs` | The remote URL builder, where a new branch starts, credential prompts, the update dialog (what is new, installing, restarting), shared fields and buttons. |
 | `views/statusbar.rs` | Branch, ahead/behind, repository state, running job. |
 | `views/state_banner.rs` | The merge, rebase, cherry-pick or revert in progress above History, Changes and requests, with Continue and Abort. |

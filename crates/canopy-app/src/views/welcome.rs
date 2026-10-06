@@ -309,7 +309,13 @@ fn card(
 ) -> egui::Response {
     let p = palette(ui.ctx());
     let m = theme::metrics();
-    Card::new()
+    // The card speaks once: its name, its help as the description and its keys as its shortcut;
+    // the text drawn inside it is not read a second time.
+    let hidden = |r: &egui::Response| {
+        r.ctx
+            .accesskit_node_builder(r.id, egui::accesskit::Node::set_hidden)
+    };
+    let response = Card::new()
         .interactive(true)
         .width(w)
         .label(title)
@@ -333,14 +339,16 @@ fn card(
                     p.accent,
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    KeyChord::command(command).show(ui);
+                    hidden(&KeyChord::command(command).show(ui));
                 });
             });
             ui.add_space(theme::SM);
-            ui.label(
-                RichText::new(title)
-                    .font(theme::heading(m.subtitle_size))
-                    .color(p.text),
+            hidden(
+                &ui.label(
+                    RichText::new(title)
+                        .font(theme::heading(m.subtitle_size))
+                        .color(p.text),
+                ),
             );
             let mut job = egui::text::LayoutJob::simple(
                 sub.to_owned(),
@@ -349,9 +357,14 @@ fn card(
                 ui.available_width(),
             );
             job.wrap.max_rows = 2;
-            ui.label(job);
+            hidden(&ui.label(job));
         })
-        .response
+        .response;
+    response.ctx.accesskit_node_builder(response.id, |n| {
+        n.set_description(sub);
+        n.set_keyboard_shortcut(hint(command));
+    });
+    response
 }
 
 #[cfg(test)]
@@ -386,6 +399,47 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A11Y-20: a quick action is read once: "Clone", its help as the description and its keys
+    /// as the shortcut, with no second "Clone" or keys label inside it.
+    #[test]
+    fn a_quick_action_is_spoken_once() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            card(
+                ui,
+                icon::CLOUD_ARROW_DOWN,
+                "Clone",
+                "From GitHub, GitLab or any URL",
+                Command::Clone,
+                220.0,
+            );
+        });
+        output.textures_delta.clear();
+        let nodes: Vec<_> = output
+            .platform_output
+            .accesskit_update
+            .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect())
+            .unwrap_or_default();
+        let spoken: Vec<_> = nodes
+            .iter()
+            .filter(|n| !n.is_hidden())
+            .filter_map(|n| n.label().or_else(|| n.value()))
+            .collect();
+        assert_eq!(spoken, ["Clone"], "{spoken:?}");
+        let card = nodes
+            .iter()
+            .find(|n| n.label() == Some("Clone"))
+            .expect("the card");
+        assert_eq!(card.description(), Some("From GitHub, GitLab or any URL"));
+        assert_eq!(
+            card.keyboard_shortcut(),
+            Some(hint(Command::Clone).as_str())
+        );
     }
 
     #[test]

@@ -380,7 +380,6 @@ impl CanopyApp {
 
     /// Queues background fetches for tabs whose auto-fetch interval has passed.
     pub(super) fn auto_fetch(&mut self, ctx: &egui::Context) {
-        self.apply_repo_looks();
         if self.screenshot.is_some() {
             return;
         }

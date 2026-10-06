@@ -6,7 +6,6 @@
 
 use std::collections::HashMap;
 
-use egui::text::LayoutJob;
 use egui::{FontId, RichText, Sense, Ui, vec2};
 use egui_phosphor::regular as icon;
 
@@ -173,55 +172,74 @@ fn header(ui: &mut Ui, r: &mut Resolver, abs: &std::path::Path, actions: &mut Ve
     );
 }
 
+/// What a whole-file choice says for a conflict of `kind` (`error`: the file cannot be parsed):
+/// its title and explanation.
+fn whole_file_text(
+    kind: Option<ConflictKind>,
+    error: Option<&str>,
+) -> (&'static str, &'static str) {
+    match (kind, error) {
+        (Some(ConflictKind::DeletedByThem), _) => (
+            "The incoming side deleted this file; the current side changed it",
+            "Keep the current version, or accept the incoming deletion.",
+        ),
+        (Some(ConflictKind::DeletedByUs), _) => (
+            "The current side deleted this file; the incoming side changed it",
+            "Keep it deleted, or restore the incoming version.",
+        ),
+        (Some(ConflictKind::AddedByUs), _) => (
+            "Only the current side added this file",
+            "Keep the current file, or accept its absence on the incoming side.",
+        ),
+        (Some(ConflictKind::AddedByThem), _) => (
+            "Only the incoming side added this file",
+            "Leave it out, or take the incoming file.",
+        ),
+        (Some(ConflictKind::BothDeleted), _) => (
+            "Both sides deleted this file",
+            "It was renamed differently on each side. Delete it here.",
+        ),
+        (_, Some(_)) => (
+            "Canopy cannot show this file line by line",
+            "It is binary, a link, or not UTF-8 text. Choose a whole side, or open it in an editor.",
+        ),
+        _ => ("Choose a side", ""),
+    }
+}
+
+/// The sides a whole-file choice offers for a conflict of `kind`, each with its button label. A
+/// file both sides deleted has one answer: either side removes it.
+fn whole_file_sides(kind: Option<ConflictKind>) -> Vec<(Side, &'static str)> {
+    match kind {
+        Some(ConflictKind::DeletedByThem) => vec![
+            (Side::Ours, "Keep current version"),
+            (Side::Theirs, "Delete the file"),
+        ],
+        Some(ConflictKind::DeletedByUs) => vec![
+            (Side::Ours, "Keep it deleted"),
+            (Side::Theirs, "Restore incoming version"),
+        ],
+        Some(ConflictKind::AddedByUs) => {
+            vec![(Side::Ours, "Keep it"), (Side::Theirs, "Leave it out")]
+        }
+        Some(ConflictKind::AddedByThem) => vec![
+            (Side::Ours, "Leave it out"),
+            (Side::Theirs, "Take incoming file"),
+        ],
+        Some(ConflictKind::BothDeleted) => vec![(Side::Ours, "Delete it")],
+        _ => vec![
+            (Side::Ours, "Keep current version"),
+            (Side::Theirs, "Keep incoming version"),
+        ],
+    }
+}
+
 /// Whole-file choice: binary or non-UTF-8 files, and deleted-on-one-side conflicts.
 fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<Action>) {
     let p = palette(ui.ctx());
     let m = theme::metrics();
     let path = r.path.clone();
-    let (title, body, ours, theirs) = match (r.kind, error) {
-        (Some(ConflictKind::DeletedByThem), _) => (
-            "The incoming side deleted this file; the current side changed it",
-            "Keep the current version, or accept the incoming deletion.",
-            "Keep current version",
-            "Delete the file",
-        ),
-        (Some(ConflictKind::DeletedByUs), _) => (
-            "The current side deleted this file; the incoming side changed it",
-            "Keep it deleted, or restore the incoming version.",
-            "Keep it deleted",
-            "Restore incoming version",
-        ),
-        (Some(ConflictKind::AddedByUs), _) => (
-            "Only the current side added this file",
-            "Keep the current file, or accept its absence on the incoming side.",
-            "Keep it",
-            "Leave it out",
-        ),
-        (Some(ConflictKind::AddedByThem), _) => (
-            "Only the incoming side added this file",
-            "Leave it out, or take the incoming file.",
-            "Leave it out",
-            "Take incoming file",
-        ),
-        (Some(ConflictKind::BothDeleted), _) => (
-            "Both sides deleted this file",
-            "It was renamed differently on each side. Delete it here.",
-            "Delete it",
-            "Delete it",
-        ),
-        (_, Some(_)) => (
-            "Canopy cannot show this file line by line",
-            "It is binary, a link, or not UTF-8 text. Choose a whole side, or open it in an editor.",
-            "Keep current version",
-            "Keep incoming version",
-        ),
-        _ => (
-            "Choose a side",
-            "",
-            "Keep current version",
-            "Keep incoming version",
-        ),
-    };
+    let (title, body) = whole_file_text(r.kind, error);
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
         ui.label(RichText::new(icon::GIT_DIFF).size(m.icon_hero).color(p.warning));
@@ -240,10 +258,10 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
             ui.spacing_mut().item_spacing.x = theme::SM;
             ui.add_space(((ui.available_width() - last) / 2.0).max(0.0));
             let start = ui.cursor().left();
-            for (side, label) in [(Side::Ours, ours), (Side::Theirs, theirs)] {
+            for (side, label) in whole_file_sides(r.kind) {
                 if Button::new(label)
                     .size(Size::Lg)
-                    .id_salt(("whole-file", label))
+                    .id_salt(("whole-file", side_name(side)))
                     .show(ui)
                     .clicked()
                 {
@@ -264,6 +282,14 @@ fn whole_file(ui: &mut Ui, r: &Resolver, error: Option<&str>, actions: &mut Vec<
             ui.ctx().request_repaint();
         }
     });
+}
+
+/// A side's name in widget ids.
+fn side_name(side: Side) -> &'static str {
+    match side {
+        Side::Ours => "ours",
+        Side::Theirs => "theirs",
+    }
 }
 
 fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
@@ -290,7 +316,7 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                     hint(Command::TakeBoth),
                     hint(Command::ClearChoice),
                 );
-                ui.add(egui::Label::new(RichText::new(keys).size(m.small_size).color(p.text_faint)).truncate())
+                commit_detail::without_icons(ui.add(egui::Label::new(RichText::new(keys).size(m.small_size).color(p.text_faint)).truncate()))
                     .kit_tooltip("Press ? for every shortcut").show();
                 ui.label(RichText::new(if done == n {
                     "All conflicts have a choice. Save the resolved file to stage it."
@@ -301,25 +327,25 @@ fn footer(ui: &mut Ui, r: &mut Resolver, actions: &mut Vec<Action>) {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = theme::SM;
                     let all = done == n;
-                    if Button::new("Save resolved file")
+                    let why = "Choose a resolution for every conflict first";
+                    let save = Button::new("Save resolved file")
                         .primary()
                         .icon(icon::CHECK)
                         .enabled(all)
                         .tooltip("Write this file and stage it as resolved")
-                        .disabled_reason("Choose a resolution for every conflict first")
-                        .show(ui)
-                        .clicked()
-                    {
+                        .disabled_reason(why)
+                        .show(ui);
+                    if commit_detail::say_unavailable(save, why).clicked() {
                         actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: true, expected: file.fingerprint() }));
                     }
-                    if Button::new("Save progress")
+                    let why = "Choose a resolution for a conflict first";
+                    let progress = Button::new("Save progress")
                         .icon(icon::FLOPPY_DISK)
                         .enabled(done > 0)
                         .tooltip("Write the chosen resolutions to the file; unresolved conflicts keep their markers")
-                        .disabled_reason("Choose a resolution for a conflict first")
-                        .show(ui)
-                        .clicked()
-                    {
+                        .disabled_reason(why)
+                        .show(ui);
+                    if commit_detail::say_unavailable(progress, why).clicked() {
                         actions.push(Action::Op(Op::Resolve { path: r.path.clone(), content: file.render(&r.choices), mark: false, expected: file.fingerprint() }));
                     }
                     if done > 0
@@ -364,12 +390,81 @@ fn code_height(n: usize, row_h: f32, spacing: f32) -> f32 {
 
 /// Code lines, one per row, truncated to the width. The block reserves its full height but only
 /// the lines inside the visible area are laid out and painted, so a side with thousands of lines
-/// costs no more than a short one.
-fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32) {
-    code_lines_at(ui, lines, color, None);
+/// costs no more than a short one. A side's preview drops the indentation all its lines share, so
+/// a nested snippet uses the box's width for its code; `name` is what a screen reader calls it.
+fn code_lines(ui: &mut Ui, lines: &[String], color: egui::Color32, name: &str) {
+    code_lines_at(ui, lines, color, None, name);
 }
 
-fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line: Option<usize>) {
+/// Columns of indentation every non-blank line of `lines` shares, tabs counted as four.
+fn common_indent(lines: &[String]) -> usize {
+    lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            l.chars()
+                .take_while(|c| c.is_whitespace())
+                .map(|c| if c == '\t' { 4 } else { 1 })
+                .sum::<usize>()
+        })
+        .min()
+        .unwrap_or(0)
+}
+
+/// `line` as painted: tabs as four spaces, its first `indent` columns dropped.
+fn shown_line(line: &str, indent: usize) -> String {
+    let expanded = line.replace('\t', "    ");
+    let skip = expanded
+        .char_indices()
+        .take(indent)
+        .take_while(|(_, c)| *c == ' ')
+        .count();
+    expanded.chars().skip(skip).collect()
+}
+
+/// Where a line too long for its box is cut: before the last whole word or number that fits,
+/// so a cut never leaves part of a name or a number looking whole ("25…" of "250"). A word
+/// longer than a quarter of what fits is cut where it must be.
+fn cut_at_boundary(text: &str, fits: usize) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    if fits >= chars.len() {
+        return chars.len();
+    }
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut at = fits;
+    while at > 0 && word(chars[at - 1]) && word(chars[at]) {
+        at -= 1;
+    }
+    if at == 0 || fits - at > fits / 4 {
+        fits
+    } else {
+        at
+    }
+}
+
+/// What a screen reader reads for a block of code lines: its first lines, and how many more.
+fn spoken_block(lines: &[String]) -> String {
+    const SPOKEN: usize = 100;
+    let mut text = lines
+        .iter()
+        .take(SPOKEN)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if lines.len() > SPOKEN {
+        use std::fmt::Write as _;
+        let _ = write!(text, "\n… and {} more lines", lines.len() - SPOKEN);
+    }
+    text
+}
+
+fn code_lines_at(
+    ui: &mut Ui,
+    lines: &[String],
+    color: egui::Color32,
+    first_line: Option<usize>,
+    name: &str,
+) {
     if lines.is_empty() {
         ui.label(
             RichText::new("(nothing)")
@@ -401,23 +496,66 @@ fn code_lines_at(ui: &mut Ui, lines: &[String], color: egui::Color32, first_line
         ),
         Sense::click(),
     );
-    // The lines are painted, not labels, so copying goes through the context menu.
+    // The lines are painted, not labels: a screen reader reads them from the block's node, and
+    // copying goes through the context menu.
+    resp.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, spoken_block(lines))
+    });
+    ui.ctx()
+        .accesskit_node_builder(resp.id, |node| node.set_label(name));
     menu::context(&resp, |m| {
         if m.item(icon::COPY, "Copy lines").show(m.ui).clicked() {
             m.ui.ctx().copy_text(lines.join("\n"));
         }
     });
+    // A side's preview (no line numbers) drops the indentation its lines share, measured once
+    // per block rather than every frame.
+    let indent = if first_line.is_none() {
+        let key = resp
+            .id
+            .with(("common-indent", lines.as_ptr() as usize, lines.len()));
+        ui.ctx()
+            .data(|d| d.get_temp::<usize>(key))
+            .unwrap_or_else(|| {
+                let indent = common_indent(lines);
+                ui.ctx().data_mut(|d| d.insert_temp(key, indent));
+                indent
+            })
+    } else {
+        0
+    };
+    let room = (width - gutter).max(0.0);
     let clip = ui.clip_rect();
     let hover = resp.hover_pos();
     for i in commit_detail::visible_rows(lines.len(), pitch, rect.min.y, clip.min.y, clip.max.y) {
-        let text = lines[i].replace('\t', "    ");
-        let mut job =
-            LayoutJob::single_section(text, egui::TextFormat::simple(font.clone(), color));
-        job.wrap = egui::text::TextWrapping::truncate_at_width((width - gutter).max(0.0));
-        let galley = ui.painter().layout_job(job);
+        let text = shown_line(&lines[i], indent);
+        let full = ui
+            .painter()
+            .layout_no_wrap(text.clone(), font.clone(), color);
+        let elided = full.size().x > room;
+        let galley = if elided {
+            // The characters that fit beside an ellipsis, then back to a word boundary.
+            let ellipsis = ui
+                .painter()
+                .layout_no_wrap("…".to_owned(), font.clone(), color)
+                .size()
+                .x;
+            let fits = full.rows.first().map_or(0, |row| {
+                row.glyphs
+                    .iter()
+                    .take_while(|g| g.pos.x + g.advance_width <= room - ellipsis)
+                    .count()
+            });
+            let cut = cut_at_boundary(&text, fits);
+            let shown: String = text.chars().take(cut).collect();
+            ui.painter()
+                .layout_no_wrap(format!("{}…", shown.trim_end()), font.clone(), color)
+        } else {
+            full
+        };
         let top = rect.min.y + crate::ui::count_f32(i) * pitch;
         // Like a truncated label: the whole line on hover when it does not fit.
-        if galley.elided
+        if elided
             && hover.is_some_and(|h| (top..top + row_h).contains(&h.y))
             && let Some(line) = lines.get(i)
         {
@@ -631,6 +769,15 @@ fn body(ui: &mut Ui, r: &mut Resolver) {
         });
 }
 
+/// The name of a block of unchanged lines: which lines of the file it holds.
+fn unchanged_name(first: usize, count: usize) -> String {
+    if count <= 1 {
+        format!("Unchanged line {first}")
+    } else {
+        format!("Unchanged lines {first} to {}", first + count - 1)
+    }
+}
+
 /// Unchanged lines between conflicts, long stretches folded.
 fn common(
     ui: &mut Ui,
@@ -649,7 +796,13 @@ fn common(
             &lines[lines.len() - KEEP..]
         };
         if !first.is_empty() {
-            code_lines_at(ui, first, p.text, Some(first_line));
+            code_lines_at(
+                ui,
+                first,
+                p.text,
+                Some(first_line),
+                &unchanged_name(first_line, first.len()),
+            );
         }
         let hidden = lines.len() - first.len() - last.len();
         ui.add_space(2.0);
@@ -665,15 +818,23 @@ fn common(
         }
         ui.add_space(2.0);
         if !last.is_empty() {
+            let from = first_line + lines.len() - last.len();
             code_lines_at(
                 ui,
                 last,
                 p.text,
-                Some(first_line + lines.len() - last.len()),
+                Some(from),
+                &unchanged_name(from, last.len()),
             );
         }
     } else if !lines.is_empty() {
-        code_lines_at(ui, lines, p.text, Some(first_line));
+        code_lines_at(
+            ui,
+            lines,
+            p.text,
+            Some(first_line),
+            &unchanged_name(first_line, lines.len()),
+        );
     }
 }
 
@@ -720,13 +881,13 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                     RichText::new(format!("Conflict {}", k + 1))
                         .font(FontId::new(m.body_size, theme::semibold())),
                 );
-                match &choice {
+                commit_detail::without_icons(match &choice {
                     Some(c) => ui.label(small(
                         format!("{}  {}", icon::CHECK, choice_label(c)),
                         p.success,
                     )),
                     None => ui.label(small(format!("{}  Unresolved", icon::WARNING), p.warning)),
-                };
+                });
             });
             ui.add_space(theme::XS);
             let mut picked: Option<Option<Choice>> = None;
@@ -775,7 +936,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                         ));
                         InsetBox::new().show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            code_lines(ui, lines, p.text);
+                            code_lines(ui, lines, p.text, title);
                         });
                         let on = choice.as_ref() == Some(&side);
                         if choice_button("Keep this version", on, false, ("keep", title))
@@ -799,7 +960,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 ));
                 InsetBox::new().show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    code_lines(ui, base, p.text_dim);
+                    code_lines(ui, base, p.text_dim, "Ancestor");
                 });
             }
             ui.add_space(theme::XS);
@@ -901,7 +1062,7 @@ fn conflict_card(ui: &mut Ui, r: &mut Resolver, k: usize, region: &ConflictRegio
                 ui.label(small("Result".to_owned(), p.success));
                 InsetBox::new().show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    code_lines(ui, &region.resolve(&c), p.text);
+                    code_lines(ui, &region.resolve(&c), p.text, "Result");
                 });
             }
         });
@@ -1011,6 +1172,150 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// What a whole-file choice for a conflict of `kind` shows: the button labels painted, and
+    /// the buttons a screen reader finds (one node per widget id).
+    fn whole_file_buttons(kind: ConflictKind) -> (Vec<String>, usize) {
+        let ctx = context();
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let mut r = Resolver::new("f".into());
+        r.reload(Some(kind), Ok(Arc::new(ConflictFile::parse("a\n"))));
+        let mut painted = Vec::new();
+        let mut nodes = 0;
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(1000.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        whole_file(ui, &r, None, &mut Vec::new());
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            painted = output
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .filter(|t| (t.starts_with("Delete") || t.starts_with("Keep")) && !t.ends_with('.'))
+                .collect();
+            nodes = output.platform_output.accesskit_update.map_or(0, |u| {
+                u.nodes
+                    .iter()
+                    .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+                    .count()
+            });
+        }
+        (painted, nodes)
+    }
+
+    #[test]
+    fn a_file_both_sides_deleted_offers_one_delete() {
+        let (painted, nodes) = whole_file_buttons(ConflictKind::BothDeleted);
+        assert_eq!(painted, ["Delete it"], "one button, not two the same");
+        assert_eq!(nodes, 1);
+        let (painted, nodes) = whole_file_buttons(ConflictKind::DeletedByThem);
+        assert_eq!(
+            painted.len(),
+            2,
+            "a real choice keeps both sides: {painted:?}"
+        );
+        assert_eq!(nodes, 2, "each side its own widget");
+    }
+
+    /// QV2-4: a side's preview drops the indentation its lines share, and a line that does not
+    /// fit is cut before a word or number, never inside one.
+    #[test]
+    fn previews_drop_shared_indentation_and_cut_between_words() {
+        let lines: Vec<String> = [
+            "        Self { attempts: 4, backoff_ms: 250 }",
+            "",
+            "\t    nested",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert_eq!(
+            common_indent(&lines),
+            8,
+            "blank lines do not count; a tab is four"
+        );
+        assert_eq!(
+            shown_line(&lines[0], 8),
+            "Self { attempts: 4, backoff_ms: 250 }"
+        );
+        assert_eq!(shown_line(&lines[2], 8), "nested");
+        let text = "backoff_ms: 250 }";
+        // 14 characters fit: "backoff_ms: 25" would cut the number; the cut goes before it.
+        assert_eq!(cut_at_boundary(text, 14), 12);
+        assert_eq!(cut_at_boundary(text, 15), 15, "after the whole number");
+        assert_eq!(cut_at_boundary(text, 40), text.chars().count());
+        // One long word is cut where it must be.
+        assert_eq!(cut_at_boundary("aaaaaaaaaaaaaaaaaaaa", 10), 10);
+    }
+
+    /// A11Y-1: a conflict's code blocks are named and their text reaches a screen reader.
+    #[test]
+    fn conflict_code_blocks_are_named_and_spoken() {
+        use egui::accesskit::{Action as AkAction, Role};
+        let ctx = context();
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        ctx.enable_accesskit();
+        let mut r = Resolver::new("f".into());
+        r.reload(None, Ok(Arc::new(ConflictFile::parse(&text(1, 2)))));
+        let mut nodes = Vec::new();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(1000.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| body(ui, &mut r));
+                },
+            );
+            out.textures_delta.clear();
+            nodes = out
+                .platform_output
+                .accesskit_update
+                .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect())
+                .unwrap_or_default();
+        }
+        let block = |name: &str| {
+            nodes
+                .iter()
+                .find(|n| n.label() == Some(name))
+                .and_then(|n| n.value().map(str::to_owned))
+        };
+        assert_eq!(
+            block("Current version").as_deref(),
+            Some("ours 0.0\nours 0.1")
+        );
+        assert_eq!(
+            block("Incoming version").as_deref(),
+            Some("theirs 0.0\ntheirs 0.1")
+        );
+        assert_eq!(block("Unchanged line 1").as_deref(), Some("common 0"));
+        let unnamed: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.supports_action(AkAction::Click) || n.supports_action(AkAction::Focus))
+            .filter(|n| !matches!(n.role(), Role::Window | Role::GenericContainer))
+            .filter(|n| n.label().is_none_or(str::is_empty) && n.value().is_none())
+            .map(|n| format!("{:?}", n.role()))
+            .collect();
+        assert!(unnamed.is_empty(), "unnamed operable nodes: {unnamed:?}");
     }
 
     #[test]

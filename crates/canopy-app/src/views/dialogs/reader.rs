@@ -69,6 +69,7 @@ pub(super) fn show(ctx: &egui::Context, doc: &mut Document, footer: Footer<'_>) 
                 .show(ui);
         })
         .body(|ui| {
+            start_at_top(ui, shown);
             scroll_keys(ui, ui.clip_rect().height());
             ui.add_space(theme::SM);
             link = legal::show(ui, shown);
@@ -159,6 +160,32 @@ fn consent_footer(ui: &mut Ui, first: &str, second: &str, neutral: bool) -> Answ
     answer
 }
 
+/// Starts each document at the top the first time a freshly opened reader shows it. egui keeps a
+/// document's scroll position (across restarts too); it is kept only while the reader stays open,
+/// for flipping between its tabs, so the first-start consent never opens part-way down the Terms.
+fn start_at_top(ui: &Ui, doc: Document) {
+    let ctx = ui.ctx();
+    let shown_key = egui::Id::new("legal-reader-shown");
+    let unread_key = egui::Id::new("legal-reader-unread");
+    let pass = ctx.cumulative_pass_nr();
+    let open = ctx
+        .data(|d| d.get_temp::<u64>(shown_key))
+        .is_some_and(|last| last + 1 >= pass);
+    let mut unread: Vec<Document> = if open {
+        ctx.data(|d| d.get_temp(unread_key)).unwrap_or_default()
+    } else {
+        vec![Document::Terms, Document::Privacy]
+    };
+    if let Some(i) = unread.iter().position(|d| *d == doc) {
+        unread.remove(i);
+        ui.scroll_with_delta_animation(vec2(0.0, TO_THE_END), egui::style::ScrollAnimation::none());
+    }
+    ctx.data_mut(|d| {
+        d.insert_temp(shown_key, pass);
+        d.insert_temp(unread_key, unread);
+    });
+}
+
 /// Scrolls the document from the keyboard: Page Up/Down and Home/End always, Space and the
 /// arrows while no control has focus (focused, they belong to it).
 fn scroll_keys(ui: &Ui, view: f32) {
@@ -191,5 +218,72 @@ fn scroll_keys(ui: &Ui, view: f32) {
             egui::style::ScrollAnimation::none()
         };
         ui.scroll_with_delta_animation(vec2(0.0, delta), animation);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// polish F2: a reader opened afresh starts at the top of its document wherever it was left
+    /// (egui keeps a scroll position, across restarts too), as the first-start consent must.
+    #[test]
+    fn a_reader_opened_afresh_starts_at_the_top() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let mut t = 0.0;
+        // One frame, the reader open or not: whether the document's first line is in sight.
+        let mut frame = |events: Vec<egui::Event>, open: bool| {
+            t += 0.1;
+            let mut doc = Document::Terms;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 800.0))),
+                    time: Some(t),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    if open {
+                        show(ui.ctx(), &mut doc, Footer::Close);
+                    }
+                },
+            );
+            out.textures_delta.clear();
+            out.shapes.iter().any(|c| match &c.shape {
+                egui::Shape::Text(text) => {
+                    text.galley.text().starts_with("Last updated")
+                        && c.clip_rect.contains_rect(text.visual_bounding_rect())
+                }
+                _ => false,
+            })
+        };
+        let end = egui::Event::Key {
+            key: Key::End,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for _ in 0..5 {
+            frame(Vec::new(), true);
+        }
+        assert!(frame(Vec::new(), true), "the reader opens at the top");
+        frame(vec![end], true);
+        for _ in 0..5 {
+            frame(Vec::new(), true);
+        }
+        assert!(!frame(Vec::new(), true), "End scrolls away from the top");
+        for _ in 0..5 {
+            frame(Vec::new(), false);
+        }
+        for _ in 0..5 {
+            frame(Vec::new(), true);
+        }
+        assert!(
+            frame(Vec::new(), true),
+            "opened again, it starts at the top"
+        );
     }
 }
