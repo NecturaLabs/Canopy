@@ -241,6 +241,9 @@ commits since the previous build.
 
 ### Changed
 
+- Primary and destructive buttons are tonal instead of solid: a ground tinted with the accent (or
+  red), a fine edge in the same colour and a bold label in it, so the main action stands out
+  without a heavy block of colour.
 - Commit details no longer have a "Commit information" block repeating the email, date and
   parents: the message shows directly under the author, the email (and the committer, when someone
   else made the commit) is in the author's tooltip and the full date in the date's.

@@ -302,7 +302,7 @@ fn paint_mark(
 }
 
 /// The outcome marks' colours on a button whose label is `label`: `success` and `danger`, or
-/// the label's own colour on a filled accent or danger button (and a disabled one).
+/// the label's own colour on a disabled button.
 fn outcome_colors(p: &Palette, label: Color32, on_fill: bool) -> (Color32, Color32) {
     if on_fill {
         (label, label)
@@ -478,7 +478,12 @@ impl Button {
         } else {
             m.button_pad_x
         };
-        let font = FontId::new(m.body_size, theme::medium());
+        // The tonal primary and danger buttons hold their own with a semibold label.
+        let font = if matches!(self.kind, ButtonKind::Primary | ButtonKind::Danger) {
+            FontId::new(m.body_size, theme::semibold())
+        } else {
+            FontId::new(m.body_size, theme::medium())
+        };
         let accessible = self.text.text().to_owned();
         let text = galley(ui, self.text, font.clone());
         let icon_font = FontId::proportional(m.icon_md);
@@ -555,28 +560,28 @@ impl Button {
                     p.focus,
                 ),
                 ButtonKind::Ghost if !enabled => (None, None, None, p.disabled_text, p.focus),
-                ButtonKind::Primary => (
-                    Some(blend(
-                        blend(s.primary, s.primary_hover, st.hover),
-                        s.primary_pressed,
-                        st.press,
-                    )),
-                    None,
-                    Some(Elevation::Primary),
-                    p.on_accent,
-                    p.focus,
-                ),
-                ButtonKind::Danger => (
-                    Some(blend(
-                        blend(s.danger_solid, s.danger_solid_hover, st.hover),
-                        s.danger_solid_pressed,
-                        st.press,
-                    )),
-                    None,
-                    Some(Elevation::Danger),
-                    p.on_danger,
-                    p.danger_base,
-                ),
+                // Tonal, not solid: the control ground tinted with the accent (or danger), its
+                // hairline and its label in that colour.
+                ButtonKind::Primary => {
+                    let (fill, ring, label) = p.tonal(p.accent, st.hover, st.press);
+                    (
+                        Some(fill),
+                        Some(ring),
+                        Some(Elevation::Control),
+                        label,
+                        p.focus,
+                    )
+                }
+                ButtonKind::Danger => {
+                    let (fill, ring, label) = p.tonal(p.danger, st.hover, st.press);
+                    (
+                        Some(fill),
+                        Some(ring),
+                        Some(Elevation::Control),
+                        label,
+                        p.danger_base,
+                    )
+                }
                 ButtonKind::Secondary => (
                     Some(blend(
                         blend(s.raised, s.raised_hover, st.hover),
@@ -635,8 +640,7 @@ impl Button {
                     Some(t) if enabled => t.color(p),
                     _ => label,
                 };
-                let on_fill =
-                    !enabled || matches!(self.kind, ButtonKind::Primary | ButtonKind::Danger);
+                let on_fill = !enabled;
                 paint_mark(
                     &painter,
                     &mut shapes,
@@ -1358,13 +1362,16 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
                 p.text,
                 Elevation::Control,
             ),
-            _ => (
-                s.primary,
-                s.primary_hover,
-                s.primary_pressed,
-                p.on_accent,
-                Elevation::Primary,
-            ),
+            _ => {
+                let (rest, _, on) = p.tonal(p.accent, 0.0, 0.0);
+                (
+                    rest,
+                    p.tonal(p.accent, 1.0, 0.0).0,
+                    p.tonal(p.accent, 1.0, 1.0).0,
+                    on,
+                    Elevation::Control,
+                )
+            }
         };
         let (rest, hover, pressed, on) = if enabled {
             (rest, hover, pressed, on)
@@ -1376,7 +1383,11 @@ impl<'a, T: PartialEq + Clone> SplitButton<'a, T> {
         if ui.is_rect_visible(rect) {
             let painter = super::content_painter(ui);
             let radius = CornerRadius::same(m.radius);
-            let ring = (!enabled || self.kind != ButtonKind::Primary).then_some(s.raised_edge);
+            let ring = Some(if enabled && self.kind == ButtonKind::Primary {
+                p.tonal(p.accent, 0.0, 0.0).1
+            } else {
+                s.raised_edge
+            });
             if enabled {
                 paint::surface(&painter, rect, radius, p, style, level, rest, ring);
             } else {
@@ -1894,12 +1905,16 @@ mod tests {
                     }
                     (fills, rings, shadow)
                 };
+                let tonal = |c: Color32| {
+                    let (fill, ring, _) = p.tonal(c, 0.0, 0.0);
+                    (fill.top, ring)
+                };
                 if style == Style::Standard {
-                    assert!(
-                        paint(ButtonKind::Primary, true, false)
-                            .0
-                            .contains(&s.primary.top)
-                    );
+                    // The tonal look: the accent-tinted ground in its accent hairline.
+                    let (fills, rings, _) = paint(ButtonKind::Primary, true, false);
+                    let (fill, ring) = tonal(p.accent);
+                    assert!(fills.contains(&fill), "{id:?}: {fills:?}");
+                    assert!(rings.contains(&ring), "{id:?}: {rings:?}");
                 }
                 for kind in [
                     ButtonKind::Primary,
@@ -1913,7 +1928,7 @@ mod tests {
                         assert!(fills.contains(&s.disabled_fill), "{at}: {fills:?}");
                         assert!(rings.contains(&s.disabled_edge), "{at}: {rings:?}");
                         assert!(!shadow, "{at}: a disabled button casts a shadow");
-                        for accent in [s.primary.top, s.danger_solid.top] {
+                        for accent in [tonal(p.accent).0, tonal(p.danger).0] {
                             let muddy = accent.gamma_multiply(theme::DISABLED_ALPHA);
                             assert!(
                                 !fills.contains(&muddy) && !fills.contains(&accent),
@@ -2112,7 +2127,11 @@ mod tests {
                 .operation(Operation::Succeeded { at: after })
                 .show(ui);
         });
-        assert_eq!(has(&primary, icon::CHECK), Some((p.on_accent, 1.0)));
+        assert_eq!(
+            has(&primary, icon::CHECK),
+            Some((p.success, 1.0)),
+            "a tonal primary has no fill to keep its own colour on"
+        );
         theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
     }
 

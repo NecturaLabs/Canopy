@@ -27,8 +27,8 @@ the shared colours with `theme::palette(ctx)`.
 
 - **Standard** (the default) is round-2 concept 1: flat fills, two-tone chrome (`panel` one step
   lighter than the `bg` ground in dark themes, darker in light), flush panes divided by 1 pt
-  `border` seams, raised `raised` secondary buttons with a 1 pt `raised_edge`, a solid `primary`,
-  and soft shadows only under floating layers. Content is painted on `pane`, which equals `bg`.
+  `border` seams, raised `raised` secondary buttons with a 1 pt `raised_edge`, tonal primary and
+  danger buttons, and soft shadows only under floating layers. Content is painted on `pane`, which equals `bg`.
 - **Deeper** is concept 4, "a floating instrument": the ground recedes and what you work on floats
   over it. The tab strip sits on the ground and the action bar is a lifted card (`deck`, with the
   deck's gradient, highlight and shadow and a `pane_edge` ring). Content panes are cards (`pane`,
@@ -211,8 +211,7 @@ Deeper overrides the geometry only: controls 30 (26 Dense), panes as cards with 
 recess and shadow layers; `kit::paint::surface` paints them. In Standard only buttons, the
 segmented thumb and the switch knob carry a 1 to 2 px contact shadow, and floating layers (menus,
 popovers, tooltips, toasts, dialogs, palette, cheatsheet) a two-layer soft shadow with a 1 pt
-`overlay_edge` ring. Deeper adds two-layer shadows to controls, coloured glows under primary and
-danger buttons, the `Pane` shadow under cards, the field recess and the deck. Shadows take each
+`overlay_edge` ring. Deeper adds two-layer shadows to controls, the `Pane` shadow under cards, the field recess and the deck. Shadows take each
 theme's own tinted `shadow` colour (cool slate in Daylight, the ground's hue in dark themes), and Deeper's light-theme cards add a tight contact layer under a wide soft one,
 so they lift off a light ground as clearly as off a dark one. High contrast has no
 highlights and rings floating layers in `control_border`. The top highlight line is white at the
@@ -448,8 +447,11 @@ in the density's metrics:
 setters (`size`, `icon`, `enabled`, `tooltip`, `disabled_reason`, `shortcut`, `id_salt`,
 `full_width`, `min_width`), and `show(ui)`; each also implements `egui::Widget`. Components read
 colours, metrics and options themselves and report their AccessKit role and label. Buttons come in
-Primary, Secondary, Ghost and Danger at Sm, Md and Lg, plus icon, tool, link and split buttons;
-disabled controls are the whole control at 42% and stay hoverable for their reason. Keyboard focus
+Primary, Secondary, Ghost and Danger at Sm, Md and Lg, plus icon, tool, link and split buttons.
+Primary and Danger are tonal, never solid (`Palette::tonal`): the raised control ground tinted 16%
+with the accent (or `danger`), 22% hovered and 28% pressed, a hairline of it mixed 45% into
+`raised_edge`, and a semibold label in that colour lifted to 4.5:1; they cast the control's shadow
+like a Secondary. Disabled controls are the whole control at 42% and stay hoverable for their reason. Keyboard focus
 draws a 2 pt ring 2 pt outside the control (`danger_base` on danger buttons), only after keyboard
 use. `tools/screenshot.sh <repo> out.png --overlay gallery [--style deeper] [--density dense]
 [--gallery-page N]` renders every component in every state; a page past the end shows the last,
@@ -658,12 +660,12 @@ while their labels and shortcuts remain discoverable in tooltips and the palette
 Overlay card, `radius-lg`, `xl` padding, 460 points wide by default, centred and no taller than
 fits between the tab strip and the status bar (`kit::overlay::modal_room`, which the settings
 screen may take too). Title, body (a `scroll_body` when it overflows), then right-aligned `Md`
-buttons as in the approved preview: secondary (outlined) then primary (the solid `button` fill,
+buttons as in the approved preview: secondary (outlined) then primary (the tonal accent button,
 the same widget everywhere, with a focus ring). Tab reaches the footer's buttons in reading order,
 left to right; a choice between two equal answers (crash reports) is two Secondary buttons with no
 Enter default and no initial focus. Destructive confirmations use a
-solid `danger` primary button (`kit::Button::danger`, its text white or black by contrast
-with the theme's `danger`) whose label names the action ("Delete branch", "Discard 3 files"), never
+tonal `danger` button (`kit::Button::danger`, its label in `danger` lifted to 4.5:1) whose
+label names the action ("Delete branch", "Discard 3 files"), never
 "OK"; Cancel has the initial focus, so Enter does not confirm a destructive dialog unless the button
 has focus. A choice that is riskier than the main one (trusting a whole folder) is a quiet link in
 `warning` with a line saying what it covers, never a second full-width button. Informational

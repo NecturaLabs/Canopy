@@ -1645,6 +1645,22 @@ impl Palette {
         ]
     }
 
+    /// A tonal control in colour `c` (the accent for a primary button, `danger` for a destructive
+    /// one): the raised control ground tinted with `c`, more on hover and press, a hairline of
+    /// `c` and the label in `c` lifted to 4.5:1 on it. Returns fill, ring and label.
+    pub fn tonal(&self, c: Color32, hover: f32, press: f32) -> (Fill, Color32, Color32) {
+        let s = self.s();
+        let t =
+            TONAL_REST + (TONAL_HOVER - TONAL_REST) * hover + (TONAL_PRESSED - TONAL_HOVER) * press;
+        let fill = Fill {
+            top: mix(s.raised.top, c, t),
+            bottom: mix(s.raised.bottom, c, t),
+        };
+        let ring = mix(s.raised_edge, c, TONAL_RING);
+        let label = self.ink(self.ink(c, fill.top), fill.bottom);
+        (fill, ring, label)
+    }
+
     /// Text or an icon in colour `fg` drawn on the translucent `fill` in the active style: `fg`
     /// moved towards the text colour just enough to read at 4.5:1 on that fill over every
     /// component surface, so it keeps its hue wherever the component is drawn.
@@ -1785,6 +1801,13 @@ pub fn over(fg: Color32, bg: Color32) -> Color32 {
 }
 
 /// `a` moved towards `b` by `t` (0 to 1).
+/// How much of its colour a tonal control's ground takes at rest, hovered and pressed, and its
+/// ring ([`Palette::tonal`]).
+const TONAL_REST: f32 = 0.16;
+const TONAL_HOVER: f32 = 0.22;
+const TONAL_PRESSED: f32 = 0.28;
+const TONAL_RING: f32 = 0.45;
+
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let m = |x: u8, y: u8| {
         crate::ui::saturate_u8((f32::from(x) + (f32::from(y) - f32::from(x)) * t).round())
