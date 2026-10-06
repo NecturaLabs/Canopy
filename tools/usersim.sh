@@ -8,14 +8,16 @@
 # The user simulation review (docs/playbook.md): Canopy driven like a user on a private Xvfb
 # display, never on the desktop session, with its own home, XDG folders and Git configuration in
 # a scratch folder, on fixture repositories only. `start` makes the scratch folder (under
-# $CANOPY_SIM_ROOT, default /run/media/nectura/Programming SSD/tmp/canopy-usersim), a fixture
+# $CANOPY_SIM_ROOT, default $TMPDIR/canopy-usersim), a fixture
 # repository with a local bare `origin` (so fetch, pull and push really run), builds the release
 # binary and launches it. The first launch shows the real first-run questions; answer them with
 # `x` like a user. `stop` quits the app, stops Xvfb and deletes the scratch folder.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SIM=${CANOPY_SIM_ROOT:-/run/media/nectura/Programming SSD/tmp/canopy-usersim}
+SIM=${CANOPY_SIM_ROOT:-${TMPDIR:-/tmp}/canopy-usersim}
+# Where cargo puts the build, as tools/screenshot.sh finds it.
+BIN=${CARGO_TARGET_DIR:-$ROOT/target}/release/canopy
 STATE=$SIM/state
 
 die() { echo "usersim: $*" >&2; exit 1; }
@@ -31,7 +33,7 @@ launch() {
     XDG_CACHE_HOME="$SIM/home/.cache" XDG_STATE_HOME="$SIM/home/.local/state" \
     TMPDIR="$SIM/tmp" GIT_CONFIG_GLOBAL="$SIM/home/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
     DISPLAY="$DISPLAY_NO" LIBGL_ALWAYS_SOFTWARE=1 CANOPY_LOG="${CANOPY_LOG:-canopy=info}" \
-    "$ROOT/target/release/canopy" "$SIM/repo" >"$SIM/app.log" 2>&1 &
+    "$BIN" "$SIM/repo" >"$SIM/app.log" 2>&1 &
   echo "APP_PID=$!" >>"$STATE"
 }
 
