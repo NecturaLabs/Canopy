@@ -2017,6 +2017,64 @@ mod tests {
         assert!(!valid_ref_name("x.lock"));
         assert!(!valid_ref_name("x~1"));
     }
+
+    /// review-views-11: the check agrees with `git check-ref-format`, so a name the dialog
+    /// accepts is one git accepts. The name is checked as a whole (`--allow-onelevel`), as
+    /// `--branch` would read `@` as the current branch; git's refusal of a branch starting with
+    /// `-` is the one rule beyond it.
+    #[test]
+    fn ref_names_are_checked_as_git_checks_them() {
+        let dir = tempfile::tempdir().expect("temporary folder");
+        canopy_core::cli::run(dir.path(), &["init", "-q"]).expect("git init");
+        let names = [
+            "feature/login",
+            "v1.2.0",
+            "a@b",
+            "@a",
+            "x.lockx",
+            "a.b/c",
+            "\u{fc}ber",
+            "a\u{a0}b",
+            "a//b",
+            "feature/.x",
+            "x/y.lock/z",
+            "a/.lock",
+            "@",
+            "HEAD",
+            ".a",
+            "a.",
+            "a.lock",
+            "a..b",
+            "a@{b",
+            "a b",
+            "a\tb",
+            "a\u{7f}b",
+            "a~b",
+            "a^b",
+            "a:b",
+            "a?b",
+            "a*b",
+            "a[b",
+            "a\\b",
+            "/a",
+            "a/",
+            "-a",
+            "",
+        ];
+        for name in names {
+            let out = canopy_core::cli::run_unchecked(
+                dir.path(),
+                &["check-ref-format", "--allow-onelevel", name],
+            )
+            .expect("git runs");
+            assert_eq!(
+                valid_ref_name(name),
+                out.code == Some(0) && !name.starts_with('-'),
+                "{name:?}: git says {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+    }
     #[test]
     fn clone_submission_keeps_its_form_until_the_worker_answers() {
         use super::{Key, Outcome, Settings, show};

@@ -6,22 +6,27 @@ pub(super) fn home() -> String {
     crate::settings::home_dir().display().to_string()
 }
 
+/// Whether git takes `name` as a branch name, by `git check-ref-format --branch`'s rules: no
+/// empty, `.`-led or `.lock`-ended part between slashes, no `..`, `@{`, ASCII control
+/// character, space or any of `~^:?*[\`, not `@` alone, not ending in `.` and not starting with
+/// `-`.
 #[expect(
     clippy::case_sensitive_file_extension_comparisons,
     reason = "git refuses a ref name ending in `.lock`, compared as written"
 )]
 pub(super) fn valid_ref_name(name: &str) -> bool {
     !name.is_empty()
+        && name != "@"
         && !name.starts_with('-')
-        && !name.starts_with('/')
-        && !name.ends_with('/')
-        && !name.ends_with(".lock")
         && !name.ends_with('.')
         && !name.contains("..")
         && !name.contains("@{")
         && !name
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\".contains(c))
+            .bytes()
+            .any(|b| b < 0x20 || b == 0x7f || b" ~^:?*[\\".contains(&b))
+        && name
+            .split('/')
+            .all(|part| !part.is_empty() && !part.starts_with('.') && !part.ends_with(".lock"))
 }
 
 /// Why `name` cannot name a new remote among `existing`, if it cannot.
