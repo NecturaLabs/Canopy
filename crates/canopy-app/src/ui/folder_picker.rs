@@ -65,8 +65,43 @@ impl FolderPicker {
         self.show_labelled(ui, salt, start, "Browse…")
     }
 
+    /// Browse without the error line under it: for a field beside the button that shows
+    /// [`FolderPicker::error`] itself.
+    pub fn show_button(&mut self, ui: &mut Ui, salt: &str, start: &Path) -> Option<PathBuf> {
+        self.button(ui, salt, start, "Browse…")
+    }
+
+    /// Why the chooser for `salt` failed, if it did.
+    pub fn error(&self, salt: &str) -> Option<&str> {
+        let id = Id::new(("folder-picker", salt));
+        self.error
+            .as_ref()
+            .filter(|(target, _)| *target == id)
+            .map(|(_, e)| e.as_str())
+    }
+
     /// [`Self::show`] with the button's own wording, for where the action is more than browsing.
     pub fn show_labelled(
+        &mut self,
+        ui: &mut Ui,
+        salt: &str,
+        start: &Path,
+        idle_label: &str,
+    ) -> Option<PathBuf> {
+        let selected = self.button(ui, salt, start, idle_label);
+        if let Some(error) = self.error(salt) {
+            let p = palette(ui.ctx());
+            let m = theme::metrics();
+            ui.label(
+                RichText::new(format!("{}  {error}", icon::WARNING_CIRCLE))
+                    .font(FontId::proportional(m.meta_size))
+                    .color(p.danger),
+            );
+        }
+        selected
+    }
+
+    fn button(
         &mut self,
         ui: &mut Ui,
         salt: &str,
@@ -110,17 +145,6 @@ impl FolderPicker {
             self.start(ui.ctx(), id, move || {
                 rfd::FileDialog::new().set_directory(start).pick_folder()
             });
-        }
-        if let Some((target, error)) = &self.error
-            && *target == id
-        {
-            let p = palette(ui.ctx());
-            let m = theme::metrics();
-            ui.label(
-                RichText::new(format!("{}  {error}", icon::WARNING_CIRCLE))
-                    .font(FontId::proportional(m.meta_size))
-                    .color(p.danger),
-            );
         }
         selected
     }

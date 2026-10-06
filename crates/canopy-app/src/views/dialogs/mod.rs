@@ -20,7 +20,7 @@ use crate::ui::kit::overlay::{
     Dialog as KitDialog, DialogResult, DialogWidth, Footer, InitialFocus,
 };
 use crate::ui::kit::progress::Spinner;
-use crate::ui::kit::row::Disclosure;
+use crate::ui::kit::row::{Disclosure, ListRow};
 use crate::ui::kit::select::Select;
 use crate::ui::kit::surface::InsetBox;
 use crate::ui::kit::toggle::{Checkbox, RadioGroup};
@@ -31,14 +31,16 @@ use crate::worker::Op;
 
 mod common;
 mod credential;
+mod reader;
 mod stack;
 mod start;
 mod update;
 mod url;
 
 use common::{
-    answer, bullet, confirm, document, field, field_with_error, folder_row, home,
-    identity_in_scope, note, swallow_enter, valid_ref_name,
+    FolderField, alternatives, answer, beside, bullet, confirm, document, field, field_with_error,
+    folder_row, home, identity_in_scope, inset_scroll, note, recent_rows, remote_name_problem,
+    swallow_enter, tilde, valid_ref_name, working,
 };
 use credential::credential;
 pub use stack::DialogStack;
@@ -50,14 +52,29 @@ pub use url::UrlBuilder;
 pub enum Dialog {
     Open {
         path: String,
+        /// Recently opened repositories, offered under the field.
+        recent: Vec<std::path::PathBuf>,
+        /// The folder asked for, while the opener looks at it.
+        pending: Option<std::path::PathBuf>,
+        /// Why the last folder asked for did not open.
+        error: Option<OpenFailure>,
     },
     Clone {
         builder: UrlBuilder,
         parent: String,
         pending: bool,
     },
+    /// How callers ask for the new-repository dialog: [`show`] turns it into
+    /// [`Dialog::NewRepository`], which keeps the dialog's state.
     Init {
         path: String,
+    },
+    NewRepository {
+        path: String,
+        /// The folder asked for, while it is created and opened.
+        pending: Option<std::path::PathBuf>,
+        /// Why it could not be created, in git's words.
+        error: Option<String>,
     },
     NewBranch {
         name: String,
@@ -87,6 +104,8 @@ pub enum Dialog {
         builder: UrlBuilder,
         /// Push the current branch after adding (publishing a local-only repository).
         publish: bool,
+        /// Fetch after adding, so the remote's branches show at once.
+        fetch: bool,
     },
     NewRequest {
         kind: ForgeKind,
@@ -153,6 +172,14 @@ pub enum Dialog {
     },
 }
 
+/// Why a folder did not open: the message as git or libgit2 gave it, and whether the folder is
+/// simply not in a repository (the dialog then offers to create one there).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenFailure {
+    pub message: String,
+    pub not_a_repository: bool,
+}
+
 /// What a dialog wants after this frame.
 pub enum Outcome {
     Keep,
@@ -170,9 +197,24 @@ impl Dialog {
         }
     }
 
-    /// The open-repository dialog, prefilled with the home directory.
+    /// The open-repository dialog, prefilled with the home directory. The app adds the recent
+    /// repositories when it opens it.
     pub fn open() -> Self {
-        Self::Open { path: home() }
+        Self::Open {
+            path: home(),
+            recent: Vec::new(),
+            pending: None,
+            error: None,
+        }
+    }
+
+    /// The new-repository dialog with `path` filled in.
+    pub fn new_repository(path: String) -> Self {
+        Self::NewRepository {
+            path,
+            pending: None,
+            error: None,
+        }
     }
 
     /// The clone dialog with the default clone folder as the destination.
@@ -184,12 +226,30 @@ impl Dialog {
         }
     }
 
-    /// The add-remote dialog.
+    /// The add-remote dialog. The app names the remote for the repository when it opens it
+    /// ([`Dialog::name_remote`]).
     pub fn add_remote(settings: &Settings) -> Self {
         Self::AddRemote {
             name: "origin".into(),
             builder: UrlBuilder::new(settings),
             publish: false,
+            fetch: true,
+        }
+    }
+
+    /// Suggests a name no remote of the repository has yet in an add-remote dialog: `origin`,
+    /// then `upstream`, then `remote2`, `remote3`…
+    pub fn name_remote(&mut self, existing: &[String]) {
+        if let Self::AddRemote { name, .. } = self {
+            // One more candidate than there are remotes: one of them is free.
+            let free = ["origin", "upstream"]
+                .into_iter()
+                .map(str::to_owned)
+                .chain((2..=existing.len() + 2).map(|i| format!("remote{i}")))
+                .find(|n| !existing.contains(n));
+            if let Some(free) = free {
+                *name = free;
+            }
         }
     }
 
@@ -223,6 +283,9 @@ pub fn show(
 ) -> Outcome {
     let p = palette(ctx);
     let m = theme::metrics();
+    if let Dialog::Init { path } = dialog {
+        *dialog = Dialog::new_repository(std::mem::take(path));
+    }
     let salt = salt(dialog);
     // What a control inside the body asked for (a link, a secondary action); it wins over the
     // footer.
@@ -274,8 +337,16 @@ pub fn show(
                 }
             })
         }
-        Dialog::Open { path } => {
-            let ok = !path.trim().is_empty();
+        Dialog::Open {
+            path,
+            recent,
+            pending,
+            error,
+        } => {
+            let busy = pending.is_some();
+            let ok = !path.trim().is_empty() && !busy;
+            let mut chosen: Option<std::path::PathBuf> = None;
+            let mut create_here = false;
             let result = KitDialog::new(salt)
                 .title("Open repository")
                 .icon(icon::FOLDER_OPEN)
@@ -283,17 +354,72 @@ pub fn show(
                 .initial_focus(InitialFocus::Body)
                 .body(|ui| {
                     let start = crate::settings::expand_home(path);
-                    folder_row(ui, picker, "open", "Folder", path, "", &start, true);
+                    let typed = path.clone();
+                    ui.add_enabled_ui(!busy, |ui| {
+                        folder_row(
+                            ui,
+                            picker,
+                            "open",
+                            path,
+                            &start,
+                            FolderField {
+                                label: "Folder",
+                                hint: "~/src/project",
+                                helper: Some("Any folder inside a Git repository."),
+                                error: error.as_ref().map(|e| e.message.as_str()),
+                                focus: true,
+                            },
+                        );
+                    });
+                    // A new folder clears what was said about the last one.
+                    if *path != typed {
+                        *error = None;
+                    }
+                    if error.as_ref().is_some_and(|e| e.not_a_repository)
+                        && LinkButton::new("Create a new repository in this folder…")
+                            .text_size(m.meta_size)
+                            .show(ui)
+                            .clicked()
+                    {
+                        create_here = true;
+                    }
+                    if let Some(asked) = pending.as_deref() {
+                        working(ui, &format!("Opening {}…", tilde(asked)));
+                    }
+                    if !recent.is_empty() {
+                        ui.add_space(theme::XS);
+                        ui.add_enabled_ui(!busy, |ui| {
+                            chosen = recent_rows(ui, recent);
+                        });
+                    }
+                    alternatives(ui, &mut extra);
                 })
-                .footer(|f| confirm(f, "Open", ok, "Enter a folder"))
+                .footer(|f| {
+                    confirm(f, "Open", ok, "Enter a folder");
+                    f.confirm_loading(busy);
+                })
                 .show(ctx);
-            answer(result, || {
-                if path.trim().is_empty() {
-                    Outcome::Keep
-                } else {
-                    Outcome::Run(vec![Action::OpenRepo(path.trim().into())])
-                }
-            })
+            if create_here {
+                Outcome::Run(vec![Action::OpenDialog(Dialog::new_repository(
+                    path.trim().to_owned(),
+                ))])
+            } else if let Some(folder) = chosen {
+                *path = tilde(&folder);
+                *error = None;
+                *pending = Some(folder.clone());
+                Outcome::RunKeep(vec![Action::OpenRepo(folder)])
+            } else {
+                answer(result, || {
+                    if path.trim().is_empty() || pending.is_some() {
+                        Outcome::Keep
+                    } else {
+                        let folder = std::path::PathBuf::from(path.trim());
+                        *error = None;
+                        *pending = Some(folder.clone());
+                        Outcome::RunKeep(vec![Action::OpenRepo(folder)])
+                    }
+                })
+            }
         }
         Dialog::Clone {
             builder,
@@ -313,17 +439,29 @@ pub fn show(
                     ui.add_enabled_ui(!busy, |ui| {
                         builder.ui(ui, true);
                         let start = crate::settings::expand_home(parent);
-                        folder_row(ui, picker, "clone", "Clone into", parent, "", &start, false);
+                        let into = clone_target(builder, parent)
+                            .map(|(_, dest)| format!("Creates {}", tilde(&dest)));
+                        folder_row(
+                            ui,
+                            picker,
+                            "clone",
+                            parent,
+                            &start,
+                            FolderField {
+                                label: "Clone into",
+                                hint: "~/src",
+                                helper: Some(
+                                    into.as_deref()
+                                        .unwrap_or("The repository gets a folder of its own here."),
+                                ),
+                                error: None,
+                                focus: false,
+                            },
+                        );
                         target = clone_target(builder, parent);
-                        if let Some((_, dest)) = &target {
-                            note(ui, format!("→ {}", dest.display()), p.text_faint);
-                        }
                     });
                     if busy {
-                        ui.horizontal(|ui| {
-                            Spinner::new().size(Size::Sm).label("the clone").show(ui);
-                            ui.label(RichText::new("Cloning repository…").size(m.body_size));
-                        });
+                        working(ui, "Cloning repository…");
                     }
                 })
                 .footer(|f| {
@@ -351,33 +489,62 @@ pub fn show(
                 _ => Outcome::Keep,
             })
         }
-        Dialog::Init { path } => {
-            let ok = !path.trim().is_empty();
+        // Turned into `NewRepository` before this match.
+        Dialog::Init { .. } => Outcome::Keep,
+        Dialog::NewRepository {
+            path,
+            pending,
+            error,
+        } => {
+            let busy = pending.is_some();
+            let ok = !path.trim().is_empty() && !busy;
             let result = KitDialog::new(salt)
                 .title("New repository")
                 .icon(icon::PLANT)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
+                .description("Canopy runs git init in the folder, creating it if it does not exist yet, and opens the new repository in a tab.")
                 .body(|ui| {
-                    let start = crate::settings::expand_home(&home());
-                    folder_row(
-                        ui,
-                        picker,
-                        "init",
-                        "Folder (created if missing)",
-                        path,
-                        "~/src/my-project",
-                        &start,
-                        true,
-                    );
+                    let start = crate::settings::expand_home(path)
+                        .parent()
+                        .map_or_else(|| crate::settings::expand_home(&home()), std::path::Path::to_path_buf);
+                    let typed = path.clone();
+                    ui.add_enabled_ui(!busy, |ui| {
+                        folder_row(
+                            ui,
+                            picker,
+                            "init",
+                            path,
+                            &start,
+                            FolderField {
+                                label: "Folder",
+                                hint: "~/src/my-project",
+                                helper: Some("A new or empty folder."),
+                                error: error.as_deref(),
+                                focus: true,
+                            },
+                        );
+                    });
+                    if *path != typed {
+                        *error = None;
+                    }
+                    if let Some(asked) = pending.as_deref() {
+                        working(ui, &format!("Creating {}…", tilde(asked)));
+                    }
                 })
-                .footer(|f| confirm(f, "Create", ok, "Enter a folder"))
+                .footer(|f| {
+                    confirm(f, "Create repository", ok, "Enter a folder");
+                    f.confirm_loading(busy);
+                })
                 .show(ctx);
             answer(result, || {
-                if path.trim().is_empty() {
+                if path.trim().is_empty() || pending.is_some() {
                     Outcome::Keep
                 } else {
-                    Outcome::Run(vec![Action::Init(crate::settings::expand_home(path))])
+                    let folder = crate::settings::expand_home(path.trim());
+                    *error = None;
+                    *pending = Some(folder.clone());
+                    Outcome::RunKeep(vec![Action::Init(folder)])
                 }
             })
         }
@@ -429,8 +596,11 @@ pub fn show(
                 .icon(icon::PENCIL_SIMPLE)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
+                .description("Renames the local branch. A branch it tracks on a remote keeps its name there.")
                 .body(|ui| {
-                    field(ui, "New name", new, "", true);
+                    let error = (!new.trim().is_empty() && !valid_ref_name(new.trim()))
+                        .then_some("Not a valid branch name");
+                    field_with_error(ui, "New name", new, old.as_str(), true, error);
                 })
                 .footer(|f| confirm(f, "Rename", ok, "Enter a new, valid branch name"))
                 .show(ctx);
@@ -452,13 +622,26 @@ pub fn show(
         } => {
             let ok = valid_ref_name(name.trim());
             let mut submitted = false;
+            let summary = tab
+                .and_then(|t| t.snap.as_ref())
+                .and_then(|s| s.commits.iter().find(|c| c.oid == *target))
+                .map(|c| c.summary.clone());
             let result = KitDialog::new(salt)
                 .title(format!("Tag {}", short_id(*target)))
                 .icon(icon::TAG)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
                 .body(|ui| {
-                    field(ui, "Name", name, "v1.2.0", true);
+                    if let Some(summary) = &summary {
+                        note(
+                            ui,
+                            format!("{}  {}  {summary}", icon::GIT_COMMIT, short_id(*target)),
+                            p.text_dim,
+                        );
+                    }
+                    let error = (!name.trim().is_empty() && !valid_ref_name(name.trim()))
+                        .then_some("Not a valid tag name");
+                    field_with_error(ui, "Name", name, "v1.2.0", true, error);
                     submitted = TextArea::new(message)
                         .label("Message (makes an annotated tag)")
                         .rows(3..=8)
@@ -492,6 +675,7 @@ pub fn show(
                 .icon(icon::ARCHIVE)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body)
+                .description("Puts your uncommitted changes aside and leaves the working tree clean. They wait under Stashes in the sidebar until you apply them.")
                 .body(|ui| {
                     field(
                         ui,
@@ -553,8 +737,19 @@ pub fn show(
             name,
             builder,
             publish,
+            fetch,
         } => {
-            let ok = valid_ref_name(name.trim()) && builder.resolve().is_some();
+            let remotes: Vec<&str> = tab
+                .and_then(|t| t.snap.as_ref())
+                .map(|s| s.remotes.iter().map(|r| r.name.as_str()).collect())
+                .unwrap_or_default();
+            let problem = remote_name_problem(name.trim(), &remotes);
+            let ok = problem.is_none() && builder.resolve().is_some();
+            let reason = if problem.is_some() {
+                "Choose a remote name that is free and valid"
+            } else {
+                "Enter the repository"
+            };
             let mut dialog = KitDialog::new(salt)
                 .width(DialogWidth::Form)
                 .initial_focus(InitialFocus::Body);
@@ -564,7 +759,10 @@ pub fn show(
                     .icon(icon::CLOUD_ARROW_UP)
                     .description("This repository is local only. Create an empty repository on GitHub or GitLab, enter it here, and Canopy adds it as a remote and pushes the current branch.")
             } else {
-                dialog.title("Add remote").icon(icon::CLOUD)
+                dialog
+                    .title("Add remote")
+                    .icon(icon::CLOUD)
+                    .description("A remote is another copy of this repository, usually on GitHub or GitLab, that you fetch from and push to.")
             };
             let label = if *publish {
                 "Add and push"
@@ -573,19 +771,26 @@ pub fn show(
             };
             let result = dialog
                 .body(|ui| {
-                    field(ui, "Name", name, "origin", false);
+                    // An empty name is said by the disabled button, not as an error.
+                    let shown = problem.as_deref().filter(|_| !name.is_empty());
+                    field_with_error(ui, "Name", name, "origin", false, shown);
                     builder.ui(ui, true);
+                    if !*publish {
+                        Checkbox::new(fetch, "Fetch its branches after adding").show(ui);
+                    }
                 })
-                .footer(|f| confirm(f, label, ok, "Enter a remote name and a repository"))
+                .footer(|f| confirm(f, label, ok, reason))
                 .show(ctx);
             answer(result, || match builder.resolve() {
-                Some(url) if valid_ref_name(name.trim()) => {
+                Some(url) if remote_name_problem(name.trim(), &remotes).is_none() => {
                     let mut run = vec![Action::Op(Op::AddRemote {
                         name: name.trim().to_owned(),
                         url,
                     })];
                     if *publish {
                         run.push(Action::Op(Op::Push { force: false }));
+                    } else if *fetch {
+                        run.push(Action::Fetch);
                     }
                     Outcome::Run(run)
                 }
@@ -799,7 +1004,7 @@ pub fn show(
                 .icon(icon::SPARKLE)
                 .width(DialogWidth::Form)
                 .body(|ui| {
-                    document(ui, "whats-new", 360.0, notes);
+                    document(ui, "whats-new", NOTES_HEIGHT, notes);
                     if LinkButton::new("All releases")
                         .external(true)
                         .text_size(m.meta_size)
@@ -861,23 +1066,14 @@ pub fn show(
             updated,
             reading,
         } => consent(ctx, salt, *step, *updated, reading),
-        Dialog::Legal(doc) => {
-            let glyph = match doc {
-                Document::Privacy => icon::SHIELD_CHECK,
-                Document::Terms => icon::SCROLL,
-            };
-            let height = (ctx.content_rect().height() - 180.0).clamp(0.0, 420.0);
-            let result = KitDialog::new(salt)
-                .title(doc.title())
-                .icon(glyph)
-                .width(DialogWidth::Form)
-                .body(|ui| document(ui, ("legal", doc.title()), height, doc.body()))
-                .footer(|f| {
-                    f.cancel_label("Close");
-                })
-                .show(ctx);
-            answer(result, || Outcome::Close)
-        }
+        Dialog::Legal(doc) => match reader::show(ctx, doc, reader::Footer::Close) {
+            reader::Answer::Close => Outcome::Close,
+            reader::Answer::Link(link) => Outcome::RunKeep(vec![follow(link)]),
+            reader::Answer::Open
+            | reader::Answer::Back
+            | reader::Answer::First
+            | reader::Answer::Second => Outcome::Keep,
+        },
         Dialog::About => {
             let result = KitDialog::new(salt)
                 .title("About Canopy")
@@ -897,6 +1093,9 @@ pub fn show(
         (_, o) => o,
     }
 }
+
+/// The tallest release notes grow in What's new before they scroll.
+const NOTES_HEIGHT: f32 = 360.0;
 
 /// The id every dialog of `dialog`'s kind shares, so switching to another kind animates it in.
 fn salt(dialog: &Dialog) -> (&'static str, std::mem::Discriminant<Dialog>) {
@@ -1071,6 +1270,38 @@ fn consent(
 ) -> Outcome {
     let p = palette(ctx);
     swallow_enter(ctx);
+    // Reading a document: the reader at full size, with the step's answers in its footer so the
+    // decision never leaves the screen.
+    if let Some(doc) = reading {
+        let footer = match step {
+            Pending::Terms => reader::Footer::Consent {
+                first: "I agree",
+                second: "Quit",
+                neutral: false,
+            },
+            Pending::CrashReports => reader::Footer::Consent {
+                first: "Send crash reports",
+                second: "Don't send",
+                neutral: true,
+            },
+        };
+        return match reader::show(ctx, doc, footer) {
+            reader::Answer::Open | reader::Answer::Close => Outcome::Keep,
+            reader::Answer::Back => {
+                *reading = None;
+                Outcome::Keep
+            }
+            reader::Answer::First => Outcome::Run(vec![match step {
+                Pending::Terms => Action::AcceptTerms,
+                Pending::CrashReports => Action::SetCrashReports(true),
+            }]),
+            reader::Answer::Second => Outcome::Run(vec![match step {
+                Pending::Terms => Action::Quit,
+                Pending::CrashReports => Action::SetCrashReports(false),
+            }]),
+            reader::Answer::Link(link) => Outcome::RunKeep(vec![follow(link)]),
+        };
+    }
     match step {
         Pending::Terms => {
             let result = KitDialog::new(salt)
@@ -1096,9 +1327,7 @@ fn consent(
                     ] {
                         bullet(ui, glyph, p.accent, text);
                     }
-                    for doc in [Document::Terms, Document::Privacy] {
-                        read(ui, doc, reading, 260.0);
-                    }
+                    documents(ui, &[Document::Terms, Document::Privacy], reading);
                 })
                 .footer(|f| {
                     f.cancel_label("Quit").confirm("I agree");
@@ -1111,9 +1340,6 @@ fn consent(
             }
         }
         Pending::CrashReports => {
-            if *reading != Some(Document::Privacy) {
-                *reading = None;
-            }
             let result = KitDialog::new(salt)
                 .title("Send crash reports?")
                 .icon(icon::FIRST_AID_KIT)
@@ -1129,7 +1355,7 @@ fn consent(
                         bullet(ui, glyph, color, text);
                     }
                     note(ui, "Canopy works the same either way. You can change this at any time in Settings → Privacy.", p.text_faint);
-                    read(ui, Document::Privacy, reading, 240.0);
+                    documents(ui, &[Document::Privacy], reading);
                 })
                 .footer(|f| {
                     f.choice("Send crash reports", "Don't send");
@@ -1144,17 +1370,49 @@ fn consent(
     }
 }
 
-/// A legal document that opens inline under its title (one at a time).
-fn read(ui: &mut Ui, doc: Document, reading: &mut Option<Document>, height: f32) {
-    let mut open = *reading == Some(doc);
-    let was = open;
-    Disclosure::new(("read", doc.title()), doc.title(), &mut open)
-        .icon(icon::SCROLL)
-        .show(ui, |ui| {
-            document(ui, ("legal", doc.title()), height, doc.body());
-        });
-    if open != was {
-        *reading = open.then_some(doc);
+/// The documents the consent asks about, one row each: its glyph, title and date, opening it in
+/// the reader.
+fn documents(ui: &mut Ui, docs: &[Document], reading: &mut Option<Document>) {
+    let m = theme::metrics();
+    InsetBox::new().show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing.y = 0.0;
+        // The rows sit on the box's fill.
+        let ground = theme::surfaces(ui.ctx()).field;
+        for doc in docs {
+            let row = ListRow::new(("consent-document", *doc))
+                .icon(doc.glyph())
+                .label(doc.title())
+                .detail(format!("Updated {}", doc.updated()))
+                .ground(ground)
+                .accessible_name(format!("Read the {}", doc.title()))
+                .show_with(ui, |rc, painter| {
+                    let g = painter.layout_no_wrap(
+                        format!("Read  {}", icon::ARROW_RIGHT),
+                        FontId::proportional(m.meta_size),
+                        rc.accent,
+                    );
+                    painter.galley(
+                        egui::pos2(
+                            rc.content.right() - g.size().x,
+                            rc.rect.center().y - g.size().y / 2.0,
+                        ),
+                        g,
+                        rc.accent,
+                    );
+                });
+            if row.clicked() {
+                *reading = Some(*doc);
+            }
+        }
+    });
+}
+
+/// The action a link in a legal document asks for: a web page opens, an email address is copied.
+fn follow(link: crate::ui::legal::Link) -> Action {
+    match link {
+        crate::ui::legal::Link::Web(url) => Action::OpenUrl(url),
+        crate::ui::legal::Link::Email(address) => Action::Copy(address),
     }
 }
 
@@ -1419,6 +1677,190 @@ mod tests {
             Dialog::NewBranch { start: Start::Commit(o), .. } if o == oid
         ));
         Ok(())
+    }
+
+    #[test]
+    fn the_opener_answers_only_the_dialog_that_asked() {
+        use super::OpenFailure;
+        use std::path::{Path, PathBuf};
+        let failure = OpenFailure {
+            message: "/tmp/x is not a Git repository".into(),
+            not_a_repository: true,
+        };
+        let mut s = DialogStack::default();
+        let mut open = Dialog::open();
+        if let Dialog::Open { pending, .. } = &mut open {
+            *pending = Some(PathBuf::from("/tmp/x"));
+        }
+        s.open(open);
+        // Another folder (a restored session) and a creation of the same path are not its own.
+        assert!(!s.finish_open(Path::new("/tmp/y"), false, Err(&failure)));
+        assert!(!s.finish_open(Path::new("/tmp/x"), true, Err(&failure)));
+        assert!(s.finish_open(Path::new("/tmp/x"), false, Err(&failure)));
+        assert!(matches!(
+            s.current(),
+            Some(Dialog::Open { pending: None, error: Some(e), .. }) if *e == failure
+        ));
+        // Asked again, it closes once the repository opened.
+        if let Some(Dialog::Open { pending, .. }) = s.current_mut() {
+            *pending = Some(PathBuf::from("/tmp/x"));
+        }
+        assert!(s.finish_open(Path::new("/tmp/x"), false, Ok(())));
+        assert!(s.current().is_none());
+
+        let mut create = Dialog::new_repository("~/new".into());
+        if let Dialog::NewRepository { pending, .. } = &mut create {
+            *pending = Some(PathBuf::from("/home/ada/new"));
+        }
+        s.open(create);
+        assert!(s.finish_open(Path::new("/home/ada/new"), true, Err(&failure)));
+        assert!(matches!(
+            s.current(),
+            Some(Dialog::NewRepository { pending: None, error: Some(e), .. }) if e == &failure.message
+        ));
+    }
+
+    #[test]
+    fn new_remotes_get_a_free_valid_name() {
+        use super::remote_name_problem;
+        let names = |existing: &[&str]| {
+            let existing: Vec<String> = existing.iter().map(|s| (*s).to_owned()).collect();
+            let mut d = Dialog::add_remote(&crate::settings::Settings::default());
+            d.name_remote(&existing);
+            match d {
+                Dialog::AddRemote { name, .. } => name,
+                _ => unreachable!(),
+            }
+        };
+        assert_eq!(names(&[]), "origin");
+        assert_eq!(names(&["origin"]), "upstream");
+        assert_eq!(names(&["origin", "upstream", "remote2"]), "remote3");
+        assert!(remote_name_problem("origin", &["origin"]).is_some());
+        assert!(remote_name_problem("", &[]).is_some());
+        assert!(remote_name_problem("a/b", &[]).is_some());
+        assert!(remote_name_problem("has space", &[]).is_some());
+        assert!(remote_name_problem("upstream", &["origin"]).is_none());
+    }
+
+    /// The legal documents read in a card that fills most of the room a modal has (O1), at the
+    /// reading measure, in both the plain dialog and the consent.
+    #[test]
+    fn legal_documents_read_at_full_size() {
+        for (w, h) in [(1440.0, 900.0), (1024.0, 700.0), (1920.0, 1080.0)] {
+            for mut dialog in [
+                Dialog::Legal(Document::Terms),
+                Dialog::Consent {
+                    step: Pending::Terms,
+                    updated: false,
+                    reading: Some(Document::Privacy),
+                },
+            ] {
+                let ctx = egui::Context::default();
+                crate::ui::fonts::install(&ctx);
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+                let mut picker = crate::ui::folder_picker::FolderPicker::default();
+                let mut card = egui::Rect::NOTHING;
+                for _ in 0..3 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            ..Default::default()
+                        },
+                        |_| {
+                            super::show(
+                                &ctx,
+                                &mut dialog,
+                                None,
+                                &mut picker,
+                                false,
+                                &crate::updater::Updater::default(),
+                                "git version 2.55.0",
+                            );
+                        },
+                    );
+                    output.textures_delta.clear();
+                    // Everything painted but the scrim is the card and its content.
+                    card = output
+                        .shapes
+                        .iter()
+                        .map(|s| s.shape.visual_bounding_rect().intersect(s.clip_rect))
+                        .filter(|r| r.is_positive() && r.width() < w * 0.99)
+                        .fold(egui::Rect::NOTHING, egui::Rect::union);
+                }
+                let room = crate::ui::kit::overlay::modal_room(&ctx);
+                assert!(
+                    card.height() >= room.height() * 0.85,
+                    "{dialog:?} at {w}x{h} is {card:?}, room {room:?}"
+                );
+                assert!(
+                    card.width() >= crate::ui::legal::measure(&ctx).min(room.width() * 0.9)
+                        && card.width() <= room.width() + 1.0,
+                    "{dialog:?} at {w}x{h} is {card:?}"
+                );
+            }
+        }
+    }
+
+    /// Consent is never given by Enter, Escape or a click on the scrim, reading or not; Escape
+    /// while reading goes back to the summary.
+    #[test]
+    fn consent_is_only_given_with_its_buttons() {
+        use super::{Key, Outcome, show};
+        for step in [Pending::Terms, Pending::CrashReports] {
+            for reading in [None, Some(Document::Terms)] {
+                let ctx = egui::Context::default();
+                crate::ui::fonts::install(&ctx);
+                let mut dialog = Dialog::Consent {
+                    step,
+                    updated: false,
+                    reading,
+                };
+                let mut picker = crate::ui::folder_picker::FolderPicker::default();
+                for key in [None, Some(Key::Enter), Some(Key::Escape), None] {
+                    let mut events = vec![egui::Event::PointerButton {
+                        pos: egui::pos2(2.0, 2.0),
+                        button: egui::PointerButton::Primary,
+                        pressed: key.is_none(),
+                        modifiers: egui::Modifiers::NONE,
+                    }];
+                    if let Some(key) = key {
+                        events.push(egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: egui::Modifiers::NONE,
+                        });
+                    }
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            events,
+                            ..Default::default()
+                        },
+                        |_| {
+                            let outcome = show(
+                                &ctx,
+                                &mut dialog,
+                                None,
+                                &mut picker,
+                                false,
+                                &crate::updater::Updater::default(),
+                                "git version 2.55.0",
+                            );
+                            assert!(
+                                matches!(outcome, Outcome::Keep),
+                                "{step:?} reading {reading:?} answered on {key:?}"
+                            );
+                        },
+                    );
+                    output.textures_delta.clear();
+                }
+                assert!(
+                    matches!(dialog, Dialog::Consent { reading: None, .. }),
+                    "Escape goes back from reading"
+                );
+            }
+        }
     }
 
     #[test]

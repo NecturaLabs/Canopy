@@ -6,6 +6,9 @@ use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::progress::Progress;
 use crate::updater::{Available, InstallState, Updater};
 
+/// The tallest the release notes grow before they scroll.
+const NOTES_HEIGHT: f32 = 220.0;
+
 /// "12.3 MB", or "12.3 of 45.6 MB" while the size is known.
 fn megabytes(done: u64, total: Option<u64>) -> String {
     #[expect(
@@ -135,22 +138,12 @@ pub(super) fn update(
                     crate::build_info::label()
                 ))
                 .body(|ui| {
-                    InsetBox::new().show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        egui::ScrollArea::vertical()
-                            .id_salt("update-notes")
-                            .max_height(220.0)
-                            .show(ui, |ui| {
-                                let notes = a.manifest.notes.trim();
-                                if notes.is_empty() {
-                                    ui.label(
-                                        RichText::new("No release notes.").color(p.text_faint),
-                                    );
-                                } else {
-                                    crate::ui::notes::markdown(ui, notes);
-                                }
-                            });
-                    });
+                    let notes = a.manifest.notes.trim();
+                    if notes.is_empty() {
+                        note(ui, "This release has no notes.", p.text_faint);
+                    } else {
+                        document(ui, "update-notes", NOTES_HEIGHT, notes);
+                    }
                     note(ui, how, p.text_faint);
                     if let InstallState::Failed { error, .. } = state {
                         note(ui, format!("{}  {error}", icon::WARNING), p.danger);

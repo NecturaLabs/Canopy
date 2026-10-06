@@ -19,7 +19,7 @@ pub(super) struct OpenRequest {
 pub(super) struct Opened {
     request: OpenRequest,
     /// The working tree's canonical root, or git's (or libgit2's) message.
-    result: Result<PathBuf, String>,
+    result: Result<PathBuf, dialogs::OpenFailure>,
 }
 
 /// Starts the opener thread. Requests are handled one at a time, so tabs open in the order they
@@ -32,7 +32,11 @@ pub(super) fn start(ctx: &egui::Context) -> Option<(Sender<OpenRequest>, Receive
         .name("opener".into())
         .spawn(move || {
             for request in req_rx {
-                let result = open(&request.path, request.create).map_err(|e| e.to_string());
+                let result =
+                    open(&request.path, request.create).map_err(|e| dialogs::OpenFailure {
+                        not_a_repository: matches!(e, canopy_core::Error::NotARepository(_)),
+                        message: e.to_string(),
+                    });
                 if done_tx.send(Opened { request, result }).is_err() {
                     break;
                 }
@@ -108,6 +112,15 @@ impl CanopyApp {
         let done: Vec<Opened> = rx.try_iter().collect();
         for Opened { request, result } in done {
             self.pending_opens = self.pending_opens.saturating_sub(1);
+            if let Err(e) = &result {
+                tracing::warn!(path = %request.path.display(), create = request.create, "could not open the repository: {}", e.message);
+            }
+            // The dialog that asked closes on success and shows a failure itself.
+            let asked = self.dialogs.finish_open(
+                &request.path,
+                request.create,
+                result.as_ref().map(|_| ()),
+            );
             match result {
                 Ok(root) => {
                     if request.create {
@@ -120,6 +133,7 @@ impl CanopyApp {
                     }
                     self.add_tab(ctx, root, request.focus);
                 }
+                Err(_) if asked => {}
                 Err(e) => self.toasts.push(
                     ctx,
                     ToastKind::Error,
@@ -128,7 +142,7 @@ impl CanopyApp {
                     } else {
                         "Could not open repository"
                     },
-                    e,
+                    e.message,
                 ),
             }
         }

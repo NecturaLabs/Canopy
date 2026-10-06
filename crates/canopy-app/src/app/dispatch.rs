@@ -24,8 +24,12 @@ impl CanopyApp {
                     danger,
                     op,
                 }),
-                Action::OpenDialog(d) => {
+                Action::OpenDialog(mut d) => {
                     self.folder_picker.cancel();
+                    if let Dialog::Open { recent, .. } = &mut d {
+                        recent.clone_from(&self.settings.recent);
+                    }
+                    d.name_remote(&self.remote_names());
                     self.dialogs.open(d);
                 }
                 Action::OpenRepo(p) => self.open_repo(ctx, p),
@@ -112,8 +116,7 @@ impl CanopyApp {
                         .get(self.active)
                         .is_some_and(RepoTab::is_local_only)
                     {
-                        self.dialogs
-                            .open(Dialog::add_remote(&self.settings).publishing());
+                        self.dialogs.open(self.add_remote_dialog(true));
                     } else if let Some(t) = self.tab() {
                         t.op(Op::Push { force: false });
                     }
@@ -152,11 +155,10 @@ impl CanopyApp {
                     }
                 }
                 Action::AddRemoteDialog => {
-                    self.dialogs.open(Dialog::add_remote(&self.settings));
+                    self.dialogs.open(self.add_remote_dialog(false));
                 }
                 Action::Publish => {
-                    self.dialogs
-                        .open(Dialog::add_remote(&self.settings).publishing());
+                    self.dialogs.open(self.add_remote_dialog(true));
                 }
                 Action::Commit => {
                     let signoff = self.settings.signoff;
@@ -341,5 +343,25 @@ impl CanopyApp {
                 }
             }
         }
+    }
+
+    /// The remotes of the active repository, by name.
+    fn remote_names(&self) -> Vec<String> {
+        self.tabs
+            .get(self.active)
+            .and_then(|t| t.snap.as_ref())
+            .map(|s| s.remotes.iter().map(|r| r.name.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// The add-remote dialog (or, `publish`, the publish dialog) for the active repository, with
+    /// a remote name it does not use yet.
+    fn add_remote_dialog(&self, publish: bool) -> Dialog {
+        let mut d = Dialog::add_remote(&self.settings);
+        if publish {
+            d = d.publishing();
+        }
+        d.name_remote(&self.remote_names());
+        d
     }
 }
