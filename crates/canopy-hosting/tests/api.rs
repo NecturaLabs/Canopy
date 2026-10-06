@@ -1562,6 +1562,81 @@ fn rollup_redirects_are_never_followed() {
     assert!(other.requests().is_empty(), "{:?}", other.requests());
 }
 
+/// Whether an error's server-derived text is fit to show and log: at most 300 characters, with no
+/// control character and nothing that hides or reorders text.
+fn is_plain_server_text(text: &str) -> bool {
+    text.chars().count() <= 300
+        && !text.chars().any(|c| {
+            c.is_control() || matches!(c, '\u{200B}' | '\u{202A}'..='\u{202E}' | '\u{3164}')
+        })
+}
+
+#[test]
+fn a_gitlab_rebase_failure_shows_its_reason_as_plain_text() {
+    let server = Server::start();
+    let mut mr = gl_mr(8, "opened", "2024-02-03T00:00:00Z");
+    mr["sha"] = json!("unchanged");
+    mr["rebase_in_progress"] = json!(false);
+    mr["merge_error"] = json!(format!("x\u{202E}y\n{}", "z".repeat(1_000)));
+    server.route(
+        "GET",
+        &format!("{GL}/merge_requests/8"),
+        200,
+        &mr.to_string(),
+    );
+    server.route(
+        "PUT",
+        &format!("{GL}/merge_requests/8/rebase"),
+        202,
+        r#"{"rebase_in_progress":true}"#,
+    );
+    match gitlab(&server, Some(TOKEN)).merge(8, MergeMethod::Rebase, None) {
+        Err(Error::Api {
+            status: 409,
+            message,
+        }) => {
+            assert!(is_plain_server_text(&message), "{message:?}");
+            assert!(message.contains("xy z"), "{message:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_malformed_redirect_is_reported_as_plain_text() {
+    // The server's redirect target, quoted by the transport's error, hides and reorders text.
+    let server = Server::start();
+    let location = format!("/a\u{202E}b{}", "c".repeat(2_000));
+    server.route_with_headers(
+        "GET",
+        "/repos/octo/hello/pulls",
+        301,
+        &[("Location", &location)],
+        "",
+    );
+    match github(&server, Some(TOKEN)).list(StateFilter::Open, 10) {
+        Err(Error::Network(message)) => assert!(is_plain_server_text(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn an_unexpected_answer_quotes_the_server_as_plain_text() {
+    // A field of the wrong type: the parser quotes the server's whole string.
+    let server = Server::start();
+    let filler = "\u{3164}".repeat(100_000);
+    server.route(
+        "GET",
+        "/repos/octo/hello/pulls",
+        200,
+        &json!([{ "number": filler }]).to_string(),
+    );
+    match github(&server, Some(TOKEN)).list(StateFilter::Open, 10) {
+        Err(Error::Parse(message)) => assert!(is_plain_server_text(&message), "{message:?}"),
+        other => panic!("{other:?}"),
+    }
+}
+
 /// The rollup reads no more of a response than any other request does (under 10 MiB).
 #[test]
 fn rollup_bodies_are_bounded() {

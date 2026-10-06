@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::client::{PER_PAGE, optional, unix};
 use crate::error::{Error, Result, head_changed, map_head_conflict};
-use crate::http::{Http, Method, encode};
+use crate::http::{Http, Method, encode, shorten};
 use crate::model::{
     Check, CheckState, Comment, MergeMethod, NewRequest, RequestDetails, RequestState,
     RequestSummary, Review, ReviewDecision, Rollup, StateFilter,
@@ -477,7 +477,9 @@ fn rebase(http: &Http, mr_path: &str, expected: Option<&str>) -> Result<Option<S
             if !error.is_empty() && now.sha == before.sha {
                 return Err(Error::Api {
                     status: 409,
-                    message: format!("GitLab could not rebase the merge request: {error}"),
+                    message: shorten(&format!(
+                        "GitLab could not rebase the merge request: {error}"
+                    )),
                 });
             }
             return Ok(now.sha.filter(|s| !s.is_empty()));

@@ -228,8 +228,16 @@ impl Http {
     ) -> Result<(HeaderMap, Vec<u8>)> {
         let mut response = result.map_err(|e| {
             let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-            tracing::warn!(method = method.as_str(), path, ms, error = %e, "hosting request failed");
-            Error::Network(e.to_string())
+            // The transport's message can quote the server (a malformed redirect target).
+            let error = shorten(&e.to_string());
+            tracing::warn!(
+                method = method.as_str(),
+                path,
+                ms,
+                error,
+                "hosting request failed"
+            );
+            Error::Network(error)
         })?;
         let status = response.status().as_u16();
         let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -245,7 +253,7 @@ impl Http {
             .with_config()
             .limit(MAX_BODY)
             .read_to_vec()
-            .map_err(|e| Error::Network(e.to_string()))?;
+            .map_err(|e| Error::Network(shorten(&e.to_string())))?;
         if (200..300).contains(&status) {
             Ok((response.headers().clone(), bytes))
         } else {
@@ -400,8 +408,10 @@ pub fn is_loopback_base(url: &str) -> bool {
     port_ok && matches!(host, "127.0.0.1" | "localhost" | "[::1]")
 }
 
+/// Parses a JSON response. The parser's message can quote the server's own text (a string where
+/// a number belongs), so it is cleaned like any server message.
 pub(crate) fn parse<T: DeserializeOwned>(bytes: &[u8], what: &str) -> Result<T> {
-    serde_json::from_slice(bytes).map_err(|e| Error::Parse(format!("{what}: {e}")))
+    serde_json::from_slice(bytes).map_err(|e| Error::Parse(shorten(&format!("{what}: {e}"))))
 }
 
 /// A GraphQL response: `data`, `errors`, or both.
@@ -541,7 +551,8 @@ fn flatten(v: &Value, field: Option<&str>, out: &mut Vec<String>) {
     }
 }
 
-fn shorten(s: &str) -> String {
+/// Server-derived text as an error carries it: [`plain_text`], at most 300 characters.
+pub(crate) fn shorten(s: &str) -> String {
     plain_text(s, MAX_MESSAGE)
 }
 
