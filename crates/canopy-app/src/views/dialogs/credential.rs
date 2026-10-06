@@ -14,6 +14,7 @@ pub(super) fn credential(
     salt: impl std::hash::Hash + std::fmt::Debug,
     prompt: &Prompt,
     answer: &mut String,
+    serial: u64,
 ) -> Outcome {
     let p = palette(ctx);
     let m = theme::metrics();
@@ -60,7 +61,7 @@ pub(super) fn credential(
                             (false, _) => "Username",
                         })
                         .password(secret)
-                        .id_salt("credential-answer")
+                        .id_salt(("credential-answer", serial))
                         .show(ui);
                     if !r.lost_focus() && ui.memory(|mem| mem.focused().is_none()) {
                         r.request_focus();
