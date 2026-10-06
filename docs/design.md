@@ -388,7 +388,7 @@ disabled controls are the whole control at 42% and stay hoverable for their reas
 draws a 2 pt ring 2 pt outside the control (`danger_base` on danger buttons), only after keyboard
 use. `tools/screenshot.sh <repo> out.png --overlay gallery [--style deeper] [--density dense]
 [--gallery-page N]` renders every component in every state; a page past the end shows the last,
-and each page is numbered at the bottom right.
+and a strip under the content numbers each page from 1 ("Page 4 of 19" for `--gallery-page 3`).
 
 
 ### Ref pill
