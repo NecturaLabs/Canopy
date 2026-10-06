@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Canopy: a native Git client, keyboard first</title>
+<meta name="description" content="Canopy is a native Git client for Linux and Windows: a commit graph, line staging, a conflict resolver, GitHub and GitLab pull requests and a command palette. No telemetry, no account.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0F1012" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="64x64" href="assets/icon-64.png">
+<link rel="apple-touch-icon" href="assets/icon-256.png">
+<meta property="og:title" content="Canopy: a native Git client, keyboard first">
+<meta property="og:description" content="A commit graph, line staging, a conflict resolver, GitHub and GitLab pull requests and a command palette. For Linux and Windows.">
+<meta property="og:image" content="https://canopy.necturalabs.com/assets/shots/m-history.webp">
+<meta property="og:url" content="https://canopy.necturalabs.com/">
+<meta property="og:type" content="website">
+<link rel="canonical" href="https://canopy.necturalabs.com/">
+<link rel="preload" href="fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/Inter-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+<script src="theme.js"></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <a class="brand" href="#top"><img src="assets/icon-64.png" width="24" height="24" alt=""><span translate="no">Canopy</span></a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#history">History</a>
+      <a href="#changes">Changes</a>
+      <a href="#requests">Pull requests</a>
+      <a href="#keyboard">Keyboard</a>
+      <a href="#privacy">Privacy</a>
+    </nav>
+    <div class="top-end">
+      <div class="theme-switch" role="radiogroup" aria-label="Theme">
+        <button type="button" role="radio" data-theme-choice="dark" aria-label="Midnight (dark)"><i class="ph" aria-hidden="true">&#xE330;</i></button>
+        <button type="button" role="radio" data-theme-choice="auto" aria-label="Match the system"><i class="ph" aria-hidden="true">&#xE18C;</i></button>
+        <button type="button" role="radio" data-theme-choice="light" aria-label="Daylight (light)"><i class="ph" aria-hidden="true">&#xE472;</i></button>
+      </div>
+      <a class="btn btn-primary btn-sm" href="#download">Download</a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" id="top" aria-labelledby="h-top">
+    <div class="wrap hero-copy">
+      <h1 id="h-top">A native Git client, keyboard&nbsp;first.</h1>
+      <p class="lead">Canopy shows your history as a commit graph, stages single lines, resolves conflicts side by side and reviews GitHub and GitLab pull requests. Made for Linux first, and for Windows.</p>
+      <div class="cta" id="h-cta">
+      <div class="install" data-install>
+        <div class="install-head">
+          <p class="install-label" id="h-inst-label">Install with one command</p>
+          <div class="seg" role="radiogroup" aria-labelledby="h-inst-label">
+            <button type="button" role="radio" aria-checked="true" data-os="sh">Linux</button>
+            <button type="button" role="radio" aria-checked="false" data-os="ps" tabindex="-1">Windows</button>
+          </div>
+        </div>
+        <div class="cmd cmd-lg">
+          <span class="prompt" aria-hidden="true" data-prompt>$</span>
+          <code data-cmd translate="no">curl -fsSL https://canopy.necturalabs.com/install | sh</code>
+          <button type="button" class="btn btn-primary copy-btn" data-copy-cmd aria-label="Copy the Linux install command"><i class="ph" aria-hidden="true" data-copy-icon>&#xE1CA;</i><span data-copy-label>Copy</span></button>
+        </div>
+      </div>
+        <p class="cta-meta">Installs build <span data-build>690</span> for your user, without <code translate="no">sudo</code> or administrator rights. <a href="#download">Archives and details</a></p>
+      </div>
+      <p class="device-note" data-note hidden><i class="ph" aria-hidden="true" data-note-icon>&#xE1E0;</i><span data-note-text>Canopy is a desktop app for Linux and Windows. Open this page on a computer to install it.</span></p>
+      <div class="phone-actions" data-phone hidden>
+        <button type="button" class="btn btn-primary btn-lg" data-copy-link><i class="ph" aria-hidden="true" data-copy-icon>&#xE1CA;</i><span data-copy-label>Copy the link to this page</span></button>
+        <button type="button" class="btn btn-ghost" data-show-install aria-expanded="false" aria-controls="h-cta">Show the install commands</button>
+      </div>
+    </div>
+
+    <div class="wrap stage">
+      <figure class="window hero-shot">
+        <picture class="shot-dark">
+          <source media="(max-width: 720px)" srcset="assets/shots/m-history-crop.webp" width="840" height="540">
+          <img src="assets/shots/m-history.webp" width="1440" height="900" fetchpriority="high" alt="Canopy's History view in Midnight: branches, remotes and tags in the sidebar, a commit graph with a colour per line of history and labels on the commits, and the selected commit's diff below.">
+        </picture>
+        <picture class="shot-light">
+          <source media="(max-width: 720px)" srcset="assets/shots/d-history-crop.webp" width="840" height="540">
+          <img src="assets/shots/d-history.webp" width="1440" height="900" alt="Canopy's History view in Daylight: branches in the sidebar, a coloured commit graph with labels, and the selected commit's diff.">
+        </picture>
+      </figure>
+
+      <div class="palette" data-palette>
+        <div class="pal-search" data-pal-search hidden>
+          <i class="ph" aria-hidden="true">&#xE30C;</i>
+          <label class="sr" for="pal-input">Command</label>
+          <input id="pal-input" type="text" placeholder="Type a command or a section" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="pal-list" aria-autocomplete="list" aria-keyshortcuts="Control+K">
+          <span class="pal-shortcut" aria-hidden="true"><kbd>Ctrl</kbd><kbd>K</kbd></span>
+        </div>
+        <nav class="pal-body" aria-label="On this page" data-pal-body>
+          <ul class="pal-list" id="pal-list">
+            <li><a href="#history"><i class="ph" aria-hidden="true">&#xE27A;</i><span>History</span></a></li>
+            <li><a href="#changes"><i class="ph" aria-hidden="true">&#xE27C;</i><span>Staging and committing</span></a></li>
+            <li><a href="#conflicts"><i class="ph" aria-hidden="true">&#xE280;</i><span>Merges and conflicts</span></a></li>
+            <li><a href="#requests"><i class="ph" aria-hidden="true">&#xE282;</i><span>Pull and merge requests</span></a></li>
+            <li><a href="#keyboard"><i class="ph" aria-hidden="true">&#xE2D8;</i><span>Keyboard</span></a></li>
+            <li><a href="#themes"><i class="ph" aria-hidden="true">&#xE5B8;</i><span>Themes</span></a></li>
+            <li><a href="#privacy"><i class="ph" aria-hidden="true">&#xE40C;</i><span>Privacy</span></a></li>
+            <li><a href="#download"><i class="ph" aria-hidden="true">&#xE20C;</i><span>Download</span></a></li>
+          </ul>
+        </nav>
+        <p class="pal-foot" data-pal-foot hidden><span><kbd>&uarr;</kbd><kbd>&darr;</kbd> move</span><span><kbd>Enter</kbd> run</span><span><kbd>J</kbd><kbd>K</kbd> next and previous section</span></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec history" id="history" aria-labelledby="h-history">
+    <div class="wrap split">
+      <div class="text">
+        <h2 id="h-history">History as a graph.</h2>
+        <p>Each line of history gets its own colour, and branches, remotes and tags are labelled on the commits they point to. Select a commit to see its files, line counts and diff.</p>
+        <p>Author pictures come from GitHub or GitLab; authors without one get their initials.</p>
+      </div>
+      <ul class="keys" aria-label="History shortcuts">
+        <li><span class="caps"><kbd>Ctrl</kbd><kbd>F</kbd> <span class="or">or</span> <kbd>/</kbd></span><span>Search by message, author or SHA</span></li>
+        <li><span class="caps"><kbd>J</kbd><kbd>K</kbd></span><span>Next and previous commit</span></li>
+        <li><span class="caps"><kbd>Y</kbd></span><span>Copy the commit's SHA</span></li>
+        <li><span class="caps"><kbd>Shift</kbd><kbd>T</kbd></span><span>Tag the commit</span></li>
+        <li><span class="caps"><kbd>O</kbd></span><span>Open it on GitHub or GitLab</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec changes" id="changes" aria-labelledby="h-changes">
+    <div class="wrap">
+      <div class="center-head">
+        <h2 id="h-changes">Stage files, hunks or single lines.</h2>
+        <p>The diff shows unified or side by side, with syntax colours. Each step from a changed file to a commit has a key.</p>
+      </div>
+      <ol class="strip" aria-label="Staging and committing from the keyboard">
+        <li><span class="caps"><kbd>2</kbd></span><span>Open Changes</span></li>
+        <li><span class="caps"><kbd>J</kbd><kbd>K</kbd></span><span>Move through files</span></li>
+        <li><span class="caps"><kbd>Space</kbd></span><span>Stage or unstage</span></li>
+        <li><span class="caps"><kbd>C</kbd></span><span>Write the message</span></li>
+        <li><span class="caps"><kbd>Ctrl</kbd><kbd>Enter</kbd></span><span>Commit</span></li>
+      </ol>
+      <figure class="window wide-shot">
+        <picture class="shot-dark">
+          <source media="(max-width: 720px)" srcset="assets/shots/m-changes-hunk.webp" width="800" height="372">
+          <img src="assets/shots/m-changes.webp" width="1440" height="900" loading="lazy" alt="The Changes view: unstaged and staged files, the commit composer, and a diff whose hunks have Stage hunk and Discard hunk buttons and the hint Click lines to pick part of a hunk.">
+        </picture>
+        <picture class="shot-light">
+          <source media="(max-width: 720px)" srcset="assets/shots/d-changes-hunk.webp" width="800" height="372">
+          <img src="assets/shots/d-changes.webp" width="1440" height="900" loading="lazy" alt="The Changes view in Daylight, with a diff ready to stage.">
+        </picture>
+      </figure>
+      <ul class="facts">
+        <li>The Commit button says why it can't run yet.</li>
+        <li>Amend the last commit from the same view.</li>
+        <li>When git refuses, you see git's own message.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec conflicts" id="conflicts" aria-labelledby="h-conflicts">
+    <div class="wrap split split-media">
+      <figure class="window">
+        <picture class="shot-dark">
+          <source media="(max-width: 720px)" srcset="assets/shots/m-conflict-crop.webp" width="800" height="420">
+          <img src="assets/shots/m-conflict.webp" width="1440" height="900" loading="lazy" alt="A merge in progress: a banner with Continue and Abort, and a conflict card showing the current and incoming versions, each with Keep this version.">
+        </picture>
+        <picture class="shot-light">
+          <source media="(max-width: 720px)" srcset="assets/shots/d-conflict-crop.webp" width="800" height="420">
+          <img src="assets/shots/d-conflict.webp" width="1440" height="900" loading="lazy" alt="The conflict resolver in Daylight, with the current and incoming versions side by side.">
+        </picture>
+      </figure>
+      <div class="text">
+        <h2 id="h-conflicts">Conflicts, side by side.</h2>
+        <p>The resolver shows your version and the incoming one together: keep either, both, or edit by hand. Continue and Abort stay in view until the merge, rebase or cherry-pick is done.</p>
+        <ul class="keys" aria-label="Conflict shortcuts">
+          <li><span class="caps"><kbd>]</kbd><kbd>[</kbd></span><span>Next and previous conflict</span></li>
+          <li><span class="caps"><kbd>H</kbd><kbd>L</kbd></span><span>Take current or incoming</span></li>
+          <li><span class="caps"><kbd>B</kbd></span><span>Take both</span></li>
+          <li><span class="caps"><kbd>Z</kbd></span><span>Undo the choice</span></li>
+        </ul>
+        <p class="aside">Discarding, a hard reset, deleting a branch and force pushing ask first. A force push always uses <code translate="no">--force-with-lease</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec requests" id="requests" aria-labelledby="h-requests">
+    <div class="wrap">
+      <div class="split-head">
+        <div class="text">
+          <h2 id="h-requests">Pull and merge requests, in the app.</h2>
+          <p>Read, review, check out and merge GitHub pull requests and GitLab merge requests, self-hosted GitLab included. With a token, every row shows its checks and reviews.</p>
+        </div>
+        <ul class="keys" aria-label="Request shortcuts">
+          <li><span class="caps"><kbd>3</kbd></span><span>Open pull requests</span></li>
+          <li><span class="caps"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>A</kbd></span><span>Approve</span></li>
+          <li><span class="caps"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>M</kbd></span><span>Merge, after you confirm</span></li>
+        </ul>
+      </div>
+      <figure class="window wide-shot">
+        <picture class="shot-dark">
+          <source media="(max-width: 720px)" srcset="assets/shots/m-requests-crop.webp" width="820" height="520">
+          <img src="assets/shots/m-requests.webp" width="1440" height="900" loading="lazy" alt="The pull requests view: open requests with branches, labels and check results, and one request's description, checks and review conversation.">
+        </picture>
+        <picture class="shot-light">
+          <source media="(max-width: 720px)" srcset="assets/shots/d-requests-crop.webp" width="820" height="520">
+          <img src="assets/shots/d-requests.webp" width="1440" height="900" loading="lazy" alt="The pull requests view in Daylight.">
+        </picture>
+      </figure>
+      <p class="caption">The requests shown are Canopy's built-in demo data. A token is only ever sent to the host it belongs to.</p>
+    </div>
+  </section>
+
+  <section class="sec keyboard" id="keyboard" aria-labelledby="h-keyboard">
+    <div class="wrap split split-media reverse">
+      <div class="text">
+        <h2 id="h-keyboard">Keyboard shortcuts and a command palette.</h2>
+        <p><kbd>Ctrl</kbd><kbd>K</kbd> opens the command palette, which lists every command and every branch to check out, and <kbd>?</kbd> shows every shortcut. Lists take vim motions and single-key actions, the way lazygit does.</p>
+        <ul class="rules">
+          <li>Super is never bound: it stays your window manager's.</li>
+          <li>Bare keys never fire while you are typing.</li>
+          <li><kbd>P</kbd> pulls, <kbd>Shift</kbd><kbd>P</kbd> pushes, <kbd>F</kbd> fetches.</li>
+        </ul>
+      </div>
+      <figure class="window">
+        <img class="shot-dark" src="assets/shots/m-cheatsheet-crop.webp" width="864" height="820" loading="lazy" alt="Canopy's keyboard shortcuts sheet, grouped into Anywhere, History, Changes and Resolving a conflicted file, each command with its keys.">
+        <img class="shot-light" src="assets/shots/d-cheatsheet-crop.webp" width="864" height="820" loading="lazy" alt="The keyboard shortcuts sheet in Daylight.">
+      </figure>
+    </div>
+  </section>
+
+  <section class="sec themes" id="themes" aria-labelledby="h-themes">
+    <div class="wrap">
+      <div class="split-head">
+        <div class="text">
+          <h2 id="h-themes">Three themes, one of your own, and high contrast.</h2>
+          <p>Midnight is the default dark theme and Daylight the light one. Observatory has navy backgrounds and a periwinkle accent. High contrast works over any of them; switch it in Settings, the toolbar's theme menu or the command palette.</p>
+        </div>
+        <dl class="options">
+          <div><dt>Style</dt><dd>Standard or Deeper</dd></div>
+          <div><dt>Density</dt><dd>Comfortable or Dense</dd></div>
+          <div><dt>Zoom</dt><dd>80 to 160 percent</dd></div>
+          <div><dt>Motion</dt><dd>As your system, reduced or full</dd></div>
+        </dl>
+      </div>
+      <figure class="compare" data-compare>
+        <div class="compare-frame window">
+          <img class="compare-a" src="assets/shots/m-history.webp" width="1440" height="900" loading="lazy" alt="History in Midnight.">
+          <img class="compare-b" src="assets/shots/d-history.webp" width="1440" height="900" loading="lazy" alt="The same History view in Daylight.">
+          <div class="compare-handle" aria-hidden="true"></div>
+        </div>
+        <figcaption class="compare-control">
+          <label for="compare-range">Midnight</label>
+          <input id="compare-range" type="range" min="0" max="100" value="50" aria-valuetext="Half Midnight, half Daylight">
+          <span>Daylight</span>
+        </figcaption>
+      </figure>
+      <div class="split split-media custom">
+        <figure class="window">
+          <picture class="shot-dark">
+            <source media="(max-width: 720px)" srcset="assets/shots/m-custom-crop.webp" width="840" height="540">
+            <img src="assets/shots/m-custom.webp" width="1440" height="900" loading="lazy" alt="History in a Custom theme built from Midnight: a green accent on the selected row, the labels and the buttons, and green-tinted backgrounds and lines.">
+          </picture>
+          <picture class="shot-light">
+            <source media="(max-width: 720px)" srcset="assets/shots/d-custom-crop.webp" width="840" height="540">
+            <img src="assets/shots/d-custom.webp" width="1440" height="900" loading="lazy" alt="History in a Custom theme built from Daylight, with a green accent and green-tinted backgrounds and lines.">
+          </picture>
+        </figure>
+        <div class="text">
+          <h3>Custom</h3>
+          <p>Start from Midnight or Daylight in Settings → Appearance, then pick an accent (a swatch or any hue, and how vivid it is) and a tint for backgrounds, lines and text.</p>
+          <p>Text and lines keep at least the base theme's contrast, and the status, graph, syntax and diff colours keep their hues.</p>
+          <p class="caption">Shown: accent hue 150, with a tint of 40 at the same hue.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec privacy" id="privacy" aria-labelledby="h-privacy">
+    <div class="wrap">
+      <h2 id="h-privacy">What Canopy sends, and to whom.</h2>
+      <div class="lists">
+        <div>
+          <h3>It contacts</h3>
+          <ul>
+            <li>Your remotes, through your own <code translate="no">git</code> with your SSH and credential setup.</li>
+            <li>Your repository's GitHub or GitLab, for pull requests and author pictures, and the picture hosts they name.</li>
+            <li>GitHub, at most once a day, to check for a new build, which you can turn off. A new build is downloaded only when you choose Update.</li>
+            <li>NecturaLabs, through Sentry, for crash reports, only if you say yes. Your computer's name and home folder are removed first.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>It has no</h3>
+          <ul>
+            <li>Telemetry or analytics.</li>
+            <li>Account or sign-in.</li>
+            <li>Server of its own between you and your code.</li>
+          </ul>
+          <p class="aside">Canopy's own requests wait until you accept the terms and answer the crash-report question, and each has an off switch.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec download" id="download" aria-labelledby="h-download">
+    <div class="wrap">
+      <div class="center-head">
+        <h2 id="h-download">Download Canopy</h2>
+        <p>Build <span data-build>690</span>, published <span data-build-date>6 October 2026</span>.</p>
+      </div>
+      <div class="dl-main">
+        <p class="device-note" data-note hidden><i class="ph" aria-hidden="true" data-note-icon>&#xE1E0;</i><span data-note-text>Canopy is a desktop app for Linux and Windows. Open this page on a computer to install it.</span></p>
+        <div class="phone-actions" data-phone hidden>
+        <button type="button" class="btn btn-primary btn-lg" data-copy-link><i class="ph" aria-hidden="true" data-copy-icon>&#xE1CA;</i><span data-copy-label>Copy the link to this page</span></button>
+        <button type="button" class="btn btn-ghost" data-show-install aria-expanded="false" aria-controls="d-install">Show the install commands</button>
+      </div>
+      <div class="install" data-install id="d-install">
+        <div class="install-head">
+          <p class="install-label" id="d-inst-label">Install with one command</p>
+          <div class="seg" role="radiogroup" aria-labelledby="d-inst-label">
+            <button type="button" role="radio" aria-checked="true" data-os="sh">Linux</button>
+            <button type="button" role="radio" aria-checked="false" data-os="ps" tabindex="-1">Windows</button>
+          </div>
+        </div>
+        <div class="cmd cmd-lg">
+          <span class="prompt" aria-hidden="true" data-prompt>$</span>
+          <code data-cmd translate="no">curl -fsSL https://canopy.necturalabs.com/install | sh</code>
+          <button type="button" class="btn btn-primary copy-btn" data-copy-cmd aria-label="Copy the Linux install command"><i class="ph" aria-hidden="true" data-copy-icon>&#xE1CA;</i><span data-copy-label>Copy</span></button>
+        </div>
+      </div>
+        <p class="copied sr" id="copy-status" role="status"></p>
+        <ul class="install-facts">
+          <li>The address redirects to the installer script in the public <a href="https://github.com/NecturaLabs/app-updates/tree/main/canopy">NecturaLabs/app-updates</a> repository on GitHub, so you can read it before you run it.</li>
+          <li>Installs for your user only, without <code translate="no">sudo</code> or administrator rights: into <code translate="no">~/.local/opt/canopy</code> on Linux and <code translate="no">%LOCALAPPDATA%\Programs\Canopy</code> on Windows.</li>
+          <li>Checks the archive's SHA-256 against the published checksum and stops if they differ.</li>
+          <li>Run it again to upgrade. It leaves an uninstaller in the install folder, and uninstalling keeps your settings.</li>
+          <li>Canopy needs <code translate="no">git</code> 2.30 or newer on your <code translate="no">PATH</code>. The installer never installs it for you.</li>
+        </ul>
+      </div>
+      <h3 class="archives-head">Or download the archive</h3>
+      <ul class="builds" aria-label="Archives">
+        <li data-platform="linux-x86_64"><i class="ph" aria-hidden="true">&#xEB02;</i><span class="b-name">Linux</span><span class="b-meta">x86_64 &middot; .tar.gz &middot; glibc 2.35 or newer</span><a class="btn" href="https://github.com/NecturaLabs/app-updates/releases/download/canopy-build-690/canopy-build-690-x86_64-unknown-linux-gnu.tar.gz" data-href>Download<span class="sr"> for Linux x86_64</span></a></li>
+        <li data-platform="linux-aarch64"><i class="ph" aria-hidden="true">&#xEB02;</i><span class="b-name">Linux</span><span class="b-meta">arm64 &middot; .tar.gz &middot; glibc 2.35 or newer</span><a class="btn" href="https://github.com/NecturaLabs/app-updates/releases/download/canopy-build-690/canopy-build-690-aarch64-unknown-linux-gnu.tar.gz" data-href>Download<span class="sr"> for Linux arm64</span></a></li>
+        <li data-platform="windows-x86_64"><i class="ph" aria-hidden="true">&#xE692;</i><span class="b-name">Windows</span><span class="b-meta">x86_64 &middot; .zip</span><a class="btn" href="https://github.com/NecturaLabs/app-updates/releases/download/canopy-build-690/canopy-build-690-x86_64-pc-windows-msvc.zip" data-href>Download<span class="sr"> for Windows</span></a></li>
+        <li class="off"><i class="ph" aria-hidden="true">&#xE516;</i><span class="b-name">macOS</span><span class="b-meta">No build yet</span></li>
+      </ul>
+
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <p>Canopy is made by NecturaLabs.</p>
+    <p>This site sets no cookies, runs no analytics and loads nothing from other sites except the build list from GitHub.</p>
+  </div>
+</footer>
+</body>
+</html>

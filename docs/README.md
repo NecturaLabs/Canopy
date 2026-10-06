@@ -21,6 +21,7 @@ in a document no longer exists.
 | How to do a recurring job step by step | `.claude/skills/<name>/SKILL.md`: `add-git-operation`, `add-keybinding`, `add-theme`, `hosting-api`, `release`, `screenshot`, `fixture-repo`, and the process skills `testing`, `independent-review`, `project-docs`, `memory-hygiene`, `agent-instructions`, `agent-orchestration` |
 | What the scripts under `tools/` do | [../tools/README.md](../tools/README.md) |
 | Installers, packaging and the update feed | [../packaging/README.md](../packaging/README.md) |
+| The landing website: running it, deploying it, where its pictures and claims come from | [../site/README.md](../site/README.md) |
 | What leaves the machine, and under which terms | [legal/privacy-policy.md](legal/privacy-policy.md), [legal/terms-of-service.md](legal/terms-of-service.md) |
 | How to check performance with 100 repositories open | [stress-test.md](stress-test.md) |
 | How the illustrations and the app icon are made | [art-prompts.md](art-prompts.md) |
@@ -30,11 +31,11 @@ in a document no longer exists.
 
 - **Kept true with the code, in the same change as the code** (a stale line is a defect):
   `architecture.md`, `design.md`, `features.md`, `keybindings.md`, `playbook.md`, `legal/`,
-  `../tools/README.md`, `../packaging/README.md` and `../AGENTS.md`. `tools/check-docs.py` checks the
-  parts a script can: that every source module is in its crate's section of `architecture.md`,
-  that every path in backticks or link exists (in every Markdown document except the ones below and
-  the process skills written for any repository; `EXCLUDED` in the script lists them), and that the
-  two copies of the skills match.
+  `../tools/README.md`, `../packaging/README.md`, `../site/README.md` and `../AGENTS.md`.
+  `tools/check-docs.py` checks the parts a script can: that every source module is in its crate's
+  section of `architecture.md`, that every path in backticks or link exists (in every Markdown
+  document except the ones below and the process skills written for any repository; `EXCLUDED` in
+  the script lists them), and that the two copies of the skills match.
 - **Point in time, never edited when the code moves on**: the records in `adr/`. A later record
   supersedes an earlier one.
 - **The queue**: `backlog.md` holds only open tasks; a finished one is deleted, and history lives in

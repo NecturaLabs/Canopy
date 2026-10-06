@@ -1,0 +1,36 @@
+# Netlify: deploy this folder as it is (set the site's base directory to `site`). No build step.
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://raw.githubusercontent.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    Referrer-Policy = "no-referrer"
+    X-Content-Type-Options = "nosniff"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+    Cross-Origin-Opener-Policy = "same-origin"
+
+[[headers]]
+  for = "/fonts/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
+# The one-line installers. 302 redirects, never proxies: the script that runs is always the one
+# published in NecturaLabs/app-updates, and this domain never serves a copy of its own.
+[[redirects]]
+  from = "/install"
+  to = "https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.sh"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/install.ps1"
+  to = "https://raw.githubusercontent.com/NecturaLabs/app-updates/main/canopy/install.ps1"
+  status = 302
+  force = true

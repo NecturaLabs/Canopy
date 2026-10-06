@@ -1,0 +1,4 @@
+{
+  "prompt": "Origin: real screenshot of Canopy (Pull requests view with the app's built-in invented demo data, request 428, Daylight), options: --demo-requests 428 --light; rendered headlessly (Xvfb) by tools/screenshot.sh with a release build of the working tree at commit 3647d47 (reports build 701), 1440x900, on a demo repository made by tools/mkfixture.sh, converted to WebP (quality 80). Not generated.",
+  "createdAt": "2026-10-06T10:20:00.000Z"
+}
