@@ -824,7 +824,13 @@ impl IconButton {
             let ground = Color32::TRANSPARENT
                 .lerp_to_gamma(p.hover_strong(), st.hover)
                 .lerp_to_gamma(p.pressed(), st.press);
-            if ground.a() > 0 {
+            if !enabled {
+                // Like every disabled control it keeps its shape: the flat `disabled_fill` in its
+                // `disabled_edge` ring, so it does not read as an enabled icon a shade dimmer.
+                let s = p.surfaces(theme::style());
+                paint::fill(&painter, rect, radius, Fill::flat(s.disabled_fill));
+                paint::rim(&painter, rect, radius, s.disabled_edge);
+            } else if ground.a() > 0 {
                 painter.rect_filled(rect, radius, ground);
             }
             if enabled {
@@ -1971,6 +1977,56 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// A disabled icon-only button keeps its shape, the flat `disabled_fill` in its
+    /// `disabled_edge` ring like every other disabled control, so it does not read as an enabled
+    /// one in a slightly dimmer colour; an enabled one at rest is a bare icon.
+    #[test]
+    fn a_disabled_icon_button_sits_on_the_disabled_fill_in_its_ring() {
+        for id in theme::ThemeId::ALL {
+            for style in Style::ALL {
+                let ctx = super::super::testkit::ctx_with(id, style, theme::Density::Comfortable);
+                let p = id.palette();
+                let s = p.surfaces(style);
+                let paint = |enabled: bool, in_disabled_ui: bool| {
+                    let shapes = frame(&ctx, Vec::new(), |ui| {
+                        ui.add_enabled_ui(!in_disabled_ui, |ui| {
+                            IconButton::new(icon::CARET_LEFT, "Scroll left")
+                                .size(Size::Sm)
+                                .enabled(enabled)
+                                .show(ui);
+                        });
+                    });
+                    let mut rects = Vec::new();
+                    for c in &shapes {
+                        if let Shape::Rect(r) = &c.shape {
+                            rects.push((r.fill, r.stroke.color));
+                        }
+                    }
+                    rects
+                };
+                for (enabled, in_disabled_ui) in [(false, false), (true, true)] {
+                    let rects = paint(enabled, in_disabled_ui);
+                    let at = format!("{id:?} {style:?} (disabled Ui: {in_disabled_ui})");
+                    assert!(
+                        rects.iter().any(|(fill, _)| *fill == s.disabled_fill),
+                        "{at}: {rects:?}"
+                    );
+                    assert!(
+                        rects.iter().any(|(_, ring)| *ring == s.disabled_edge),
+                        "{at}: {rects:?}"
+                    );
+                }
+                let rects = paint(true, false);
+                assert!(
+                    rects
+                        .iter()
+                        .all(|(fill, ring)| *fill != s.disabled_fill && *ring != s.disabled_edge),
+                    "{id:?} {style:?}: an enabled icon button shows the disabled look: {rects:?}"
+                );
             }
         }
     }
