@@ -158,16 +158,6 @@ impl Http {
         }
     }
 
-    /// A response body as [`Self::hide_token`] leaves it, for an error built from it.
-    fn hide_token_in(&self, body: &[u8]) -> Vec<u8> {
-        match &self.token {
-            Some(token) if token.len() >= MIN_TOKEN_LEN => {
-                self.hide_token(&String::from_utf8_lossy(body)).into_bytes()
-            }
-            _ => body.to_vec(),
-        }
-    }
-
     /// Parses a JSON response; the parser's message, which can quote the server, carries no
     /// token.
     fn parse<T: DeserializeOwned>(&self, bytes: &[u8], what: &str) -> Result<T> {
@@ -206,8 +196,13 @@ impl Http {
             .read_to_vec()
             .map_err(|_| Error::Network("Could not read the profile response".into()))?;
         if !(200..300).contains(&status) {
-            let body = self.hide_token_in(&bytes);
-            return Err(map_status(status, response.headers(), &body, self.kind));
+            return Err(map_status_with_token(
+                status,
+                response.headers(),
+                &bytes,
+                self.kind,
+                self.token.as_deref(),
+            ));
         }
         self.parse(&bytes, "profile response")
     }
@@ -290,8 +285,13 @@ impl Http {
         if (200..300).contains(&status) {
             Ok((response.headers().clone(), bytes))
         } else {
-            let body = self.hide_token_in(&bytes);
-            let err = map_status(status, response.headers(), &body, self.kind);
+            let err = map_status_with_token(
+                status,
+                response.headers(),
+                &bytes,
+                self.kind,
+                self.token.as_deref(),
+            );
             tracing::warn!(method = method.as_str(), path, status, ms, error = %err, "hosting request rejected");
             Err(err)
         }
@@ -370,7 +370,10 @@ impl Http {
                 .map(|e| e.message.trim())
                 .filter(|m| !m.is_empty())
                 .collect();
-            let message = shorten(&self.hide_token(&messages.join("; ")));
+            let message = shorten(&self.hide_token(&plain_text(
+                &messages.join("; "),
+                usize::MAX,
+            )));
             Error::Api {
                 status: 200,
                 message: if message.is_empty() {
@@ -484,9 +487,22 @@ pub(crate) fn rate_limit_reset(headers: &HeaderMap) -> Option<i64> {
         })
 }
 
-/// Maps an unsuccessful response to an [`Error`].
-pub(crate) fn map_status(status: u16, headers: &HeaderMap, body: &[u8], kind: ForgeKind) -> Error {
-    let message = server_message(body).unwrap_or_else(|| default_reason(status).to_owned());
+/// Maps an unsuccessful response to an [`Error`], redacting the client's token only after
+/// JSON escapes and invisible characters are normalized. Never truncate before token removal.
+fn map_status_with_token(
+    status: u16,
+    headers: &HeaderMap,
+    body: &[u8],
+    kind: ForgeKind,
+    token: Option<&str>,
+) -> Error {
+    let message = server_message_unbounded(body)
+        .unwrap_or_else(|| default_reason(status).to_owned());
+    let message = match token {
+        Some(token) if token.len() >= MIN_TOKEN_LEN => message.replace(token, REDACTED),
+        _ => message,
+    };
+    let message = shorten(&message);
     match status {
         401 => Error::Unauthorized(message),
         403 => {
@@ -511,6 +527,17 @@ pub(crate) fn map_status(status: u16, headers: &HeaderMap, body: &[u8], kind: Fo
     }
 }
 
+/// Message extraction without a client token, used for diagnostic tests.
+#[cfg(test)]
+pub(crate) fn server_message(body: &[u8]) -> Option<String> {
+    server_message_unbounded(body).map(|message| shorten(&message))
+}
+
+#[cfg(test)]
+pub(crate) fn map_status(status: u16, headers: &HeaderMap, body: &[u8], kind: ForgeKind) -> Error {
+    map_status_with_token(status, headers, body, kind, None)
+}
+
 fn default_reason(status: u16) -> &'static str {
     match status {
         400 => "Bad Request",
@@ -530,15 +557,15 @@ fn default_reason(status: u16) -> &'static str {
 
 /// The human-readable message in an error body: GitHub's `message` plus `errors[]`, GitLab's
 /// `message` (a string, a list, or a field → messages map), `error` and `error_description`.
-/// A non-JSON body is used as is, shortened.
-pub(crate) fn server_message(body: &[u8]) -> Option<String> {
+/// Normalize the full text before redacting client-specific tokens or truncating it.
+fn server_message_unbounded(body: &[u8]) -> Option<String> {
     let Ok(json) = serde_json::from_slice::<Value>(body) else {
         let text = String::from_utf8_lossy(body);
         let text = text.trim();
         if text.starts_with('<') {
             return None;
         }
-        return Some(shorten(text)).filter(|t| !t.is_empty());
+        return Some(plain_text(text, usize::MAX)).filter(|t| !t.is_empty());
     };
     let mut parts: Vec<String> = Vec::new();
     for key in ["message", "error", "error_description", "errors"] {
@@ -547,7 +574,7 @@ pub(crate) fn server_message(body: &[u8]) -> Option<String> {
         }
     }
     parts.dedup();
-    Some(shorten(&parts.join("; "))).filter(|t| !t.is_empty())
+    Some(plain_text(&parts.join("; "), usize::MAX)).filter(|t| !t.is_empty())
 }
 
 /// Collects the strings in an error value. Objects in GitHub's `errors` array contribute their
@@ -960,6 +987,29 @@ mod tests {
         assert_eq!(server_message(b"<html>bad gateway</html>"), None);
         assert_eq!(server_message(b"plain text").as_deref(), Some("plain text"));
         assert_eq!(server_message(b"{}"), None);
+    }
+
+    #[test]
+    fn status_messages_redact_normalized_client_tokens() {
+        let headers = HeaderMap::new();
+        let token = "arbitrarySecretToken1234567";
+        for body in [
+            br#"{"message":"arbitrarySecretToken1234567"}"#.as_slice(),
+            br#"{"message":"arbitrarySecret\\u0054oken1234567"}"#.as_slice(),
+            b"{\"message\":\"arbitrarySecret\xe2\x80\x8bToken1234567\"}".as_slice(),
+        ] {
+            let error = map_status_with_token(
+                422,
+                &headers,
+                body,
+                ForgeKind::GitLab,
+                Some(token),
+            );
+            let message = error.to_string();
+            assert!(message.contains("<redacted>"), "{message}");
+            assert!(!message.contains(token), "{message}");
+            assert!(!message.contains("Secret"), "{message}");
+        }
     }
 
     #[test]
