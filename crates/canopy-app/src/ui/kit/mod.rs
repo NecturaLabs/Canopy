@@ -217,6 +217,13 @@ pub fn focus_visible(ctx: &egui::Context) -> bool {
     focus_visible_now(ctx)
 }
 
+/// Draws keyboard focus from now on, until the next pointer press: a dialog opening with its
+/// default button focused shows which button Enter will press.
+pub(crate) fn show_focus(ctx: &egui::Context) {
+    focus_visible(ctx);
+    ctx.data_mut(|d| d.insert_temp(Id::new("canopy-kit-focus-visible"), true));
+}
+
 /// [`focus_visible`] for this frame's input.
 fn focus_visible_now(ctx: &egui::Context) -> bool {
     let id = Id::new("canopy-kit-focus-visible");
