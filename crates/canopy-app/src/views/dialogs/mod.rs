@@ -1157,7 +1157,7 @@ pub fn show(
                 .body(|ui| {
                     document(ui, "whats-new", NOTES_HEIGHT, notes);
                     if LinkButton::new("All releases")
-                        .external(true)
+                        .url(crate::updater::RELEASES_PAGE)
                         .text_size(m.meta_size)
                         .show(ui)
                         .clicked()
@@ -1650,23 +1650,23 @@ fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
         ui.add_space(theme::MD);
         // Where to read more: links, so the one action in the footer stays the main one. The row
         // is centred on its width from the frame before.
-        let links: [(&str, bool, Outcome); 4] = [
-            ("What's new", false, Outcome::Run(vec![Action::WhatsNew])),
+        let links: [(&str, Option<&str>, Outcome); 4] = [
+            ("What's new", None, Outcome::Run(vec![Action::WhatsNew])),
             (
                 "Releases",
-                true,
+                Some(crate::updater::RELEASES_PAGE),
                 Outcome::Run(vec![Action::OpenUrl(
                     crate::updater::RELEASES_PAGE.to_owned(),
                 )]),
             ),
             (
                 "Privacy Policy",
-                false,
+                None,
                 Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Privacy))]),
             ),
             (
                 "Terms of Service",
-                false,
+                None,
                 Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Terms))]),
             ),
         ];
@@ -1676,13 +1676,12 @@ fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
             ui.spacing_mut().item_spacing.x = theme::MD;
             ui.add_space(((ui.available_width() - last) / 2.0).max(0.0));
             let start = ui.cursor().left();
-            for (label, external, target) in links {
-                if LinkButton::new(label)
-                    .external(external)
-                    .text_size(m.meta_size)
-                    .show(ui)
-                    .clicked()
-                {
+            for (label, url, target) in links {
+                let mut link = LinkButton::new(label).text_size(m.meta_size);
+                if let Some(url) = url {
+                    link = link.url(url);
+                }
+                if link.show(ui).clicked() {
                     outcome = Some(target);
                 }
             }

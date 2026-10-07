@@ -35,6 +35,7 @@ use egui_phosphor::regular as icon;
 
 use super::button::{spinner_due, tip};
 use super::chip::Keycap;
+use super::overlay::TooltipExt;
 use super::toggle::{component_id, gallery_caption, remembered};
 use super::{ForceState, IconButton, KitResponse, Size, anim, paint};
 use crate::keymap::{self, Command};
@@ -105,11 +106,13 @@ pub(crate) fn grounds(p: &Palette, style: Style) -> [Color32; 5] {
 }
 
 /// How a field looks in theme `p` and `style`. Cached per theme and style.
-pub(crate) fn look(p: &Palette, style: Style) -> FieldLook {
+pub(crate) fn look(p: &'static Palette, style: Style) -> FieldLook {
+    // By the palette itself: a theme's high contrast and each custom theme share its name.
     thread_local! {
-        static CACHE: RefCell<HashMap<(&'static str, Style), FieldLook>> = RefCell::default();
+        static CACHE: RefCell<HashMap<(usize, Style), FieldLook>> = RefCell::default();
     }
-    if let Some(l) = CACHE.with(|c| c.borrow().get(&(p.name, style)).copied()) {
+    let key = (std::ptr::from_ref(p).addr(), style);
+    if let Some(l) = CACHE.with(|c| c.borrow().get(&key).copied()) {
         return l;
     }
     let s = p.surfaces(style);
@@ -154,7 +157,7 @@ pub(crate) fn look(p: &Palette, style: Style) -> FieldLook {
         side,
         base,
     };
-    CACHE.with(|c| c.borrow_mut().insert((p.name, style), l));
+    CACHE.with(|c| c.borrow_mut().insert(key, l));
     l
 }
 
@@ -484,7 +487,9 @@ impl<'t> Core<'t> {
                 Keycap::new(hint.rsplit(" · ").next().unwrap_or_default())
             });
         let clears = self.kind == Kind::Search || self.clearable;
-        let button = Size::Xs.height();
+        // The small buttons are drawn at `Size::Xs`, with a hit area of at least 24 points
+        // (WCAG 2.5.8).
+        let button = Size::Xs.height().max(theme::MIN_TARGET);
         let trail_pad = if self.kind == Kind::Search || self.stepper.is_some() {
             theme::XS
         } else {
@@ -735,6 +740,7 @@ impl<'t> Core<'t> {
                     at,
                     IconButton::new(glyph, name.clone())
                         .size(Size::Xs)
+                        .min_target(button)
                         .enabled(interactive && can)
                         .id_salt(id.with(salt)),
                 );
@@ -751,7 +757,19 @@ impl<'t> Core<'t> {
             k.paint_on(&painter, cap);
             x = cap.left() - theme::SM;
         } else if clears {
-            let show = filled && interactive && (self.kind == Kind::Search || hovered || focused);
+            // Held while the button has focus or the pointer, and through the frame Tab leaves
+            // the text for it (the text has let go of focus by then), so Tab can reach it.
+            let engaged_id = id.with("kit-field-clear-engaged");
+            let engaged = ctx
+                .data(|d| d.get_temp::<bool>(engaged_id))
+                .unwrap_or(false);
+            let show = filled
+                && interactive
+                && (self.kind == Kind::Search
+                    || hovered
+                    || focused
+                    || response.lost_focus()
+                    || engaged);
             let reveal = match self.force {
                 Some(_) => f32::from(u8::from(show)),
                 None => anim::ease(&ctx, id.with("kit-field-clear"), show, motion::FAST),
@@ -769,8 +787,11 @@ impl<'t> Core<'t> {
                     at,
                     IconButton::new(icon::X, name)
                         .size(Size::Xs)
+                        .min_target(button)
                         .id_salt(id.with("kit-field-clear-button")),
                 );
+                let held = clear.has_focus() || clear.hovered();
+                ctx.data_mut(|d| d.insert_temp(engaged_id, held));
                 if clear.clicked() {
                     self.text.clear();
                     response.mark_changed();
@@ -790,6 +811,7 @@ impl<'t> Core<'t> {
                 at,
                 IconButton::new(glyph, name)
                     .size(Size::Xs)
+                    .min_target(button)
                     .enabled(enabled)
                     .id_salt(id.with("kit-field-reveal-button")),
             );
@@ -878,18 +900,49 @@ impl<'t> Core<'t> {
                 n.set_invalid(Invalid::True);
             }
         });
+        // A value wider than the well shows whole in a tooltip (never a hidden secret).
+        let clipped = (enabled
+            && !multiline
+            && !self.password
+            && galley.size().x > rect.width() - left - right + 0.5)
+            .then(|| clipped_tip(self.text));
+        let response = tip(
+            response,
+            enabled,
+            self.tooltip.as_deref().filter(|_| clipped.is_none()),
+            self.disabled_reason.as_deref(),
+            None,
+            true,
+        );
+        let response = match clipped {
+            Some(full) => {
+                let mut tooltip = response.kit_tooltip(full);
+                if let Some(about) = &self.tooltip {
+                    tooltip = tooltip.detail(about.clone());
+                }
+                tooltip.show()
+            }
+            None => response,
+        };
         Shown {
-            response: tip(
-                response,
-                enabled,
-                self.tooltip.as_deref(),
-                self.disabled_reason.as_deref(),
-                None,
-                true,
-            ),
+            response,
             submitted,
             stepped,
         }
+    }
+}
+
+/// A tooltip's longest value: more is cut with an ellipsis, so a pasted page is not echoed whole.
+const CLIPPED_TIP_CHARS: usize = 600;
+
+/// The text of a value too wide for its field, for its tooltip.
+fn clipped_tip(value: &str) -> String {
+    let mut chars = value.chars();
+    let shown: String = chars.by_ref().take(CLIPPED_TIP_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{shown}…")
+    } else {
+        shown
     }
 }
 
@@ -1801,17 +1854,22 @@ mod tests {
     }
 
     /// O10: a field is a well a step off every surface it can sit on, every text colour reads
-    /// on it there, and its resting edge is quiet on the sides with a bottom edge that stands
-    /// 3:1 (4.5:1 strict) from every surface and the well at rest, so the field is identifiable.
+    /// on it there (the placeholder is `text_faint`: 4.5:1, 5.5:1 strict), and its resting edge
+    /// is quiet on the sides with a bottom edge that stands 3:1 (4.5:1 strict) from every
+    /// surface and the well at rest, so the field is identifiable. In every theme, at high
+    /// contrast too.
     #[test]
     fn a_field_is_a_readable_well_with_a_quiet_accessible_edge_in_every_theme() {
-        for id in theme::ThemeId::ALL {
-            let p = id.palette();
+        for (id, high) in theme::ThemeId::ALL
+            .into_iter()
+            .flat_map(|t| [(t, false), (t, true)])
+        {
+            let p = id.shown_palette(high);
             let (text_min, dim_min, faint_min, rim_min) = targets(p);
             for style in Style::ALL {
                 let l = look(p, style);
                 for (i, ground) in grounds(p, style).into_iter().enumerate() {
-                    let at = format!("{} {style:?} ground {i}", p.name);
+                    let at = format!("{} high contrast {high} {style:?} ground {i}", p.name);
                     for wash in [l.wash, l.hover_wash] {
                         let well = theme::over(wash, ground);
                         assert!(theme::contrast(p.text, well) >= text_min, "{at}: text");
@@ -2203,7 +2261,7 @@ mod tests {
         );
         let m = theme::metrics();
         let at = pos2(
-            rect.right() - m.field_pad_x - Size::Xs.height() / 2.0,
+            rect.right() - m.field_pad_x - theme::MIN_TARGET / 2.0,
             rect.center().y,
         );
         testkit::click(&ctx, at, |ui| {
@@ -2290,6 +2348,209 @@ mod tests {
             contrast.contains(&(true, 2.5)),
             "a solid 2.5 pt focus ring: {contrast:?}"
         );
+    }
+
+    /// WCAG 2.4.7 and 1.4.11: a focused field turns its whole edge to the focus colour, which
+    /// stands 3:1 (4.5:1 strict) from every surface and well, whether it took focus from the
+    /// keyboard or the pointer.
+    #[test]
+    fn a_focused_field_shows_a_focus_colour_edge_for_keyboard_and_pointer() {
+        for (id, high) in theme::ThemeId::ALL
+            .into_iter()
+            .flat_map(|t| [(t, false), (t, true)])
+        {
+            let p = id.shown_palette(high);
+            let (_, _, _, rim_min) = targets(p);
+            for style in Style::ALL {
+                let l = look(p, style);
+                for ground in grounds(p, style) {
+                    let well = theme::over(l.wash, ground);
+                    for against in [ground, well] {
+                        assert!(
+                            theme::contrast(p.focus, against) >= rim_min,
+                            "{} {high} {style:?}: the focus edge",
+                            p.name
+                        );
+                    }
+                }
+            }
+        }
+        let edge_in_focus = |how: &dyn Fn(&egui::Context, Rect, &mut String)| {
+            let ctx = testkit::ctx();
+            let p = theme::palette(&ctx);
+            let mut text = String::new();
+            let mut rect = Rect::NOTHING;
+            frame(&ctx, Vec::new(), |ui| {
+                rect = TextField::new(&mut text).id_salt("f").show(ui).rect;
+            });
+            how(&ctx, rect, &mut text);
+            let shapes = frame(&ctx, Vec::new(), |ui| {
+                TextField::new(&mut text).id_salt("f").show(ui);
+            });
+            shapes.iter().any(|c| {
+                matches!(&c.shape, Shape::Rect(r) if r.stroke.color == p.focus && r.stroke.width > 0.0)
+            })
+        };
+        let by_pointer = |ctx: &egui::Context, rect: Rect, text: &mut String| {
+            testkit::click(ctx, rect.center(), |ui| {
+                TextField::new(text).id_salt("f").show(ui);
+            });
+        };
+        let by_keyboard = |ctx: &egui::Context, _: Rect, text: &mut String| {
+            frame(ctx, key(Key::Tab), |ui| {
+                TextField::new(text).id_salt("f").show(ui);
+            });
+        };
+        assert!(edge_in_focus(&by_pointer), "pointer focus shows the edge");
+        assert!(edge_in_focus(&by_keyboard), "keyboard focus shows the edge");
+    }
+
+    /// WCAG 3.3.1 and 4.1.2: an error is said in words and an icon under the field, and the
+    /// field is announced invalid with the message as its description, never by colour alone.
+    /// No error, or an empty one, shows and announces nothing.
+    #[test]
+    fn an_error_is_words_and_an_icon_and_announced() {
+        let ctx = testkit::ctx();
+        let message = "Branch names cannot contain spaces.";
+        let painted = |error: Option<&str>| {
+            let mut text = "a b".to_owned();
+            let shapes = frame(&ctx, Vec::new(), |ui| {
+                TextField::new(&mut text).error(error).id_salt("e").show(ui);
+            });
+            let has = |wanted: &str| shapes.iter().any(|c| paints(&c.shape, wanted));
+            (has(message), has(icon::WARNING_CIRCLE))
+        };
+        assert_eq!(painted(Some(message)), (true, true), "words and an icon");
+        assert_eq!(painted(None), (false, false), "none before there is one");
+        assert_eq!(
+            painted(Some("")),
+            (false, false),
+            "an empty message is none"
+        );
+        let announced = |error: Option<&str>| {
+            let mut text = "a b".to_owned();
+            let nodes = spoken(&ctx, |ui| {
+                TextField::new(&mut text)
+                    .label("Name")
+                    .error(error)
+                    .id_salt("e")
+                    .show(ui);
+            });
+            let node = nodes
+                .into_iter()
+                .find(|n| n.role == Role::TextInput)
+                .expect("a text input");
+            (node.invalid, node.description)
+        };
+        assert_eq!(announced(Some(message)), (true, Some(message.to_owned())));
+        assert_eq!(announced(None), (false, None));
+        assert_eq!(announced(Some("")), (false, None));
+    }
+
+    /// Whether `shape` paints exactly `text`.
+    fn paints(shape: &Shape, text: &str) -> bool {
+        match shape {
+            Shape::Text(t) => t.galley.text() == text,
+            Shape::Vec(v) => v.iter().any(|s| paints(s, text)),
+            _ => false,
+        }
+    }
+
+    /// WCAG 2.5.8: the buttons in a field (clear, reveal the secret, the steppers) answer a
+    /// pointer over at least 24 points square, in every density.
+    #[test]
+    fn the_buttons_in_a_field_have_a_target_of_24_points() {
+        for density in theme::Density::ALL {
+            let ctx = testkit::ctx_with(theme::ThemeId::Midnight, Style::Standard, density);
+            let mut search = "auth".to_owned();
+            let mut secret = "hunter2".to_owned();
+            let mut number = 300.0;
+            let nodes = spoken(&ctx, |ui| {
+                SearchField::new(&mut search).id_salt("s").show(ui);
+                TextField::new(&mut secret)
+                    .password(true)
+                    .id_salt("p")
+                    .show(ui);
+                NumberField::new(&mut number, 100.0..=900.0)
+                    .step_names("Fewer", "More")
+                    .id_salt("n")
+                    .show(ui);
+            });
+            for name in ["Clear search", "Show secret", "Fewer", "More"] {
+                let bounds = find(&nodes, name)
+                    .and_then(|n| n.bounds)
+                    .unwrap_or_else(|| panic!("{name} is in its field"));
+                assert!(
+                    bounds.width() >= theme::MIN_TARGET - 0.01
+                        && bounds.height() >= theme::MIN_TARGET - 0.01,
+                    "{density:?}: {name} is {:?}",
+                    bounds.size()
+                );
+            }
+        }
+    }
+
+    /// A clear button that shows only while the field is hovered or focused stays while Tab
+    /// moves focus onto it, so a keyboard user can press it.
+    #[test]
+    fn the_clear_button_can_be_reached_with_tab() {
+        let ctx = testkit::ctx();
+        let mut text = "feature/x".to_owned();
+        let show = |ui: &mut Ui, text: &mut String| {
+            TextField::new(text)
+                .clearable(true)
+                .id_salt("c")
+                .show(ui)
+                .id
+        };
+        let mut id = Id::NULL;
+        frame(&ctx, Vec::new(), |ui| id = show(ui, &mut text));
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(&ctx, Vec::new(), |ui| _ = show(ui, &mut text));
+        frame(&ctx, key(Key::Tab), |ui| _ = show(ui, &mut text));
+        for _ in 0..3 {
+            frame(&ctx, Vec::new(), |ui| _ = show(ui, &mut text));
+        }
+        assert!(!ctx.memory(|m| m.has_focus(id)), "focus left the text");
+        let nodes = spoken(&ctx, |ui| _ = show(ui, &mut text));
+        assert!(find(&nodes, "Clear").is_some(), "the button it moved onto");
+        frame(&ctx, key(Key::Enter), |ui| _ = show(ui, &mut text));
+        assert_eq!(text, "", "Enter on the focused button clears the field");
+    }
+
+    /// Cut-off text: a value wider than its field shows whole in a tooltip (at the default
+    /// Helpful level), a value that fits does not, and a secret never does.
+    #[test]
+    fn a_value_wider_than_its_field_shows_whole_in_a_tooltip() {
+        let long = "a-branch-name-much-longer-than-the-field-it-is-typed-into/with/more";
+        // The field paints its own text once; a tooltip is a second painting.
+        let painted = |value: &str, password: bool| {
+            let mut text = value.to_owned();
+            testkit::painted_after_hover(pos2(60.0, 16.0), value, |ui| {
+                TextField::new(&mut text)
+                    .password(password)
+                    .width(120.0)
+                    .id_salt("t")
+                    .show(ui);
+            })
+        };
+        assert_eq!(painted(long, false), 2, "the field's text and the tooltip");
+        assert_eq!(painted("main", false), 1, "a value that fits has none");
+        assert_eq!(
+            painted(long, true),
+            0,
+            "a secret is neither shown nor repeated"
+        );
+    }
+
+    /// Cut-off values in a tooltip stop at a sensible length.
+    #[test]
+    fn a_very_long_value_is_cut_in_its_tooltip() {
+        assert_eq!(clipped_tip("short"), "short");
+        let long = "x".repeat(CLIPPED_TIP_CHARS + 50);
+        let tip = clipped_tip(&long);
+        assert_eq!(tip.chars().count(), CLIPPED_TIP_CHARS + 1);
+        assert!(tip.ends_with('…'));
     }
 
     // ------------------------------------------------------------------------ NumberField

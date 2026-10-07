@@ -1489,7 +1489,7 @@ fn body(ui: &mut Ui, d: &RequestDetails, now: i64, actions: &mut Vec<Action>) {
                             .show();
                         match &c.url {
                             Some(u) => {
-                                if LinkButton::new(&c.name).external(true).show(ui).clicked() {
+                                if LinkButton::new(&c.name).url(u).show(ui).clicked() {
                                     actions.push(Action::OpenUrl(u.clone()));
                                 }
                             }

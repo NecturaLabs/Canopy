@@ -140,6 +140,36 @@ pub fn release(pos: Pos2) -> Vec<Event> {
     }]
 }
 
+/// The pointer moving to `pos` and pressing and releasing the secondary button there.
+pub fn secondary_click(pos: Pos2) -> Vec<Event> {
+    let button = |pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Secondary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    vec![Event::PointerMoved(pos), button(true), button(false)]
+}
+
+/// What the app copied to the clipboard in the frame of `f`.
+pub fn copied(ctx: &Context, events: Vec<Event>, mut f: impl FnMut(&mut Ui)) -> Vec<String> {
+    let out = ctx.run_ui(
+        RawInput {
+            events,
+            ..Default::default()
+        },
+        |ui| f(ui),
+    );
+    out.platform_output
+        .commands
+        .into_iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(text) => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
 /// A full click at `pos` over two frames of `f`; the second frame's result is returned.
 pub fn click(ctx: &Context, pos: Pos2, mut f: impl FnMut(&mut Ui)) {
     frame(ctx, press(pos), &mut f);
@@ -158,6 +188,10 @@ pub struct Spoken {
     pub numeric: Option<f64>,
     pub disabled: bool,
     pub description: Option<String>,
+    /// Marked invalid (a field with an error).
+    pub invalid: bool,
+    /// Where it is, in points.
+    pub bounds: Option<egui::Rect>,
 }
 
 impl Spoken {
@@ -172,6 +206,13 @@ impl Spoken {
             numeric: n.numeric_value(),
             disabled: n.is_disabled(),
             description: n.description().map(str::to_owned),
+            invalid: n.invalid().is_some(),
+            bounds: n.bounds().map(|b| {
+                egui::Rect::from_min_max(
+                    egui::pos2(crate::ui::to_f32(b.x0), crate::ui::to_f32(b.y0)),
+                    egui::pos2(crate::ui::to_f32(b.x1), crate::ui::to_f32(b.y1)),
+                )
+            }),
         }
     }
 }
@@ -224,4 +265,36 @@ pub fn parts(ctx: &Context, group: &str, mut f: impl FnMut(&mut Ui)) -> Vec<Stri
 /// The node labelled `label`, if one was spoken.
 pub fn find<'a>(nodes: &'a [Spoken], label: &str) -> Option<&'a Spoken> {
     nodes.iter().find(|n| n.label.as_deref() == Some(label))
+}
+
+/// How many times `text` is painted once the pointer has rested on `show`'s widget (at
+/// `at`) for longer than the tooltip delay.
+pub fn painted_after_hover(at: Pos2, text: &str, mut show: impl FnMut(&mut Ui)) -> usize {
+    fn count(shape: &Shape, text: &str) -> usize {
+        match shape {
+            Shape::Text(t) => usize::from(t.galley.text() == text),
+            Shape::Vec(v) => v.iter().map(|s| count(s, text)).sum(),
+            _ => 0,
+        }
+    }
+    let ctx = ctx();
+    let mut shown = 0;
+    for i in 0..12 {
+        let events = if i == 0 {
+            vec![Event::PointerMoved(at)]
+        } else {
+            Vec::new()
+        };
+        let mut out = ctx.run_ui(
+            RawInput {
+                time: Some(f64::from(i) * 0.2),
+                events,
+                ..Default::default()
+            },
+            |ui| show(ui),
+        );
+        out.textures_delta.clear();
+        shown = out.shapes.iter().map(|c| count(&c.shape, text)).sum();
+    }
+    shown
 }

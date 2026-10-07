@@ -1,7 +1,6 @@
 //! Git's and ssh's credential prompts.
 
 use super::*;
-use crate::ui::kit::overlay::TooltipExt;
 
 /// The tallest git's question grows before it scrolls.
 const QUESTION_HEIGHT: f32 = 180.0;
@@ -154,10 +153,9 @@ pub(super) fn credential(
                     }
                     if let Some((label, url)) = published
                         && LinkButton::new(label)
-                            .external(true)
+                            .url(url)
                             .text_size(m.meta_size)
                             .show(ui)
-                            .kit_tooltip(url).show()
                             .clicked()
                     {
                         extra = Some(Outcome::RunKeep(vec![Action::OpenUrl(url.to_owned())]));

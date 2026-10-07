@@ -727,6 +727,7 @@ pub struct IconButton {
     operation: Operation,
     disabled_reason: Option<String>,
     shortcut: Option<Command>,
+    min_target: f32,
     id_salt: Option<Id>,
     force: Option<ForceState>,
 }
@@ -754,12 +755,20 @@ impl IconButton {
             operation: Operation::Idle,
             disabled_reason: None,
             shortcut: None,
+            min_target: 0.0,
             id_salt: None,
             force: None,
         }
     }
     pub fn size(mut self, size: Size) -> Self {
         self.size = size;
+        self
+    }
+    /// The smallest side of the area that answers the pointer and takes focus: a button drawn
+    /// smaller than `side` keeps its look and gets this much hit area around it, centred
+    /// (WCAG 2.5.8: [`theme::MIN_TARGET`]).
+    pub fn min_target(mut self, side: f32) -> Self {
+        self.min_target = side;
         self
     }
     /// Colours the icon by `tone` at rest (a destructive action's `danger`).
@@ -817,13 +826,16 @@ impl IconButton {
         } else {
             Sense::click()
         };
-        let (rect, response) = match self.id_salt {
+        let target = side.max(self.min_target);
+        let (hit, response) = match self.id_salt {
             Some(id) => {
-                let rect = ui.allocate_space(Vec2::splat(side)).1;
+                let rect = ui.allocate_space(Vec2::splat(target)).1;
                 (rect, ui.interact(rect, ui.id().with(id), sense))
             }
-            None => ui.allocate_exact_size(Vec2::splat(side), sense),
+            None => ui.allocate_exact_size(Vec2::splat(target), sense),
         };
+        // What is drawn is `side` across, in the middle of the hit area.
+        let rect = Rect::from_center_size(hit.center(), Vec2::splat(side));
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
             let painter = super::content_painter(ui);
@@ -1177,13 +1189,15 @@ pub fn tool_divider(ui: &mut Ui) {
 // --------------------------------------------------------------------------------- LinkButton
 
 /// Text that opens something: `accent2`, brightening and underlined on hover (at rest too where
-/// the theme's `Design::link_underline` asks). External links end in an arrow icon (open web
-/// addresses through `platform.rs`).
+/// the theme's `Design::link_underline` asks). A link to a web address ([`LinkButton::url`]) ends
+/// in an arrow icon, shows the address in a tooltip and offers "Copy link" in its context menu
+/// (open web addresses through `platform.rs`). Every link is at least [`theme::MIN_TARGET`]
+/// tall, and Enter on a focused one clicks it.
 #[derive(Debug)]
 #[must_use = "call .show(ui) or ui.add(..)"]
 pub struct LinkButton {
     text: String,
-    external: bool,
+    url: Option<String>,
     size: Option<f32>,
     force: Option<ForceState>,
 }
@@ -1192,14 +1206,15 @@ impl LinkButton {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
-            external: false,
+            url: None,
             size: None,
             force: None,
         }
     }
-    /// Leaves Canopy (a web page): appends "↗".
-    pub fn external(mut self, external: bool) -> Self {
-        self.external = external;
+    /// Leaves Canopy for the web page at `url`: appends "↗", names the address in a tooltip and
+    /// offers to copy it.
+    pub fn url(mut self, url: impl Into<String>) -> Self {
+        self.url = Some(url.into());
         self
     }
     /// Text size (defaults to `body_size`).
@@ -1223,7 +1238,7 @@ impl LinkButton {
             .painter()
             .layout_no_wrap(self.text.clone(), font, p.accent2);
         // An external link's arrow is the icon font's, a little smaller than the text.
-        let arrow = self.external.then(|| {
+        let arrow = self.url.is_some().then(|| {
             ui.painter().layout_no_wrap(
                 icon::ARROW_UP_RIGHT.to_owned(),
                 FontId::proportional(size * 0.85),
@@ -1237,7 +1252,10 @@ impl LinkButton {
         } else {
             Sense::hover()
         };
-        let (rect, response) = ui.allocate_exact_size(vec2(width, g.size().y), sense);
+        // The target is as tall as WCAG 2.5.8 asks; the text sits in the middle of it.
+        let (hit, response) =
+            ui.allocate_exact_size(vec2(width, g.size().y.max(theme::MIN_TARGET)), sense);
+        let rect = Rect::from_center_size(hit.center(), vec2(width, g.size().y));
         let st = Interact::of(&ctx, &response, enabled, self.force);
         if ui.is_rect_visible(rect) {
             let painter = &super::content_painter(ui);
@@ -1283,12 +1301,16 @@ impl LinkButton {
                 );
             }
         }
-        let response = if enabled {
+        let mut response = if enabled {
             response.on_hover_cursor(egui::CursorIcon::PointingHand)
         } else {
             response
         };
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Link, enabled, &self.text));
+        if let (Some(url), true) = (&self.url, enabled) {
+            response = response.kit_tooltip(url.clone()).show();
+            super::menu::link_menu(&response, url, "Copy link");
+        }
         response
     }
 }
@@ -1675,7 +1697,7 @@ pub(crate) fn gallery(ui: &mut Ui) {
     ui.horizontal_wrapped(|ui| {
         LinkButton::new("Release notes").show(ui);
         LinkButton::new("Open on GitHub")
-            .external(true)
+            .url(crate::updater::RELEASES_PAGE)
             .show_forced(ui, ForceState::HOVER);
         LinkButton::new("Focused link").show_forced(ui, ForceState::FOCUS);
         LinkButton::new("Small link")
@@ -1772,6 +1794,7 @@ fn gallery_operations(ui: &mut Ui, small: &impl Fn(&mut Ui, &str)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::kit::testkit;
 
     /// One frame; returns what it painted.
     fn frame(
@@ -1883,34 +1906,33 @@ mod tests {
     fn disabled_buttons_keep_a_readable_label_in_every_theme() {
         for id in theme::ThemeId::ALL {
             for style in Style::ALL {
-                let ctx = super::super::testkit::ctx_with(id, style, theme::Density::Comfortable);
+                let ctx = testkit::ctx_with(id, style, theme::Density::Comfortable);
                 let s = id.palette().surfaces(style);
                 let grounds = [s.pane, s.panel, s.overlay];
                 let off = |w: f64, what: &str| {
                     assert!(w >= 3.0, "{id:?} {style:?} disabled {what}: {w:.2}:1");
                 };
                 for kind in ButtonKind::ALL {
-                    let w =
-                        super::super::testkit::weakest_label(&ctx, &grounds, move |ui: &mut Ui| {
-                            Button::new("Commit")
-                                .kind(kind)
-                                .icon(icon::CHECK)
-                                .enabled(false)
-                                .show(ui);
-                        });
+                    let w = testkit::weakest_label(&ctx, &grounds, move |ui: &mut Ui| {
+                        Button::new("Commit")
+                            .kind(kind)
+                            .icon(icon::CHECK)
+                            .enabled(false)
+                            .show(ui);
+                    });
                     off(w, kind.label());
                 }
-                let w = super::super::testkit::weakest_label(&ctx, &grounds, |ui: &mut Ui| {
+                let w = testkit::weakest_label(&ctx, &grounds, |ui: &mut Ui| {
                     IconButton::new(icon::GEAR, "Settings")
                         .enabled(false)
                         .show(ui);
                 });
                 off(w, "icon button");
-                let w = super::super::testkit::weakest_label(&ctx, &grounds, |ui: &mut Ui| {
+                let w = testkit::weakest_label(&ctx, &grounds, |ui: &mut Ui| {
                     ToolButton::new(icon::TAG, "Tag").enabled(false).show(ui);
                 });
                 off(w, "tool button");
-                let w = super::super::testkit::weakest_label(&ctx, &grounds, |ui: &mut Ui| {
+                let w = testkit::weakest_label(&ctx, &grounds, |ui: &mut Ui| {
                     let mut v = 0_u8;
                     SplitButton::new(&mut v, &[(0, "Commit"), (1, "Commit and push")])
                         .enabled(false)
@@ -1928,7 +1950,7 @@ mod tests {
     fn disabled_filled_buttons_use_the_neutral_disabled_fill() {
         for id in theme::ThemeId::ALL {
             for style in Style::ALL {
-                let ctx = super::super::testkit::ctx_with(id, style, theme::Density::Comfortable);
+                let ctx = testkit::ctx_with(id, style, theme::Density::Comfortable);
                 let p = id.palette();
                 let s = p.surfaces(style);
                 let paint = |kind: ButtonKind, enabled: bool, in_disabled_ui: bool| {
@@ -2105,7 +2127,7 @@ mod tests {
     /// no icon of its own.
     #[test]
     fn operation_buttons_keep_their_size_in_every_state() {
-        let ctx = super::super::testkit::ctx();
+        let ctx = testkit::ctx();
         let sizes = |op: Operation, t: f64| {
             let mut rects = [Rect::NOTHING; 4];
             for _ in 0..2 {
@@ -2129,7 +2151,7 @@ mod tests {
     /// A running operation's button keeps focus but ignores clicks, as a loading button does.
     #[test]
     fn a_running_operation_ignores_clicks() {
-        let ctx = super::super::testkit::ctx();
+        let ctx = testkit::ctx();
         let mut clock = 1.0;
         for op in [Operation::Idle, Operation::Running] {
             let mut rects = [Rect::NOTHING; 4];
@@ -2147,10 +2169,10 @@ mod tests {
             let _ = frame_at(&ctx, tick(), Vec::new(), |ui| show(ui, &mut rects));
             for i in 0..4 {
                 let at = rects[i].center();
-                let _ = frame_at(&ctx, tick(), super::super::testkit::press(at), |ui| {
+                let _ = frame_at(&ctx, tick(), testkit::press(at), |ui| {
                     show(ui, &mut rects);
                 });
-                let _ = frame_at(&ctx, tick(), super::super::testkit::release(at), |ui| {
+                let _ = frame_at(&ctx, tick(), testkit::release(at), |ui| {
                     show(ui, &mut rects);
                 });
             }
@@ -2163,7 +2185,7 @@ mod tests {
     /// for `OUTCOME_HOLD`, and then the icon is back.
     #[test]
     fn an_operation_shows_its_spinner_then_its_outcome_then_the_icon() {
-        let ctx = super::super::testkit::ctx();
+        let ctx = testkit::ctx();
         theme::apply(
             &ctx,
             theme::ThemeId::Midnight,
@@ -2236,7 +2258,7 @@ mod tests {
     /// shows at full strength and in place from the first frame to the end of the hold.
     #[test]
     fn reduced_motion_shows_outcomes_without_a_pop_or_a_shake() {
-        let ctx = super::super::testkit::ctx();
+        let ctx = testkit::ctx();
         let mark_at = |op: Operation, t: f64| {
             let marked = frame_at(&ctx, t, Vec::new(), |ui| {
                 IconButton::new(icon::ARROWS_CLOCKWISE, "Refresh")
@@ -2301,5 +2323,131 @@ mod tests {
         assert_eq!(toggled("Fetch"), None, "Fetch is a plain button");
         assert_eq!(toggled("Stashes"), Some(Toggled::True));
         assert_eq!(toggled("Sidebar"), Some(Toggled::False));
+    }
+    /// F1: at the default Helpful level a toolbar tool with a shortcut shows its tooltip (a
+    /// shortcut is what the screen does not show); one without says only what its label does,
+    /// so it waits for All.
+    #[test]
+    fn a_tool_with_a_shortcut_shows_its_tooltip_at_the_default_level() {
+        use crate::ui::kit::overlay::{TooltipLevel, set_tooltip_level};
+        use crate::ui::kit::testkit;
+        let tip = "Fetch all remotes";
+        let tool = |ui: &mut Ui, shortcut: Option<Command>| {
+            let mut tool = ToolButton::new(icon::ARROWS_CLOCKWISE, "Fetch").tooltip(tip);
+            if let Some(c) = shortcut {
+                tool = tool.shortcut(c);
+            }
+            let _ = tool.show(ui);
+        };
+        let at = pos2(30.0, 20.0);
+        set_tooltip_level(TooltipLevel::Helpful);
+        assert_eq!(
+            testkit::painted_after_hover(at, tip, |ui| tool(ui, Some(Command::Fetch))),
+            1,
+            "Helpful shows a tool's tooltip with its shortcut"
+        );
+        assert_eq!(
+            testkit::painted_after_hover(at, tip, |ui| tool(ui, None)),
+            0,
+            "Helpful leaves out a description of a labelled tool"
+        );
+        set_tooltip_level(TooltipLevel::All);
+        assert_eq!(
+            testkit::painted_after_hover(at, tip, |ui| tool(ui, None)),
+            1
+        );
+        set_tooltip_level(TooltipLevel::Helpful);
+    }
+    fn link_nodes(ctx: &egui::Context, add: impl FnMut(&mut Ui)) -> Vec<testkit::Spoken> {
+        testkit::spoken(ctx, add)
+    }
+
+    /// WCAG 2.5.8: a link is at least 24 points tall, and a link to a web page also ends in an
+    /// arrow.
+    #[test]
+    fn a_link_is_24_points_tall_and_a_web_link_ends_in_an_arrow() {
+        let ctx = testkit::ctx();
+        let (mut plain, mut web) = (Rect::NOTHING, Rect::NOTHING);
+        let _ = frame(&ctx, Vec::new(), |ui| {
+            plain = LinkButton::new("Details")
+                .text_size(theme::metrics().small_size)
+                .show(ui)
+                .rect;
+            web = LinkButton::new("Details")
+                .text_size(theme::metrics().small_size)
+                .url("https://example.com/")
+                .show(ui)
+                .rect;
+        });
+        assert!(plain.height() >= theme::MIN_TARGET, "{plain:?}");
+        assert!(web.height() >= theme::MIN_TARGET, "{web:?}");
+        assert!(web.width() > plain.width() + 4.0, "the arrow: {web:?}");
+    }
+
+    /// A web link shows its address in a tooltip at the default level and offers "Copy link" in
+    /// its context menu; a link inside Canopy does neither.
+    #[test]
+    fn a_web_link_names_its_address_and_copies_it() {
+        use crate::ui::kit::overlay::{TooltipLevel, set_tooltip_level};
+        let url = "https://example.com/releases";
+        set_tooltip_level(TooltipLevel::Helpful);
+        let link = |ui: &mut Ui, url: Option<&str>| {
+            let mut link = LinkButton::new("Releases");
+            if let Some(url) = url {
+                link = link.url(url);
+            }
+            link.show(ui);
+        };
+        let at = pos2(20.0, 12.0);
+        assert_eq!(
+            testkit::painted_after_hover(at, url, |ui| link(ui, Some(url))),
+            1,
+            "the tooltip names the address"
+        );
+        assert_eq!(
+            testkit::painted_after_hover(at, url, |ui| link(ui, None)),
+            0
+        );
+
+        let ctx = testkit::ctx();
+        for (target, offered) in [(Some(url), true), (None, false)] {
+            let ctx = if offered { &ctx } else { &testkit::ctx() };
+            let _ = frame(ctx, Vec::new(), |ui| link(ui, target));
+            let _ = frame(ctx, testkit::secondary_click(at), |ui| link(ui, target));
+            let nodes = link_nodes(ctx, |ui| link(ui, target));
+            assert_eq!(
+                testkit::find(&nodes, "Copy link").is_some(),
+                offered,
+                "{target:?}"
+            );
+        }
+        // Choosing it copies the address.
+        let item = testkit::find(&link_nodes(&ctx, |ui| link(ui, Some(url))), "Copy link")
+            .and_then(|n| n.bounds)
+            .expect("the item")
+            .center();
+        testkit::copied(&ctx, testkit::press(item), |ui| link(ui, Some(url)));
+        let copied = testkit::copied(&ctx, testkit::release(item), |ui| link(ui, Some(url)));
+        assert_eq!(copied, vec![url.to_owned()]);
+    }
+
+    /// A link takes Tab focus and Enter on it clicks it.
+    #[test]
+    fn enter_on_a_focused_link_clicks_it() {
+        let ctx = testkit::ctx();
+        let mut clicks = 0;
+        let mut show = |ctx: &egui::Context, events: Vec<egui::Event>| {
+            let _ = frame(ctx, events, |ui| {
+                if LinkButton::new("Details").show(ui).clicked() {
+                    clicks += 1;
+                }
+            });
+        };
+        show(&ctx, Vec::new());
+        show(&ctx, testkit::key(egui::Key::Tab));
+        show(&ctx, Vec::new());
+        show(&ctx, testkit::key(egui::Key::Enter));
+        show(&ctx, Vec::new());
+        assert_eq!(clicks, 1);
     }
 }

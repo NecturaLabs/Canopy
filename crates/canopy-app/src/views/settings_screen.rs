@@ -1298,13 +1298,39 @@ fn config_phrase(v: &ConfigValue) -> String {
     )
 }
 
+/// The settings behind a pull strategy, phrased as every other row's: [`config_phrase`].
+fn pull_phrase(config: &canopy_core::PullConfig) -> Option<String> {
+    use canopy_core::ConfigScope;
+    let phrases: Vec<String> = config
+        .sources
+        .iter()
+        .map(|s| {
+            config_phrase(&ConfigValue {
+                key: s.key.clone(),
+                value: s.value.clone(),
+                scope: match s.scope {
+                    ConfigScope::System => "system",
+                    ConfigScope::Global => "global",
+                    ConfigScope::Local => "local",
+                    ConfigScope::Worktree => "worktree",
+                    ConfigScope::Command => "command",
+                    ConfigScope::Other => "",
+                }
+                .to_owned(),
+                origin: s.origin.clone(),
+            })
+        })
+        .collect();
+    (!phrases.is_empty()).then(|| and_list(&phrases))
+}
+
 /// What git's configuration says about pulls, against Canopy's `choice`. Canopy always passes a
 /// strategy (`canopy_core::Repo::pull`): the configuration's when it follows it and one is set,
 /// else its own, and then a configuration that differs does not apply.
 fn pull_note(facts: &GitFacts, choice: PullChoice) -> Option<Note> {
     let config = facts.pull.as_ref()?;
     let ours = choice.mode.strategy();
-    let Some((configured, described)) = config.strategy.zip(config.describe()) else {
+    let Some((configured, described)) = config.strategy.zip(pull_phrase(config)) else {
         return choice.follow_config.then(|| Note {
             text: format!(
                 "Your git configuration sets no pull strategy, so pulls use {}.",
@@ -1901,19 +1927,19 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     heading(ui, "Theme");
     if block(ui, "Theme", "") {
         theme_cards(ui, s);
-        if s.theme != DEFAULTS.theme {
-            let m = theme::metrics();
-            ui.add_space(theme::SM);
-            if LinkButton::new(format!(
-                "Back to the default theme, {}",
-                DEFAULTS.theme.name()
-            ))
-            .text_size(m.meta_size)
+        // An action, so a button, and always drawn: choosing a theme moves nothing below it.
+        ui.add_space(theme::SM);
+        let default = DEFAULTS.theme;
+        if Button::new(format!("Back to the default theme, {}", default.name()))
+            .ghost()
+            .size(Size::Sm)
+            .enabled(s.theme != default)
+            .disabled_reason(format!("{} is already the theme.", default.name()))
+            .id_salt("theme-default")
             .show(ui)
             .clicked()
-            {
-                s.theme = DEFAULTS.theme;
-            }
+        {
+            s.theme = default;
         }
     }
     if s.theme == ThemeId::Custom {
@@ -4308,13 +4334,14 @@ fn accounts<'f>(
                     ForgeKind::GitLab => "Needs the api scope (read_api is enough to only browse).",
                 };
                 ui.add(egui::Label::new(RichText::new(scopes).size(m.small_size).color(p.text_faint)).wrap());
+                let page = hosting::token_page(kind, &host);
                 if LinkButton::new("Create a token")
-                    .external(true)
+                    .url(page.clone())
                     .text_size(m.small_size)
                     .show(ui)
                     .clicked()
                 {
-                    actions.push(Action::OpenUrl(hosting::token_page(kind, &host)));
+                    actions.push(Action::OpenUrl(page));
                 }
             });
         ui.add_space(m.card_gap);
@@ -5197,12 +5224,16 @@ mod tests {
     }
 
     /// Where the group heading `group` is drawn, top edge, after opening `screen`.
-    fn heading_top(mut screen: SettingsScreen, group: &str) -> f64 {
+    fn heading_top(screen: SettingsScreen, group: &str) -> f64 {
+        heading_top_with(screen, Settings::default(), group)
+    }
+
+    /// [`heading_top`] with `settings` (the theme in them is the one shown).
+    fn heading_top_with(mut screen: SettingsScreen, mut settings: Settings, group: &str) -> f64 {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         crate::ui::fonts::install(&ctx);
         theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
-        let mut settings = Settings::default();
         let mut tokens = TokenStore::default();
         let mut actions = Vec::new();
         let mut top = None;
@@ -5364,17 +5395,17 @@ mod tests {
         assert!(!followed.warn);
         assert_eq!(
             followed.text,
-            "Your git configuration decides: pull.rebase=true (your global git config), so \
-             pulls use rebase. Recommended: fast-forward only, with Canopy asking when the \
-             branches diverged."
+            "Your git configuration decides: pull.rebase = true (global: \
+             /home/me/.gitconfig), so pulls use rebase. Recommended: fast-forward only, with \
+             Canopy asking when the branches diverged."
         );
         assert!(!pull_note(&facts, own(PullMode::Rebase)).unwrap().warn);
         let overridden = pull_note(&facts, own(PullMode::Merge)).unwrap();
         assert!(overridden.warn);
         assert_eq!(
             overridden.text,
-            "Canopy passes --no-rebase --ff, so your git configuration's pull.rebase=true (your \
-             global git config) does not apply to pulls from Canopy."
+            "Canopy passes --no-rebase --ff, so your git configuration's pull.rebase = true \
+             (global: /home/me/.gitconfig) does not apply to pulls from Canopy."
         );
     }
 
@@ -5906,5 +5937,119 @@ mod tests {
             Scope::Global,
             "without a repository only the global configuration can be written"
         );
+    }
+    /// The Git page drawn with `facts` as the global configuration; the AccessKit nodes it spoke.
+    fn git_page(facts: GitFacts, follow: bool) -> Vec<crate::ui::kit::testkit::Spoken> {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let mut settings = Settings {
+            follow_git_config: follow,
+            ..Settings::default()
+        };
+        let mut screen = SettingsScreen::default();
+        screen.facts.global.asked = true;
+        screen.facts.global.facts = Some(Arc::new(facts));
+        crate::ui::kit::testkit::spoken(&ctx, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                git(
+                    ui,
+                    &mut screen,
+                    &mut settings,
+                    &IdentityView {
+                        repo: None,
+                        identity: None,
+                        error: None,
+                    },
+                    &mut Vec::new(),
+                );
+            });
+        })
+    }
+
+    /// F8: while Canopy follows the git configuration, every choice the configuration sets is
+    /// shown unavailable, the conflict style included, and each such row says the same thing in
+    /// the same words.
+    #[test]
+    fn every_choice_the_git_configuration_decides_is_unavailable_and_noted_alike() {
+        use canopy_core::{ConfigScope, ConfigSource, PullConfig, PullStrategy};
+        let facts = GitFacts {
+            pull: Some(PullConfig {
+                strategy: Some(PullStrategy::Rebase),
+                sources: vec![ConfigSource {
+                    key: "pull.rebase".into(),
+                    value: "true".into(),
+                    scope: ConfigScope::Global,
+                    origin: "file:/home/me/.gitconfig".into(),
+                    file: None,
+                }],
+                invalid: Vec::new(),
+            }),
+            fetch_prune: Some(fact("fetch.prune", "true")),
+            conflict_style: Some(fact("merge.conflictStyle", "merge")),
+            ..GitFacts::default()
+        };
+        let nodes = git_page(facts, true);
+        for name in ["Pull strategy", "Prune on fetch", "Conflict style"] {
+            let node = crate::ui::kit::testkit::find(&nodes, name)
+                .unwrap_or_else(|| panic!("{name} is on the page"));
+            assert!(node.disabled, "{name} is decided by the configuration");
+        }
+        let notes: Vec<&str> = nodes
+            .iter()
+            .filter_map(|n| n.value.as_deref())
+            .filter(|t| t.starts_with("Your git configuration decides:"))
+            .collect();
+        assert_eq!(notes.len(), 3, "{notes:?}");
+        for note in &notes {
+            assert!(
+                note.contains("(global: ~/") || note.contains("(global: /home/me"),
+                "every row names where the setting is in the same form: {note}"
+            );
+        }
+    }
+    /// F9: choosing another theme moves nothing below the theme cards, and the way back to the
+    /// default theme is a button (it does something), not a link.
+    #[test]
+    fn choosing_a_theme_does_not_shift_the_page() {
+        let at = |theme: ThemeId| {
+            let settings = Settings {
+                theme,
+                ..Settings::default()
+            };
+            heading_top_with(SettingsScreen::at(Section::Appearance), settings, "Look")
+        };
+        let default = at(DEFAULTS.theme);
+        // Custom opens its own group of colour rows, which is what choosing it asks for.
+        for theme in ThemeId::ALL.into_iter().filter(|t| *t != ThemeId::Custom) {
+            assert!(
+                (at(theme) - default).abs() < 0.5,
+                "{theme:?} moves the page by {}",
+                at(theme) - default
+            );
+        }
+        let nodes = {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+            let mut settings = Settings {
+                theme: ThemeId::Daylight,
+                ..Settings::default()
+            };
+            crate::ui::kit::testkit::spoken(&ctx, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    appearance(ui, &mut settings, &mut None);
+                });
+            })
+        };
+        let back = nodes
+            .iter()
+            .find(|n| {
+                n.label
+                    .as_deref()
+                    .is_some_and(|l| l.starts_with("Back to the default theme"))
+            })
+            .expect("the way back to the default theme");
+        assert_eq!(back.role, egui::accesskit::Role::Button);
     }
 }
