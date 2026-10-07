@@ -1079,6 +1079,25 @@ fn a_binary_in_an_install_folder_with_its_receipt_is_managed() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Names
+
+#[test]
+fn work_directory_names_never_repeat_within_the_process() {
+    let names: Vec<Vec<String>> = std::thread::scope(|scope| {
+        let threads: Vec<_> = (0..8)
+            .map(|_| scope.spawn(|| (0..5_000).map(|_| unique_name("canopy-update.")).collect()))
+            .collect();
+        threads
+            .into_iter()
+            .map(|t| t.join().expect("thread"))
+            .collect()
+    });
+    let all: Vec<&String> = names.iter().flatten().collect();
+    let distinct: std::collections::HashSet<&String> = all.iter().copied().collect();
+    assert_eq!(distinct.len(), all.len(), "a name was handed out twice");
+}
+
+// ---------------------------------------------------------------------------------------------
 // Any other installation
 
 #[cfg(unix)]
