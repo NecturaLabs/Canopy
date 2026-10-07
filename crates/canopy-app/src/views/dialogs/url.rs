@@ -34,14 +34,25 @@ impl UrlBuilder {
 
     /// The URL to use, if complete and acceptable ([`UrlBuilder::problem`]).
     pub fn resolve(&self) -> Option<String> {
+        if self.host_problem().is_some() {
+            return None;
+        }
         self.built()
             .filter(|u| canopy_core::ops::remote_url_problem(u).is_none())
     }
 
     /// Why the URL typed or built cannot be used, such as credentials in it.
     pub fn problem(&self) -> Option<&'static str> {
-        self.built()
-            .and_then(|u| canopy_core::ops::remote_url_problem(&u))
+        self.host_problem().or_else(|| {
+            self.built()
+                .and_then(|u| canopy_core::ops::remote_url_problem(&u))
+        })
+    }
+
+    /// A GitLab host with user information must not silently lose credentials while normalising.
+    fn host_problem(&self) -> Option<&'static str> {
+        (self.source == UrlSource::GitLab && self.host.contains('@'))
+            .then_some("Remove the user name and password from the host.")
     }
 
     /// The URL as typed or built, before it is checked.
@@ -88,12 +99,14 @@ impl UrlBuilder {
             }
             UrlSource::GitHub | UrlSource::GitLab => {
                 if self.source == UrlSource::GitLab {
-                    field(
+                    let host_error = self.host_problem();
+                    field_with_error(
                         ui,
                         "Host (empty for gitlab.com)",
                         &mut self.host,
                         "gitlab.example.com",
                         false,
+                        host_error,
                     );
                 }
                 let form = if self.source == UrlSource::GitHub {
@@ -101,10 +114,14 @@ impl UrlBuilder {
                 } else {
                     "group/subgroup/project"
                 };
-                let error = self.problem().map(str::to_owned).or_else(|| {
-                    (self.built().is_none() && !self.project.trim().is_empty())
-                        .then(|| format!("Use the form {form}"))
-                });
+                let error = if self.host_problem().is_some() {
+                    None
+                } else {
+                    self.problem().map(str::to_owned).or_else(|| {
+                        (self.built().is_none() && !self.project.trim().is_empty())
+                            .then(|| format!("Use the form {form}"))
+                    })
+                };
                 let helper = if self.ssh {
                     "SSH: your SSH key signs you in."
                 } else {
@@ -163,5 +180,36 @@ impl UrlBuilder {
 fn take_focus(ui: &Ui, r: &egui::Response, focus: bool) {
     if focus && !r.lost_focus() && ui.memory(|m| m.focused().is_none()) {
         r.request_focus();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{UrlBuilder, UrlSource};
+    use crate::settings::Settings;
+
+    #[test]
+    fn credentials_in_gitlab_host_are_refused_at_host_field() {
+        let mut builder = UrlBuilder::new(&Settings::default());
+        builder.source = UrlSource::GitLab;
+        builder.project = "team/repo".to_owned();
+
+        for host in [
+            "https://user:secret@gitlab.example.com",
+            "user@gitlab.example.com",
+        ] {
+            builder.host = host.to_owned();
+            assert_eq!(
+                builder.host_problem(),
+                Some("Remove the user name and password from the host.")
+            );
+            assert_eq!(builder.problem(), builder.host_problem());
+            assert!(builder.resolve().is_none());
+        }
+
+        builder.host = "gitlab.example.com".to_owned();
+        assert!(builder.host_problem().is_none());
+        assert!(builder.problem().is_none());
+        assert!(builder.resolve().is_some());
     }
 }
