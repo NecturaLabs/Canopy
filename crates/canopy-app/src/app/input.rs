@@ -368,7 +368,11 @@ mod tests {
         frame(&ctx, Vec::new(), |ui| {
             build(ui);
         });
-        assert_eq!(ctx.memory(|m| m.focused()), focused, "the widget has focus");
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            focused,
+            "the widget has focus"
+        );
         let mut actions = Vec::new();
         let press = egui::Event::Key {
             key,

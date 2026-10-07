@@ -1497,7 +1497,11 @@ mod tests {
         };
         let mut events = vec![esc(true), esc(false)];
         let out = settle(&ctx, 30.0, &mut events, &mut show);
-        assert_eq!(ctx.memory(|m| m.focused()), None, "Esc dropped the focus");
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            None,
+            "Esc dropped the focus"
+        );
         assert!(inside(&out, 0), "the active tab is back in view");
     }
 
