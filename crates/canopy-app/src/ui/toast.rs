@@ -230,6 +230,7 @@ fn lifetime(kind: ToastKind, decision: bool, title: &str, body: Option<&str>) ->
 struct Toast {
     id: u64,
     kind: ToastKind,
+    topic: Topic,
     title: String,
     body: String,
     born: f64,
@@ -312,9 +313,12 @@ impl Slide {
 }
 
 impl Toasts {
-    /// Which topics show as cards from now on.
+    /// Applies new card filters immediately; hidden cards remain in the notification center.
     pub fn set_prefs(&mut self, prefs: NotificationPrefs) {
         self.prefs = prefs;
+        self.items.retain(|item| prefs.shows(item.topic));
+        self.places
+            .retain(|(id, _)| self.items.iter().any(|item| item.id == *id));
     }
 
     /// Notifies: into the center, and as a card when its topic shows as one.
@@ -416,6 +420,7 @@ impl Toasts {
         self.items.push(Toast {
             id: self.next,
             kind,
+            topic,
             title,
             body,
             born: ctx.input(|i| i.time),
