@@ -272,6 +272,8 @@ pub struct Toasts {
     history: VecDeque<Entry>,
     /// Notifications that count on the bell and were seen neither as a card nor in the center.
     unread: usize,
+    /// How many of the `unread` are errors: the bell turns danger while there is one.
+    unread_errors: usize,
     /// Whether the notification center was open last frame (no cards show meanwhile).
     center_open: bool,
     /// Offers taken in the center, handed out by [`Toasts::show`].
@@ -405,6 +407,7 @@ impl Toasts {
         if !card {
             if topic.counts() && !self.center_open {
                 self.unread += 1;
+                self.unread_errors += usize::from(kind == ToastKind::Error);
             }
             tracing::debug!(title = %title, ?topic, "notification kept for the center");
             ctx.request_repaint();
@@ -433,6 +436,7 @@ impl Toasts {
                 // Not made: it waits in the center, counted on the bell as when it runs out.
                 tracing::warn!(title = %gone.title, "a sixth decision pushed out the oldest card");
                 self.unread += 1;
+                self.unread_errors += usize::from(gone.kind == ToastKind::Error);
             }
         }
         ctx.request_repaint();
@@ -464,12 +468,17 @@ impl Toasts {
             }
         }
         // A decision nobody made waits in the center, counted on the bell.
-        let undecided = self
-            .items
-            .iter()
-            .filter(|t| t.left <= 0.0 && t.offer.is_some())
-            .count();
-        self.unread += undecided;
+        let undecided = || {
+            self.items
+                .iter()
+                .filter(|t| t.left <= 0.0 && t.offer.is_some())
+        };
+        let (count, errors) = (
+            undecided().count(),
+            undecided().filter(|t| t.kind == ToastKind::Error).count(),
+        );
+        self.unread += count;
+        self.unread_errors += errors;
         self.items.retain(|t| t.left > 0.0);
         self.focus_held = false;
         if self.items.is_empty() {
@@ -634,6 +643,16 @@ impl Toasts {
     }
 }
 
+/// Where the bell's badge goes: over the button's top right corner, but never outside `clip`,
+/// which would cut it off.
+fn badge_origin(button: egui::Rect, size: egui::Vec2, clip: egui::Rect) -> egui::Pos2 {
+    let at = button.right_top() + vec2(-size.x * 0.4, -size.y * 0.3);
+    egui::pos2(
+        at.x.min(clip.right() - size.x).max(clip.left()),
+        at.y.min(clip.bottom() - size.y).max(clip.top()),
+    )
+}
+
 impl Toasts {
     /// The status bar's bell, with the count of unseen notifications that need the user, and the
     /// notification center it opens. Returns whether the user asked for the notification
@@ -654,17 +673,9 @@ impl Toasts {
             .active(self.center_open)
             .id_salt("notification-center")
             .show(ui);
-        if unread > 0 {
-            let errors = self
-                .history
-                .iter()
-                .take(unread)
-                .any(|e| e.kind == ToastKind::Error);
-            let badge = Badge::new(super::kit::chip::count_text(unread))
-                .tone(if errors { Tone::Danger } else { Tone::Accent })
-                .strong();
+        if let Some(badge) = self.bell_badge() {
             let size = badge.measure(ui);
-            let at = response.rect.right_top() + vec2(-size.x * 0.4, -size.y * 0.3);
+            let at = badge_origin(response.rect, size, ui.clip_rect());
             badge.paint(ui, egui::Rect::from_min_size(at, size));
         }
         let mut settings = false;
@@ -680,6 +691,7 @@ impl Toasts {
         self.center_open = shown.is_some() && !leave;
         if self.center_open {
             self.unread = 0;
+            self.unread_errors = 0;
             // What is open in the center needs no card as well.
             self.items.clear();
         }
@@ -687,6 +699,24 @@ impl Toasts {
             response,
             value: settings,
         }
+    }
+
+    /// The bell's count: `danger` when one of the unread notifications is an error, else the
+    /// accent.
+    fn bell_badge(&self) -> Option<Badge> {
+        if self.unread == 0 {
+            return None;
+        }
+        let tone = if self.unread_errors > 0 {
+            Tone::Danger
+        } else {
+            Tone::Accent
+        };
+        Some(
+            Badge::new(super::kit::chip::count_text(self.unread))
+                .tone(tone)
+                .strong(),
+        )
     }
 
     /// The notification center's content; returns whether the settings link was clicked.
@@ -1684,6 +1714,48 @@ mod tests {
             toasts.items.iter().map(|t| t.title.as_str()).collect(),
             toasts.history.iter().map(|e| e.title.as_str()).collect(),
         )
+    }
+
+    #[test]
+    fn the_bell_count_is_danger_when_an_unread_notification_is_an_error() {
+        let ctx = egui::Context::default();
+        let p = theme::palette(&ctx);
+        let mut toasts = Toasts::default();
+        toasts.set_prefs(NotificationPrefs {
+            errors: false,
+            attention: false,
+            ..Default::default()
+        });
+        assert!(toasts.bell_badge().is_none(), "nothing unread, no badge");
+        toasts.push(&ctx, ToastKind::Info, Topic::Attention, "Decide", "");
+        let (fill, ink) = toasts.bell_badge().expect("one unread").colors(p);
+        assert_eq!((fill, ink), (p.s().primary, p.on_accent), "an accent count");
+        toasts.push(&ctx, ToastKind::Error, Topic::Error, "Could not pull", "no");
+        let (fill, ink) = toasts.bell_badge().expect("two unread").colors(p);
+        assert_eq!((fill, ink), (p.s().danger_solid, p.on_danger), "an error");
+        // A newer notification that is not counted does not hide the error.
+        toasts.push(&ctx, ToastKind::Success, Topic::Finished, "Pushed", "");
+        let (fill, _) = toasts.bell_badge().expect("still unread").colors(p);
+        assert_eq!(
+            fill,
+            p.s().danger_solid,
+            "an error under a newer notification"
+        );
+    }
+
+    #[test]
+    fn the_bell_badge_stays_inside_the_bar_that_clips_it() {
+        let button = egui::Rect::from_min_size(egui::pos2(780.0, 580.0), vec2(16.0, 16.0));
+        let size = vec2(14.0, 14.0);
+        let bar = egui::Rect::from_min_max(egui::pos2(0.0, 577.0), egui::pos2(800.0, 600.0));
+        let at = badge_origin(button, size, bar);
+        assert!(
+            bar.contains_rect(egui::Rect::from_min_size(at, size)),
+            "{at:?}"
+        );
+        let roomy = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(900.0, 700.0));
+        let at = badge_origin(button, size, roomy);
+        assert_eq!(at, button.right_top() + vec2(-size.x * 0.4, -size.y * 0.3));
     }
 
     #[test]

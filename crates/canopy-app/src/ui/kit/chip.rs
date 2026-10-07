@@ -100,7 +100,8 @@ impl Badge {
         self
     }
 
-    /// The `primary` fill with `on_accent` text (the view switcher's counts).
+    /// The `primary` fill with `on_accent` text (the view switcher's counts); a danger badge
+    /// keeps its tone as `danger_solid` with `on_danger` text.
     pub fn strong(mut self) -> Self {
         self.strong = true;
         self
@@ -125,7 +126,10 @@ impl Badge {
     pub fn colors(&self, p: &Palette) -> (Fill, Color32) {
         let s = p.s();
         if self.strong {
-            return (s.primary, p.on_accent);
+            return match self.tone {
+                Tone::Danger => (s.danger_solid, p.on_danger),
+                _ => (s.primary, p.on_accent),
+            };
         }
         match self.tone {
             Tone::Neutral => (Fill::flat(s.badge), p.text),
