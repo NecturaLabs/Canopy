@@ -464,15 +464,15 @@ fn context_at_key(popup: Id) -> Id {
     popup.with("kit-context-at")
 }
 
-/// A context menu on `response`, opened by a secondary click at the pointer, or by Shift+F10
-/// while `response` has keyboard focus, below it with its first item focused. Returns what `add`
-/// returned while it is open.
+/// A context menu on `response`, opened by a secondary click at the pointer, or by the key the
+/// keymap table lists for [`Command::ContextMenu`] (Shift+F10) while `response` has keyboard
+/// focus, below it with its first item focused. Returns what `add` returned while it is open.
 pub fn context<R>(response: &Response, add: impl FnOnce(&mut Menu<'_>) -> R) -> Option<R> {
     let ctx = &response.ctx;
     let id = Popup::default_response_id(response);
     let at_key = context_at_key(id);
     let by_key =
-        response.has_focus() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, Key::F10));
+        response.has_focus() && ctx.input_mut(|i| keymap::consume(i, Command::ContextMenu));
     if by_key {
         let at = pos2(response.rect.left() + theme::SM, response.rect.bottom());
         ctx.data_mut(|d| d.insert_temp(at_key, at));
