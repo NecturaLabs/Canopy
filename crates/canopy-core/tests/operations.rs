@@ -3306,6 +3306,28 @@ fn init_refuses_an_invalid_branch_name_and_creates_nothing() {
     );
 }
 
+/// Inside an existing repository git expands `@{-1}` and `@{upstream}` against it: such a name is
+/// still no branch name, and nothing is created (no `sub/.git` left behind by a failed init).
+#[test]
+fn init_inside_a_repository_refuses_names_that_git_expands() {
+    let (_up_dir, _up, _clone_dir, copy) = upstream_and_clone();
+    let outer = copy.workdir();
+    git(outer, &["checkout", "-q", "-b", "other"]);
+    git(outer, &["checkout", "-q", "-"]);
+    for bad in ["@{-1}", "@{upstream}", "@{u}"] {
+        let target = outer.join("sub");
+        let err = Repo::init(&target, bad, false)
+            .err()
+            .unwrap_or_else(|| panic!("{bad:?} must be refused"))
+            .to_string();
+        assert!(
+            err.contains("not a valid branch name"),
+            "{bad:?}: expected the refusal, got {err}"
+        );
+        assert!(!target.exists(), "{bad:?}: nothing may be created");
+    }
+}
+
 /// When the changes set aside for a pull conflict with what came in, git still succeeds and
 /// leaves conflicted files with nothing in progress; a merge stopped on conflicts is not that.
 #[test]

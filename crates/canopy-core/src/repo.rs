@@ -65,8 +65,7 @@ impl Repo {
 
     /// Creates a new repository in `path` (creating the directory) and opens it. Its first
     /// branch is `initial_branch`, unless `follow_config` and `init.defaultBranch` names one. A
-    /// name git would not accept as a branch is refused, with git's message, before anything is
-    /// created.
+    /// name git would not accept as a branch is refused before anything is created.
     pub fn init(path: &Path, initial_branch: &str, follow_config: bool) -> Result<Self> {
         // Where git can run before `path` exists: its nearest folder that does.
         let existing = path
@@ -77,7 +76,18 @@ impl Repo {
             && crate::cli::run_unchecked(existing, &["config", "--get", "init.defaultBranch"])
                 .is_ok_and(|o| o.code == Some(0));
         if !configured {
-            crate::cli::run(existing, &["check-ref-format", "--branch", initial_branch])?;
+            // Not `--branch`: that expands `@{-1}` and `@{upstream}` against whichever repository
+            // `existing` is in, and `git init` refuses such a name only after creating the folder.
+            let ref_name = format!("refs/heads/{initial_branch}");
+            let valid = !initial_branch.starts_with('-')
+                && initial_branch != "HEAD"
+                && crate::cli::run_unchecked(existing, &["check-ref-format", &ref_name])
+                    .is_ok_and(|o| o.code == Some(0));
+            if !valid {
+                return Err(Error::invalid(format!(
+                    "'{initial_branch}' is not a valid branch name"
+                )));
+            }
         }
         std::fs::create_dir_all(path)?;
         if configured {
