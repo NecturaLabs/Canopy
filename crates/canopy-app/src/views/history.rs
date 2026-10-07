@@ -338,20 +338,19 @@ fn filter_field_key() -> egui::Id {
     egui::Id::new(FILTER_ID).with("field")
 }
 
-/// Paints `text` on one line from `x`, ellipsized before `right`; returns where it ends.
 /// The widest a commit's date can read, as `date_text` writes it: what the Date column must hold
 /// so the longest relative time is not cut.
 fn longest_dates(relative: bool, iso: bool) -> &'static [&'static str] {
     match (relative, iso) {
-        (true, true) => &["59 minutes ago", "23 hours ago", "6 days ago", "2026-09-28"],
+        (true, true) => &["59 minutes ago", "23 hours ago", "6 days ago", "2026-04-04"],
         (true, false) => &[
             "59 minutes ago",
             "23 hours ago",
             "6 days ago",
-            "Sep 28, 2026",
+            "May 30, 2026",
         ],
-        (false, true) => &["2026-09-28"],
-        (false, false) => &["Sep 28, 2026"],
+        (false, true) => &["2026-04-04"],
+        (false, false) => &["May 30, 2026"],
     }
 }
 
@@ -896,7 +895,7 @@ mod tests {
 
     use super::*;
 
-    /// F11: the Date column grows to hold its longest text instead of cutting "10 minutes ago".
+    /// The Date column grows to hold its longest text instead of cutting "10 minutes ago".
     #[test]
     fn the_date_column_holds_the_longest_relative_time() {
         let wide = |text: &str| 7.0 * crate::ui::count_f32(text.chars().count());
@@ -908,6 +907,64 @@ mod tests {
         }
         // Without relative dates only the absolute date has to fit.
         assert!((date_column_width(60.0, false, true, wide) - 90.0).abs() < 0.01);
+    }
+
+    /// The absolute date the column is sized for is the widest one `date_text` can write: no
+    /// month and day of any year is wider in the proportional font.
+    #[test]
+    fn the_date_column_sample_is_the_widest_absolute_date() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        let font = FontId::proportional(theme::metrics().body_size);
+        let sample = longest_dates(false, false)[0];
+        let mut sample_width = 0.0;
+        let mut widest = (0.0_f32, String::new());
+        let iso_sample = longest_dates(false, true)[0];
+        let mut iso_sample_width = 0.0;
+        let mut iso_widest = (0.0_f32, String::new());
+        for _ in 0..2 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let measure = |text: &str| {
+                    ui.fonts_mut(|f| {
+                        f.layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
+                    })
+                    .size()
+                    .x
+                };
+                sample_width = measure(sample);
+                widest = [
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+                    "Dec",
+                ]
+                .into_iter()
+                .flat_map(|month| (1..=31).map(move |day| format!("{month} {day}, 2026")))
+                .map(|date| (measure(&date), date))
+                .fold(
+                    (0.0_f32, String::new()),
+                    |a, b| if b.0 > a.0 { b } else { a },
+                );
+                iso_sample_width = measure(iso_sample);
+                iso_widest = (1..=12)
+                    .flat_map(|month| (1..=31).map(move |day| format!("2026-{month:02}-{day:02}")))
+                    .map(|date| (measure(&date), date))
+                    .fold(
+                        (0.0_f32, String::new()),
+                        |a, b| if b.0 > a.0 { b } else { a },
+                    );
+            });
+            out.textures_delta.clear();
+        }
+        assert!(
+            sample_width >= widest.0 - 0.01,
+            "{sample} is narrower than {}",
+            widest.1
+        );
+        assert!(
+            iso_sample_width >= iso_widest.0 - 0.01,
+            "{iso_sample} is narrower than {}",
+            iso_widest.1
+        );
     }
 
     /// A11Y-3, A11Y-4, A11Y-20: Tab meets the commit list before the details, stops once on the
