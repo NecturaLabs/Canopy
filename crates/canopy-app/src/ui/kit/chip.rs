@@ -368,7 +368,7 @@ impl RefPill {
     }
 
     /// Fill, ring and label colours ([`Palette::pill`] in the lane's colour): the same for every
-    /// kind, a little stronger for the checked-out branch.
+    /// kind, with a white hairline for the checked-out branch.
     pub fn colors(&self, p: &Palette) -> (Color32, Color32, Color32) {
         p.pill(p.lane(self.lane), self.kind == RefKind::CurrentBranch)
     }
@@ -1454,46 +1454,50 @@ mod tests {
         }
     }
 
-    /// Every ref pill shares one tonal design in its lane's colour: the badge surface tinted with
-    /// it, a hairline of it, label and glyph in it; the checked-out branch is tinted more. Label
-    /// and glyph read at 4.5:1 on the pill wherever it sits, and two lanes tell apart.
+    /// Every ref pill is a solid fill of its lane's colour with a white label and glyph, deepened
+    /// only as far as the label needs to read at 4.5:1, so it stays as vivid as the lane allows;
+    /// the checked-out branch has a white hairline, and two lanes tell apart.
     #[test]
-    fn every_ref_pill_is_tinted_in_its_lane() {
+    fn every_ref_pill_is_its_lane_colour_with_a_white_label() {
+        let deepened =
+            |c: Color32, step: i32| theme::mix(c, Color32::BLACK, crate::ui::int_f32(step) / 20.0);
         for id in theme::ThemeId::ALL {
             for contrast in [false, true] {
                 let p = id.shown_palette(contrast);
                 for lane in (0u16..).take(p.lanes.len()) {
                     let branch = RefPill::new("x", RefKind::LocalBranch).lane(lane);
+                    let (fill, ring, _) = branch.colors(p);
                     for kind in KINDS {
                         let pill = RefPill::new("x", kind).lane(lane);
-                        let (fill, ring, ink) = pill.colors(p);
+                        let (f, r, ink) = pill.colors(p);
                         let strong = kind == RefKind::CurrentBranch;
                         assert_eq!(
-                            (fill, ring, ink),
+                            (f, r, ink),
                             p.pill(p.lane(lane), strong),
                             "{} {kind:?} lane {lane}",
                             p.name
                         );
-                        if !strong {
-                            assert_eq!(fill, branch.colors(p).0, "{} {kind:?}", p.name);
-                        }
+                        assert_eq!(f, fill, "{} {kind:?}: one fill per lane", p.name);
+                        assert_eq!(ink, Color32::WHITE, "{} {kind:?}", p.name);
                         assert_eq!(pill.glyph_color(p), ink, "{} {kind:?}", p.name);
-                        assert_ne!(fill, p.s().badge, "{} lane {lane}: tinted", p.name);
-                        for bg in p.component_surfaces(p.s()) {
-                            let r = theme::contrast(ink, theme::over(fill, bg));
-                            assert!(r >= 4.5, "{} {kind:?} lane {lane}: {r:.2}:1", p.name);
+                        if strong {
+                            assert_eq!(r, Color32::WHITE, "{} lane {lane}", p.name);
+                        } else {
+                            assert_eq!(r, ring, "{} {kind:?}", p.name);
                         }
                     }
-                    let current = RefPill::new("x", RefKind::CurrentBranch).lane(lane);
-                    let badge = p.s().badge;
-                    let distance = |c: Color32| {
-                        u32::from(badge.r().abs_diff(c.r()))
-                            + u32::from(badge.g().abs_diff(c.g()))
-                            + u32::from(badge.b().abs_diff(c.b()))
-                    };
+                    assert_eq!(fill.a(), 255, "{} lane {lane}: solid", p.name);
+                    let r = theme::contrast(Color32::WHITE, fill);
+                    assert!(r >= 4.5, "{} lane {lane}: {r:.2}:1", p.name);
+                    let lane_colour = p.lane(lane);
+                    let step = (0..=20)
+                        .find(|&s| deepened(lane_colour, s) == fill)
+                        .expect("the lane colour, deepened");
                     assert!(
-                        distance(current.colors(p).0) > distance(branch.colors(p).0),
-                        "{} lane {lane}: the checked-out branch is tinted more",
+                        step == 0
+                            || theme::contrast(Color32::WHITE, deepened(lane_colour, step - 1))
+                                < 4.5,
+                        "{} lane {lane}: deepened no further than the label needs",
                         p.name
                     );
                 }

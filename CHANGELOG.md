@@ -274,9 +274,9 @@ commits since the previous build.
 - Commit details no longer have a "Commit information" block repeating the email, date and
   parents: the message shows directly under the author, the email (and the committer, when someone
   else made the commit) is in the author's tooltip and the full date in the date's.
-- Branch, tag and stash pills in History are redesigned as one consistent style: every pill is
-  softly tinted in its commit's graph colour, with a hairline and label in that colour, told
-  apart by its icon; the checked-out branch is tinted a little more.
+- Branch, tag and stash pills in History are redesigned as one consistent style: every pill is a
+  solid fill of its commit's graph colour with a white label, told apart by its icon; the
+  checked-out branch has a white outline.
 - Settings rows now keep their controls in one aligned column.
 - Releases are numbered builds, named by `git rev-list --count` of their commit on `main` and its
   short hash (`build 412 (a1b2c3d)`), instead of semantic versions. The number is shown in About,
