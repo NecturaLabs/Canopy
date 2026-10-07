@@ -25,19 +25,6 @@ fn token_from(kind: ForgeKind, lookup: impl Fn(&str) -> Option<String>) -> Optio
         .find(|v| !v.is_empty())
 }
 
-/// A token from the environment: `GH_TOKEN` then `GITHUB_TOKEN` for GitHub, `GITLAB_TOKEN` then
-/// `GL_TOKEN` for GitLab. Trimmed; empty values are skipped.
-///
-/// This ignores the host, so a GitLab token meant for gitlab.com would also be offered to any
-/// host recognised as GitLab, including one recognised only because its name contains
-/// "gitlab" (`gitlab.attacker.example`). Use [`token_from_env_for`].
-#[deprecated(
-    note = "ignores the host and can leak a token to an untrusted server; use token_from_env_for"
-)]
-pub fn token_from_env(kind: ForgeKind) -> Option<String> {
-    token_from(kind, |name| std::env::var(name).ok())
-}
-
 /// A token from the environment for the project on `host`, or `None` when the environment's
 /// tokens are not meant for that host.
 ///
