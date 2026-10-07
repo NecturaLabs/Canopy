@@ -2062,20 +2062,6 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
     heading(ui, "Theme");
     if block(ui, "Theme", "") {
         theme_cards(ui, s);
-        // An action, so a button, and always drawn: choosing a theme moves nothing below it.
-        ui.add_space(theme::SM);
-        let default = DEFAULTS.theme;
-        if Button::new(format!("Back to the default theme, {}", default.name()))
-            .ghost()
-            .size(Size::Sm)
-            .enabled(s.theme != default)
-            .disabled_reason(format!("{} is already the theme.", default.name()))
-            .id_salt("theme-default")
-            .show(ui)
-            .clicked()
-        {
-            s.theme = default;
-        }
     }
     if s.theme == ThemeId::Custom {
         group_gap(ui, theme::LG);
@@ -2434,7 +2420,11 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> Response 
         .interactive(true)
         .selected(selected)
         .width(width)
-        .label(format!("{} theme", id.name()))
+        .label(if id == DEFAULTS.theme {
+            format!("{} theme (default)", id.name())
+        } else {
+            format!("{} theme", id.name())
+        })
         .tooltip(tp.concept)
         .id_salt(("theme-card", id))
         .show(ui, |ui| {
@@ -2468,7 +2458,13 @@ fn theme_card(ui: &mut Ui, id: ThemeId, selected: bool, width: f32) -> Response 
             ui.painter().text(
                 caption.right_center(),
                 Align2::RIGHT_CENTER,
-                if tp.dark { "Dark" } else { "Light" },
+                if id == DEFAULTS.theme {
+                    if tp.dark { "Default · Dark" } else { "Default · Light" }
+                } else if tp.dark {
+                    "Dark"
+                } else {
+                    "Light"
+                },
                 FontId::proportional(m.small_size),
                 p.text_faint,
             );
