@@ -24,7 +24,14 @@ BIN=$TARGET/release/canopy
 STATE=$SIM/state
 
 die() { echo "usersim: $*" >&2; exit 1; }
+# The scratch folder's state is sourced and its Git configuration used, so it must be a folder of
+# this user's that nobody else can write to (the default path is a predictable one in $TMPDIR).
+private() {
+  [[ -d $SIM && ! -L $SIM && -O $SIM ]] || die "$SIM is not a folder of yours"
+  [[ -z $(find "$SIM" -maxdepth 0 \( -perm -020 -o -perm -002 \)) ]] || die "others can write to $SIM"
+}
 load() {
+  private
   [[ -f $STATE ]] || die "not started (tools/usersim.sh start)"
   # shellcheck source=/dev/null
   source "$STATE"
@@ -55,6 +62,8 @@ start)
   for tool in Xvfb xdotool import; do
     command -v "$tool" >/dev/null || die "needs $tool"
   done
+  [[ -e $SIM ]] || { mkdir -p -- "$(dirname -- "$SIM")" && mkdir -m 700 -- "$SIM"; }
+  private
   mkdir -p "$SIM/home/.config" "$SIM/home/.local/share" "$SIM/home/.cache" "$SIM/tmp"
   printf '[user]\n\tname = Sim User\n\temail = sim@example.com\n' >"$SIM/home/.gitconfig"
   "$ROOT/tools/mkfixture.sh" --force "$SIM/repo" "$kind" >/dev/null
