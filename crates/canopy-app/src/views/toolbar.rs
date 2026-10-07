@@ -538,6 +538,9 @@ fn view_tabs(
         .strong_badges(true)
         .badge(1, changes)
         .badge(2, n)
+        // The tools after the switcher keep their place as the counts come and go (a commit
+        // empties Changes while the pointer is on Push).
+        .badge_room(1)
         .label("View")
         .id_salt(VIEW_TABS)
         .option_enabled(
@@ -545,6 +548,9 @@ fn view_tabs(
             requests.is_some(),
             Some("Add a GitHub or GitLab remote to view pull or merge requests"),
         );
+    if requests.is_some() {
+        tabs = tabs.badge_room(2);
+    }
     for (i, ((_, _, label), command)) in options.iter().zip(commands).enumerate() {
         tabs = tabs.option_tooltip(i, *label).option_shortcut(i, command);
     }
@@ -845,6 +851,38 @@ mod tests {
             let text = text_rect(&shapes, label).expect("view label");
             assert!(control.contains_rect(text), "{label} overflows its control");
         }
+    }
+
+    /// usersim F6: the tools after the switcher stay put as the Changes and Requests counts come
+    /// and go (a commit empties Changes while the pointer is on Push).
+    #[test]
+    fn the_switcher_keeps_its_width_as_the_counts_come_and_go() {
+        let ctx = context();
+        let right = |changes: usize, requests: usize| {
+            let mut edge = 0.0;
+            for _ in 0..2 {
+                frame(&ctx, Vec::new(), |ui| {
+                    view_tabs(
+                        ui,
+                        View::History,
+                        changes,
+                        Some((ForgeKind::GitHub, requests)),
+                        false,
+                        &mut Vec::new(),
+                    );
+                    edge = ui.min_rect().right();
+                });
+            }
+            edge
+        };
+        let edges: Vec<f32> = [(0, 0), (4, 0), (12, 3), (0, 12), (99, 99)]
+            .iter()
+            .map(|(c, r)| right(*c, *r))
+            .collect();
+        assert!(
+            edges.iter().all(|e| (e - edges[0]).abs() < 0.5),
+            "the switcher's right edge moved: {edges:?}"
+        );
     }
 
     #[test]

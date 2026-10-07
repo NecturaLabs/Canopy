@@ -1729,6 +1729,8 @@ impl<'a> Dialog<'a> {
                             };
                             if let Some(t) = target {
                                 ctx.memory_mut(|m| m.request_focus(t));
+                                // Enter presses this button: it shows, whatever opened the dialog.
+                                super::show_focus(&ctx);
                             }
                         }
                         // Enter confirms only when no control has focus (or Confirm itself has
@@ -2356,6 +2358,55 @@ mod tests {
         // Enter clicked the focused Cancel button, never Delete.
         assert_ne!(result, DialogResult::Confirm, "focus {focused:?}");
         assert_eq!(result, DialogResult::Cancel);
+    }
+
+    /// usersim F13: the button Enter will press (Cancel in a destructive dialog, the primary in
+    /// any other) shows its focus ring when the dialog opens, also after a pointer click opened it.
+    #[test]
+    fn a_dialog_shows_which_button_enter_will_press() {
+        let ring = |out: &egui::FullOutput, color: Color32| {
+            fn has(shape: &Shape, c: Color32) -> bool {
+                match shape {
+                    Shape::Vec(v) => v.iter().any(|s| has(s, c)),
+                    Shape::Rect(r) => {
+                        r.stroke.width > 0.0 && r.stroke.color.to_opaque() == c.to_opaque()
+                    }
+                    _ => false,
+                }
+            }
+            out.shapes.iter().any(|c| has(&c.shape, color))
+        };
+        for destructive in [true, false] {
+            let ctx = context();
+            let show = |ctx: &Context| {
+                let d = Dialog::new("ask").title("Sure?").footer(|f| {
+                    f.cancel().confirm("Go");
+                });
+                if destructive { d.destructive() } else { d }.show(ctx)
+            };
+            // The pointer opened it: no key has been pressed.
+            let at = pos2(5.0, 5.0);
+            let press = egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let _ = run(&ctx, vec![egui::Event::PointerMoved(at), press], |_| {});
+            let mut out = run(&ctx, Vec::new(), |ui| {
+                show(ui.ctx());
+            });
+            for _ in 0..4 {
+                out = run(&ctx, Vec::new(), |ui| {
+                    show(ui.ctx());
+                });
+            }
+            let focus = theme::palette(&ctx).focus;
+            assert!(
+                ring(&out, focus),
+                "destructive {destructive}: no focus ring on the default button"
+            );
+        }
     }
 
     #[test]
