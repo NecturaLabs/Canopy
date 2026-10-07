@@ -1317,4 +1317,69 @@ mod tests {
         let wide = bar(1150.0);
         assert!(painted(&wide, "Changes") && painted(&wide, "Local only"));
     }
+    /// F1: with Tooltips at the default Helpful, resting the pointer on the toolbar's Fetch and
+    /// Pull shows what they do and their shortcuts.
+    #[test]
+    fn the_fetch_and_pull_tools_show_their_tooltips_at_the_default_level() {
+        use crate::ui::kit::overlay::{TooltipLevel, set_tooltip_level};
+        fn painted(shapes: &[egui::epaint::ClippedShape], text: &str) -> bool {
+            fn find(shape: &egui::Shape, text: &str) -> bool {
+                match shape {
+                    egui::Shape::Text(t) => t.galley.text() == text,
+                    egui::Shape::Vec(v) => v.iter().any(|s| find(s, text)),
+                    _ => false,
+                }
+            }
+            shapes.iter().any(|c| find(&c.shape, text))
+        }
+        set_tooltip_level(TooltipLevel::Helpful);
+        let mut tab = repo_tab("alpha");
+        tab.snap = Some(Arc::new(canopy_core::RepoSnapshot {
+            remotes: vec![canopy_core::RemoteInfo {
+                name: "origin".into(),
+                url: Some("https://example.com/a.git".into()),
+                default_branch: None,
+            }],
+            ..canopy_core::RepoSnapshot::default()
+        }));
+        let bar = |ctx: &egui::Context, time: f64, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(SCREEN),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| actions_bar(ui, &tab, &mut Vec::new()),
+            );
+            out.textures_delta.clear();
+            let nodes: Vec<Node> = out
+                .platform_output
+                .accesskit_update
+                .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect())
+                .unwrap_or_default();
+            (out.shapes, nodes)
+        };
+        for (tool, tip) in [
+            ("Fetch", "Fetch all remotes"),
+            ("Pull", "Pull the current branch: Fast-forward only"),
+        ] {
+            let ctx = context();
+            let mut nodes = Vec::new();
+            for i in 0..3 {
+                nodes = bar(&ctx, f64::from(i) * 0.1, Vec::new()).1;
+            }
+            let at = node_rect(node(&nodes, Role::Button, tool)).center();
+            let mut shapes = Vec::new();
+            for i in 0..12 {
+                let events = if i == 0 {
+                    vec![egui::Event::PointerMoved(at)]
+                } else {
+                    Vec::new()
+                };
+                shapes = bar(&ctx, 1.0 + f64::from(i) * 0.2, events).0;
+            }
+            assert!(painted(&shapes, tip), "{tool} shows {tip:?} at Helpful");
+        }
+    }
 }
