@@ -1218,38 +1218,48 @@ mod tests {
     }
 
     /// An address on 127.0.0.1 that refuses connections and that no other test in this process
-    /// can take.
+    /// can be handed.
     ///
     /// Binding a listener and dropping it does not give such an address: the port is free again,
     /// and another test binding to port 0 can be handed it before the connection is made, then
-    /// answers it. Here a socket connects to a throwaway listener and both are kept: nothing
-    /// listens on the socket's own port, so connecting to it is refused, and the port stays in
-    /// use, so nothing can bind it.
+    /// answers it. Holding a connected socket's port does not either: Windows lets another socket
+    /// bind a port a connected one uses. A port below every operating system's ephemeral range is
+    /// never handed to a bind to port 0, so the first one nothing listens on will do.
     struct Refused {
         address: std::net::SocketAddr,
-        _socket: std::net::TcpStream,
-        _listener: std::net::TcpListener,
     }
 
     impl Refused {
         fn new() -> Self {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            let socket = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-            Self {
-                address: socket.local_addr().unwrap(),
-                _socket: socket,
-                _listener: listener,
-            }
+            let address = (1..=16u16)
+                .map(|port| std::net::SocketAddr::from(([127, 0, 0, 1], port)))
+                .find(|address| {
+                    std::net::TcpStream::connect(address)
+                        .is_err_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused)
+                })
+                .expect("a port below 17 on 127.0.0.1 that refuses connections");
+            Self { address }
         }
     }
 
     #[test]
-    fn a_refused_address_stays_refused_and_cannot_be_taken() {
+    fn a_refused_address_stays_refused_and_is_never_handed_to_a_server() {
         let refused = Refused::new();
         let connect = std::net::TcpStream::connect(refused.address).unwrap_err();
         assert_eq!(connect.kind(), std::io::ErrorKind::ConnectionRefused);
-        let bind = std::net::TcpListener::bind(refused.address).unwrap_err();
-        assert_eq!(bind.kind(), std::io::ErrorKind::AddrInUse);
+        assert!(
+            refused.address.port() < 1024,
+            "below every operating system's ephemeral range"
+        );
+        // The servers of the other tests bind to port 0 and keep what they are given.
+        let servers: Vec<_> = (0..64)
+            .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
+            .collect();
+        assert!(
+            servers
+                .iter()
+                .all(|s| s.local_addr().unwrap() != refused.address)
+        );
     }
 
     #[test]
