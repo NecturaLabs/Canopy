@@ -1204,20 +1204,94 @@ fn row_with_note(
 /// Every setting's default, for the buttons that go back to it.
 static DEFAULTS: LazyLock<Settings> = LazyLock::new(Settings::default);
 
-/// A button back to a setting's default, shown while the setting differs from it (drawn right
-/// to left, so it sits before the control). Returns true when it was clicked.
+/// How much room the control of the row being drawn took last frame, for the reset button that
+/// goes before it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ControlRoom {
+    /// From the row's right edge to the control's left edge, spacing included.
+    width: f32,
+    height: f32,
+}
+
+/// The row being drawn: where [`revert`] finds its control's room.
+#[derive(Debug, Clone, Copy)]
+struct RowRoom {
+    last: Option<ControlRoom>,
+}
+
+fn row_room_id() -> egui::Id {
+    egui::Id::new("settings-row-room")
+}
+
+/// Runs a row's `control` and measures what it took, for the next frame's [`revert`]. A control
+/// that wrapped onto a second line has no single width: the reset button then flows with it.
+fn run_control(ui: &mut Ui, control: impl FnOnce(&mut Ui)) {
+    let key = ui.id().with("control-room");
+    let last: Option<ControlRoom> = ui.data(|d| d.get_temp(key));
+    ui.data_mut(|d| d.insert_temp(row_room_id(), RowRoom { last }));
+    let start = ui.cursor();
+    control(ui);
+    let end = ui.cursor();
+    ui.data_mut(|d| d.remove::<RowRoom>(row_room_id()));
+    let room = (end.min.y <= start.min.y + 0.5).then(|| ControlRoom {
+        width: start.right() - end.right(),
+        height: ui.min_rect().height(),
+    });
+    let changed = match (room, last) {
+        (Some(a), Some(b)) => (a.width - b.width).abs() > 0.5 || (a.height - b.height).abs() > 0.5,
+        (None, None) => false,
+        _ => true,
+    };
+    if changed {
+        ui.data_mut(|d| {
+            if let Some(r) = room {
+                d.insert_temp(key, r);
+            } else {
+                d.remove::<ControlRoom>(key);
+            }
+        });
+        ui.ctx().request_repaint();
+    }
+}
+
+/// A button back to a setting's default, shown while the setting differs from it. It sits before
+/// the row's control (to its left) and so is drawn, and met by Tab and by a screen reader, before
+/// it: call it first in the row's control. Returns true when it was clicked.
 fn revert<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, default: &T, name: &str) -> bool {
     if value == default {
         return false;
     }
-    let clicked = IconButton::new(
+    let side = crate::ui::kit::button::icon_button_side(Size::Sm);
+    let button = IconButton::new(
         icon::ARROW_COUNTER_CLOCKWISE,
         format!("Reset {name} to its default"),
     )
     .size(Size::Sm)
-    .id_salt(("revert", name))
-    .show(ui)
-    .clicked();
+    .id_salt(("revert", name));
+    // The row draws right to left, so the control's place is known from last frame only: the
+    // button is put where it ended, and drawn first.
+    let room = ui
+        .ctx()
+        .data(|d| d.get_temp::<RowRoom>(row_room_id()))
+        .and_then(|row| row.last);
+    let place = room.and_then(|room| {
+        let right = ui.cursor().right() - room.width;
+        let rect = Rect::from_center_size(
+            pos2(right - side * 0.5, ui.cursor().top() + room.height * 0.5),
+            Vec2::splat(side),
+        );
+        (rect.left() >= ui.max_rect().left()).then_some(rect)
+    });
+    let slot = UiBuilder::new()
+        .id_salt("revert-slot")
+        .layout(Layout::left_to_right(Align::Center));
+    let clicked = match place {
+        Some(rect) => {
+            let mut at = ui.new_child(slot.max_rect(rect));
+            button.show(&mut at).clicked()
+        }
+        None => ui.scope_builder(slot, |ui| button.show(ui).clicked()).inner,
+    };
     if clicked {
         value.clone_from(default);
     }
@@ -1703,7 +1777,7 @@ fn row_layout(
                 Layout::right_to_left(Align::Center).with_main_wrap(true),
                 |ui| {
                     ui.add_space(theme::SM);
-                    control(ui);
+                    run_control(ui, control);
                 },
             );
         } else {
@@ -1724,7 +1798,7 @@ fn row_layout(
                     |ui| {
                         // Keeps controls clear of the scroll bar.
                         ui.add_space(theme::SM);
-                        control(ui);
+                        run_control(ui, control);
                     },
                 );
             });
@@ -1826,11 +1900,11 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
         "Based on",
         "The theme your colours start from: its backgrounds, text, lines and shapes.",
         |ui| {
+            revert(ui, &mut c.light, &defaults.light, "Based on");
             let options = [(false, "Midnight"), (true, "Daylight")];
             Segmented::new(&mut c.light, &options)
                 .label("Based on")
                 .show(ui);
-            revert(ui, &mut c.light, &defaults.light, "Based on");
         },
     );
     let accents = custom_theme::HUES.map(|(hue, name)| (hue, c.accent_sample(hue), name));
@@ -1839,11 +1913,11 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
         "Accent",
         "Buttons, links, focus rings and the selection.",
         |ui| {
+            revert(ui, &mut c.accent_hue, &defaults.accent_hue, "Accent");
             Swatches::new(&mut c.accent_hue, &accents)
                 .label("Accent")
                 .id_salt("custom-accent")
                 .show(ui);
-            revert(ui, &mut c.accent_hue, &defaults.accent_hue, "Accent");
         },
     );
     row(
@@ -1865,6 +1939,12 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
         "Accent intensity",
         "How vivid the accent is, against the base theme's.",
         |ui| {
+            revert(
+                ui,
+                &mut c.accent_intensity,
+                &defaults.accent_intensity,
+                "Accent intensity",
+            );
             value(ui, format!("{}%", c.accent_intensity));
             Slider::new(&mut c.accent_intensity, CustomTheme::ACCENT_INTENSITY)
                 .label("Accent intensity")
@@ -1872,12 +1952,6 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
                 .width(ZOOM_RAIL_WIDTH)
                 .id_salt("custom-accent-intensity")
                 .show(ui);
-            revert(
-                ui,
-                &mut c.accent_intensity,
-                &defaults.accent_intensity,
-                "Accent intensity",
-            );
         },
     );
     let tints = custom_theme::HUES.map(|(hue, name)| (hue, CustomTheme::tint_sample(hue), name));
@@ -1886,11 +1960,11 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
         "Tint",
         "A colour for backgrounds, lines and text. Text and lines keep their contrast.",
         |ui| {
+            revert(ui, &mut c.tint_hue, &defaults.tint_hue, "Tint");
             Swatches::new(&mut c.tint_hue, &tints)
                 .label("Tint")
                 .id_salt("custom-tint")
                 .show(ui);
-            revert(ui, &mut c.tint_hue, &defaults.tint_hue, "Tint");
         },
     );
     row(ui, "Tint hue", "Any hue between the colours above.", |ui| {
@@ -1907,6 +1981,7 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
         "Tint strength",
         "0% keeps the base theme's neutral backgrounds.",
         |ui| {
+            revert(ui, &mut c.tint, &defaults.tint, "Tint strength");
             value(ui, format!("{}%", c.tint));
             Slider::new(&mut c.tint, CustomTheme::TINT)
                 .label("Tint strength")
@@ -1914,7 +1989,6 @@ fn custom_theme_rows(ui: &mut Ui, c: &mut CustomTheme) {
                 .width(ZOOM_RAIL_WIDTH)
                 .id_salt("custom-tint-strength")
                 .show(ui);
-            revert(ui, &mut c.tint, &defaults.tint, "Tint strength");
         },
     );
 }
@@ -1954,11 +2028,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Style",
         "Standard: flat, two-tone chrome. Deeper: floating panes, gradient controls and layered shadows.",
         |ui| {
+            revert(ui, &mut s.style, &DEFAULTS.style, "Style");
             let options = Style::ALL.map(|v| (v, v.label()));
             Segmented::new(&mut s.style, &options)
                 .label("Style")
                 .show(ui);
-            revert(ui, &mut s.style, &DEFAULTS.style, "Style");
         },
     );
     row(
@@ -1966,17 +2040,17 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "High contrast",
         "The chosen theme with stronger text, lines and focus rings, outlines instead of shadows and no translucency, for low vision and glare.",
         |ui| {
+            revert(
+                ui,
+                &mut s.high_contrast,
+                &DEFAULTS.high_contrast,
+                "High contrast",
+            );
             let on = s.high_contrast;
             switch_with(
                 Switch::new(&mut s.high_contrast, ""),
                 ui,
                 on,
-                "High contrast",
-            );
-            revert(
-                ui,
-                &mut s.high_contrast,
-                &DEFAULTS.high_contrast,
                 "High contrast",
             );
         },
@@ -1994,6 +2068,12 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             None => "Blur what is behind menus, dialogs, toasts and the palette.",
         },
         |ui| {
+            revert(
+                ui,
+                &mut s.translucent,
+                &DEFAULTS.translucent,
+                "Translucent surfaces",
+            );
             let on = s.translucent;
             switch_with(
                 Switch::new(&mut s.translucent, "")
@@ -2003,12 +2083,6 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
                 on,
                 "Translucent surfaces",
             );
-            revert(
-                ui,
-                &mut s.translucent,
-                &DEFAULTS.translucent,
-                "Translucent surfaces",
-            );
         },
     );
     row(
@@ -2016,11 +2090,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Density",
         "Dense fits about a quarter more history: 24-point rows, a single-row toolbar and smaller text.",
         |ui| {
+            revert(ui, &mut s.density, &DEFAULTS.density, "Density");
             let options = Density::ALL.map(|v| (v, v.label()));
             Segmented::new(&mut s.density, &options)
                 .label("Density")
                 .show(ui);
-            revert(ui, &mut s.density, &DEFAULTS.density, "Density");
         },
     );
     row(
@@ -2028,11 +2102,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Graph nodes",
         "How commits are drawn in the history graph.",
         |ui| {
+            revert(ui, &mut s.graph_node, &DEFAULTS.graph_node, "Graph nodes");
             let options = NodeShape::ALL.map(|v| (v, v.label()));
             Segmented::new(&mut s.graph_node, &options)
                 .label("Graph nodes")
                 .show(ui);
-            revert(ui, &mut s.graph_node, &DEFAULTS.graph_node, "Graph nodes");
         },
     );
     row(
@@ -2040,11 +2114,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Graph lines",
         "How the history graph joins a branch to the lane it leaves or merges into.",
         |ui| {
+            revert(ui, &mut s.graph_curve, &DEFAULTS.graph_curve, "Graph lines");
             let options = Curve::ALL.map(|v| (v, v.label()));
             Segmented::new(&mut s.graph_curve, &options)
                 .label("Graph lines")
                 .show(ui);
-            revert(ui, &mut s.graph_curve, &DEFAULTS.graph_curve, "Graph lines");
         },
     );
     let system = match motion::system() {
@@ -2053,11 +2127,11 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         None => "Your system did not say whether to reduce motion.",
     };
     row(ui, "Motion", system, |ui| {
+        revert(ui, &mut s.motion, &DEFAULTS.motion, "Motion");
         let options = MotionPref::ALL.map(|v| (v, v.label()));
         Segmented::new(&mut s.motion, &options)
             .label("Motion")
             .show(ui);
-        revert(ui, &mut s.motion, &DEFAULTS.motion, "Motion");
     });
     group_gap(ui, theme::LG);
     heading(ui, "Interface");
@@ -2070,10 +2144,10 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
             crate::keymap::hint(Command::ZoomOut)
         ),
         |ui| {
-            zoom_slider(ui, s, preview);
             if revert(ui, &mut s.zoom, &DEFAULTS.zoom, "Zoom") {
                 *preview = None;
             }
+            zoom_slider(ui, s, preview);
         },
     );
     row(
@@ -2081,13 +2155,13 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Dates",
         "How the history shows when a commit was made.",
         |ui| {
+            revert(ui, &mut s.relative_dates, &DEFAULTS.relative_dates, "Dates");
             Segmented::new(
                 &mut s.relative_dates,
                 &[(true, "Relative"), (false, "Calendar")],
             )
             .label("Dates")
             .show(ui);
-            revert(ui, &mut s.relative_dates, &DEFAULTS.relative_dates, "Dates");
         },
     );
     row(
@@ -2095,18 +2169,18 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Commit date format",
         "Calendar dates in History and commit details, including older relative dates. Exact timestamp tooltips always include the author's UTC offset.",
         |ui| {
-            Segmented::new(
-                &mut s.iso_dates,
-                &[(false, "Sep 21, 2026"), (true, "2026-09-21")],
-            )
-            .label("Commit date format")
-            .show(ui);
             revert(
                 ui,
                 &mut s.iso_dates,
                 &DEFAULTS.iso_dates,
                 "Commit date format",
             );
+            Segmented::new(
+                &mut s.iso_dates,
+                &[(false, "Sep 21, 2026"), (true, "2026-09-21")],
+            )
+            .label("Commit date format")
+            .show(ui);
         },
     );
     row(
@@ -2114,13 +2188,13 @@ fn appearance(ui: &mut Ui, s: &mut Settings, preview: &mut Option<f32>) {
         "Author avatars",
         "Pictures or coloured initials next to authors.",
         |ui| {
-            switch(ui, &mut s.show_avatars, "Author avatars");
             revert(
                 ui,
                 &mut s.show_avatars,
                 &DEFAULTS.show_avatars,
                 "Author avatars",
             );
+            switch(ui, &mut s.show_avatars, "Author avatars");
         },
     );
     notifications(ui, &mut s.notifications);
@@ -2137,11 +2211,11 @@ fn tooltips(ui: &mut Ui, s: &mut Settings) {
         "Show tooltips",
         "Helpful: only what the screen does not show — an icon's name, why something is unavailable, cut-off text, shortcuts, full dates and addresses. All: also descriptions of labelled controls and how to use them. Off: none, except why something is unavailable.",
         |ui| {
+            revert(ui, &mut s.tooltips, &DEFAULTS.tooltips, "Show tooltips");
             let options = TooltipLevel::ALL.map(|v| (v, v.label()));
             Segmented::new(&mut s.tooltips, &options)
                 .label("Show tooltips")
                 .show(ui);
-            revert(ui, &mut s.tooltips, &DEFAULTS.tooltips, "Show tooltips");
         },
     );
     // Off still explains why something is unavailable, after this delay too.
@@ -2150,16 +2224,16 @@ fn tooltips(ui: &mut Ui, s: &mut Settings) {
         "Tooltip delay",
         "How long the pointer rests on something before its tooltip shows.",
         |ui| {
-            let options = TooltipDelay::ALL.map(|v| (v, v.label()));
-            Segmented::new(&mut s.tooltip_delay, &options)
-                .label("Tooltip delay")
-                .show(ui);
             revert(
                 ui,
                 &mut s.tooltip_delay,
                 &DEFAULTS.tooltip_delay,
                 "Tooltip delay",
             );
+            let options = TooltipDelay::ALL.map(|v| (v, v.label()));
+            Segmented::new(&mut s.tooltip_delay, &options)
+                .label("Tooltip delay")
+                .show(ui);
         },
     );
 }
@@ -2174,13 +2248,13 @@ fn notifications(ui: &mut Ui, n: &mut crate::settings::NotificationPrefs) {
         "Notification cards",
         "Cards in the bottom-right corner when something happens. The bell in the status bar lists every notification, whatever is chosen here.",
         |ui| {
-            switch(ui, &mut n.cards, "Notification cards");
             revert(
                 ui,
                 &mut n.cards,
                 &DEFAULTS.notifications.cards,
                 "Notification cards",
             );
+            switch(ui, &mut n.cards, "Notification cards");
         },
     );
     let cards = n.cards;
@@ -2189,8 +2263,8 @@ fn notifications(ui: &mut Ui, n: &mut crate::settings::NotificationPrefs) {
         let on = n.topic_mut(topic);
         ui.add_enabled_ui(cards, |ui| {
             row(ui, topic.label(), topic.help(), |ui| {
-                switch(ui, on, topic.label());
                 revert(ui, on, &default, topic.label());
+                switch(ui, on, topic.label());
             });
         });
     }
@@ -2722,13 +2796,13 @@ fn git(
         "Follow my git config",
         "Where your git configuration sets one of the choices below, it decides, and each choice here applies only where it sets none. Recommended: on, with the recommendations below for anything it does not set.",
         |ui| {
-            switch(ui, &mut s.follow_git_config, "Follow my git config");
             revert(
                 ui,
                 &mut s.follow_git_config,
                 &DEFAULTS.follow_git_config,
                 "Follow my git config",
             );
+            switch(ui, &mut s.follow_git_config, "Follow my git config");
         },
     );
     heading(ui, "Remote");
@@ -2740,13 +2814,13 @@ fn git(
         |ui| {
             let set = f.is_some_and(|f| f.pull.as_ref().is_some_and(|p| p.strategy.is_some()));
             ui.add_enabled_ui(!decided(set), |ui| {
+                revert(ui, &mut s.pull_mode, &DEFAULTS.pull_mode, "Pull strategy");
                 let options = PullMode::ALL.map(|m| (m, m.label()));
                 Select::new(&mut s.pull_mode, &options)
                     .width(select_width(ui, options.iter().map(|(_, l)| *l)))
                     .name("Pull strategy")
                     .id_salt("pull-strategy")
                     .show(ui);
-                revert(ui, &mut s.pull_mode, &DEFAULTS.pull_mode, "Pull strategy");
             });
         },
     );
@@ -2761,13 +2835,13 @@ fn git(
             .as_ref(),
         |ui| {
             ui.add_enabled_ui(!decided(prune_set), |ui| {
-                switch(ui, &mut s.prune_on_fetch, "Prune on fetch");
                 revert(
                     ui,
                     &mut s.prune_on_fetch,
                     &DEFAULTS.prune_on_fetch,
                     "Prune on fetch",
                 );
+                switch(ui, &mut s.prune_on_fetch, "Prune on fetch");
             });
         },
     );
@@ -2780,13 +2854,13 @@ fn git(
         |ui| {
             let set = f.is_some_and(|f| !f.prune_tags.is_empty());
             ui.add_enabled_ui(!decided(set), |ui| {
-                switch(ui, &mut s.prune_tags, "Prune tags too");
                 revert(
                     ui,
                     &mut s.prune_tags,
                     &DEFAULTS.prune_tags,
                     "Prune tags too",
                 );
+                switch(ui, &mut s.prune_tags, "Prune tags too");
             });
         },
     );
@@ -2800,8 +2874,8 @@ fn git(
             // Each key decides only its own kind of operation: rebases or merges.
             let set = f.is_some_and(|f| f.autostash.len() == 2);
             ui.add_enabled_ui(!decided(set), |ui| {
-                switch(ui, &mut s.autostash, "Autostash");
                 revert(ui, &mut s.autostash, &DEFAULTS.autostash, "Autostash");
+                switch(ui, &mut s.autostash, "Autostash");
             });
         },
     );
@@ -2828,13 +2902,13 @@ fn git(
         |ui| {
             let set = f.is_some_and(|f| f.follow_tags.is_some());
             ui.add_enabled_ui(!decided(set), |ui| {
-                switch(ui, &mut s.follow_tags, "Push tags with their commits");
                 revert(
                     ui,
                     &mut s.follow_tags,
                     &DEFAULTS.follow_tags,
                     "Push tags with their commits",
                 );
+                switch(ui, &mut s.follow_tags, "Push tags with their commits");
             });
         },
     );
@@ -2858,13 +2932,13 @@ fn git(
         |ui| {
             let set = f.is_some_and(|f| f.push_default.is_some());
             ui.add_enabled_ui(!decided(set), |ui| {
+                revert(ui, &mut s.push_default, &DEFAULTS.push_default, "Push to");
                 let options = PushMode::ALL.map(|m| (m, m.label()));
                 Select::new(&mut s.push_default, &options)
                     .width(select_width(ui, options.iter().map(|(_, l)| *l)))
                     .name("Push to")
                     .id_salt("push-default")
                     .show(ui);
-                revert(ui, &mut s.push_default, &DEFAULTS.push_default, "Push to");
             });
         },
     );
@@ -2874,6 +2948,12 @@ fn git(
         "Fetches every remote of open repositories while Canopy is idle.",
         None,
         |ui| {
+            revert(
+                ui,
+                &mut s.auto_fetch_minutes,
+                &DEFAULTS.auto_fetch_minutes,
+                "Fetch in the background",
+            );
             let labels = fetch_intervals();
             let options: Vec<(u32, &str)> = labels.iter().map(|(m, l)| (*m, l.as_str())).collect();
             // A stored interval the list does not offer still shows as itself.
@@ -2884,12 +2964,6 @@ fn git(
                 .name("Fetch in the background")
                 .id_salt("auto-fetch")
                 .show(ui);
-            revert(
-                ui,
-                &mut s.auto_fetch_minutes,
-                &DEFAULTS.auto_fetch_minutes,
-                "Fetch in the background",
-            );
         },
     );
     heading(ui, "Conflicts");
@@ -2917,18 +2991,18 @@ fn git(
         |ui| {
             let set = f.is_some_and(|f| f.conflict_style.is_some());
             ui.add_enabled_ui(!decided(set), |ui| {
-                let options = ConflictMode::ALL.map(|m| (m, m.label()));
-                Select::new(&mut s.conflict_style, &options)
-                    .width(select_width(ui, options.iter().map(|(_, l)| *l)))
-                    .name("Conflict style")
-                    .id_salt("conflict-style")
-                    .show(ui);
                 revert(
                     ui,
                     &mut s.conflict_style,
                     &DEFAULTS.conflict_style,
                     "Conflict style",
                 );
+                let options = ConflictMode::ALL.map(|m| (m, m.label()));
+                Select::new(&mut s.conflict_style, &options)
+                    .width(select_width(ui, options.iter().map(|(_, l)| *l)))
+                    .name("Conflict style")
+                    .id_salt("conflict-style")
+                    .show(ui);
             });
         },
     );
@@ -2953,13 +3027,13 @@ fn git(
         |ui| {
             let set = f.is_some_and(|f| f.cleanup.is_some());
             ui.add_enabled_ui(!decided(set), |ui| {
+                revert(ui, &mut s.cleanup, &DEFAULTS.cleanup, "Message cleanup");
                 let options = CleanupMode::ALL.map(|m| (m, m.label()));
                 Select::new(&mut s.cleanup, &options)
                     .width(select_width(ui, options.iter().map(|(_, l)| *l)))
                     .name("Message cleanup")
                     .id_salt("commit-cleanup")
                     .show(ui);
-                revert(ui, &mut s.cleanup, &DEFAULTS.cleanup, "Message cleanup");
             });
         },
     );
@@ -2983,6 +3057,12 @@ fn git(
         |ui| {
             let set = f.is_some_and(|f| f.initial_branch.is_some());
             ui.add_enabled_ui(!decided(set), |ui| {
+                revert(
+                    ui,
+                    &mut s.initial_branch,
+                    &DEFAULTS.initial_branch,
+                    "First branch of a new repository",
+                );
                 fixed_width(ui, FIELD_WIDTH, |ui| {
                     TextField::new(&mut s.initial_branch)
                         .placeholder(crate::settings::INITIAL_BRANCH)
@@ -2991,12 +3071,6 @@ fn git(
                         .id_salt("initial-branch")
                         .show(ui)
                 });
-                revert(
-                    ui,
-                    &mut s.initial_branch,
-                    &DEFAULTS.initial_branch,
-                    "First branch of a new repository",
-                );
             });
         },
     );
@@ -3006,8 +3080,8 @@ fn git(
         "Appends a Signed-off-by trailer (git commit --signoff), as DCO projects require.",
         None,
         |ui| {
-            switch(ui, &mut s.signoff, "Add Signed-off-by");
             revert(ui, &mut s.signoff, &DEFAULTS.signoff, "Add Signed-off-by");
+            switch(ui, &mut s.signoff, "Add Signed-off-by");
         },
     );
     row(
@@ -3015,37 +3089,37 @@ fn git(
         "Commits per page",
         "How many commits the history loads before \"Load more\".",
         |ui| {
-            commit_page(ui, s);
             revert(
                 ui,
                 &mut s.commit_page,
                 &DEFAULTS.commit_page,
                 "Commits per page",
             );
+            commit_page(ui, s);
         },
     );
     heading(ui, "Diffs");
     row(ui, "Layout", "", |ui| {
+        revert(ui, &mut s.split_diff, &DEFAULTS.split_diff, "Diff layout");
         Segmented::new(
             &mut s.split_diff,
             &[(false, "Unified"), (true, "Side by side")],
         )
         .label("Diff layout")
         .show(ui);
-        revert(ui, &mut s.split_diff, &DEFAULTS.split_diff, "Diff layout");
     });
     row(
         ui,
         "Syntax highlighting",
         "Colours code in diffs by language (Rust, TypeScript, Python, Markdown and about 200 more).",
         |ui| {
-            switch(ui, &mut s.syntax_highlight, "Syntax highlighting");
             revert(
                 ui,
                 &mut s.syntax_highlight,
                 &DEFAULTS.syntax_highlight,
                 "Syntax highlighting",
             );
+            switch(ui, &mut s.syntax_highlight, "Syntax highlighting");
         },
     );
     default_row(
@@ -3054,6 +3128,12 @@ fn git(
         "Unchanged lines shown around each change. A repository can also change it from its diff header.",
         None,
         |ui| {
+            revert(
+                ui,
+                &mut s.diff.context,
+                &DEFAULTS.diff.context,
+                "Context lines",
+            );
             let p = palette(ui.ctx());
             let m = theme::metrics();
             // Right to left: the value, then the rail.
@@ -3068,12 +3148,6 @@ fn git(
                 .width(ZOOM_RAIL_WIDTH)
                 .id_salt("diff-context")
                 .show(ui);
-            revert(
-                ui,
-                &mut s.diff.context,
-                &DEFAULTS.diff.context,
-                "Context lines",
-            );
         },
     );
     default_row(
@@ -3082,18 +3156,18 @@ fn git(
         "Ignoring whitespace turns off hunk staging, since such a diff cannot be applied.",
         None,
         |ui| {
-            let options = WhitespaceMode::ALL.map(|m| (m, m.label()));
-            Select::new(&mut s.diff.whitespace, &options)
-                .width(SELECT_WIDTH)
-                .name("Whitespace")
-                .id_salt("whitespace")
-                .show(ui);
             revert(
                 ui,
                 &mut s.diff.whitespace,
                 &DEFAULTS.diff.whitespace,
                 "Whitespace",
             );
+            let options = WhitespaceMode::ALL.map(|m| (m, m.label()));
+            Select::new(&mut s.diff.whitespace, &options)
+                .width(SELECT_WIDTH)
+                .name("Whitespace")
+                .id_salt("whitespace")
+                .show(ui);
         },
     );
     let overridden = s.repos_with_overrides();
@@ -3944,18 +4018,18 @@ fn integrations(
         "Used for URLs Canopy builds from owner/repository when you clone, add a remote or publish. SSH needs a key added to your account.",
         None,
         |ui| {
-            Segmented::new(
-                &mut s.clone_protocol,
-                &[(CloneProtocol::Https, "HTTPS"), (CloneProtocol::Ssh, "SSH")],
-            )
-            .label("Clone protocol")
-            .show(ui);
             revert(
                 ui,
                 &mut s.clone_protocol,
                 &DEFAULTS.clone_protocol,
                 "Clone protocol",
             );
+            Segmented::new(
+                &mut s.clone_protocol,
+                &[(CloneProtocol::Https, "HTTPS"), (CloneProtocol::Ssh, "SSH")],
+            )
+            .label("Clone protocol")
+            .show(ui);
         },
     );
     heading(ui, "GitHub and GitLab");
@@ -3979,13 +4053,13 @@ fn integrations(
         "Pull and merge requests",
         "Load, review and act on pull/merge requests through the GitHub and GitLab APIs. Requests load when you open a repository hosted there. Off keeps Canopy offline apart from git itself.",
         |ui| {
-            switch(ui, &mut s.hosting_api, "Pull and merge requests");
             revert(
                 ui,
                 &mut s.hosting_api,
                 &DEFAULTS.hosting_api,
                 "Pull and merge requests",
             );
+            switch(ui, &mut s.hosting_api, "Pull and merge requests");
         },
     );
     heading(ui, "Tools");
@@ -4520,13 +4594,13 @@ fn privacy(
         &help_text,
         "Sends commit IDs to GitHub or author emails to GitLab. Pictures, and authors without one, are remembered for 12 hours. A failed refresh keeps the previous picture. Turn off to use initials and stop new requests. Also requires Pull and merge requests to be on.",
         |ui| {
-            switch(ui, &mut s.download_avatars, "Download profile pictures");
             revert(
                 ui,
                 &mut s.download_avatars,
                 &DEFAULTS.download_avatars,
                 "Download profile pictures",
             );
+            switch(ui, &mut s.download_avatars, "Download profile pictures");
         },
     );
     row_end(ui);
@@ -4537,6 +4611,7 @@ fn privacy(
         "Normal records operations, warnings and errors. Detailed adds every git command and API call with its timing.",
         "Turn Detailed on while you reproduce a problem. The CANOPY_LOG environment variable overrides this.",
         |ui| {
+            revert(ui, &mut s.log_level, &DEFAULTS.log_level, "Log detail");
             let before = s.log_level;
             let options = crate::logging::LogLevel::ALL.map(|l| (l, l.label()));
             Select::new(&mut s.log_level, &options)
@@ -4544,7 +4619,6 @@ fn privacy(
                 .name("Log detail")
                 .id_salt("log-level")
                 .show(ui);
-            revert(ui, &mut s.log_level, &DEFAULTS.log_level, "Log detail");
             if s.log_level != before {
                 crate::logging::set_level(s.log_level);
             }
@@ -4634,13 +4708,13 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
         "Check for updates",
         "At most once a day, when Canopy starts, it reads a small public file on GitHub naming the latest build. GitHub sees your IP address and your Canopy build number, nothing else. Nothing is downloaded or installed until you choose Update.",
         |ui| {
-            switch(ui, &mut s.check_updates, "Check for updates");
             revert(
                 ui,
                 &mut s.check_updates,
                 &DEFAULTS.check_updates,
                 "Check for updates",
             );
+            switch(ui, &mut s.check_updates, "Check for updates");
         },
     );
     row(
@@ -4648,13 +4722,13 @@ fn updates(ui: &mut Ui, s: &mut Settings, update: &UpdateState, actions: &mut Ve
         "Include beta builds",
         "Also offer beta builds, which are less tested than stable ones.",
         |ui| {
-            switch(ui, &mut s.include_prereleases, "Include beta builds");
             revert(
                 ui,
                 &mut s.include_prereleases,
                 &DEFAULTS.include_prereleases,
                 "Include beta builds",
             );
+            switch(ui, &mut s.include_prereleases, "Include beta builds");
         },
     );
 }
@@ -5125,6 +5199,139 @@ mod tests {
             );
         }
         assert!(checked > 10, "Tab reached only {checked} page controls");
+    }
+
+    /// usersim2 N3: a row's reset button sits before its control, and is drawn and reached
+    /// before it too: Tab and a screen reader meet them in the order they are seen (WCAG 2.4.3).
+    #[test]
+    fn tab_follows_the_order_of_a_row_with_a_reset_button() {
+        let mut met = 0;
+        for section in [Section::Git, Section::Appearance] {
+            let ctx = egui::Context::default();
+            crate::ui::fonts::install(&ctx);
+            ctx.enable_accesskit();
+            theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+            let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 4000.0));
+            let mut settings = Settings {
+                initial_branch: "trunk".to_owned(),
+                signoff: true,
+                commit_page: 77,
+                relative_dates: !DEFAULTS.relative_dates,
+                style: Style::Deeper,
+                prune_on_fetch: !DEFAULTS.prune_on_fetch,
+                autostash: !DEFAULTS.autostash,
+                syntax_highlight: !DEFAULTS.syntax_highlight,
+                high_contrast: !DEFAULTS.high_contrast,
+                show_avatars: !DEFAULTS.show_avatars,
+                ..Settings::default()
+            };
+            let mut tokens = TokenStore::default();
+            let mut screen = SettingsScreen::at(section);
+            // No git configuration is read: what it sets would decide the rows.
+            screen.facts.global.asked = true;
+            screen.facts.global.facts = Some(Arc::new(GitFacts::default()));
+            let mut time = 0.0;
+            let mut frame = |events: Vec<egui::Event>| {
+                time += 1.0;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(bounds),
+                        events,
+                        time: Some(time),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(
+                            ui.ctx(),
+                            &mut screen,
+                            &mut settings,
+                            &mut tokens,
+                            &SettingsData {
+                                tabs: &[],
+                                update: &UpdateState::Idle,
+                                identity: IdentityView {
+                                    repo: None,
+                                    identity: None,
+                                    error: None,
+                                },
+                            },
+                            &mut Vec::new(),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                output
+            };
+            for _ in 0..4 {
+                frame(Vec::new());
+            }
+            let update = frame(Vec::new())
+                .platform_output
+                .accesskit_update
+                .expect("accesskit");
+            // Every node in reading order (the order the controls were drawn in).
+            let nodes: HashMap<_, _> = update.nodes.iter().cloned().collect();
+            let mut order = Vec::new();
+            let mut pending = vec![update.tree.as_ref().expect("a tree").root];
+            while let Some(id) = pending.pop() {
+                order.push(id);
+                if let Some(node) = nodes.get(&id) {
+                    pending.extend(node.children().iter().rev());
+                }
+            }
+            let place = |label: &str| {
+                order.iter().enumerate().find_map(|(i, id)| {
+                    let node = nodes.get(id)?;
+                    (node.label() == Some(label) && node.bounds().is_some())
+                        .then(|| (i, node.bounds().expect("bounds")))
+                })
+            };
+            for node in nodes.values() {
+                let Some(name) = node
+                    .label()
+                    .and_then(|l| l.strip_prefix("Reset "))
+                    .and_then(|l| l.strip_suffix(" to its default"))
+                else {
+                    continue;
+                };
+                let (reset, control) = (place(node.label().expect("label")), place(name));
+                let (Some((at, reset)), Some((then, control))) = (reset, control) else {
+                    continue;
+                };
+                met += 1;
+                assert!(
+                    at < then,
+                    "{section:?}: {name}: the reset button is read after it"
+                );
+                assert!(
+                    reset.x1 <= control.x0 + 1.0,
+                    "{section:?}: {name}: the reset button {reset:?} is not left of {control:?}"
+                );
+            }
+            // And Tab, from the top: the first stop on the First branch row is its reset button.
+            if section == Section::Git {
+                let tab = |pressed| egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                let mut stops = Vec::new();
+                for _ in 0..100 {
+                    frame(vec![tab(true), tab(false)]);
+                    frame(Vec::new());
+                    stops.push(format!("{:?}", ctx.memory(egui::Memory::focused)));
+                }
+                let at = |needle: &str| stops.iter().position(|s| s.contains(needle));
+                let (reset, field) = (at("First branch of a new repository"), at("initial-branch"));
+                assert!(
+                    matches!((reset, field), (Some(r), Some(f)) if r + 1 == f),
+                    "Tab reaches the reset button ({reset:?}) just before the field ({field:?})"
+                );
+            }
+        }
+        assert!(met >= 8, "only {met} reset buttons were checked");
     }
 
     #[test]
