@@ -491,7 +491,8 @@ never takes focus; Tab does.
 no view uses egui's `TextEdit` directly. The placeholder reads at 4.5:1 and the field's bottom edge
 and well at 3:1 (4.5:1 at high contrast) on every surface, tested per theme, style and contrast; the
 look is cached per palette, so a high contrast or custom theme never reuses its base theme's. Focus
-shows a ring for keyboard and pointer alike. An error is message text with an icon under the field,
+shows a ring for keyboard and pointer alike; the borderless search of the palette and the
+cheatsheet, which has no box, turns the 2 pt line under it to the focus colour. An error is message text with an icon under the field,
 announced as invalid with the message as its description, and never shows before the user typed.
 The small buttons inside a field (clear, reveal, stepper) keep their look but take a 24-point hit
 area (`IconButton::min_target`), and Tab reaches the clear button. A value wider than its field shows
