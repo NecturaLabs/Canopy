@@ -283,12 +283,12 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                 let n = parts.iter().flatten().count();
                 let content: f32 = parts.iter().flatten().sum::<f32>()
                     + ITEM_GAP * crate::ui::count_f32(n.saturating_sub(1));
-                // The room a count would take, when this segment keeps it free: the content stays
-                // centred in it.
+                // The room the widest count ("99+") would take, when this segment keeps it free: the
+                // content stays centred in it.
                 let held = if self.badge_room.contains(&i) {
-                    let two = Badge::new(count_text(88)).mono().measure(ui).x;
+                    let widest = Badge::new(count_text(100)).mono().measure(ui).x;
                     let shown = badge.as_ref().map_or(0.0, |b| b.measure(ui).x);
-                    (two - shown).max(0.0)
+                    (widest - shown).max(0.0)
                         + if badge.is_none() && n > 0 {
                             ITEM_GAP
                         } else {
@@ -1211,7 +1211,7 @@ mod tests {
 
     const OPTS: [(u8, &str); 3] = [(0, "History"), (1, "Changes"), (2, "Requests")];
 
-    /// usersim F6: a segment that keeps room for its count does not change the control's width
+    /// a segment that keeps room for its count does not change the control's width
     /// as the count appears, grows to two digits and goes.
     #[test]
     fn a_segment_with_badge_room_keeps_the_controls_width_as_its_count_comes_and_goes() {
@@ -1232,7 +1232,7 @@ mod tests {
             });
             w
         };
-        let counts = [0, 4, 12, 99];
+        let counts = [0, 4, 12, 99, 150];
         let widths: Vec<f32> = counts.iter().map(|n| width(*n, true)).collect();
         assert!(
             widths.iter().all(|w| (w - widths[0]).abs() < 0.5),

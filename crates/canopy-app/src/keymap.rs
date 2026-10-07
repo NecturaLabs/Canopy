@@ -728,6 +728,32 @@ pub fn listed_here(binding: &Binding) -> bool {
             .any(|b| b.command == binding.command && b.section.is_bare())
 }
 
+/// Consumes a key press that matches one of the chords the table lists for `command`, for a
+/// widget that handles the command itself (the table only lists it); true if there was one.
+pub fn consume(input: &mut egui::InputState, command: Command) -> bool {
+    let mut found = false;
+    input.events.retain(|e| {
+        let egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } = e
+        else {
+            return true;
+        };
+        let owned = !found
+            && BINDINGS
+                .iter()
+                .filter(|b| b.command == command)
+                .flat_map(|b| b.chords)
+                .any(|c| c.matches(*key, *modifiers));
+        found |= owned;
+        !owned
+    });
+    found
+}
+
 /// How long the second key of a double press (`gg`) may take.
 const DOUBLE_PRESS_SECONDS: f64 = 1.0;
 
@@ -947,6 +973,41 @@ mod tests {
         assert_eq!(all_keys(rows[0].command), ["Shift+F10"]);
         assert_eq!(hint(rows[0].command), "Shift+F10");
         assert!(rows[0].section.is_bare(), "not while typing");
+    }
+
+    /// A widget that owns a command's key takes it from the table: whatever chord the table lists
+    /// for `ContextMenu`, and no other key.
+    #[test]
+    fn a_widget_consumes_the_chords_the_table_lists_for_its_command() {
+        let press = |key: Key, modifiers: Modifiers| egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let ctx = egui::Context::default();
+        let mut consumed = (false, false);
+        let mut left = 0;
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events: vec![
+                    press(Key::F10, Modifiers::NONE),
+                    press(Key::F10, Modifiers::SHIFT),
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                ui.input_mut(|i| {
+                    consumed.0 = consume(i, Command::ContextMenu);
+                    consumed.1 = consume(i, Command::ContextMenu);
+                    left = i.events.len();
+                });
+            },
+        );
+        out.textures_delta.clear();
+        assert_eq!(consumed, (true, false), "the Shift+F10 press, once");
+        assert_eq!(left, 1, "the bare F10 press is left alone");
     }
 
     #[test]

@@ -257,6 +257,9 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
         let mut picked: Option<usize> = None;
         if can_open && !forced_open {
             if trigger.has_focus() {
+                ctx.data_mut(|d| d.insert_temp(typing_id(), (trigger.id, popup_id)));
+            }
+            if trigger.has_focus() {
                 // Up and Down drive the list, and while it is open Esc closes it instead of
                 // taking focus away from the trigger.
                 ui.memory_mut(|mem| {
@@ -731,6 +734,20 @@ impl<T: PartialEq + Clone> Widget for Select<'_, T> {
     fn ui(self, ui: &mut Ui) -> Response {
         self.show(ui)
     }
+}
+
+/// Where the select that last had keyboard focus keeps its trigger and list.
+fn typing_id() -> Id {
+    Id::new("kit-select-typing")
+}
+
+/// Whether a focused select has its list open and so takes the letters typed (type-ahead). The
+/// app's bare keys leave them alone, as for a text field.
+pub fn takes_text(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<(Id, Id)>(typing_id()))
+        .is_some_and(|(trigger, list)| {
+            ctx.memory(|m| m.has_focus(trigger)) && Popup::is_id_open(ctx, list)
+        })
 }
 
 /// The trigger of a select whose id was set with `.id(id)`: what `Memory::request_focus` takes.

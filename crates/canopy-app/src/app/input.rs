@@ -17,9 +17,10 @@ impl CanopyApp {
             .tabs
             .get(self.active)
             .is_some_and(|tab| tab.view == View::History && tab.history_filter_open);
-        // Only a text field takes letters; any other focused widget (a button the pointer or Tab
-        // left focus on, after Esc closed its menu) keeps just Space, Enter and the arrows.
-        let typing = ctx.text_edit_focused();
+        // Only a text field, or an open list's type-ahead, takes letters; any other focused widget
+        // (a button the pointer or Tab left focus on, after Esc closed its menu) keeps just Space,
+        // Enter and the arrows.
+        let typing = ctx.text_edit_focused() || crate::ui::kit::select::takes_text(ctx);
         let widget_focused = !typing && ctx.memory(|m| m.focused().is_some());
         let fired = keymap::dispatch(ctx, |b, chord| {
             if b.command == Command::ContextMenu {
@@ -448,6 +449,70 @@ mod tests {
             let actions = keyboard_with_focus(&mut app, key, button);
             assert!(actions.is_empty(), "{key:?} fired {actions:?}");
         }
+    }
+
+    /// Letters typed into an open list jump to an option (type-ahead): they are not the bare
+    /// repository keys (`s` stashes, `m` merges), and the text event stays for the list.
+    #[test]
+    fn letters_typed_into_an_open_select_are_not_repository_keys() {
+        use crate::ui::kit::testkit::{frame, key};
+        let ctx = crate::ui::kit::testkit::ctx();
+        let options = [(0_u8, "Merge"), (1, "Squash"), (2, "Rebase")];
+        let mut value = 0_u8;
+        let mut trigger = egui::Id::NULL;
+        let mut show = |ui: &mut egui::Ui| {
+            trigger = crate::ui::kit::select::Select::new(&mut value, &options)
+                .id_salt("method")
+                .show(ui)
+                .id;
+            trigger
+        };
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        frame(&ctx, Vec::new(), |ui| {
+            let id = show(ui);
+            ui.memory_mut(|m| m.request_focus(id));
+        });
+        frame(&ctx, Vec::new(), |ui| {
+            show(ui);
+        });
+        frame(&ctx, key(egui::Key::ArrowDown), |ui| {
+            show(ui);
+        });
+        frame(&ctx, Vec::new(), |ui| {
+            show(ui);
+        });
+        assert!(egui::Popup::is_any_open(&ctx), "the list is open");
+        let mut events = key(egui::Key::S);
+        events.push(egui::Event::Text("s".into()));
+        let mut actions = Vec::new();
+        let mut text_left = false;
+        frame(&ctx, events, |ui| {
+            app.keyboard(ui.ctx(), &mut actions);
+            text_left = ui.input(|i| {
+                i.events
+                    .iter()
+                    .any(|e| matches!(e, egui::Event::Text(t) if t == "s"))
+            });
+            show(ui);
+        });
+        assert!(actions.is_empty(), "{actions:?}");
+        assert!(text_left, "the list still gets the letter");
+        // Closed again, the same key is the repository's.
+        frame(&ctx, key(egui::Key::Escape), |ui| {
+            show(ui);
+        });
+        frame(&ctx, Vec::new(), |ui| {
+            show(ui);
+        });
+        assert!(!egui::Popup::is_any_open(&ctx), "Escape closed the list");
+        let mut actions = Vec::new();
+        frame(&ctx, key(egui::Key::S), |ui| {
+            app.keyboard(ui.ctx(), &mut actions);
+            show(ui);
+        });
+        assert!(!actions.is_empty(), "a closed list leaves the key alone");
     }
 
     /// While a text field has focus a bare letter is text, not a command.

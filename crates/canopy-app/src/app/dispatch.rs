@@ -194,7 +194,10 @@ impl CanopyApp {
                     {
                         self.dialogs.open(self.add_remote_dialog(true));
                     } else if let Some(t) = self.tab() {
-                        t.op(Op::Push { force: false });
+                        t.op(Op::Push {
+                            force: false,
+                            expect: None,
+                        });
                     }
                 }
                 Action::WhatsNew => {
@@ -645,10 +648,8 @@ mod tests {
         );
     }
 
-    /// A pull decision, or the offer to force-delete a branch, that comes back after the user
-    /// moved to another tab is answered for the repository that asked, never the active one.
-    /// F12: the force push question names the branch and where it goes, which the repository
-    /// thread works out.
+    /// The force push question names the branch and where it goes, which the repository thread
+    /// works out, and confirming it carries that answer to the push.
     #[test]
     fn the_force_push_question_names_the_branch_and_its_destination() {
         let ctx = egui::Context::default();
@@ -691,7 +692,17 @@ mod tests {
             body.contains("origin/feature/dark-mode is overwritten"),
             "{body}"
         );
-        assert!(matches!(op, Op::Push { force: true }));
+        let Op::Push {
+            force: true,
+            expect: Some(expect),
+        } = op
+        else {
+            panic!("a force push naming its target: {op:?}");
+        };
+        assert_eq!(
+            (&*expect.branch, &*expect.remote, &*expect.dest),
+            ("feature/dark-mode", "origin", "feature/dark-mode")
+        );
     }
 
     #[test]
@@ -708,6 +719,8 @@ mod tests {
         assert_eq!(title, "Force delete branch topic?");
     }
 
+    /// A pull decision, or the offer to force-delete a branch, that comes back after the user
+    /// moved to another tab is answered for the repository that asked, never the active one.
     #[test]
     fn a_late_question_is_answered_for_the_repository_that_asked() {
         use crate::settings::PullMode;
