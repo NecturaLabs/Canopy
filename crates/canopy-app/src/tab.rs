@@ -311,6 +311,15 @@ pub fn outcome_title(label: &str, ok: bool) -> String {
     }
 }
 
+/// The last `n` lines of `text`: where git puts its summary.
+fn last_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..]
+        .join("\n")
+        .trim()
+        .to_owned()
+}
+
 /// How the last announced operation ended, for the action bar to show on its tool for a moment.
 #[derive(Debug, Clone)]
 pub struct Finished {
@@ -1397,7 +1406,7 @@ impl RepoTab {
                                 notices.push(Notice {
                                     ok: true,
                                     title: outcome_title(&label, true),
-                                    body: out.trim().to_owned(),
+                                    body: last_lines(&out, 3),
                                 });
                             }
                         }

@@ -1268,6 +1268,50 @@ fn pull_rebase_replays_local_commits() {
 }
 
 #[test]
+fn a_rebase_pull_reports_git_s_last_word_not_its_progress_glued_to_it() {
+    if !in_isolated_git_env("a_rebase_pull_reports_git_s_last_word_not_its_progress_glued_to_it") {
+        return;
+    }
+    let (up_dir, _up, _c, copy) = upstream_and_clone();
+    diverge(up_dir.path(), &copy);
+    let mut progress = Vec::new();
+    let out = copy
+        .pull(PullStrategy::Rebase, |l| progress.push(l.to_owned()))
+        .expect("pull");
+    // Git writes "Rebasing (1/1)" and, after a carriage return, the result on the same line.
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("Successfully rebased and updated")),
+        "{out:?}"
+    );
+    assert!(!out.contains("Rebasing ("), "{out:?}");
+    assert!(!out.contains('\r'), "{out:?}");
+    assert!(
+        progress.iter().any(|l| l.starts_with("Rebasing (")),
+        "the progress still reaches the caller: {progress:?}"
+    );
+}
+
+#[test]
+fn a_fetch_reports_every_ref_it_updated() {
+    if !in_isolated_git_env("a_fetch_reports_every_ref_it_updated") {
+        return;
+    }
+    let (up_dir, _up, _c, copy) = upstream_and_clone();
+    for branch in ["one", "two", "three", "four"] {
+        git(up_dir.path(), &["branch", branch]);
+    }
+    let out = copy.fetch(None, false, |_| {}).expect("fetch");
+    for branch in ["one", "two", "three", "four"] {
+        assert!(
+            out.lines()
+                .any(|l| l.contains("[new branch]") && l.contains(&format!("origin/{branch}"))),
+            "{branch} missing from {out:?}"
+        );
+    }
+}
+
+#[test]
 fn pull_merge_creates_a_merge_commit() {
     if !in_isolated_git_env("pull_merge_creates_a_merge_commit") {
         return;
