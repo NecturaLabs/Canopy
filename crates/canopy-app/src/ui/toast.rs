@@ -424,14 +424,15 @@ impl Toasts {
             offer,
         });
         if self.items.len() > 5 {
-            // The oldest routine card goes first, then the oldest error: a pending decision
-            // stays longest.
-            let oldest = self
-                .items
+            // Evict an older card, never the one that just arrived. Prefer an older routine
+            // card to an error, and an error to an unanswered decision.
+            let older = &self.items[..self.items.len() - 1];
+            let oldest = older
                 .iter()
                 .position(|t| t.offer.is_none() && t.kind != ToastKind::Error)
-                .or_else(|| self.items.iter().position(|t| t.offer.is_none()));
-            let gone = self.items.remove(oldest.unwrap_or(0));
+                .or_else(|| older.iter().position(|t| t.offer.is_none()))
+                .unwrap_or(0);
+            let gone = self.items.remove(oldest);
             if gone.offer.is_some() {
                 // Not made: it waits in the center, counted on the bell as when it runs out.
                 tracing::warn!(title = %gone.title, "a sixth decision pushed out the oldest card");
@@ -1086,6 +1087,34 @@ mod tests {
         );
         assert_eq!(text[2].body, toasts.items[2].help, "a hint still leads");
         assert_eq!(text[2].details, Some(rejected));
+    }
+
+    #[test]
+    fn a_new_routine_card_does_not_evict_itself_when_five_errors_are_visible() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        for index in 0..5 {
+            toasts.push(
+                &ctx,
+                ToastKind::Error,
+                Topic::Error,
+                format!("Error {index}"),
+                "failure",
+            );
+        }
+        toasts.push(&ctx, ToastKind::Success, Topic::Update, "Pushed", "main");
+        assert_eq!(toasts.items.len(), 5);
+        assert_eq!(toasts.items.last().map(|t| t.title.as_str()), Some("Pushed"));
+        assert!(!toasts.items.iter().any(|t| t.title == "Error 0"));
+        assert_eq!(
+            toasts.items.iter().filter(|t| t.kind == ToastKind::Error).count(),
+            4
+        );
+
+        toasts.push(&ctx, ToastKind::Info, Topic::Confirmation, "Copied", "SHA");
+        assert_eq!(toasts.items.last().map(|t| t.title.as_str()), Some("Copied"));
+        assert_eq!(toasts.items.len(), 5);
+        assert!(!toasts.items.iter().any(|t| t.title == "Pushed"));
     }
 
     #[test]
