@@ -2095,7 +2095,7 @@ mod tests {
     }
 
     /// The history's ref pills keep their labels readable on every surface a row can have, in
-    /// every theme and lane colour, each label in its commit's lane colour.
+    /// every theme and lane colour: white where white reads, otherwise its commit's lane colour.
     #[test]
     fn rendered_ref_pills_label_readably_in_their_lane_colour() {
         use canopy_core::{RefKind, RefLabel};
@@ -2147,10 +2147,17 @@ mod tests {
                         "{} {kind:?}: the label paints its own ink",
                         p.name
                     );
+                    let white_reads = p.component_surfaces(p.s()).iter().all(|s| {
+                        theme::contrast(egui::Color32::WHITE, theme::over(fill, *s)) >= 4.5
+                    });
+                    let expected = if white_reads {
+                        egui::Color32::WHITE
+                    } else {
+                        p.ink(p.lane(lane), fill)
+                    };
                     assert_eq!(
-                        actual,
-                        p.ink(p.lane(lane), fill),
-                        "{} {kind:?} lane {lane}: the label is in the lane's colour",
+                        actual, expected,
+                        "{} {kind:?} lane {lane}: white where it reads, else the lane's colour",
                         p.name
                     );
                 }

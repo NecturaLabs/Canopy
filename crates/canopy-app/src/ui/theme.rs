@@ -1659,20 +1659,22 @@ impl Palette {
         (fill, ring, label)
     }
 
-    /// A ref pill in colour `c` (its lane's): a solid fill of `c`, deepened only as far as a white
-    /// label needs to read at 4.5:1 on it, so it stays as vivid as the lane allows in every theme;
-    /// a hairline of the fill lifted towards white, or white itself for the checked-out branch
-    /// (`strong`). Returns fill, ring and label.
+    /// A ref pill in colour `c` (its lane's): the badge surface tinted with `c` (more for the
+    /// checked-out branch, `strong`) and a hairline of `c`, the tonal look of [`Palette::tonal`]
+    /// at rest. The label is white where white reads at 4.5:1 on the pill over every component
+    /// surface, and otherwise `c` lifted that far ([`Palette::ink`]). Returns fill, ring and label.
     pub fn pill(&self, c: Color32, strong: bool) -> (Color32, Color32, Color32) {
-        let label = Color32::WHITE;
-        let fill = (0..=20)
-            .map(|step| mix(c, Color32::BLACK, crate::ui::int_f32(step) / 20.0))
-            .find(|f| contrast(label, *f) >= 4.5)
-            .unwrap_or(Color32::BLACK);
-        let ring = if strong {
-            label
+        let s = self.s();
+        let fill = mix(s.badge, c, if strong { TONAL_PRESSED } else { TONAL_REST });
+        let ring = mix(s.badge, c, TONAL_RING);
+        let white_reads = self
+            .component_surfaces(s)
+            .iter()
+            .all(|b| contrast(Color32::WHITE, over(fill, *b)) >= 4.5);
+        let label = if white_reads {
+            Color32::WHITE
         } else {
-            mix(fill, label, PILL_RING)
+            self.ink(c, fill)
         };
         (fill, ring, label)
     }
@@ -1822,8 +1824,6 @@ const TONAL_REST: f32 = 0.16;
 const TONAL_HOVER: f32 = 0.22;
 const TONAL_PRESSED: f32 = 0.28;
 const TONAL_RING: f32 = 0.45;
-/// How far a ref pill's hairline is lifted from its fill towards its white label.
-const PILL_RING: f32 = 0.3;
 
 /// `a` moved towards `b` by `t` (0 to 1).
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {

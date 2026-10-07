@@ -277,9 +277,10 @@ commits since the previous build.
 - Commit details no longer have a "Commit information" block repeating the email, date and
   parents: the message shows directly under the author, the email (and the committer, when someone
   else made the commit) is in the author's tooltip and the full date in the date's.
-- Branch, tag and stash pills in History are redesigned as one consistent style: every pill is a
-  solid fill of its commit's graph colour with a white label, told apart by its icon; the
-  checked-out branch has a white outline.
+- Branch, tag and stash pills in History are redesigned as one consistent style: every pill is
+  softly tinted in its commit's graph colour with a hairline in that colour and a white label,
+  told apart by its icon; in light themes, where white would not read, the label takes the
+  graph colour. The checked-out branch is tinted a little more.
 - Prompts mark Canopy's recommended choice and leave out what goes without saying, such as "Esc
   cancels"; notifications of finished work say what happened ("Pulled", "Could not push").
 - Select boxes look like the buttons beside them, with an up-down caret; text fields have one even
