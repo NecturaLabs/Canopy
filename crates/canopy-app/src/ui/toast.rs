@@ -1093,6 +1093,10 @@ mod tests {
     fn a_new_routine_card_does_not_evict_itself_when_five_errors_are_visible() {
         let ctx = egui::Context::default();
         let mut toasts = Toasts::default();
+        toasts.set_prefs(NotificationPrefs {
+            confirmations: true,
+            ..Default::default()
+        });
         for index in 0..5 {
             toasts.push(
                 &ctx,
