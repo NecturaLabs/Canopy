@@ -57,6 +57,9 @@ pub fn set_askpass(askpass: Option<Askpass>) {
 )]
 pub fn command(workdir: Option<&Path>) -> Command {
     let mut cmd = Command::new("git");
+    // A repository can set core.fsmonitor to a shell command. Never execute it while
+    // inspecting a repository that a user has just opened or cloned.
+    cmd.args(["-c", "core.fsmonitor=false"]);
     if let Some(dir) = workdir {
         cmd.current_dir(dir);
     }
@@ -582,6 +585,35 @@ pub(crate) fn has_merge_tree_write_tree() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_fsmonitor_command_is_not_executed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temporary repository");
+        run(dir.path(), &["init", "-q"]).expect("initialize repository");
+        let script = dir.path().join("fsmonitor");
+        let marker = dir.path().join("fsmonitor-ran");
+        std::fs::write(&script, "#!/bin/sh\ntouch fsmonitor-ran\n").expect("create harmless probe");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("make probe executable");
+        run(dir.path(), &["config", "--local", "core.fsmonitor", "./fsmonitor"])
+            .expect("configure repository probe");
+
+        // Verify the fixture would execute its configured command with an ordinary git.
+        let baseline = Command::new("git")
+            .current_dir(dir.path())
+            .args(["status", "--porcelain"])
+            .output()
+            .expect("run unprotected git");
+        assert!(baseline.status.success(), "fixture git status failed");
+        assert!(marker.exists(), "fixture did not activate the fsmonitor command");
+        std::fs::remove_file(&marker).expect("reset probe");
+
+        run(dir.path(), &["status", "--porcelain"]).expect("safe git status");
+        assert!(!marker.exists(), "repository fsmonitor command was executed");
+    }
 
     #[test]
     fn a_git_that_exits_before_reading_its_input_reports_its_own_error() {
