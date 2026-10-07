@@ -45,7 +45,9 @@ use crate::ui::theme::{self, Elevation, FocusStyle, Palette, Style};
 /// The focus and error halo, drawn outside the edge (3 pt; focus at 26%, error at 18%).
 pub(crate) const HALO: f32 = 3.0;
 pub(crate) const FOCUS_HALO_ALPHA: u8 = 66;
-pub(crate) const ERROR_HALO_ALPHA: u8 = 46;
+const ERROR_HALO_ALPHA: u8 = 46;
+/// The thickness of the focus line under a borderless search.
+const FOCUS_LINE: f32 = 2.0;
 /// The well: `text` at this alpha at most (less where a text colour would not read), and this
 /// much more while hovered.
 const WELL_ALPHA: u8 = 12;
@@ -678,6 +680,11 @@ impl<'t> Core<'t> {
         };
         if !bare {
             paint_box(&painter, rect, radius, edge, halo);
+        } else if interactive && focus_t > 0.0 {
+            // The surface's own input has no box to ring: the line under it, over the seam the
+            // surface draws there, takes the focus colour.
+            let line = Rect::from_min_max(pos2(rect.left(), rect.bottom() - FOCUS_LINE), rect.max);
+            painter.rect_filled(line, 0.0, p.focus.gamma_multiply(focus_t));
         }
 
         if let Some(glyph) = icon_glyph {
@@ -1745,6 +1752,14 @@ pub(crate) fn gallery(ui: &mut Ui) {
         .show(ui);
     gallery_caption(
         ui,
+        "Borderless, focused: the line under it takes the focus colour",
+    );
+    SearchField::new(&mut "menu".to_owned())
+        .borderless(true)
+        .id(Id::new("gallery-search-bare-focus"))
+        .show_forced(ui, ForceState::FOCUS);
+    gallery_caption(
+        ui,
         "Summary counter at 50 and 73 characters (text stops clear of it); description, idle",
     );
     cols(ui, &mut |ui, i| {
@@ -2218,6 +2233,49 @@ mod tests {
         };
         assert!(painted(false));
         assert!(!painted(true));
+    }
+
+    /// usersim2 N4: a borderless search (the palette's and the cheatsheet's input) has no box to
+    /// ring, so focus, by Tab or by a click, turns the line under it to the focus colour
+    /// (docs/design.md: a ring for keyboard and pointer alike).
+    #[test]
+    fn a_borderless_search_shows_focus_by_keyboard_and_pointer() {
+        for by_pointer in [false, true] {
+            let ctx = testkit::ctx();
+            let focus = theme::palette(&ctx).focus;
+            let mut text = "menu".to_owned();
+            let mut show = |ctx: &egui::Context, events: Vec<egui::Event>| {
+                let mut rect = Rect::NOTHING;
+                let shapes = frame(ctx, events, |ui| {
+                    rect = SearchField::new(&mut text)
+                        .borderless(true)
+                        .id_salt("surface")
+                        .show(ui)
+                        .rect;
+                });
+                (fills(&shapes), rect)
+            };
+            let (_, rect) = show(&ctx, Vec::new());
+            let at = rect.left_center() + vec2(40.0, 0.0);
+            assert!(
+                !show(&ctx, Vec::new()).0.contains(&focus),
+                "unfocused, nothing is ringed"
+            );
+            let events = if by_pointer {
+                testkit::press(at)
+            } else {
+                key(Key::Tab)
+            };
+            show(&ctx, events);
+            if by_pointer {
+                show(&ctx, testkit::release(at));
+            }
+            let seen = show(&ctx, Vec::new()).0;
+            assert!(
+                seen.contains(&focus),
+                "focus (by pointer: {by_pointer}) shows in the focus colour: {seen:?}"
+            );
+        }
     }
 
     #[test]
