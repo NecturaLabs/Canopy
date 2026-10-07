@@ -468,7 +468,8 @@ pub(crate) fn run_answer(
 /// Runs a long command (clone, fetch, pull, push) and reports each progress line from standard
 /// error to `progress` as it arrives.
 ///
-/// Returns standard error's last lines on success, which is where git puts its summary.
+/// Returns standard error on success, one line per line git finished (without blank lines),
+/// which is where git puts its summary and what it did to each ref.
 pub fn run_streaming(
     workdir: Option<&Path>,
     args: &[&str],
@@ -492,9 +493,13 @@ pub fn run_streaming(
         buf
     });
 
+    // Standard error as a terminal would show it: a carriage return starts the line over, so
+    // git's progress ("Receiving objects: 40%", "Rebasing (1/3)") is replaced by what follows
+    // it on the same line instead of being glued to it.
     let mut stderr_all = Vec::new();
     if let Some(mut err) = child.stderr.take() {
-        let mut line = Vec::new();
+        let mut segment = Vec::new();
+        let mut shown = Vec::new();
         let mut chunk = [0u8; 4096];
         loop {
             let n = match err.read(&mut chunk) {
@@ -505,22 +510,24 @@ pub fn run_streaming(
             };
             for &b in &chunk[..n] {
                 if b == b'\r' || b == b'\n' {
-                    if !line.is_empty() {
-                        progress(String::from_utf8_lossy(&line).trim());
-                        line.clear();
+                    if !segment.is_empty() {
+                        progress(String::from_utf8_lossy(&segment).trim());
+                        shown = std::mem::take(&mut segment);
                     }
                     if b == b'\n' {
+                        stderr_all.append(&mut shown);
                         stderr_all.push(b'\n');
                     }
                 } else {
-                    line.push(b);
-                    stderr_all.push(b);
+                    segment.push(b);
                 }
             }
         }
-        if !line.is_empty() {
-            progress(String::from_utf8_lossy(&line).trim());
+        if !segment.is_empty() {
+            progress(String::from_utf8_lossy(&segment).trim());
+            shown = segment;
         }
+        stderr_all.append(&mut shown);
     }
 
     let status = child.wait()?;
@@ -531,9 +538,8 @@ pub fn run_streaming(
     let stdout = stdout_reader.join().unwrap_or_default();
     if status.success() {
         let text = String::from_utf8_lossy(&stderr_all);
-        let tail: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-        let start = tail.len().saturating_sub(3);
-        Ok(tail[start..].join("\n"))
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        Ok(lines.join("\n"))
     } else {
         Err(failure(args, &stdout, &stderr_all))
     }

@@ -272,6 +272,17 @@ fn with_paths<'a>(args: &[&'a str], paths: &'a [String]) -> Vec<&'a str> {
     v
 }
 
+/// Where a force push sends the current branch ([`Repo::force_push_target`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushTarget {
+    /// The checked-out branch that is pushed.
+    pub branch: String,
+    /// The remote it goes to.
+    pub remote: String,
+    /// The branch on that remote that is overwritten, without `refs/heads/`.
+    pub dest: String,
+}
+
 impl Repo {
     pub(crate) fn git_cmd(&self, args: &[&str]) -> Result<String> {
         cli::run(self.workdir(), args)
@@ -720,19 +731,38 @@ impl Repo {
     /// (`git merge @{upstream}`) or a rebase onto the upstream (`git rebase`, which finds the
     /// fork point as `git pull --rebase` does). The pull's second step once
     /// [`Repo::pull_preview`] has fetched, so the remote is asked only once.
+    ///
+    /// With `checked`, the commit the preview showed, that commit is brought in whatever the
+    /// upstream is by now: a fetch made elsewhere in between cannot slip in commits nobody saw.
+    /// A rebase then still drops the commits the upstream rewrote, as `git rebase` does.
     pub fn pull_fetched(
         &self,
         strategy: PullStrategy,
+        checked: Option<Oid>,
         progress: impl FnMut(&str),
     ) -> Result<String> {
         let conflicts = self.conflict_override();
         let mut args: Vec<&str> = conflicts.iter().map(String::as_str).collect();
+        let tip = checked.map(|oid| oid.to_string());
+        let target = tip.as_deref().unwrap_or("@{upstream}");
+        let fork_point = match (strategy, &tip) {
+            (PullStrategy::Rebase | PullStrategy::RebaseMerges, Some(_)) => {
+                self.upstream_fork_point()
+            }
+            _ => None,
+        };
         match strategy {
             PullStrategy::Rebase | PullStrategy::RebaseMerges => {
                 args.push("rebase");
                 args.extend(self.autostash_flag(true));
                 if strategy == PullStrategy::RebaseMerges {
                     args.push("--rebase-merges");
+                }
+                if tip.is_some() {
+                    match &fork_point {
+                        Some(fork) => args.extend(["--onto", target, fork]),
+                        None => args.push(target),
+                    }
                 }
             }
             PullStrategy::Merge
@@ -745,10 +775,23 @@ impl Repo {
                     PullStrategy::FastForwardOnly => "--ff-only",
                     _ => "--ff",
                 });
-                args.push("@{upstream}");
+                args.push(target);
             }
         }
         cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
+    /// Where the branch left the upstream's earlier tips, found in the upstream's reflog as
+    /// `git rebase` does without arguments; `None` where there is none to find.
+    fn upstream_fork_point(&self) -> Option<String> {
+        let out = cli::run_unchecked(
+            self.workdir(),
+            &["merge-base", "--fork-point", "@{upstream}", "HEAD"],
+        )
+        .ok()?;
+        (out.code == Some(0))
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+            .filter(|fork| !fork.is_empty())
     }
 
     /// The strategy the user's git configuration asks a pull to use ([`Repo::pull_config`]),
@@ -791,25 +834,72 @@ impl Repo {
             let (remote, dest) = self.push_destination(&branch)?;
             args.extend([remote, format!("HEAD:{dest}")]);
         } else if !has_upstream {
-            let remotes = self.git().remotes()?;
-            let names: Vec<&str> = remotes.iter().flatten().flatten().collect();
-            let remote = if names.contains(&"origin") {
-                "origin".to_owned()
-            } else if let [only] = names.as_slice() {
-                (*only).to_owned()
-            } else if names.is_empty() {
-                return Err(Error::invalid(
-                    "This repository has no remote. Add one first.",
-                ));
-            } else {
-                return Err(Error::invalid(
-                    "Several remotes and no upstream: set one with git push -u.",
-                ));
-            };
+            let remote = self.remote_without_upstream()?;
             args.extend(["--set-upstream".to_owned(), remote, branch]);
         }
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
+    /// The remote a branch with no upstream is pushed to: `origin`, else the only remote.
+    fn remote_without_upstream(&self) -> Result<String> {
+        let remotes = self.git().remotes()?;
+        let names: Vec<&str> = remotes.iter().flatten().flatten().collect();
+        if names.contains(&"origin") {
+            Ok("origin".to_owned())
+        } else if let [only] = names.as_slice() {
+            Ok((*only).to_owned())
+        } else if names.is_empty() {
+            Err(Error::invalid(
+                "This repository has no remote. Add one first.",
+            ))
+        } else {
+            Err(Error::invalid(
+                "Several remotes and no upstream: set one with git push -u.",
+            ))
+        }
+    }
+
+    /// Refuses unless a force push would go where `asked` says, as [`Repo::force_push_target`]
+    /// works it out now. The branch can change between the question and the push, and only
+    /// what the user confirmed may be overwritten.
+    pub fn ensure_force_push_target(&self, asked: &PushTarget) -> Result<()> {
+        let now = self.force_push_target()?;
+        if now == *asked {
+            return Ok(());
+        }
+        Err(Error::invalid(format!(
+            "Nothing was pushed: you were asked about force pushing {} to {}/{}, but the \
+             checked-out branch would now go to {}/{} as {}. Force push again to confirm it.",
+            asked.branch, asked.remote, asked.dest, now.remote, now.dest, now.branch
+        )))
+    }
+
+    /// Where [`Repo::push`] with `force` sends the current branch: the remote and the branch on
+    /// it, worked out as the push works them out. Refuses where the push would.
+    pub fn force_push_target(&self) -> Result<PushTarget> {
+        let Some(branch) = self.head()?.branch else {
+            return Err(Error::invalid("Check out a branch to push it."));
+        };
+        let has_upstream = self
+            .git()
+            .find_branch(&branch, git2::BranchType::Local)
+            .and_then(|b| b.upstream())
+            .is_ok();
+        let (remote, dest) = if has_upstream {
+            self.push_destination(&branch)?
+        } else {
+            (
+                self.remote_without_upstream()?,
+                format!("refs/heads/{branch}"),
+            )
+        };
+        let dest = dest.strip_prefix("refs/heads/").unwrap_or(&dest).to_owned();
+        Ok(PushTarget {
+            branch,
+            remote,
+            dest,
+        })
     }
 
     /// Where a push without a destination sends `branch`, as `(remote, ref on the remote)`,

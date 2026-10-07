@@ -106,6 +106,32 @@ fn settle_identity_dialog(dialogs: &mut DialogStack, saved: bool) {
     }
 }
 
+/// The question before a force push: the branch and the remote branch it overwrites.
+fn force_push_dialog(repo: &std::path::Path, target: canopy_core::PushTarget) -> Dialog {
+    let canopy_core::PushTarget {
+        branch,
+        remote,
+        dest,
+    } = target;
+    Dialog::Confirm {
+        title: format!("Force push {branch} to {remote}/{dest}?"),
+        body: format!(
+            "{remote}/{dest} is overwritten with your local {branch}. --force-with-lease refuses if someone else pushed in the meantime."
+        ),
+        confirm: "Force push branch".into(),
+        danger: true,
+        repo: repo.to_path_buf(),
+        op: Op::Push {
+            force: true,
+            expect: Some(canopy_core::PushTarget {
+                branch,
+                remote,
+                dest,
+            }),
+        },
+    }
+}
+
 impl CanopyApp {
     pub(super) fn request_identity(&mut self, job: IdentityJob) {
         if self
@@ -299,12 +325,16 @@ impl CanopyApp {
                         repo: tab.path.clone(),
                         strategy: d.strategy,
                         preview: d.preview,
+                        moved: d.moved,
                     }
                 });
             }
+            if let Some(target) = tab.force_push_offer.take() {
+                self.dialogs.open(force_push_dialog(&tab.path, target));
+            }
             if let Some(name) = tab.force_delete_offer.take() {
                 self.dialogs.open(Dialog::Confirm {
-                    title: "Force delete branch".into(),
+                    title: format!("Force delete branch {name}?"),
                     body: format!(
                         "{name} has commits that are not merged into its upstream or the current branch. Delete it anyway? Those commits stay reachable only through the reflog."
                     ),

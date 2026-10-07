@@ -213,6 +213,7 @@ const DIALOG_OVERLAYS: &[&str] = &[
     "confirm-merge-risky",
     "diverged",
     "pull-conflicts",
+    "pull-moved",
     "whats-new",
     "crash",
     "update-available",
@@ -354,6 +355,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             everywhere: true,
             preview: canopy_core::PullPreview {
                 upstream: "origin/main".into(),
+                tip: None,
                 ahead: 2,
                 behind: 3,
                 conflicts: Some(vec!["src/api/routes.rs".into()]),
@@ -363,12 +365,27 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
         "pull-conflicts" => Dialog::PullConflicts {
             repo: PathBuf::new(),
             strategy: canopy_core::PullStrategy::FastForwardOnly,
+            moved: false,
             preview: canopy_core::PullPreview {
                 upstream: "origin/main".into(),
+                tip: None,
                 ahead: 0,
                 behind: 2,
                 conflicts: None,
                 overlap: vec!["README.md".into(), "src/api/routes.rs".into()],
+            },
+        },
+        "pull-moved" => Dialog::PullConflicts {
+            repo: PathBuf::new(),
+            strategy: canopy_core::PullStrategy::Merge,
+            moved: true,
+            preview: canopy_core::PullPreview {
+                upstream: "origin/main".into(),
+                tip: None,
+                ahead: 0,
+                behind: 3,
+                conflicts: None,
+                overlap: Vec::new(),
             },
         },
         "confirm-danger" => Dialog::Confirm {

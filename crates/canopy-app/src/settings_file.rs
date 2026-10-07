@@ -8,7 +8,9 @@
 //! (`hosting.rs` keeps them), so they are never in the file. The programs Canopy runs, the hosts
 //! trusted with a GitLab token and everything tied to a folder on this computer
 //! ([`THIS_COMPUTER`]) are neither written nor read either, and a file may switch a network
-//! feature off but never on ([`NETWORK_SWITCHES`]).
+//! feature off but never on ([`NETWORK_SWITCHES`]) nor fetch more often (`AUTO_FETCH`). Git
+//! choices that could delete local tags, override the user's own git configuration or send a push
+//! somewhere unexpected take a file's value only when it is the safe one ([`GIT_GUARDS`]).
 //!
 //! The file is JSON: `{"format": "canopy-settings", "version": 1, "exported": "<UTC>",
 //! "settings": {…}}`. An import is checked as a whole before anything changes: a file that is
@@ -69,6 +71,51 @@ pub const NETWORK_SWITCHES: &[(&str, &str)] = &[
     ("hosting_api", "pull and merge requests"),
     ("download_avatars", "profile pictures"),
     ("check_updates", "update checks"),
+    ("include_prereleases", "beta builds"),
+];
+
+/// How often a file may have Canopy fetch on its own, with the import message's words: never more
+/// often than now, and never when automatic fetching is off here (0 turns it off).
+const AUTO_FETCH: (&str, &str) = ("auto_fetch_minutes", "automatic fetching");
+
+/// Whether a file's `auto_fetch_minutes` asks for no more fetching than `current` does.
+fn fetches_no_more(current: Option<&Value>, value: &Value) -> bool {
+    let now = current.and_then(Value::as_u64).unwrap_or(0);
+    value
+        .as_u64()
+        .is_some_and(|v| v == 0 || (now != 0 && v >= now))
+}
+
+/// The one value of a guarded setting a file may set.
+#[derive(Debug, Clone, Copy)]
+pub enum Safe {
+    Bool(bool),
+    Text(&'static str),
+}
+
+impl Safe {
+    fn is(self, value: &Value) -> bool {
+        match self {
+            Self::Bool(b) => value == &Value::Bool(b),
+            Self::Text(t) => value.as_str() == Some(t),
+        }
+    }
+}
+
+/// Git choices where one value can lose data or send it, with the value a file may set and the
+/// import message's words. Any other value in a file leaves the current one alone, so a file
+/// cannot have a pruning fetch delete local tags that were never pushed (`prune_tags`), take
+/// decisions away from the user's git configuration (`follow_git_config`) or have a push without
+/// a destination create or update a branch the user did not choose (`push_default`). The other
+/// git choices are Canopy's defaults or lose nothing, and a file sets them freely.
+pub const GIT_GUARDS: &[(&str, Safe, &str)] = &[
+    ("prune_tags", Safe::Bool(false), "tag pruning"),
+    (
+        "follow_git_config",
+        Safe::Bool(true),
+        "following the git configuration",
+    ),
+    ("push_default", Safe::Text("Simple"), "where a push goes"),
 ];
 
 /// An imported file's settings, and what of the file was not taken.
@@ -122,8 +169,8 @@ pub fn export(s: &Settings) -> Result<String, String> {
 }
 
 /// `current` with the preferences from a settings file; nothing else changes. Preferences the
-/// file does not name keep their current value, and so do [`THIS_COMPUTER`]'s and a
-/// [`NETWORK_SWITCHES`] feature that is off.
+/// file does not name keep their current value, and so do [`THIS_COMPUTER`]'s, a
+/// [`NETWORK_SWITCHES`] feature that is off and a [`GIT_GUARDS`] choice the file sets unsafely.
 pub fn import(current: &Settings, text: &str) -> Result<Imported, String> {
     let file: Value =
         serde_json::from_str(text).map_err(|e| format!("This is not a settings file: {e}."))?;
@@ -169,6 +216,20 @@ pub fn import(current: &Settings, text: &str) -> Result<Imported, String> {
             && merged.get(&key) == Some(&Value::Bool(false))
         {
             if value != Value::Bool(false) {
+                keep(words);
+            }
+            continue;
+        }
+        if key == AUTO_FETCH.0 && !fetches_no_more(merged.get(&key), &value) {
+            if merged.get(&key) != Some(&value) {
+                keep(AUTO_FETCH.1);
+            }
+            continue;
+        }
+        if let Some((_, safe, words)) = GIT_GUARDS.iter().find(|(k, ..)| *k == key)
+            && !safe.is(&value)
+        {
+            if merged.get(&key) != Some(&value) {
                 keep(words);
             }
             continue;
@@ -313,7 +374,7 @@ fn read_text(reader: impl Read) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{CloneProtocol, PullMode};
+    use crate::settings::{CloneProtocol, PullMode, PushMode};
     use crate::ui::theme::ThemeId;
 
     fn customised() -> Settings {
@@ -402,6 +463,141 @@ mod tests {
             (back.zoom - 1.2).abs() < f32::EPSILON,
             "preferences still come in"
         );
+    }
+
+    fn file_with(settings: &str) -> String {
+        format!(r#"{{"format": "canopy-settings", "version": 1, "settings": {settings}}}"#)
+    }
+
+    #[test]
+    fn a_file_cannot_turn_on_tag_pruning() {
+        let off = Settings::default();
+        let on = Settings {
+            prune_tags: true,
+            ..Settings::default()
+        };
+        let imported = import(
+            &off,
+            &file_with(r#"{"prune_tags": true, "follow_git_config": false}"#),
+        )
+        .unwrap();
+        assert!(
+            !imported.settings.prune_tags,
+            "a file must not turn on deleting local tags"
+        );
+        assert!(
+            imported.kept.contains(&"tag pruning"),
+            "{:?}",
+            imported.kept
+        );
+        // A file may switch it off, and a switch already on stays on.
+        assert!(
+            !import(&on, &file_with(r#"{"prune_tags": false}"#))
+                .unwrap()
+                .settings
+                .prune_tags
+        );
+        let same = import(&on, &file_with(r#"{"prune_tags": true}"#)).unwrap();
+        assert!(same.settings.prune_tags && same.kept.is_empty());
+    }
+
+    #[test]
+    fn a_file_cannot_fetch_more_often_or_turn_on_beta_builds() {
+        let off = Settings::default();
+        let every_ten = Settings {
+            auto_fetch_minutes: 10,
+            ..Settings::default()
+        };
+        let imported = import(
+            &off,
+            &file_with(r#"{"auto_fetch_minutes": 1, "include_prereleases": true}"#),
+        )
+        .unwrap();
+        assert_eq!(
+            imported.settings.auto_fetch_minutes, 0,
+            "fetching stays off"
+        );
+        assert!(
+            !imported.settings.include_prereleases,
+            "beta builds stay off"
+        );
+        assert!(
+            imported.kept.contains(&"automatic fetching") && imported.kept.contains(&"beta builds"),
+            "{:?}",
+            imported.kept
+        );
+        let faster = import(&every_ten, &file_with(r#"{"auto_fetch_minutes": 1}"#)).unwrap();
+        assert_eq!(
+            faster.settings.auto_fetch_minutes, 10,
+            "no more often than now"
+        );
+        // Less often, or off, comes in.
+        for minutes in [30, 0] {
+            let fewer = import(
+                &every_ten,
+                &file_with(&format!(r#"{{"auto_fetch_minutes": {minutes}}}"#)),
+            )
+            .unwrap();
+            assert_eq!(fewer.settings.auto_fetch_minutes, minutes);
+            assert!(fewer.kept.is_empty(), "{:?}", fewer.kept);
+        }
+    }
+
+    #[test]
+    fn a_file_cannot_stop_following_the_git_configuration() {
+        let follows = Settings::default();
+        assert!(follows.follow_git_config);
+        let imported = import(&follows, &file_with(r#"{"follow_git_config": false}"#)).unwrap();
+        assert!(imported.settings.follow_git_config);
+        assert!(imported.kept.contains(&"following the git configuration"));
+        let apart = Settings {
+            follow_git_config: false,
+            ..Settings::default()
+        };
+        let back = import(&apart, &file_with(r#"{"follow_git_config": true}"#)).unwrap();
+        assert!(
+            back.settings.follow_git_config,
+            "a file may hand decisions back to git"
+        );
+    }
+
+    #[test]
+    fn a_file_cannot_choose_where_a_push_goes() {
+        let simple = Settings::default();
+        for mode in ["Current", "Upstream"] {
+            let imported = import(
+                &simple,
+                &file_with(&format!(r#"{{"push_default": "{mode}"}}"#)),
+            )
+            .unwrap();
+            assert_eq!(imported.settings.push_default, PushMode::Simple, "{mode}");
+            assert!(imported.kept.contains(&"where a push goes"));
+        }
+        let current = Settings {
+            push_default: PushMode::Current,
+            ..Settings::default()
+        };
+        let back = import(&current, &file_with(r#"{"push_default": "Upstream"}"#)).unwrap();
+        assert_eq!(back.settings.push_default, PushMode::Current);
+        let back = import(&current, &file_with(r#"{"push_default": "Simple"}"#)).unwrap();
+        assert_eq!(back.settings.push_default, PushMode::Simple);
+    }
+
+    #[test]
+    fn a_file_still_sets_the_harmless_git_choices() {
+        let here = Settings::default();
+        let imported = import(
+            &here,
+            &file_with(
+                r#"{"prune_on_fetch": false, "autostash": false, "follow_tags": false,
+                    "pull_mode": "Rebase", "initial_branch": "trunk"}"#,
+            ),
+        )
+        .unwrap();
+        let s = imported.settings;
+        assert!(!s.prune_on_fetch && !s.autostash && !s.follow_tags);
+        assert_eq!(s.initial_branch, "trunk");
+        assert!(imported.kept.is_empty(), "{:?}", imported.kept);
     }
 
     #[test]

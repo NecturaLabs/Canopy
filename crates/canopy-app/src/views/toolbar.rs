@@ -538,6 +538,9 @@ fn view_tabs(
         .strong_badges(true)
         .badge(1, changes)
         .badge(2, n)
+        // The tools after the switcher keep their place as the counts come and go (a commit
+        // empties Changes while the pointer is on Push).
+        .badge_room(1)
         .label("View")
         .id_salt(VIEW_TABS)
         .option_enabled(
@@ -545,6 +548,9 @@ fn view_tabs(
             requests.is_some(),
             Some("Add a GitHub or GitLab remote to view pull or merge requests"),
         );
+    if requests.is_some() {
+        tabs = tabs.badge_room(2);
+    }
     for (i, ((_, _, label), command)) in options.iter().zip(commands).enumerate() {
         tabs = tabs.option_tooltip(i, *label).option_shortcut(i, command);
     }
@@ -847,6 +853,38 @@ mod tests {
         }
     }
 
+    /// usersim F6: the tools after the switcher stay put as the Changes and Requests counts come
+    /// and go (a commit empties Changes while the pointer is on Push).
+    #[test]
+    fn the_switcher_keeps_its_width_as_the_counts_come_and_go() {
+        let ctx = context();
+        let right = |changes: usize, requests: usize| {
+            let mut edge = 0.0;
+            for _ in 0..2 {
+                frame(&ctx, Vec::new(), |ui| {
+                    view_tabs(
+                        ui,
+                        View::History,
+                        changes,
+                        Some((ForgeKind::GitHub, requests)),
+                        false,
+                        &mut Vec::new(),
+                    );
+                    edge = ui.min_rect().right();
+                });
+            }
+            edge
+        };
+        let edges: Vec<f32> = [(0, 0), (4, 0), (12, 3), (0, 12), (99, 99), (150, 150)]
+            .iter()
+            .map(|(c, r)| right(*c, *r))
+            .collect();
+        assert!(
+            edges.iter().all(|e| (e - edges[0]).abs() < 0.5),
+            "the switcher's right edge moved: {edges:?}"
+        );
+    }
+
     #[test]
     fn requests_without_a_forge_cannot_be_chosen() {
         let ctx = context();
@@ -970,12 +1008,24 @@ mod tests {
                     strategy: PullStrategy::default(),
                     follow_config: true,
                     prune: true,
-                    checked: false,
+                    checked: None,
                 },
                 Some(Tool::Pull),
             ),
-            (Op::Push { force: false }, Some(Tool::Push)),
-            (Op::Push { force: true }, Some(Tool::Push)),
+            (
+                Op::Push {
+                    force: false,
+                    expect: None,
+                },
+                Some(Tool::Push),
+            ),
+            (
+                Op::Push {
+                    force: true,
+                    expect: None,
+                },
+                Some(Tool::Push),
+            ),
             (
                 Op::StashSave {
                     message: None,
@@ -1316,5 +1366,70 @@ mod tests {
         assert!(!painted(&narrow, "Local only"), "the badge goes");
         let wide = bar(1150.0);
         assert!(painted(&wide, "Changes") && painted(&wide, "Local only"));
+    }
+    /// F1: with Tooltips at the default Helpful, resting the pointer on the toolbar's Fetch and
+    /// Pull shows what they do and their shortcuts.
+    #[test]
+    fn the_fetch_and_pull_tools_show_their_tooltips_at_the_default_level() {
+        use crate::ui::kit::overlay::{TooltipLevel, set_tooltip_level};
+        fn painted(shapes: &[egui::epaint::ClippedShape], text: &str) -> bool {
+            fn find(shape: &egui::Shape, text: &str) -> bool {
+                match shape {
+                    egui::Shape::Text(t) => t.galley.text() == text,
+                    egui::Shape::Vec(v) => v.iter().any(|s| find(s, text)),
+                    _ => false,
+                }
+            }
+            shapes.iter().any(|c| find(&c.shape, text))
+        }
+        set_tooltip_level(TooltipLevel::Helpful);
+        let mut tab = repo_tab("alpha");
+        tab.snap = Some(Arc::new(canopy_core::RepoSnapshot {
+            remotes: vec![canopy_core::RemoteInfo {
+                name: "origin".into(),
+                url: Some("https://example.com/a.git".into()),
+                default_branch: None,
+            }],
+            ..canopy_core::RepoSnapshot::default()
+        }));
+        let bar = |ctx: &egui::Context, time: f64, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(SCREEN),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| actions_bar(ui, &tab, &mut Vec::new()),
+            );
+            out.textures_delta.clear();
+            let nodes: Vec<Node> = out
+                .platform_output
+                .accesskit_update
+                .map(|u| u.nodes.into_iter().map(|(_, n)| n).collect())
+                .unwrap_or_default();
+            (out.shapes, nodes)
+        };
+        for (tool, tip) in [
+            ("Fetch", "Fetch all remotes"),
+            ("Pull", "Pull the current branch: Fast-forward only"),
+        ] {
+            let ctx = context();
+            let mut nodes = Vec::new();
+            for i in 0..3 {
+                nodes = bar(&ctx, f64::from(i) * 0.1, Vec::new()).1;
+            }
+            let at = node_rect(node(&nodes, Role::Button, tool)).center();
+            let mut shapes = Vec::new();
+            for i in 0..12 {
+                let events = if i == 0 {
+                    vec![egui::Event::PointerMoved(at)]
+                } else {
+                    Vec::new()
+                };
+                shapes = bar(&ctx, 1.0 + f64::from(i) * 0.2, events).0;
+            }
+            assert!(painted(&shapes, tip), "{tool} shows {tip:?} at Helpful");
+        }
     }
 }

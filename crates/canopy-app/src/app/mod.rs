@@ -97,6 +97,7 @@ pub const OVERLAYS: &[&str] = &[
     "confirm-merge-risky",
     "diverged",
     "pull-conflicts",
+    "pull-moved",
     "whats-new",
     "crash",
     "update-available",

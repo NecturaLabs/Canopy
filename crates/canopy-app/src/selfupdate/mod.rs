@@ -20,6 +20,7 @@ use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use canopy_hosting::updates::{self, UpdateManifest};
 
@@ -806,11 +807,16 @@ fn sweep(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// A name no other call in this process, and no other process, has used: the process id and a
+/// count keep it unique, and the clock's nanoseconds keep it from matching what an earlier process
+/// with the same id left behind.
 fn unique_name(prefix: &str) -> String {
+    static COUNT: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos());
-    format!("{prefix}{}-{nanos}", std::process::id())
+    let count = COUNT.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}{}-{nanos}-{count}", std::process::id())
 }
 
 /// The installer script of `plan`'s release, when it can be trusted: listed in the release's

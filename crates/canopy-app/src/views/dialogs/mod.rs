@@ -30,7 +30,7 @@ use crate::ui::theme::{self, palette};
 use crate::worker::Op;
 
 mod common;
-pub(crate) use common::tilde_in;
+pub(crate) use common::{tilde_in, valid_ref_name};
 mod credential;
 mod reader;
 mod stack;
@@ -41,7 +41,7 @@ mod url;
 use common::{
     FolderField, alternatives, answer, beside, bullet, confirm, document, field, field_with_error,
     folder_row, home, identity_in_scope, inset_scroll, note, recent_rows, remote_name_problem,
-    swallow_enter, tilde, valid_ref_name, working,
+    swallow_enter, tilde, working,
 };
 use credential::credential;
 pub use stack::DialogStack;
@@ -139,6 +139,8 @@ pub enum Dialog {
         repo: std::path::PathBuf,
         strategy: canopy_core::PullStrategy,
         preview: canopy_core::PullPreview,
+        /// The remote moved after the user's last answer: this asks about the new state.
+        moved: bool,
     },
     About,
     Identity {
@@ -819,7 +821,10 @@ pub fn show(
                         url,
                     })];
                     if *publish {
-                        run.push(Action::Op(Op::Push { force: false }));
+                        run.push(Action::Op(Op::Push {
+                            force: false,
+                            expect: None,
+                        }));
                     } else if *fetch {
                         run.push(Action::Fetch);
                     }
@@ -990,6 +995,7 @@ pub fn show(
                     repo: repo.clone(),
                     mode: *mode,
                     remember: *remember,
+                    seen: preview.tip,
                 }])
             })
         }
@@ -997,28 +1003,43 @@ pub fn show(
             repo,
             strategy,
             preview,
+            moved,
         } => {
-            let incoming = match preview.behind {
-                1 => "1 new commit".to_owned(),
-                n => format!("{n} new commits"),
+            let (title, description, confirm) = if *moved {
+                let incoming = match preview.behind {
+                    1 => "1 new commit".to_owned(),
+                    n => format!("{n} new commits"),
+                };
+                (
+                    "The remote changed while you decided",
+                    format!(
+                        "{} received new commits since Canopy checked it and now has {incoming} for you. Pull them?",
+                        preview.upstream
+                    ),
+                    moved_pull_confirm(*strategy),
+                )
+            } else {
+                (
+                    "This pull will likely conflict",
+                    likely_conflict_description(&preview.upstream, preview.behind),
+                    "Pull anyway",
+                )
             };
             let result = KitDialog::new(salt)
-                .title("This pull will likely conflict")
+                .title(title)
                 .icon(icon::WARNING)
                 .width(DialogWidth::Form)
-                .description(format!(
-                    "{} has {incoming} that touch what you are working on. If you pull anyway, Canopy takes you to Changes to resolve the conflicts.",
-                    preview.upstream
-                ))
+                .description(description)
                 .body(|ui| predicted_conflicts(ui, preview))
                 .footer(|f| {
-                    f.cancel().confirm("Pull anyway");
+                    f.cancel().confirm(confirm);
                 })
                 .show(ctx);
             answer(result, || {
                 Outcome::Run(vec![Action::PullAnyway {
                     repo: repo.clone(),
                     strategy: *strategy,
+                    seen: preview.tip,
                 }])
             })
         }
@@ -1139,7 +1160,7 @@ pub fn show(
                 .body(|ui| {
                     document(ui, "whats-new", NOTES_HEIGHT, notes);
                     if LinkButton::new("All releases")
-                        .external(true)
+                        .url(crate::updater::RELEASES_PAGE)
                         .text_size(m.meta_size)
                         .show(ui)
                         .clicked()
@@ -1257,6 +1278,28 @@ fn clone_target(builder: &UrlBuilder, parent: &str) -> Option<(String, std::path
     }
     let dest = crate::settings::expand_home(parent).join(&name);
     Some((url.trim().to_owned(), dest))
+}
+
+/// The confirm button of the question about a remote that moved after the user chose how to
+/// combine the branches: it names that choice, as the diverged-branches dialog does.
+fn moved_pull_confirm(strategy: canopy_core::PullStrategy) -> &'static str {
+    use canopy_core::PullStrategy as S;
+    match strategy {
+        S::Rebase | S::RebaseMerges => "Pull with rebase",
+        S::Merge | S::MergeNoFastForward => "Pull with merge",
+        S::FastForwardOnly => "Pull",
+    }
+}
+
+/// The likely-conflict dialog's text: what the upstream has and what happens on "Pull anyway".
+fn likely_conflict_description(upstream: &str, behind: usize) -> String {
+    let (incoming, verb) = match behind {
+        1 => ("1 new commit".to_owned(), "touches"),
+        n => (format!("{n} new commits"), "touch"),
+    };
+    format!(
+        "{upstream} has {incoming} that {verb} what you are working on. If you pull anyway, Canopy takes you to Changes to resolve the conflicts."
+    )
 }
 
 /// How many predicted files a pull's dialog lists before "and N more".
@@ -1621,23 +1664,23 @@ fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
         ui.add_space(theme::MD);
         // Where to read more: links, so the one action in the footer stays the main one. The row
         // is centred on its width from the frame before.
-        let links: [(&str, bool, Outcome); 4] = [
-            ("What's new", false, Outcome::Run(vec![Action::WhatsNew])),
+        let links: [(&str, Option<&str>, Outcome); 4] = [
+            ("What's new", None, Outcome::Run(vec![Action::WhatsNew])),
             (
                 "Releases",
-                true,
+                Some(crate::updater::RELEASES_PAGE),
                 Outcome::Run(vec![Action::OpenUrl(
                     crate::updater::RELEASES_PAGE.to_owned(),
                 )]),
             ),
             (
                 "Privacy Policy",
-                false,
+                None,
                 Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Privacy))]),
             ),
             (
                 "Terms of Service",
-                false,
+                None,
                 Outcome::Run(vec![Action::OpenDialog(Dialog::Legal(Document::Terms))]),
             ),
         ];
@@ -1647,13 +1690,12 @@ fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
             ui.spacing_mut().item_spacing.x = theme::MD;
             ui.add_space(((ui.available_width() - last) / 2.0).max(0.0));
             let start = ui.cursor().left();
-            for (label, external, target) in links {
-                if LinkButton::new(label)
-                    .external(external)
-                    .text_size(m.meta_size)
-                    .show(ui)
-                    .clicked()
-                {
+            for (label, url, target) in links {
+                let mut link = LinkButton::new(label).text_size(m.meta_size);
+                if let Some(url) = url {
+                    link = link.url(url);
+                }
+                if link.show(ui).clicked() {
                     outcome = Some(target);
                 }
             }
@@ -1670,7 +1712,10 @@ fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Dialog, DialogStack, Oid, Start, valid_ref_name};
+    use super::{
+        Dialog, DialogStack, Oid, Start, likely_conflict_description, moved_pull_confirm,
+        valid_ref_name,
+    };
     use crate::askpass::Prompt;
     use crate::ui::legal::{Document, Pending};
     use crossbeam_channel::Receiver;
@@ -1705,6 +1750,33 @@ mod tests {
         Dialog::Stash {
             message: name.into(),
             untracked: false,
+        }
+    }
+
+    #[test]
+    fn the_likely_conflict_text_agrees_with_the_number_of_commits() {
+        for (behind, says) in [
+            (1, "origin/main has 1 new commit that touches what you are"),
+            (2, "origin/main has 2 new commits that touch what you are"),
+        ] {
+            let text = likely_conflict_description("origin/main", behind);
+            assert!(text.starts_with(says), "{behind}: {text}");
+        }
+    }
+
+    /// The question about a remote that moved keeps the user's earlier choice in view: the
+    /// button names what the pull will do, in the words of the diverged-branches dialog.
+    #[test]
+    fn the_moved_remote_question_names_the_way_the_branches_combine() {
+        use canopy_core::PullStrategy as S;
+        for (strategy, says) in [
+            (S::Rebase, "Pull with rebase"),
+            (S::RebaseMerges, "Pull with rebase"),
+            (S::Merge, "Pull with merge"),
+            (S::MergeNoFastForward, "Pull with merge"),
+            (S::FastForwardOnly, "Pull"),
+        ] {
+            assert_eq!(moved_pull_confirm(strategy), says, "{strategy:?}");
         }
     }
 

@@ -400,7 +400,7 @@ fn whole_rows_height<T>(
 const ROW_GAP: f32 = 10.0;
 
 /// "The field that is the surface": the palette's and cheatsheet's search, the kit's borderless
-/// [`SearchField`] with only a seam under it, full width.
+/// [`SearchField`] with only a seam under it, full width; focus turns the seam to the focus colour.
 pub(crate) fn surface_search(
     ui: &mut egui::Ui,
     text: &mut String,
@@ -410,14 +410,14 @@ pub(crate) fn surface_search(
     let s = theme::surfaces(ui.ctx());
     let m = theme::metrics();
     let at = ui.available_rect_before_wrap();
-    let edit = SearchField::new(text)
+    // Under the field, so its focus line lies over the seam.
+    let bottom = at.top() + m.palette_input_height;
+    paint::seam_h(ui.painter(), at.x_range(), bottom - 0.5, s.border);
+    SearchField::new(text)
         .placeholder(placeholder)
         .name(name)
         .borderless(true)
-        .show(ui);
-    let bottom = at.top() + m.palette_input_height;
-    paint::seam_h(ui.painter(), at.x_range(), bottom - 0.5, s.border);
-    edit
+        .show(ui)
 }
 
 /// One palette entry as a list row: icon, label, detail, and its shortcut as keycaps. The
@@ -503,6 +503,7 @@ fn entry_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::kit::testkit;
     use egui::vec2;
 
     fn entry(label: &str, detail: &str) -> Entry {
@@ -616,6 +617,43 @@ mod tests {
             let code = text.split("#[cfg(test)]").next().unwrap_or_default();
             assert!(!code.contains("TextEdit::"), "{file} builds its own input");
         }
+    }
+
+    /// usersim2 N4: the palette's and the cheatsheet's search shows focus in the focus colour,
+    /// over its seam, whether it was reached by Tab or by a click.
+    #[test]
+    fn the_surface_search_shows_focus_over_its_seam() {
+        // The colour of each flat fill or line, in paint order.
+        fn collect(shape: &egui::Shape, out: &mut Vec<egui::Color32>) {
+            match shape {
+                egui::Shape::Vec(v) => v.iter().for_each(|s| collect(s, out)),
+                egui::Shape::Rect(r) if r.fill.a() > 0 => out.push(r.fill),
+                egui::Shape::LineSegment { stroke, .. } => out.push(stroke.color),
+                _ => {}
+            }
+        }
+        let ctx = testkit::ctx();
+        let (focus, border) = (palette(&ctx).focus, theme::surfaces(&ctx).border);
+        let mut text = String::new();
+        let mut frame = |events: Vec<egui::Event>| {
+            let mut out = Vec::new();
+            for c in testkit::frame(&ctx, events, |ui| {
+                surface_search(ui, &mut text, "Search", "Search shortcuts");
+            }) {
+                collect(&c.shape, &mut out);
+            }
+            out
+        };
+        frame(Vec::new());
+        assert!(!frame(Vec::new()).contains(&focus), "unfocused: no ring");
+        frame(key(Key::Tab));
+        let colors = frame(Vec::new());
+        let at = |c: egui::Color32| colors.iter().rposition(|x| *x == c);
+        let (line, seam) = (at(focus), at(border));
+        assert!(
+            matches!((line, seam), (Some(l), Some(s)) if l > s),
+            "focus line {line:?} over the seam {seam:?}"
+        );
     }
 
     #[test]

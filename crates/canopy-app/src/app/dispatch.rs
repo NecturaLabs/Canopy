@@ -105,6 +105,11 @@ impl CanopyApp {
                         }
                     }
                 }
+                Action::ForcePush => {
+                    if let Some(t) = self.tab() {
+                        t.worker.send(Job::PushTarget);
+                    }
+                }
                 Action::LoadMore => {
                     let page = self.settings.commit_page;
                     if let Some(t) = self.tab() {
@@ -130,7 +135,7 @@ impl CanopyApp {
                             strategy: choice.mode.strategy(),
                             follow_config: choice.follow_config,
                             prune: settings.prune_for(&t.path),
-                            checked: false,
+                            checked: None,
                         });
                     }
                 }
@@ -138,6 +143,7 @@ impl CanopyApp {
                     repo,
                     mode,
                     remember,
+                    seen,
                 } => {
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.path == repo) {
                         match remember {
@@ -162,17 +168,21 @@ impl CanopyApp {
                             strategy: mode.strategy(),
                             follow_config: false,
                             prune: self.settings.prune_for(&t.path),
-                            checked: true,
+                            checked: seen,
                         });
                     }
                 }
-                Action::PullAnyway { repo, strategy } => {
+                Action::PullAnyway {
+                    repo,
+                    strategy,
+                    seen,
+                } => {
                     if let Some(t) = self.tabs.iter().find(|t| t.path == repo) {
                         t.op(Op::Pull {
                             strategy,
                             follow_config: false,
                             prune: self.settings.prune_for(&t.path),
-                            checked: true,
+                            checked: seen,
                         });
                     }
                 }
@@ -184,7 +194,10 @@ impl CanopyApp {
                     {
                         self.dialogs.open(self.add_remote_dialog(true));
                     } else if let Some(t) = self.tab() {
-                        t.op(Op::Push { force: false });
+                        t.op(Op::Push {
+                            force: false,
+                            expect: None,
+                        });
                     }
                 }
                 Action::WhatsNew => {
@@ -618,6 +631,7 @@ mod tests {
             repo: path.clone(),
             mode,
             remember,
+            seen: None,
         };
         app.apply(&ctx, vec![pull(PullMode::Merge, Remember::No)]);
         assert_eq!(app.settings.pull_mode_for(&path), default);
@@ -632,6 +646,77 @@ mod tests {
             (here.mode, here.follow_config),
             (everywhere.mode, everywhere.follow_config)
         );
+    }
+
+    /// The force push question names the branch and where it goes, which the repository thread
+    /// works out, and confirming it carries that answer to the push.
+    #[test]
+    fn the_force_push_question_names_the_branch_and_its_destination() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let (worker, events, jobs) = crate::worker::Worker::detached();
+        let mut tab = test_tab(canopy_core::RepoSnapshot::default());
+        tab.worker = worker;
+        app.tabs.push(tab);
+        app.apply(&ctx, vec![Action::ForcePush]);
+        assert!(
+            app.dialogs.current().is_none(),
+            "nothing is asked before the answer"
+        );
+        let sent: Vec<_> = jobs.try_iter().collect();
+        assert!(
+            sent.iter().any(|j| matches!(j, Job::PushTarget)),
+            "{sent:?}"
+        );
+        events
+            .send(crate::worker::Event::PushTarget(Ok(
+                canopy_core::PushTarget {
+                    branch: "feature/dark-mode".into(),
+                    remote: "origin".into(),
+                    dest: "feature/dark-mode".into(),
+                },
+            )))
+            .expect("the tab listens");
+        app.poll(&ctx);
+        let Some(Dialog::Confirm {
+            title, body, op, ..
+        }) = app.dialogs.current()
+        else {
+            panic!("no confirmation: {:?}", app.dialogs.current());
+        };
+        assert_eq!(
+            title,
+            "Force push feature/dark-mode to origin/feature/dark-mode?"
+        );
+        assert!(
+            body.contains("origin/feature/dark-mode is overwritten"),
+            "{body}"
+        );
+        let Op::Push {
+            force: true,
+            expect: Some(expect),
+        } = op
+        else {
+            panic!("a force push naming its target: {op:?}");
+        };
+        assert_eq!(
+            (&*expect.branch, &*expect.remote, &*expect.dest),
+            ("feature/dark-mode", "origin", "feature/dark-mode")
+        );
+    }
+
+    #[test]
+    fn the_force_delete_question_names_the_branch() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        app.tabs[0].force_delete_offer = Some("topic".into());
+        app.poll(&ctx);
+        let Some(Dialog::Confirm { title, .. }) = app.dialogs.current() else {
+            panic!("no confirmation: {:?}", app.dialogs.current());
+        };
+        assert_eq!(title, "Force delete branch topic?");
     }
 
     /// A pull decision, or the offer to force-delete a branch, that comes back after the user
@@ -656,6 +741,7 @@ mod tests {
             strategy: canopy_core::PullStrategy::FastForwardOnly,
             diverged: true,
             configured: false,
+            moved: false,
         });
         app.tabs[0].force_delete_offer = Some("topic".into());
         app.poll(&ctx);
@@ -669,6 +755,7 @@ mod tests {
                         repo,
                         mode: PullMode::Merge,
                         remember: Remember::Repository,
+                        seen: None,
                     });
                 }
                 Dialog::Confirm { repo, op, .. } => {

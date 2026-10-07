@@ -77,6 +77,8 @@ pub struct Segmented<'a, T: PartialEq + Clone> {
     options: Vec<(T, Option<&'a str>, &'a str)>,
     content: Content,
     badges: Vec<(usize, usize)>,
+    /// Segments that keep room for a two-digit count while they show none.
+    badge_room: Vec<usize>,
     strong_badges: bool,
     label: String,
     equal: bool,
@@ -123,6 +125,7 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
             options,
             content: c,
             badges: Vec::new(),
+            badge_room: Vec::new(),
             strong_badges: false,
             label: String::new(),
             equal: false,
@@ -143,6 +146,12 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
         if n > 0 {
             self.badges.push((index, n));
         }
+        self
+    }
+    /// Segment `index` keeps the room of a two-digit count badge while it shows none, so the
+    /// control (and whatever sits after it) does not change width as the count comes and goes.
+    pub fn badge_room(mut self, index: usize) -> Self {
+        self.badge_room.push(index);
         self
     }
     /// Count badges on the `primary` fill (the view switcher's counts, spec 4.18 `strong`).
@@ -274,10 +283,24 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
                 let n = parts.iter().flatten().count();
                 let content: f32 = parts.iter().flatten().sum::<f32>()
                     + ITEM_GAP * crate::ui::count_f32(n.saturating_sub(1));
-                let width = if text.is_none() && badge.is_none() {
+                // The room the widest count ("99+") would take, when this segment keeps it free: the
+                // content stays centred in it.
+                let held = if self.badge_room.contains(&i) {
+                    let widest = Badge::new(count_text(100)).mono().measure(ui).x;
+                    let shown = badge.as_ref().map_or(0.0, |b| b.measure(ui).x);
+                    (widest - shown).max(0.0)
+                        + if badge.is_none() && n > 0 {
+                            ITEM_GAP
+                        } else {
+                            0.0
+                        }
+                } else {
+                    0.0
+                };
+                let width = if text.is_none() && badge.is_none() && held == 0.0 {
                     (content + 2.0 * (pad - 3.0)).max(seg_h + 4.0)
                 } else {
-                    content + 2.0 * pad
+                    content + held + 2.0 * pad
                 };
                 Seg {
                     icon,
@@ -1187,6 +1210,39 @@ mod tests {
     use super::*;
 
     const OPTS: [(u8, &str); 3] = [(0, "History"), (1, "Changes"), (2, "Requests")];
+
+    /// a segment that keeps room for its count does not change the control's width
+    /// as the count appears, grows to two digits and goes.
+    #[test]
+    fn a_segment_with_badge_room_keeps_the_controls_width_as_its_count_comes_and_goes() {
+        let ctx = testkit::ctx();
+        let width = |count: usize, room: bool| {
+            let mut v = 0_u8;
+            let mut w = 0.0;
+            frame(&ctx, Vec::new(), |ui| {
+                let mut tabs = Segmented::with_icons(
+                    &mut v,
+                    &[(0, "", "History"), (1, "", "Changes"), (2, "", "Requests")],
+                )
+                .badge(1, count);
+                if room {
+                    tabs = tabs.badge_room(1);
+                }
+                w = tabs.show(ui).rect.width();
+            });
+            w
+        };
+        let counts = [0, 4, 12, 99, 150];
+        let widths: Vec<f32> = counts.iter().map(|n| width(*n, true)).collect();
+        assert!(
+            widths.iter().all(|w| (w - widths[0]).abs() < 0.5),
+            "{widths:?} with room"
+        );
+        assert!(
+            (width(0, false) - width(4, false)).abs() > 4.0,
+            "without room the control grows with its count"
+        );
+    }
 
     #[test]
     fn segmented_chooses_by_click_and_arrows() {

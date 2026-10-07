@@ -1121,8 +1121,9 @@ mod tests {
 
         // A graphical editor in $VISUAL wins, named by its desktop entry.
         let mut e = env(root, &defaults);
+        // Quoted, as a user would write a path with spaces (the temporary folder may have some).
         e.visual = Some(format!(
-            "{} --wait",
+            "\"{}\" --wait",
             root.join("opt/code/bin/code").display()
         ));
         e.editor = Some("nvim".to_owned());

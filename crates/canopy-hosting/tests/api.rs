@@ -213,9 +213,35 @@ mod server {
         let _ = stream.write_all(out.as_bytes());
         let _ = stream.flush();
     }
+
+    /// An address on 127.0.0.1 that refuses connections and that no server in this process can
+    /// take.
+    ///
+    /// Binding a listener and dropping it does not give such an address: the port is free again,
+    /// and a server another test starts on port 0 can be handed it before the connection is made,
+    /// then answers it. Here a socket connects to a throwaway listener and both are kept: nothing
+    /// listens on the socket's own port, so connecting to it is refused, and the port stays in
+    /// use, so nothing can bind it.
+    pub struct Refused {
+        pub address: std::net::SocketAddr,
+        _socket: TcpStream,
+        _listener: TcpListener,
+    }
+
+    impl Refused {
+        pub fn new() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let socket = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+            Self {
+                address: socket.local_addr().expect("addr"),
+                _socket: socket,
+                _listener: listener,
+            }
+        }
+    }
 }
 
-use server::Server;
+use server::{Refused, Server};
 
 const TOKEN: &str = "tok-SECRET-1234567890";
 
@@ -703,12 +729,7 @@ fn github_error_mapping() {
     ));
 
     // Nothing listening.
-    let dead = {
-        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let port = l.local_addr().expect("addr").port();
-        drop(l);
-        port
-    };
+    let dead = Refused::new();
     let forge = Forge {
         kind: ForgeKind::GitHub,
         host: "github.com".into(),
@@ -718,12 +739,21 @@ fn github_error_mapping() {
     let offline = Client::with_api_base(
         &forge,
         Some(TOKEN.into()),
-        &format!("http://127.0.0.1:{dead}"),
+        &format!("http://{}", dead.address),
     );
     let err = offline.viewer().expect_err("connection refused");
     assert!(matches!(err, Error::Network(_)), "{err:?}");
     assert!(!err.to_string().contains(TOKEN));
     assert!(!format!("{err:?}").contains(TOKEN));
+}
+
+#[test]
+fn a_refused_address_stays_refused_and_cannot_be_taken() {
+    let refused = Refused::new();
+    let connect = std::net::TcpStream::connect(refused.address).expect_err("refused");
+    assert_eq!(connect.kind(), std::io::ErrorKind::ConnectionRefused);
+    let bind = std::net::TcpListener::bind(refused.address).expect_err("in use");
+    assert_eq!(bind.kind(), std::io::ErrorKind::AddrInUse);
 }
 
 #[test]

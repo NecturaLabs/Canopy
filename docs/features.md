@@ -1,7 +1,7 @@
 # Feature matrix
 
-Canopy's status per feature, next to three established clients. **Done** means shipped in v0.1;
-**Unreleased** means merged into `main` and in the code, but in no release yet (the backlog's
+Canopy's status per feature, next to three established clients. **Done** means shipped in a
+release (build 763 or earlier); **Unreleased** means merged into `main` and in the code, but in no release yet (the backlog's
 "Implemented, awaiting in-app verification" list says which of these the owner has not yet
 confirmed in the running app); **Planned** means it has an entry in [backlog.md](backlog.md),
 and "backend merged" means `canopy-core` has it but no screen uses it yet. Competitor columns reflect their
@@ -18,9 +18,9 @@ Update this table in the same change that adds or alters a feature.
 | macOS | Done | Yes | Yes | Yes |
 | Windows | Done | Yes | Yes | Yes |
 | Native (non-Electron) UI | Done | Yes | No | Yes |
-| One-line install into its own folder, with uninstall (Linux, macOS, Windows) | Unreleased | No | No | No |
-| In-app update: download, SHA-256 check and install in place where the installer put Canopy (Linux), the installer elsewhere, then restart | Unreleased | ? | ? | ? |
-| Releases named by build number (`build 412 (a1b2c3d)`), shown in About, `--version`, logs and the update check; no version bumps | Unreleased | ? | ? | ? |
+| One-line install into its own folder, with uninstall (Linux, macOS, Windows) | Done | No | No | No |
+| In-app update: download, SHA-256 check and install in place where the installer put Canopy (Linux), the installer elsewhere, then restart | Done | ? | ? | ? |
+| Releases named by build number (`build 412 (a1b2c3d)`), shown in About, `--version`, logs and the update check; no version bumps | Done | ? | ? | ? |
 | Builds for Linux arm64 and Intel macOS | Experimental | No | Yes | Yes |
 | Network operations through the system `git` (credential helpers, SSH config, hooks) | Done | Yes | ? | Partial |
 
@@ -34,11 +34,11 @@ Update this table in the same change that adds or alters a feature.
 | Welcome screen with recent repositories | Done | Yes | Yes | Yes |
 | Auto refresh (file watcher, window focus) | Done | Yes | Yes | Yes |
 | Submodules | Planned (backend merged) | Yes | Yes | Yes |
-| Worktrees: a sidebar section lists the working folders with their branches (the open one marked) and opens one in a tab; creating and removing them is planned | Unreleased | Yes | Yes | ? |
+| Worktrees: a sidebar section lists the working folders with their branches (the open one marked) and opens one in a tab; creating and removing them is planned | Done | Yes | Yes | ? |
 | Git LFS indicator and commands | Planned (status backend merged) | Yes | Yes | Yes |
-| Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Unreleased | Yes | ? | ? |
+| Partial clones (`--filter=blob:none`, `--filter=tree:0`): history, commit details and diffs download the missing objects through `git` on demand | Done | Yes | ? | ? |
 | Very large repositories | Planned | ? | ? | ? |
-| Local-only repositories (no remote), with Publish to add one and push | Unreleased | ? | ? | ? |
+| Local-only repositories (no remote), with Publish to add one and push | Done | ? | ? | ? |
 
 Partial clones differ from a full clone in what the views can show without the network. Commit
 details list the changed files at once and fetch the line counts afterwards (a commit with more
@@ -96,17 +96,17 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
 |---|---|---|---|---|
 | Unstaged, staged and conflicted lists (empty ones hidden while another has content) | Done | Yes | Yes | Yes |
-| Clean working tree summary: branch status, Push/Pull/Publish, last commit | Unreleased | ? | ? | ? |
+| Clean working tree summary: branch status, Push/Pull/Publish, last commit | Done | ? | ? | ? |
 | Stage, unstage, discard per file and all | Done | Yes | Yes | Yes |
 | Hunk staging, unstaging and discard | Done | Yes | Yes | Yes |
-| Line-level staging | Unreleased | Yes | Yes | Yes |
+| Line-level staging | Done | Yes | Yes | Yes |
 | Diff with old and new line numbers | Done | Yes | Yes | Yes |
-| Side-by-side diff (a new or deleted file stays one column) | Unreleased | Yes | Yes | No |
-| Syntax highlighting in diffs | Unreleased | Yes | Yes | ? |
+| Side-by-side diff (a new or deleted file stays one column) | Done | Yes | Yes | No |
+| Syntax highlighting in diffs | Done | Yes | Yes | ? |
 | Image diff | Planned | Yes | Yes | ? |
-| Ignore whitespace, context lines setting | Unreleased | Yes | Yes | Yes |
+| Ignore whitespace, context lines setting | Done | Yes | Yes | Yes |
 | Commit composer with summary counter; follows the file lists, says why Commit is disabled | Done | Yes | Yes | Partial |
-| Unsent commit message kept when its tab closes, until the repository opens again (same session) | Unreleased | ? | ? | ? |
+| Unsent commit message kept when its tab closes, until the repository opens again (same session) | Done | ? | ? | ? |
 | Amend | Done | Yes | Yes | Yes |
 | Commit signing (GPG/SSH) | Planned | Yes | Yes | Yes |
 | Commit message templates and linting | Planned | ? | Yes | ? |
@@ -116,17 +116,17 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Feature | Canopy v0.1 | Fork | GitKraken | Sourcetree |
 |---|---|---|---|---|
 | Create (from any commit), checkout, rename, delete | Done | Yes | Yes | Yes |
-| Delete with `git branch -d`, forcing only after Git refuses and you confirm | Unreleased | ? | ? | ? |
+| Delete with `git branch -d`, forcing only after Git refuses and you confirm | Done | ? | ? | ? |
 | Checkout remote branch as tracking branch | Done | Yes | Yes | Yes |
 | Ahead/behind badges | Done | Yes | Yes | Yes |
-| Sidebar marks the branch, remote branch, tag, stash or worktree you clicked while History shows its commit (the checked-out branch on opening), apart from the checked-out branch (accent check, semibold) | Unreleased | Yes | Yes | Yes |
-| A branch checked out in another worktree opens it (double-click or Open worktree) instead of a checkout Git would refuse | Unreleased | Yes | Yes | ? |
+| Sidebar marks the branch, remote branch, tag, stash or worktree you clicked while History shows its commit (the checked-out branch on opening), apart from the checked-out branch (accent check, semibold) | Done | Yes | Yes | Yes |
+| A branch checked out in another worktree opens it (double-click or Open worktree) instead of a checkout Git would refuse | Done | Yes | Yes | ? |
 | Merge into current | Done | Yes | Yes | Yes |
 | Rebase current onto | Done | Yes | Yes | Yes |
 | Merge, rebase, cherry-pick in progress: continue and abort | Done | Yes | Yes | Yes |
 | Interactive rebase editor | Planned | Yes | Yes | Yes |
-| Merge modes: fast-forward when possible, no fast-forward, fast-forward only, squash | Unreleased | ? | ? | ? |
-| Built-in 3-way conflict resolver | Unreleased | Yes | Yes | No |
+| Merge modes: fast-forward when possible, no fast-forward, fast-forward only, squash | Done | ? | ? | ? |
+| Built-in 3-way conflict resolver | Done | Yes | Yes | No |
 | Drag a branch onto another to merge or rebase | Planned | Yes | Yes | ? |
 | git-flow | Planned (backend merged) | Yes | Yes | Yes |
 | Bisect | Planned | ? | ? | ? |
@@ -137,17 +137,20 @@ change when current settings change; Canopy never rewrites existing commits to f
 |---|---|---|---|---|
 | Fetch (all remotes, prune) | Done | Yes | Yes | Yes |
 | Pull (fast-forward or rebase per git config) | Done | Yes | Yes | Yes |
-| Pull checks first: fast-forward only by default, asks Rebase (recommended) or Merge when branches diverged, remembered for the repository or, where Canopy's own setting asked for fast-forwards, for every repository, and names the files before a pull that would conflict | Unreleased | ? | ? | ? |
-| Your git configuration decides what it sets (Follow my git config, on by default); elsewhere Canopy passes recommended defaults (autostash, push tags with their commits, `push.default=simple`, zdiff3 conflicts, `main` for new repositories, no tag pruning, `#` lines kept in commit messages), each a choice in Settings with its recommendation and where your configuration sets it | Unreleased | ? | ? | ? |
-| A pull fetches once: after its check it brings in what it fetched, so a credential prompt comes once | Unreleased | ? | ? | ? |
-| A rebase that stops on conflicts takes you to Changes, like a pull | Unreleased | ? | ? | ? |
-| A pull that stops on conflicts, or whose set-aside changes conflict when they come back, opens Changes to resolve them | Unreleased | ? | ? | ? |
+| Pull checks first: fast-forward only by default, asks Rebase (recommended) or Merge when branches diverged, remembered for the repository or, where Canopy's own setting asked for fast-forwards, for every repository, and names the files before a pull that would conflict | Done | ? | ? | ? |
+| Your git configuration decides what it sets (Follow my git config, on by default); elsewhere Canopy passes recommended defaults (autostash, push tags with their commits, `push.default=simple`, zdiff3 conflicts, `main` for new repositories, no tag pruning, `#` lines kept in commit messages), each a choice in Settings with its recommendation and where your configuration sets it | Done | ? | ? | ? |
+| A pull fetches once: after its check it brings in what it fetched, so a credential prompt comes once | Done | ? | ? | ? |
+| A rebase that stops on conflicts takes you to Changes, like a pull | Done | ? | ? | ? |
+| A pull that stops on conflicts, or whose set-aside changes conflict when they come back, opens Changes to resolve them | Done | ? | ? | ? |
 | Push, setting upstream when missing | Done | Yes | Yes | Yes |
 | Force push with lease | Done | Yes | ? | ? |
-| In-app credential and SSH passphrase prompts | Unreleased | Yes | Yes | Yes |
-| Pull request integration (GitHub) | Unreleased | ? | Yes | ? |
-| Merge request integration (GitLab, including self-hosted) | Unreleased | ? | ? | ? |
-| Open a commit, branch or remote on GitHub or GitLab | Unreleased | ? | ? | ? |
+| The force push confirmation names the branch and the remote branch it overwrites | Unreleased | ? | ? | ? |
+| A pull asks again when the remote changed while you decided | Unreleased | ? | ? | ? |
+| The status bar says when a branch is not tracking a remote branch of the same name that exists | Unreleased | ? | ? | ? |
+| In-app credential and SSH passphrase prompts | Done | Yes | Yes | Yes |
+| Pull request integration (GitHub) | Done | ? | Yes | ? |
+| Merge request integration (GitLab, including self-hosted) | Done | ? | ? | ? |
+| Open a commit, branch or remote on GitHub or GitLab | Done | ? | ? | ? |
 
 ## Commits, tags and stashes
 
@@ -160,7 +163,7 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Copy SHA or message | Done | Yes | Yes | Yes |
 | Tags: lightweight and annotated, delete, push | Done | Yes | Yes | Yes |
 | Stash: save (message, untracked), apply, pop, drop | Done | Yes | Yes | Yes |
-| Pop and drop act on the stash you picked, by its commit, even if the list changed | Unreleased | ? | ? | ? |
+| Pop and drop act on the stash you picked, by its commit, even if the list changed | Done | ? | ? | ? |
 | Patches: create and apply | Planned | Yes | ? | Yes |
 
 Requests supports Ctrl+Shift+A to approve and Ctrl+Shift+M to open the merge confirmation,
@@ -187,30 +190,32 @@ as Reload, and only with hosting on and a list already loaded.
 |---|---|---|---|---|
 | Command palette | Done | Yes | Yes | No |
 | Keyboard shortcuts for common operations | Done | Yes | Yes | Yes |
-| Keyboard cheatsheet and vim-style single-key actions | Unreleased | ? | ? | ? |
-| Settings screen (appearance, Git, integrations, accounts, updates, privacy, keyboard; relative/calendar History dates with English or ISO calendar format) | Unreleased | ? | ? | ? |
-| Compact layouts and 80–160% interface zoom | Unreleased | ? | ? | ? |
-| Shared raised controls, larger input targets and visible keyboard focus | Unreleased | ? | ? | ? |
-| Keyboard-only use: one Tab stop per list with the arrows inside, Shift+F10 context menus, modal palette, cheatsheet and dialogs that give focus back | Unreleased | ? | ? | ? |
-| Native folder chooser without blocking the app | Unreleased | ? | ? | ? |
+| Keyboard cheatsheet and vim-style single-key actions | Done | ? | ? | ? |
+| Settings screen (appearance, Git, integrations, accounts, updates, privacy, keyboard; relative/calendar History dates with English or ISO calendar format) | Done | ? | ? | ? |
+| Compact layouts and 80–160% interface zoom | Done | ? | ? | ? |
+| Shared raised controls, larger input targets and visible keyboard focus | Done | ? | ? | ? |
+| Keyboard-only use: one Tab stop per list with the arrows inside, Shift+F10 context menus, modal palette, cheatsheet and dialogs that give focus back | Done | ? | ? | ? |
+| Native folder chooser without blocking the app | Done | ? | ? | ? |
 | Configurable keybindings | Planned | ? | ? | ? |
 | Dark and light themes (Midnight and Daylight) | Done | Yes | Yes | ? |
-| Observatory theme (the previous Midnight) | Unreleased | ? | ? | ? |
-| High contrast switch for every theme (keeps the theme's backgrounds and colours, raises text, outlines and focus) | Unreleased | ? | ? | ? |
-| History graph options: commit marks (dots, rings, squares, diamonds) and lines (curves, metro, circuit) | Unreleased | ? | ? | ? |
-| Appearance options: Style (Standard, Deeper), Density (Comfortable, Dense), Motion (match system, reduced, full); Translucent surfaces (off by default; menus, select lists, popovers, dialogs, toasts, the command palette and the cheatsheet) | Unreleased | ? | ? | ? |
-| Command palette entries for Style, Density, Translucent surfaces, High contrast and Motion; High contrast also in the toolbar's theme menu | Unreleased | ? | ? | ? |
-| Custom theme: Midnight or Daylight recoloured from an accent (swatches, hue, intensity) and a tint (swatches, hue, strength); text and lines keep their contrast; works with High contrast | Unreleased | No | Yes | No |
+| Observatory theme (the previous Midnight) | Done | ? | ? | ? |
+| High contrast switch for every theme (keeps the theme's backgrounds and colours, raises text, outlines and focus) | Done | ? | ? | ? |
+| History graph options: commit marks (dots, rings, squares, diamonds) and lines (curves, metro, circuit) | Done | ? | ? | ? |
+| Appearance options: Style (Standard, Deeper), Density (Comfortable, Dense), Motion (match system, reduced, full); Translucent surfaces (off by default; menus, select lists, popovers, dialogs, toasts, the command palette and the cheatsheet) | Done | ? | ? | ? |
+| Command palette entries for Style, Density, Translucent surfaces, High contrast and Motion; High contrast also in the toolbar's theme menu | Done | ? | ? | ? |
+| Custom theme: Midnight or Daylight recoloured from an accent (swatches, hue, intensity) and a tint (swatches, hue, strength); text and lines keep their contrast; works with High contrast | Done | No | Yes | No |
 | Confirmation for destructive operations | Done | Yes | Yes | Yes |
 | Toast notifications with git's error output and a viewport-bounded overflow stack | Done | ? | ? | ? |
-| Notification cards that stay as long as their words take to read (5–10 s, errors 8–15 s, decisions 15 s then the center), paused while pointed at, focused or the window is away; decisions as two named buttons, no close button | Unreleased | ? | ? | ? |
-| Notification settings (Appearance → Notifications): cards on or off, and per type — errors, needs your attention, updates, finished operations, confirmations; by default only the first three show as cards | Unreleased | ? | ? | ? |
-| Tooltip settings (Appearance → Tooltips): Helpful (default; only what the screen does not show), All, or Off (only why a control is unavailable), and a Quick, Normal or Slow delay | Unreleased | ? | ? | ? |
-| Notification center: the status bar's bell lists the last 100 notifications, whatever shows as a card, with an unread count for those that need you; copy for failures, clear all, and the decisions a notification asks for (pull, accounts, review or restart into an update) | Unreleased | ? | Yes | ? |
+| Notification cards that stay as long as their words take to read (5–10 s, errors 8–15 s, decisions 15 s then the center), paused while pointed at, focused or the window is away; decisions as two named buttons, no close button | Done | ? | ? | ? |
+| Notification settings (Appearance → Notifications): cards on or off, and per type — errors, needs your attention, updates, finished operations, confirmations; by default only the first three show as cards | Done | ? | ? | ? |
+| Tooltip settings (Appearance → Tooltips): Helpful (default; only what the screen does not show), All, or Off (only why a control is unavailable), and a Quick, Normal or Slow delay | Done | ? | ? | ? |
+| Links: a web link shows its address and offers Copy link; links in text are underlined; a cut-off field value shows whole in a tooltip | Unreleased | ? | ? | ? |
+| A settings file cannot turn on tag pruning, automatic fetching or beta builds, fetch more often, stop following your git configuration or choose where a push goes | Unreleased | ? | ? | ? |
+| Notification center: the status bar's bell lists the last 100 notifications, whatever shows as a card, with an unread count for those that need you; copy for failures, clear all, and the decisions a notification asks for (pull, accounts, review or restart into an update) | Done | ? | Yes | ? |
 | Localisation | Planned | ? | ? | Yes |
-| Update check, which can be turned off (nothing is sent before you accept the Terms) | Unreleased | ? | ? | ? |
-| Opt-in, scrubbed crash reports | Unreleased | ? | ? | ? |
-| Screen reader basics (AccessKit): window named for the repository, diff lines and conflict code read, unavailable buttons say why, no icon glyphs read, Settings scrolls to the focused control | Unreleased | ? | ? | ? |
+| Update check, which can be turned off (nothing is sent before you accept the Terms) | Done | ? | ? | ? |
+| Opt-in, scrubbed crash reports | Done | ? | ? | ? |
+| Screen reader basics (AccessKit): window named for the repository, diff lines and conflict code read, unavailable buttons say why, no icon glyphs read, Settings scrolls to the focused control | Done | ? | ? | ? |
 | Full screen reader support (AccessKit) | Planned | ? | ? | ? |
 
 Author pictures are fetched after consent when enabled in Privacy, through the repository hosting worker. GitLab-provided Gravatar and Libravatar image URLs need no API keys. Pictures, and authors without one, are cached locally for 12 hours across restarts; failed refreshes retain the previous picture. A private repository without a token, an unpushed commit or a lost connection no longer hides pictures, and GitLab authors without a picture keep their initials instead of a generated pattern. Lookups take at most half of GitHub's anonymous request limit, and cache files unused for 30 days are deleted.

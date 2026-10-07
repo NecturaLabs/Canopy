@@ -56,6 +56,9 @@ pub enum Action {
     SetView(View),
     Reveal(Oid),
     Refresh,
+    /// Ask before force pushing the current branch: the repository thread first works out where
+    /// the push would go, so the question can say.
+    ForcePush,
     LoadMore,
     Fetch,
     Pull,
@@ -65,11 +68,15 @@ pub enum Action {
         repo: PathBuf,
         mode: crate::settings::PullMode,
         remember: Remember,
+        /// The upstream commit the question showed ([`canopy_core::PullPreview::tip`]).
+        seen: Option<Oid>,
     },
     /// Pull the repository at `repo` with `strategy` although it will likely conflict.
     PullAnyway {
         repo: PathBuf,
         strategy: canopy_core::ops::PullStrategy,
+        /// The upstream commit the question showed ([`canopy_core::PullPreview::tip`]).
+        seen: Option<Oid>,
     },
     Push,
     Commit,

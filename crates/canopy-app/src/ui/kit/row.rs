@@ -3,8 +3,8 @@
 //!
 //! Rows snap: selection changes at once and the hover ground follows the pointer within `FAST`.
 //! Selection is a translucent wash with the theme's mark over it (`Design::selection`: a leading
-//! bar, a ring or an inner glow); the keyboard cursor on an unselected row is
-//! an inset 1.5 pt focus ring. Every row is focusable and activates with Enter or Space.
+//! bar, a ring or an inner glow); the keyboard cursor on an unselected row, and keyboard focus on
+//! any row, is an inset 1.5 pt focus ring. Every row is focusable and activates with Enter or Space.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -156,6 +156,8 @@ struct Frame {
     ctx: RowCtx,
     radius: CornerRadius,
     cursor: bool,
+    /// Keyboard focus is on the row and shown: the ring is drawn on a selected row too.
+    focused: bool,
     enabled: bool,
 }
 
@@ -217,7 +219,8 @@ fn frame(ui: &mut Ui, spec: &FrameSpec) -> Frame {
             motion::FAST,
         ),
     };
-    let cursor = spec.cursor || f.focus || (response.has_focus() && focus_visible(&c));
+    let focused = f.focus || (response.has_focus() && focus_visible(&c));
+    let cursor = spec.cursor || focused;
     let base = spec.ground.unwrap_or_else(|| spec.kind.ground(p));
     let strong = spec.kind.chrome();
     let ground = ground(p, base, spec.zebra, spec.selected, hover, pressed, strong);
@@ -304,14 +307,16 @@ fn frame(ui: &mut Ui, spec: &FrameSpec) -> Frame {
         ctx,
         radius,
         cursor,
+        focused,
         enabled,
     }
 }
 
 impl Frame {
-    /// The keyboard cursor ring on an unselected row, drawn over the content.
+    /// The keyboard cursor ring on an unselected row, and the focus ring on any row, drawn over
+    /// the content.
     fn finish(&self) {
-        if self.cursor && !self.ctx.selected {
+        if self.cursor && (!self.ctx.selected || self.focused) {
             let p = theme::palette(self.painter.ctx());
             paint::inset_ring(&self.painter, self.rect, self.radius, p.focus);
         }
@@ -1738,12 +1743,17 @@ impl Roving {
                 None,
             );
         }
+        let clicked = response.clicked() && !focused;
         ctx.data_mut(|d| {
             let st = d.get_temp_mut_or_default::<RovingState>(self.id);
             st.stop = index;
             st.visited = true;
             if focused {
                 st.focused = Some((index, response.id));
+            } else if clicked {
+                // A click puts keyboard focus on the row, as in any list: the arrows go on from
+                // it and Shift+F10 opens its menu. The row takes it next frame, as the stop.
+                st.pending = Some(index);
             }
             if let Some(t) = target {
                 st.pending = Some(t);
@@ -2125,6 +2135,78 @@ mod tests {
             "Tab enters on the stop and leaves the list; the arrows move inside it"
         );
         assert_eq!(moves, [(2, 3), (3, 4), (4, 3)], "the view hears each move");
+    }
+
+    /// usersim F14: a click puts keyboard focus on the row it selected, so the arrows move on from
+    /// it and Shift+F10 opens its menu; the row paints its focus ring even though it is selected.
+    #[test]
+    fn a_click_focuses_the_row_and_the_arrows_continue_from_it() {
+        let ctx = ctx();
+        ctx.enable_accesskit();
+        let rects = std::cell::RefCell::new(Vec::new());
+        let moves = std::cell::RefCell::new(Vec::new());
+        let mut show = |ui: &mut Ui| {
+            rects.borrow_mut().clear();
+            let list = Roving::new(ui.ctx(), "click-list", 6, Some(0));
+            for i in 0..6 {
+                let r = ListRow::new(("click-row", i))
+                    .label(format!("Row {i}"))
+                    .roving(list, i)
+                    .show(ui);
+                rects.borrow_mut().push(r.rect);
+            }
+            if let Some(m) = list.moved(ui.ctx()) {
+                moves.borrow_mut().push(m);
+            }
+        };
+        run(&ctx, Vec::new(), &mut show);
+        let at = rects.borrow()[4].center();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        run(&ctx, vec![egui::Event::PointerMoved(at)], &mut show);
+        run(&ctx, vec![button(true), button(false)], &mut show);
+        // Two quiet frames: the row takes the focus the click asked for.
+        let focused = focus_after(&ctx, Vec::new(), &mut show);
+        assert_eq!(
+            focused.as_deref(),
+            Some("Row 4"),
+            "the clicked row has focus"
+        );
+        let next = focus_after(&ctx, vec![key(Key::ArrowDown)], &mut show);
+        assert_eq!(next.as_deref(), Some("Row 5"), "the arrow moves on from it");
+        assert_eq!(*moves.borrow(), [(4, 5)]);
+    }
+
+    /// usersim F14: a selected row with keyboard focus shows the focus ring over its selection.
+    #[test]
+    fn a_selected_row_with_focus_paints_the_focus_ring() {
+        let ctx = ctx();
+        let ring = theme::palette(&ctx).focus;
+        let has_ring = |out: &egui::FullOutput| {
+            fn walk(s: &Shape, ring: Color32) -> bool {
+                match s {
+                    Shape::Rect(r) => r.stroke.color == ring && r.stroke.width > 0.0,
+                    Shape::Vec(v) => v.iter().any(|s| walk(s, ring)),
+                    _ => false,
+                }
+            }
+            out.shapes.iter().any(|c| walk(&c.shape, ring))
+        };
+        let resting = run(&ctx, Vec::new(), |ui| {
+            ListRow::new("ring").label("Row").selected(true).show(ui);
+        });
+        assert!(!has_ring(&resting), "a selected row at rest has no ring");
+        let focused = run(&ctx, Vec::new(), |ui| {
+            ListRow::new("ring")
+                .label("Row")
+                .selected(true)
+                .show_forced(ui, ForceState::FOCUS);
+        });
+        assert!(has_ring(&focused), "a focused selected row shows the ring");
     }
 
     /// A11Y-2: with motion on, Tab from a row goes to its hover action and on to the next control;

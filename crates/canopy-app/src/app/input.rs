@@ -8,6 +8,7 @@ impl CanopyApp {
         let modal =
             self.dialogs.current().is_some() || self.settings_screen.is_some() || self.palette.open;
         let overlay = modal || self.cheatsheet.open;
+        let menu_open = egui::Popup::is_any_open(ctx);
         // Settings on top of everything: its search takes the find shortcut.
         let settings_on_top = self.settings_screen.is_some()
             && self.dialogs.current().is_none()
@@ -17,12 +18,19 @@ impl CanopyApp {
             .tabs
             .get(self.active)
             .is_some_and(|tab| tab.view == View::History && tab.history_filter_open);
-        let typing = ctx.egui_wants_keyboard_input();
-        // A button or checkbox reached with Tab keeps Space, Enter and the arrows for itself.
+        // Only a text field, or an open list's type-ahead, takes letters; any other focused widget
+        // (a button the pointer or Tab left focus on, after Esc closed its menu) keeps just Space,
+        // Enter and the arrows.
+        let typing = ctx.text_edit_focused() || crate::ui::kit::select::takes_text(ctx);
         let widget_focused = !typing && ctx.memory(|m| m.focused().is_some());
         let fired = keymap::dispatch(ctx, |b, chord| {
+            if b.command == Command::ContextMenu {
+                // Listed for the cheatsheet; the focused row consumes the key itself.
+                return false;
+            }
             if b.command == Command::Dismiss {
-                return overlay || search_open;
+                // An open menu is the topmost layer: it takes this Escape and closes itself.
+                return (overlay || search_open) && !menu_open;
             }
             if modal {
                 return settings_on_top
@@ -56,6 +64,8 @@ impl CanopyApp {
         let view = self.tabs.get(self.active).map(|t| t.view);
         match command {
             C::Palette => actions.push(Action::Palette),
+            // Opened by the focused row (`keyboard` never fires it).
+            C::ContextMenu => {}
             C::Cheatsheet => self.cheatsheet.toggle(),
             C::Dismiss => {
                 if self.cheatsheet.open {
@@ -298,6 +308,43 @@ mod tests {
         actions
     }
 
+    /// Shift+F10 is in the keymap table for the cheatsheet, but the focused row opens its menu
+    /// itself: the keyboard table must leave the key press for the widget.
+    #[test]
+    fn shift_f10_is_left_for_the_focused_row() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::F10,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::SHIFT,
+            }],
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        let mut left = false;
+        let mut output = ctx.run_ui(raw, |ui| {
+            app.keyboard(ui.ctx(), &mut actions);
+            left = ui.ctx().input(|i| {
+                i.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::Key {
+                            key: egui::Key::F10,
+                            ..
+                        }
+                    )
+                })
+            });
+        });
+        output.textures_delta.clear();
+        assert!(left, "the table consumed Shift+F10 before the row saw it");
+        assert!(actions.is_empty(), "{actions:?}");
+    }
+
     /// review-views-1: the find shortcut reaches Settings' search on the welcome screen too.
     #[test]
     fn settings_search_takes_the_find_shortcut_with_no_repository_open() {
@@ -335,6 +382,185 @@ mod tests {
         );
         run(&mut app, Command::Dismiss);
         assert!(app.settings_screen.is_none());
+    }
+
+    /// usersim2 N1: with a menu open over a dialog (a link's context menu in the legal reader),
+    /// the first Escape closes the menu only; the next one dismisses the dialog.
+    #[test]
+    fn escape_closes_an_open_menu_before_the_dialog_behind_it() {
+        let mut app = test_app();
+        app.dialogs.open(Dialog::open());
+        let ctx = egui::Context::default();
+        let esc = || crate::ui::kit::testkit::key(egui::Key::Escape);
+        // As the app draws: the keyboard table first, then the interface with the menu.
+        let run = |app: &mut CanopyApp, events: Vec<egui::Event>, open: bool| {
+            let mut actions = Vec::new();
+            frame(&ctx, events, |ui| {
+                app.keyboard(ui.ctx(), &mut actions);
+                let button = ui.button("Row");
+                let _ = egui::Popup::menu(&button)
+                    .open_memory(open.then_some(egui::SetOpenCommand::Bool(true)))
+                    .show(|ui| ui.label("Copy link"));
+            });
+        };
+        run(&mut app, Vec::new(), true);
+        run(&mut app, Vec::new(), false);
+        assert!(egui::Popup::is_any_open(&ctx), "the menu is open");
+        run(&mut app, esc(), false);
+        assert!(
+            !egui::Popup::is_any_open(&ctx),
+            "the first Escape closes the menu"
+        );
+        assert!(app.dialogs.current().is_some(), "and leaves the dialog");
+        run(&mut app, esc(), false);
+        assert!(
+            app.dialogs.current().is_none(),
+            "the next Escape dismisses the dialog"
+        );
+    }
+
+    fn frame(ctx: &egui::Context, events: Vec<egui::Event>, f: impl FnMut(&mut egui::Ui)) {
+        let mut f = f;
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| f(ui),
+        );
+        out.textures_delta.clear();
+    }
+
+    /// Runs `keyboard` for one frame in which `key` is pressed while the widget `focused` built by
+    /// `build` has keyboard focus.
+    fn keyboard_with_focus(
+        app: &mut CanopyApp,
+        key: egui::Key,
+        build: impl Fn(&mut egui::Ui) -> egui::Id,
+    ) -> Vec<Action> {
+        let ctx = egui::Context::default();
+        let mut focused = None;
+        // The first frame builds the widget and gives it focus; the key arrives in the second.
+        frame(&ctx, Vec::new(), |ui| {
+            let id = build(ui);
+            ui.memory_mut(|m| m.request_focus(id));
+            focused = Some(id);
+        });
+        frame(&ctx, Vec::new(), |ui| {
+            build(ui);
+        });
+        assert_eq!(
+            ctx.memory(egui::Memory::focused),
+            focused,
+            "the widget has focus"
+        );
+        let mut actions = Vec::new();
+        let press = egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&ctx, vec![press], |ui| {
+            build(ui);
+            app.keyboard(ui.ctx(), &mut actions);
+        });
+        actions
+    }
+
+    /// usersim F2: a button left focused (the bell after Esc closes the center) keeps Space, Enter
+    /// and the arrows for itself but must not swallow the bare repository keys.
+    #[test]
+    fn a_focused_button_leaves_the_bare_repository_keys_working() {
+        let button = |ui: &mut egui::Ui| ui.button("Bell").id;
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        let actions = keyboard_with_focus(&mut app, egui::Key::F, button);
+        assert!(matches!(actions.as_slice(), [Action::Fetch]), "{actions:?}");
+        let actions = keyboard_with_focus(&mut app, egui::Key::P, button);
+        assert!(matches!(actions.as_slice(), [Action::Pull]), "{actions:?}");
+        // The arrows and Space stay with the button.
+        for key in [egui::Key::ArrowDown, egui::Key::Space, egui::Key::Enter] {
+            let actions = keyboard_with_focus(&mut app, key, button);
+            assert!(actions.is_empty(), "{key:?} fired {actions:?}");
+        }
+    }
+
+    /// Letters typed into an open list jump to an option (type-ahead): they are not the bare
+    /// repository keys (`s` stashes, `m` merges), and the text event stays for the list.
+    #[test]
+    fn letters_typed_into_an_open_select_are_not_repository_keys() {
+        use crate::ui::kit::testkit::{frame, key};
+        let ctx = crate::ui::kit::testkit::ctx();
+        let options = [(0_u8, "Merge"), (1, "Squash"), (2, "Rebase")];
+        let mut value = 0_u8;
+        let mut trigger = egui::Id::NULL;
+        let mut show = |ui: &mut egui::Ui| {
+            trigger = crate::ui::kit::select::Select::new(&mut value, &options)
+                .id_salt("method")
+                .show(ui)
+                .id;
+            trigger
+        };
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        frame(&ctx, Vec::new(), |ui| {
+            let id = show(ui);
+            ui.memory_mut(|m| m.request_focus(id));
+        });
+        frame(&ctx, Vec::new(), |ui| {
+            show(ui);
+        });
+        frame(&ctx, key(egui::Key::ArrowDown), |ui| {
+            show(ui);
+        });
+        frame(&ctx, Vec::new(), |ui| {
+            show(ui);
+        });
+        assert!(egui::Popup::is_any_open(&ctx), "the list is open");
+        let mut events = key(egui::Key::S);
+        events.push(egui::Event::Text("s".into()));
+        let mut actions = Vec::new();
+        let mut text_left = false;
+        frame(&ctx, events, |ui| {
+            app.keyboard(ui.ctx(), &mut actions);
+            text_left = ui.input(|i| {
+                i.events
+                    .iter()
+                    .any(|e| matches!(e, egui::Event::Text(t) if t == "s"))
+            });
+            show(ui);
+        });
+        assert!(actions.is_empty(), "{actions:?}");
+        assert!(text_left, "the list still gets the letter");
+        // Closed again, the same key is the repository's.
+        frame(&ctx, key(egui::Key::Escape), |ui| {
+            show(ui);
+        });
+        frame(&ctx, Vec::new(), |ui| {
+            show(ui);
+        });
+        assert!(!egui::Popup::is_any_open(&ctx), "Escape closed the list");
+        let mut actions = Vec::new();
+        frame(&ctx, key(egui::Key::S), |ui| {
+            app.keyboard(ui.ctx(), &mut actions);
+            show(ui);
+        });
+        assert!(!actions.is_empty(), "a closed list leaves the key alone");
+    }
+
+    /// While a text field has focus a bare letter is text, not a command.
+    #[test]
+    fn a_focused_text_field_keeps_the_bare_keys() {
+        let field = |ui: &mut egui::Ui| ui.text_edit_singleline(&mut String::new()).id;
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        let actions = keyboard_with_focus(&mut app, egui::Key::F, field);
+        assert!(actions.is_empty(), "{actions:?}");
     }
 
     /// secfix2 F5: the Pop shortcut pops the stash the snapshot shows as latest, by its commit.

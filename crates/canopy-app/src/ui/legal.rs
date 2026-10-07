@@ -7,12 +7,16 @@
 
 use std::sync::{Arc, OnceLock};
 
-use egui::text::{CCursor, LayoutJob, TextFormat};
+use egui::text::{LayoutJob, TextFormat};
 use egui::{
-    Color32, CornerRadius, FontId, Galley, Rect, Sense, Ui, WidgetInfo, WidgetType, pos2, vec2,
+    Color32, CornerRadius, FontId, Galley, Rect, Response, Sense, Ui, WidgetInfo, WidgetType, pos2,
+    vec2,
 };
 
+use egui_phosphor::regular as icon;
+
 use crate::settings::Settings;
+use crate::ui::kit::menu;
 use crate::ui::kit::overlay::TooltipExt;
 use crate::ui::kit::paint;
 use crate::ui::theme::{self, palette};
@@ -330,9 +334,19 @@ fn paragraph(
             },
             ..TextFormat::default()
         };
-        job.append(&run.text, 0.0, format);
-        let n = run.text.chars().count();
+        job.append(&run.text, 0.0, format.clone());
+        let mut n = run.text.chars().count();
         if let Some(link) = &run.link {
+            // A link that leaves Canopy ends in the arrow the kit's links end in.
+            if matches!(link, Link::Web(_)) {
+                let marker = TextFormat {
+                    font_id: FontId::proportional(font.size * 0.85),
+                    ..format
+                };
+                let tail = format!("\u{a0}{}", icon::ARROW_UP_RIGHT);
+                n += tail.chars().count();
+                job.append(&tail, 0.0, marker);
+            }
             links.push((chars..chars + n, link, &run.text));
         }
         chars += n;
@@ -345,42 +359,75 @@ fn paragraph(
     let id = ui.id().with(("legal-paragraph", salt));
     let mut clicked = None;
     for (i, (range, link, label)) in links.into_iter().enumerate() {
-        let a = galley.pos_from_cursor(CCursor::new(range.start));
-        let b = galley.pos_from_cursor(CCursor::new(range.end));
-        // A link that wraps keeps the part on its first line.
-        let right = if (a.top() - b.top()).abs() < 1.0 {
-            b.left()
-        } else {
-            galley.rect.right()
-        };
-        let area = Rect::from_min_max(a.min, pos2(right, a.max.y)).translate(rect.min.to_vec2());
-        let r = ui.interact(area, id.with(i), Sense::click());
-        r.widget_info(|| WidgetInfo::labeled(WidgetType::Link, true, label));
-        let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
-        if r.hovered() || r.has_focus() {
-            // Under the glyphs, as the kit link draws it: the row's text sits centred in the
-            // taller line.
+        // One area per line the link runs over; the first is the focus stop and the one spoken.
+        let areas = link_areas(&galley, &range, rect.min.to_vec2());
+        let responses: Vec<_> = areas
+            .iter()
+            .enumerate()
+            .map(|(k, area)| {
+                let sense = if k == 0 { Sense::click() } else { Sense::CLICK };
+                let r = ui.interact(*area, id.with((i, k)), sense);
+                if k == 0 {
+                    r.widget_info(|| WidgetInfo::labeled(WidgetType::Link, true, label));
+                }
+                r.on_hover_cursor(egui::CursorIcon::PointingHand)
+            })
+            .collect();
+        let lit = responses.iter().any(|r| r.hovered() || r.has_focus());
+        let focused = responses.iter().any(Response::has_focus);
+        for area in &areas {
+            // Underlined at rest, as a link in a block of text must be (WCAG 1.4.1); heavier
+            // under the pointer and at focus. Under the glyphs, as the kit link draws it: the
+            // row's text sits centred in the taller line.
             let baseline = area.center().y + font.size * 0.5;
             paint::seam_h(ui.painter(), area.x_range(), baseline, p.accent2);
+            if lit {
+                paint::seam_h(ui.painter(), area.x_range(), baseline + 1.0, p.accent2);
+            }
+            if focused {
+                paint::focus_ring(
+                    ui.painter(),
+                    area.expand2(vec2(2.0, 0.0)),
+                    CornerRadius::same(m.radius_sm),
+                    p.focus,
+                    Color32::TRANSPARENT,
+                );
+            }
         }
-        if r.has_focus() {
-            paint::focus_ring(
-                ui.painter(),
-                area.expand2(vec2(2.0, 0.0)),
-                CornerRadius::same(m.radius_sm),
-                p.focus,
-                Color32::TRANSPARENT,
-            );
-        }
-        let tip = match link {
-            Link::Web(url) => url.clone(),
-            Link::Email(_) => "Copy address".to_owned(),
+        let (tip, copy, destination) = match link {
+            Link::Web(url) => (url.clone(), "Copy link", url),
+            Link::Email(address) => ("Copy address".to_owned(), "Copy address", address),
         };
-        if r.kit_tooltip(tip).show().clicked() {
-            clicked = Some(link.clone());
+        for r in responses {
+            let r = r.kit_tooltip(tip.clone()).show();
+            menu::link_menu(&r, destination, copy);
+            if r.clicked() {
+                clicked = Some(link.clone());
+            }
         }
     }
     clicked
+}
+
+/// Where the characters `range` of `galley` are, one rectangle for each line they run over,
+/// moved by `by` (the galley's place on screen).
+fn link_areas(galley: &Galley, range: &std::ops::Range<usize>, by: egui::Vec2) -> Vec<Rect> {
+    let mut areas = Vec::new();
+    let mut start = 0;
+    for row in &galley.rows {
+        let glyphs = row.glyphs.len();
+        let (from, to) = (range.start.max(start), range.end.min(start + glyphs));
+        if let (true, Some(first), Some(last)) = (
+            from < to,
+            row.glyphs.get(from.saturating_sub(start)),
+            row.glyphs.get(to.saturating_sub(start + 1)),
+        ) {
+            let x = row.pos.x + first.pos.x..=row.pos.x + last.pos.x + last.advance_width;
+            areas.push(Rect::from_x_y_ranges(x, row.rect().y_range()).translate(by));
+        }
+        start += glyphs + usize::from(row.ends_with_newline);
+    }
+    areas
 }
 
 /// What the start-up consent dialog still has to ask.
@@ -531,5 +578,190 @@ mod tests {
         assert_eq!(pending(&s), None);
         s.accepted_terms = "2020-01-01".into();
         assert_eq!(pending(&s), Some(Pending::Terms));
+    }
+    /// The Privacy Policy drawn in a tall window for a frame or more with `events`.
+    fn privacy_frame(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        clicked: &mut Option<Link>,
+    ) -> egui::FullOutput {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 6000.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                ui.set_width(600.0);
+                *clicked = show(ui, Document::Privacy).or(clicked.take());
+            },
+        );
+        out.textures_delta.clear();
+        out
+    }
+
+    fn privacy_links() -> usize {
+        Document::Privacy
+            .blocks()
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(r) | Block::Item(r) => Some(r),
+                Block::Heading(_) => None,
+            })
+            .flatten()
+            .filter(|r| r.link.is_some())
+            .count()
+    }
+
+    /// `(horizontal accent lines, shapes of text holding the external arrow)` in `shape`.
+    fn count(shape: &egui::Shape, accent: Color32) -> (usize, usize) {
+        match shape {
+            egui::Shape::LineSegment { points, stroke } => (
+                usize::from(stroke.color == accent && (points[0].y - points[1].y).abs() < 0.01),
+                0,
+            ),
+            egui::Shape::Rect(r) if r.fill == accent && r.rect.height() <= 1.5 => (1, 0),
+            egui::Shape::Text(t) => (
+                0,
+                usize::from(t.galley.text().contains(icon::ARROW_UP_RIGHT)),
+            ),
+            egui::Shape::Vec(v) => v
+                .iter()
+                .map(|s| count(s, accent))
+                .fold((0, 0), |(a, b), (c, d)| (a + c, b + d)),
+            _ => (0, 0),
+        }
+    }
+
+    /// WCAG 1.4.1: a link in a block of text is underlined at rest in every theme, not only
+    /// under the pointer, and a web address ends in the arrow that marks leaving Canopy.
+    #[test]
+    fn inline_links_are_underlined_at_rest_and_web_ones_end_in_an_arrow() {
+        for id in theme::ThemeId::ALL {
+            let ctx = crate::ui::kit::testkit::ctx_with(
+                id,
+                theme::Style::Standard,
+                theme::Density::Comfortable,
+            );
+            let accent = palette(&ctx).accent2;
+            let mut clicked = None;
+            for _ in 0..2 {
+                privacy_frame(&ctx, Vec::new(), &mut clicked);
+            }
+            let out = privacy_frame(&ctx, Vec::new(), &mut clicked);
+            let (underlines, arrows) = out
+                .shapes
+                .iter()
+                .map(|c| count(&c.shape, accent))
+                .fold((0, 0), |(a, b), (c, d)| (a + c, b + d));
+            assert!(
+                underlines >= privacy_links(),
+                "{id:?}: {underlines} underlines for {} links",
+                privacy_links()
+            );
+            assert!(arrows >= 1, "{id:?}: a web link ends in an arrow");
+        }
+    }
+
+    /// A link takes Tab focus, Enter follows it, and the secondary click offers to copy it.
+    #[test]
+    fn an_inline_link_follows_on_enter_and_offers_to_copy_it() {
+        use crate::ui::kit::testkit;
+        let ctx = testkit::ctx();
+        let mut clicked = None;
+        for _ in 0..2 {
+            privacy_frame(&ctx, Vec::new(), &mut clicked);
+        }
+        // The first link is the first Tab stop.
+        privacy_frame(&ctx, testkit::key(egui::Key::Tab), &mut clicked);
+        privacy_frame(&ctx, Vec::new(), &mut clicked);
+        assert!(clicked.is_none());
+        privacy_frame(&ctx, testkit::key(egui::Key::Enter), &mut clicked);
+        privacy_frame(&ctx, Vec::new(), &mut clicked);
+        assert!(clicked.is_some(), "Enter follows the focused link");
+
+        let ctx = testkit::ctx();
+        ctx.enable_accesskit();
+        let at = |out: &egui::FullOutput| {
+            out.platform_output
+                .accesskit_update
+                .as_ref()
+                .and_then(|u| {
+                    u.nodes
+                        .iter()
+                        .find(|(_, n)| n.role() == egui::accesskit::Role::Link)
+                })
+                .and_then(|(_, n)| n.bounds())
+                .map(|b| {
+                    pos2(
+                        crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+                        crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+                    )
+                })
+                .expect("a link")
+        };
+        privacy_frame(&ctx, Vec::new(), &mut clicked);
+        let out = privacy_frame(&ctx, Vec::new(), &mut clicked);
+        let link = at(&out);
+        privacy_frame(&ctx, testkit::secondary_click(link), &mut clicked);
+        let out = privacy_frame(&ctx, Vec::new(), &mut clicked);
+        let labels: Vec<String> = out
+            .platform_output
+            .accesskit_update
+            .map(|u| {
+                u.nodes
+                    .iter()
+                    .filter_map(|(_, n)| n.label().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            labels
+                .iter()
+                .any(|l| l == "Copy link" || l == "Copy address"),
+            "{labels:?}"
+        );
+    }
+    /// A link that wraps gets an area on each line it runs over, and one that starts a line is
+    /// not drawn at the end of the line before it.
+    #[test]
+    fn a_link_that_wraps_is_found_on_each_of_its_lines() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let text = "For questions about your data, email support@necturalabs.com today";
+        let font = FontId::proportional(16.0);
+        let galley_of = |width: f32| {
+            let mut out = None;
+            let mut run = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let mut job =
+                    LayoutJob::simple(text.to_owned(), font.clone(), Color32::WHITE, width);
+                job.wrap.max_width = width;
+                out = Some(ui.fonts_mut(|f| f.layout_job(job)));
+            });
+            run.textures_delta.clear();
+            out.expect("laid out")
+        };
+        let before = text.split_once("support").expect("link").0.chars().count();
+        let range = before..before + "support@necturalabs.com".chars().count();
+        let whole = galley_of(10_000.0);
+        let one = link_areas(&whole, &range, egui::Vec2::ZERO);
+        assert_eq!(one.len(), 1);
+        // Narrow enough that the address starts a line of its own.
+        let narrow = galley_of(whole.size().x * 0.62);
+        assert!(narrow.rows.len() >= 2, "{}", narrow.rows.len());
+        let areas = link_areas(&narrow, &range, egui::Vec2::ZERO);
+        assert_eq!(areas.len(), 1, "{areas:?}");
+        let last = narrow.rows.last().expect("a row").rect();
+        assert!(
+            areas[0].top() >= last.top() - 0.5,
+            "the link is on the line it was wrapped to: {:?} not in {last:?}",
+            areas[0]
+        );
+        assert!(
+            (areas[0].width() - one[0].width()).abs() < 1.0,
+            "all of it: {:?} vs {:?}",
+            areas[0],
+            one[0]
+        );
     }
 }
