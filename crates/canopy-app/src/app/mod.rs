@@ -1283,7 +1283,7 @@ fn content_pane(
             // The card that holds the keyboard (the table or list) gets the focus edge and a lit
             // top.
             if focus_edge {
-                focused_edge(&wide, cards[0], radius, p.focus);
+                crate::ui::kit::paint::pane_focus(&wide, cards[0], radius, p.focus, 1.0);
             }
         });
 }
@@ -1410,24 +1410,6 @@ fn corner_mask(
         mesh.add_triangle(0, i, i + 1);
     }
     painter.add(mesh);
-}
-
-/// Deeper's focused-pane edge on `card`, its top edge lit at full strength so the pane that holds
-/// the keyboard (History's table) reads as the one in front.
-fn focused_edge(
-    painter: &egui::Painter,
-    card: egui::Rect,
-    radius: egui::CornerRadius,
-    focus: egui::Color32,
-) {
-    crate::ui::kit::paint::focus_edge(painter, card, radius, focus, 1.0);
-    let r = f32::from(radius.nw);
-    let width = 1.5;
-    painter.hline(
-        (card.left() + r)..=(card.right() - r),
-        card.top() + width / 2.0,
-        egui::Stroke::new(width, theme::Palette::tint(focus, 210)),
-    );
 }
 
 /// The compact window's navigation: a button opening the sidebar in a popover. Its open state is
