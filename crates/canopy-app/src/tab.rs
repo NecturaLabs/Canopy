@@ -466,6 +466,8 @@ fn success_body(kind: &OpKind, out: &str, subject: &str, branch: Option<&str>) -
 pub struct Finished {
     /// The operation's label (`Op::label`).
     pub label: String,
+    /// Stable operation identity; labels are display text, not control state.
+    pub kind: OpKind,
     pub ok: bool,
     pub at: Instant,
 }
@@ -649,6 +651,7 @@ pub struct RepoTab {
     /// Move keyboard focus to the commit summary next frame.
     pub focus_summary: bool,
     pub running: Option<String>,
+    pub running_kind: Option<OpKind>,
     pub finished: Option<Finished>,
     /// How this repository pulls by Canopy's settings (kept current by the app every frame).
     pub pull: PullChoice,
@@ -752,6 +755,7 @@ impl RepoTab {
             amend: false,
             focus_summary: false,
             running: None,
+            running_kind: None,
             finished: None,
             pull: PullChoice::default(),
             git_options: None,
@@ -1508,8 +1512,9 @@ impl RepoTab {
                             .clone_into(&mut self.commit_body);
                     }
                 }
-                Event::OpStarted(label) => {
+                Event::OpStarted { label, kind } => {
                     self.running = Some(label);
+                    self.running_kind = Some(kind);
                     self.progress = None;
                 }
                 // An empty line ends the progress of a download the worker ran outside an
@@ -1522,6 +1527,7 @@ impl RepoTab {
                     result,
                 } => {
                     self.running = None;
+                    self.running_kind = None;
                     self.progress = None;
                     // Any operation can change the file being resolved (a save, a stash, a
                     // checkout): parse it again so choices and the save guard match the disk.
@@ -1556,6 +1562,7 @@ impl RepoTab {
                             if announce {
                                 self.finished = Some(Finished {
                                     label: label.clone(),
+                                    kind: kind.clone(),
                                     ok: true,
                                     at: Instant::now(),
                                 });
@@ -1574,6 +1581,7 @@ impl RepoTab {
                             _ => {
                                 self.finished = Some(Finished {
                                     label: label.clone(),
+                                    kind: kind.clone(),
                                     ok: false,
                                     at: Instant::now(),
                                 });
@@ -1588,11 +1596,13 @@ impl RepoTab {
                 }
                 Event::PullDecision(decision) => {
                     self.running = None;
+                    self.running_kind = None;
                     self.progress = None;
                     self.pull_decision = Some(*decision);
                 }
                 Event::Conflicted(label) => {
                     self.running = None;
+                    self.running_kind = None;
                     self.progress = None;
                     // The resolver lives in Changes: take the user to the conflicted files.
                     self.view = View::Changes;
