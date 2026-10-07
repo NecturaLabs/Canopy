@@ -1016,7 +1016,7 @@ pub fn show(
                         "{} received new commits since Canopy checked it and now has {incoming} for you. Pull them?",
                         preview.upstream
                     ),
-                    "Pull",
+                    moved_pull_confirm(*strategy),
                 )
             } else {
                 (
@@ -1278,6 +1278,17 @@ fn clone_target(builder: &UrlBuilder, parent: &str) -> Option<(String, std::path
     }
     let dest = crate::settings::expand_home(parent).join(&name);
     Some((url.trim().to_owned(), dest))
+}
+
+/// The confirm button of the question about a remote that moved after the user chose how to
+/// combine the branches: it names that choice, as the diverged-branches dialog does.
+fn moved_pull_confirm(strategy: canopy_core::PullStrategy) -> &'static str {
+    use canopy_core::PullStrategy as S;
+    match strategy {
+        S::Rebase | S::RebaseMerges => "Pull with rebase",
+        S::Merge | S::MergeNoFastForward => "Pull with merge",
+        S::FastForwardOnly => "Pull",
+    }
 }
 
 /// The likely-conflict dialog's text: what the upstream has and what happens on "Pull anyway".
@@ -1701,7 +1712,10 @@ fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Dialog, DialogStack, Oid, Start, likely_conflict_description, valid_ref_name};
+    use super::{
+        Dialog, DialogStack, Oid, Start, likely_conflict_description, moved_pull_confirm,
+        valid_ref_name,
+    };
     use crate::askpass::Prompt;
     use crate::ui::legal::{Document, Pending};
     use crossbeam_channel::Receiver;
@@ -1747,6 +1761,22 @@ mod tests {
         ] {
             let text = likely_conflict_description("origin/main", behind);
             assert!(text.starts_with(says), "{behind}: {text}");
+        }
+    }
+
+    /// The question about a remote that moved keeps the user's earlier choice in view: the
+    /// button names what the pull will do, in the words of the diverged-branches dialog.
+    #[test]
+    fn the_moved_remote_question_names_the_way_the_branches_combine() {
+        use canopy_core::PullStrategy as S;
+        for (strategy, says) in [
+            (S::Rebase, "Pull with rebase"),
+            (S::RebaseMerges, "Pull with rebase"),
+            (S::Merge, "Pull with merge"),
+            (S::MergeNoFastForward, "Pull with merge"),
+            (S::FastForwardOnly, "Pull"),
+        ] {
+            assert_eq!(moved_pull_confirm(strategy), says, "{strategy:?}");
         }
     }
 
