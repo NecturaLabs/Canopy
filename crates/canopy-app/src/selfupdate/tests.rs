@@ -1083,18 +1083,19 @@ fn a_binary_in_an_install_folder_with_its_receipt_is_managed() {
 
 #[test]
 fn work_directory_names_never_repeat_within_the_process() {
-    let names: Vec<Vec<String>> = std::thread::scope(|scope| {
-        let threads: Vec<_> = (0..8)
-            .map(|_| scope.spawn(|| (0..5_000).map(|_| unique_name("canopy-update.")).collect()))
-            .collect();
-        threads
-            .into_iter()
-            .map(|t| t.join().expect("thread"))
-            .collect()
+    let handed_out = Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| {
+                let batch: Vec<String> =
+                    (0..5_000).map(|_| unique_name("canopy-update.")).collect();
+                handed_out.lock().expect("names").extend(batch);
+            });
+        }
     });
-    let all: Vec<&String> = names.iter().flatten().collect();
-    let distinct: std::collections::HashSet<&String> = all.iter().copied().collect();
-    assert_eq!(distinct.len(), all.len(), "a name was handed out twice");
+    let names = handed_out.into_inner().expect("names");
+    let distinct: std::collections::HashSet<&String> = names.iter().collect();
+    assert_eq!(distinct.len(), names.len(), "a name was handed out twice");
 }
 
 // ---------------------------------------------------------------------------------------------
