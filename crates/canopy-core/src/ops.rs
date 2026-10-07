@@ -501,7 +501,7 @@ impl Repo {
             return self.checkout_branch(branch);
         }
         let full = format!("{remote}/{branch}");
-        self.git_cmd(&["switch", "-q", "-c", branch, "--track", &full])
+        self.git_cmd(&["switch", "-q", "-c", branch, "--track", "--", &full])
             .map(drop)
     }
 
@@ -513,7 +513,7 @@ impl Repo {
 
     /// Renames a local branch.
     pub fn rename_branch(&self, old: &str, new: &str) -> Result<()> {
-        self.git_cmd(&["branch", "-m", old, new]).map(drop)
+        self.git_cmd(&["branch", "-m", "--", old, new]).map(drop)
     }
 
     /// Deletes a local branch: [`Self::force_delete_branch`] when `force` is set, otherwise
@@ -974,7 +974,7 @@ impl Repo {
         let refspec = format!("refs/tags/{tag}");
         cli::run_streaming(
             Some(self.workdir()),
-            &["push", "--progress", remote, &refspec],
+            &["push", "--progress", "--", remote, &refspec],
             progress,
         )
     }
@@ -1083,7 +1083,7 @@ impl Repo {
     ) -> Result<String> {
         cli::run_streaming(
             Some(self.workdir()),
-            &["push", "--progress", remote, "--delete", branch],
+            &["push", "--progress", "--delete", "--", remote, branch],
             progress,
         )
     }
