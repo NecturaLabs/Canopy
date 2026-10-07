@@ -272,6 +272,17 @@ fn with_paths<'a>(args: &[&'a str], paths: &'a [String]) -> Vec<&'a str> {
     v
 }
 
+/// Where a force push sends the current branch ([`Repo::force_push_target`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushTarget {
+    /// The checked-out branch that is pushed.
+    pub branch: String,
+    /// The remote it goes to.
+    pub remote: String,
+    /// The branch on that remote that is overwritten, without `refs/heads/`.
+    pub dest: String,
+}
+
 impl Repo {
     pub(crate) fn git_cmd(&self, args: &[&str]) -> Result<String> {
         cli::run(self.workdir(), args)
@@ -791,25 +802,57 @@ impl Repo {
             let (remote, dest) = self.push_destination(&branch)?;
             args.extend([remote, format!("HEAD:{dest}")]);
         } else if !has_upstream {
-            let remotes = self.git().remotes()?;
-            let names: Vec<&str> = remotes.iter().flatten().flatten().collect();
-            let remote = if names.contains(&"origin") {
-                "origin".to_owned()
-            } else if let [only] = names.as_slice() {
-                (*only).to_owned()
-            } else if names.is_empty() {
-                return Err(Error::invalid(
-                    "This repository has no remote. Add one first.",
-                ));
-            } else {
-                return Err(Error::invalid(
-                    "Several remotes and no upstream: set one with git push -u.",
-                ));
-            };
+            let remote = self.remote_without_upstream()?;
             args.extend(["--set-upstream".to_owned(), remote, branch]);
         }
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         cli::run_streaming(Some(self.workdir()), &args, progress)
+    }
+
+    /// The remote a branch with no upstream is pushed to: `origin`, else the only remote.
+    fn remote_without_upstream(&self) -> Result<String> {
+        let remotes = self.git().remotes()?;
+        let names: Vec<&str> = remotes.iter().flatten().flatten().collect();
+        if names.contains(&"origin") {
+            Ok("origin".to_owned())
+        } else if let [only] = names.as_slice() {
+            Ok((*only).to_owned())
+        } else if names.is_empty() {
+            Err(Error::invalid(
+                "This repository has no remote. Add one first.",
+            ))
+        } else {
+            Err(Error::invalid(
+                "Several remotes and no upstream: set one with git push -u.",
+            ))
+        }
+    }
+
+    /// Where [`Repo::push`] with `force` sends the current branch: the remote and the branch on
+    /// it, worked out as the push works them out. Refuses where the push would.
+    pub fn force_push_target(&self) -> Result<PushTarget> {
+        let Some(branch) = self.head()?.branch else {
+            return Err(Error::invalid("Check out a branch to push it."));
+        };
+        let has_upstream = self
+            .git()
+            .find_branch(&branch, git2::BranchType::Local)
+            .and_then(|b| b.upstream())
+            .is_ok();
+        let (remote, dest) = if has_upstream {
+            self.push_destination(&branch)?
+        } else {
+            (
+                self.remote_without_upstream()?,
+                format!("refs/heads/{branch}"),
+            )
+        };
+        let dest = dest.strip_prefix("refs/heads/").unwrap_or(&dest).to_owned();
+        Ok(PushTarget {
+            branch,
+            remote,
+            dest,
+        })
     }
 
     /// Where a push without a destination sends `branch`, as `(remote, ref on the remote)`,

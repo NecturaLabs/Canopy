@@ -105,6 +105,11 @@ impl CanopyApp {
                         }
                     }
                 }
+                Action::ForcePush => {
+                    if let Some(t) = self.tab() {
+                        t.worker.send(Job::PushTarget);
+                    }
+                }
                 Action::LoadMore => {
                     let page = self.settings.commit_page;
                     if let Some(t) = self.tab() {
@@ -636,6 +641,67 @@ mod tests {
 
     /// A pull decision, or the offer to force-delete a branch, that comes back after the user
     /// moved to another tab is answered for the repository that asked, never the active one.
+    /// F12: the force push question names the branch and where it goes, which the repository
+    /// thread works out.
+    #[test]
+    fn the_force_push_question_names_the_branch_and_its_destination() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let (worker, events, jobs) = crate::worker::Worker::detached();
+        let mut tab = test_tab(canopy_core::RepoSnapshot::default());
+        tab.worker = worker;
+        app.tabs.push(tab);
+        app.apply(&ctx, vec![Action::ForcePush]);
+        assert!(
+            app.dialogs.current().is_none(),
+            "nothing is asked before the answer"
+        );
+        let sent: Vec<_> = jobs.try_iter().collect();
+        assert!(
+            sent.iter().any(|j| matches!(j, Job::PushTarget)),
+            "{sent:?}"
+        );
+        events
+            .send(crate::worker::Event::PushTarget(Ok(
+                canopy_core::PushTarget {
+                    branch: "feature/dark-mode".into(),
+                    remote: "origin".into(),
+                    dest: "feature/dark-mode".into(),
+                },
+            )))
+            .expect("the tab listens");
+        app.poll(&ctx);
+        let Some(Dialog::Confirm {
+            title, body, op, ..
+        }) = app.dialogs.current()
+        else {
+            panic!("no confirmation: {:?}", app.dialogs.current());
+        };
+        assert_eq!(
+            title,
+            "Force push feature/dark-mode to origin/feature/dark-mode?"
+        );
+        assert!(
+            body.contains("origin/feature/dark-mode is overwritten"),
+            "{body}"
+        );
+        assert!(matches!(op, Op::Push { force: true }));
+    }
+
+    #[test]
+    fn the_force_delete_question_names_the_branch() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        app.tabs[0].force_delete_offer = Some("topic".into());
+        app.poll(&ctx);
+        let Some(Dialog::Confirm { title, .. }) = app.dialogs.current() else {
+            panic!("no confirmation: {:?}", app.dialogs.current());
+        };
+        assert_eq!(title, "Force delete branch topic?");
+    }
+
     #[test]
     fn a_late_question_is_answered_for_the_repository_that_asked() {
         use crate::settings::PullMode;

@@ -56,6 +56,9 @@ pub enum Action {
     SetView(View),
     Reveal(Oid),
     Refresh,
+    /// Ask before force pushing the current branch: the repository thread first works out where
+    /// the push would go, so the question can say.
+    ForcePush,
     LoadMore,
     Fetch,
     Pull,

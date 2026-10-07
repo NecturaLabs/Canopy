@@ -330,7 +330,7 @@ pub fn show(ui: &mut Ui, tab: &mut RepoTab, actions: &mut Vec<Action>) {
                     m.separator();
                     if is_head {
                         if m.item(icon::WARNING, "Force push (with lease)…").danger().show(m.ui).clicked() {
-                            actions.push(Action::Confirm { title: format!("Force push {name}?"), body: format!("The remote copy of {name} is overwritten with your local branch. --force-with-lease refuses if someone else pushed in the meantime."), confirm: "Force push branch".into(), danger: true, op: Op::Push { force: true } });
+                            actions.push(Action::ForcePush);
                         }
                     } else if worktree.is_none() && m.item(icon::TRASH, "Delete…").danger().show(m.ui).clicked() {
                         actions.push(Action::Confirm { title: format!("Delete branch {name}?"), body: "Only the local branch is deleted. If it has commits that are not merged, Git refuses and Canopy asks before forcing it.".into(), confirm: "Delete branch".into(), danger: true, op: Op::DeleteBranch { name: name.clone(), force: false } });

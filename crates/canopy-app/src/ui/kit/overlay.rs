@@ -669,6 +669,7 @@ impl TooltipExt for Response {
             shortcut: None,
             at_pointer: false,
             extra: false,
+            unavailable: false,
         }
     }
 }
@@ -687,6 +688,7 @@ pub struct Tooltip {
     shortcut: Option<Command>,
     at_pointer: bool,
     extra: bool,
+    unavailable: bool,
 }
 
 /// How far above and below the pointer a pointer-placed tooltip may still sit against the control
@@ -744,6 +746,13 @@ impl Tooltip {
         self
     }
 
+    /// The text says why the control is unavailable, though its response is enabled (a kit
+    /// control draws itself disabled without disabling its ui): shown at every level.
+    pub fn unavailable(mut self, unavailable: bool) -> Self {
+        self.unavailable = unavailable;
+        self
+    }
+
     pub fn show(self) -> Response {
         let Self {
             response,
@@ -752,8 +761,9 @@ impl Tooltip {
             shortcut,
             at_pointer,
             extra,
+            unavailable,
         } = self;
-        if !tooltip_shows(tooltip_level(), response.enabled(), extra) {
+        if !tooltip_shows(tooltip_level(), response.enabled() && !unavailable, extra) {
             return response;
         }
         let mut tip = if response.enabled() {

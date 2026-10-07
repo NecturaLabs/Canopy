@@ -293,6 +293,9 @@ pub enum Job {
     Conflict(String),
     /// What the configuration asks a pull to do on the current branch (`Repo::pull_config`).
     PullConfig,
+    /// Where a force push of the current branch would go ([`Repo::force_push_target`]), for the
+    /// question that asks before it.
+    PushTarget,
     /// How the operations that follow have git behave (Settings → Git).
     Options(canopy_core::GitOptions),
     /// A mutation.
@@ -342,6 +345,8 @@ pub enum Event {
     /// The answer to [`Job::PullConfig`]: git's own message when the configuration cannot be
     /// read.
     PullConfig(Result<canopy_core::PullConfig, String>),
+    /// The answer to [`Job::PushTarget`]: git's own message when it cannot tell.
+    PushTarget(Result<canopy_core::PushTarget, String>),
     MergeMessage(String),
     /// A new commit message after a squash, never an amend prefill.
     SquashMessage(String),
@@ -576,6 +581,7 @@ impl Job {
             Self::SquashMessage(_) => "squash-message",
             Self::Conflict(_) => "conflict",
             Self::PullConfig => "pull-config",
+            Self::PushTarget => "push-target",
             Self::Options(_) => "options",
             Self::Op(_) => "operation",
         }
@@ -773,6 +779,11 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                 Job::PullConfig => {
                     emit(Event::PullConfig(
                         repo.pull_config().map_err(|e| e.to_string()),
+                    ));
+                }
+                Job::PushTarget => {
+                    emit(Event::PushTarget(
+                        repo.force_push_target().map_err(|e| e.to_string()),
                     ));
                 }
                 Job::Conflict(path) => {

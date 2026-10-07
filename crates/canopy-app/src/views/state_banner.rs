@@ -132,6 +132,78 @@ mod tests {
         assert_eq!(confirm, "Abort rebase");
     }
 
+    /// Whether `tip` is painted after the pointer rests on the banner's Continue button.
+    fn continue_tip_shown(level: crate::ui::kit::overlay::TooltipLevel, tip: &str) -> bool {
+        let mut snap = canopy_core::RepoSnapshot {
+            state: canopy_core::RepoState::Merge,
+            ..Default::default()
+        };
+        snap.status.conflicted.push(canopy_core::FileEntry {
+            path: "a.txt".into(),
+            old_path: None,
+            kind: canopy_core::ChangeKind::Modified,
+            additions: 0,
+            deletions: 0,
+            lfs: false,
+            old_mode: None,
+            new_mode: None,
+        });
+        let tab = crate::app::test_tab(snap);
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        crate::ui::fonts::install(&ctx);
+        theme::apply(&ctx, theme::ThemeId::Midnight, theme::Appearance::STILL);
+        crate::ui::kit::overlay::set_tooltip_level(level);
+        let mut at = egui::Pos2::ZERO;
+        let mut found = false;
+        for i in 0..16 {
+            let events = if i == 1 {
+                vec![egui::Event::PointerMoved(at)]
+            } else {
+                Vec::new()
+            };
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 400.0))),
+                    time: Some(f64::from(i) * 0.2),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(ui, &tab, &mut Vec::new()),
+            );
+            out.textures_delta.clear();
+            if let Some(update) = out.platform_output.accesskit_update {
+                for (_, node) in update.nodes {
+                    if node.label().is_some_and(|l| l.starts_with("Continue"))
+                        && let Some(b) = node.bounds()
+                    {
+                        at = pos2(
+                            crate::ui::to_f32(f64::midpoint(b.x0, b.x1)),
+                            crate::ui::to_f32(f64::midpoint(b.y0, b.y1)),
+                        );
+                    }
+                }
+            }
+            found = out
+                .shapes
+                .iter()
+                .any(|c| matches!(&c.shape, egui::Shape::Text(t) if t.galley.text() == tip));
+        }
+        crate::ui::kit::overlay::set_tooltip_level(crate::ui::kit::overlay::TooltipLevel::Helpful);
+        found
+    }
+
+    /// F18: a disabled Continue says why on hover at every tooltip level.
+    #[test]
+    fn a_disabled_continue_says_why_at_every_tooltip_level() {
+        use crate::ui::kit::overlay::TooltipLevel;
+        let shown: Vec<bool> = [TooltipLevel::Off, TooltipLevel::Helpful, TooltipLevel::All]
+            .into_iter()
+            .map(|l| continue_tip_shown(l, "Resolve and stage every conflicted file first"))
+            .collect();
+        assert_eq!(shown, [true, true, true], "Off, Helpful, All");
+    }
+
     #[test]
     fn the_body_counts_the_conflicts_left() {
         assert_eq!(conflicts_left(0), "No conflicts left");

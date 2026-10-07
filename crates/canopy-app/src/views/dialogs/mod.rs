@@ -998,17 +998,13 @@ pub fn show(
             strategy,
             preview,
         } => {
-            let incoming = match preview.behind {
-                1 => "1 new commit".to_owned(),
-                n => format!("{n} new commits"),
-            };
             let result = KitDialog::new(salt)
                 .title("This pull will likely conflict")
                 .icon(icon::WARNING)
                 .width(DialogWidth::Form)
-                .description(format!(
-                    "{} has {incoming} that touch what you are working on. If you pull anyway, Canopy takes you to Changes to resolve the conflicts.",
-                    preview.upstream
+                .description(likely_conflict_description(
+                    &preview.upstream,
+                    preview.behind,
                 ))
                 .body(|ui| predicted_conflicts(ui, preview))
                 .footer(|f| {
@@ -1257,6 +1253,17 @@ fn clone_target(builder: &UrlBuilder, parent: &str) -> Option<(String, std::path
     }
     let dest = crate::settings::expand_home(parent).join(&name);
     Some((url.trim().to_owned(), dest))
+}
+
+/// The likely-conflict dialog's text: what the upstream has and what happens on "Pull anyway".
+fn likely_conflict_description(upstream: &str, behind: usize) -> String {
+    let (incoming, verb) = match behind {
+        1 => ("1 new commit".to_owned(), "touches"),
+        n => (format!("{n} new commits"), "touch"),
+    };
+    format!(
+        "{upstream} has {incoming} that {verb} what you are working on. If you pull anyway, Canopy takes you to Changes to resolve the conflicts."
+    )
 }
 
 /// How many predicted files a pull's dialog lists before "and N more".
@@ -1670,7 +1677,7 @@ fn about(ui: &mut Ui, git_version: &str) -> Option<Outcome> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Dialog, DialogStack, Oid, Start, valid_ref_name};
+    use super::{Dialog, DialogStack, Oid, Start, likely_conflict_description, valid_ref_name};
     use crate::askpass::Prompt;
     use crate::ui::legal::{Document, Pending};
     use crossbeam_channel::Receiver;
@@ -1705,6 +1712,17 @@ mod tests {
         Dialog::Stash {
             message: name.into(),
             untracked: false,
+        }
+    }
+
+    #[test]
+    fn the_likely_conflict_text_agrees_with_the_number_of_commits() {
+        for (behind, says) in [
+            (1, "origin/main has 1 new commit that touches what you are"),
+            (2, "origin/main has 2 new commits that touch what you are"),
+        ] {
+            let text = likely_conflict_description("origin/main", behind);
+            assert!(text.starts_with(says), "{behind}: {text}");
         }
     }
 
