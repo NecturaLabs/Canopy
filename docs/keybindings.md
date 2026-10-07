@@ -47,7 +47,8 @@ Rules, each guarded by a test in `keymap.rs`:
   both, `g` and `G`, Ctrl+Tab and Ctrl+Shift+Tab.
 - Capital letters shown as single-key shortcuts mean Shift plus that letter; `P`, for example,
   means Shift+P.
-- **Bare keys never fire while a text field has focus.** Only the "Anywhere" chords, which all
+- **Bare keys never fire while a text field has focus**, nor while a select's open list is taking
+  letters (type-ahead). Only the "Anywhere" chords, which all
   carry Ctrl, or are F5 or Esc, work while typing. Their Git twins are Fork's Ctrl+Shift chords,
   chosen so they never take a text-editing chord (Ctrl+A, C, V, X, Z, Y). Pull and push are the
   one family whose letters differ between the layers (`p` and `P` against Ctrl+Shift+L and
