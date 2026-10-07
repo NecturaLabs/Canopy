@@ -174,6 +174,13 @@ impl Op {
             Self::Pull { .. } => OpKind::Pull,
             Self::Push { .. } => OpKind::Push,
             Self::DeleteBranch { name, force: false } => OpKind::SafeDelete(name.clone()),
+            Self::Merge(..) | Self::Rebase(_) => OpKind::Merge,
+            Self::StashSave { .. } => OpKind::Stash,
+            Self::StashApply { pop: true, .. } | Self::StashApplyCommit { pop: true, .. } => {
+                OpKind::Pop
+            }
+            Self::CreateBranch { .. } => OpKind::Branch,
+            Self::AddRemote { .. } => OpKind::Publish,
             _ => OpKind::Other,
         }
     }
@@ -360,7 +367,7 @@ pub enum Event {
         kind: Option<canopy_core::ConflictKind>,
         file: Result<Arc<canopy_core::ConflictFile>, String>,
     },
-    OpStarted(String),
+    OpStarted { label: String, kind: OpKind },
     Progress(String),
     OpFinished {
         label: String,
@@ -492,6 +499,12 @@ pub enum OpKind {
     Push,
     /// `git branch -d`: when Git refuses an unmerged branch, offer to force the delete.
     SafeDelete(String),
+    /// A merge, squash or rebase invoked from the toolbar.
+    Merge,
+    Stash,
+    Pop,
+    Branch,
+    Publish,
     Other,
 }
 
@@ -851,7 +864,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         _ => None,
                     };
                     tracing::info!(operation = %label, "operation started");
-                    emit(Event::OpStarted(label.clone()));
+                    emit(Event::OpStarted {
+                        label: label.clone(),
+                        kind: kind.clone(),
+                    });
                     let progress = |line: &str| emit(Event::Progress(line.to_owned()));
                     let decided = match &op {
                         Op::Pull {
@@ -1465,7 +1481,7 @@ mod tests {
         );
         assert_eq!(
             Op::Merge("topic".into(), canopy_core::MergeMode::Default).kind(),
-            OpKind::Other
+            OpKind::Merge
         );
         let fetch = Op::Fetch {
             prune: true,
