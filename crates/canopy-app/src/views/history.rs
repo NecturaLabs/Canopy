@@ -2095,14 +2095,25 @@ mod tests {
     }
 
     /// The history's ref pills keep their labels readable on every surface a row can have, in
-    /// every theme and lane colour: white where white reads, otherwise its commit's lane colour.
+    /// every theme, style and lane colour: white where white reads, otherwise its commit's lane
+    /// colour.
     #[test]
     fn rendered_ref_pills_label_readably_in_their_lane_colour() {
         use canopy_core::{RefKind, RefLabel};
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        for id in theme::ThemeId::ALL {
-            theme::apply(&ctx, id, theme::Appearance::STILL);
+        for (id, style) in theme::ThemeId::ALL
+            .into_iter()
+            .flat_map(|id| theme::Style::ALL.map(|style| (id, style)))
+        {
+            theme::apply(
+                &ctx,
+                id,
+                theme::Appearance {
+                    style,
+                    ..theme::Appearance::STILL
+                },
+            );
             let p = palette(&ctx);
             for kind in [
                 RefKind::CurrentBranch,
@@ -2110,6 +2121,7 @@ mod tests {
                 RefKind::RemoteBranch,
                 RefKind::Tag,
                 RefKind::Head,
+                RefKind::Stash,
             ] {
                 for lane in (0u16..).take(p.lanes.len()) {
                     let label = RefLabel {
@@ -2138,7 +2150,7 @@ mod tests {
                         let ratio = theme::contrast(actual, theme::over(fill, surface));
                         assert!(
                             ratio >= 4.5,
-                            "{} {kind:?} lane {lane}: painted ink {actual:?} contrast {ratio:.2}:1",
+                            "{} {style:?} {kind:?} lane {lane}: painted ink {actual:?} contrast {ratio:.2}:1",
                             p.name
                         );
                     }

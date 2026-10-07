@@ -1457,51 +1457,63 @@ mod tests {
     /// Every ref pill shares one tonal design in its lane's colour: the badge surface tinted with
     /// it and a hairline of it, label and glyph white where white reads and in the lane colour
     /// otherwise; the checked-out branch is tinted more. Label and glyph read at 4.5:1 on the pill
-    /// wherever it sits, and two lanes tell apart.
+    /// wherever it sits, in either style, and two lanes tell apart.
     #[test]
     fn every_ref_pill_is_tinted_in_its_lane() {
-        for id in theme::ThemeId::ALL {
-            for contrast in [false, true] {
-                let p = id.shown_palette(contrast);
-                for lane in (0u16..).take(p.lanes.len()) {
-                    let branch = RefPill::new("x", RefKind::LocalBranch).lane(lane);
-                    for kind in KINDS {
-                        let pill = RefPill::new("x", kind).lane(lane);
-                        let (fill, ring, ink) = pill.colors(p);
-                        let strong = kind == RefKind::CurrentBranch;
-                        assert_eq!(
-                            (fill, ring, ink),
-                            p.pill(p.lane(lane), strong),
-                            "{} {kind:?} lane {lane}",
-                            p.name
-                        );
-                        if !strong {
-                            assert_eq!(fill, branch.colors(p).0, "{} {kind:?}", p.name);
-                        }
-                        assert_eq!(pill.glyph_color(p), ink, "{} {kind:?}", p.name);
-                        assert_ne!(fill, p.s().badge, "{} lane {lane}: tinted", p.name);
-                        for bg in p.component_surfaces(p.s()) {
-                            let r = theme::contrast(ink, theme::over(fill, bg));
-                            assert!(r >= 4.5, "{} {kind:?} lane {lane}: {r:.2}:1", p.name);
-                        }
-                    }
-                    let current = RefPill::new("x", RefKind::CurrentBranch).lane(lane);
-                    let badge = p.s().badge;
-                    let distance = |c: Color32| {
-                        u32::from(badge.r().abs_diff(c.r()))
-                            + u32::from(badge.g().abs_diff(c.g()))
-                            + u32::from(badge.b().abs_diff(c.b()))
-                    };
-                    assert!(
-                        distance(current.colors(p).0) > distance(branch.colors(p).0),
-                        "{} lane {lane}: the checked-out branch is tinted more",
+        for (id, style, contrast) in theme::ThemeId::ALL.into_iter().flat_map(|id| {
+            Style::ALL
+                .into_iter()
+                .flat_map(move |style| [false, true].map(|contrast| (id, style, contrast)))
+        }) {
+            let _ctx = crate::ui::kit::testkit::ctx_with(id, style, theme::Density::Comfortable);
+            let p = id.shown_palette(contrast);
+            for lane in (0u16..).take(p.lanes.len()) {
+                let branch = RefPill::new("x", RefKind::LocalBranch).lane(lane);
+                let badge = p.s().badge;
+                let distance = |c: Color32| {
+                    u32::from(badge.r().abs_diff(c.r()))
+                        + u32::from(badge.g().abs_diff(c.g()))
+                        + u32::from(badge.b().abs_diff(c.b()))
+                };
+                for kind in KINDS {
+                    let pill = RefPill::new("x", kind).lane(lane);
+                    let (fill, ring, ink) = pill.colors(p);
+                    let strong = kind == RefKind::CurrentBranch;
+                    assert_eq!(
+                        (fill, ring, ink),
+                        p.pill(p.lane(lane), strong),
+                        "{} {kind:?} lane {lane}",
                         p.name
                     );
+                    if !strong {
+                        assert_eq!(fill, branch.colors(p).0, "{} {kind:?}", p.name);
+                    }
+                    assert_eq!(pill.glyph_color(p), ink, "{} {kind:?}", p.name);
+                    assert_ne!(fill, p.s().badge, "{} lane {lane}: tinted", p.name);
+                    assert!(
+                        distance(ring) > distance(fill),
+                        "{} {kind:?} lane {lane}: the hairline is more of the lane than the fill",
+                        p.name
+                    );
+                    for bg in p.component_surfaces(p.s()) {
+                        let r = theme::contrast(ink, theme::over(fill, bg));
+                        assert!(
+                            r >= 4.5,
+                            "{} {style:?} {kind:?} lane {lane}: {r:.2}:1",
+                            p.name
+                        );
+                    }
                 }
-                let one = RefPill::new("x", RefKind::LocalBranch).lane(0).colors(p).0;
-                let two = RefPill::new("x", RefKind::LocalBranch).lane(1).colors(p).0;
-                assert_ne!(one, two, "{}: lanes tell apart", p.name);
+                let current = RefPill::new("x", RefKind::CurrentBranch).lane(lane);
+                assert!(
+                    distance(current.colors(p).0) > distance(branch.colors(p).0),
+                    "{} lane {lane}: the checked-out branch is tinted more",
+                    p.name
+                );
             }
+            let one = RefPill::new("x", RefKind::LocalBranch).lane(0).colors(p).0;
+            let two = RefPill::new("x", RefKind::LocalBranch).lane(1).colors(p).0;
+            assert_ne!(one, two, "{}: lanes tell apart", p.name);
         }
     }
 
