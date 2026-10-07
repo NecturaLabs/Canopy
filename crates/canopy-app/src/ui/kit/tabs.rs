@@ -1302,13 +1302,19 @@ mod tests {
         for glyph in glyphs {
             assert!(text_rect(&out, glyph).is_some(), "a control is missing");
         }
-        // At the start the left button has nothing to scroll to (dimmed, out of the tab order and
-        // so out of the AccessKit tree); the right one and the list are buttons with names.
+        // At the start the left button has nothing to scroll to, so it is unavailable (on Linux
+        // its name says so too); the right one and the list are available.
         let nodes = labelled(&out);
-        let has = |label: &str| nodes.iter().any(|(l, _)| l == label);
-        assert!(!has("Scroll tabs left"));
-        assert!(has("Scroll tabs right"));
-        assert!(has("All repositories"));
+        let disabled = |label: &str| {
+            nodes
+                .iter()
+                .find(|(l, _)| l.starts_with(label))
+                .unwrap_or_else(|| panic!("{label}: {nodes:?}"))
+                .1
+        };
+        assert!(disabled("Scroll tabs left"));
+        assert!(!disabled("Scroll tabs right"));
+        assert!(!disabled("All repositories"));
         // Back to room: the controls go again.
         let out = frame(&ctx, 0.2, Vec::new(), |ui| {
             let _ = DocTabs::new(&few, 0).max_width(800.0).show(ui);
