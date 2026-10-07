@@ -981,11 +981,18 @@ mod tests {
             }
             assert_eq!(toasts.items.len(), 1, "only {enabled_topic:?} shows a card");
             assert_eq!(toasts.items[0].topic, enabled_topic);
-            assert_eq!(toasts.history.len(), Topic::ALL.len(), "all topics remain in the center");
+            assert_eq!(
+                toasts.history.len(),
+                Topic::ALL.len(),
+                "all topics remain in the center"
+            );
 
             *prefs.topic_mut(enabled_topic) = false;
             toasts.set_prefs(prefs);
-            assert!(toasts.items.is_empty(), "switching off {enabled_topic:?} hides its card");
+            assert!(
+                toasts.items.is_empty(),
+                "switching off {enabled_topic:?} hides its card"
+            );
             assert_eq!(toasts.history.len(), Topic::ALL.len());
         }
     }
@@ -997,10 +1004,23 @@ mod tests {
         toasts.set_prefs(NotificationPrefs::default());
         // The same completed-operation topic is used by foreground and background fetches.
         for title in ["Fetched", "Background fetch complete"] {
-            toasts.push(&ctx, ToastKind::Success, Topic::Finished, title, "up to date");
+            toasts.push(
+                &ctx,
+                ToastKind::Success,
+                Topic::Finished,
+                title,
+                "up to date",
+            );
         }
-        assert!(toasts.items.is_empty(), "finished-operation cards are disabled by default");
-        assert_eq!(toasts.history.len(), 2, "the notification center retains both results");
+        assert!(
+            toasts.items.is_empty(),
+            "finished-operation cards are disabled by default"
+        );
+        assert_eq!(
+            toasts.history.len(),
+            2,
+            "the notification center retains both results"
+        );
     }
 
     /// REVIEW-KIT-5: a sixth notification pushes out the oldest one that is not an error; an
