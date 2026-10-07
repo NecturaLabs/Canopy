@@ -106,6 +106,7 @@ Only when no text field has focus.
 | Shift+G, also End | Go to the bottom |
 | / | Show or hide History search |
 | Shift+R | Refresh |
+| Shift+F10 | Open the menu of the focused row |
 
 ## History
 

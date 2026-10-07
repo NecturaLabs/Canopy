@@ -51,7 +51,7 @@ rather than beige, khaki or lilac; text and the status colour stay readable on e
 (`status_washes_keep_text_readable`). `danger` is the text-grade red; `danger_base` is concept 1's
 `#e5484d` red for error rings, the danger button's focus ring and danger fills; `danger_solid`
 fills the danger button. Light themes ring the switch knob in `knob_edge`. Disabled controls use
-`Palette::disabled_text` on `Surfaces::disabled_fill` with a `disabled_edge` ring, flat in both
+`Palette::disabled_text` on `Surfaces::disabled_fill` with a `disabled_edge` ring (icon buttons too), flat in both
 styles and never dimmed again with `DISABLED_ALPHA` (`disabled_tokens_are_readable`: at least
 3:1, 4.5:1 at high contrast). A banner's or callout's action can be disabled too, so disabled text
 also keeps 3:1 on every status wash and 3.5:1 on the washes of the grounds banners sit on
@@ -104,8 +104,11 @@ Links are for going somewhere (a web page, release notes, another screen); an ac
 something (copy, dismiss, create) is a button, a Ghost one where it should stay quiet. Link
 buttons are Inter Medium in `accent2` and underlined on hover and focus; where the link colour alone does
 not set a link apart from body text, the theme's `Design::link_underline` underlines them at rest
-too: at high contrast, for low vision. Inline links in the legal texts still
-underline only on hover and focus.
+too: at high contrast, for low vision. Links inside body text (the legal texts) are underlined at
+rest in every theme (WCAG 1.4.1), heavier on hover and focus, each line of a wrapped link on its own
+text. A web link (`LinkButton::url`) ends in an arrow, shows its address in a tooltip and offers
+Copy link in its context menu (Copy address for an e-mail link). Every link is at least 24 points
+tall (`theme::MIN_TARGET`), WCAG 2.5.8's 24 CSS pixels read as 24 points at 100% scale.
 
 Every pairing (text on every surface and state, labels on every fill end, focus, outlines, lanes,
 syntax, coloured components, glass over any backdrop) is a test in `theme.rs`, run for every theme
@@ -481,6 +484,18 @@ a disabled control's reason is its description everywhere. Overlays (the palette
 dialogs) are modal: Tab stays inside, and closing gives focus back to what had it. Dragging a split
 never takes focus; Tab does.
 
+
+### Text field
+
+`kit::field` draws every text input (single-line, search, secret, numeric and the commit composer);
+no view uses egui's `TextEdit` directly. The placeholder reads at 4.5:1 and the field's bottom edge
+and well at 3:1 (4.5:1 at high contrast) on every surface, tested per theme, style and contrast; the
+look is cached per palette, so a high contrast or custom theme never reuses its base theme's. Focus
+shows a ring for keyboard and pointer alike. An error is message text with an icon under the field,
+announced as invalid with the message as its description, and never shows before the user typed.
+The small buttons inside a field (clear, reveal, stepper) keep their look but take a 24-point hit
+area (`IconButton::min_target`), and Tab reaches the clear button. A value wider than its field shows
+whole in a tooltip at the Helpful level (up to 600 characters), never for a secret.
 
 ### Ref pill
 

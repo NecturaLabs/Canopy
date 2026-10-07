@@ -145,6 +145,7 @@ change when current settings change; Canopy never rewrites existing commits to f
 | Push, setting upstream when missing | Done | Yes | Yes | Yes |
 | Force push with lease | Done | Yes | ? | ? |
 | The force push confirmation names the branch and the remote branch it overwrites | Unreleased | ? | ? | ? |
+| A pull asks again when the remote changed while you decided | Unreleased | ? | ? | ? |
 | The status bar says when a branch is not tracking a remote branch of the same name that exists | Unreleased | ? | ? | ? |
 | In-app credential and SSH passphrase prompts | Unreleased | Yes | Yes | Yes |
 | Pull request integration (GitHub) | Unreleased | ? | Yes | ? |
@@ -208,6 +209,8 @@ as Reload, and only with hosting on and a list already loaded.
 | Notification cards that stay as long as their words take to read (5–10 s, errors 8–15 s, decisions 15 s then the center), paused while pointed at, focused or the window is away; decisions as two named buttons, no close button | Unreleased | ? | ? | ? |
 | Notification settings (Appearance → Notifications): cards on or off, and per type — errors, needs your attention, updates, finished operations, confirmations; by default only the first three show as cards | Unreleased | ? | ? | ? |
 | Tooltip settings (Appearance → Tooltips): Helpful (default; only what the screen does not show), All, or Off (only why a control is unavailable), and a Quick, Normal or Slow delay | Unreleased | ? | ? | ? |
+| Links: a web link shows its address and offers Copy link; links in text are underlined; a cut-off field value shows whole in a tooltip | Unreleased | ? | ? | ? |
+| A settings file cannot turn on tag pruning, automatic fetching or beta builds, fetch more often, stop following your git configuration or choose where a push goes | Unreleased | ? | ? | ? |
 | Notification center: the status bar's bell lists the last 100 notifications, whatever shows as a card, with an unread count for those that need you; copy for failures, clear all, and the decisions a notification asks for (pull, accounts, review or restart into an update) | Unreleased | ? | Yes | ? |
 | Localisation | Planned | ? | ? | Yes |
 | Update check, which can be turned off (nothing is sent before you accept the Terms) | Unreleased | ? | ? | ? |
