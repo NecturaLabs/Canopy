@@ -875,7 +875,7 @@ mod tests {
             }
             edge
         };
-        let edges: Vec<f32> = [(0, 0), (4, 0), (12, 3), (0, 12), (99, 99)]
+        let edges: Vec<f32> = [(0, 0), (4, 0), (12, 3), (0, 12), (99, 99), (150, 150)]
             .iter()
             .map(|(c, r)| right(*c, *r))
             .collect();
