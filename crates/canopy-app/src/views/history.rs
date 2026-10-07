@@ -339,6 +339,30 @@ fn filter_field_key() -> egui::Id {
 }
 
 /// Paints `text` on one line from `x`, ellipsized before `right`; returns where it ends.
+/// The widest a commit's date can read, as `date_text` writes it: what the Date column must hold
+/// so the longest relative time is not cut.
+fn longest_dates(relative: bool, iso: bool) -> &'static [&'static str] {
+    match (relative, iso) {
+        (true, true) => &["59 minutes ago", "23 hours ago", "6 days ago", "2026-09-28"],
+        (true, false) => &[
+            "59 minutes ago",
+            "23 hours ago",
+            "6 days ago",
+            "Sep 28, 2026",
+        ],
+        (false, true) => &["2026-09-28"],
+        (false, false) => &["Sep 28, 2026"],
+    }
+}
+
+/// The Date column's width: `base`, or more when `measure` says its longest text needs it.
+fn date_column_width(base: f32, relative: bool, iso: bool, measure: impl Fn(&str) -> f32) -> f32 {
+    longest_dates(relative, iso)
+        .iter()
+        .map(|d| measure(d) + 2.0 * CELL_PAD)
+        .fold(base, f32::max)
+}
+
 fn paint_line(
     painter: &egui::Painter,
     x: f32,
@@ -447,7 +471,23 @@ fn table(ui: &mut Ui, tab: &mut RepoTab, settings: &Settings, actions: &mut Vec<
     let show_date = full.width() >= 760.0;
     let show_sha = full.width() >= 460.0;
     let author_w = if show_author { author_col } else { 0.0 };
-    let date_w = if show_date { date_col } else { 0.0 };
+    let date_w = if show_date {
+        let font = FontId::proportional(m.body_size);
+        date_column_width(
+            date_col,
+            settings.relative_dates,
+            settings.iso_dates,
+            |text| {
+                ui.fonts_mut(|f| {
+                    f.layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
+                })
+                .size()
+                .x
+            },
+        )
+    } else {
+        0.0
+    };
     let sha_w = if show_sha { sha_col } else { 0.0 };
     let desc_w = (full.width() - graph_w - author_w - date_w - sha_w).max(0.0);
     let desc_x = full.min.x + graph_w;
@@ -855,6 +895,20 @@ mod tests {
     use egui::Pos2;
 
     use super::*;
+
+    /// F11: the Date column grows to hold its longest text instead of cutting "10 minutes ago".
+    #[test]
+    fn the_date_column_holds_the_longest_relative_time() {
+        let wide = |text: &str| 7.0 * crate::ui::count_f32(text.chars().count());
+        let narrow = |_: &str| 20.0;
+        for iso in [false, true] {
+            // "59 minutes ago" is 14 characters: 98 points of text plus both paddings.
+            assert!((date_column_width(104.0, true, iso, wide) - 118.0).abs() < 0.01);
+            assert!((date_column_width(104.0, true, iso, narrow) - 104.0).abs() < 0.01);
+        }
+        // Without relative dates only the absolute date has to fit.
+        assert!((date_column_width(60.0, false, true, wide) - 90.0).abs() < 0.01);
+    }
 
     /// A11Y-3, A11Y-4, A11Y-20: Tab meets the commit list before the details, stops once on the
     /// list (the selected commit, announced with its branches), and the arrows move the selection
