@@ -445,7 +445,15 @@ fn success_body(kind: &OpKind, out: &str, subject: &str, branch: Option<&str>) -
             }
             body
         }
-        OpKind::Push | OpKind::Other | OpKind::Squash(_) | OpKind::SafeDelete(_) => {
+        OpKind::Push
+        | OpKind::Other
+        | OpKind::Squash(_)
+        | OpKind::SafeDelete(_)
+        | OpKind::Merge
+        | OpKind::Stash
+        | OpKind::Pop
+        | OpKind::Branch
+        | OpKind::Publish => {
             if let Some(told) = changes.describe() {
                 told
             } else if out.lines().any(|l| l.trim() == "Everything up-to-date") {
