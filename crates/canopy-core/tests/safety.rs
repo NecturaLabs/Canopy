@@ -237,6 +237,38 @@ fn publish_branch_rejects_unknown_remotes_and_branches() {
     ));
 }
 
+#[test]
+fn push_arguments_do_not_treat_remote_names_or_refs_as_options() {
+    let (origin, work, repo) = upstream_and_clone();
+    let p = work.path();
+    git(p, &["tag", "v1"]);
+    repo.push_tag("origin", "v1", |_| {}).expect("push tag");
+    assert!(ref_exists(origin.path(), "refs/tags/v1"));
+
+    for result in [
+        repo.push_tag("--mirror", "v1", |_| {}),
+        repo.delete_remote_branch("origin", "--mirror", |_| {}),
+    ] {
+        assert!(result.is_err(), "option-shaped input must not run an option");
+    }
+    assert!(ref_exists(origin.path(), "refs/heads/main"));
+    assert!(ref_exists(origin.path(), "refs/tags/v1"));
+
+    // The ordinary deletion still works with the separator.
+    repo.delete_remote_branch("origin", "main", |_| {})
+        .expect("delete remote branch");
+    assert!(!ref_exists(origin.path(), "refs/heads/main"));
+}
+
+#[test]
+fn rename_and_checkout_refuse_option_shaped_names() {
+    let (_origin, work, repo) = upstream_and_clone();
+    assert!(repo.rename_branch("main", "--delete").is_err());
+    assert!(repo.checkout_remote_branch("origin", "--orphan").is_err());
+    assert_eq!(repo.head().unwrap().branch.as_deref(), Some("main"));
+    assert!(ref_exists(work.path(), "refs/heads/main"));
+}
+
 // --- File modes and type changes ---------------------------------------------------------------
 
 #[cfg(unix)]
