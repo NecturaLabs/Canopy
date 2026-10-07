@@ -38,7 +38,7 @@ pub mod toast;
 pub mod toggle;
 
 #[cfg(test)]
-mod testkit;
+pub(crate) mod testkit;
 
 pub use button::{Button, ButtonKind, IconButton, ToolButton};
 

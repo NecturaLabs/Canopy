@@ -4308,13 +4308,14 @@ fn accounts<'f>(
                     ForgeKind::GitLab => "Needs the api scope (read_api is enough to only browse).",
                 };
                 ui.add(egui::Label::new(RichText::new(scopes).size(m.small_size).color(p.text_faint)).wrap());
+                let page = hosting::token_page(kind, &host);
                 if LinkButton::new("Create a token")
-                    .external(true)
+                    .url(page.clone())
                     .text_size(m.small_size)
                     .show(ui)
                     .clicked()
                 {
-                    actions.push(Action::OpenUrl(hosting::token_page(kind, &host)));
+                    actions.push(Action::OpenUrl(page));
                 }
             });
         ui.add_space(m.card_gap);

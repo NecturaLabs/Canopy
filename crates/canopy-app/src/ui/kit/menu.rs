@@ -494,6 +494,16 @@ pub fn context<R>(response: &Response, add: impl FnOnce(&mut Menu<'_>) -> R) -> 
     show_popup(response, popup, Kind::Context, by_key, add)
 }
 
+/// The context menu every link has, opened by a secondary click or Shift+F10: copies where it
+/// leads (`label`: "Copy link", "Copy address").
+pub(crate) fn link_menu(response: &Response, destination: &str, label: &str) {
+    let _ = context(response, |m| {
+        if m.item(icon::COPY, label).show(m.ui).clicked() {
+            response.ctx.copy_text(destination.to_owned());
+        }
+    });
+}
+
 /// A menu opened by clicking `button` (or Enter/Space on it, which opens it with the first item
 /// focused). Returns what `add` returned while it is open.
 pub fn menu<R>(button: &Response, add: impl FnOnce(&mut Menu<'_>) -> R) -> Option<R> {

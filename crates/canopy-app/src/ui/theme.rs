@@ -35,6 +35,8 @@ pub const MD: f32 = 12.0;
 pub const LG: f32 = 16.0;
 pub const XL: f32 = 24.0;
 pub const XXL: f32 = 32.0;
+/// The smallest side of anything a pointer must hit (WCAG 2.5.8), taking a point as a CSS pixel.
+pub const MIN_TARGET: f32 = 24.0;
 pub const COMPACT_WIDTH: f32 = 1000.0;
 pub const SETTINGS_MAX_WIDTH: f32 = 1120.0;
 pub const SETTINGS_MAX_HEIGHT: f32 = 900.0;
