@@ -1204,52 +1204,61 @@ fn row_with_note(
 /// Every setting's default, for the buttons that go back to it.
 static DEFAULTS: LazyLock<Settings> = LazyLock::new(Settings::default);
 
-/// How much room the control of the row being drawn took last frame, for the reset button that
-/// goes before it.
+/// What the control of a row took last frame, for the reset button that goes before it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ControlRoom {
     /// From the row's right edge to the control's left edge, spacing included.
     width: f32,
-    height: f32,
+    /// The control's middle, below the row's top.
+    middle: f32,
+    /// The control did not fit on one line: the reset button then flows with it.
+    wrapped: bool,
 }
 
-/// The row being drawn: where [`revert`] finds its control's room.
+/// The row being drawn: where [`revert`] finds the room its control took last frame (`None` before
+/// the first frame has measured it), and where this frame's control starts.
 #[derive(Debug, Clone, Copy)]
 struct RowRoom {
     last: Option<ControlRoom>,
+    top: f32,
+    right: f32,
 }
 
 fn row_room_id() -> egui::Id {
     egui::Id::new("settings-row-room")
 }
 
-/// Runs a row's `control` and measures what it took, for the next frame's [`revert`]. A control
-/// that wrapped onto a second line has no single width: the reset button then flows with it.
+/// Runs a row's `control` and measures what it took, for the next frame's [`revert`].
 fn run_control(ui: &mut Ui, control: impl FnOnce(&mut Ui)) {
     let key = ui.id().with("control-room");
     let last: Option<ControlRoom> = ui.data(|d| d.get_temp(key));
-    ui.data_mut(|d| d.insert_temp(row_room_id(), RowRoom { last }));
     let start = ui.cursor();
+    let top = ui.max_rect().top();
+    ui.data_mut(|d| {
+        d.insert_temp(
+            row_room_id(),
+            RowRoom {
+                last,
+                top,
+                right: start.right(),
+            },
+        );
+    });
     control(ui);
     let end = ui.cursor();
     ui.data_mut(|d| d.remove::<RowRoom>(row_room_id()));
-    let room = (end.min.y <= start.min.y + 0.5).then(|| ControlRoom {
+    let room = ControlRoom {
         width: start.right() - end.right(),
-        height: ui.min_rect().height(),
-    });
-    let changed = match (room, last) {
-        (Some(a), Some(b)) => (a.width - b.width).abs() > 0.5 || (a.height - b.height).abs() > 0.5,
-        (None, None) => false,
-        _ => true,
+        middle: ui.min_rect().center().y - top,
+        wrapped: end.min.y > start.min.y + 0.5,
     };
+    let changed = last.is_none_or(|l| {
+        l.wrapped != room.wrapped
+            || (l.width - room.width).abs() > 0.5
+            || (l.middle - room.middle).abs() > 0.5
+    });
     if changed {
-        ui.data_mut(|d| {
-            if let Some(r) = room {
-                d.insert_temp(key, r);
-            } else {
-                d.remove::<ControlRoom>(key);
-            }
-        });
+        ui.data_mut(|d| d.insert_temp(key, room));
         ui.ctx().request_repaint();
     }
 }
@@ -1269,28 +1278,31 @@ fn revert<T: PartialEq + Clone>(ui: &mut Ui, value: &mut T, default: &T, name: &
     .size(Size::Sm)
     .id_salt(("revert", name));
     // The row draws right to left, so the control's place is known from last frame only: the
-    // button is put where it ended, and drawn first.
-    let room = ui
-        .ctx()
-        .data(|d| d.get_temp::<RowRoom>(row_room_id()))
-        .and_then(|row| row.last);
-    let place = room.and_then(|room| {
-        let right = ui.cursor().right() - room.width;
-        let rect = Rect::from_center_size(
-            pos2(right - side * 0.5, ui.cursor().top() + room.height * 0.5),
-            Vec2::splat(side),
-        );
-        (rect.left() >= ui.max_rect().left()).then_some(rect)
-    });
-    let slot = UiBuilder::new()
-        .id_salt("revert-slot")
-        .layout(Layout::left_to_right(Align::Center));
-    let clicked = match place {
-        Some(rect) => {
-            let mut at = ui.new_child(slot.max_rect(rect));
-            button.show(&mut at).clicked()
+    // button is put where it ended, and drawn first. A row's first frame draws without it, and a
+    // control that wraps lets the button flow with it.
+    let row = ui.ctx().data(|d| d.get_temp::<RowRoom>(row_room_id()));
+    let clicked = match row {
+        Some(RowRoom { last: None, .. }) => false,
+        Some(RowRoom {
+            last:
+                Some(ControlRoom {
+                    width,
+                    middle,
+                    wrapped: false,
+                }),
+            top,
+            right,
+        }) if right - width - side >= ui.max_rect().left() => {
+            let at = pos2(right - width - side * 0.5, top + middle);
+            let mut slot = ui.new_child(
+                UiBuilder::new()
+                    .id_salt("revert-slot")
+                    .max_rect(Rect::from_center_size(at, Vec2::splat(side)))
+                    .layout(Layout::left_to_right(Align::Center)),
+            );
+            button.show(&mut slot).clicked()
         }
-        None => ui.scope_builder(slot, |ui| button.show(ui).clicked()).inner,
+        _ => button.show(ui).clicked(),
     };
     if clicked {
         value.clone_from(default);
