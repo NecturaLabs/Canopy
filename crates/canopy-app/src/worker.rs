@@ -452,7 +452,7 @@ fn recheck_pull(
 }
 
 /// Ask about `preview` when the pull would diverge under fast-forward only or likely conflict
-/// (or always when `moved`), else bring the fetched upstream in.
+/// (or always when `moved` and something would come in), else bring the fetched upstream in.
 fn next_step(
     repo: &Repo,
     preview: canopy_core::PullPreview,
@@ -462,7 +462,9 @@ fn next_step(
 ) -> PullNext {
     let (strategy, configured) = pull_strategy(repo, strategy, follow_config);
     let diverged = preview.diverged() && strategy == PullStrategy::FastForwardOnly;
-    if diverged || preview.risky() || moved {
+    // A moved upstream that brings nothing in is not worth a question.
+    let moved_for_nothing = moved && preview.behind == 0;
+    if !moved_for_nothing && (diverged || preview.risky() || moved) {
         PullNext::Ask(PullDecision {
             preview,
             strategy,
@@ -1975,6 +1977,34 @@ mod read_tests {
             "{events:?}"
         );
         assert!(copy.join("later.txt").exists());
+    }
+
+    /// The upstream moved while the user decided, but to a commit the branch already has (it was
+    /// rewound): nothing would come in, so there is nothing to ask and the pull just finishes.
+    #[test]
+    fn a_moved_upstream_with_nothing_new_does_not_ask() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        let up = root.path().join("up");
+        let seen = Oid::from_str(&git(&copy, &["rev-parse", "origin/main"])).expect("oid");
+        git(&up, &["reset", "-q", "--hard", "HEAD~1"]);
+        git(&copy, &["fetch", "-q"]);
+        let before = git(&copy, &["rev-parse", "HEAD"]);
+        let worker = worker_with_canopys_choices(copy.clone());
+        worker.send(Job::Op(Op::Pull {
+            strategy: PullStrategy::Merge,
+            follow_config: false,
+            prune: false,
+            checked: Some(seen),
+        }));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
+        });
+        assert!(
+            matches!(events.last(), Some(Event::OpFinished { result: Ok(_), .. })),
+            "nothing new, so nothing to ask: {events:?}"
+        );
+        assert_eq!(git(&copy, &["rev-parse", "HEAD"]), before);
     }
 
     /// Where the upstream is still the commit the user was shown, the checked pull just goes.
