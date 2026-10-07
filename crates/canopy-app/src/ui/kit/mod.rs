@@ -199,7 +199,26 @@ pub(crate) fn content_painter(ui: &egui::Ui) -> egui::Painter {
 /// Whether keyboard focus should be drawn: true after a key press, false again after a pointer
 /// press (CSS `:focus-visible`; moving the pointer keeps it). Text fields show focus whatever this
 /// says.
+///
+/// The answer follows every frame's input, not only the frames somebody asked in: a pointer press
+/// in a frame where no focused widget looked (a right click that opens a context menu) still
+/// counts.
 pub fn focus_visible(ctx: &egui::Context) -> bool {
+    let id = Id::new("canopy-kit-focus-visible");
+    if ctx.data_mut(|d| d.get_temp::<bool>(id.with("hooked")).is_none()) {
+        ctx.data_mut(|d| d.insert_temp(id.with("hooked"), true));
+        ctx.on_begin_pass(
+            "canopy-kit-focus-visible",
+            std::sync::Arc::new(|ui: &mut egui::Ui| {
+                focus_visible_now(ui.ctx());
+            }),
+        );
+    }
+    focus_visible_now(ctx)
+}
+
+/// [`focus_visible`] for this frame's input.
+fn focus_visible_now(ctx: &egui::Context) -> bool {
     let id = Id::new("canopy-kit-focus-visible");
     let (key, pointer) = ctx.input(|i| {
         (
@@ -288,6 +307,41 @@ mod tests {
     use super::testkit;
     use super::theme::{self, Density, Style, ThemeId};
     use super::{chip, choice, field, menu, range, row, select, toggle};
+
+    /// usersim F19: a pointer press ends visible focus even in a frame where no focused widget
+    /// asked (a right click that opens a context menu), so the menu does not show its first item
+    /// as keyboard focused.
+    #[test]
+    fn a_pointer_press_hides_focus_though_nobody_asked_that_frame() {
+        let ctx = testkit::ctx();
+        let key = egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let press = egui::Event::PointerButton {
+            pos: egui::pos2(10.0, 10.0),
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut asked = Vec::new();
+        testkit::frame(&ctx, vec![key], |ui| {
+            asked.push(super::focus_visible(ui.ctx()));
+        });
+        // The press frame: nothing asks.
+        testkit::frame(&ctx, vec![press], |_| {});
+        testkit::frame(&ctx, Vec::new(), |ui| {
+            asked.push(super::focus_visible(ui.ctx()));
+        });
+        assert_eq!(
+            asked,
+            [true, false],
+            "a key shows focus, the press hides it"
+        );
+    }
 
     #[test]
     fn disabled_text_reads_on_every_control_surface() {
