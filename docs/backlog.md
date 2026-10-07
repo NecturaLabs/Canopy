@@ -6,6 +6,10 @@ yet true, then correctness and the features people meet first, then polish. Take
 
 ## Now
 
+- [ ] Operation cleanup: audit failed, cancelled and interrupted operations for files, temporary
+      directories and processes Canopy leaves on the user's PC; clean up only Canopy-owned
+      artifacts, preserve user work and recoverable Git states, and verify failure paths in
+      isolated fixtures leave no orphaned artifacts or processes.
 - [ ] Crash reports: `crash_reports.rs` `redact_url_credentials` ends the user part at `?`/`#`,
       so `https://u:secret?x@host/r` keeps `secret` in a report; use `canopy_core::cli::userinfo`
       (git splits at the first `/` only). Its `TOKEN_PREFIXES` (11) lacks the six GitLab prefixes
@@ -78,6 +82,19 @@ yet true, then correctness and the features people meet first, then polish. Take
 - [ ] Request content updates: thoroughly investigate stale pull/merge request content in the
       app across GitHub and GitLab; trace refreshes, caching, selection/tab changes, responses
       arriving out of order, and edits/actions; compare displayed content with host API data.
+- [ ] Branch/worktree checkout: switching to a different branch or worktree should reuse the
+      current repository tab rather than open a new one; verify both paths in the running app.
+- [ ] Appearance default theme: remove the "Back to the default theme, Midnight" button and
+      mark Midnight as "Default" on its theme selection card, independently of selection.
+- [ ] Appearance theme selection: make the top-right checkmark clearly visible and distinct
+      from unselected cards; verify selected states across themes and contrast settings.
+- [ ] Appearance custom colors: add a color picker alongside the predefined custom-theme
+      color choices; verify arbitrary colors apply and persist across restarts.
+- [ ] Notifications settings: move notification preferences out of Appearance into their own
+      Notifications tab; verify all existing preferences remain accessible and effective.
+- [ ] Notification filters: audit every kind filter and fix ignored preferences; disabling
+      "Finished operations" must suppress successful fetch notifications, including background
+      fetches, while each other category follows its own configured filter.
 - [ ] Partial clones: remember a failed download until Retry (no retry on every refresh); a fetch
       timeout; a Retry for failed diffs; a "not downloaded" marker per file; offer to convert a
       `LegacyPartialClone`, behind a confirmation.
