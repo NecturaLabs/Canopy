@@ -9,7 +9,7 @@ pub(super) fn home() -> String {
 /// Whether git takes `name` as a branch name, by `git check-ref-format --branch`'s rules: no
 /// empty, `.`-led or `.lock`-ended part between slashes, no `..`, `@{`, ASCII control
 /// character, space or any of `~^:?*[\`, not `@` alone, not ending in `.` and not starting with
-/// `-`.
+/// `-`, and not the reserved `HEAD`.
 #[expect(
     clippy::case_sensitive_file_extension_comparisons,
     reason = "git refuses a ref name ending in `.lock`, compared as written"
@@ -17,6 +17,7 @@ pub(super) fn home() -> String {
 pub(crate) fn valid_ref_name(name: &str) -> bool {
     !name.is_empty()
         && name != "@"
+        && name != "HEAD"
         && !name.starts_with('-')
         && !name.ends_with('.')
         && !name.contains("..")
@@ -358,5 +359,18 @@ pub(super) fn identity_in_scope(
         (Some(name), Some(email)) => Some(format!("{name} <{email}>")),
         (Some(value), None) | (None, Some(value)) => Some(value.to_owned()),
         (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_ref_name;
+
+    #[test]
+    fn reserved_head_cannot_name_a_new_ref() {
+        assert!(!valid_ref_name("HEAD"));
+        assert!(valid_ref_name("head"));
+        assert!(valid_ref_name("topic/HEAD"));
+        assert!(valid_ref_name("release/v1.2"));
     }
 }
