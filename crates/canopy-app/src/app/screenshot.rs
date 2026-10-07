@@ -344,9 +344,11 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             body: "HEAD will point at this commit, not at a branch (a detached HEAD). Commits you make there belong to no branch until you create one.".into(),
             confirm: "Check out commit".into(),
             danger: false,
+            repo: PathBuf::new(),
             op: Op::Checkout("38b14e7".into()),
         },
         "diverged" => Dialog::Diverged {
+            repo: PathBuf::new(),
             mode: settings::PullMode::Rebase,
             remember: crate::action::Remember::Repository,
             everywhere: true,
@@ -359,6 +361,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             },
         },
         "pull-conflicts" => Dialog::PullConflicts {
+            repo: PathBuf::new(),
             strategy: canopy_core::PullStrategy::FastForwardOnly,
             preview: canopy_core::PullPreview {
                 upstream: "origin/main".into(),
@@ -373,6 +376,7 @@ fn dialog_overlay(name: &str, settings: &Settings) -> Option<Dialog> {
             body: "feature/dark-mode has 1 commit that is on no other branch. You can restore it from the reflog for 90 days.".into(),
             confirm: "Delete branch".into(),
             danger: true,
+            repo: PathBuf::new(),
             op: Op::DeleteBranch {
                 name: "feature/dark-mode".into(),
                 force: false,

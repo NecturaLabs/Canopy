@@ -585,6 +585,11 @@ impl CanopyApp {
         self.tabs.get_mut(self.active)
     }
 
+    /// The tab of the repository at `repo`, whether or not it is active.
+    fn tab_at(&mut self, repo: &std::path::Path) -> Option<&mut RepoTab> {
+        self.tabs.iter_mut().find(|t| t.path == repo)
+    }
+
     fn set_theme(&mut self, ctx: &egui::Context, id: ThemeId) {
         self.settings.theme = id;
         self.apply_look(ctx);

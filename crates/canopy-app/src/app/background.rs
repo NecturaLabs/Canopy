@@ -288,6 +288,7 @@ impl CanopyApp {
             if let Some(d) = tab.pull_decision.take() {
                 self.dialogs.open(if d.diverged {
                     Dialog::Diverged {
+                        repo: tab.path.clone(),
                         mode: settings::PullMode::Rebase,
                         remember: crate::action::Remember::Repository,
                         everywhere: !d.configured,
@@ -295,6 +296,7 @@ impl CanopyApp {
                     }
                 } else {
                     Dialog::PullConflicts {
+                        repo: tab.path.clone(),
                         strategy: d.strategy,
                         preview: d.preview,
                     }
@@ -308,6 +310,7 @@ impl CanopyApp {
                     ),
                     confirm: "Force delete".into(),
                     danger: true,
+                    repo: tab.path.clone(),
                     op: Op::DeleteBranch { name, force: true },
                 });
             }

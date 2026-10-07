@@ -13,19 +13,29 @@ impl CanopyApp {
                         t.op(op);
                     }
                 }
+                Action::OpIn { repo, op } => {
+                    if let Some(t) = self.tab_at(&repo) {
+                        t.op(op);
+                    }
+                }
                 Action::Confirm {
                     title,
                     body,
                     confirm,
                     danger,
                     op,
-                } => self.dialogs.open(Dialog::Confirm {
-                    title,
-                    body,
-                    confirm,
-                    danger,
-                    op,
-                }),
+                } => {
+                    if let Some(repo) = self.tab().map(|t| t.path.clone()) {
+                        self.dialogs.open(Dialog::Confirm {
+                            title,
+                            body,
+                            confirm,
+                            danger,
+                            repo,
+                            op,
+                        });
+                    }
+                }
                 Action::OpenDialog(mut d) => {
                     self.folder_picker.cancel();
                     if let Dialog::Open { recent, .. } = &mut d {
@@ -124,8 +134,12 @@ impl CanopyApp {
                         });
                     }
                 }
-                Action::PullAs { mode, remember } => {
-                    if let Some(t) = self.tabs.get_mut(self.active) {
+                Action::PullAs {
+                    repo,
+                    mode,
+                    remember,
+                } => {
+                    if let Some(t) = self.tabs.iter_mut().find(|t| t.path == repo) {
                         match remember {
                             Remember::No => {}
                             Remember::Repository => {
@@ -152,8 +166,8 @@ impl CanopyApp {
                         });
                     }
                 }
-                Action::PullAnyway(strategy) => {
-                    if let Some(t) = self.tabs.get(self.active) {
+                Action::PullAnyway { repo, strategy } => {
+                    if let Some(t) = self.tabs.iter().find(|t| t.path == repo) {
                         t.op(Op::Pull {
                             strategy,
                             follow_config: false,
@@ -600,7 +614,11 @@ mod tests {
         let mut app = app_with_tab();
         let path = app.tabs[0].path.clone();
         let default = app.settings.pull_mode;
-        let pull = |mode, remember| Action::PullAs { mode, remember };
+        let pull = |mode, remember| Action::PullAs {
+            repo: path.clone(),
+            mode,
+            remember,
+        };
         app.apply(&ctx, vec![pull(PullMode::Merge, Remember::No)]);
         assert_eq!(app.settings.pull_mode_for(&path), default);
         app.apply(&ctx, vec![pull(PullMode::Merge, Remember::Repository)]);
@@ -613,6 +631,75 @@ mod tests {
         assert_eq!(
             (here.mode, here.follow_config),
             (everywhere.mode, everywhere.follow_config)
+        );
+    }
+
+    /// A pull decision, or the offer to force-delete a branch, that comes back after the user
+    /// moved to another tab is answered for the repository that asked, never the active one.
+    #[test]
+    fn a_late_question_is_answered_for_the_repository_that_asked() {
+        use crate::settings::PullMode;
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        let mut receivers = Vec::new();
+        for name in ["asked", "active"] {
+            let (worker, _, jobs) = crate::worker::Worker::detached();
+            let mut tab = test_tab(canopy_core::RepoSnapshot::default());
+            tab.worker = worker;
+            tab.path = PathBuf::from(name);
+            app.tabs.push(tab);
+            receivers.push(jobs);
+        }
+        app.active = 1;
+        app.tabs[0].pull_decision = Some(crate::worker::PullDecision {
+            preview: canopy_core::PullPreview::default(),
+            strategy: canopy_core::PullStrategy::FastForwardOnly,
+            diverged: true,
+            configured: false,
+        });
+        app.tabs[0].force_delete_offer = Some("topic".into());
+        app.poll(&ctx);
+        let asked = PathBuf::from("asked");
+        let mut answers = Vec::new();
+        while let Some(d) = app.dialogs.current().cloned() {
+            match d {
+                Dialog::Diverged { repo, .. } => {
+                    assert_eq!(repo, asked);
+                    answers.push(Action::PullAs {
+                        repo,
+                        mode: PullMode::Merge,
+                        remember: Remember::Repository,
+                    });
+                }
+                Dialog::Confirm { repo, op, .. } => {
+                    assert_eq!(repo, asked);
+                    answers.push(Action::OpIn { repo, op });
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+            app.dialogs.close();
+        }
+        assert_eq!(answers.len(), 2, "both questions were asked");
+        app.apply(&ctx, answers);
+        let sent: Vec<_> = receivers[0].try_iter().collect();
+        assert!(
+            sent.iter().any(|j| matches!(j, Job::Op(Op::Pull { .. }))),
+            "{sent:?}"
+        );
+        assert!(
+            sent.iter()
+                .any(|j| matches!(j, Job::Op(Op::DeleteBranch { force: true, .. }))),
+            "{sent:?}"
+        );
+        assert_eq!(
+            receivers[1].try_iter().count(),
+            0,
+            "the active tab is untouched"
+        );
+        assert_eq!(app.settings.pull_mode_for(&asked), PullMode::Merge);
+        assert_ne!(
+            app.settings.pull_mode_for(std::path::Path::new("active")),
+            PullMode::Merge
         );
     }
 

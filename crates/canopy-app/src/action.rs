@@ -30,6 +30,12 @@ pub enum AppearanceChoice {
 #[derive(Debug, Clone)]
 pub enum Action {
     Op(Op),
+    /// `op` in the repository at `repo`, whichever tab is active (a confirmation answered after
+    /// the user moved to another tab); nothing when that repository's tab is closed.
+    OpIn {
+        repo: PathBuf,
+        op: Op,
+    },
     Confirm {
         title: String,
         body: String,
@@ -53,14 +59,18 @@ pub enum Action {
     LoadMore,
     Fetch,
     Pull,
-    /// Pull the active repository with `mode`, chosen when a fast-forward was not possible;
+    /// Pull the repository at `repo` with `mode`, chosen when a fast-forward was not possible;
     /// `remember` keeps it as the pull strategy of that repository or of every repository.
     PullAs {
+        repo: PathBuf,
         mode: crate::settings::PullMode,
         remember: Remember,
     },
-    /// Pull the active repository with `strategy` although it will likely conflict.
-    PullAnyway(canopy_core::ops::PullStrategy),
+    /// Pull the repository at `repo` with `strategy` although it will likely conflict.
+    PullAnyway {
+        repo: PathBuf,
+        strategy: canopy_core::ops::PullStrategy,
+    },
     Push,
     Commit,
     PrefillAmend,

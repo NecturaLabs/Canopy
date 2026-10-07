@@ -116,11 +116,15 @@ pub enum Dialog {
         body: String,
         confirm: String,
         danger: bool,
+        /// The repository `op` runs in: the one that asked, even after a switch to another tab.
+        repo: std::path::PathBuf,
         op: Op,
     },
     /// A fast-forward pull found that the branch and its upstream both moved on: how to bring
     /// them together, and whether to pull this repository that way from now on.
     Diverged {
+        /// The repository that pulled.
+        repo: std::path::PathBuf,
         mode: crate::settings::PullMode,
         remember: crate::action::Remember,
         /// Whether "every repository" is offered: Canopy's setting, not the git configuration,
@@ -131,6 +135,8 @@ pub enum Dialog {
     },
     /// A pull would likely stop on conflicts: pull anyway (and resolve them) or not.
     PullConflicts {
+        /// The repository that pulled.
+        repo: std::path::PathBuf,
         strategy: canopy_core::PullStrategy,
         preview: canopy_core::PullPreview,
     },
@@ -912,13 +918,20 @@ pub fn show(
             body,
             confirm,
             danger,
+            repo,
             op,
         } => {
             let result =
                 confirmation(salt, title, body, confirm, *danger, icon::QUESTION, |_| {}).show(ctx);
-            answer(result, || Outcome::Run(vec![Action::Op(op.clone())]))
+            answer(result, || {
+                Outcome::Run(vec![Action::OpIn {
+                    repo: repo.clone(),
+                    op: op.clone(),
+                }])
+            })
         }
         Dialog::Diverged {
+            repo,
             mode,
             remember,
             everywhere,
@@ -974,12 +987,17 @@ pub fn show(
                 .show(ctx);
             answer(result, || {
                 Outcome::Run(vec![Action::PullAs {
+                    repo: repo.clone(),
                     mode: *mode,
                     remember: *remember,
                 }])
             })
         }
-        Dialog::PullConflicts { strategy, preview } => {
+        Dialog::PullConflicts {
+            repo,
+            strategy,
+            preview,
+        } => {
             let incoming = match preview.behind {
                 1 => "1 new commit".to_owned(),
                 n => format!("{n} new commits"),
@@ -997,7 +1015,12 @@ pub fn show(
                     f.cancel().confirm("Pull anyway");
                 })
                 .show(ctx);
-            answer(result, || Outcome::Run(vec![Action::PullAnyway(*strategy)]))
+            answer(result, || {
+                Outcome::Run(vec![Action::PullAnyway {
+                    repo: repo.clone(),
+                    strategy: *strategy,
+                }])
+            })
         }
         Dialog::ConfirmClearIdentity { repo, scope } => {
             let target = match scope {
