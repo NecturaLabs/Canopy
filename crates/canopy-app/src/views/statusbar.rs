@@ -230,11 +230,17 @@ fn unpublished(
     snap: &canopy_core::RepoSnapshot,
     branch: &canopy_core::BranchInfo,
 ) -> (String, String) {
+    // Where a push without an upstream goes (`Repo::push`): `origin`, else the only remote.
+    let pushes_to = match snap.remotes.as_slice() {
+        remotes if remotes.iter().any(|r| r.name == "origin") => Some("origin"),
+        [only] => Some(only.name.as_str()),
+        _ => None,
+    };
     let there = snap
         .remote_branches
         .iter()
         .filter(|r| r.branch == branch.name)
-        .min_by_key(|r| r.remote != "origin");
+        .min_by_key(|r| Some(r.remote.as_str()) != pushes_to);
     let Some(there) = there else {
         return (
             "not published".to_owned(),
@@ -248,9 +254,20 @@ fn unpublished(
     } else {
         format!("{name} exists, not tracking it")
     };
-    let tip = if same {
+    let tip = if same && pushes_to == Some(there.remote.as_str()) {
         format!(
             "This branch has no upstream. Push sets {name}, at the same commit, as its upstream."
+        )
+    } else if let Some(remote) = pushes_to.filter(|r| *r != there.remote) {
+        format!(
+            "This branch has no upstream, and {name} is not where Push goes: it publishes the \
+             branch to {remote}/{} and sets that as its upstream.",
+            branch.name
+        )
+    } else if pushes_to.is_none() {
+        format!(
+            "This branch has no upstream, and {name} exists. With several remotes and no origin \
+             Push refuses: set one with git push -u."
         )
     } else {
         format!("This branch has no upstream, and {name} is at another commit.")
@@ -264,7 +281,7 @@ mod tests {
 
     use super::*;
 
-    /// F10: a branch with no upstream is "not published" only when no remote has it.
+    /// A branch with no upstream is "not published" only when no remote has it.
     #[test]
     fn an_untracked_branch_says_whether_a_remote_has_it() {
         let oid = |hex: &str| canopy_core::Oid::from_str(hex).expect("an id");
@@ -299,6 +316,54 @@ mod tests {
         assert_eq!(
             unpublished(&snap, &branch).0,
             "origin/feature/graph exists, not tracking it"
+        );
+    }
+
+    /// The tooltip promises an upstream only where a push without one would really set it: to
+    /// `origin`, else the only remote, and not at all with several remotes and no `origin`.
+    #[test]
+    fn the_untracked_tooltip_promises_only_what_the_push_does() {
+        let oid =
+            canopy_core::Oid::from_str("1111111111111111111111111111111111111111").expect("an id");
+        let branch = canopy_core::BranchInfo {
+            name: "feature/graph".into(),
+            target: Some(oid),
+            is_head: true,
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            worktree: None,
+        };
+        let tip = |remotes: &[&str], branch_on: &str| {
+            let snap = canopy_core::RepoSnapshot {
+                remotes: remotes
+                    .iter()
+                    .map(|name| canopy_core::RemoteInfo {
+                        name: (*name).into(),
+                        url: None,
+                        default_branch: None,
+                    })
+                    .collect(),
+                remote_branches: vec![canopy_core::RemoteBranchInfo {
+                    remote: branch_on.into(),
+                    branch: "feature/graph".into(),
+                    target: Some(oid),
+                }],
+                ..Default::default()
+            };
+            unpublished(&snap, &branch).1
+        };
+        let promise = "Push sets fork/feature/graph";
+        assert!(tip(&["fork"], "fork").contains(promise), "the only remote");
+        let several = tip(&["origin", "fork"], "fork");
+        assert!(!several.contains(promise), "{several}");
+        assert!(several.contains("origin/feature/graph"), "{several}");
+        let none = tip(&["upstream", "fork"], "fork");
+        assert!(!none.contains(promise), "{none}");
+        assert!(none.contains("git push -u"), "{none}");
+        assert!(
+            tip(&["origin", "fork"], "origin").contains("Push sets origin/feature/graph"),
+            "origin is where it goes"
         );
     }
 
