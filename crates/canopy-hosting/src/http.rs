@@ -370,10 +370,7 @@ impl Http {
                 .map(|e| e.message.trim())
                 .filter(|m| !m.is_empty())
                 .collect();
-            let message = shorten(&self.hide_token(&plain_text(
-                &messages.join("; "),
-                usize::MAX,
-            )));
+            let message = shorten(&self.hide_token(&plain_text(&messages.join("; "), usize::MAX)));
             Error::Api {
                 status: 200,
                 message: if message.is_empty() {
@@ -496,8 +493,8 @@ fn map_status_with_token(
     kind: ForgeKind,
     token: Option<&str>,
 ) -> Error {
-    let message = server_message_unbounded(body)
-        .unwrap_or_else(|| default_reason(status).to_owned());
+    let message =
+        server_message_unbounded(body).unwrap_or_else(|| default_reason(status).to_owned());
     let message = match token {
         Some(token) if token.len() >= MIN_TOKEN_LEN => message.replace(token, REDACTED),
         _ => message,
@@ -998,13 +995,7 @@ mod tests {
             br#"{"message":"arbitrarySecret\u0054oken1234567"}"#.as_slice(),
             b"{\"message\":\"arbitrarySecret\xe2\x80\x8bToken1234567\"}".as_slice(),
         ] {
-            let error = map_status_with_token(
-                422,
-                &headers,
-                body,
-                ForgeKind::GitLab,
-                Some(token),
-            );
+            let error = map_status_with_token(422, &headers, body, ForgeKind::GitLab, Some(token));
             let message = error.to_string();
             assert!(message.contains("<redacted>"), "{message}");
             assert!(!message.contains(token), "{message}");

@@ -1108,15 +1108,25 @@ mod tests {
         }
         toasts.push(&ctx, ToastKind::Success, Topic::Update, "Pushed", "main");
         assert_eq!(toasts.items.len(), 5);
-        assert_eq!(toasts.items.last().map(|t| t.title.as_str()), Some("Pushed"));
+        assert_eq!(
+            toasts.items.last().map(|t| t.title.as_str()),
+            Some("Pushed")
+        );
         assert!(!toasts.items.iter().any(|t| t.title == "Error 0"));
         assert_eq!(
-            toasts.items.iter().filter(|t| t.kind == ToastKind::Error).count(),
+            toasts
+                .items
+                .iter()
+                .filter(|t| t.kind == ToastKind::Error)
+                .count(),
             4
         );
 
         toasts.push(&ctx, ToastKind::Info, Topic::Confirmation, "Copied", "SHA");
-        assert_eq!(toasts.items.last().map(|t| t.title.as_str()), Some("Copied"));
+        assert_eq!(
+            toasts.items.last().map(|t| t.title.as_str()),
+            Some("Copied")
+        );
         assert_eq!(toasts.items.len(), 5);
         assert!(!toasts.items.iter().any(|t| t.title == "Pushed"));
     }

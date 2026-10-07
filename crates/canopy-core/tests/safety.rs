@@ -249,15 +249,22 @@ fn push_arguments_do_not_treat_remote_names_or_refs_as_options() {
         repo.push_tag("--mirror", "v1", |_| {}),
         repo.delete_remote_branch("origin", "--mirror", |_| {}),
     ] {
-        assert!(result.is_err(), "option-shaped input must not run an option");
+        assert!(
+            result.is_err(),
+            "option-shaped input must not run an option"
+        );
     }
     assert!(ref_exists(origin.path(), "refs/heads/main"));
     assert!(ref_exists(origin.path(), "refs/tags/v1"));
 
-    // The ordinary deletion still works with the separator.
-    repo.delete_remote_branch("origin", "main", |_| {})
+    // The ordinary deletion works with the separator: do not delete main, which the
+    // non-bare upstream has checked out (receive.denyDeleteCurrent).
+    git(p, &["branch", "feature-delete"]);
+    git(p, &["push", "origin", "feature-delete"]);
+    assert!(ref_exists(origin.path(), "refs/heads/feature-delete"));
+    repo.delete_remote_branch("origin", "feature-delete", |_| {})
         .expect("delete remote branch");
-    assert!(!ref_exists(origin.path(), "refs/heads/main"));
+    assert!(!ref_exists(origin.path(), "refs/heads/feature-delete"));
 }
 
 #[test]
