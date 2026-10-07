@@ -304,7 +304,7 @@ impl CanopyApp {
             }
             if let Some(name) = tab.force_delete_offer.take() {
                 self.dialogs.open(Dialog::Confirm {
-                    title: "Force delete branch".into(),
+                    title: format!("Force delete branch {name}?"),
                     body: format!(
                         "{name} has commits that are not merged into its upstream or the current branch. Delete it anyway? Those commits stay reachable only through the reflog."
                     ),

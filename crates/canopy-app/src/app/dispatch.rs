@@ -637,6 +637,20 @@ mod tests {
     /// A pull decision, or the offer to force-delete a branch, that comes back after the user
     /// moved to another tab is answered for the repository that asked, never the active one.
     #[test]
+    fn the_force_delete_question_names_the_branch() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        app.tabs[0].force_delete_offer = Some("topic".into());
+        app.poll(&ctx);
+        let Some(Dialog::Confirm { title, .. }) = app.dialogs.current() else {
+            panic!("no confirmation: {:?}", app.dialogs.current());
+        };
+        assert_eq!(title, "Force delete branch topic?");
+    }
+
+    #[test]
     fn a_late_question_is_answered_for_the_repository_that_asked() {
         use crate::settings::PullMode;
         let ctx = egui::Context::default();
