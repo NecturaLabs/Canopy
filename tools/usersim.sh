@@ -68,8 +68,13 @@ start)
   printf '[user]\n\tname = Sim User\n\temail = sim@example.com\n' >"$SIM/home/.gitconfig"
   "$ROOT/tools/mkfixture.sh" --force "$SIM/repo" "$kind" >/dev/null
   git clone -q --bare "$SIM/repo" "$SIM/origin.git"
-  # The fixture's own origin and its upstreams stay; only where it points changes.
-  git -C "$SIM/repo" remote set-url origin "$SIM/origin.git"
+  # A fixture's own origin and its upstreams stay; only where it points changes. A fixture without
+  # one (conflict, linear, big) gets the bare clone as its origin.
+  if git -C "$SIM/repo" remote get-url origin >/dev/null 2>&1; then
+    git -C "$SIM/repo" remote set-url origin "$SIM/origin.git"
+  else
+    git -C "$SIM/repo" remote add origin "$SIM/origin.git"
+  fi
   git -C "$SIM/repo" fetch -q origin
   (cd "$ROOT" && cargo build -q --release -p canopy-app)
   for n in $(seq 70 99); do [[ -e /tmp/.X11-unix/X$n || -e /tmp/.X$n-lock ]] || break; done
