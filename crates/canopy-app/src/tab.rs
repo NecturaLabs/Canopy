@@ -311,13 +311,152 @@ pub fn outcome_title(label: &str, ok: bool) -> String {
     }
 }
 
-/// The last `n` lines of `text`: where git puts its summary.
-fn last_lines(text: &str, n: usize) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    lines[lines.len().saturating_sub(n)..]
-        .join("\n")
-        .trim()
-        .to_owned()
+/// How many names a notification lists before "and N more".
+const NAMES_SHOWN: usize = 3;
+
+/// What git's `->` lines (fetch and push summaries) say happened to refs, by the name of the ref
+/// on the far side.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RefChanges {
+    new_branches: Vec<String>,
+    updated: Vec<String>,
+    forced: Vec<String>,
+    deleted: Vec<String>,
+    new_tags: Vec<String>,
+    moved_tags: Vec<String>,
+}
+
+impl RefChanges {
+    fn parse(out: &str) -> Self {
+        let mut changes = Self::default();
+        for line in out.lines() {
+            let mut chars = line.chars();
+            if chars.next() != Some(' ') {
+                continue;
+            }
+            let Some(flag) = chars.next() else { continue };
+            let rest = line.get(2..).unwrap_or_default().trim_start();
+            let name = match rest.split_once("->") {
+                Some((_, to)) => to.split_whitespace().next(),
+                // `git push --delete` names the ref alone.
+                None => rest
+                    .strip_prefix("[deleted]")
+                    .and_then(|r| r.split_whitespace().next()),
+            };
+            let Some(name) = name.map(str::to_owned) else {
+                continue;
+            };
+            let slot = match flag {
+                '*' if rest.starts_with("[new tag]") => &mut changes.new_tags,
+                '*' => &mut changes.new_branches,
+                't' => &mut changes.moved_tags,
+                '+' => &mut changes.forced,
+                '-' => &mut changes.deleted,
+                ' ' if rest
+                    .split_whitespace()
+                    .next()
+                    .is_some_and(|r| r.contains("..")) =>
+                {
+                    &mut changes.updated
+                }
+                _ => continue,
+            };
+            slot.push(name);
+        }
+        changes
+    }
+
+    /// "New branch: origin/x. Updated: origin/main.", or `None` when nothing changed.
+    fn describe(&self) -> Option<String> {
+        let groups = [
+            ("New branch", "New branches", &self.new_branches),
+            ("Updated", "Updated", &self.updated),
+            ("Force-updated", "Force-updated", &self.forced),
+            ("Removed", "Removed", &self.deleted),
+            ("New tag", "New tags", &self.new_tags),
+            ("Moved tag", "Moved tags", &self.moved_tags),
+        ];
+        let sentences: Vec<String> = groups
+            .iter()
+            .filter(|(_, _, names)| !names.is_empty())
+            .map(|(one, many, names)| {
+                let label = if names.len() == 1 { one } else { many };
+                let mut list = names
+                    .iter()
+                    .take(NAMES_SHOWN)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if names.len() > NAMES_SHOWN {
+                    list = format!("{list} and {} more", names.len() - NAMES_SHOWN);
+                }
+                format!("{label}: {list}.")
+            })
+            .collect();
+        (!sentences.is_empty()).then(|| sentences.join(" "))
+    }
+}
+
+/// Whether a line of git's output is transfer chatter rather than a result.
+fn is_transfer_chatter(line: &str) -> bool {
+    const PROGRESS: &[&str] = &[
+        "remote:",
+        "From ",
+        "To ",
+        "Enumerating objects",
+        "Counting objects",
+        "Compressing objects",
+        "Writing objects",
+        "Receiving objects",
+        "Resolving deltas",
+        "Unpacking objects",
+        "Delta compression",
+        "Total ",
+    ];
+    PROGRESS.iter().any(|p| line.starts_with(p))
+}
+
+/// What a successfully finished operation says in words, for its notification. Git's own text is
+/// kept only for failures; a success is told from the ref lines and results in `out`, never as
+/// the transfer chatter around them. `subject` is the message the commit composer held and
+/// `branch` the checked-out branch, both from before the operation.
+fn success_body(kind: &OpKind, out: &str, subject: &str, branch: Option<&str>) -> String {
+    let changes = RefChanges::parse(out);
+    match kind {
+        OpKind::Commit => match (subject.is_empty(), out.trim()) {
+            (false, id) if !id.is_empty() => format!("{subject} ({id})"),
+            (false, _) => subject.to_owned(),
+            (true, id) => id.to_owned(),
+        },
+        OpKind::Fetch => changes
+            .describe()
+            .unwrap_or_else(|| "Nothing new on any remote.".to_owned()),
+        OpKind::Pull => {
+            let branch = branch.unwrap_or("The branch");
+            let mut body = if out.lines().any(|l| l.starts_with("Successfully rebased")) {
+                format!("Rebased {branch} onto its upstream.")
+            } else {
+                format!("{branch} is up to date with its upstream.")
+            };
+            if out.contains("Applied autostash") {
+                body.push_str(" Your uncommitted changes are back.");
+            }
+            body
+        }
+        OpKind::Push | OpKind::Other | OpKind::Squash(_) | OpKind::SafeDelete(_) => {
+            if let Some(told) = changes.describe() {
+                told
+            } else if out.lines().any(|l| l.trim() == "Everything up-to-date") {
+                "Everything was already up to date on the remote.".to_owned()
+            } else {
+                let kept: Vec<&str> = out
+                    .lines()
+                    .filter(|l| !l.trim().is_empty() && !is_transfer_chatter(l))
+                    .collect();
+                kept.join("\n").trim().to_owned()
+            }
+        }
+    }
 }
 
 /// How the last announced operation ended, for the action bar to show on its tool for a moment.
@@ -1377,6 +1516,9 @@ impl RepoTab {
                     }
                     match result {
                         Ok(out) => {
+                            let subject = self.commit_summary.trim().to_owned();
+                            let branch =
+                                self.snap.as_ref().and_then(|snap| snap.head.branch.clone());
                             if kind == OpKind::Commit {
                                 self.commit_summary.clear();
                                 self.commit_body.clear();
@@ -1406,7 +1548,7 @@ impl RepoTab {
                                 notices.push(Notice {
                                     ok: true,
                                     title: outcome_title(&label, true),
-                                    body: last_lines(&out, 3),
+                                    body: success_body(&kind, &out, &subject, branch.as_deref()),
                                 });
                             }
                         }
@@ -1650,6 +1792,78 @@ mod tests {
         }
         // A verb counts only as a whole word.
         assert_eq!(outcome_title("Pushingly", true), "Pushingly — done");
+    }
+
+    #[test]
+    fn a_success_is_told_in_words_not_in_git_s_transfer_output() {
+        let fetch = "remote: Total 3 (delta 2), reused 0 (delta 0), pack-reused 0 (from 0)\n\
+            From /srv/origin\n\
+            \x20  a1c2bac..6620397  main       -> origin/main\n\
+            \x20* [new branch]      feat       -> origin/feat\n\
+            \x20* [new branch]      two        -> origin/two\n\
+            \x20* [new branch]      three      -> origin/three\n\
+            \x20* [new branch]      four       -> origin/four\n\
+            \x20- [deleted]         (none)     -> origin/old\n\
+            \x20* [new tag]         v1         -> v1";
+        let push = "To /srv/origin\n   a1c2bac..6620397  main -> main\n + 1234567...89abcde feat -> feat (forced update)";
+        let cases: [(OpKind, &str, &str, &str); 9] = [
+            (
+                OpKind::Commit,
+                "a1b2c3d",
+                "Fix the typo",
+                "Fix the typo (a1b2c3d)",
+            ),
+            (
+                OpKind::Fetch,
+                fetch,
+                "",
+                "New branches: origin/feat, origin/two, origin/three and 1 more. Updated: origin/main. Removed: origin/old. New tag: v1.",
+            ),
+            (OpKind::Fetch, "", "", "Nothing new on any remote."),
+            (
+                OpKind::Pull,
+                "From /srv/origin\n   a..b  main -> origin/main\nSuccessfully rebased and updated refs/heads/main.",
+                "",
+                "Rebased main onto its upstream.",
+            ),
+            (
+                OpKind::Pull,
+                "remote: Total 3",
+                "",
+                "main is up to date with its upstream.",
+            ),
+            (
+                OpKind::Push,
+                push,
+                "",
+                "Updated: main. Force-updated: feat.",
+            ),
+            (
+                OpKind::Push,
+                "To /srv/origin\nEverything up-to-date",
+                "",
+                "Everything was already up to date on the remote.",
+            ),
+            (
+                OpKind::Other,
+                "To /srv/origin\n - [deleted]         gone",
+                "",
+                "Removed: gone.",
+            ),
+            (
+                OpKind::Other,
+                "Merge made by the 'ort' strategy.",
+                "",
+                "Merge made by the 'ort' strategy.",
+            ),
+        ];
+        for (kind, out, subject, told) in cases {
+            assert_eq!(
+                success_body(&kind, out, subject, Some("main")),
+                told,
+                "{kind:?}: {out}"
+            );
+        }
     }
 
     /// The unstaged change to `a.rs`, open in the diff pane.
