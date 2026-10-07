@@ -660,10 +660,11 @@ impl Settings {
         }
     }
 
-    /// The first branch of a repository Canopy creates.
+    /// The first branch of a repository Canopy creates: the default when none is set or the saved
+    /// one is a name git refuses (from an older Canopy or an imported file).
     pub fn initial_branch(&self) -> &str {
         Some(self.initial_branch.trim())
-            .filter(|b| !b.is_empty())
+            .filter(|b| crate::views::dialogs::valid_ref_name(b))
             .unwrap_or(INITIAL_BRANCH)
     }
 
@@ -786,6 +787,24 @@ mod tests {
     use eframe::Storage as _;
 
     use super::*;
+
+    /// A saved or imported first branch that git would refuse never reaches `git init`: the
+    /// default takes its place.
+    #[test]
+    fn an_invalid_first_branch_falls_back_to_the_default() {
+        for bad in ["bad name~", "-x", "a..b", "@{-1}", "x.lock"] {
+            let s = Settings {
+                initial_branch: bad.to_owned(),
+                ..Settings::default()
+            };
+            assert_eq!(s.initial_branch(), INITIAL_BRANCH, "{bad}");
+        }
+        let s = Settings {
+            initial_branch: " trunk ".to_owned(),
+            ..Settings::default()
+        };
+        assert_eq!(s.initial_branch(), "trunk");
+    }
 
     #[test]
     fn midnight_is_the_default_theme() {
