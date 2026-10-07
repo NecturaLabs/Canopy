@@ -570,9 +570,13 @@ impl CanopyApp {
                 Some(name) if t.name != name => name.clone_into(&mut t.name),
                 Some(_) => {}
                 None => {
-                    let folder = t.path.file_name().map(|n| n.to_string_lossy());
-                    if folder.as_deref() != Some(t.name.as_str()) {
-                        t.name = crate::tab::folder_name(&t.path);
+                    let folder = t
+                        .path
+                        .file_name()
+                        .unwrap_or_else(|| t.path.as_os_str())
+                        .to_string_lossy();
+                    if folder.as_ref() != t.name {
+                        folder.as_ref().clone_into(&mut t.name);
                     }
                 }
             }
