@@ -6412,11 +6412,16 @@ mod tests {
             })
         };
         assert!(
-            nodes.iter().any(|n| n.label.as_deref() == Some("Midnight theme (default)")),
+            nodes
+                .iter()
+                .any(|n| n.label.as_deref() == Some("Midnight theme (default)")),
             "Midnight is identified as the default even when Daylight is selected"
         );
         assert!(
-            !nodes.iter().any(|n| n.label.as_deref().is_some_and(|l| l.starts_with("Back to the default theme"))),
+            !nodes.iter().any(|n| n
+                .label
+                .as_deref()
+                .is_some_and(|l| l.starts_with("Back to the default theme"))),
             "the separate default-theme button was removed"
         );
     }
