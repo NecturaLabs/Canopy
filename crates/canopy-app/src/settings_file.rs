@@ -8,9 +8,9 @@
 //! (`hosting.rs` keeps them), so they are never in the file. The programs Canopy runs, the hosts
 //! trusted with a GitLab token and everything tied to a folder on this computer
 //! ([`THIS_COMPUTER`]) are neither written nor read either, and a file may switch a network
-//! feature off but never on ([`NETWORK_SWITCHES`]) nor fetch more often ([`AUTO_FETCH`]). Git choices that could delete local tags,
-//! override the user's own git configuration or send a push somewhere unexpected take a file's
-//! value only when it is the safe one ([`GIT_GUARDS`]).
+//! feature off but never on ([`NETWORK_SWITCHES`]) nor fetch more often (`AUTO_FETCH`). Git
+//! choices that could delete local tags, override the user's own git configuration or send a push
+//! somewhere unexpected take a file's value only when it is the safe one ([`GIT_GUARDS`]).
 //!
 //! The file is JSON: `{"format": "canopy-settings", "version": 1, "exported": "<UTC>",
 //! "settings": {…}}`. An import is checked as a whole before anything changes: a file that is
