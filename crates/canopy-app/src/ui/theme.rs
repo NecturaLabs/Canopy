@@ -1835,14 +1835,14 @@ pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }
 
-/// Translucent surfaces: a blurred backdrop sample after the composite shader's luminance clamp.
-/// Dark themes scale it down to at most `cap` relative luminance, light themes lift it towards
-/// white to at least `cap`, in linear light. Shared by the glass shader's uniform and the test.
+/// CPU reference for the glass shader's backdrop luminance clamp, used by contrast tests.
+/// Dark themes scale a sample down to at most `cap` relative luminance; light themes lift it
+/// towards white to at least `cap`, in linear light. The GPU performs its own clamp.
 #[cfg_attr(
     not(test),
     expect(
         dead_code,
-        reason = "the glass renderer's luminance clamp uniform comes with the blur"
+        reason = "this CPU reference for the glass shader's luminance clamp is used by tests"
     )
 )]
 pub fn clamp_backdrop(c: Color32, dark: bool, cap: f32) -> Color32 {

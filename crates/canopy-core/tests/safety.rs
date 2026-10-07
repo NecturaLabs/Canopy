@@ -900,10 +900,19 @@ fn collapsed_folders_flag_repositories_inside() {
 fn non_utf8_folders_are_listed_and_never_staged_as_gitlinks() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
+
+    let create_non_utf8_dir = |path: &Path| {
+        fs::create_dir(path).unwrap_or_else(|error| {
+            panic!(
+                "cannot create non-UTF-8 test directory at {} (TMPDIR may be on NTFS or another filesystem that rejects this name): {error}",
+                path.display()
+            )
+        });
+    };
     let (dir, repo) = fixture();
     let p = dir.path();
     let odd = p.join(OsStr::from_bytes(b"odd\xffdir"));
-    fs::create_dir(&odd).unwrap();
+    create_non_utf8_dir(&odd);
     fs::write(odd.join("f.txt"), "f\n").unwrap();
 
     // The folder's file is listed, not lost.
@@ -917,7 +926,7 @@ fn non_utf8_folders_are_listed_and_never_staged_as_gitlinks() {
     // A repository with such a name is found, and Stage all refuses rather than adding it.
     fs::remove_dir_all(&odd).unwrap();
     let nested = p.join(OsStr::from_bytes(b"repo\xff"));
-    fs::create_dir(&nested).unwrap();
+    create_non_utf8_dir(&nested);
     git(&nested, &["init", "-q", "-b", "main"]);
     configure(&nested);
     commit_file(&nested, "inner.txt", "inner\n");
