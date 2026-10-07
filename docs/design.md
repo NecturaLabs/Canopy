@@ -277,7 +277,8 @@ default, shows what the screen does not: an icon-only control's name, why a cont
 unavailable, cut-off text, shortcuts, and details such as full dates, addresses and paths. A
 tooltip that only describes a labelled control (a kit button, toggle, field or chip with its name
 on screen and no shortcut) or says how to use something is `Tooltip::extra` and shows only at
-All. Off shows none but why a control is unavailable. A truncated label's tooltip shows only when
+All. Every level, Off included, shows why a control is unavailable, also for kit buttons that
+draw themselves disabled. A truncated label's tooltip shows only when
 the label is actually cut.
 
 A glyph beside text takes the text's size. A glyph drawn on its own takes one of the icon sizes
@@ -464,12 +465,14 @@ and a strip under the content numbers each page from 1 ("Page 4 of 19" for `--ga
 
 Rows separate selection from being current: `ListRow::selected` is the selection wash and mark
 (the sidebar row last clicked, while History shows its commit), `ListRow::current` the checked-out
-branch's accent icon and semibold label, announced as current rather than selected.
+branch's accent icon and semibold label, announced as current rather than selected. A selected row
+that has keyboard focus also draws the focus ring.
 
 Keyboard and screen readers (`kit::a11y`): a list is one Tab stop (`kit::row::Roving`, used by
 History's commits, each sidebar section and card grids): Tab lands on the row last visited (else the
 selected or checked-out one), the arrows move inside (Left and Right too in a grid), and the next
-Tab leaves the list. A row's actions stay revealed while one of them has focus; a tree row's chevron
+Tab leaves the list. A click puts focus on the clicked row, so the arrows and Shift+F10 continue
+from it. A row's actions stay revealed while one of them has focus; a tree row's chevron
 is no Tab stop. Containers are named groups holding their parts in the order shown: a list, a tree,
 a menu, a radio group, a segmented control, a tab list, a select's open list, a callout, a dialog.
 Linux's adapter drops two states, so there the name carries them: a disclosure's ", expanded" or
@@ -510,7 +513,9 @@ source and protocol, the request state filter and the diff layout. A recessed `b
 hairline `border`; the chosen segment is raised (`elevated`, restrained edge and micro-shadow),
 with an accent baseline and `text`,
 the others `text-dim` brightening on hover. Each segment is a radio button inside the control's
-radio group for assistive technology and shows the focus ring.
+radio group for assistive technology and shows the focus ring. A segment with a count badge can
+keep room for a two-digit count (`Segmented::badge_room`), so the view switcher and the toolbar
+beside it do not move as the count comes and goes.
 
 ### Switch and checkbox
 
@@ -600,7 +605,8 @@ contrast draws bold line art without glows (`Signal`).
 ### Context menu
 
 A secondary click opens a context menu at the pointer; Shift+F10 opens the focused row's below it
-with its first available item focused (`kit::menu::context`). In an open menu Up, Down, Home and
+with its first available item focused (`kit::menu::context`); a menu opened with the pointer holds
+that focus unseen, so only the hovered item is lit. In an open menu Up, Down, Home and
 End move between the items and wrap, nothing behind it moves, and Escape gives focus back to the
 row (the Menu key is not reported by the windowing layer). Screen readers hear a menu of its items.
 An opened submenu item uses the same neutral surface as a hovered menu item.
@@ -626,8 +632,9 @@ Dense) and shaped like the other floating layers of the style: the kind's glyph 
 centred on the title's line), a semibold title that truncates, the body in `text_dim` at
 `meta_size` with 1.45 leading 4 points below it, and, only when the notification asks for a
 decision, a row of two buttons 10 points lower. A card has no close button: it goes on a click
-(when it asks for nothing), on its buttons or on its timer. Known failures lead with a plain
-explanation, any other error shows git's first line under its title, and git's full output is in
+(when it asks for nothing), on its buttons or on its timer. A finished operation says what happened in words (the commit's subject and id, the refs created,
+updated or removed, what a pull did to the branch); git's own text is kept for failures. Known
+failures lead with a plain explanation, any other error shows git's first line under its title, and git's full output is in
 the notification center (its tooltip and Copy). Screen readers hear an error as an alert with its
 message.
 
@@ -659,7 +666,8 @@ on a failure, whose output is worth keeping; their labels line up with the text.
 `SM` space and a hairline at 8% of the text colour over the surface, the same in every theme. A
 header holds a Ghost Clear all and the settings gear. Notifications of a counting topic (errors,
 attention, updates) that showed no card, and decisions whose card ran out, raise a strong count
-badge on the bell, `danger` when one is an error, else `accent`; opening the center clears it,
+badge on the bell, solid `danger_solid` with `on_danger` text when an unread one is an error, else
+`accent`, kept inside the status bar; opening the center clears it,
 and while it is open new notifications go to its list instead of a card.
 
 ### Command palette
@@ -693,7 +701,8 @@ Enter default and no initial focus. Destructive confirmations use a
 tonal `danger` button (`kit::Button::danger`, its label in `danger` lifted to 4.5:1) whose
 label names the action ("Delete branch", "Discard 3 files"), never
 "OK"; Cancel has the initial focus, so Enter does not confirm a destructive dialog unless the button
-has focus. A choice that is riskier than the main one (trusting a whole folder) is a quiet link in
+has focus. The button with the initial focus shows its focus ring when the dialog opens, so it is
+clear what Enter presses. A choice that is riskier than the main one (trusting a whole folder) is a quiet link in
 `warning` with a line saying what it covers, never a second full-width button. Informational
 destinations (About: What's new, Releases, the legal texts) are text links in `accent`, with one
 primary button for the real action.

@@ -144,6 +144,8 @@ change when current settings change; Canopy never rewrites existing commits to f
 | A pull that stops on conflicts, or whose set-aside changes conflict when they come back, opens Changes to resolve them | Unreleased | ? | ? | ? |
 | Push, setting upstream when missing | Done | Yes | Yes | Yes |
 | Force push with lease | Done | Yes | ? | ? |
+| The force push confirmation names the branch and the remote branch it overwrites | Unreleased | ? | ? | ? |
+| The status bar says when a branch is not tracking a remote branch of the same name that exists | Unreleased | ? | ? | ? |
 | In-app credential and SSH passphrase prompts | Unreleased | Yes | Yes | Yes |
 | Pull request integration (GitHub) | Unreleased | ? | Yes | ? |
 | Merge request integration (GitLab, including self-hosted) | Unreleased | ? | ? | ? |
