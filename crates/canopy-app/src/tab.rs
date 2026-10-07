@@ -660,6 +660,9 @@ pub struct RepoTab {
     pull_config_branch: Option<String>,
     /// A branch `git branch -d` refused as not fully merged; the app asks before forcing it.
     pub force_delete_offer: Option<String>,
+    /// Where a force push would go, once the repository thread has worked it out: the app asks
+    /// before pushing.
+    pub force_push_offer: Option<canopy_core::PushTarget>,
     /// A pull waits for the user's decision (diverged branches, or likely conflicts).
     pub pull_decision: Option<crate::worker::PullDecision>,
     pub progress: Option<String>,
@@ -754,6 +757,7 @@ impl RepoTab {
             pull_config_asked: false,
             pull_config_branch: None,
             force_delete_offer: None,
+            force_push_offer: None,
             pull_decision: None,
             progress: None,
             commit_limit,
@@ -1448,6 +1452,14 @@ impl RepoTab {
                         tracing::debug!(error = %e, "pull settings not read");
                         self.pull_config = None;
                     }
+                },
+                Event::PushTarget(result) => match result {
+                    Ok(target) => self.force_push_offer = Some(target),
+                    Err(e) => notices.push(Notice {
+                        ok: false,
+                        title: "Could not force push".into(),
+                        body: e,
+                    }),
                 },
                 Event::HeadMessage(m) => {
                     if !self.amend

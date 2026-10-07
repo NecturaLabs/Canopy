@@ -1312,6 +1312,61 @@ fn a_fetch_reports_every_ref_it_updated() {
 }
 
 #[test]
+fn a_force_push_says_where_it_will_push() {
+    if !in_isolated_git_env("a_force_push_says_where_it_will_push") {
+        return;
+    }
+    let (_up_dir, _up, _c, copy) = upstream_and_clone();
+    let target = |repo: &Repo| repo.force_push_target().expect("a target");
+    let found = target(&copy);
+    assert_eq!(
+        (
+            found.branch.as_str(),
+            found.remote.as_str(),
+            found.dest.as_str()
+        ),
+        ("main", "origin", "main")
+    );
+    // No upstream: the branch goes to origin under its own name, as the push sets it up.
+    git(
+        copy.workdir(),
+        &["checkout", "-q", "--no-track", "-b", "topic"],
+    );
+    let found = target(&copy);
+    assert_eq!(
+        (
+            found.branch.as_str(),
+            found.remote.as_str(),
+            found.dest.as_str()
+        ),
+        ("topic", "origin", "topic")
+    );
+    // An upstream under another name: push.default says whether that is where it goes.
+    git(copy.workdir(), &["push", "-q", "origin", "topic:elsewhere"]);
+    git(
+        copy.workdir(),
+        &["branch", "-q", "--set-upstream-to=origin/elsewhere"],
+    );
+    let choose = |push_default| {
+        copy.set_options(GitOptions {
+            follow_config: false,
+            push_default,
+            ..GitOptions::default()
+        });
+    };
+    choose(PushDefault::Upstream);
+    assert_eq!(target(&copy).dest, "elsewhere");
+    choose(PushDefault::Current);
+    assert_eq!(target(&copy).dest, "topic");
+    choose(PushDefault::Simple);
+    let refused = copy.force_push_target().expect_err("git refuses it too");
+    assert!(
+        refused.to_string().contains("push.default=simple"),
+        "{refused}"
+    );
+}
+
+#[test]
 fn pull_merge_creates_a_merge_commit() {
     if !in_isolated_git_env("pull_merge_creates_a_merge_commit") {
         return;
