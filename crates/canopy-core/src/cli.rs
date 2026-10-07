@@ -588,6 +588,10 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test must demonstrate that ordinary git executes the fixture's fsmonitor command"
+    )]
     fn repository_fsmonitor_command_is_not_executed() {
         use std::os::unix::fs::PermissionsExt;
 
