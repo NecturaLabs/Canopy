@@ -1079,6 +1079,26 @@ fn a_binary_in_an_install_folder_with_its_receipt_is_managed() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Names
+
+#[test]
+fn work_directory_names_never_repeat_within_the_process() {
+    let handed_out = Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| {
+                let batch: Vec<String> =
+                    (0..5_000).map(|_| unique_name("canopy-update.")).collect();
+                handed_out.lock().expect("names").extend(batch);
+            });
+        }
+    });
+    let names = handed_out.into_inner().expect("names");
+    let distinct: std::collections::HashSet<&String> = names.iter().collect();
+    assert_eq!(distinct.len(), names.len(), "a name was handed out twice");
+}
+
+// ---------------------------------------------------------------------------------------------
 // Any other installation
 
 #[cfg(unix)]

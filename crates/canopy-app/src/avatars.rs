@@ -1217,16 +1217,48 @@ mod tests {
         );
     }
 
+    /// An address on 127.0.0.1 that refuses connections and that no other test in this process
+    /// can take.
+    ///
+    /// Binding a listener and dropping it does not give such an address: the port is free again,
+    /// and another test binding to port 0 can be handed it before the connection is made, then
+    /// answers it. Here a socket connects to a throwaway listener and both are kept: nothing
+    /// listens on the socket's own port, so connecting to it is refused, and the port stays in
+    /// use, so nothing can bind it.
+    struct Refused {
+        address: std::net::SocketAddr,
+        _socket: std::net::TcpStream,
+        _listener: std::net::TcpListener,
+    }
+
+    impl Refused {
+        fn new() -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let socket = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            Self {
+                address: socket.local_addr().unwrap(),
+                _socket: socket,
+                _listener: listener,
+            }
+        }
+    }
+
+    #[test]
+    fn a_refused_address_stays_refused_and_cannot_be_taken() {
+        let refused = Refused::new();
+        let connect = std::net::TcpStream::connect(refused.address).unwrap_err();
+        assert_eq!(connect.kind(), std::io::ErrorKind::ConnectionRefused);
+        let bind = std::net::TcpListener::bind(refused.address).unwrap_err();
+        assert_eq!(bind.kind(), std::io::ErrorKind::AddrInUse);
+    }
+
     #[test]
     fn being_offline_postpones_lookups_instead_of_caching_a_failure() {
-        // A port nothing listens on: the connection is refused.
-        let closed = {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-            format!("http://{}", listener.local_addr().unwrap())
-        };
+        let closed = Refused::new();
         let forge = canopy_core::forge::Forge::parse("https://github.com/octo/hello", &[])
             .expect("github forge");
-        let client = canopy_hosting::Client::with_api_base(&forge, Some("t".into()), &closed);
+        let base = format!("http://{}", closed.address);
+        let client = canopy_hosting::Client::with_api_base(&forge, Some("t".into()), &base);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("picture.json");
         let offline = load_at(
