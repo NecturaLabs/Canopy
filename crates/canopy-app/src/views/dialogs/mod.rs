@@ -30,7 +30,7 @@ use crate::ui::theme::{self, palette};
 use crate::worker::Op;
 
 mod common;
-pub(crate) use common::tilde_in;
+pub(crate) use common::{tilde_in, valid_ref_name};
 mod credential;
 mod reader;
 mod stack;
@@ -41,7 +41,7 @@ mod url;
 use common::{
     FolderField, alternatives, answer, beside, bullet, confirm, document, field, field_with_error,
     folder_row, home, identity_in_scope, inset_scroll, note, recent_rows, remote_name_problem,
-    swallow_enter, tilde, valid_ref_name, working,
+    swallow_enter, tilde, working,
 };
 use credential::credential;
 pub use stack::DialogStack;

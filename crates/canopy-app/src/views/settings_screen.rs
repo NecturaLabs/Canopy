@@ -1861,6 +1861,55 @@ fn fixed_width(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> Response) -
     .inner
 }
 
+/// Why `text` cannot be the first branch of a new repository: git must accept it as a branch
+/// name (`refs/heads/<name>`, so no leading `-`). Empty is fine: the default is used.
+fn initial_branch_problem(text: &str) -> Option<&'static str> {
+    let name = text.trim();
+    (!name.is_empty() && !crate::views::dialogs::valid_ref_name(name)).then_some(
+        "Not a valid branch name: git refuses spaces, .., ~ ^ : ? * [ \\ and a leading -",
+    )
+}
+
+/// What was typed in the first-branch field that is not a branch name yet, and the setting it
+/// was typed over.
+#[derive(Debug, Clone, PartialEq)]
+struct BranchDraft {
+    text: String,
+    saved: String,
+}
+
+/// The first-branch field. A name git refuses shows its error as it is typed and is not kept:
+/// `saved` holds the last name that was good until the text is one again.
+fn initial_branch_field(ui: &mut Ui, saved: &mut String) {
+    let id = ui.id().with("initial-branch-draft");
+    // A draft over a setting that has since changed (reset, imported) is stale.
+    let draft: Option<BranchDraft> = ui
+        .data(|d| d.get_temp(id))
+        .filter(|d: &BranchDraft| d.saved == *saved);
+    let mut text = draft.map_or_else(|| saved.clone(), |d| d.text);
+    let before = text.clone();
+    let problem = initial_branch_problem(&text);
+    fixed_width(ui, FIELD_WIDTH, |ui| {
+        TextField::new(&mut text)
+            .placeholder(crate::settings::INITIAL_BRANCH)
+            .width(FIELD_WIDTH)
+            .name("First branch of a new repository")
+            .error(problem)
+            .id_salt("initial-branch")
+            .show(ui)
+    });
+    if text == before {
+        return;
+    }
+    if initial_branch_problem(&text).is_none() {
+        *saved = text;
+        ui.data_mut(|d| d.remove::<BranchDraft>(id));
+    } else {
+        let saved = saved.clone();
+        ui.data_mut(|d| d.insert_temp(id, BranchDraft { text, saved }));
+    }
+}
+
 /// A switch whose name is its row's title, so it draws no label of its own.
 fn switch(ui: &mut Ui, on: &mut bool, name: &str) -> Response {
     let was = *on;
@@ -3063,14 +3112,7 @@ fn git(
                     &DEFAULTS.initial_branch,
                     "First branch of a new repository",
                 );
-                fixed_width(ui, FIELD_WIDTH, |ui| {
-                    TextField::new(&mut s.initial_branch)
-                        .placeholder(crate::settings::INITIAL_BRANCH)
-                        .width(FIELD_WIDTH)
-                        .name("First branch of a new repository")
-                        .id_salt("initial-branch")
-                        .show(ui)
-                });
+                initial_branch_field(ui, &mut s.initial_branch);
             });
         },
     );
@@ -5332,6 +5374,120 @@ mod tests {
             }
         }
         assert!(met >= 8, "only {met} reset buttons were checked");
+    }
+
+    /// usersim2 N2: the first-branch field says as it is typed that git refuses a name, shows
+    /// nothing before anything is typed, and keeps only a name git accepts.
+    #[test]
+    fn the_first_branch_field_refuses_a_name_git_refuses_as_it_is_typed() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        ctx.enable_accesskit();
+        theme::apply(&ctx, ThemeId::Midnight, theme::Appearance::STILL);
+        let bounds = Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 4000.0));
+        let mut settings = Settings::default();
+        let mut tokens = TokenStore::default();
+        let mut screen = SettingsScreen::at(Section::Git);
+        // No git configuration is read: what it sets would decide the row.
+        screen.facts.global.asked = true;
+        screen.facts.global.facts = Some(Arc::new(GitFacts::default()));
+        let mut time = 0.0;
+        let mut frame = |settings: &mut Settings, events: Vec<egui::Event>| {
+            time += 1.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(bounds),
+                    events,
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(
+                        ui.ctx(),
+                        &mut screen,
+                        settings,
+                        &mut tokens,
+                        &SettingsData {
+                            tabs: &[],
+                            update: &UpdateState::Idle,
+                            identity: IdentityView {
+                                repo: None,
+                                identity: None,
+                                error: None,
+                            },
+                        },
+                        &mut Vec::new(),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let said = |out: &egui::FullOutput| {
+            out.platform_output
+                .accesskit_update
+                .as_ref()
+                .is_some_and(|u| {
+                    u.nodes.iter().any(|(_, n)| {
+                        [n.label(), n.description(), n.value()]
+                            .into_iter()
+                            .flatten()
+                            .any(|t| t.starts_with("Not a valid branch name"))
+                    })
+                })
+        };
+        for _ in 0..4 {
+            frame(&mut settings, Vec::new());
+        }
+        // Tab to the field.
+        let tab = |pressed| egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut found = false;
+        for _ in 0..100 {
+            frame(&mut settings, vec![tab(true), tab(false)]);
+            frame(&mut settings, Vec::new());
+            if ctx
+                .memory(egui::Memory::focused)
+                .is_some_and(|id| format!("{id:?}").contains("initial-branch"))
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "Tab reaches the field");
+        let out = frame(&mut settings, Vec::new());
+        assert!(!said(&out), "no error before anything is typed");
+        let select_all = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        let mut typed = |settings: &mut Settings, text: &str| {
+            frame(settings, vec![select_all.clone()]);
+            frame(settings, vec![egui::Event::Text(text.to_owned())]);
+            frame(settings, Vec::new())
+        };
+        let out = typed(&mut settings, "bad name~");
+        assert!(said(&out), "the error shows as the bad name is typed");
+        assert_eq!(settings.initial_branch, "main", "a bad name is not kept");
+        let out = typed(&mut settings, "-x");
+        assert!(said(&out), "a leading dash is refused");
+        assert_eq!(settings.initial_branch, "main");
+        let out = typed(&mut settings, "trunk");
+        assert!(!said(&out), "a good name clears the error");
+        assert_eq!(settings.initial_branch, "trunk", "a good name is kept");
+        let out = typed(&mut settings, "release/1.0");
+        assert!(!said(&out));
+        assert_eq!(settings.initial_branch, "release/1.0");
+        let out = typed(&mut settings, "");
+        assert!(!said(&out), "empty means the default, not an error");
     }
 
     #[test]
