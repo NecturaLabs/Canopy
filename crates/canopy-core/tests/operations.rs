@@ -652,6 +652,10 @@ fn upstream_and_clone() -> (tempfile::TempDir, Repo, tempfile::TempDir, Repo) {
     let dest = clone_dir.path().join("clone");
     canopy_core::ops::clone(&up_dir.path().to_string_lossy(), &dest, |_| {}).expect("clone");
     configure(&dest);
+    // The clone checked its files out under the system-wide core.autocrlf=true of Git for
+    // Windows, as CRLF; with it now false they would read as edited, and a pull's autostash would
+    // carry that edit into the next commit.
+    git(&dest, &["checkout-index", "--all", "--force", "-u"]);
     let copy = canopys_choices(Repo::open(&dest).expect("open clone"));
     (up_dir, up, clone_dir, copy)
 }
