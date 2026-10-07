@@ -602,8 +602,11 @@ mod tests {
         std::fs::write(&script, "#!/bin/sh\ntouch fsmonitor-ran\n").expect("create harmless probe");
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
             .expect("make probe executable");
-        run(dir.path(), &["config", "--local", "core.fsmonitor", "./fsmonitor"])
-            .expect("configure repository probe");
+        run(
+            dir.path(),
+            &["config", "--local", "core.fsmonitor", "./fsmonitor"],
+        )
+        .expect("configure repository probe");
 
         // Verify the fixture would execute its configured command with an ordinary git.
         let baseline = Command::new("git")
@@ -612,11 +615,17 @@ mod tests {
             .output()
             .expect("run unprotected git");
         assert!(baseline.status.success(), "fixture git status failed");
-        assert!(marker.exists(), "fixture did not activate the fsmonitor command");
+        assert!(
+            marker.exists(),
+            "fixture did not activate the fsmonitor command"
+        );
         std::fs::remove_file(&marker).expect("reset probe");
 
         run(dir.path(), &["status", "--porcelain"]).expect("safe git status");
-        assert!(!marker.exists(), "repository fsmonitor command was executed");
+        assert!(
+            !marker.exists(),
+            "repository fsmonitor command was executed"
+        );
     }
 
     #[test]
