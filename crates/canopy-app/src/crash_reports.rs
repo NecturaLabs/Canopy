@@ -192,50 +192,10 @@ fn replace_home(text: &str, home: &str) -> String {
     replace_path(text, home, "~")
 }
 
-/// Replaces `scheme://user:password@` with `scheme://<redacted>@` in every URL in `text`.
-#[expect(
-    clippy::string_slice,
-    reason = "offsets come from find, match_indices and ASCII lengths, so they fall between characters"
-)]
+/// Redacts URL user info exactly as git parses it, including passwords containing '?' or '#'.
 fn redact_url_credentials(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(i) = rest.find("://") {
-        // Git and libcurl accept extra slashes before the authority (`https:///user:pw@host`).
-        let slashes = rest[i + 3..].len() - rest[i + 3..].trim_start_matches('/').len();
-        let (head, tail) = rest.split_at(i + 3 + slashes);
-        out.push_str(head);
-        let authority_end = tail
-            .find(|c: char| {
-                matches!(c, '/' | '?' | '#' | '\'' | '"' | '<' | '>' | '`') || c.is_whitespace()
-            })
-            .unwrap_or(tail.len());
-        match tail[..authority_end].rfind('@') {
-            Some(at) => {
-                out.push_str("<redacted>");
-                rest = &tail[at..];
-            }
-            None => rest = tail,
-        }
-    }
-    out.push_str(rest);
-    out
+    canopy_core::cli::redact_url(text)
 }
-
-/// Prefixes of GitHub and GitLab access tokens.
-const TOKEN_PREFIXES: [&str; 11] = [
-    "ghp_",
-    "gho_",
-    "ghu_",
-    "ghs_",
-    "ghr_",
-    "github_pat_",
-    "glpat-",
-    "gldt-",
-    "glptt-",
-    "glrt-",
-    "gloas-",
-];
 
 /// Labels whose value is a secret: the value after them is hidden, the label kept.
 const SECRET_LABELS: [&str; 4] = [
@@ -263,7 +223,7 @@ fn redact_tokens(text: &str) -> String {
         let rest = &text[i..];
         let at_word_start = text[..i].chars().next_back().is_none_or(|c| !token_char(c));
         if at_word_start {
-            for prefix in TOKEN_PREFIXES {
+            for prefix in canopy_hosting::TOKEN_PREFIXES {
                 if let Some(value) = rest.strip_prefix(prefix) {
                     let len = value.find(|c| !token_char(c)).unwrap_or(value.len());
                     // Real tokens are long; a bare prefix in prose is left alone.
@@ -469,6 +429,16 @@ mod tests {
     }
 
     #[test]
+    fn credentials_with_query_or_fragment_characters_are_redacted() {
+        for marker in ['?', '#'] {
+            let input = format!("fatal: https://u:secret{marker}x@host/r");
+            let output = scrub_text(&input, "");
+            assert_eq!(output, "fatal: https://<redacted>@host/r");
+            assert!(!output.contains("secret"));
+        }
+    }
+
+    #[test]
     fn access_tokens_are_redacted() {
         let cases = [
             (
@@ -486,6 +456,12 @@ mod tests {
                 "GITLAB_TOKEN=glpat-AbCdEf123456-xyz",
                 "GITLAB_TOKEN=<token>",
             ),
+            ("glcbt-abcdefgh1234", "<token>"),
+            ("glft-abcdefgh1234", "<token>"),
+            ("glimt-abcdefgh1234", "<token>"),
+            ("glagent-abcdefgh1234", "<token>"),
+            ("glsoat-abcdefgh1234", "<token>"),
+            ("glffct-abcdefgh1234", "<token>"),
             (
                 "Authorization: Bearer abc.def-ghi",
                 "Authorization: Bearer <token>",

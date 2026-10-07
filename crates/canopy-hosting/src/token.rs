@@ -9,6 +9,27 @@ use canopy_core::forge::{ForgeKind, normalise_host};
 /// How long `git credential fill` may run before it is killed.
 const CREDENTIAL_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Known GitHub and GitLab token prefixes shared by API error and crash-report scrubbing.
+pub const TOKEN_PREFIXES: [&str; 17] = [
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "glpat-",
+    "gldt-",
+    "glptt-",
+    "glrt-",
+    "gloas-",
+    "glcbt-",
+    "glft-",
+    "glimt-",
+    "glagent-",
+    "glsoat-",
+    "glffct-",
+];
+
 /// The variables each provider's own CLI reads, in priority order.
 fn env_names(kind: ForgeKind) -> [&'static str; 2] {
     match kind {

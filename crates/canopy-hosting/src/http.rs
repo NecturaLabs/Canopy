@@ -16,6 +16,7 @@ use ureq::tls::{RootCerts, TlsConfig};
 use ureq::{Agent, Body, RequestBuilder};
 
 use crate::error::{Error, Result};
+use crate::token::TOKEN_PREFIXES;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -593,27 +594,6 @@ const REDACTED: &str = "<redacted>";
 /// The shortest token [`Http::hide_token`] looks for: shorter text is too likely to be ordinary
 /// words, and no real token is that short.
 const MIN_TOKEN_LEN: usize = 8;
-
-/// The prefixes of GitHub's and GitLab's tokens: a word starting with one is a token.
-const TOKEN_PREFIXES: [&str; 17] = [
-    "ghp_",
-    "gho_",
-    "ghu_",
-    "ghs_",
-    "ghr_",
-    "github_pat_",
-    "glpat-",
-    "gldt-",
-    "glptt-",
-    "glrt-",
-    "gloas-",
-    "glcbt-",
-    "glft-",
-    "glimt-",
-    "glagent-",
-    "glsoat-",
-    "glffct-",
-];
 
 /// A server's own words made safe to show among Canopy's and to log.
 ///
