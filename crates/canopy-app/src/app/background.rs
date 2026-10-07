@@ -121,7 +121,14 @@ fn force_push_dialog(repo: &std::path::Path, target: canopy_core::PushTarget) ->
         confirm: "Force push branch".into(),
         danger: true,
         repo: repo.to_path_buf(),
-        op: Op::Push { force: true },
+        op: Op::Push {
+            force: true,
+            expect: Some(canopy_core::PushTarget {
+                branch,
+                remote,
+                dest,
+            }),
+        },
     }
 }
 

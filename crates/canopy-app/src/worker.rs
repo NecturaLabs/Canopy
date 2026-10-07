@@ -122,8 +122,11 @@ pub enum Op {
         prune: bool,
         checked: Option<Oid>,
     },
+    /// A push of the current branch. A force push carries `expect`, what the user was asked
+    /// about: the worker refuses if the branch or its destination is no longer that.
     Push {
         force: bool,
+        expect: Option<canopy_core::PushTarget>,
     },
     AddRemote {
         name: String,
@@ -235,7 +238,7 @@ impl Op {
             Self::StashDrop(_) => "Dropping stash".into(),
             Self::Fetch { .. } => "Fetching".into(),
             Self::Pull { .. } => "Pulling".into(),
-            Self::Push { force: true } => "Force pushing".into(),
+            Self::Push { force: true, .. } => "Force pushing".into(),
             Self::Push { .. } => "Pushing".into(),
             Self::AddRemote { name, .. } => format!("Adding remote {name}"),
             Self::RemoveRemote(r) => format!("Removing remote {r}"),
@@ -1231,7 +1234,12 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
                 repo.pull(strategy, progress)
             }
         }
-        Op::Push { force } => repo.push(force, progress),
+        Op::Push { force, expect } => {
+            if let Some(asked) = expect.filter(|_| force) {
+                repo.ensure_force_push_target(&asked)?;
+            }
+            repo.push(force, progress)
+        }
         Op::AddRemote { name, url } => done(repo.add_remote(&name, &url)),
         Op::RemoveRemote(r) => done(repo.remove_remote(&r)),
         Op::SetRemoteUrl { name, url } => done(repo.set_remote_url(&name, &url)),
@@ -1990,6 +1998,70 @@ mod read_tests {
             "{events:?}"
         );
         assert!(copy.join("up.txt").exists());
+    }
+
+    /// The force push the user confirmed is the one the question named: where the checked-out
+    /// branch changed after the question, nothing is pushed.
+    #[test]
+    fn a_force_push_is_refused_when_the_branch_changed_since_the_question() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("home")).expect("home");
+        std::fs::write(root.path().join("home").join("gitconfig"), "").expect("config");
+        let src = root.path().join("src");
+        std::fs::create_dir(&src).expect("src");
+        git(&src, &["init", "-q", "-b", "main"]);
+        git(&src, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(root.path(), &["clone", "-q", "--bare", "src", "up.git"]);
+        git(root.path(), &["clone", "-q", "up.git", "copy"]);
+        let copy = root.path().join("copy");
+        let up = root.path().join("up.git");
+        git(&copy, &["commit", "-q", "--allow-empty", "-m", "local"]);
+        let worker = worker_with_canopys_choices(copy.clone());
+        worker.send(Job::PushTarget);
+        let events = events_until(&worker, |e| matches!(e, Event::PushTarget(_)));
+        let Some(Event::PushTarget(Ok(asked))) = events.last() else {
+            panic!("{events:?}");
+        };
+        assert_eq!(asked.branch, "main");
+        let force = |expect: &canopy_core::PushTarget| {
+            worker.send(Job::Op(Op::Push {
+                force: true,
+                expect: Some(expect.clone()),
+            }));
+            events_until(&worker, |e| matches!(e, Event::OpFinished { .. }))
+        };
+
+        git(&copy, &["checkout", "-q", "-b", "other"]);
+        let events = force(asked);
+        let Some(Event::OpFinished {
+            result: Err(error), ..
+        }) = events.last()
+        else {
+            panic!("a changed branch must be refused: {events:?}");
+        };
+        assert!(error.contains("main") && error.contains("other"), "{error}");
+        assert_eq!(
+            git(&up, &["branch", "--list", "other"]),
+            "",
+            "nothing pushed"
+        );
+        assert_ne!(
+            git(&up, &["rev-parse", "main"]),
+            git(&copy, &["rev-parse", "main"]),
+            "main was not pushed either"
+        );
+
+        // Back on the branch the question named, the same confirmation goes through.
+        git(&copy, &["checkout", "-q", "main"]);
+        let events = force(asked);
+        assert!(
+            matches!(events.last(), Some(Event::OpFinished { result: Ok(_), .. })),
+            "{events:?}"
+        );
+        assert_eq!(
+            git(&up, &["rev-parse", "main"]),
+            git(&copy, &["rev-parse", "main"])
+        );
     }
 
     /// A rebase that stops on conflicts is not a failure: like a pull, it says so and the tab

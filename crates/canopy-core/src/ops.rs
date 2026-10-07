@@ -828,6 +828,21 @@ impl Repo {
         }
     }
 
+    /// Refuses unless a force push would go where `asked` says, as [`Repo::force_push_target`]
+    /// works it out now. The branch can change between the question and the push, and only
+    /// what the user confirmed may be overwritten.
+    pub fn ensure_force_push_target(&self, asked: &PushTarget) -> Result<()> {
+        let now = self.force_push_target()?;
+        if now == *asked {
+            return Ok(());
+        }
+        Err(Error::invalid(format!(
+            "Nothing was pushed: you were asked about force pushing {} to {}/{}, but the \
+             checked-out branch would now go to {}/{} as {}. Force push again to confirm it.",
+            asked.branch, asked.remote, asked.dest, now.remote, now.dest, now.branch
+        )))
+    }
+
     /// Where [`Repo::push`] with `force` sends the current branch: the remote and the branch on
     /// it, worked out as the push works them out. Refuses where the push would.
     pub fn force_push_target(&self) -> Result<PushTarget> {

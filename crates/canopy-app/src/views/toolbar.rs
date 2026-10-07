@@ -1012,8 +1012,20 @@ mod tests {
                 },
                 Some(Tool::Pull),
             ),
-            (Op::Push { force: false }, Some(Tool::Push)),
-            (Op::Push { force: true }, Some(Tool::Push)),
+            (
+                Op::Push {
+                    force: false,
+                    expect: None,
+                },
+                Some(Tool::Push),
+            ),
+            (
+                Op::Push {
+                    force: true,
+                    expect: None,
+                },
+                Some(Tool::Push),
+            ),
             (
                 Op::StashSave {
                     message: None,
