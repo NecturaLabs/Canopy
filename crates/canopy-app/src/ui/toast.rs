@@ -956,6 +956,53 @@ fn local_offset_minutes(seconds: i64) -> i32 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn topic_filters_apply_to_each_category_and_live_cards() {
+        let ctx = egui::Context::default();
+        for enabled_topic in Topic::ALL {
+            let mut prefs = NotificationPrefs {
+                cards: true,
+                errors: false,
+                attention: false,
+                updates: false,
+                finished: false,
+                confirmations: false,
+            };
+            *prefs.topic_mut(enabled_topic) = true;
+            let mut toasts = Toasts::default();
+            toasts.set_prefs(prefs);
+            for topic in Topic::ALL {
+                let kind = if topic == Topic::Error {
+                    ToastKind::Error
+                } else {
+                    ToastKind::Success
+                };
+                toasts.push(&ctx, kind, topic, topic.label(), "completed");
+            }
+            assert_eq!(toasts.items.len(), 1, "only {enabled_topic:?} shows a card");
+            assert_eq!(toasts.items[0].topic, enabled_topic);
+            assert_eq!(toasts.history.len(), Topic::ALL.len(), "all topics remain in the center");
+
+            *prefs.topic_mut(enabled_topic) = false;
+            toasts.set_prefs(prefs);
+            assert!(toasts.items.is_empty(), "switching off {enabled_topic:?} hides its card");
+            assert_eq!(toasts.history.len(), Topic::ALL.len());
+        }
+    }
+
+    #[test]
+    fn successful_fetch_respects_disabled_finished_operations() {
+        let ctx = egui::Context::default();
+        let mut toasts = Toasts::default();
+        toasts.set_prefs(NotificationPrefs::default());
+        // The same completed-operation topic is used by foreground and background fetches.
+        for title in ["Fetched", "Background fetch complete"] {
+            toasts.push(&ctx, ToastKind::Success, Topic::Finished, title, "up to date");
+        }
+        assert!(toasts.items.is_empty(), "finished-operation cards are disabled by default");
+        assert_eq!(toasts.history.len(), 2, "the notification center retains both results");
+    }
+
     /// REVIEW-KIT-5: a sixth notification pushes out the oldest one that is not an error; an
     /// unread error stays.
     #[test]
