@@ -358,7 +358,7 @@ in the density's metrics:
 - History search stays hidden until Ctrl+F or `/` opens it and focuses the field. The same
   shortcut, Esc or the close button hides it and clears the query. The commit count does not
   occupy the table header; an in-progress operation banner remains visible without search.
-- The action toolbar uses `ACTION_BAR_HEIGHT` (52 points), with 40-point tools, body-size captions
+- The action toolbar uses `action_bar_height` (58 points in Comfortable density), with 46-point tools, body-size captions
   and room for its horizontal scrollbar. Tabs and toolbar actions scroll horizontally when needed; toolbar overflow has no
   scroll bar and fades out at the edge it hides behind (Scroll edges). The commit form scrolls independently above its fixed Commit button. Long status paths truncate with
   a tooltip. Diff controls share a row with the filename when space permits and wrap below it, and hunk actions use named icons in narrow
