@@ -995,7 +995,7 @@ mod tests {
         let token = "arbitrarySecretToken1234567";
         for body in [
             br#"{"message":"arbitrarySecretToken1234567"}"#.as_slice(),
-            br#"{"message":"arbitrarySecret\\u0054oken1234567"}"#.as_slice(),
+            br#"{"message":"arbitrarySecret\u0054oken1234567"}"#.as_slice(),
             b"{\"message\":\"arbitrarySecret\xe2\x80\x8bToken1234567\"}".as_slice(),
         ] {
             let error = map_status_with_token(
