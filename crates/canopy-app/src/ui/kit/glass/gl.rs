@@ -1,4 +1,4 @@
-#![allow(
+#![expect(
     unsafe_code,
     reason = "OpenGL calls for the backdrop blur; owner-approved 2026-10-05"
 )]
