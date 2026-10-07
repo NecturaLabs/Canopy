@@ -3324,6 +3324,15 @@ fn a_pull_preview_finds_conflicts_before_the_pull() {
     assert_eq!((p.ahead, p.behind), (0, 1), "the fetch ran first");
     assert_eq!(p.overlap, ["a.txt"]);
     assert_eq!(
+        p.tip.map(|t| t.to_string()),
+        Some(
+            git(copy.workdir(), &["rev-parse", "origin/main"])
+                .trim()
+                .to_owned()
+        ),
+        "the preview names the upstream commit it compared"
+    );
+    assert_eq!(
         p.conflicts, None,
         "a fast-forward cannot conflict by itself"
     );

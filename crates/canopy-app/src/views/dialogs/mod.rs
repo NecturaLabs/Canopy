@@ -139,6 +139,8 @@ pub enum Dialog {
         repo: std::path::PathBuf,
         strategy: canopy_core::PullStrategy,
         preview: canopy_core::PullPreview,
+        /// The remote moved after the user's last answer: this asks about the new state.
+        moved: bool,
     },
     About,
     Identity {
@@ -990,6 +992,7 @@ pub fn show(
                     repo: repo.clone(),
                     mode: *mode,
                     remember: *remember,
+                    seen: preview.tip,
                 }])
             })
         }
@@ -997,28 +1000,46 @@ pub fn show(
             repo,
             strategy,
             preview,
+            moved,
         } => {
             let incoming = match preview.behind {
                 1 => "1 new commit".to_owned(),
                 n => format!("{n} new commits"),
             };
+            let (title, description, confirm) = if *moved {
+                (
+                    "The remote changed while you decided",
+                    format!(
+                        "{} received new commits since Canopy checked it and now has {incoming} for you. Pull them?",
+                        preview.upstream
+                    ),
+                    "Pull",
+                )
+            } else {
+                (
+                    "This pull will likely conflict",
+                    format!(
+                        "{} has {incoming} that touch what you are working on. If you pull anyway, Canopy takes you to Changes to resolve the conflicts.",
+                        preview.upstream
+                    ),
+                    "Pull anyway",
+                )
+            };
             let result = KitDialog::new(salt)
-                .title("This pull will likely conflict")
+                .title(title)
                 .icon(icon::WARNING)
                 .width(DialogWidth::Form)
-                .description(format!(
-                    "{} has {incoming} that touch what you are working on. If you pull anyway, Canopy takes you to Changes to resolve the conflicts.",
-                    preview.upstream
-                ))
+                .description(description)
                 .body(|ui| predicted_conflicts(ui, preview))
                 .footer(|f| {
-                    f.cancel().confirm("Pull anyway");
+                    f.cancel().confirm(confirm);
                 })
                 .show(ctx);
             answer(result, || {
                 Outcome::Run(vec![Action::PullAnyway {
                     repo: repo.clone(),
                     strategy: *strategy,
+                    seen: preview.tip,
                 }])
             })
         }

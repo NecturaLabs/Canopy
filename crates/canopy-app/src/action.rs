@@ -65,11 +65,15 @@ pub enum Action {
         repo: PathBuf,
         mode: crate::settings::PullMode,
         remember: Remember,
+        /// The upstream commit the question showed ([`canopy_core::PullPreview::tip`]).
+        seen: Option<Oid>,
     },
     /// Pull the repository at `repo` with `strategy` although it will likely conflict.
     PullAnyway {
         repo: PathBuf,
         strategy: canopy_core::ops::PullStrategy,
+        /// The upstream commit the question showed ([`canopy_core::PullPreview::tip`]).
+        seen: Option<Oid>,
     },
     Push,
     Commit,

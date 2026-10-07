@@ -113,12 +113,14 @@ pub enum Op {
     /// upstream is fetched (pruning as `prune` says) and the pull waits for the user's decision
     /// ([`Event::PullDecision`]) when the branches diverged under a fast-forward-only strategy or
     /// it would likely conflict. A `checked` pull brings in the upstream as already fetched,
-    /// without asking the remote again.
+    /// without asking the remote again: `checked` is the upstream commit the user was shown, and
+    /// if the upstream has moved since (an auto-fetch landed while they decided) the pull asks
+    /// again about the new state instead of pulling what they did not see.
     Pull {
         strategy: PullStrategy,
         follow_config: bool,
         prune: bool,
-        checked: bool,
+        checked: Option<Oid>,
     },
     Push {
         force: bool,
@@ -378,6 +380,9 @@ pub struct PullDecision {
     pub diverged: bool,
     /// The git configuration chose the strategy, not Canopy's setting.
     pub configured: bool,
+    /// The upstream moved after the preview the user answered: this is a new question about the
+    /// new state.
+    pub moved: bool,
 }
 
 /// The strategy a pull uses: what the git configuration asks for when `follow_config` and it
@@ -400,8 +405,8 @@ fn pull_strategy(repo: &Repo, strategy: PullStrategy, follow_config: bool) -> (P
 enum PullNext {
     /// Ask the user first.
     Ask(PullDecision),
-    /// The upstream is fetched: bring it in without fetching again.
-    Fetched,
+    /// The upstream is fetched, and this is its commit: bring it in without fetching again.
+    Fetched(Option<Oid>),
     /// No upstream to preview: `git pull` reports why.
     Pull,
 }
@@ -417,18 +422,49 @@ fn decide_pull(
     let Some(preview) = repo.pull_preview(prune, progress)? else {
         return Ok(PullNext::Pull);
     };
+    Ok(next_step(repo, preview, strategy, follow_config, false))
+}
+
+/// What a checked pull does once the user has answered: it goes ahead if the upstream is still
+/// the commit they were shown (`seen`), and otherwise asks about the new state, whatever it
+/// holds, since what they answered is not what would come in.
+fn recheck_pull(
+    repo: &Repo,
+    seen: Oid,
+    strategy: PullStrategy,
+    follow_config: bool,
+) -> canopy_core::Result<PullNext> {
+    let Some(preview) = repo.compare_upstream()? else {
+        return Ok(PullNext::Pull);
+    };
+    if preview.tip == Some(seen) {
+        return Ok(PullNext::Fetched(preview.tip));
+    }
+    Ok(next_step(repo, preview, strategy, follow_config, true))
+}
+
+/// Ask about `preview` when the pull would diverge under fast-forward only or likely conflict
+/// (or always when `moved`), else bring the fetched upstream in.
+fn next_step(
+    repo: &Repo,
+    preview: canopy_core::PullPreview,
+    strategy: PullStrategy,
+    follow_config: bool,
+    moved: bool,
+) -> PullNext {
     let (strategy, configured) = pull_strategy(repo, strategy, follow_config);
     let diverged = preview.diverged() && strategy == PullStrategy::FastForwardOnly;
-    Ok(if diverged || preview.risky() {
+    if diverged || preview.risky() || moved {
         PullNext::Ask(PullDecision {
             preview,
             strategy,
             diverged,
             configured,
+            moved,
         })
     } else {
-        PullNext::Fetched
-    })
+        PullNext::Fetched(preview.tip)
+    }
 }
 
 /// What a finished operation means for the tab, independent of its label's wording.
@@ -806,7 +842,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             strategy,
                             follow_config,
                             prune,
-                            checked: false,
+                            checked: None,
                         } => Some(decide_pull(
                             &repo,
                             *strategy,
@@ -814,6 +850,12 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             *prune,
                             progress,
                         )),
+                        Op::Pull {
+                            strategy,
+                            follow_config,
+                            checked: Some(seen),
+                            ..
+                        } => Some(recheck_pull(&repo, *seen, *strategy, *follow_config)),
                         _ => None,
                     };
                     let fetch_failed = matches!(decided, Some(Err(_)));
@@ -826,8 +868,10 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                         }
                         Some(Err(e)) => Err(e.to_string()),
                         Some(Ok(next)) => {
-                            if let (PullNext::Fetched, Op::Pull { checked, .. }) = (next, &mut op) {
-                                *checked = true;
+                            if let (PullNext::Fetched(tip), Op::Pull { checked, .. }) =
+                                (next, &mut op)
+                            {
+                                *checked = tip;
                             }
                             perform(&repo, op, progress).map_err(|e| e.to_string())
                         }
@@ -870,6 +914,7 @@ fn run(path: PathBuf, jobs: Receiver<Job>, events: Sender<Event>, ctx: egui::Con
                             strategy: PullStrategy::FastForwardOnly,
                             diverged: true,
                             configured,
+                            moved: false,
                         })));
                     } else if stopped {
                         // Not a failure: the conflicts are the user's to resolve.
@@ -1168,7 +1213,7 @@ fn perform(repo: &Repo, op: Op, progress: impl FnMut(&str)) -> canopy_core::Resu
             ..
         } => {
             let (strategy, _) = pull_strategy(repo, strategy, follow_config);
-            if checked {
+            if checked.is_some() {
                 // The preview fetched; what the user saw is what comes in.
                 repo.pull_fetched(strategy, progress)
             } else {
@@ -1559,7 +1604,7 @@ mod read_tests {
         let d = asks(decide(PullStrategy::FastForwardOnly));
         assert!(d.diverged && !d.preview.risky(), "{d:?}");
         assert!(
-            matches!(decide(PullStrategy::Rebase), PullNext::Fetched),
+            matches!(decide(PullStrategy::Rebase), PullNext::Fetched(_)),
             "clean: no question, and nothing left to fetch"
         );
         // Both sides change the same line now.
@@ -1743,7 +1788,7 @@ mod read_tests {
                 strategy: PullStrategy::FastForwardOnly,
                 follow_config: follow,
                 prune: false,
-                checked: false,
+                checked: None,
             }));
             let events = events_until(&worker, |e| {
                 matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
@@ -1808,7 +1853,7 @@ mod read_tests {
             strategy: PullStrategy::FastForwardOnly,
             follow_config: false,
             prune: false,
-            checked: false,
+            checked: None,
         }));
         let events = events_until(&worker, |e| {
             matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
@@ -1829,12 +1874,13 @@ mod read_tests {
     fn a_refused_fast_forward_asks_how_to_combine_the_branches() {
         let root = tempfile::tempdir().expect("tempdir");
         let copy = diverged_clone(root.path());
+        let seen = Oid::from_str(&git(&copy, &["rev-parse", "origin/main"])).expect("oid");
         let worker = worker_with_canopys_choices(copy);
         worker.send(Job::Op(Op::Pull {
             strategy: PullStrategy::FastForwardOnly,
             follow_config: false,
             prune: false,
-            checked: true,
+            checked: Some(seen),
         }));
         let events = events_until(&worker, |e| {
             matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
@@ -1844,6 +1890,95 @@ mod read_tests {
         };
         assert!(d.diverged, "{d:?}");
         assert_eq!((d.preview.ahead, d.preview.behind), (1, 1));
+    }
+
+    /// The upstream moves while the user decides (an auto-fetch lands): the checked pull must
+    /// not bring in the commits they were not shown, but ask about the new state.
+    #[test]
+    fn a_checked_pull_asks_again_when_the_upstream_moved_since_the_preview() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        let up = root.path().join("up");
+        let worker = worker_with_canopys_choices(copy.clone());
+        worker.send(Job::Op(Op::Pull {
+            strategy: PullStrategy::FastForwardOnly,
+            follow_config: false,
+            prune: false,
+            checked: None,
+        }));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
+        });
+        let Some(Event::PullDecision(shown)) = events.last() else {
+            panic!("{events:?}");
+        };
+        assert!(!shown.moved);
+        let seen = shown.preview.tip.expect("the preview names its commit");
+
+        std::fs::write(up.join("later.txt"), "later\n").expect("write");
+        git(&up, &["add", "."]);
+        git(&up, &["commit", "-q", "-m", "later"]);
+        git(&copy, &["fetch", "-q"]);
+        let before = git(&copy, &["rev-parse", "HEAD"]);
+
+        let pull = |checked| {
+            worker.send(Job::Op(Op::Pull {
+                strategy: PullStrategy::Merge,
+                follow_config: false,
+                prune: false,
+                checked,
+            }));
+            events_until(&worker, |e| {
+                matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
+            })
+        };
+        let events = pull(Some(seen));
+        let Some(Event::PullDecision(again)) = events.last() else {
+            panic!("a moved upstream must ask again: {events:?}");
+        };
+        assert!(again.moved && !again.diverged, "{again:?}");
+        assert_eq!(
+            again.preview.behind, 2,
+            "the new state is what it asks about"
+        );
+        assert_ne!(again.preview.tip, Some(seen));
+        assert_eq!(
+            git(&copy, &["rev-parse", "HEAD"]),
+            before,
+            "nothing was pulled"
+        );
+        assert!(!copy.join("later.txt").exists());
+
+        // Answered for what it shows now, the pull goes ahead.
+        let events = pull(again.preview.tip);
+        assert!(
+            matches!(events.last(), Some(Event::OpFinished { result: Ok(_), .. })),
+            "{events:?}"
+        );
+        assert!(copy.join("later.txt").exists());
+    }
+
+    /// Where the upstream is still the commit the user was shown, the checked pull just goes.
+    #[test]
+    fn a_checked_pull_goes_ahead_when_the_upstream_is_unchanged() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let copy = diverged_clone(root.path());
+        let seen = Oid::from_str(&git(&copy, &["rev-parse", "origin/main"])).expect("oid");
+        let worker = worker_with_canopys_choices(copy.clone());
+        worker.send(Job::Op(Op::Pull {
+            strategy: PullStrategy::Merge,
+            follow_config: false,
+            prune: false,
+            checked: Some(seen),
+        }));
+        let events = events_until(&worker, |e| {
+            matches!(e, Event::PullDecision(_) | Event::OpFinished { .. })
+        });
+        assert!(
+            matches!(events.last(), Some(Event::OpFinished { result: Ok(_), .. })),
+            "{events:?}"
+        );
+        assert!(copy.join("up.txt").exists());
     }
 
     /// A rebase that stops on conflicts is not a failure: like a pull, it says so and the tab

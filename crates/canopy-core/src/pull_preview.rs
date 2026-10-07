@@ -23,6 +23,9 @@ struct Upstream {
 pub struct PullPreview {
     /// The upstream, as `origin/main`.
     pub upstream: String,
+    /// The upstream's commit this preview compared against. `None` only in a placeholder that
+    /// did not come from a repository.
+    pub tip: Option<Oid>,
     /// Commits on the branch that the upstream does not have.
     pub ahead: usize,
     /// Commits on the upstream that the branch does not have.
@@ -78,6 +81,7 @@ impl Repo {
         let (ahead, behind) = git.graph_ahead_behind(ours, theirs)?;
         let mut preview = PullPreview {
             upstream: upstream.shown,
+            tip: Some(theirs),
             ahead,
             behind,
             ..PullPreview::default()
