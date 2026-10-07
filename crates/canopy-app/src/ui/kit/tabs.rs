@@ -1504,15 +1504,8 @@ mod tests {
         // Press, then release a frame later, as a menu item expects.
         let mut press_release = click(pick);
         let release = press_release.split_off(2);
-        let o = list_frame(&ctx, &tabs, 1200.0, 3.1, press_release, &mut got);
-        eprintln!(
-            "after press {:?} {:?} pick {pick:?} {:?}",
-            text_rect(&o, &names[13]),
-            got,
-            text_rect(&o, &names[0])
-        );
-        let o = list_frame(&ctx, &tabs, 1200.0, 3.2, release, &mut got);
-        eprintln!("after release {:?} {:?}", text_rect(&o, &names[13]), got);
+        let _ = list_frame(&ctx, &tabs, 1200.0, 3.1, press_release, &mut got);
+        let _ = list_frame(&ctx, &tabs, 1200.0, 3.2, release, &mut got);
         let _ = list_frame(&ctx, &tabs, 1200.0, 3.3, Vec::new(), &mut got);
         assert_eq!(got, vec![DocTabsEvent::Select(13)]);
     }
