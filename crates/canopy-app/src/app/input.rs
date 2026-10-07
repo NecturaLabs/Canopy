@@ -22,6 +22,10 @@ impl CanopyApp {
         let typing = ctx.text_edit_focused();
         let widget_focused = !typing && ctx.memory(|m| m.focused().is_some());
         let fired = keymap::dispatch(ctx, |b, chord| {
+            if b.command == Command::ContextMenu {
+                // Listed for the cheatsheet; the focused row consumes the key itself.
+                return false;
+            }
             if b.command == Command::Dismiss {
                 return overlay || search_open;
             }
@@ -57,6 +61,8 @@ impl CanopyApp {
         let view = self.tabs.get(self.active).map(|t| t.view);
         match command {
             C::Palette => actions.push(Action::Palette),
+            // Opened by the focused row (`keyboard` never fires it).
+            C::ContextMenu => {}
             C::Cheatsheet => self.cheatsheet.toggle(),
             C::Dismiss => {
                 if self.cheatsheet.open {
@@ -297,6 +303,43 @@ mod tests {
         let mut actions = Vec::new();
         app.command(&ctx, command, 0, &mut actions);
         actions
+    }
+
+    /// Shift+F10 is in the keymap table for the cheatsheet, but the focused row opens its menu
+    /// itself: the keyboard table must leave the key press for the widget.
+    #[test]
+    fn shift_f10_is_left_for_the_focused_row() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::F10,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::SHIFT,
+            }],
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        let mut left = false;
+        let mut output = ctx.run_ui(raw, |ui| {
+            app.keyboard(ui.ctx(), &mut actions);
+            left = ui.ctx().input(|i| {
+                i.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::Key {
+                            key: egui::Key::F10,
+                            ..
+                        }
+                    )
+                })
+            });
+        });
+        output.textures_delta.clear();
+        assert!(left, "the table consumed Shift+F10 before the row saw it");
+        assert!(actions.is_empty(), "{actions:?}");
     }
 
     /// review-views-1: the find shortcut reaches Settings' search on the welcome screen too.

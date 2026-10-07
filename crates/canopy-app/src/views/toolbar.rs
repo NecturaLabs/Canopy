@@ -1008,7 +1008,7 @@ mod tests {
                     strategy: PullStrategy::default(),
                     follow_config: true,
                     prune: true,
-                    checked: false,
+                    checked: None,
                 },
                 Some(Tool::Pull),
             ),

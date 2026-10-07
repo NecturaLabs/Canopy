@@ -61,9 +61,8 @@ yet true, then correctness and the features people meet first, then polish. Take
       shows no focus ring; three panels' resize handles have no accessible name; Settings
       navigation and theme cards should use the kit `Roving` focus; `app/input.rs:20-22` blocks
       every bare key whenever any widget has focus, and list rows now hold focus.
-- [ ] Shift+F10 (row context menu) is not in the `keymap.rs` table, so the cheatsheet does not
-      list it; `app/mod.rs` should use `paint::pane_focus` instead of its own copy;
-      `theme.rs` `clamp_backdrop` comment is stale.
+- [ ] `app/mod.rs` should use `paint::pane_focus` instead of its own copy; `theme.rs`
+      `clamp_backdrop` comment is stale.
 - [ ] Toasts: with five unread errors, a new Success or Info toast evicts itself at once
       (`ui/toast.rs:205-211`), so "Pushed" or "Fetched" never shows; evict the oldest older
       non-error, or replace the oldest error. Smaller: the conflict indent cache keys on a

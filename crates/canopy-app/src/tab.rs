@@ -2598,6 +2598,7 @@ mod tests {
             strategy: canopy_core::PullStrategy::FastForwardOnly,
             diverged: true,
             configured: false,
+            moved: false,
         })))?;
         let notices = tab.poll(&[]);
         assert!(notices.is_empty(), "a choice to make, not a failure");
@@ -2633,6 +2634,7 @@ mod tests {
             strategy: canopy_core::PullStrategy::Rebase,
             diverged: false,
             configured: false,
+            moved: false,
         };
         events.send(Event::PullDecision(Box::new(decision.clone())))?;
         assert!(tab.poll(&[]).is_empty());

@@ -57,7 +57,7 @@ OPTIONS:
                               clone-running, clone-error, init, new-branch, rename, new-tag,
                               stash, add-remote, add-remote-refused, publish, new-request,
                               confirm, confirm-danger, confirm-host, confirm-merge-risky,
-                              diverged, pull-conflicts, whats-new, crash, update-available,
+                              diverged, pull-conflicts, pull-moved, whats-new, crash, update-available,
                               update-failed, terms, consent-reading, crash-reading, username,
                               password, approve or notice
         --size <WxH>          Initial window size [default: 1440x900]

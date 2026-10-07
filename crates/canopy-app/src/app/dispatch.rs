@@ -135,7 +135,7 @@ impl CanopyApp {
                             strategy: choice.mode.strategy(),
                             follow_config: choice.follow_config,
                             prune: settings.prune_for(&t.path),
-                            checked: false,
+                            checked: None,
                         });
                     }
                 }
@@ -143,6 +143,7 @@ impl CanopyApp {
                     repo,
                     mode,
                     remember,
+                    seen,
                 } => {
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.path == repo) {
                         match remember {
@@ -167,17 +168,21 @@ impl CanopyApp {
                             strategy: mode.strategy(),
                             follow_config: false,
                             prune: self.settings.prune_for(&t.path),
-                            checked: true,
+                            checked: seen,
                         });
                     }
                 }
-                Action::PullAnyway { repo, strategy } => {
+                Action::PullAnyway {
+                    repo,
+                    strategy,
+                    seen,
+                } => {
                     if let Some(t) = self.tabs.iter().find(|t| t.path == repo) {
                         t.op(Op::Pull {
                             strategy,
                             follow_config: false,
                             prune: self.settings.prune_for(&t.path),
-                            checked: true,
+                            checked: seen,
                         });
                     }
                 }
@@ -623,6 +628,7 @@ mod tests {
             repo: path.clone(),
             mode,
             remember,
+            seen: None,
         };
         app.apply(&ctx, vec![pull(PullMode::Merge, Remember::No)]);
         assert_eq!(app.settings.pull_mode_for(&path), default);
@@ -722,6 +728,7 @@ mod tests {
             strategy: canopy_core::PullStrategy::FastForwardOnly,
             diverged: true,
             configured: false,
+            moved: false,
         });
         app.tabs[0].force_delete_offer = Some("topic".into());
         app.poll(&ctx);
@@ -735,6 +742,7 @@ mod tests {
                         repo,
                         mode: PullMode::Merge,
                         remember: Remember::Repository,
+                        seen: None,
                     });
                 }
                 Dialog::Confirm { repo, op, .. } => {

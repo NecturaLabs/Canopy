@@ -318,6 +318,7 @@ impl CanopyApp {
                         repo: tab.path.clone(),
                         strategy: d.strategy,
                         preview: d.preview,
+                        moved: d.moved,
                     }
                 });
             }

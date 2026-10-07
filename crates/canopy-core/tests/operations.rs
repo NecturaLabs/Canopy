@@ -3282,6 +3282,30 @@ fn init_starts_on_the_branch_canopy_names_or_the_configured_one() {
     assert_eq!(head(false, "not-followed"), "refs/heads/trunk");
 }
 
+/// A branch name that git would not accept is refused before anything is created, with git's
+/// own message: on a git older than 2.28 the name would otherwise go to `symbolic-ref HEAD`.
+#[test]
+fn init_refuses_an_invalid_branch_name_and_creates_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for bad in ["../../x", "a b", "-x", "a..b", "@{-1}", "", "x.lock"] {
+        let target = dir.path().join("repo");
+        let err = Repo::init(&target, bad, false)
+            .err()
+            .unwrap_or_else(|| panic!("{bad:?} must be refused"))
+            .to_string();
+        assert!(
+            err.contains("not a valid branch name"),
+            "{bad:?}: git's message expected, got {err}"
+        );
+        assert!(!target.exists(), "{bad:?}: nothing may be created");
+    }
+    let repo = Repo::init(&dir.path().join("ok"), "release/1.x", false).expect("valid name");
+    assert_eq!(
+        git(repo.workdir(), &["symbolic-ref", "HEAD"]).trim(),
+        "refs/heads/release/1.x"
+    );
+}
+
 /// When the changes set aside for a pull conflict with what came in, git still succeeds and
 /// leaves conflicted files with nothing in progress; a merge stopped on conflicts is not that.
 #[test]
@@ -3398,6 +3422,15 @@ fn a_pull_preview_finds_conflicts_before_the_pull() {
         .expect("upstream");
     assert_eq!((p.ahead, p.behind), (0, 1), "the fetch ran first");
     assert_eq!(p.overlap, ["a.txt"]);
+    assert_eq!(
+        p.tip.map(|t| t.to_string()),
+        Some(
+            git(copy.workdir(), &["rev-parse", "origin/main"])
+                .trim()
+                .to_owned()
+        ),
+        "the preview names the upstream commit it compared"
+    );
     assert_eq!(
         p.conflicts, None,
         "a fast-forward cannot conflict by itself"

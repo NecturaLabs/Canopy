@@ -64,12 +64,22 @@ impl Repo {
     }
 
     /// Creates a new repository in `path` (creating the directory) and opens it. Its first
-    /// branch is `initial_branch`, unless `follow_config` and `init.defaultBranch` names one.
+    /// branch is `initial_branch`, unless `follow_config` and `init.defaultBranch` names one. A
+    /// name git would not accept as a branch is refused, with git's message, before anything is
+    /// created.
     pub fn init(path: &Path, initial_branch: &str, follow_config: bool) -> Result<Self> {
-        std::fs::create_dir_all(path)?;
+        // Where git can run before `path` exists: its nearest folder that does.
+        let existing = path
+            .ancestors()
+            .find(|p| p.is_dir())
+            .unwrap_or_else(|| Path::new("."));
         let configured = follow_config
-            && crate::cli::run_unchecked(path, &["config", "--get", "init.defaultBranch"])
+            && crate::cli::run_unchecked(existing, &["config", "--get", "init.defaultBranch"])
                 .is_ok_and(|o| o.code == Some(0));
+        if !configured {
+            crate::cli::run(existing, &["check-ref-format", "--branch", initial_branch])?;
+        }
+        std::fs::create_dir_all(path)?;
         if configured {
             crate::cli::run(path, &["init", "-q"])?;
         } else if crate::cli::version_number().is_some_and(|v| v >= (2, 28)) {
