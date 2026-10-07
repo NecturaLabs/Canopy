@@ -741,9 +741,8 @@ mod tests {
             run.textures_delta.clear();
             out.expect("laid out")
         };
-        let start = text.find("support").expect("link").min(text.len());
-        let range = text[..start].chars().count()
-            ..text[..start].chars().count() + "support@necturalabs.com".chars().count();
+        let before = text.split_once("support").expect("link").0.chars().count();
+        let range = before..before + "support@necturalabs.com".chars().count();
         let whole = galley_of(10_000.0);
         let one = link_areas(&whole, &range, egui::Vec2::ZERO);
         assert_eq!(one.len(), 1);
