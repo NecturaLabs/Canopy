@@ -17,8 +17,9 @@ impl CanopyApp {
             .tabs
             .get(self.active)
             .is_some_and(|tab| tab.view == View::History && tab.history_filter_open);
-        let typing = ctx.egui_wants_keyboard_input();
-        // A button or checkbox reached with Tab keeps Space, Enter and the arrows for itself.
+        // Only a text field takes letters; any other focused widget (a button the pointer or Tab
+        // left focus on, after Esc closed its menu) keeps just Space, Enter and the arrows.
+        let typing = ctx.text_edit_focused();
         let widget_focused = !typing && ctx.memory(|m| m.focused().is_some());
         let fired = keymap::dispatch(ctx, |b, chord| {
             if b.command == Command::Dismiss {
@@ -335,6 +336,82 @@ mod tests {
         );
         run(&mut app, Command::Dismiss);
         assert!(app.settings_screen.is_none());
+    }
+
+    fn frame(ctx: &egui::Context, events: Vec<egui::Event>, f: impl FnMut(&mut egui::Ui)) {
+        let mut f = f;
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| f(ui),
+        );
+        out.textures_delta.clear();
+    }
+
+    /// Runs `keyboard` for one frame in which `key` is pressed while the widget `focused` built by
+    /// `build` has keyboard focus.
+    fn keyboard_with_focus(
+        app: &mut CanopyApp,
+        key: egui::Key,
+        build: impl Fn(&mut egui::Ui) -> egui::Id,
+    ) -> Vec<Action> {
+        let ctx = egui::Context::default();
+        let mut focused = None;
+        // The first frame builds the widget and gives it focus; the key arrives in the second.
+        frame(&ctx, Vec::new(), |ui| {
+            let id = build(ui);
+            ui.memory_mut(|m| m.request_focus(id));
+            focused = Some(id);
+        });
+        frame(&ctx, Vec::new(), |ui| {
+            build(ui);
+        });
+        assert_eq!(ctx.memory(|m| m.focused()), focused, "the widget has focus");
+        let mut actions = Vec::new();
+        let press = egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&ctx, vec![press], |ui| {
+            build(ui);
+            app.keyboard(ui.ctx(), &mut actions);
+        });
+        actions
+    }
+
+    /// usersim F2: a button left focused (the bell after Esc closes the center) keeps Space, Enter
+    /// and the arrows for itself but must not swallow the bare repository keys.
+    #[test]
+    fn a_focused_button_leaves_the_bare_repository_keys_working() {
+        let button = |ui: &mut egui::Ui| ui.button("Bell").id;
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        let actions = keyboard_with_focus(&mut app, egui::Key::F, button);
+        assert!(matches!(actions.as_slice(), [Action::Fetch]), "{actions:?}");
+        let actions = keyboard_with_focus(&mut app, egui::Key::P, button);
+        assert!(matches!(actions.as_slice(), [Action::Pull]), "{actions:?}");
+        // The arrows and Space stay with the button.
+        for key in [egui::Key::ArrowDown, egui::Key::Space, egui::Key::Enter] {
+            let actions = keyboard_with_focus(&mut app, key, button);
+            assert!(actions.is_empty(), "{key:?} fired {actions:?}");
+        }
+    }
+
+    /// While a text field has focus a bare letter is text, not a command.
+    #[test]
+    fn a_focused_text_field_keeps_the_bare_keys() {
+        let field = |ui: &mut egui::Ui| ui.text_edit_singleline(&mut String::new()).id;
+        let mut app = test_app();
+        app.tabs
+            .push(test_tab(canopy_core::RepoSnapshot::default()));
+        let actions = keyboard_with_focus(&mut app, egui::Key::F, field);
+        assert!(actions.is_empty(), "{actions:?}");
     }
 
     /// secfix2 F5: the Pop shortcut pops the stash the snapshot shows as latest, by its commit.
