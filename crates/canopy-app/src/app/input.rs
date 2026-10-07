@@ -392,7 +392,7 @@ mod tests {
         let ctx = egui::Context::default();
         let esc = || crate::ui::kit::testkit::key(egui::Key::Escape);
         // As the app draws: the keyboard table first, then the interface with the menu.
-        let mut run = |app: &mut CanopyApp, events: Vec<egui::Event>, open: bool| {
+        let run = |app: &mut CanopyApp, events: Vec<egui::Event>, open: bool| {
             let mut actions = Vec::new();
             frame(&ctx, events, |ui| {
                 app.keyboard(ui.ctx(), &mut actions);
