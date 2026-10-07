@@ -1666,7 +1666,7 @@ impl Palette {
         let s = self.s();
         let fill = mix(s.badge, c, if strong { TONAL_PRESSED } else { TONAL_REST });
         let ring = mix(s.badge, c, TONAL_RING);
-        (fill, ring, self.ink(c, fill))
+        (fill, ring, Color32::WHITE)
     }
 
     /// Text or an icon in colour `fg` drawn on the translucent `fill` in the active style: `fg`
