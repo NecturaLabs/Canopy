@@ -163,6 +163,8 @@ fn credentials_are_recognised_in_every_spelling_git_accepts() {
         "ssh:///git:pw@host/r",
         "ftps://u:p@host/r",
         "http::https://token@host/r",
+        "http::https:/user:pw@host/r",
+        "https:/user:pw@host/r",
     ] {
         assert!(url_has_credentials(url), "{url}");
     }

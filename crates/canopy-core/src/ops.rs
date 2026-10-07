@@ -204,7 +204,10 @@ pub fn clone(url: &str, dest: &Path, progress: impl FnMut(&str)) -> Result<()> {
     reason = "the range comes from cli::userinfo over the same text"
 )]
 pub fn url_has_credentials(url: &str) -> bool {
-    let Some((scheme, rest)) = url.trim().split_once("://") else {
+    let url = url.trim();
+    // A git remote helper can receive an invalid one-slash URL and print the entire URL
+    // (including its password) in stderr before refusing it.
+    let Some((scheme, rest)) = url.split_once("://").or_else(|| url.split_once(":/")) else {
         return false;
     };
     let Some(user) = cli::userinfo(rest, char::is_whitespace) else {
