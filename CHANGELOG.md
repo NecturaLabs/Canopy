@@ -11,8 +11,8 @@ commits since the previous build.
 ### Added
 
 - A pull looks before it changes anything: it fetches, and when your branch and the remote have
-  both moved on it asks whether to rebase or merge (and can remember the answer for the
-  repository); when a pull would likely conflict it names the files first and lets you cancel.
+  both moved on it asks whether to rebase (recommended) or merge, and can remember the answer
+  for the repository or for every repository; when a pull would likely conflict it names the files first and lets you cancel.
   It then brings in what it fetched, so it asks the remote, and you for credentials, only once.
   A pull or rebase that stops on conflicts, or whose uncommitted changes conflict when they come
   back, takes you to Changes to resolve them.
@@ -90,7 +90,8 @@ commits since the previous build.
 - Credential and SSH passphrase prompts, and host-key questions, in Canopy's own dialog instead of
   failing, whenever git or ssh needs one.
 - Staging, unstaging and discarding single lines of a hunk, side-by-side diffs, syntax highlighting,
-  and context-line and whitespace options for diffs, global or per repository.
+  and context-line and whitespace options for diffs, global or per repository (Use for every
+  repository makes one repository's options the default).
 - A three-way conflict resolver (ours, theirs, both, the common ancestor or an edit by hand), and
   merge modes: default, no fast-forward, fast-forward only and squash.
 - Each repository tab shows its commits to push and pull.
@@ -129,6 +130,8 @@ commits since the previous build.
 
 ### Fixed
 
+- With a screen reader running, closing a dialog (such as the force push confirmation) no
+  longer crashes Canopy.
 - Notification cards follow the Dense density like the rest of the window, with tighter padding
   and a smaller icon, instead of keeping Comfortable's.
 - A commit keeps message lines that start with `#` (an issue number, a Markdown heading) unless
@@ -277,6 +280,10 @@ commits since the previous build.
 - Branch, tag and stash pills in History are redesigned as one consistent style: every pill is a
   solid fill of its commit's graph colour with a white label, told apart by its icon; the
   checked-out branch has a white outline.
+- Prompts mark Canopy's recommended choice and leave out what goes without saying, such as "Esc
+  cancels"; notifications of finished work say what happened ("Pulled", "Could not push").
+- Select boxes look like the buttons beside them, with an up-down caret; text fields have one even
+  edge; links brighten and underline under the pointer, and links to the web end in an arrow.
 - Settings rows now keep their controls in one aligned column.
 - Releases are numbered builds, named by `git rev-list --count` of their commit on `main` and its
   short hash (`build 412 (a1b2c3d)`), instead of semantic versions. The number is shown in About,
