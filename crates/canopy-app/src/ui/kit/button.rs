@@ -80,7 +80,14 @@ pub(super) fn tip(
     match (text, shortcut) {
         (None, _) => response,
         (Some(t), Some(c)) if enabled => response.kit_tooltip(t).shortcut(c).show(),
-        (Some(t), _) => response.kit_tooltip(t).extra(labelled).show(),
+        (Some(t), _) => {
+            let why = !enabled && reason.is_some();
+            response
+                .kit_tooltip(t)
+                .extra(labelled && !why)
+                .unavailable(why)
+                .show()
+        }
     }
 }
 
