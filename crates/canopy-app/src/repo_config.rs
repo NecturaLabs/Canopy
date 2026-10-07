@@ -150,15 +150,13 @@ pub fn read(workdir: Option<&Path>) -> GitFacts {
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
                 .filter(|b| !b.is_empty());
         facts.remotes = remotes(dir);
-        facts.remote_prune = facts
-            .remotes
-            .iter()
-            .filter_map(|r| {
-                get_bool(dir, scope, &format!("remote.{}.prune", r.name))
-                    .ok()
-                    .flatten()
-            })
-            .collect();
+        match remote_prune_values(&facts.remotes, |key| get_bool(dir, scope, key)) {
+            Ok(values) => facts.remote_prune = values,
+            Err(e) => {
+                facts.error = Some(e);
+                return facts;
+            }
+        }
     }
     facts.prune_tags = get_bool(dir, scope, "fetch.pruneTags")
         .ok()
@@ -221,6 +219,21 @@ fn get_value(dir: &Path, scope: &[&str], key: &str) -> Result<Option<ConfigValue
             }
         }
     }
+}
+
+/// Reads each remote's pruning preference without silently dropping a failed git config read.
+fn remote_prune_values(
+    remotes: &[Remote],
+    mut get: impl FnMut(&str) -> Result<Option<ConfigValue>, String>,
+) -> Result<Vec<ConfigValue>, String> {
+    let mut values = Vec::new();
+    for remote in remotes {
+        let key = format!("remote.{}.prune", remote.name);
+        if let Some(value) = get(&key).map_err(|e| format!("{key}: {e}"))? {
+            values.push(value);
+        }
+    }
+    Ok(values)
 }
 
 /// [`get_value`] for a boolean key, with the value as git reads it: a key written without `=`
@@ -312,6 +325,30 @@ mod tests {
         let old = parse_value("fetch.prune", "file:.git/config\tfalse\n", false).expect("value");
         assert_eq!((old.scope.as_str(), old.as_bool()), ("", Some(false)));
         assert_eq!(parse_value("x", "", true), None);
+    }
+
+    #[test]
+    fn remote_prune_reader_exposes_git_config_failures() {
+        let remotes = [
+            Remote {
+                name: "origin".into(),
+                url: "https://example.com/o".into(),
+            },
+            Remote {
+                name: "mirror".into(),
+                url: "https://example.com/m".into(),
+            },
+        ];
+        let error = remote_prune_values(&remotes, |key| {
+            if key == "remote.mirror.prune" {
+                Err("invalid configuration".into())
+            } else {
+                Ok(None)
+            }
+        })
+        .expect_err("a failed config read must reach the user");
+        assert!(error.contains("remote.mirror.prune"), "{error}");
+        assert!(error.contains("invalid configuration"), "{error}");
     }
 
     #[test]
