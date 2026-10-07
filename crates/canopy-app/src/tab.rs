@@ -435,6 +435,8 @@ fn success_body(kind: &OpKind, out: &str, subject: &str, branch: Option<&str>) -
             let branch = branch.unwrap_or("The branch");
             let mut body = if out.lines().any(|l| l.starts_with("Successfully rebased")) {
                 format!("Rebased {branch} onto its upstream.")
+            } else if out.lines().any(|l| l.starts_with("Merge made by")) {
+                format!("{branch} now has everything from its upstream.")
             } else {
                 format!("{branch} is up to date with its upstream.")
             };
@@ -1818,7 +1820,7 @@ mod tests {
             \x20- [deleted]         (none)     -> origin/old\n\
             \x20* [new tag]         v1         -> v1";
         let push = "To /srv/origin\n   a1c2bac..6620397  main -> main\n + 1234567...89abcde feat -> feat (forced update)";
-        let cases: [(OpKind, &str, &str, &str); 9] = [
+        let cases: [(OpKind, &str, &str, &str); 10] = [
             (
                 OpKind::Commit,
                 "a1b2c3d",
@@ -1843,6 +1845,12 @@ mod tests {
                 "remote: Total 3",
                 "",
                 "main is up to date with its upstream.",
+            ),
+            (
+                OpKind::Pull,
+                "Merge made by the 'ort' strategy.\n a.txt | 1 +\n 1 file changed, 1 insertion(+)",
+                "",
+                "main now has everything from its upstream.",
             ),
             (
                 OpKind::Push,
