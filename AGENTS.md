@@ -46,7 +46,7 @@ These come from the owner and override anything else in the repository.
   choice with its recommendation and, where the user's configuration sets it, the setting, its
   value and where it is set. Covered: pull strategy, prune, tag pruning, autostash,
   follow-tags, `push.default`, conflict style, the first branch of `init`, commit cleanup; no
-  notification outside Settings reports them yet (`docs/backlog.md`, "Git settings"). A pull
+  notification outside Settings reports them yet (see the Git settings GitHub issue). A pull
   checks first and asks before it would diverge or conflict.
 - **Toolkit**: egui stays (the owner chose it over React).
 - **Art**: in-app illustrations are drawn in code from the active theme (`ui/art.rs`,
@@ -103,8 +103,9 @@ adding a dependency.
 
 ## Workflow
 
-- `docs/backlog.md` is the task board, one short line per open task: take them from the top of
-  "Now" down, and delete one only when verified in the running app, not when the code compiles.
+- **GitHub Issues is the sole backlog.** Read [open issues](https://github.com/NecturaLabs/Canopy/issues?q=is%3Aissue+is%3Aopen) before starting work. Prioritize `[Now]` in the migrated order, then `[Next]` and `[Later]`; `[Verify]` requires live application or owner verification, and `[Owner]` requires owner action.
+- **Keep issues updated as part of every task:** search first, create an issue for new work, link it in the implementing PR, record partial progress, tests and remaining follow-ups in the issue, and close it only once its acceptance criteria are verified (including in-app screenshots/live checks when appropriate). Never mark unrun checks as passing. A partially completed compound issue stays open, with completed subparts noted.
+- Do not maintain Markdown or agent-specific shadow backlogs or TODO lists. `docs/backlog.md` is a migration pointer, not an active task board. Open issues preserve all prior tasks, including those awaiting verification or owner decisions.
 - Any change to what the UI shows needs a screenshot check (`screenshot` skill), dark and light
   where colours are involved; unit tests cannot see layout or colour.
 - `docs/playbook.md`: running the app live on a private Xvfb display, testing an update end to end,
@@ -117,10 +118,12 @@ adding a dependency.
 - Subagents (the owner's rule): at most 3 at a time. Small things are done directly. Each builder
   gets its own `CARGO_TARGET_DIR` in a scratch directory, deleted afterwards; keep 5 GB of disk
   free.
-- Branches: no pull requests and no long-lived branches. Small fixes go straight to `main`; larger
-  work on a short branch merged with `git merge --no-ff` or a fast-forward. Push `main` when the
-  owner asks. `tools/check.sh` must pass before merging; do not wait for CI. Where a check fails
-  for a reason already in `docs/backlog.md`, report the actual run.
+- Branches: use short-lived branches and reviewable GitHub PRs, linking the relevant issues.
+  Commit frequently and atomically using Conventional Commits. Related small backlog fixes can
+  share one PR, with a separate commit per independent fix. **Never merge or push directly to
+  `main` without the owner's explicit approval.** Before recommending a merge, run
+  `tools/check.sh`, check CI and perform relevant live verification. For a known failure, link
+  its GitHub issue and report the actual run; do not bypass checks.
 - Before declaring work done: `tools/check.sh` passes and the `canopy-review` agent has reviewed
   the diff (brief it per the `independent-review` skill); fix or answer every Blocking finding.
   Only a typo or formatting-only change skips this.
