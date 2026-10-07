@@ -27,9 +27,6 @@ yet true, then correctness and the features people meet first, then polish. Take
       message under Project; the legal reader's scroll offset survives restarts (consent opens
       part-way down); toolbar/palette "Pop latest stash" still pops index 0, not the commit the
       tooltip named.
-- [ ] Settings import: `settings_file.rs` NETWORK_SWITCHES lets a file raise `auto_fetch_minutes`
-      (timed `git fetch`, no lower clamp) and `include_prereleases`, while the UI says an import
-      "never turns a network feature on": guard both or narrow the wording (owner decision).
 - [ ] `ops.rs:206` `url_has_credentials` needs `://`; check with a real git whether a one-slash
       helper URL (`http::https:/user:pw@host/r`) prints the password unredacted.
 - [ ] Component library: triage the rest of its working record (kept outside the repository with

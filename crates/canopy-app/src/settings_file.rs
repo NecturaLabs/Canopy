@@ -8,7 +8,7 @@
 //! (`hosting.rs` keeps them), so they are never in the file. The programs Canopy runs, the hosts
 //! trusted with a GitLab token and everything tied to a folder on this computer
 //! ([`THIS_COMPUTER`]) are neither written nor read either, and a file may switch a network
-//! feature off but never on ([`NETWORK_SWITCHES`]). Git choices that could delete local tags,
+//! feature off but never on ([`NETWORK_SWITCHES`]) nor fetch more often ([`AUTO_FETCH`]). Git choices that could delete local tags,
 //! override the user's own git configuration or send a push somewhere unexpected take a file's
 //! value only when it is the safe one ([`GIT_GUARDS`]).
 //!
@@ -71,7 +71,20 @@ pub const NETWORK_SWITCHES: &[(&str, &str)] = &[
     ("hosting_api", "pull and merge requests"),
     ("download_avatars", "profile pictures"),
     ("check_updates", "update checks"),
+    ("include_prereleases", "beta builds"),
 ];
+
+/// How often a file may have Canopy fetch on its own, with the import message's words: never more
+/// often than now, and never when automatic fetching is off here (0 turns it off).
+const AUTO_FETCH: (&str, &str) = ("auto_fetch_minutes", "automatic fetching");
+
+/// Whether a file's `auto_fetch_minutes` asks for no more fetching than `current` does.
+fn fetches_no_more(current: Option<&Value>, value: &Value) -> bool {
+    let now = current.and_then(Value::as_u64).unwrap_or(0);
+    value
+        .as_u64()
+        .is_some_and(|v| v == 0 || (now != 0 && v >= now))
+}
 
 /// The one value of a guarded setting a file may set.
 #[derive(Debug, Clone, Copy)]
@@ -204,6 +217,12 @@ pub fn import(current: &Settings, text: &str) -> Result<Imported, String> {
         {
             if value != Value::Bool(false) {
                 keep(words);
+            }
+            continue;
+        }
+        if key == AUTO_FETCH.0 && !fetches_no_more(merged.get(&key), &value) {
+            if merged.get(&key) != Some(&value) {
+                keep(AUTO_FETCH.1);
             }
             continue;
         }
@@ -480,6 +499,48 @@ mod tests {
         );
         let same = import(&on, &file_with(r#"{"prune_tags": true}"#)).unwrap();
         assert!(same.settings.prune_tags && same.kept.is_empty());
+    }
+
+    #[test]
+    fn a_file_cannot_fetch_more_often_or_turn_on_beta_builds() {
+        let off = Settings::default();
+        let every_ten = Settings {
+            auto_fetch_minutes: 10,
+            ..Settings::default()
+        };
+        let imported = import(
+            &off,
+            &file_with(r#"{"auto_fetch_minutes": 1, "include_prereleases": true}"#),
+        )
+        .unwrap();
+        assert_eq!(
+            imported.settings.auto_fetch_minutes, 0,
+            "fetching stays off"
+        );
+        assert!(
+            !imported.settings.include_prereleases,
+            "beta builds stay off"
+        );
+        assert!(
+            imported.kept.contains(&"automatic fetching") && imported.kept.contains(&"beta builds"),
+            "{:?}",
+            imported.kept
+        );
+        let faster = import(&every_ten, &file_with(r#"{"auto_fetch_minutes": 1}"#)).unwrap();
+        assert_eq!(
+            faster.settings.auto_fetch_minutes, 10,
+            "no more often than now"
+        );
+        // Less often, or off, comes in.
+        for minutes in [30, 0] {
+            let fewer = import(
+                &every_ten,
+                &file_with(&format!(r#"{{"auto_fetch_minutes": {minutes}}}"#)),
+            )
+            .unwrap();
+            assert_eq!(fewer.settings.auto_fetch_minutes, minutes);
+            assert!(fewer.kept.is_empty(), "{:?}", fewer.kept);
+        }
     }
 
     #[test]
