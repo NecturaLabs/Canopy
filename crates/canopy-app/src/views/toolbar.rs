@@ -26,7 +26,7 @@ use crate::ui::kit::{IconButton, Size, ToolButton, menu, paint};
 use crate::ui::motion;
 use crate::ui::theme::{self, ThemeId, palette};
 use crate::ui::widgets::forge_icon;
-use crate::worker::Op;
+use crate::worker::{Op, OpKind};
 
 /// Repository tabs: the wordmark, the document tabs, and the strip's tools on the right.
 pub fn tabs(
@@ -623,22 +623,17 @@ enum Tool {
     Pop,
 }
 
-/// The tool an operation (its worker label, `Op::label`) belongs to, if any.
-fn tool_of(label: &str) -> Option<Tool> {
-    Some(match label {
-        "Fetching" => Tool::Fetch,
-        "Pulling" => Tool::Pull,
-        "Pushing" | "Force pushing" => Tool::Push,
-        "Stashing" => Tool::Stash,
-        "Popping stash" => Tool::Pop,
-        l if ["Merging ", "Squashing ", "Rebasing onto "]
-            .iter()
-            .any(|p| l.starts_with(p)) =>
-        {
-            Tool::Merge
-        }
-        l if l.starts_with("Creating branch ") => Tool::Branch,
-        l if l.starts_with("Adding remote ") => Tool::Publish,
+/// The toolbar action that owns an operation, independent of its display wording.
+fn tool_of(kind: &OpKind) -> Option<Tool> {
+    Some(match kind {
+        OpKind::Fetch => Tool::Fetch,
+        OpKind::Pull => Tool::Pull,
+        OpKind::Push => Tool::Push,
+        OpKind::Stash => Tool::Stash,
+        OpKind::Pop => Tool::Pop,
+        OpKind::Merge | OpKind::Squash(_) => Tool::Merge,
+        OpKind::Branch => Tool::Branch,
+        OpKind::Publish => Tool::Publish,
         _ => return None,
     })
 }
@@ -659,7 +654,7 @@ impl Outcome {
     /// The outcome `finished` still shows `seconds` after it, at `now` on the context's clock,
     /// or `None` once [`motion::OUTCOME_HOLD`] has passed.
     fn after(finished: &Finished, seconds: f32, now: f64) -> Option<Self> {
-        let tool = tool_of(&finished.label)?;
+        let tool = tool_of(&finished.kind)?;
         if seconds >= motion::OUTCOME_HOLD {
             return None;
         }
@@ -700,7 +695,7 @@ impl Running {
             .filter(|_| job.is_none())
             .and_then(|f| Outcome::after(f, f.at.elapsed().as_secs_f32(), now));
         Self {
-            tool: job.and_then(tool_of),
+            tool: job.and(tab.running_kind.as_ref()).and_then(tool_of),
             tip,
             outcome,
         }
@@ -990,7 +985,7 @@ mod tests {
         assert_eq!(open_requests(&ctx, &tab), 0, "a failure forgets the count");
     }
 
-    /// V30: each running operation's worker label lights the tool that started it.
+    /// Each running operation's kind lights the tool that started it, independent of its label.
     #[test]
     fn running_operations_map_to_their_tools() {
         use canopy_core::MergeMode;
@@ -1102,7 +1097,7 @@ mod tests {
             ),
         ];
         for (op, tool) in cases {
-            assert_eq!(tool_of(&op.label()), tool, "{}", op.label());
+            assert_eq!(tool_of(&op.kind()), tool, "{}", op.label());
         }
     }
 
@@ -1198,6 +1193,7 @@ mod tests {
     fn an_outcome_holds_on_its_tool_then_ends() {
         let done = Finished {
             label: "Fetching".into(),
+            kind: OpKind::Fetch,
             ok: true,
             at: std::time::Instant::now(),
         };
@@ -1216,6 +1212,7 @@ mod tests {
         );
         let failed = Finished {
             label: "Pushing".into(),
+            kind: OpKind::Push,
             ok: false,
             ..done
         };
@@ -1225,6 +1222,7 @@ mod tests {
         assert_eq!(shown.tip, "Could not push");
         let other = Finished {
             label: "Committing".into(),
+            kind: OpKind::Commit,
             ok: true,
             at: std::time::Instant::now(),
         };
@@ -1241,7 +1239,10 @@ mod tests {
         let mut tab =
             RepoTab::with_worker(PathBuf::from("alpha"), 100, DiffPrefs::default(), worker);
         events
-            .send(Event::OpStarted("Fetching".into()))
+            .send(Event::OpStarted {
+                label: "Fetching".into(),
+                kind: OpKind::Fetch,
+            })
             .expect("started");
         tab.poll(&[]);
         let busy = Running::of(&ctx, &tab);
